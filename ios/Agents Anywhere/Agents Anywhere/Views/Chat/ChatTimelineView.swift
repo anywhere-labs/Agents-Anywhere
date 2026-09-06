@@ -336,9 +336,6 @@ private struct ChatTimelineContent: View, Equatable {
                     onDismiss: { model.session.dismissPendingMessage(id: pending.id) })
                     .id(pending.id)
             }
-            if model.isRunning && !model.timeline.rows.contains(where: { $0.structure.isStreamingText }) {
-                Text("正在处理任务").font(.subheadline).foregroundStyle(.secondary).frame(height: 40, alignment: .leading)
-            }
             if model.session.hasNewerItems {
                 Button(action: onLoadLatest) {
                     Group {
@@ -352,6 +349,7 @@ private struct ChatTimelineContent: View, Equatable {
             // Constant breathing room: status text and card counts cannot
             // change this spacer or create a spurious follow request.
             Color.clear.frame(height: 32)
+                .traceChatLayout("tail-spacer")
                 .overlay(alignment: .bottom) {
                     Color.clear.frame(height: 96)
                         .onScrollVisibilityChange(threshold: 0.01) { onTailVisibility(.near, $0) }

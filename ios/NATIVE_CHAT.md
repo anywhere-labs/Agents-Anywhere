@@ -36,9 +36,13 @@ Semantic error and availability colors remain separate from the primary color.
   does not keep a polling clock awake. New glyphs use a 240 ms opacity, blur and
   vertical reveal. Initial history and recovery snapshots do not replay reveals.
 - Pending user-message removal and authoritative echo insertion happen in the
-  same presentation tick. A per-width/Dynamic-Type height floor and stable blocks
-  reduce Markdown height churn during streaming. Authoritative replacements
-  reset the layout generation.
+  same presentation tick. `MarkdownBlockLayout` measures and places each stable
+  block with the parent's proposed column width. Its layout-local height cache
+  protects asynchronous empty/short fragments without geometry-to-View-state
+  feedback. Intrinsic text widths cannot reset the reservation; minimum/ideal
+  probes and actual column widths have separate measurements. Real iPad resizing
+  reflows immediately, and Dynamic Type/display scale/direction changes reset the
+  cache. Authoritative replacements reset the enclosing layout generation.
 - Opening a session immediately displays one persistent loading indicator in
   the detail column. History loading and timeline mounting wait for the sidebar
   animation's completion and another 120 ms; a new selection cancels the pending
@@ -131,6 +135,13 @@ Semantic error and availability colors remain separate from the primary color.
 - The session header uses `safeAreaBar` with the scroll view's native soft edge
   effect. Its subtitle shows the Agent and device names, using the device ID
   when its name is not yet available. The sidebar icon has three left-aligned strokes, the last shorter.
+  Session headers reserve one caption-sized status slot, including while idle:
+  syncing, offline/device availability, runtime reasons and working/waiting
+  feedback update that slot without changing the top inset. Network failures
+  take precedence over cached runtime status; malformed data remains an error
+  toast rather than being mislabeled as offline. The timeline has no temporary
+  working row or first-token thinking label, and empty attachment stacks do not
+  contribute a phantom inter-item gap.
   A right-hand glass button group contains New Session and a details menu. The
   phone's left-edge drawer gesture starts within 44 points and still requires
   horizontal intent so vertical timeline scrolling is not intercepted.
@@ -171,7 +182,9 @@ Semantic error and availability colors remain separate from the primary color.
   Ambiguous writes require refreshing; a successful takeover followed by a failed
   read retains the confirmed write result.
 - Read-only sessions also show an interactive glass takeover pill below the
-  header, sharing the options sheet's native system Alert. The empty composer says
+  header, sharing the options sheet's native system Alert. It floats in the same
+  overlay layer as error toasts, so metadata arrival or successful takeover does
+  not resize the header's safe-area inset. The empty composer says
   “请先接管” until takeover is enabled; existing drafts remain intact. The sidebar
   strokes explicitly use AA's primary foreground color in both appearances.
 - Switches use the native switch style with inherited app tint/accent overrides
@@ -321,7 +334,7 @@ than a “server unavailable” alert.
 
 Verified on 2026-09-06, without starting a server or simulator:
 
-- 137 headless Swift tests across eighteen suites pass against production client-core
+- 144 headless Swift tests across nineteen suites pass against production client-core
   sources. They cover API contracts, recovery/cache races, uncertain delivery,
   30 Hz presentation, echo handoff, target preparation, preference scope, schema
   payloads and interaction lifecycle/IME guards. Session-detail checks cover
@@ -331,7 +344,10 @@ Verified on 2026-09-06, without starting a server or simulator:
   cases cover actual tail visibility despite conflicting geometry, out-of-order
   visibility callbacks, opening before tail measurement, manual/explicit returns,
   animation completion ordering, drawer occlusion, interaction changes and both
-  history edges. Sidebar status priority/order and compact approval
+  history edges. Layout regression cases replay alternating intrinsic text widths
+  under one column proposal, transient short/empty fragments, minimum/ideal probes
+  and immediate narrow/wide reflow. Header status tests distinguish real offline
+  facts from stale activity, syncing and invalid responses. Sidebar status priority/order and compact approval
   grouping are checked against the Web and runtime contracts. Read receipt tests
   exercise the production API, immediate local read state, rapid navigation,
   equal-revision snapshots, delayed acknowledgements, per-turn coalescing,
@@ -432,14 +448,18 @@ keyboard layout and real mobile-network behavior still need manual validation:
     and offset distinguish reflow or scrolling from a drawing-only flash. These
     logs contain no message text and do not require a diagnostics overlay.
     `Drawer component` lines narrow a content-size change to a group, row,
-    Copy/Share footer, or Markdown block. `natural` is the block's intrinsic size;
-    `reserved` includes its minimum-height guard. Membership/status changes are
-    reported separately from size changes so a 48-point footer and a paragraph
-    reflow cannot be mistaken for each other.
+    Copy/Share footer, or Markdown block's final `layout` size. Header, composer,
+    interaction dock and constant tail-spacer sizes are traced as well. Intrinsic
+    text widths no longer write to View state or generate reserved/natural trace
+    pairs. Membership/status changes are reported separately from size changes
+    so a 48-point footer and a paragraph reflow cannot be mistaken for each other.
     Repeat while reading in the middle and while streaming. Expand/collapse the
     composer, show/dismiss the keyboard and respond to approval cards; check the
     bottom margin is applied once and that a manual upward scroll is respected.
-    Check Agent/device names in the header. Load older pages by tap/pull and check the spinner, retained
+    Check Agent/device names and syncing/offline/working feedback in the header.
+    Sync completion and takeover must not move the viewport. Resize the iPad
+    split and change Dynamic Type in both directions; blocks should rewrap with
+    no reservation from the previous font/column width. Load older pages by tap/pull and check the spinner, retained
     reading offset and the final-page marker. Send images and documents, check
     composer thumbnails, the bubble's left spinner and unchanged preview/text
     geometry after echoes. Read a device-path image online, then reopen it offline

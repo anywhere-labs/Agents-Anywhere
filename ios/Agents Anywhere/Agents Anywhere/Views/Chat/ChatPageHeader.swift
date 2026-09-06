@@ -3,10 +3,13 @@ import SwiftUI
 struct ChatPageHeader<Actions: View>: View {
     let title: String
     var subtitle: String?
+    var status: ChatHeaderStatus?
+    var reservesStatusLine = false
     let controls: ChatControlMetrics
     let onMenu: () -> Void
     @ViewBuilder var actions: () -> Actions
     @Environment(\.colorScheme) private var colorScheme
+    @ScaledMetric(relativeTo: .caption2) private var statusLineHeight: CGFloat = 14
 
     var body: some View {
         GlassEffectContainer(spacing: 8) {
@@ -17,9 +20,29 @@ struct ChatPageHeader<Actions: View>: View {
                         .frame(width: controls.diameter, height: controls.diameter)
                         .glassEffect(.regular.interactive(), in: .circle)
                 }.accessibilityLabel("打开侧栏")
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.headline).lineLimit(1)
-                    if let subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.headline).lineLimit(1, reservesSpace: true)
+                    if let subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1, reservesSpace: true) }
+                    if reservesStatusLine {
+                        // This slot exists before, during and after syncing.
+                        // Status changes cannot resize the top safe-area bar.
+                        ZStack(alignment: .leading) {
+                            if let status {
+                                HStack(spacing: 4) {
+                                    Group {
+                                        if status.isProgress {
+                                            ProgressView().progressViewStyle(.circular).controlSize(.mini)
+                                        } else { Image(systemName: status.symbol) }
+                                    }.frame(width: statusLineHeight, height: statusLineHeight)
+                                    Text(status.title).lineLimit(1)
+                                }
+                                .font(.caption2).foregroundStyle(.secondary)
+                                .accessibilityElement(children: .ignore).accessibilityLabel(status.detail)
+                                .help(status.detail)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading).frame(height: statusLineHeight)
+                    }
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 actions()
             }.buttonStyle(.plain)

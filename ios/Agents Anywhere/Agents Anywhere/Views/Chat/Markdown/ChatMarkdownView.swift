@@ -41,11 +41,11 @@ private struct MarkdownBlockView: View, Equatable {
     let block: MarkdownBlockSnapshot
     let isStreaming: Bool
     let isTail: Bool
-    @State private var heightFloor: CGFloat = 0
-    @State private var measuredWidth: CGFloat = 0
     @State private var hasSettled = false
     @State private var headingLedger = GlyphRevealLedger()
     @Environment(\.dynamicTypeSize) private var dynamicType
+    @Environment(\.displayScale) private var displayScale
+    @Environment(\.layoutDirection) private var direction
     @Environment(\.chatLayoutTraceOwner) private var traceOwner
 
     static func == (lhs: Self, rhs: Self) -> Bool {
@@ -55,38 +55,26 @@ private struct MarkdownBlockView: View, Equatable {
     var body: some View {
         // Only changed blocks reach Textual's parser. The complete document was
         // parsed above, so cross-block references and nested structures survive.
-        StructuredText(String(block.content.hashValue), parser: ParsedBlock(content: block.content))
-            .textual.structuredTextStyle(ChatMarkdownStyle(headingLedger: headingLedger))
-            .textual.imageAttachmentLoader(ChatImageLoader())
-            .textual.textSelection(.enabled)
-            .environment(\.streamingGlyphAnimation, isStreaming && !hasSettled)
-            .font(.body)
-            .foregroundStyle(.primary)
-            .fixedSize(horizontal: false, vertical: true)
-            .traceChatLayout("markdown:\(traceOwner):\(block.id):natural")
-            .onGeometryChange(for: CGSize.self, of: \.size) { size in
-                guard size.width > 1 else { return }
-                if abs(measuredWidth - size.width) > 1 {
-                    measuredWidth = size.width
-                    heightFloor = ceil(size.height)
-                } else if size.height > heightFloor + 0.5 {
-                    heightFloor = ceil(size.height)
-                }
-            }
-            // A fragment can briefly report an empty layout as the highlighter
-            // or attachment resolves. Preserve its last real height in that gap.
-            .frame(minHeight: heightFloor, alignment: .topLeading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .traceChatLayout("markdown:\(traceOwner):\(block.id):reserved", state: "heightFloor=\(heightFloor), measuredWidth=\(measuredWidth)")
-            .onChange(of: dynamicType) { heightFloor = 0; measuredWidth = 0 }
-            .task(id: isTail) {
-                hasSettled = false
-                guard !isTail else { return }
-                do { try await Task.sleep(for: ReplyPresentation.settleDelay) } catch { return }
-                // Finish any new glyphs, then stop the drawing clock for this
-                // completed block even while the rest of the response streams.
-                hasSettled = true
-            }
+        MarkdownBlockLayout(dynamicType: dynamicType, displayScale: displayScale, direction: direction) {
+            StructuredText(String(block.content.hashValue), parser: ParsedBlock(content: block.content))
+                .textual.structuredTextStyle(ChatMarkdownStyle(headingLedger: headingLedger))
+                .textual.imageAttachmentLoader(ChatImageLoader())
+                .textual.textSelection(.enabled)
+                .environment(\.streamingGlyphAnimation, isStreaming && !hasSettled)
+                .font(.body)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .traceChatLayout("markdown:\(traceOwner):\(block.id):layout")
+        .task(id: isTail) {
+            hasSettled = false
+            guard !isTail else { return }
+            do { try await Task.sleep(for: ReplyPresentation.settleDelay) } catch { return }
+            // Finish any new glyphs, then stop the drawing clock for this
+            // completed block even while the rest of the response streams.
+            hasSettled = true
+        }
     }
 }
 

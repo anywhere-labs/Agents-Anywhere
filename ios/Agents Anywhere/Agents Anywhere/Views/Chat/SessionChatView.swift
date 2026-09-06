@@ -64,32 +64,31 @@ struct SessionChatView: View, Equatable {
                 }
                 .overlay { if !model.isOpeningReady { openingMask } }
                 .safeAreaBar(edge: .top, spacing: 0) {
-                    VStack(spacing: 0) {
-                        ChatPageHeader(title: session.metadata?.title ?? "会话",
-                            subtitle: [session.metadata?.runtimeName ?? session.metadata?.runtime,
-                                deviceName ?? session.metadata?.connectorId].compactMap { $0 }.joined(separator: " · "),
-                            controls: controls, onMenu: onMenu) {
-                            HStack(spacing: 0) {
-                                Button(action: onNewSession) { ChatHeaderActionLabel(symbol: "square.and.pencil", controls: controls) }
-                                    .accessibilityLabel("新建会话")
-                                Menu {
-                                    Button("会话详情与导出", systemImage: "info.circle") { sheet = .details }
-                                    Button("文件管理", systemImage: "folder") { sheet = .files }
-                                        .disabled(session.metadata?.cwd?.isEmpty != false)
-                                    Button("复制会话 ID", systemImage: "number") { UIPasteboard.general.string = session.id }
-                                } label: { ChatHeaderActionLabel(symbol: "ellipsis", controls: controls) }
-                                .accessibilityLabel("会话菜单")
-                            }.glassEffect(.regular.interactive(), in: .capsule)
-                        }
-                        connectionBar
-                        if requiresTakeover { takeoverPill }
+                    ChatPageHeader(title: session.metadata?.title ?? "会话",
+                        subtitle: [session.metadata?.runtimeName ?? session.metadata?.runtime,
+                            deviceName ?? session.metadata?.connectorId].compactMap { $0 }.joined(separator: " · "),
+                        status: model.headerStatus, reservesStatusLine: true,
+                        controls: controls, onMenu: onMenu) {
+                        HStack(spacing: 0) {
+                            Button(action: onNewSession) { ChatHeaderActionLabel(symbol: "square.and.pencil", controls: controls) }
+                                .accessibilityLabel("新建会话")
+                            Menu {
+                                Button("会话详情与导出", systemImage: "info.circle") { sheet = .details }
+                                Button("文件管理", systemImage: "folder") { sheet = .files }
+                                    .disabled(session.metadata?.cwd?.isEmpty != false)
+                                Button("复制会话 ID", systemImage: "number") { UIPasteboard.general.string = session.id }
+                            } label: { ChatHeaderActionLabel(symbol: "ellipsis", controls: controls) }
+                            .accessibilityLabel("会话菜单")
+                        }.glassEffect(.regular.interactive(), in: .capsule)
                     }
                     .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headerHeight = $0 }
+                    .traceChatLayout("session-header")
                 }
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     VStack(spacing: 0) {
                         SessionInteractionDock(chat: model,
                             onShowAll: { expandedNoticeID = $0; sheet = .notices })
+                            .traceChatLayout("interaction-dock")
                         ChatComposerDock(draft: session.composer, settings: model.settings,
                             maximumEditorHeight: min(160, max(72, geometry.size.height * 0.30)), controls: controls,
                             canSend: session.canSend, canAttach: model.canAttach,
@@ -101,14 +100,19 @@ struct SessionChatView: View, Equatable {
                             settingsError: model.settingsError, sessionChat: model,
                             onSend: model.send, onStop: model.interrupt, onLoadSettings: model.loadSettings,
                             onApplySettings: model.applySettings, applyError: { model.settingsError })
+                            .traceChatLayout("composer-dock")
                     }
                     .frame(maxWidth: ChatControlMetrics.maximumContentWidth).frame(maxWidth: .infinity)
                     // Native safe-area layout owns both the visible scroll
                     // region and the dock's space; do not add a second margin.
                 }
                 .overlay(alignment: .top) {
-                    ChatErrorToasts(store: toasts, isRetrying: session.isLoading, onRetry: { _ in await session.refresh() })
-                        .padding(.top, headerHeight)
+                    VStack(spacing: 4) {
+                        // Metadata can arrive after history. Transient controls
+                        // float below the header instead of resizing its inset.
+                        if requiresTakeover { takeoverPill }
+                        ChatErrorToasts(store: toasts, isRetrying: session.isLoading, onRetry: { _ in await session.refresh() })
+                    }.padding(.top, headerHeight)
                 }
         }
         .modifier(ChatPageSafeArea(insets: safeAreaInsets))
@@ -184,18 +188,6 @@ struct SessionChatView: View, Equatable {
         .transition(.identity)
     }
 
-    @ViewBuilder private var connectionBar: some View {
-        if session.network.availability == .offline || session.connection == .offline {
-            status("网络已断开，草稿和已加载的消息已保留", icon: "wifi.slash")
-        } else if session.metadata?.connectorStatus == .offline {
-            status("设备离线，等待重新连接", icon: "desktopcomputer")
-        } else if session.failure == nil && (session.connection == .reconnecting || !session.runtime.isFresh) {
-            status("正在同步会话状态…", icon: "arrow.triangle.2.circlepath")
-        } else if let reason = session.runtime.state?.statusReason, !reason.isEmpty {
-            status(reason, icon: "info.circle")
-        }
-    }
-
     private var takeoverPill: some View {
         Button { pendingTakeover = true } label: {
             Label("接管会话以继续交互", systemImage: "hand.raised")
@@ -208,14 +200,6 @@ struct SessionChatView: View, Equatable {
         .buttonStyle(.plain).disabled(!model.canChangeTakeover)
         .accessibilityIdentifier("chat.session.takeover")
         .padding(.horizontal, 20).padding(.bottom, 4)
-    }
-
-    private func status(_ text: String, icon: String, retry: Bool = false) -> some View {
-        HStack(spacing: 10) {
-            Label(text, systemImage: icon).lineLimit(3)
-            if retry { Button("重试") { Task { await session.refresh() } }.disabled(session.isLoading) }
-        }
-        .font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 20).padding(.bottom, 8)
     }
 
     private func openFile(_ path: String) {

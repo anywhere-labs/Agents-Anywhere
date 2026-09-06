@@ -20,10 +20,12 @@ struct SessionTimelineRow: View {
                 } else {
                     VStack(alignment: .leading, spacing: 14) {
                         markdown
-                        ChatMessageAttachments(files: files, onOpen: onAttachment, loadThumbnail: chat.thumbnail, alignment: .leading)
-                        if row.value.isStreamingText && row.text.isEmpty {
-                            Text("正在思考").font(.subheadline).foregroundStyle(.secondary)
-                        } else if !row.value.isStreamingText {
+                        if !files.isEmpty {
+                            ChatMessageAttachments(files: files, onOpen: onAttachment, loadThumbnail: chat.thumbnail, alignment: .leading)
+                        }
+                        // Waiting feedback lives in the fixed header slot. An
+                        // extra placeholder row would disappear on the first token.
+                        if !row.value.isStreamingText {
                             if row.value.status == .interrupted || row.value.status == .cancelled {
                                 Text("已停止生成").font(.caption).foregroundStyle(.secondary)
                             }
