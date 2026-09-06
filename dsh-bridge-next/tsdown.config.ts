@@ -1,6 +1,8 @@
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'tsdown'
 import ts from 'typescript'
+import { clientCss } from './scripts/client-css.ts'
 
 const { name: packageId } = createRequire(import.meta.url)('./package.json') as { name: string }
 
@@ -44,8 +46,10 @@ export default defineConfig([
     sourcemap: true,
     dts: true,
     deps: {
-      neverBundle: ['@deepseek-ai/cordis', 'react', 'react/jsx-runtime'],
+      neverBundle: ['@deepseek-ai/cordis', 'react', 'react/jsx-runtime', '@deepseek-ai/dsh-client-ui-primitives'],
+      alwaysBundle: ['clsx'],
     },
+    plugins: [clientCss(packageId, fileURLToPath(new URL('.', import.meta.url)))],
     outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
     // The browser wrapper must not be applied to the separate declaration build.
     outputOptions: (options, _format, { cjsDts }) => cjsDts ? options : {

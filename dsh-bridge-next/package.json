@@ -29,8 +29,9 @@
     "client": {
       "platform": "web",
       "inject": [
-        "slots",
-        "connection"
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-settings-general"
       ]
     }
   },
@@ -53,12 +54,18 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.2",
     "@deepseek-ai/dsh-api-gateway": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.1.2-rc.1",
     "@deepseek-ai/dsh-typert-protocol": "0.1.2-rc.1",
     "@deepseek-ai/dsh-typert-registry": "0.1.2-rc.1",
     "@deepseek-ai/schemastery": "3.18.1",
+    "@types/jsdom": "21.1.7",
     "@types/node": "^24.13.3",
     "@types/react": "~18.3.31",
+    "@types/react-dom": "18.3.7",
+    "jsdom": "26.1.0",
+    "lightningcss": "1.32.0",
     "react": "18.3.1",
+    "react-dom": "18.3.1",
     "tsdown": "0.22.14",
     "tsx": "4.21.0",
     "typescript": "5.9.3"
@@ -67,5 +74,8 @@
     "node": "^22.19.0 || >=24"
   },
   "packageManager": "yarn@4.18.0",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "clsx": "2.1.1"
+  }
 }

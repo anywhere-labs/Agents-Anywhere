@@ -38,7 +38,7 @@ DSH_HOME="$HOME/.dsh" npx -y -p @deepseek-ai/dsh@0.1.2-rc.1 \
   dsh plugin --profile desktop add "link:$PWD"
 ```
 
-链接安装方式已在全新临时 `DSH_HOME` / profile 中验证，并通过 `--dump-config` 确认插件层。安装后重启目标 DSH Desktop，再打开设置中的 **Agents Anywhere**。本次开发没有安装到现有 Desktop profile，也没有重启应用。
+链接安装方式已在全新临时 `DSH_HOME` / profile 中验证，并通过 `--dump-config` 确认插件层。安装后重启目标 DSH Desktop，再打开设置中的 **Agents Anywhere**。
 
 旧 `dsh-bridge` 如果还在管理同一个账号或设备，应先在 DSH 中停用旧插件，再测试 Next；本项目不会接管旧插件或 Desktop 的进程与凭据。
 
@@ -60,7 +60,7 @@ cd /Users/t4wefan/code/github/Agents-Anywhere/dsh-bridge-next
 corepack yarn dev
 ```
 
-`dev` 监听并重新生成 `lib/`，无需每次创建压缩包或重新执行链接安装。前端代码变化后刷新 DSH 页面；Host、依赖、manifest 或插件集合变化后重启目标 DSH 实例。此命令不启动 DSH、AA Server、Web 或 Connector。
+`dev` 监听并重新生成 `lib/`，无需每次创建压缩包或重新执行链接安装。启用官方 `client-hmr` 的 DSH Desktop 会自动加载前端 TSX 和 CSS 变化；未启用时刷新 DSH 页面。Host、依赖、manifest 或插件集合变化后重启目标 DSH 实例。此命令不启动 DSH、AA Server、Web 或 Connector。
 
 构建时自动把仓库 `connector/` 的 Python 源码复制到 `lib/bundled-connector/`。发布内容不依赖旁边另一个仓库目录。开发时修改 Connector 源码后，重新执行 `build` 或重启 `dev` 以更新副本。虚拟环境在插件数据目录创建，不写入源码目录。
 
@@ -69,9 +69,19 @@ corepack yarn dev
 | `corepack yarn typecheck` | Host、Client、构建脚本类型检查 |
 | `corepack yarn build` | 构建两端产物并复制 Connector 源码 |
 | `corepack yarn dev` | 持续构建 |
-| `corepack yarn check:build` | 产物导入、Client 注册与释放、源码副本检查 |
+| `corepack yarn check:build` | 产物导入、官方 UI 交互、CSS 热更新契约、Client 注册与释放、源码副本检查 |
 | `corepack yarn test` | 单元与集成测试；先执行 build |
 | `corepack yarn check` | 完整构建和自动化验证，可在 headless 环境运行 |
+
+## 前端组件与样式
+
+设置页通过官方 `settings.section` 扩展点挂载，使用 `@deepseek-ai/dsh-client-ui-primitives` 的 `Button`、`Input`、`StateDot`。这些组件由 DSH 的平台模块提供，插件不打包自己的副本；`clsx` 作为普通辅助依赖内联。
+
+页面布局位于 `src/client/features/onboarding/section.module.css`，使用 CSS Modules 和官方 `--dsw-alias-*` / `--dsw-font-*` 主题变量。页面跟随 DSH 的明暗主题，不声明全局主题或固定颜色。
+
+外部插件无法直接使用官方仓库未发布的构建 helper，因此 `scripts/client-css.ts` 按其输出契约处理 CSS：监听源文件、生成局部类名，在 Client factory 执行时注入带 `data-plugin` / `data-plugin-css` 的样式，供 DSH HMR 清理和重新加载。实现参考官方 `docs/web-styling.zh.md` 与 `packages/client/tsdown.client.ts`。
+
+`check:build` 在 headless DOM 中加载真实官方组件，验证登录、取消、地址保存和设置页卸载；同时检查样式去重及 HMR 清理后的重新注入。Node 中的 CSS loader 仅用于验证，不进入插件产物。
 
 ## 配置与本地状态
 
