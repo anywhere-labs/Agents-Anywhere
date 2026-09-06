@@ -13,6 +13,7 @@ import { readJson, writeJson } from '../../src/host/storage/files.js'
 class FakeApi extends AccountApi {
   registrations = 0
   exchanges = 0
+  profileReads = 0
   online = false
   validCredential = true
   renewals = 0
@@ -22,7 +23,7 @@ class FakeApi extends AccountApi {
     this.exchanges++
     return { apiBaseUrl: this.baseUrl, userId: 'user-test', displayName: '测试用户', accessToken: 'USER-SECRET', expiresAt: Date.now() + 3600_000 }
   }
-  override async me() { return { userId: 'user-test', displayName: '测试用户' } }
+  override async me() { this.profileReads++; return { userId: 'user-test', displayName: '测试用户' } }
   override async device(): Promise<Device> { return { id: 'conn_test', name: 'Test', userId: 'user-test', status: this.online ? 'online' : 'offline' } }
   override async devices() { return this.registrations ? [...this.knownDevices, await this.device()] : this.knownDevices }
   override async register() { this.registrations++; return { connector: await this.device(), connectorToken: 'CONNECTOR-SECRET' } }
@@ -40,7 +41,7 @@ class FakeConnector implements ConnectorProcess {
   async assertHealthy() { if (!this.running) throw new Error('not running') }
 }
 
-async function fixture() {
+async function fixture(autoStart = false) {
   const root = await mkdtemp(join(tmpdir(), 'aa-flow-'))
   const api = new FakeApi('https://api.example.test')
   const connector = new FakeConnector()
@@ -48,11 +49,12 @@ async function fixture() {
   let healthError: Error | null = null
   let detection: DesktopDetection = { status: 'absent', message: 'not registered' }
   let localIds: string[] = []
+  let detections = 0
   const create = () => new OnboardingManager({
-    stateRoot: root, connectorSourceDir: root, uvPath: 'uv', autoStart: false,
+    stateRoot: root, connectorSourceDir: root, uvPath: 'uv', autoStart,
     apiBaseUrl: api.baseUrl,
   }, {
-    api: base => base === api.baseUrl ? api : new FakeApi(base), connector, detect: async () => detection,
+    api: base => base === api.baseUrl ? api : new FakeApi(base), connector, detect: async () => { detections++; return detection },
     checkServer: async (base) => { checkedServers.push(base); if (healthError) throw healthError },
     onlineTimeoutMs: 5000, pollIntervalMs: 10,
     readConnectorIds: async () => localIds,
@@ -61,6 +63,7 @@ async function fixture() {
   return {
     root, api, connector, checkedServers,
     get manager() { return manager },
+    get detections() { return detections },
     setDesktop(value: DesktopDetection) { detection = value },
     setLocalIds(value: string[]) { localIds = value },
     failHealthCheck() { healthError = new Error('无法连接服务器，请检查地址和网络后重试。') },
@@ -194,6 +197,29 @@ test('Desktop presence or an invalid registry prevents the plugin from becoming 
     assert.equal(h.connector.starts, 0)
   } finally { await h.close() }
 })
+
+for (const signedIn of [false, true]) {
+  test(`startup and each inspect check Desktop before account management (signed in: ${signedIn})`, async () => {
+    const h = await fixture(true)
+    h.setDesktop({ status: 'installed', executablePath: '/example/Electron', message: 'installed' })
+    try {
+      if (signedIn) await writeJson(join(h.root, 'account.json'), {
+        apiBaseUrl: h.api.baseUrl, userId: 'user-test', displayName: '测试用户',
+        accessToken: 'PRIVATE', expiresAt: Date.now() + 3600_000,
+      })
+      await h.manager.resume()
+      assert.equal(h.detections, 1)
+      assert.equal((await h.manager.inspect()).desktop.status, 'installed')
+      assert.equal((await h.manager.inspect()).desktop.status, 'installed')
+      assert.equal(h.detections, 3)
+      assert.equal(h.connector.starts, 0)
+      assert.equal(h.api.profileReads, 0)
+      assert.equal(h.api.registrations, 0)
+      assert.equal(h.api.exchanges, 0)
+      assert.deepEqual(h.checkedServers, [])
+    } finally { await h.close() }
+  })
+}
 
 test('repeated begin shares preparation, and disposal during preparation cannot open a callback', async () => {
   const h = await fixture()

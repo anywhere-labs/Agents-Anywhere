@@ -10,6 +10,12 @@ export function useOnboardingState(host: OnboardingHostApi, active: boolean) {
   const running = useRef(false)
   const request = useRef(0)
 
+  const prepareOpen = useCallback(() => {
+    // A new opening must wait for its own detection, never display a cached mode.
+    request.current++
+    setSnapshot(null); setReadError(null); setError(null)
+  }, [])
+
   const refresh = useCallback(async () => {
     const id = ++request.current
     const next = await host.inspect()
@@ -38,7 +44,7 @@ export function useOnboardingState(host: OnboardingHostApi, active: boolean) {
     finally { running.current = false; setBusy(false) }
   }
 
-  return { snapshot, error, readError, busy, run, refresh, clearError: () => setError(null) }
+  return { snapshot, error, readError, busy, run, refresh, prepareOpen, clearError: () => setError(null) }
 }
 
 export type OnboardingState = ReturnType<typeof useOnboardingState>

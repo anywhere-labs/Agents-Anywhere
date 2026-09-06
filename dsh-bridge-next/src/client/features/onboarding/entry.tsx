@@ -17,6 +17,11 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
   const [open, setOpen] = useState(false)
   const state = useOnboardingState(host, open)
   const snapshot = state.snapshot
+  const standalone = snapshot?.desktop.status === 'absent'
+  const showLogin = standalone && !snapshot.account
+  const detectionError = snapshot?.desktop.status === 'error' ? snapshot.desktop.message : !snapshot ? state.readError : null
+  const detectionMessage = detectionError ?? (snapshot?.desktop.status === 'installed'
+    ? '已安装桌面端，连接功能即将开放。' : '正在检查本机桌面端…')
   const trigger = useRef<HTMLButtonElement | null>(null)
   const content = useRef<HTMLDivElement | null>(null)
   const close = useCallback(() => setOpen(false), [])
@@ -66,7 +71,7 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
           aria-label="手机连接"
           aria-haspopup="dialog"
           aria-expanded={open}
-          onClick={event => { trigger.current = event.currentTarget; setOpen(true) }}
+          onClick={event => { trigger.current = event.currentTarget; state.prepareOpen(); setOpen(true) }}
         >
           {wide ? <span className={css.label}>手机连接</span> : null}
         </Button>
@@ -75,14 +80,17 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
     <Modal
       open={open}
       onClose={close}
-      title={snapshot?.account ? '已登录' : '登录到 Agents Anywhere'}
+      title={standalone ? snapshot.account ? '已登录' : '登录到 Agents Anywhere' : '手机连接'}
       closeLabel="关闭手机连接"
-      {...(!snapshot?.account ? { description: '在所有设备间访问你的 Agent、会话和工作空间。' } : {})}
-      className={clsx(css.dialog, snapshot?.account && css.accountDialog)}
+      {...(showLogin ? { description: '在所有设备间访问你的 Agent、会话和工作空间。' } : {})}
+      className={clsx(css.dialog, !showLogin && css.accountDialog)}
       contentClassName={clsx(css.dialogContent)}
     >
       <div ref={content}>
-        {snapshot?.account ? <AccountPanel key={`${snapshot.settings.apiBaseUrl}:${snapshot.account.userId}`} host={host} state={state} snapshot={snapshot} account={snapshot.account} />
+        {!standalone ? <>
+          <p className={css.placeholder} role={detectionError ? 'alert' : 'status'}>{detectionMessage}</p>
+          {detectionError ? <Button variant="outline" disabled={state.busy} onClick={() => void state.run(state.refresh)}>重新检查</Button> : null}
+        </> : snapshot.account ? <AccountPanel key={`${snapshot.settings.apiBaseUrl}:${snapshot.account.userId}`} host={host} state={state} snapshot={snapshot} account={snapshot.account} />
           : <OnboardingSection host={host} state={state} />}
       </div>
     </Modal>

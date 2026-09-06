@@ -76,6 +76,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     const calls: { endpoint: string; payload: unknown }[] = []
     let failNextBegin = false
     let failInspect = false
+    let inspectGate: Promise<void> | null = null
     let failLogout = false
     type EntryProps = { host: OnboardingHostApi; wide: boolean }
     let entry: { Component: ComponentType<EntryProps>; props: { host: OnboardingHostApi } } | undefined
@@ -84,7 +85,11 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       connection: { rpc: { call: async (channel: string, endpoint: string, payload: unknown) => {
         assert.equal(channel, '/api')
         calls.push({ endpoint, payload })
-        if (endpoint.endsWith('/inspect') && failInspect) return { ok: false, error: { message: '读取状态失败。' } }
+        if (endpoint.endsWith('/inspect')) {
+          const inspected = snapshot
+          if (inspectGate) await inspectGate
+          return failInspect ? { ok: false, error: { message: '读取状态失败。' } } : { ok: true, value: inspected }
+        }
         if (endpoint.endsWith('/begin')) {
           if (failNextBegin) { failNextBegin = false; return { ok: false, error: { message: '无法连接服务器，请检查地址和网络后重试。' } } }
           snapshot = { ...snapshot, stage: 'authorizing' }
@@ -259,9 +264,60 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(dialog()!.querySelector('[data-state]')?.getAttribute('data-state'), 'error')
     failInspect = true
     await reopen()
-    assert.match(dialog()!.textContent!, /状态暂不可用/)
+    assert.match(dialog()!.textContent!, /读取状态失败/)
+    assert.doesNotMatch(dialog()!.textContent!, /BensonWang|打开 Web|退出登录|登录 Agents Anywhere Cloud/)
+    assert.ok(button('重新检查'))
     failInspect = false
     await reopen()
+
+    const signedInSnapshot = snapshot
+    const installed = { status: 'installed', executablePath: '/example/Electron', message: 'installed' } as const
+    const actionsBeforeDesktop = calls.filter(call => /\/(begin|logout|cancel)$/.test(call.endpoint)).length
+    for (const account of [signedInSnapshot.account, null]) {
+      snapshot = { ...signedInSnapshot, account, desktop: installed }
+      const readsBefore = calls.filter(call => call.endpoint.endsWith('/inspect')).length
+      await reopen()
+      assert.ok(calls.filter(call => call.endpoint.endsWith('/inspect')).length > readsBefore, 'Every opening must perform a fresh detection')
+      assert.equal(dialog()!.getAttribute('aria-label'), '手机连接')
+      assert.match(dialog()!.textContent!, /已安装桌面端，连接功能即将开放。/)
+      assert.equal(dialog()!.querySelector('input, img, form, a'), null)
+      assert.doesNotMatch(dialog()!.textContent!, /BensonWang|账号信息|Connector|打开 Web|退出登录|登录 Agents Anywhere Cloud/)
+      assert.equal(dialog()!.querySelectorAll('button').length, 1, 'Desktop placeholder only has the official close control')
+    }
+    assert.equal(calls.filter(call => /\/(begin|logout|cancel)$/.test(call.endpoint)).length, actionsBeforeDesktop)
+
+    snapshot = signedInSnapshot
+    await reopen()
+    assert.match(dialog()!.textContent!, /BensonWang/)
+    let releaseInspection!: () => void
+    inspectGate = new Promise(resolve => { releaseInspection = resolve })
+    snapshot = { ...signedInSnapshot, desktop: installed }
+    await reopen()
+    assert.match(dialog()!.textContent!, /正在检查本机桌面端/)
+    assert.doesNotMatch(dialog()!.textContent!, /BensonWang|登录 Agents Anywhere Cloud|已安装桌面端/)
+    await act(async () => { releaseInspection() })
+    inspectGate = null
+    assert.match(dialog()!.textContent!, /已安装桌面端，连接功能即将开放。/)
+
+    // A response from an earlier, closed opening must not overwrite the current mode.
+    inspectGate = new Promise(resolve => { releaseInspection = resolve })
+    snapshot = signedInSnapshot
+    await reopen()
+    assert.match(dialog()!.textContent!, /正在检查本机桌面端/)
+    inspectGate = null
+    snapshot = { ...signedInSnapshot, desktop: installed }
+    await reopen()
+    await act(async () => { releaseInspection() })
+    assert.match(dialog()!.textContent!, /已安装桌面端，连接功能即将开放。/)
+    assert.doesNotMatch(dialog()!.textContent!, /BensonWang/)
+
+    snapshot = { ...signedInSnapshot, desktop: { status: 'error', message: '安装记录无法读取。' } }
+    await reopen()
+    assert.match(dialog()!.textContent!, /安装记录无法读取/)
+    assert.doesNotMatch(dialog()!.textContent!, /BensonWang|打开 Web|退出登录/)
+    snapshot = signedInSnapshot
+    await act(async () => { button('重新检查').click() })
+    assert.equal(dialog()!.getAttribute('aria-label'), '已登录')
 
     failLogout = true
     await act(async () => { button('退出登录').click() })

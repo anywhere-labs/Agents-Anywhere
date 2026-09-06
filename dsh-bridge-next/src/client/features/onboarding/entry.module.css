@@ -40,6 +40,13 @@
 
 .accountDialog { width: min(480px, 100%); }
 
+.placeholder {
+  margin: 0;
+  padding: 20px 0;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-s-14);
+}
+
 .dialogContent {
   box-sizing: border-box;
   min-height: 0;

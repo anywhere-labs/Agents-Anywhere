@@ -59,6 +59,7 @@ export class OnboardingManager {
   private async load(): Promise<void> {
     this.releaseLock = await acquireManagerLock(join(this.config.stateRoot, 'manager.lock'), () => this.loseOwnership())
     try {
+      this.desktop = await this.detect()
       const settings = await readJson<ConnectionSettings>(join(this.config.stateRoot, 'settings.json'))
       if (settings) {
         this.settings = this.validateSettings(settings)
@@ -74,7 +75,6 @@ export class OnboardingManager {
         await writeJson(join(this.config.stateRoot, 'settings.json'), this.settings)
       }
       if (this.account?.apiBaseUrl !== this.settings.apiBaseUrl) this.account = null
-      this.desktop = await this.detect()
     } catch (error) {
       await this.releaseLock?.()
       this.releaseLock = null
@@ -93,7 +93,7 @@ export class OnboardingManager {
   async inspect(): Promise<OnboardingSnapshot> {
     await this.initialize()
     this.desktop = await this.detect()
-    this.refreshProfile()
+    if (this.desktop.status === 'absent') this.refreshProfile()
     return this.snapshot()
   }
 
