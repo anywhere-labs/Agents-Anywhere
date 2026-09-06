@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react"
 import { useTranslations } from "next-intl"
+import { toast } from "sonner"
 
 import { useRouteSearchParams } from "@/components/hash-route-params"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -29,6 +30,7 @@ import { openNativeFilePreviewWindow } from "@/components/panels/files-panel"
 import { dashboardApi } from "@/features/dashboard/api"
 import { loadStoredSession } from "@/features/auth/session"
 import type { FsEntry, FsPreviewSessionResponse, FsReadTextResult } from "@/features/dashboard/types"
+import { copyText } from "@/lib/clipboard"
 
 type PreviewState =
   | { kind: "loading" }
@@ -50,6 +52,7 @@ const TEXT_MAX_BYTES = 1_000_000
 
 export function FilePreviewPage() {
   const t = useTranslations("preview")
+  const tCommon = useTranslations("common")
   const params = useRouteSearchParams()
   const connectorId = params.get("connectorId") ?? ""
   const root = params.get("root") ?? ""
@@ -258,13 +261,18 @@ export function FilePreviewPage() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload)
   }, [dirty])
 
-  const copyText = React.useCallback(() => {
+  const handleCopy = React.useCallback(async () => {
     if (state.kind !== "text") return
     const content = editorRef.current?.getValue() ?? state.file.content
-    navigator.clipboard.writeText(content).catch(() => undefined)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1200)
-  }, [state])
+    setCopied(false)
+    try {
+      await copyText(content)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1200)
+    } catch {
+      toast.error(tCommon("copyFailed"))
+    }
+  }, [state, tCommon])
 
   return (
     <main className="flex h-svh min-h-0 flex-col overflow-hidden bg-background text-foreground">
@@ -312,9 +320,9 @@ export function FilePreviewPage() {
           variant="ghost"
           size="icon-sm"
           type="button"
-          aria-label={t("copy")}
+          aria-label={copied ? tCommon("copied") : t("copy")}
           disabled={state.kind !== "text"}
-          onClick={copyText}
+          onClick={handleCopy}
         >
           {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
         </Button>

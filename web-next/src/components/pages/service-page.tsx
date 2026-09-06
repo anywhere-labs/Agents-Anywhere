@@ -53,6 +53,7 @@ import type {
   ServiceInfo,
 } from "@/features/auth/types"
 import { cn } from "@/lib/utils"
+import { copyText } from "@/lib/clipboard"
 
 type OAuthTemplateKey = "custom" | "github" | "gitlab" | "google"
 
@@ -249,11 +250,16 @@ export function ServicePage() {
 
   React.useEffect(() => load(), [load])
 
-  const copy = React.useCallback((key: CopyKey, value: string) => {
-    void navigator.clipboard.writeText(value)
-    setCopied(key)
-    window.setTimeout(() => setCopied(null), 1200)
-  }, [])
+  const copy = React.useCallback(async (key: CopyKey, value: string) => {
+    setCopied(null)
+    try {
+      await copyText(value)
+      setCopied(key)
+      window.setTimeout(() => setCopied(null), 1200)
+    } catch {
+      toast.error(tCommon("copyFailed"))
+    }
+  }, [tCommon])
 
   const updateOAuthDraft = React.useCallback((patch: Partial<OAuthProviderConfigUpdate>) => {
     setOauthDraft((current) => ({ ...current, ...patch }))

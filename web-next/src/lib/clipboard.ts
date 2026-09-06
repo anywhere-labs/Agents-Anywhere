@@ -1,6 +1,6 @@
 export async function copyText(text: string, container?: HTMLElement): Promise<void> {
   try {
-    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    if (typeof navigator !== "undefined" && typeof navigator.clipboard?.writeText === "function") {
       await navigator.clipboard.writeText(text)
       return
     }
@@ -25,7 +25,9 @@ export async function copyText(text: string, container?: HTMLElement): Promise<v
   textarea.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;font-size:16px;"
   try {
     // Keep the selection inside the caller's modal focus boundary.
-    const parent = container ?? ownerDocument.body
+    const parent = container
+      ?? previousFocus?.closest<HTMLElement>('[role="dialog"], [role="alertdialog"], [role="menu"]')
+      ?? ownerDocument.body
     parent.appendChild(textarea)
     textarea.focus({ preventScroll: true })
     textarea.select()

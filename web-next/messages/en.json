@@ -16,6 +16,7 @@
     "close": "Close",
     "copy": "Copy",
     "copied": "Copied",
+    "copyFailed": "Copy failed. Please select the text and copy it manually.",
     "done": "Done",
     "create": "Create",
     "retry": "Retry",

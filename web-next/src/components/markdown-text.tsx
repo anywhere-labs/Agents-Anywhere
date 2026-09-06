@@ -4,10 +4,12 @@ import * as React from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { Copy, Check, ExternalLink, GitBranch } from "lucide-react"
+import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
+import { copyText } from "@/lib/clipboard"
 import { highlightCode } from "@/lib/code-highlight"
 import { openNativeFilePreviewWindow } from "@/components/panels/files-panel"
 import type { SessionView } from "@/features/dashboard/types"
@@ -505,6 +507,7 @@ function safeExternalUrl(value?: string): string | null {
 
 function MarkdownCodeBlock({ code, language }: { code: string; language: string }) {
   const tSession = useTranslations("dashboard.session")
+  const tCommon = useTranslations("common")
   const [copied, setCopied] = React.useState(false)
   return (
     <div className="my-3 min-w-0 max-w-full overflow-hidden rounded-xl border border-border bg-background">
@@ -513,12 +516,17 @@ function MarkdownCodeBlock({ code, language }: { code: string; language: string 
         <button
           type="button"
           className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-          onClick={() => {
-            navigator.clipboard.writeText(code).catch(() => undefined)
-            setCopied(true)
-            setTimeout(() => setCopied(false), 1200)
+          onClick={async () => {
+            setCopied(false)
+            try {
+              await copyText(code)
+              setCopied(true)
+              setTimeout(() => setCopied(false), 1200)
+            } catch {
+              toast.error(tCommon("copyFailed"))
+            }
           }}
-          aria-label={tSession("copyCode")}
+          aria-label={copied ? tCommon("copied") : tSession("copyCode")}
         >
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
         </button>

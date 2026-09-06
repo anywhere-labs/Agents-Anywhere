@@ -25,7 +25,7 @@ function documentFixture(copy = () => true) {
     removeAllRanges: () => calls.push("clear-selection"),
     addRange: (value) => { assert.equal(value, range); calls.push("restore-selection") },
   }
-  const previousFocus = { isConnected: true, focus: () => calls.push("restore-focus") }
+  const previousFocus = { isConnected: true, focus: () => calls.push("restore-focus"), closest: () => null }
   const textarea = {
     value: "",
     style: {},
@@ -66,6 +66,17 @@ test("a rejected modern clipboard write falls back to the browser copy command",
   const fixture = documentFixture()
   const navigator = { clipboard: { writeText: async () => { throw new Error("NotAllowedError") } } }
   await load({ navigator, document: fixture.document })("command")
+  assert.ok(fixture.calls.includes("copy"))
+  assert.equal(fixture.children.length, 0)
+})
+
+test("fallback stays inside the focused menu or dialog when no container is supplied", async () => {
+  const fixture = documentFixture()
+  const focusBoundary = { appendChild: (element) => fixture.children.push(element) }
+  fixture.document.activeElement.closest = () => focusBoundary
+  fixture.document.body.appendChild = () => assert.fail("selection must stay inside the focus boundary")
+  await load({ navigator: {}, document: fixture.document })("shared link")
+  assert.equal(fixture.textarea.value, "shared link")
   assert.ok(fixture.calls.includes("copy"))
   assert.equal(fixture.children.length, 0)
 })
