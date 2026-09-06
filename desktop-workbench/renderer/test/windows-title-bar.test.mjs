@@ -70,6 +70,7 @@ test("theme synchronization waits for CSS to update and cancels stale animation 
       createElement() {},
     },
     useTheme: () => ({ resolvedTheme: "light" }),
+    appIcon: { src: "/_next/static/media/icon-mac-source.png" },
     getDesktopWorkbenchBridge: () => ({ window: { setTitleBarColors: colors => { updates.push(colors); return Promise.resolve() } } }),
     readTitleBarColors: () => ({ color: "#fafafa", symbolColor: "#0a0a0a" }),
     requestAnimationFrame: callback => { frameCallback = callback; return 7 },
@@ -82,4 +83,33 @@ test("theme synchronization waits for CSS to update and cancels stale animation 
   assert.deepEqual(updates, [{ color: "#fafafa", symbolColor: "#0a0a0a" }])
   cleanup()
   assert.equal(cancelled, 7)
+})
+
+test("title bar preserves the native application icon in both themes", () => {
+  const iconImport = ast.statements.find(node => ts.isImportDeclaration(node) && node.importClause?.name?.text === "appIcon")
+  assert.ok(iconImport)
+  const componentUrl = new URL("../src/components/desktop/windows-title-bar.tsx", import.meta.url)
+  const iconUrl = new URL(iconImport.moduleSpecifier.text, componentUrl)
+  assert.equal(iconUrl.href, new URL("../../build/icon-mac-source.png", import.meta.url).href)
+  assert.deepEqual(readFileSync(iconUrl).subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+
+  for (const resolvedTheme of ["dark", "light"]) {
+    const elements = []
+    const appIcon = { src: "/_next/static/media/icon-mac-source.png" }
+    const component = loadFunction("WindowsTitleBar", {
+      React: {
+        useState: () => [true, () => {}],
+        useRef: () => ({ current: null }),
+        useLayoutEffect() {},
+        useEffect() {},
+        createElement: (type, props) => { elements.push({ type, props }) },
+      },
+      useTheme: () => ({ resolvedTheme }),
+      appIcon,
+    })
+    component()
+    const icon = elements.find(element => element.type === "img")
+    assert.equal(icon.props.src, appIcon.src)
+    assert.match(icon.props.className, /shrink-0/)
+  }
 })

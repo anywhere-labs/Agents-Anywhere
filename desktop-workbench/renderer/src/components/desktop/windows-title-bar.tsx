@@ -4,6 +4,7 @@ import * as React from "react"
 import { useTheme } from "next-themes"
 
 import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
+import appIcon from "../../../../build/icon-mac-source.png"
 
 export function readTitleBarColors(element: HTMLElement) {
   const style = getComputedStyle(element)
@@ -56,9 +57,9 @@ export function WindowsTitleBar() {
   return (
     <div ref={titleBarRef} className="aa-windows-title-bar aa-window-drag flex items-center gap-2 bg-sidebar px-3 text-xs text-sidebar-foreground">
       <img
-        src={resolvedTheme === "dark" ? "/icon-dark-32x32.png" : "/icon-light-32x32.png"}
+        src={appIcon.src}
         alt=""
-        className="size-4"
+        className="size-4 shrink-0 object-contain"
         draggable={false}
       />
       <span className="truncate">Agents Anywhere</span>
