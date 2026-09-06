@@ -1758,7 +1758,23 @@
       "unavailable": "Service settings unavailable.",
       "loadFailed": "Failed to load service settings.",
       "updateFailed": "Failed to update settings.",
-      "oauthUpdateFailed": "Failed to update OAuth settings."
+      "oauthUpdateFailed": "Failed to update OAuth settings.",
+      "email": {
+        "title": "Email verification · Resend",
+        "description": "Configure Resend delivery and email verification requirements.",
+        "enabled": "Require email verification codes",
+        "enabledDescription": "When enabled, registration (including admin-created users) and binding or changing email require a code. When disabled, email is marked verified directly.",
+        "fromAddress": "Sender address",
+        "fromDescription": "Use a domain verified in Resend. Name <email> format is supported.",
+        "apiKey": "Resend API key",
+        "apiKeyDescription": "Leave blank to keep the saved key. The server never returns the key.",
+        "configured": "API key configured",
+        "notConfigured": "No API key configured",
+        "clearKey": "Remove the saved API key",
+        "save": "Save email settings",
+        "saved": "Email settings saved.",
+        "failed": "Failed to save email settings."
+      }
     }
   },
   "preview": {

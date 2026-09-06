@@ -61,7 +61,21 @@ export type AdminUserListResponse = {
   serverTime: string;
 };
 
+export type EmailSettings = {
+  enabled: boolean;
+  fromAddress: string;
+  apiKeyConfigured: boolean;
+};
+
+export type EmailSettingsUpdate = {
+  enabled: boolean;
+  fromAddress: string;
+  apiKey?: string;
+  clearApiKey?: boolean;
+};
+
 export type InstanceSettings = {
+  email: EmailSettings;
   registrationOpen: boolean;
   oauthRegistrationOpen: boolean;
   oauth: OAuthProviderConfig | null;

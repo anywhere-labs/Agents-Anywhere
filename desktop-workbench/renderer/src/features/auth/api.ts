@@ -8,6 +8,7 @@ import type {
   AuthMe,
   ChangePasswordRequest,
   InstanceSettings,
+  EmailSettingsUpdate,
   OAuthProviderConfigUpdate,
   ServiceInfo,
   UserRole,
@@ -140,6 +141,7 @@ export class AuthApi {
       registrationOpen?: boolean;
       oauthRegistrationOpen?: boolean;
       oauth?: OAuthProviderConfigUpdate;
+      email?: EmailSettingsUpdate;
     },
   ): Promise<InstanceSettings> {
     return this.client.patch<InstanceSettings>("/admin/settings", body, { token });
