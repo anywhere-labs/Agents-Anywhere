@@ -6651,6 +6651,23 @@
         }
       }
     },
+    "一个想法，就够了": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start with an idea"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一个想法，就够了"
+          }
+        }
+      }
+    },
     "上一级目录": {
       "extractionState": "manual",
       "localizations": {
@@ -6851,6 +6868,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "交互与通知"
+          }
+        }
+      }
+    },
+    "今天，做点什么？": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What shall we work on?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今天，做点什么？"
+          }
+        }
+      }
+    },
+    "从一个问题开始，让 Agent 和你一起找到答案。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start with a question and find the answer with your Agent."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从一个问题开始，让 Agent 和你一起找到答案。"
           }
         }
       }
@@ -7297,6 +7348,23 @@
         }
       }
     },
+    "修一个问题，做一个功能，或探索新的方向。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fix a bug, build a feature, or explore a new direction."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "修一个问题，做一个功能，或探索新的方向。"
+          }
+        }
+      }
+    },
     "修改": {
       "extractionState": "manual",
       "localizations": {
@@ -7497,6 +7565,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "其他打开方式…"
+          }
+        }
+      }
+    },
+    "写下想做的事，和 Agent 一起把细节补全。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share what you want to do and work out the details with your Agent."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写下想做的事，和 Agent 一起把细节补全。"
+          }
+        }
+      }
+    },
+    "准备好，一起开工": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Let’s get to work"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "准备好，一起开工"
           }
         }
       }
@@ -9711,6 +9813,23 @@
         }
       }
     },
+    "把想法变成进展": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn ideas into progress"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把想法变成进展"
+          }
+        }
+      }
+    },
     "拒绝": {
       "extractionState": "manual",
       "localizations": {
@@ -9860,6 +9979,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "推荐"
+          }
+        }
+      }
+    },
+    "描述你的目标，其余的可以一步步来。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Describe your goal. We can work through the details one step at a time."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "描述你的目标，其余的可以一步步来。"
           }
         }
       }
@@ -11853,6 +11989,23 @@
         }
       }
     },
+    "让下一步更简单": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Make the next step easier"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "让下一步更简单"
+          }
+        }
+      }
+    },
     "设备": {
       "extractionState": "manual",
       "localizations": {
@@ -12851,6 +13004,23 @@
         }
       }
     },
+    "选择熟悉的设备和工具，开始下一件想做的事。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose your device and tools, and start your next task."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择熟悉的设备和工具，开始下一件想做的事。"
+          }
+        }
+      }
+    },
     "选择设备": {
       "extractionState": "manual",
       "localizations": {
@@ -12881,6 +13051,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "选择设备和 Agent"
+          }
+        }
+      }
+    },
+    "选择设备和 Agent，把想做的事交给它。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a device and an Agent, then tell it what you have in mind."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择设备和 Agent，把想做的事交给它。"
           }
         }
       }

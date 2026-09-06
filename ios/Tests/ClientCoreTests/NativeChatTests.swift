@@ -90,6 +90,32 @@ import Testing
         #expect(Array(appended.suffix(2)) == [0, 0])
     }
 
+    @Test func longerWelcomeRevealKeepsTheStreamingCurveAndDefaultDuration() throws {
+        let streaming = GlyphRevealLedger()
+        let welcome = GlyphRevealLedger(duration: 0.4)
+        _ = streaming.progress(count: 4, now: 0, enabled: true)
+        _ = welcome.progress(count: 4, now: 0, enabled: true)
+        let streamed = try #require(streaming.progress(count: 4, now: 0.06, enabled: true))
+        let slower = try #require(welcome.progress(count: 4, now: 0.1, enabled: true))
+        #expect(abs(streamed[0] - slower[0]) < 0.000001)
+        #expect(streaming.progress(count: 4, now: 0.25, enabled: true) == nil)
+        #expect(welcome.progress(count: 4, now: 0.25, enabled: true) != nil)
+        #expect(welcome.progress(count: 4, now: 0.4, enabled: true) == nil)
+    }
+
+    @Test func welcomePhrasesPreserveLocalizedWordsAndExactContent() {
+        for text in ["从这里开始", "选择设备和 Agent，把想做的事交给它。", "Turn ideas into progress.",
+                     "  Let's build something.\n", "你好 👩🏽‍💻，一起开始！", "...", "", "  "] {
+            let phrases = TextPhraseSequence.chunks(in: text)
+            #expect(phrases.joined() == text)
+            #expect(phrases.allSatisfy { !$0.isEmpty })
+        }
+        let english = TextPhraseSequence.chunks(in: "Use your workstation to explore.")
+        #expect(english.contains { $0.contains("workstation") })
+        #expect(english.count > 1)
+        #expect(TextPhraseSequence.chunks(in: "选择设备和 Agent，把想做的事交给它。").count > 1)
+    }
+
     @Test func composerWhitespaceExpandsButMarkedTextNeverSends() {
         let draft = ComposerDraft()
         #expect(!draft.isExpanded)

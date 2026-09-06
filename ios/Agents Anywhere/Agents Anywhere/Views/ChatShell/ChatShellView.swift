@@ -106,7 +106,8 @@ struct ChatShellView: View {
                 onCopySessionId: copySessionId
             )
         } content: { safeAreaInsets in
-            mainContent.modifier(ChatDetailNavigation(insets: safeAreaInsets))
+            mainContent(isSidebarVisible: sidebar.isOpen(in: layout))
+                .modifier(ChatDetailNavigation(insets: safeAreaInsets))
         }
     }
 
@@ -150,7 +151,7 @@ struct ChatShellView: View {
     }
 
     @ViewBuilder
-    private var mainContent: some View {
+    private func mainContent(isSidebarVisible: Bool) -> some View {
         if case let .device(connectorId) = selection,
            let connector = appState.connectors.first(where: { $0.id == connectorId }),
            let clients = appState.nativeChatServices,
@@ -195,6 +196,7 @@ struct ChatShellView: View {
                 NewSessionView(model: services.newSession, connectors: appState.connectors, sessions: appState.sessions, repository: services.dashboardRepository,
                     dashboardLoading: appState.isDashboardLoading,
                     dashboardError: appState.connectorsError,
+                    isSidebarVisible: isSidebarVisible,
                     onMenu: toggleSidebar, onManageDevice: openDevice,
                     onCreated: { session in
                         appState.updateSession(session)

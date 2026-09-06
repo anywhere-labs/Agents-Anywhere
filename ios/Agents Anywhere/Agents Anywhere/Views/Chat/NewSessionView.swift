@@ -7,6 +7,7 @@ struct NewSessionView: View, Equatable {
     let repository: V2DashboardRepository
     var dashboardLoading = false
     var dashboardError: String?
+    var isSidebarVisible = false
     let onMenu: () -> Void
     let onManageDevice: (String) -> Void
     let onCreated: (V2SessionMeta) -> Void
@@ -15,7 +16,7 @@ struct NewSessionView: View, Equatable {
     @State private var showsWorkspace = false
     @State private var confirmsRetry = false
     @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
 
     private var controls: ChatControlMetrics { .init(bodyLineHeight: bodyLineHeight) }
@@ -24,42 +25,33 @@ struct NewSessionView: View, Equatable {
         lhs.model === rhs.model && lhs.connectors == rhs.connectors && lhs.sessions == rhs.sessions
             && lhs.dashboardLoading == rhs.dashboardLoading
             && lhs.dashboardError == rhs.dashboardError
+            && lhs.isSidebarVisible == rhs.isSidebarVisible
     }
 
     var body: some View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        AppSymbol("sparkles", size: 28).foregroundStyle(.primary)
-                        Text(String(localized: "从这里开始")).font(.largeTitle.bold())
-                        Text(String(localized: "选择运行任务的设备和 Agent，\n把想做的事交给它。"))
-                            .font(.body).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.top, 26)
+                    NewSessionWelcomeView().padding(.top, 26)
 
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(String(localized: "运行目标")).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                        targetCard
-                        Button { showsWorkspace = true } label: {
-                            HStack(spacing: 6) {
-                                Text(workspaceName).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
-                                    .lineLimit(1).layoutPriority(1)
-                                if !model.workspace.isEmpty {
-                                    Text(model.workspace).font(.system(.footnote, design: .monospaced))
-                                        .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                                }
-                                if model.loadingHomes.contains(model.connectorID), model.workspace.isEmpty {
-                                    ProgressView().controlSize(.mini)
-                                } else { AppSymbol("chevron.down", size: 12).foregroundStyle(.secondary) }
+                    Button { showsWorkspace = true } label: {
+                        HStack(spacing: 6) {
+                            Text(workspaceName).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                                .lineLimit(1).layoutPriority(1)
+                            if !model.workspace.isEmpty {
+                                Text(model.workspace).font(.system(.footnote, design: .monospaced))
+                                    .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                             }
-                            .padding(.vertical, 12)
-                            .overlay(alignment: .bottom) { Rectangle().fill(.secondary.opacity(0.35)).frame(height: 1) }
-                            .contentShape(.rect)
+                            if model.loadingHomes.contains(model.connectorID), model.workspace.isEmpty {
+                                ProgressView().controlSize(.mini)
+                            } else { AppSymbol("chevron.down", size: 12).foregroundStyle(.secondary) }
                         }
-                        .buttonStyle(.plain)
-                        .disabled(model.connector == nil || model.isCreating)
+                        .padding(.vertical, 12)
+                        .overlay(alignment: .bottom) { Rectangle().fill(.secondary.opacity(0.35)).frame(height: 1) }
+                        .contentShape(.rect)
                     }
+                    .buttonStyle(.plain)
+                    .disabled(model.connector == nil || model.isCreating)
 
                     connectionStatus
                     if model.isCreating { Label(String(localized: "正在创建会话…"), appSymbol: "arrow.up.circle").font(.subheadline).foregroundStyle(.secondary) }
@@ -94,12 +86,9 @@ struct NewSessionView: View, Equatable {
                     onApplySettings: { model.saveSelections(); return true })
             }
         }
-        .modifier(ChatPageToolbar(title: String(localized: "Agents Anywhere"), onMenu: onMenu))
+        .modifier(ChatPageToolbar(title: isSidebarVisible ? "" : String(localized: "Agents Anywhere"), onMenu: onMenu))
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { model.draft.isFocused = true } label: { AppSymbol("square.and.pencil") }
-                    .accessibilityLabel(String(localized: "开始新会话"))
-            }
+            ToolbarItem(placement: .topBarTrailing) { targetButton }
         }
         .onChange(of: model.draft.text) { _, _ in model.saveDraft() }
         .task(id: TargetRefreshKey(connectors: connectors, network: model.network, connectorID: model.connectorID)) { await model.refresh(connectors: connectors) }
@@ -115,37 +104,30 @@ struct NewSessionView: View, Equatable {
         }
     }
 
-    private var targetCard: some View {
-        Button { showsTarget = true } label: {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 14) {
-                    AppSymbol("desktopcomputer", size: 24).foregroundStyle(.primary).frame(width: 32)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(model.connector?.name ?? String(localized: "选择设备")).font(.headline).foregroundStyle(.primary)
-                        Text(model.connector?.status == .online ? String(localized: "在线") : model.connector == nil ? String(localized: "你的任务将在所选设备上运行") : String(localized: "设备离线"))
-                            .font(.footnote).foregroundStyle(model.connector?.status == .online ? .green : .secondary)
+    private var targetButton: some View {
+        Button {
+            model.draft.isFocused = false
+            showsTarget = true
+        } label: {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(model.runtime?.sessionDisplayName ?? String(localized: "运行目标"))
+                        .font(.subheadline.weight(.semibold)).lineLimit(1)
+                    if horizontalSizeClass == .regular, let device = model.connector {
+                        Text(device.name).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    Spacer()
-                    AppSymbol("chevron.right", size: 14).foregroundStyle(.secondary)
                 }
-                Divider()
-                HStack(spacing: 14) {
-                    AppSymbol("sparkle", size: 23).foregroundStyle(.primary).frame(width: 32)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(model.runtime?.sessionDisplayName ?? String(localized: "选择 Agent")).font(.headline).foregroundStyle(.primary)
-                        Text(model.runtime?.typeDisplayName ?? String(localized: "从这台设备已配置的实例中选择"))
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if model.isPreparing { ProgressView().controlSize(.small) }
-                }
+                .frame(maxWidth: horizontalSizeClass == .regular ? 180 : 112, alignment: .leading)
+                .fixedSize(horizontal: true, vertical: false)
+                Group {
+                    if model.isPreparing { ProgressView().controlSize(.mini) }
+                    else { AppSymbol("chevron.down", size: 12) }
+                }.frame(width: 14, height: 14)
             }
-            .padding(20)
-            .background(AppTheme.groupedFill(colorScheme), in: .rect(cornerRadius: 26))
         }
-        .buttonStyle(.plain)
         .disabled(model.isCreating)
         .accessibilityLabel(String(localized: "选择设备和 Agent"))
+        .accessibilityValue([model.connector?.name, model.runtime?.sessionDisplayName].compactMap { $0 }.joined(separator: " · "))
         .accessibilityIdentifier("chat.new.target")
     }
 

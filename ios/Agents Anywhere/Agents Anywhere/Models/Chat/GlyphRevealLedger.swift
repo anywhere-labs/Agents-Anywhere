@@ -13,7 +13,13 @@ nonisolated struct GlyphRevealEffect {
 /// appended glyphs; a later flush never restarts an earlier batch's animation.
 nonisolated final class GlyphRevealLedger: @unchecked Sendable {
     private let lock = NSLock()
+    private let duration: TimeInterval
     private var births: [TimeInterval] = []
+
+    init(duration: TimeInterval = ReplyPresentation.revealSeconds) {
+        precondition(duration > 0 && duration.isFinite)
+        self.duration = duration
+    }
 
     func progress(count: Int, now: TimeInterval, enabled: Bool) -> [Double]? {
         lock.lock()
@@ -21,7 +27,6 @@ nonisolated final class GlyphRevealLedger: @unchecked Sendable {
         // Textual can briefly emit an empty Text while rebuilding a heading or
         // fragment. That intermediate draw must not erase earlier glyph births.
         guard count > 0 else { return nil }
-        let duration = ReplyPresentation.revealSeconds
         guard enabled else {
             births = Array(repeating: now - duration - 1, count: count)
             return nil
