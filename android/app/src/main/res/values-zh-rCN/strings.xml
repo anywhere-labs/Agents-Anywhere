@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="home_project_options">项目操作</string>
+    <string name="home_project_filter_sessions">筛选项目会话</string>
+    <string name="home_project_session_status">会话状态</string>
+    <string name="home_project_filter_active">活跃会话</string>
+    <string name="home_project_filter_archived">已归档</string>
+    <string name="home_project_filter_all">全部</string>
+    <string name="home_project_load_retry">会话加载失败，点击重试。</string>
     <string name="app_name">Agents Anywhere</string>
     <string name="common_back">返回</string>
     <string name="common_cancel">取消</string>

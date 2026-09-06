@@ -24,9 +24,34 @@ fun sessionListComparator(now: Long = System.currentTimeMillis()): Comparator<Ag
 fun archivedSessionComparator(): Comparator<AgentSession> =
     compareByDescending<AgentSession> { timestampMillis(it.archivedAt ?: it.sortKey) }.thenBy { it.id }
 
+enum class ProjectSessionStatusFilter(val archiveStates: List<Boolean>) {
+    Active(listOf(false)),
+    Archived(listOf(true)),
+    All(listOf(false, true)),
+}
+
+data class ProjectSessionLoadKey(val projectId: String, val archived: Boolean)
+
+fun projectSessionMatchesStatus(session: AgentSession, status: ProjectSessionStatusFilter): Boolean = when (status) {
+    ProjectSessionStatusFilter.Active -> !session.archived && !session.pinned
+    ProjectSessionStatusFilter.Archived -> session.archived
+    ProjectSessionStatusFilter.All -> session.archived || !session.pinned
+}
+
+fun projectHasVisibleSessions(
+    project: AgentProject,
+    sessions: Collection<AgentSession>,
+    status: ProjectSessionStatusFilter,
+): Boolean = project.manuallyCreated || (project.sidebarSessionCounts?.let { counts ->
+    when (status) {
+        ProjectSessionStatusFilter.Active -> counts.active > 0
+        ProjectSessionStatusFilter.Archived -> counts.archived > 0
+        ProjectSessionStatusFilter.All -> counts.active + counts.archived > 0
+    }
+} ?: sessions.any { it.projectId == project.id && projectSessionMatchesStatus(it, status) })
+
 fun projectHasActiveSessions(project: AgentProject, sessions: Collection<AgentSession>): Boolean =
-    project.manuallyCreated || (project.sidebarSessionCounts?.let { it.active > 0 }
-        ?: sessions.any { it.projectId == project.id && !it.archived && !it.pinned })
+    projectHasVisibleSessions(project, sessions, ProjectSessionStatusFilter.Active)
 
 fun sortProjectsByActivity(projects: List<AgentProject>, sessions: Collection<AgentSession>): List<AgentProject> {
     val activity = sessions.filter { !it.projectId.isNullOrBlank() }.groupBy { it.projectId }

@@ -83,6 +83,7 @@ fun NewSessionScreen(
     onLoadPermissionCatalog: suspend (String, String) -> Result<NewSessionPermissionCatalog>,
     onPrepareSession: (NewSessionDraft) -> Unit,
     initialProjectId: String? = null,
+    projectOnly: Boolean = false,
     onCreateProject: suspend (String, String, String) -> Result<AgentProject> = { _, _, _ ->
         Result.failure(IllegalStateException("Project creation is not connected."))
     },
@@ -93,7 +94,7 @@ fun NewSessionScreen(
     val preferenceStore = remember(context, serverUrl, userId) { NewSessionPreferenceStore(context, serverUrl, userId) }
     val initialPreference = remember(preferenceStore) { preferenceStore.read() }
     var preference by remember(preferenceStore) { mutableStateOf(initialPreference) }
-    val defaultTitle = stringResource(R.string.new_session_title)
+    val defaultTitle = stringResource(if (projectOnly) R.string.new_session_create_project else R.string.new_session_title)
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
@@ -101,7 +102,7 @@ fun NewSessionScreen(
         sessionsState.devices.filter { it.online }
     }
     val inventory = rememberNewSessionRuntimeInventory(
-        connectorIds = onlineDevices.map { it.id },
+        connectorIds = if (projectOnly) emptyList() else onlineDevices.map { it.id },
         onLoad = onListRuntimes,
         loadError = stringResource(R.string.new_session_runtime_load_failed),
     )
@@ -139,7 +140,7 @@ fun NewSessionScreen(
     var pathError by remember { mutableStateOf<String?>(null) }
     var expandedConfiguration by remember { mutableStateOf<NewSessionConfigurationKey?>(null) }
     val workspaceListState = rememberLazyListState()
-    var creatingProject by rememberSaveable { mutableStateOf(false) }
+    var creatingProject by rememberSaveable { mutableStateOf(projectOnly) }
     val devices = if (creatingProject) onlineDevices else onlineDevices.filter { device ->
         activeNewSessionRuntimes(inventory.results[device.id]?.runtimes.orEmpty()).isNotEmpty()
     }
@@ -196,6 +197,10 @@ fun NewSessionScreen(
     fun cancelProjectCreation() {
         if (projectCreating) return
         keyboard?.hide()
+        if (projectOnly) {
+            navigate(AppDestination.Sessions)
+            return
+        }
         selectedDeviceId = previousDeviceId
         selectedProjectId = previousProjectId
         selectedWorkspacePath = previousPath
@@ -456,7 +461,7 @@ fun NewSessionScreen(
                 loading = !creatingProject && inventory.loading,
             ),
         )
-        add(
+        if (!projectOnly) add(
             NewSessionConfigurationField(
                 key = NewSessionConfigurationKey.Agent,
                 label = stringResource(R.string.new_session_agent),
@@ -473,7 +478,7 @@ fun NewSessionScreen(
                 loading = selectedDevice != null && runtimeSelection.runtimesLoading,
             ),
         )
-        if (showModelConfiguration) {
+        if (!projectOnly && showModelConfiguration) {
             add(
                 NewSessionConfigurationField(
                     key = NewSessionConfigurationKey.Model,
@@ -519,7 +524,7 @@ fun NewSessionScreen(
                 ),
             )
         }
-        if (showPermissionConfiguration) {
+        if (!projectOnly && showPermissionConfiguration) {
             add(
                 NewSessionConfigurationField(
                     key = NewSessionConfigurationKey.Permission,
@@ -653,7 +658,7 @@ fun NewSessionScreen(
                 selectedDeviceId = project.connectorId
                 selectedWorkspacePath = project.workspacePath
                 currentPath = project.workspacePath
-                creatingProject = false
+                if (projectOnly) navigate(AppDestination.Sessions) else creatingProject = false
                 choosePath = false
             } catch (error: CancellationException) {
                 throw error
@@ -686,6 +691,7 @@ fun NewSessionScreen(
         ) {
             NewSessionHeader(
                 title = title,
+                editable = !projectOnly,
                 editing = editingTitle,
                 darkMode = darkMode,
                 focusRequester = focusRequester,

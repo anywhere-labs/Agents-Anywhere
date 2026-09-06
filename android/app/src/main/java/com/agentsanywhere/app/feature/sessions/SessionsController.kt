@@ -407,6 +407,7 @@ class SessionsController(
     suspend fun loadProjectSessions(
         projectId: String,
         devices: List<AgentDevice>,
+        archived: Boolean = false,
     ): Result<List<AgentSession>> {
         if (projectId.isBlank()) return Result.failure(IllegalArgumentException("Project ID is required."))
         val auth = newSessionAuth()
@@ -421,7 +422,7 @@ class SessionsController(
                         serverUrl = auth.serverUrl,
                         authorizationToken = auth.accessToken,
                         projectId = projectId,
-                        archived = false,
+                        archived = archived,
                         cursor = cursor,
                     )
                     sessions += page.sessions

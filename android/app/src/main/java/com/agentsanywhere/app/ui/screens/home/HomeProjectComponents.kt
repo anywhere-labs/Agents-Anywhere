@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -63,21 +64,27 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.sessions.ProjectSessionStatusFilter
 import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.composables.icons.lucide.Archive
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.Folder
+import com.composables.icons.lucide.FolderOpen
+import com.composables.icons.lucide.Ellipsis
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Pin
+import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.SquarePen
 import kotlin.math.roundToInt
 
 internal data class HomeProjectActionMenu(
     val project: AgentProject,
     val rowBounds: Rect,
+    val anchorBounds: Rect? = null,
+    val expanded: Boolean = false,
 )
 
 @Composable
@@ -85,17 +92,23 @@ internal fun HomeProjectList(
     projects: List<AgentProject>,
     allSessions: List<AgentSession>,
     projectPreferences: HomeProjectPreferences,
+    projectSessionStatus: ProjectSessionStatusFilter,
+    onProjectSessionStatusChange: (ProjectSessionStatusFilter) -> Unit,
+    projectErrors: Map<String, String>,
+    onRetryProject: (String) -> Unit,
+    onCreateProject: () -> Unit,
     pinnedSessions: List<AgentSession>,
     sessionsByProject: Map<String, List<AgentSession>>,
     loadingProjectIds: Set<String>,
     expandedProjectIds: Set<String>,
     onProjectExpandedChange: (AgentProject, Boolean) -> Unit,
-    onProjectLongPress: (AgentProject, Rect) -> Unit,
+    onProjectMenu: (HomeProjectActionMenu) -> Unit,
     onNewSession: (AgentProject) -> Unit,
     onSessionLongPress: (AgentSession, Rect) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
 ) {
     var pinnedExpanded by remember { mutableStateOf(true) }
+    var filterAnchor by remember { mutableStateOf<Rect?>(null) }
     val projectsExpanded = projectPreferences.projectsExpanded
     val ordered = remember(projects, allSessions) {
         com.agentsanywhere.app.feature.sessions.sortProjectsByActivity(projects, allSessions)
@@ -119,20 +132,22 @@ internal fun HomeProjectList(
                 items(pinnedProjects, key = { "pinned-project-${it.id}" }) { project ->
                     HomeProjectTreeItem(
                         project = project,
-                        sessions = sessionsByProject[project.id].orEmpty().filterNot(AgentSession::pinned),
+                        sessions = sessionsByProject[project.id].orEmpty(),
                         expanded = project.id in expandedProjectIds,
                         loading = project.id in loadingProjectIds,
                         onExpandedChange = { onProjectExpandedChange(project, it) },
-                        onLongPress = { onProjectLongPress(project, it) },
+                        onMenu = onProjectMenu,
+                        error = projectErrors[project.id],
+                        onRetry = { onRetryProject(project.id) },
                         onNewSession = { onNewSession(project) },
                         onSessionLongPress = onSessionLongPress,
                         onOpenSession = onOpenSession,
                     )
                 }
                 items(pinnedSessions, key = { "pinned-session-${it.id}" }) { session ->
-                    HomePinnedSessionRow(
+                    HomeProjectSessionRow(
                         session = session,
-                        showDivider = true,
+                        inset = false,
                         onClick = { onOpenSession(session) },
                         onLongPress = { onSessionLongPress(session, it) },
                     )
@@ -145,6 +160,8 @@ internal fun HomeProjectList(
                 label = stringResource(R.string.home_projects),
                 expanded = projectsExpanded,
                 onClick = projectPreferences::toggleSection,
+                onFilter = { filterAnchor = it },
+                onCreate = onCreateProject,
             )
         }
         if (projectsExpanded) {
@@ -156,11 +173,13 @@ internal fun HomeProjectList(
                 items(regularProjects, key = { "project-${it.id}" }) { project ->
                     HomeProjectTreeItem(
                         project = project,
-                        sessions = sessionsByProject[project.id].orEmpty().filterNot(AgentSession::pinned),
+                        sessions = sessionsByProject[project.id].orEmpty(),
                         expanded = project.id in expandedProjectIds,
                         loading = project.id in loadingProjectIds,
                         onExpandedChange = { onProjectExpandedChange(project, it) },
-                        onLongPress = { onProjectLongPress(project, it) },
+                        onMenu = onProjectMenu,
+                        error = projectErrors[project.id],
+                        onRetry = { onRetryProject(project.id) },
                         onNewSession = { onNewSession(project) },
                         onSessionLongPress = onSessionLongPress,
                         onOpenSession = onOpenSession,
@@ -168,6 +187,14 @@ internal fun HomeProjectList(
                 }
             }
         }
+    }
+    filterAnchor?.let { anchor ->
+        HomeProjectFilterMenu(
+            anchorBounds = anchor,
+            selected = projectSessionStatus,
+            onDismiss = { filterAnchor = null },
+            onSelect = onProjectSessionStatusChange,
+        )
     }
 }
 
@@ -178,7 +205,9 @@ private fun HomeProjectTreeItem(
     expanded: Boolean,
     loading: Boolean,
     onExpandedChange: (Boolean) -> Unit,
-    onLongPress: (Rect) -> Unit,
+    onMenu: (HomeProjectActionMenu) -> Unit,
+    error: String?,
+    onRetry: () -> Unit,
     onNewSession: () -> Unit,
     onSessionLongPress: (AgentSession, Rect) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
@@ -187,10 +216,18 @@ private fun HomeProjectTreeItem(
         project = project,
         expanded = expanded,
         onClick = { onExpandedChange(!expanded) },
-        onLongPress = onLongPress,
+        onMenu = onMenu,
         onNewSession = onNewSession,
     )
     if (expanded) {
+        if (error != null) {
+            Text(
+                text = stringResource(R.string.home_project_load_retry),
+                color = LocalAAColors.current.errorText,
+                fontSize = 13.sp,
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onRetry).padding(start = 34.dp, top = 10.dp, bottom = 10.dp),
+            )
+        }
         when {
             loading && sessions.isEmpty() -> Box(
                 modifier = Modifier
@@ -206,7 +243,7 @@ private fun HomeProjectTreeItem(
                 )
             }
 
-            sessions.isEmpty() -> Box(
+            sessions.isEmpty() && error == null -> Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(42.dp)
@@ -222,13 +259,11 @@ private fun HomeProjectTreeItem(
             }
 
             else -> sessions.forEach { session ->
-                Box(modifier = Modifier.padding(start = 34.dp)) {
-                    HomeRecentSessionRow(
-                        session = session,
-                        onClick = { onOpenSession(session) },
-                        onLongPress = { onSessionLongPress(session, it) },
-                    )
-                }
+                HomeProjectSessionRow(
+                    session = session,
+                    onClick = { onOpenSession(session) },
+                    onLongPress = { onSessionLongPress(session, it) },
+                )
             }
         }
     }
@@ -239,7 +274,7 @@ private fun HomeProjectRow(
     project: AgentProject,
     expanded: Boolean,
     onClick: () -> Unit,
-    onLongPress: (Rect) -> Unit,
+    onMenu: (HomeProjectActionMenu) -> Unit,
     onNewSession: () -> Unit,
 ) {
     val colors = LocalAAColors.current
@@ -251,7 +286,7 @@ private fun HomeProjectRow(
             .fillMaxWidth()
             .height(56.dp)
             .onGloballyPositioned { bounds = it.boundsInRoot() }
-            .pointerInput(onClick, onLongPress, bounds) {
+            .pointerInput(onClick, onMenu, bounds, expanded) {
                 detectTapGestures(
                     onTap = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -259,7 +294,7 @@ private fun HomeProjectRow(
                     },
                     onLongPress = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onLongPress(bounds)
+                        onMenu(HomeProjectActionMenu(project, bounds, expanded = expanded))
                     },
                 )
             }
@@ -268,7 +303,7 @@ private fun HomeProjectRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Icon(
-            imageVector = Lucide.Folder,
+            imageVector = if (expanded) Lucide.FolderOpen else Lucide.Folder,
             contentDescription = null,
             tint = colors.faint,
             modifier = Modifier.size(21.dp),
@@ -282,14 +317,9 @@ private fun HomeProjectRow(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        Icon(
-            imageVector = Lucide.ChevronDown,
-            contentDescription = null,
-            tint = colors.faint,
-            modifier = Modifier
-                .size(16.dp)
-                .graphicsLayer { rotationZ = if (expanded) 0f else -90f },
-        )
+        HomeProjectIconButton(Lucide.Ellipsis, stringResource(R.string.home_project_options)) { anchor ->
+            onMenu(HomeProjectActionMenu(project, bounds, anchorBounds = anchor, expanded = expanded))
+        }
         Box(
             modifier = Modifier
                 .size(38.dp)
@@ -316,14 +346,19 @@ private fun HomeProjectSectionHeader(
     label: String,
     expanded: Boolean,
     onClick: () -> Unit,
+    onFilter: ((Rect) -> Unit)? = null,
+    onCreate: (() -> Unit)? = null,
 ) {
     val colors = LocalAAColors.current
     val haptic = LocalHapticFeedback.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(41.dp)
-            .clickable(
+            .height(44.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            modifier = Modifier.weight(1f).height(44.dp).clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = {
@@ -331,24 +366,44 @@ private fun HomeProjectSectionHeader(
                     onClick()
                 },
             ),
-        verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = label,
+                color = colors.faint,
+                fontSize = 13.2.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+            )
+            Icon(
+                imageVector = Lucide.ChevronDown,
+                contentDescription = null,
+                tint = colors.faint,
+                modifier = Modifier
+                    .size(16.dp)
+                    .graphicsLayer { rotationZ = if (expanded) 0f else -90f },
+            )
+        }
+        onFilter?.let { onShow ->
+            HomeProjectIconButton(Lucide.Ellipsis, stringResource(R.string.home_project_filter_sessions), onShow)
+        }
+        onCreate?.let { create ->
+            HomeProjectIconButton(Lucide.Plus, stringResource(R.string.new_session_create_project)) { create() }
+        }
+    }
+}
+
+@Composable
+private fun HomeProjectIconButton(icon: ImageVector, description: String, onClick: (Rect) -> Unit) {
+    var bounds by remember { mutableStateOf(Rect.Zero) }
+    Box(
+        modifier = Modifier.size(38.dp).clip(CircleShape)
+            .onGloballyPositioned { bounds = it.boundsInWindow() }
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onClick(bounds) },
+        contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = label,
-            modifier = Modifier.weight(1f),
-            color = colors.faint,
-            fontSize = 13.2.sp,
-            fontWeight = FontWeight.ExtraBold,
-            maxLines = 1,
-        )
-        Icon(
-            imageVector = Lucide.ChevronDown,
-            contentDescription = null,
-            tint = colors.faint,
-            modifier = Modifier
-                .size(16.dp)
-                .graphicsLayer { rotationZ = if (expanded) 0f else -90f },
-        )
+        Icon(icon, contentDescription = description, tint = LocalAAColors.current.faint, modifier = Modifier.size(19.dp))
     }
 }
 
@@ -377,6 +432,12 @@ internal fun HomeProjectActionOverlay(
     onTogglePinned: () -> Unit,
     onArchive: () -> Unit,
 ) {
+    menu.anchorBounds?.let { anchor ->
+        HomeProjectAnchoredPopup(anchor, onDismiss) {
+            HomeProjectActionCard(menu.project, Modifier, onEdit, onTogglePinned, onArchive)
+        }
+        return
+    }
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val density = LocalDensity.current
@@ -413,7 +474,7 @@ internal fun HomeProjectActionOverlay(
                 .clip(highlightShape)
                 .background(if (darkMode) Color(0xFF202020) else Color.White),
         ) {
-            HomeProjectHighlightRow(menu.project)
+            HomeProjectHighlightRow(menu.project, menu.expanded)
         }
         HomeProjectActionCard(
             project = menu.project,
@@ -426,7 +487,7 @@ internal fun HomeProjectActionOverlay(
 }
 
 @Composable
-private fun HomeProjectHighlightRow(project: AgentProject) {
+private fun HomeProjectHighlightRow(project: AgentProject, expanded: Boolean) {
     val colors = LocalAAColors.current
     Row(
         modifier = Modifier
@@ -435,7 +496,7 @@ private fun HomeProjectHighlightRow(project: AgentProject) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Icon(Lucide.Folder, contentDescription = null, tint = colors.faint, modifier = Modifier.size(21.dp))
+        Icon(if (expanded) Lucide.FolderOpen else Lucide.Folder, contentDescription = null, tint = colors.faint, modifier = Modifier.size(21.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = project.name,

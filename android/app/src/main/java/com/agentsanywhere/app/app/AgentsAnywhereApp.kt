@@ -44,6 +44,8 @@ import com.agentsanywhere.app.feature.sessions.NewSessionCreateOutcome
 import com.agentsanywhere.app.feature.sessions.NewSessionDraft
 import com.agentsanywhere.app.feature.sessions.NewSessionPreferenceStore
 import com.agentsanywhere.app.feature.sessions.projectHasActiveSessions
+import com.agentsanywhere.app.feature.sessions.ProjectSessionLoadKey
+import com.agentsanywhere.app.feature.sessions.ProjectSessionStatusFilter
 import com.agentsanywhere.app.feature.sessions.beginSessionRequest
 import com.agentsanywhere.app.feature.sessions.mergedWithRefresh
 import com.agentsanywhere.app.feature.sessions.replacedByDashboardSnapshot
@@ -188,8 +190,9 @@ fun AgentsAnywhereApp(
     }
     var isRefreshingSessions by remember { mutableStateOf(false) }
     var projectSessionsById by remember { mutableStateOf<Map<String, List<AgentSession>>>(emptyMap()) }
-    var loadingProjectIds by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var projectSessionsLoadedAt by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    var loadingProjectRequests by remember { mutableStateOf<Set<ProjectSessionLoadKey>>(emptySet()) }
+    var projectSessionErrors by remember { mutableStateOf<Map<ProjectSessionLoadKey, String>>(emptyMap()) }
+    var projectSessionsLoadedAt by remember { mutableStateOf<Map<ProjectSessionLoadKey, Long>>(emptyMap()) }
     val projectLoadSlots = remember { Semaphore(3) }
     var projectsRequestVersion by remember { mutableStateOf(0L) }
     val scope = rememberCoroutineScope()
@@ -240,7 +243,8 @@ fun AgentsAnywhereApp(
         sessionsState = SessionsState()
         isRefreshingSessions = false
         projectSessionsById = emptyMap()
-        loadingProjectIds = emptySet()
+        loadingProjectRequests = emptySet()
+        projectSessionErrors = emptyMap()
         projectSessionsLoadedAt = emptyMap()
         selectedSessionId = null
         initialNewSessionProjectId = null
@@ -349,27 +353,38 @@ fun AgentsAnywhereApp(
         }
     }
 
-    fun loadProjectSessions(projectId: String) {
-        if (projectId.isBlank() || projectId in loadingProjectIds) return
-        val loadedAt = projectSessionsLoadedAt[projectId]
-        if (projectId in projectSessionsById && loadedAt != null && SystemClock.elapsedRealtime() - loadedAt < 30_000L) return
+    fun loadProjectSessions(projectId: String, status: ProjectSessionStatusFilter = ProjectSessionStatusFilter.Active) {
+        if (projectId.isBlank()) return
         val token = sessionStore.readAccessToken()
-        loadingProjectIds = loadingProjectIds + projectId
-        scope.launch {
-            try {
-                projectLoadSlots.withPermit {
-                    if (sessionStore.readAccessToken() != token || sessionsState.projects.none { it.id == projectId }) return@withPermit
-                    sessionsController.loadProjectSessions(projectId, sessionsState.devices)
-                        .onSuccess { sessions ->
-                            if (sessionStore.readAccessToken() == token && sessionsState.projects.any { it.id == projectId }) {
-                                projectSessionsById = projectSessionsById + (projectId to sessions)
-                                projectSessionsLoadedAt = projectSessionsLoadedAt + (projectId to SystemClock.elapsedRealtime())
+        status.archiveStates.forEach { archived ->
+            val key = ProjectSessionLoadKey(projectId, archived)
+            if (key in loadingProjectRequests) return@forEach
+            val loadedAt = projectSessionsLoadedAt[key]
+            if (loadedAt != null && SystemClock.elapsedRealtime() - loadedAt < 30_000L) return@forEach
+            loadingProjectRequests = loadingProjectRequests + key
+            projectSessionErrors = projectSessionErrors - key
+            scope.launch {
+                try {
+                    projectLoadSlots.withPermit {
+                        if (sessionStore.readAccessToken() != token || sessionsState.projects.none { it.id == projectId }) return@withPermit
+                        sessionsController.loadProjectSessions(projectId, sessionsState.devices, archived)
+                            .onSuccess { sessions ->
+                                if (sessionStore.readAccessToken() == token && sessionsState.projects.any { it.id == projectId }) {
+                                    val retained = projectSessionsById[projectId].orEmpty().filter { it.archived != archived }
+                                    projectSessionsById = projectSessionsById + (projectId to (retained + sessions).associateBy { it.id }.values.toList())
+                                    projectSessionsLoadedAt = projectSessionsLoadedAt + (key to SystemClock.elapsedRealtime())
+                                }
+                            }.onFailure { error ->
+                                if (error is kotlinx.coroutines.CancellationException) throw error
+                                if (sessionStore.readAccessToken() == token) {
+                                    projectSessionErrors = projectSessionErrors + (key to (error.message ?: "Could not load project sessions."))
+                                }
                             }
-                        }
-                }
-            } finally {
-                if (sessionStore.readAccessToken() == token) {
-                    loadingProjectIds = loadingProjectIds - projectId
+                    }
+                } finally {
+                    if (sessionStore.readAccessToken() == token) {
+                        loadingProjectRequests = loadingProjectRequests - key
+                    }
                 }
             }
         }
@@ -391,7 +406,7 @@ fun AgentsAnywhereApp(
         if (destination != AppDestination.SessionDetail) {
             preparedSessionDraft = null
         }
-        if (destination == AppDestination.NewSession) {
+        if (destination == AppDestination.NewSession || destination == AppDestination.NewProject) {
             initialNewSessionProjectId = null
         }
         if (
@@ -470,7 +485,8 @@ fun AgentsAnywhereApp(
         languageMode = languageMode,
         sidebarViewMode = sidebarViewMode,
         projectSessionsById = projectSessionsById,
-        loadingProjectIds = loadingProjectIds,
+        loadingProjectRequests = loadingProjectRequests,
+        projectSessionErrors = projectSessionErrors,
         initialNewSessionProjectId = initialNewSessionProjectId,
         sessionDetailController = sessionDetailController,
         sessionRealtimeController = sessionRealtimeController,
@@ -487,11 +503,15 @@ fun AgentsAnywhereApp(
                     showInitialLoading = false,
                     showRefreshIndicator = true,
                 )
+                val previousRequests = projectSessionsLoadedAt.keys + projectSessionErrors.keys + loadingProjectRequests
                 projectSessionsLoadedAt = emptyMap()
                 if (sidebarViewMode == com.agentsanywhere.app.ui.screens.home.HomeSidebarViewMode.Project) {
                     val loaded = (projectSessionsById.values.flatten() + sessionsState.sessions + sessionsState.archivedSessions)
                         .associateBy { it.id }.values
                     sessionsState.projects.filter { projectHasActiveSessions(it, loaded) }.forEach { loadProjectSessions(it.id) }
+                    previousRequests.filter { key -> sessionsState.projects.any { it.id == key.projectId } }.forEach { key ->
+                        loadProjectSessions(key.projectId, if (key.archived) ProjectSessionStatusFilter.Archived else ProjectSessionStatusFilter.Active)
+                    }
                 }
             }
         },
@@ -749,7 +769,9 @@ fun AgentsAnywhereApp(
                 sessionsController.archiveProjectSessions(projectId, sessionsState.devices, scope = "all")
                     .onSuccess { sessions ->
                         sessionsState = sessionsState.withPatchedSessions(sessions, request.generation)
-                        projectSessionsById = projectSessionsById + (projectId to emptyList())
+                        projectSessionsById = projectSessionsById + (projectId to
+                            (projectSessionsById[projectId].orEmpty() + sessions).associateBy { it.id }.values.toList())
+                        projectSessionsLoadedAt = projectSessionsLoadedAt.filterKeys { it.projectId != projectId }
                         reloadProjects()
                     }
             }

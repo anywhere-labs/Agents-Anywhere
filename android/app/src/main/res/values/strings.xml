@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="home_project_options">Project actions</string>
+    <string name="home_project_filter_sessions">Filter project sessions</string>
+    <string name="home_project_session_status">Session status</string>
+    <string name="home_project_filter_active">Active sessions</string>
+    <string name="home_project_filter_archived">Archived</string>
+    <string name="home_project_filter_all">All</string>
+    <string name="home_project_load_retry">Could not load sessions. Tap to retry.</string>
     <string name="app_name">Agents Anywhere</string>
     <string name="common_back">Back</string>
     <string name="common_cancel">Cancel</string>

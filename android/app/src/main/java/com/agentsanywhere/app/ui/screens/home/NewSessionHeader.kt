@@ -57,6 +57,7 @@ internal fun NewSessionHeader(
     onSubmitTitle: () -> Unit,
     onClose: () -> Unit,
     onEditToggle: () -> Unit,
+    editable: Boolean = true,
 ) {
     val colors = LocalAAColors.current
     val iconColor = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777)
@@ -140,7 +141,7 @@ internal fun NewSessionHeader(
                     .padding(horizontal = 16.dp),
             )
         }
-        HeaderCircleButton(darkMode = darkMode, onClick = onEditToggle) {
+        if (editable) HeaderCircleButton(darkMode = darkMode, onClick = onEditToggle) {
             if (editing) {
                 CheckGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF333333))
             } else {
@@ -151,7 +152,7 @@ internal fun NewSessionHeader(
                     modifier = Modifier.size(18.dp),
                 )
             }
-        }
+        } else Box(Modifier.size(40.dp))
     }
 }
 

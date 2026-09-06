@@ -27,6 +27,8 @@ import com.agentsanywhere.app.feature.sessions.NewSessionCreateDraft
 import com.agentsanywhere.app.feature.sessions.NewSessionCreateOutcome
 import com.agentsanywhere.app.feature.sessions.NewSessionDirectory
 import com.agentsanywhere.app.feature.sessions.NewSessionDraft
+import com.agentsanywhere.app.feature.sessions.ProjectSessionLoadKey
+import com.agentsanywhere.app.feature.sessions.ProjectSessionStatusFilter
 import com.agentsanywhere.app.feature.sessions.NewSessionModelCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionPermissionCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeCapabilities
@@ -75,7 +77,8 @@ internal fun AgentsAnywhereNavHost(
     languageMode: String,
     sidebarViewMode: String,
     projectSessionsById: Map<String, List<AgentSession>>,
-    loadingProjectIds: Set<String>,
+    loadingProjectRequests: Set<ProjectSessionLoadKey>,
+    projectSessionErrors: Map<ProjectSessionLoadKey, String>,
     initialNewSessionProjectId: String?,
     sessionDetailController: SessionDetailController,
     sessionRealtimeController: SessionRealtimeController,
@@ -115,7 +118,7 @@ internal fun AgentsAnywhereNavHost(
     onRenameSession: suspend (String, String) -> Result<AgentSession>,
     onSetSessionPinned: suspend (String, Boolean) -> Result<AgentSession>,
     onSetSessionArchived: suspend (String, Boolean) -> Result<AgentSession>,
-    onLoadProjectSessions: (String) -> Unit,
+    onLoadProjectSessions: (String, ProjectSessionStatusFilter) -> Unit,
     onLoadProjects: suspend () -> Result<List<AgentProject>>,
     onLoadArchivedPage: suspend (String?, String?) -> Result<com.agentsanywhere.app.feature.sessions.SessionPageAppend>,
     onRestoreProject: suspend (String) -> Result<List<AgentSession>>,
@@ -198,7 +201,8 @@ internal fun AgentsAnywhereNavHost(
                     sidebarViewMode = sidebarViewMode,
                     appUpdateViewModel = appUpdateViewModel,
                     projectSessionsById = projectSessionsById,
-                    loadingProjectIds = loadingProjectIds,
+                    loadingProjectRequests = loadingProjectRequests,
+                    projectSessionErrors = projectSessionErrors,
                     onRefresh = onRefreshSessions,
                     onLoadMore = { tab -> onLoadMoreSessions(tab == HomeTab.Archived) },
                     onTabSelected = onHomeTabSelected,
@@ -228,7 +232,7 @@ internal fun AgentsAnywhereNavHost(
                     deviceAgentPreviews = deviceAgentPreviews,
                     onPairDevice = { navigate(AppDestination.DeviceSetup) },
                 )
-                AppDestination.NewSession -> androidx.compose.runtime.key(serverUrl, userId) { NewSessionScreen(
+                AppDestination.NewSession, AppDestination.NewProject -> androidx.compose.runtime.key(serverUrl, userId, destination) { NewSessionScreen(
                     navigate = navigate,
                     sessionsState = sessionsState,
                     serverUrl = serverUrl,
@@ -239,7 +243,8 @@ internal fun AgentsAnywhereNavHost(
                     onLoadModelCatalog = onLoadNewSessionModelCatalog,
                     onLoadPermissionCatalog = onLoadNewSessionPermissionCatalog,
                     onPrepareSession = onPrepareSession,
-                    initialProjectId = initialNewSessionProjectId,
+                    initialProjectId = initialNewSessionProjectId.takeIf { destination == AppDestination.NewSession },
+                    projectOnly = destination == AppDestination.NewProject,
                     sidebarViewMode = sidebarViewMode,
                     onLoadProjects = onLoadProjects,
                     onCreateProject = onCreateProject,

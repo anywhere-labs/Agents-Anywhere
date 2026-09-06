@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import com.agentsanywhere.app.feature.sessions.ProjectSessionStatusFilter
 import org.json.JSONArray
 
 internal class HomeProjectPreferences(private val storage: SharedPreferences, private val key: String) {
@@ -14,6 +15,16 @@ internal class HomeProjectPreferences(private val storage: SharedPreferences, pr
         private set
     var projectsExpanded by mutableStateOf(storage.getBoolean("$key:section", true))
         private set
+    var sessionStatus by mutableStateOf(
+        ProjectSessionStatusFilter.entries.firstOrNull { it.name == storage.getString("$key:status", null) }
+            ?: ProjectSessionStatusFilter.Active,
+    )
+        private set
+
+    fun selectSessionStatus(status: ProjectSessionStatusFilter) {
+        sessionStatus = status
+        storage.edit().putString("$key:status", status.name).apply()
+    }
 
     fun setProjectExpanded(id: String, expanded: Boolean) {
         expandedIds = if (expanded) expandedIds + id else expandedIds - id
