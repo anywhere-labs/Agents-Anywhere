@@ -25,6 +25,7 @@ from agent_server.core.protocol import (
 from agent_server.core.runtime_identity import RuntimeIdentity, RuntimeIdentityError
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
+from agent_server.infra.repositories.projects import MissingWorkspaceError
 from agent_server.services.repository_ports import ConnectorNotificationRepository
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
@@ -51,8 +52,7 @@ def _session_dashboard_changed(
     if previous is None:
         return True
     return (
-        previous.updatedSeq != current.updatedSeq
-        or previous.sortAt != current.sortAt
+        previous.updatedSeq != current.updatedSeq or previous.sortAt != current.sortAt
     )
 
 
@@ -354,6 +354,8 @@ class SessionNotificationHandler:
                     last_activity_at=params.get("lastActivityAt"),
                     source_state=None,
                 )
+            except MissingWorkspaceError:
+                return IngestEffect()
             except ValueError as exc:
                 raise NotificationValidationError(
                     "session_identity_conflict",
@@ -410,13 +412,16 @@ class SessionSourceNotificationHandler:
                 runtime_id=runtime_id,
             )
         except KeyError:
-            session = await self._store.upsert_connector_session(
-                connector_id=connector_id,
-                session_id=session_id,
-                runtime=runtime,
-                runtime_id=runtime_id,
-                external_session_id=external_session_id,
-            )
+            try:
+                session = await self._store.upsert_connector_session(
+                    connector_id=connector_id,
+                    session_id=session_id,
+                    runtime=runtime,
+                    runtime_id=runtime_id,
+                    external_session_id=external_session_id,
+                )
+            except MissingWorkspaceError:
+                return IngestEffect()
             previous_session = None
         else:
             previous_session = session
@@ -471,7 +476,10 @@ class SessionInventoryNotificationHandler:
 
         raw_sessions = params.get("sessions")
         complete = params.get("complete")
-        if not isinstance(raw_sessions, list) or len(raw_sessions) > SESSION_INVENTORY_LIMIT:
+        if (
+            not isinstance(raw_sessions, list)
+            or len(raw_sessions) > SESSION_INVENTORY_LIMIT
+        ):
             raise NotificationValidationError(
                 "invalid_session_inventory_sessions",
                 f"session inventory sessions must contain at most {SESSION_INVENTORY_LIMIT} entries",
@@ -594,6 +602,8 @@ class SessionStateNotificationHandler:
                     runtime_id=runtime_id,
                     external_session_id=external_session_id,
                 )
+            except MissingWorkspaceError:
+                return IngestEffect()
             except ValueError as exc:
                 raise NotificationValidationError(
                     "session_identity_conflict",
@@ -694,6 +704,8 @@ class SessionTurnEndedNotificationHandler:
                     runtime_id=runtime_id,
                     external_session_id=external_session_id,
                 )
+            except MissingWorkspaceError:
+                return IngestEffect()
             except ValueError as exc:
                 raise NotificationValidationError(
                     "session_identity_conflict",
@@ -719,9 +731,7 @@ class SessionTurnEndedNotificationHandler:
             async with self._timeline_write_buffer.session_fence(session_id):
                 session = await self._store.record_session_turn_end(
                     session_id=session_id,
-                    source_observed_at=_string_or_none(
-                        params.get("sourceObservedAt")
-                    ),
+                    source_observed_at=_string_or_none(params.get("sourceObservedAt")),
                     mark_read_on_change=False,
                 )
         return IngestEffect(
@@ -760,7 +770,9 @@ class TimelineNotificationHandler:
         connector_id: str,
         params: dict[str, Any],
     ) -> IngestEffect:
-        items = [TimelineItemIn.model_validate(item) for item in params.get("items", [])]
+        items = [
+            TimelineItemIn.model_validate(item) for item in params.get("items", [])
+        ]
         runtime, runtime_id = await timeline_runtime_identity_from_params(
             self._store,
             params,
@@ -882,9 +894,7 @@ class TimelineNotificationHandler:
             timeline_published=(
                 result.changed and self._timeline_write_buffer is not None
             ),
-            dashboard_changed=(
-                result.changed and self._timeline_write_buffer is None
-            ),
+            dashboard_changed=(result.changed and self._timeline_write_buffer is None),
         )
 
 
@@ -1091,7 +1101,9 @@ def runtime_capability_update_session_id(
     return None
 
 
-async def _session_disabled(store: ConnectorNotificationRepository, session_id: str) -> bool:
+async def _session_disabled(
+    store: ConnectorNotificationRepository, session_id: str
+) -> bool:
     return await store.get_session_runtime(session_id) is None
 
 
@@ -1211,7 +1223,9 @@ def _v2_session_status(value: Any) -> SessionStatus | None:
 
 
 def _session_meta_should_archive(params: dict[str, Any]) -> bool:
-    metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
+    metadata = (
+        params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
+    )
     if _bool_param(params, metadata, ("hidden",)):
         return True
     if _bool_param(params, metadata, ("localArchived", "local_archived")):
@@ -1287,11 +1301,15 @@ def _session_meta_source_observation(
         }
     if not _session_meta_should_archive(params):
         return None
-    metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
+    metadata = (
+        params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
+    )
     deleted = _bool_param(params, metadata, ("localDeleted", "local_deleted"))
     local_state = _string_param(params, metadata, ("localState", "local_state"))
     return {
-        "availability": "deleted" if deleted or local_state == "deleted" else "archived",
+        "availability": "deleted"
+        if deleted or local_state == "deleted"
+        else "archived",
         "reason": "legacy session metadata",
         "observed_at": params.get("sourceObservedAt"),
         "observation_origin": "inventory",
@@ -1299,7 +1317,9 @@ def _session_meta_source_observation(
 
 
 def _dsh_session_meta_source_state(params: dict[str, Any]) -> str:
-    metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
+    metadata = (
+        params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
+    )
     if _bool_param(params, metadata, ("localDeleted", "local_deleted")):
         return "missing"
     local_state = _string_param(
@@ -1465,7 +1485,9 @@ def _selections_param(params: dict[str, Any]) -> dict[str, str | None] | None:
     return selections
 
 
-def _reject_legacy_selection_fields(params: dict[str, Any], *, notification: str) -> None:
+def _reject_legacy_selection_fields(
+    params: dict[str, Any], *, notification: str
+) -> None:
     if "modelSelectionId" not in params and "permissionSelectionId" not in params:
         return
     raise NotificationValidationError(

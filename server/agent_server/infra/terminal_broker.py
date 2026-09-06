@@ -25,6 +25,13 @@ RELAY_REFRESH_SECONDS = 10
 BROWSER_LEASE_SECONDS = 30
 
 
+class TerminalRelayError(RuntimeError):
+    def __init__(self, detail: str, status_code: int = 409) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.status_code = status_code
+
+
 @dataclass
 class _Chunk:
     seq: int
@@ -63,8 +70,10 @@ class Terminal:
     env: dict[str, str] = field(default_factory=dict)
     relay_token: str = field(default_factory=lambda: secrets.token_urlsafe(32))
     purpose: str = "user"
+    relay_mode: str = "create"
     launch_signature: str | None = None
     ephemeral_group_id: str | None = None
+    persistent: bool = False
     pid: int | None = None
     status: str = "starting"
     exit_code: int | None = None
@@ -100,6 +109,7 @@ class Terminal:
             "scrollbackBytes": self.scrollback_bytes,
             "scrollbackSeq": self.last_seq,
             "ephemeralGroupId": self.ephemeral_group_id,
+            "persistent": self.persistent,
             "createdAt": _iso(self.created_at),
         }
 
@@ -120,9 +130,11 @@ class Terminal:
             "profile": self.profile,
             "env": self.env,
             "relay_token": self.relay_token,
+            "relay_mode": self.relay_mode,
             "purpose": self.purpose,
             "launch_signature": self.launch_signature,
             "ephemeral_group_id": self.ephemeral_group_id,
+            "persistent": self.persistent,
             "pid": self.pid,
             "status": self.status,
             "exit_code": self.exit_code,
@@ -149,9 +161,11 @@ class Terminal:
             profile=payload.get("profile"),
             env=dict(payload.get("env") or {}),
             relay_token=str(payload["relay_token"]),
+            relay_mode=str(payload.get("relay_mode") or "create"),
             purpose=str(payload.get("purpose") or "user"),
             launch_signature=payload.get("launch_signature"),
             ephemeral_group_id=payload.get("ephemeral_group_id"),
+            persistent=payload.get("persistent") is True,
             pid=payload.get("pid"),
             status=str(payload.get("status") or "starting"),
             exit_code=payload.get("exit_code"),
@@ -180,6 +194,7 @@ class TerminalBroker:
         self._clients: dict[str, dict[WebSocket, _BrowserState]] = {}
         self._relay_sockets: dict[str, _RelayState] = {}
         self._relay_ready: dict[str, asyncio.Event] = {}
+        self._relay_requests: dict[tuple[str, str], asyncio.Future[Any]] = {}
         self._lock = asyncio.Lock()
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._pubsub = None
@@ -199,6 +214,8 @@ class TerminalBroker:
         )
 
     async def close(self) -> None:
+        for terminal_id, _ in list(self._relay_requests):
+            self._fail_relay_requests(terminal_id)
         tasks = [
             task
             for task in (self._listener_task, self._refresh_task)
@@ -266,9 +283,12 @@ class TerminalBroker:
         purpose: str = "user",
         launch_signature: str | None = None,
         ephemeral_group_id: str | None = None,
+        persistent: bool = False,
+        terminal_id: str | None = None,
+        relay_mode: str = "create",
     ) -> Terminal:
         term = Terminal(
-            id=f"trm_{secrets.token_urlsafe(10)}",
+            id=terminal_id or f"trm_{secrets.token_urlsafe(10)}",
             session_id=session_id,
             connector_id=connector_id,
             connector_connection_id=connector_connection_id,
@@ -283,8 +303,10 @@ class TerminalBroker:
             profile=profile,
             env=dict(env or {}),
             purpose=purpose,
+            relay_mode=relay_mode,
             launch_signature=launch_signature,
             ephemeral_group_id=ephemeral_group_id,
+            persistent=persistent,
         )
         if self._coordinator.distributed:
             async with self._coordinator.client.pipeline(transaction=True) as pipeline:
@@ -404,6 +426,16 @@ class TerminalBroker:
             if current is not None:
                 removed.append(current)
         return removed
+
+    async def remove_relays_for_connector(self, connector_id: str) -> None:
+        terminals = (
+            await self._get_indexed(self._connector_key(connector_id))
+            if self._coordinator.distributed
+            else list(self._terminals.values())
+        )
+        for term in terminals:
+            if term.connector_id == connector_id and term.relay_mode == "attach":
+                await self.remove(term.id)
 
     async def on_output(self, terminal_id: str, *, data: bytes, seq: int) -> None:
         if not self._coordinator.distributed:
@@ -650,6 +682,82 @@ class TerminalBroker:
         await self._publish("command", terminal_id, payload)
         return True
 
+    async def has_connector(self, terminal_id: str) -> bool:
+        if self._coordinator.distributed:
+            return bool(
+                await self._coordinator.client.exists(self._relay_key(terminal_id))
+            )
+        return terminal_id in self._relay_sockets
+
+    async def owns_connector_socket(
+        self, terminal_id: str, websocket: WebSocket
+    ) -> bool:
+        relay = self._relay_sockets.get(terminal_id)
+        if relay is None or relay.websocket is not websocket:
+            return False
+        if self._coordinator.distributed:
+            owner = await self._coordinator.client.get(self._relay_key(terminal_id))
+            return self._as_text(owner) == relay.lease_id
+        return True
+
+    async def request_relay(
+        self, terminal_id: str, payload: dict[str, Any], *, timeout: float = 10
+    ) -> Any:
+        request_id = secrets.token_urlsafe(18)
+        key = (terminal_id, request_id)
+        future = asyncio.get_running_loop().create_future()
+        self._relay_requests[key] = future
+        try:
+            async with asyncio.timeout(timeout):
+                if not await self.send_to_connector(
+                    terminal_id, {**payload, "requestId": request_id}
+                ):
+                    raise TerminalRelayError("terminal relay is disconnected")
+                return await future
+        except TimeoutError:
+            raise TerminalRelayError("terminal relay request timed out", 504) from None
+        finally:
+            self._relay_requests.pop(key, None)
+            if not future.done():
+                future.cancel()
+            elif not future.cancelled():
+                future.exception()
+
+    async def relay_response(self, terminal_id: str, payload: dict[str, Any]) -> None:
+        if self._coordinator.distributed:
+            await self._publish("response", terminal_id, payload)
+        else:
+            self._resolve_relay_response(terminal_id, payload)
+
+    def _resolve_relay_response(
+        self, terminal_id: str, payload: dict[str, Any]
+    ) -> None:
+        request_id = payload.get("requestId")
+        if not isinstance(request_id, str):
+            return
+        future = self._relay_requests.get((terminal_id, request_id))
+        if future is None or future.done():
+            return
+        if payload.get("ok") is True:
+            future.set_result(payload.get("result"))
+        else:
+            error = payload.get("error")
+            error = error if isinstance(error, dict) else {}
+            code = error.get("code")
+            future.set_exception(
+                TerminalRelayError(
+                    str(error.get("message") or "terminal relay request failed"),
+                    code if isinstance(code, int) and 400 <= code <= 599 else 502,
+                )
+            )
+
+    def _fail_relay_requests(self, terminal_id: str) -> None:
+        for (tid, _), future in list(self._relay_requests.items()):
+            if tid == terminal_id and not future.done():
+                future.set_exception(
+                    TerminalRelayError("terminal relay is disconnected")
+                )
+
     async def _mutate(
         self,
         terminal_id: str,
@@ -749,6 +857,8 @@ class TerminalBroker:
                         await self._send_relay(terminal_id, relay, payload)
             elif kind in {"output", "exit"}:
                 await self._fan_out(terminal_id, payload)
+            elif kind == "response":
+                self._resolve_relay_response(terminal_id, payload)
             elif kind == "remove":
                 await self._close_local(terminal_id, exit_code=payload.get("exitCode"))
 
@@ -765,6 +875,23 @@ class TerminalBroker:
                     self._relay_ready.setdefault(terminal_id, asyncio.Event()).clear()
                     with suppress(Exception):
                         await relay.websocket.close()
+                else:
+                    term = await self.get(terminal_id)
+                    if term is not None and term.relay_mode == "attach":
+                        async with self._coordinator.client.pipeline(
+                            transaction=True
+                        ) as pipeline:
+                            pipeline.expire(
+                                self._terminal_key(terminal_id), TERMINAL_TTL_SECONDS
+                            )
+                            pipeline.expire(
+                                self._session_key(term.session_id), TERMINAL_TTL_SECONDS
+                            )
+                            pipeline.expire(
+                                self._connector_key(term.connector_id),
+                                TERMINAL_TTL_SECONDS,
+                            )
+                            await pipeline.execute()
             async with self._lock:
                 browser_leases = [
                     (terminal_id, state.lease_id)
@@ -855,6 +982,7 @@ class TerminalBroker:
                     return
 
     async def _close_local(self, terminal_id: str, *, exit_code: Any) -> None:
+        self._fail_relay_requests(terminal_id)
         async with self._lock:
             clients = list(self._clients.pop(terminal_id, {}))
         for client in clients:

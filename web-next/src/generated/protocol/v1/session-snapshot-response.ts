@@ -83,6 +83,7 @@ export type Lastsyncedat = string | null
 export type Latestturnendseq = number
 export type Pinned = boolean
 export type Pinnedat = string | null
+export type Projectid = string | null
 export type Runtime3 = "codex" | "claude" | "opencode" | "acp" | "dsh"
 export type Sortat = string | null
 export type Sourceavailability = "available" | "archived" | "unavailable" | "deleted" | "missing" | "unknown"
@@ -264,6 +265,7 @@ export interface SessionView {
   latestTurnEndSeq?: Latestturnendseq
   pinned?: Pinned
   pinnedAt?: Pinnedat
+  projectId?: Projectid
   runtime: Runtime3
   sortAt?: Sortat
   sourceAvailability?: Sourceavailability

@@ -69,6 +69,9 @@ class LocalOps:
     async def terminal_rename(self, params: dict[str, Any]) -> dict[str, Any]:
         return await self.terminal.rename(params)
 
+    async def terminal_set_persistent(self, params: dict[str, Any]) -> dict[str, Any]:
+        return await self.terminal.set_persistent(params)
+
     async def terminal_list(self, params: dict[str, Any]) -> dict[str, Any]:
         return await self.terminal.list(params)
 

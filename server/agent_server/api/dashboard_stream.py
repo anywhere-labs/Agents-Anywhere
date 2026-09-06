@@ -45,6 +45,7 @@ async def _dashboard_snapshot(
     user_id: str,
 ) -> dict[str, Any]:
     connectors = await db.list_connectors(user_id=user_id)
+    projects = await db.list_projects(user_id=user_id)
     active_page, active_has_more, active_cursor = await db.list_sessions_page(
         archived=False,
         limit=SESSION_PAGE_LIMIT,
@@ -70,6 +71,7 @@ async def _dashboard_snapshot(
                 connectors,
             )
         ],
+        "projects": [project.model_dump(mode="json") for project in projects],
         "sessions": [
             session.model_dump(mode="json")
             for session in sessions

@@ -24,6 +24,7 @@ import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.ui.designsystem.AAAppearanceMode
 import com.agentsanywhere.app.ui.designsystem.AALanguageMode
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereTheme
+import com.agentsanywhere.app.ui.screens.home.HomeSidebarViewMode
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +38,7 @@ class MainActivity : ComponentActivity() {
     private val appUpdateViewModel by viewModels<AppUpdateViewModel>()
     private var appearanceMode by mutableStateOf(AAAppearanceMode.System)
     private var languageMode by mutableStateOf(AALanguageMode.System)
+    private var sidebarViewMode by mutableStateOf(HomeSidebarViewMode.Project)
     private var pendingUpdateApk: File? = null
     private var installingUpdate = false
 
@@ -66,6 +68,9 @@ class MainActivity : ComponentActivity() {
             ?: AAAppearanceMode.System
         languageMode = preferences.getString(KEY_LANGUAGE_MODE, AALanguageMode.System)
             ?: AALanguageMode.System
+        sidebarViewMode = HomeSidebarViewMode.normalize(
+            preferences.getString(KEY_SIDEBAR_VIEW_MODE, HomeSidebarViewMode.Project),
+        )
         oauthCallbackUri.value = intent?.data
         appUpdateViewModel.checkForUpdate(showPrompt = true)
         setContent {
@@ -73,6 +78,7 @@ class MainActivity : ComponentActivity() {
                 AgentsAnywhereApp(
                     appearanceMode = appearanceMode,
                     languageMode = languageMode,
+                    sidebarViewMode = sidebarViewMode,
                     onAppearanceModeChange = { mode ->
                         appearanceMode = mode
                         preferences.edit().putString(KEY_APPEARANCE_MODE, mode).apply()
@@ -83,6 +89,10 @@ class MainActivity : ComponentActivity() {
                             languageMode = mode
                             recreate()
                         }
+                    },
+                    onSidebarViewModeChange = { mode ->
+                        sidebarViewMode = HomeSidebarViewMode.normalize(mode)
+                        preferences.edit().putString(KEY_SIDEBAR_VIEW_MODE, sidebarViewMode).apply()
                     },
                     oauthCallbackUri = oauthCallbackUri.value,
                     onOAuthCallbackConsumed = { oauthCallbackUri.value = null },
@@ -159,5 +169,6 @@ class MainActivity : ComponentActivity() {
         private const val UI_PREFERENCES_NAME = "agents_anywhere_ui"
         private const val KEY_APPEARANCE_MODE = "appearance_mode"
         private const val KEY_LANGUAGE_MODE = "language_mode"
+        private const val KEY_SIDEBAR_VIEW_MODE = "sidebar_view_mode"
     }
 }

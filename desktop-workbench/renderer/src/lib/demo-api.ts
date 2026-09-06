@@ -4,29 +4,6 @@
 
 export type UserRole = "admin" | "member"
 
-export type AuthConfig = {
-  needsBootstrap: boolean
-  registrationOpen: boolean
-  oauthRegistrationOpen: boolean
-  oauthEnabled: boolean
-  oauthProviderLabel?: string | null
-  setupTokenExpiresAt?: string | null
-}
-
-export type AuthResponse = {
-  userId: string
-  role: UserRole
-  accessToken: string
-  tokenType: "bearer" | string
-}
-
-export type AuthMe = {
-  userId: string
-  role: UserRole
-  disabled: boolean
-  avatar?: string | null
-}
-
 // ── Dashboard ──────────────────────────────────────────────
 
 export type ConnectorStatus = "online" | "offline"
@@ -36,6 +13,7 @@ export type ConnectorView = {
   userId: string
   name: string
   deviceOs?: "macos" | "windows" | "linux" | null
+  connectorKind?: "desktop" | "cli" | null
   status: ConnectorStatus
   lastSeenAt?: string | null
 }
@@ -196,8 +174,6 @@ export type FsEntry = {
 // Mock data fixtures
 // ─────────────────────────────────────────────────────────────
 
-const MOCK_TOKEN = "mock-token"
-
 const mockConnectors: ConnectorView[] = [
   {
     id: "conn-1",
@@ -252,22 +228,6 @@ const mockSessions: SessionView[] = [
   { id: "s20", connectorId: "conn-4", connectorStatus: "offline", runtime: "Claude", title: "这是猫还是狗", cwd: null, status: "idle", takeover: false, pinned: false, archived: false, unread: false, lastReadSeq: 1, latestTurnEndSeq: 1, updatedSeq: 1, updatedAt: "上周" },
   { id: "s21", connectorId: "conn-4", connectorStatus: "offline", runtime: "Claude", title: "这是猫还是鼠.", cwd: null, status: "idle", takeover: false, pinned: false, archived: false, unread: false, lastReadSeq: 1, latestTurnEndSeq: 1, updatedSeq: 1, updatedAt: "上周" },
 ]
-
-const mockMe: AuthMe = {
-  userId: "t4wefan",
-  role: "admin",
-  disabled: false,
-  avatar: null,
-}
-
-const mockAuthConfig: AuthConfig = {
-  needsBootstrap: false,
-  registrationOpen: true,
-  oauthRegistrationOpen: true,
-  oauthEnabled: true,
-  oauthProviderLabel: "GitLab",
-  setupTokenExpiresAt: null,
-}
 
 let mockUsers: AdminUser[] = [
   { userId: "t4wefan", role: "admin", disabled: false, avatar: null, createdAt: new Date(Date.now() - 86400000 * 7).toISOString(), updatedAt: new Date(Date.now() - 86400000 * 6).toISOString() },
@@ -351,27 +311,6 @@ const mockAgentConfigs: Record<string, AgentConfig[]> = {
 
 function delay(ms = 80): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
-}
-
-// Auth
-export async function getAuthConfig(): Promise<AuthConfig> {
-  await delay()
-  return { ...mockAuthConfig }
-}
-
-export async function login(_input: { userId: string; password?: string }): Promise<AuthResponse> {
-  await delay(200)
-  return { userId: mockMe.userId, role: mockMe.role, accessToken: MOCK_TOKEN, tokenType: "bearer" }
-}
-
-export async function register(_input: { userId: string; password?: string }): Promise<AuthResponse> {
-  await delay(200)
-  return { userId: _input.userId, role: "member", accessToken: MOCK_TOKEN, tokenType: "bearer" }
-}
-
-export async function getMe(_token: string): Promise<AuthMe> {
-  await delay()
-  return { ...mockMe }
 }
 
 // Dashboard
@@ -657,18 +596,9 @@ export async function fsList(
 export type FilterValue = {
   connectorId: string | "all"
   runtime: string | "all"
-  status: SessionStatusFilter
 }
 
-export type SessionStatusFilter = "all" | "archived"
-
-export const defaultFilter: FilterValue = { connectorId: "all", runtime: "all", status: "all" }
-
-function isUserArchived(session: SessionView): boolean {
-  if (typeof session.userArchived === "boolean") return session.userArchived
-  if (session.archiveSource) return session.archiveSource === "user" || session.archiveSource === "both"
-  return session.archived
-}
+export const defaultFilter: FilterValue = { connectorId: "all", runtime: "all" }
 
 export function filterSessions(
   list: SessionView[],
@@ -678,11 +608,7 @@ export function filterSessions(
   return list.filter((s) => {
     if (filter.connectorId !== "all" && s.connectorId !== filter.connectorId) return false
     if (filter.runtime !== "all" && s.runtime !== filter.runtime) return false
-    if (filter.status === "archived") {
-      if (!isUserArchived(s) || s.sourceAvailability === "archived") return false
-    } else {
-      if (s.archived) return false
-    }
+    if (s.archived) return false
     if (query.trim() && !(s.title ?? "").toLowerCase().includes(query.trim().toLowerCase())) return false
     return true
   })

@@ -3,49 +3,29 @@
 import * as React from "react"
 import { authApi } from "@/features/auth/api"
 import {
-  authResponseToSession,
   clearStoredSession,
   loadStoredSession,
   saveStoredSession,
 } from "@/features/auth/session"
-import type { AuthMe, OAuthFinalizePayload, StoredSession } from "@/features/auth/types"
+import type { AuthMe, StoredSession } from "@/features/auth/types"
+import { normalizeAuthMe, normalizeDesktopOAuthMe } from "@/features/auth/normalize-me"
+import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
 import { useTranslations } from "next-intl"
 
-export type AuthScreen =
-  | "bootstrap"
-  | "login"
-  | "register"
-  | "signed-out"
-  | "oauth-new-user"
-  | "oauth-link-existing"
-  | "mobile-oauth"
-  | "preview"
-  | "app"
-
-export type OAuthPending = {
-  status: "authenticated" | "needs_password" | "needs_registration"
-  pendingToken: string
-  userId: string
-}
+export type AuthScreen = "login" | "signed-out" | "preview" | "app"
 
 type AuthState = {
   screen: AuthScreen
-  needsBootstrap: boolean
   session: StoredSession | null
   me: AuthMe | null
   loading: boolean
   error: string | null
   isAuthenticated: boolean
-  oauthEnabled: boolean
-  oauthProviderLabel: string | null
-  oauthPending: OAuthPending | null
-  registrationOpen: boolean
+  desktopOAuthAvailable: boolean
+  emailVerificationRequired: boolean
+  refreshConfig: () => Promise<void>
   navigate: (screen: AuthScreen) => void
-  login: (input: { userId: string; password: string }) => Promise<void>
-  register: (input: { userId: string; password: string; setupToken?: string }) => Promise<void>
-  startOAuth: () => Promise<void>
-  finalizeOAuth: (input: { userId?: string; password?: string; setPassword?: boolean }) => Promise<void>
-  cancelOAuth: () => void
+  startDesktopOAuth: () => Promise<void>
   refreshMe: () => Promise<AuthMe | null>
   signOut: () => void
 }
@@ -60,129 +40,55 @@ export function useAuth() {
 
 function hashToScreen(hash: string): AuthScreen {
   const path = hash.replace(/^#\/?/, "").split("?")[0] ?? ""
-  const exactMap: Record<string, AuthScreen> = {
-    login: "login",
-    register: "register",
-    "signed-out": "signed-out",
-    "oauth/new": "oauth-new-user",
-    "oauth/link": "oauth-link-existing",
-    "mobile-oauth": "mobile-oauth",
-    preview: "preview",
-  }
-  if (exactMap[path]) return exactMap[path]
+  if (path === "login") return "login"
+  if (path === "signed-out") return "signed-out"
+  if (path === "preview") return "preview"
 
-  // Any app sub-route -> app. Default bare hash "/" is also app.
   const isAppRoute =
     path === "" ||
     path === "app" ||
     path.startsWith("session/") ||
+    path.startsWith("new-session/") ||
     path.startsWith("settings") ||
     path === "dashboard" ||
     path === "team" ||
     path === "service" ||
+    path === "mobile-connections" ||
     path.startsWith("device")
 
-  if (isAppRoute) return "app"
-
-  return "login"
+  return isAppRoute ? "app" : "login"
 }
 
-function screenToHash(s: AuthScreen): string {
+function screenToHash(screen: AuthScreen): string {
   const map: Record<AuthScreen, string> = {
-    bootstrap: "#/bootstrap",
     login: "#/login",
-    register: "#/register",
     "signed-out": "#/signed-out",
-    "oauth-new-user": "#/oauth/new",
-    "oauth-link-existing": "#/oauth/link",
-    "mobile-oauth": "#/mobile-oauth",
     preview: "#/preview",
     app: "#/",
   }
-  return map[s] ?? "#/login"
-}
-
-function readOAuthPendingFromUrl(): OAuthPending | null {
-  const params = new URLSearchParams(window.location.search)
-  const pendingToken = params.get("oauth_pending")
-  const status = params.get("oauth_status") as OAuthPending["status"] | null
-  if (!pendingToken || !status) return null
-  if (status !== "authenticated" && status !== "needs_password" && status !== "needs_registration") return null
-  return {
-    status,
-    pendingToken,
-    userId: params.get("oauth_user") ?? "",
-  }
-}
-
-function readOAuthErrorFromUrl(): string | null {
-  return new URLSearchParams(window.location.search).get("oauth_error")
-}
-
-function clearOAuthQueryParams() {
-  const url = new URL(window.location.href)
-  const hadOAuthParams =
-    url.searchParams.has("oauth_pending") ||
-    url.searchParams.has("oauth_status") ||
-    url.searchParams.has("oauth_user") ||
-    url.searchParams.has("oauth_error")
-  if (!hadOAuthParams) return
-  url.searchParams.delete("oauth_pending")
-  url.searchParams.delete("oauth_status")
-  url.searchParams.delete("oauth_user")
-  url.searchParams.delete("oauth_error")
-  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`)
+  return map[screen]
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const t = useTranslations("auth")
-  // Start with "login" for safe SSR, then immediately correct from hash on mount.
   const [screen, setScreenState] = React.useState<AuthScreen>("login")
   const [session, setSession] = React.useState<StoredSession | null>(null)
   const [me, setMe] = React.useState<AuthMe | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
-  const [oauthEnabled, setOauthEnabled] = React.useState(false)
-  const [oauthProviderLabel, setOauthProviderLabel] = React.useState<string | null>(null)
-  const [oauthPending, setOauthPending] = React.useState<OAuthPending | null>(null)
-  const [registrationOpen, setRegistrationOpen] = React.useState(false)
+  const [emailVerificationRequired, setEmailVerificationRequired] = React.useState(false)
+  const refreshConfig = React.useCallback(async () => {
+    const config = await authApi.config()
+    setEmailVerificationRequired(config.emailVerificationRequired)
+  }, [])
+  const desktopAuthBridge = getDesktopWorkbenchBridge()?.auth ?? null
 
-  // On mount: set screen from the current hash, then listen for changes.
   React.useEffect(() => {
     let cancelled = false
     const stored = loadStoredSession()
     const nextScreen = hashToScreen(window.location.hash)
-    const initialOAuthPending = readOAuthPendingFromUrl()
-    const initialOAuthError = readOAuthErrorFromUrl()
-    clearOAuthQueryParams()
 
     async function boot() {
-      if (initialOAuthError && !cancelled) {
-        setError(initialOAuthError)
-      }
-      try {
-        const config = await authApi.config()
-        if (!cancelled) {
-          setOauthEnabled(config.oauthEnabled)
-          setOauthProviderLabel(config.oauthProviderLabel)
-          setRegistrationOpen(config.registrationOpen)
-        }
-        if (config.needsBootstrap && !cancelled) {
-          setScreenState("bootstrap")
-          setLoading(false)
-          return
-        }
-      } catch {
-        // Server unreachable — fall through to normal auth flow.
-      }
-      if (initialOAuthPending) {
-        setOauthPending(initialOAuthPending)
-        if (!cancelled) {
-          setScreenState(initialOAuthPending.status === "needs_registration" ? "oauth-new-user" : "oauth-link-existing")
-          setLoading(false)
-        }
-        return
-      }
       if (!stored) {
         if (!cancelled) {
           setScreenState(nextScreen === "app" ? "login" : nextScreen)
@@ -190,12 +96,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         return
       }
+
       setSession(stored)
       try {
-        const currentUser = await authApi.me(stored.accessToken)
+        const currentUser = normalizeAuthMe(await authApi.me(stored.accessToken), stored)
         if (cancelled) return
         setMe(currentUser)
-        setScreenState(nextScreen === "login" || nextScreen === "register" ? "app" : nextScreen)
+        setScreenState(nextScreen === "login" ? "app" : nextScreen)
       } catch {
         clearStoredSession()
         if (cancelled) return
@@ -208,154 +115,101 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     void boot()
-    const handler = () => setScreenState(hashToScreen(window.location.hash))
-    window.addEventListener("hashchange", handler)
+    const handleHashChange = () => setScreenState(hashToScreen(window.location.hash))
+    window.addEventListener("hashchange", handleHashChange)
     return () => {
       cancelled = true
-      window.removeEventListener("hashchange", handler)
+      window.removeEventListener("hashchange", handleHashChange)
     }
   }, [])
 
-  const navigate = React.useCallback((s: AuthScreen) => {
-    window.location.hash = screenToHash(s)
-    if (s === "login") setOauthPending(null)
-    setScreenState(s)
+  const navigate = React.useCallback((nextScreen: AuthScreen) => {
+    window.location.hash = screenToHash(nextScreen)
+    setScreenState(nextScreen)
   }, [])
 
-  const finishAuth = React.useCallback(async (auth: Parameters<typeof authResponseToSession>[0]) => {
-    const nextSession = authResponseToSession(auth)
+  const finishDesktopOAuth = React.useCallback(async (accessToken: string) => {
+    const currentUser = normalizeDesktopOAuthMe(await authApi.me(accessToken))
+    const nextSession: StoredSession = {
+      accessToken,
+      userId: currentUser.userId,
+      role: currentUser.role,
+    }
     saveStoredSession(nextSession)
     setSession(nextSession)
-    const currentUser = await authApi.me(nextSession.accessToken)
     setMe(currentUser)
     setError(null)
-    setOauthPending(null)
-    const postAuthScreen = hashToScreen(window.location.hash)
-    if (postAuthScreen === "mobile-oauth") {
-      setScreenState("mobile-oauth")
-      return
-    }
     window.location.hash = "#/"
     setScreenState("app")
   }, [])
 
   React.useEffect(() => {
-    if (!oauthPending || oauthPending.status !== "authenticated") return
+    if (!desktopAuthBridge) return
     let cancelled = false
-    const pendingToken = oauthPending.pendingToken
-    async function finalizeAuthenticatedOAuth() {
-      setLoading(true)
-      setError(null)
+    let consuming = false
+
+    const consumeResult = async () => {
+      if (consuming) return
+      consuming = true
       try {
-        const result = await authApi.finalizeOAuth({ pendingToken })
-        if (!cancelled) await finishAuth(result.auth)
+        const result = await desktopAuthBridge.consumeOAuthResult()
+        if (!result || cancelled) return
+        if (result.status === "error") {
+          setError(result.error)
+          setScreenState("login")
+          return
+        }
+
+        setLoading(true)
+        setError(null)
+        await finishDesktopOAuth(result.accessToken)
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : t("errors.oauth"))
-          setOauthPending(null)
           setScreenState("login")
         }
       } finally {
+        consuming = false
         if (!cancelled) setLoading(false)
       }
     }
-    void finalizeAuthenticatedOAuth()
+
+    const unsubscribe = desktopAuthBridge.onOAuthResult(() => void consumeResult())
+    void consumeResult()
     return () => {
       cancelled = true
+      if (typeof unsubscribe === "function") unsubscribe()
     }
-  }, [finishAuth, oauthPending, t])
+  }, [desktopAuthBridge, finishDesktopOAuth, t])
 
-  const login = React.useCallback(
-    async (input: { userId: string; password: string }) => {
-      setLoading(true)
-      setError(null)
-      try {
-        await finishAuth(await authApi.login(input))
-      } catch (err) {
-        setError(err instanceof Error ? err.message : t("errors.loginFailed"))
-        throw err
-      } finally {
-        setLoading(false)
-      }
-    },
-    [finishAuth, t],
-  )
-
-  const register = React.useCallback(
-    async (input: { userId: string; password: string; setupToken?: string }) => {
-      setLoading(true)
-      setError(null)
-      try {
-        await finishAuth(await authApi.register(input))
-      } catch (err) {
-        setError(err instanceof Error ? err.message : t("errors.registerFailed"))
-        throw err
-      } finally {
-        setLoading(false)
-      }
-    },
-    [finishAuth, t],
-  )
-
-  const startOAuth = React.useCallback(async () => {
+  const startDesktopOAuth = React.useCallback(async () => {
+    if (!desktopAuthBridge) return
     setLoading(true)
     setError(null)
     try {
-      const result = await authApi.startOAuth(window.location.href)
-      window.location.assign(result.authorizeUrl)
+      await desktopAuthBridge.startOAuth()
     } catch (err) {
       setError(err instanceof Error ? err.message : t("errors.oauth"))
-      setLoading(false)
       throw err
+    } finally {
+      setLoading(false)
     }
-  }, [t])
-
-  const finalizeOAuth = React.useCallback(
-    async (input: { userId?: string; password?: string; setPassword?: boolean }) => {
-      if (!oauthPending) return
-      setLoading(true)
-      setError(null)
-      try {
-        const payload: OAuthFinalizePayload = {
-          pendingToken: oauthPending.pendingToken,
-          userId: input.userId?.trim().toLowerCase() || undefined,
-          password: input.password || undefined,
-          setPassword: Boolean(input.setPassword),
-        }
-        const result = await authApi.finalizeOAuth(payload)
-        await finishAuth(result.auth)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : t("errors.oauth"))
-        throw err
-      } finally {
-        setLoading(false)
-      }
-    },
-    [finishAuth, oauthPending, t],
-  )
-
-  const cancelOAuth = React.useCallback(() => {
-    setOauthPending(null)
-    setError(null)
-    window.location.hash = "#/login"
-    setScreenState("login")
-  }, [])
+  }, [desktopAuthBridge, t])
 
   const refreshMe = React.useCallback(async () => {
     if (!session?.accessToken) {
       setMe(null)
       return null
     }
-    const currentUser = await authApi.me(session.accessToken)
+    const currentUser = normalizeAuthMe(await authApi.me(session.accessToken), session)
     setMe(currentUser)
     return currentUser
-  }, [session?.accessToken])
+  }, [session])
 
   const signOut = React.useCallback(() => {
     clearStoredSession()
     setSession(null)
     setMe(null)
-    setOauthPending(null)
     window.location.hash = "#/signed-out"
     setScreenState("signed-out")
   }, [])
@@ -364,23 +218,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     <AuthContext.Provider
       value={{
         screen,
-        needsBootstrap: screen === "bootstrap",
         session,
         me,
         loading,
         error,
         isAuthenticated: Boolean(session),
-        oauthEnabled,
-        oauthProviderLabel,
-        oauthPending,
-        registrationOpen,
+        desktopOAuthAvailable: Boolean(desktopAuthBridge),
+        emailVerificationRequired,
+        refreshConfig,
         navigate,
-
-        login,
-        register,
-        startOAuth,
-        finalizeOAuth,
-        cancelOAuth,
+        startDesktopOAuth,
         refreshMe,
         signOut,
       }}

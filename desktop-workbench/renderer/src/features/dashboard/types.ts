@@ -34,6 +34,7 @@ export type ConnectorView = {
   userId: string;
   name: string;
   deviceOs?: "macos" | "windows" | "linux" | null;
+  connectorKind?: "desktop" | "cli" | null;
   status: ConnectorStatus;
   lastSeenAt: string | null;
   createdAt: string;
@@ -130,6 +131,7 @@ export type RuntimeStatusValue = SessionStatusValue | "error" | "disconnected";
 export type SessionView = {
   id: string;
   connectorId: string;
+  projectId?: string | null;
   connectorStatus: ConnectorStatus;
   runtime: string;
   runtimeId?: string;
@@ -255,6 +257,7 @@ export type SessionCommandListResponse = {
 export type DashboardSnapshotMessage = {
   type: "dashboard.snapshot";
   connectors: ConnectorView[];
+  projects: ProjectView[];
   sessions: SessionView[];
   sessionPages: {
     active: SessionPageInfo;
@@ -276,8 +279,58 @@ export type SessionResponse = {
   serverTime: string;
 };
 
+export type ProjectView = {
+  id: string;
+  userId: string;
+  connectorId: string;
+  name: string;
+  workspacePath: string;
+  manuallyCreated?: boolean;
+  sidebarSessionCounts?: { active: number; archived: number };
+  pinned: boolean;
+  pinnedAt: string | null;
+  activeSessionCount: number;
+  lastActivityAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProjectListResponse = {
+  projects: ProjectView[];
+  serverTime: string;
+};
+
+export type ProjectResponse = {
+  project: ProjectView;
+  serverTime: string;
+};
+
+export type ProjectCreateRequest = {
+  name: string;
+  connectorId: string;
+  workspacePath: string;
+};
+
+export type ProjectCreateResponse = ProjectResponse & {
+  attachedSessions: number;
+};
+
+export type ProjectPatchRequest = {
+  name?: string;
+  pinned?: boolean;
+};
+
+export type ProjectDeleteResponse = {
+  projectId: string;
+  detachedSessions: number;
+  serverTime: string;
+};
+
+export type ProjectSessionListResponse = SessionListResponse;
+
 export type SessionCreateRequest = {
   connectorId: string;
+  projectId: string;
   runtime: string;
   runtimeId?: string;
   externalSessionId?: string | null;
@@ -288,6 +341,7 @@ export type SessionCreateRequest = {
 
 export type SessionCreateAndStartRequest = {
   connectorId: string;
+  projectId: string;
   runtime: string;
   runtimeId?: string;
   title?: string;
@@ -547,6 +601,8 @@ export type FsListResult = {
   path: string;
   entries: FsEntry[];
   truncated?: boolean;
+  targetPath?: string | null;
+  targetType?: "directory" | "file" | "missing" | "other" | string | null;
 };
 
 export type FsReadTextResult = {
@@ -618,12 +674,15 @@ export type TerminalView = {
   scrollbackBytes: number;
   scrollbackSeq: number;
   ephemeralGroupId?: string | null;
+  persistent?: boolean;
   createdAt: string;
 };
 
 export type TerminalCreateRequest = {
   cols: number;
   rows: number;
+  /** Use the renewable persistent lease instead of the ordinary Connector idle TTL. */
+  persistent?: boolean;
   label?: string;
   cwd?: string;
   shell?: string;

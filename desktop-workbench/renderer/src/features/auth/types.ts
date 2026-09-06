@@ -2,6 +2,7 @@ export type UserRole = "admin" | "member";
 
 export type AuthConfig = {
   needsBootstrap: boolean;
+  emailVerificationRequired: boolean;
   registrationOpen: boolean;
   oauthRegistrationOpen: boolean;
   oauthEnabled: boolean;
@@ -10,16 +11,11 @@ export type AuthConfig = {
   serverTime: string;
 };
 
-export type AuthResponse = {
-  userId: string;
-  role: UserRole;
-  accessToken: string;
-  tokenType: string;
-  serverTime: string;
-};
-
 export type AuthMe = {
   userId: string;
+  email: string | null;
+  displayName: string;
+  emailVerified: boolean;
   role: UserRole;
   disabled: boolean;
   avatar: string | null;
@@ -30,53 +26,6 @@ export type ChangePasswordRequest = {
   newPassword?: string;
   newPasswordVerifier?: string;
   newPasswordSalt?: string;
-};
-
-export type AuthCredentials = {
-  userId: string;
-  password?: string;
-  passwordVerifier?: string;
-  passwordSalt?: string;
-  setupToken?: string;
-};
-
-export type AuthPasswordSaltResponse = {
-  salt: string;
-  serverTime: string;
-};
-
-export type OAuthStartResponse = {
-  authorizeUrl: string;
-  serverTime: string;
-};
-
-export type OAuthAuthorizePayload = {
-  response_type: string;
-  client_id: string;
-  redirect_uri: string;
-  code_challenge: string;
-  code_challenge_method?: string;
-  scope?: string;
-  state?: string;
-};
-
-export type OAuthAuthorizeResponse = {
-  redirectUrl: string;
-  serverTime: string;
-};
-
-export type OAuthFinalizePayload = {
-  pendingToken: string;
-  userId?: string;
-  password?: string;
-  passwordVerifier?: string;
-  passwordSalt?: string;
-  setPassword?: boolean;
-};
-
-export type OAuthFinalizeResponse = {
-  auth: AuthResponse;
-  serverTime: string;
 };
 
 export type OAuthProviderConfig = {
@@ -112,7 +61,21 @@ export type AdminUserListResponse = {
   serverTime: string;
 };
 
+export type EmailSettings = {
+  enabled: boolean;
+  fromAddress: string;
+  apiKeyConfigured: boolean;
+};
+
+export type EmailSettingsUpdate = {
+  enabled: boolean;
+  fromAddress: string;
+  apiKey?: string;
+  clearApiKey?: boolean;
+};
+
 export type InstanceSettings = {
+  email: EmailSettings;
   registrationOpen: boolean;
   oauthRegistrationOpen: boolean;
   oauth: OAuthProviderConfig | null;

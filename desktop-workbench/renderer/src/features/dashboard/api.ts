@@ -1,4 +1,5 @@
 import { ApiClient, apiClient, apiPath } from "@/lib/api";
+import { shouldAuthorizeDownloadUrl } from "@/lib/api/download-auth";
 import type {
   AdminDashboardOverviewResponse,
   AdminDashboardSettings,
@@ -32,6 +33,13 @@ import type {
   ProtocolModelCatalogResponse,
   ProtocolPermissionCatalogResponse,
   PublicSessionShareResponse,
+  ProjectCreateRequest,
+  ProjectCreateResponse,
+  ProjectDeleteResponse,
+  ProjectListResponse,
+  ProjectPatchRequest,
+  ProjectResponse,
+  ProjectSessionListResponse,
   RpcResponse,
   RuntimeTypeListResponse,
   SessionCommandListResponse,
@@ -179,6 +187,59 @@ export class DashboardApi {
 
   pollPairing(pairingId: string): Promise<PairingPollResponse> {
     return this.client.post<PairingPollResponse>("/pairing/poll", { pairingId }, { auth: false });
+  }
+
+  listProjects(token: string): Promise<ProjectListResponse> {
+    return this.client.get<ProjectListResponse>("/projects", { token });
+  }
+
+  createProject(
+    token: string,
+    body: ProjectCreateRequest,
+  ): Promise<ProjectCreateResponse> {
+    return this.client.post<ProjectCreateResponse>("/projects", body, { token });
+  }
+
+  updateProject(
+    token: string,
+    projectId: string,
+    body: ProjectPatchRequest,
+  ): Promise<ProjectResponse> {
+    return this.client.patch<ProjectResponse>(
+      `/projects/${encodeURIComponent(projectId)}`,
+      body,
+      { token },
+    );
+  }
+
+  deleteProject(token: string, projectId: string): Promise<ProjectDeleteResponse> {
+    return this.client.delete<ProjectDeleteResponse>(
+      `/projects/${encodeURIComponent(projectId)}`,
+      { token },
+    );
+  }
+
+  listProjectSessions(
+    token: string,
+    projectId: string,
+    query: { archived?: boolean; limit?: number; cursor?: string | null } = {},
+  ): Promise<ProjectSessionListResponse> {
+    return this.client.get<ProjectSessionListResponse>(
+      `/projects/${encodeURIComponent(projectId)}/sessions`,
+      { token, query },
+    );
+  }
+
+  archiveProjectSessions(
+    token: string,
+    projectId: string,
+    body: { archived: boolean; scope?: ArchiveAllScope },
+  ): Promise<ArchiveAllResponse> {
+    return this.client.post<ArchiveAllResponse>(
+      `/projects/${encodeURIComponent(projectId)}/sessions/archive-all`,
+      body,
+      { token },
+    );
   }
 
   listSessions(
@@ -475,7 +536,7 @@ export class DashboardApi {
 
   async downloadBlob(token: string | null, url: string): Promise<Blob> {
     const headers: HeadersInit = {};
-    if (token) headers.authorization = `Bearer ${token}`;
+    if (token && shouldAuthorizeDownloadUrl(url)) headers.authorization = `Bearer ${token}`;
     const response = await fetch(url, {
       headers,
     });
@@ -551,10 +612,11 @@ export class DashboardApi {
     token: string,
     connectorId: string,
     terminalId: string,
+    signal?: AbortSignal,
   ): Promise<RpcResponse<unknown>> {
     return this.client.delete<RpcResponse<unknown>>(
       `/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminalId)}`,
-      { token },
+      { token, signal },
     );
   }
 
@@ -567,6 +629,19 @@ export class DashboardApi {
     return this.client.patch<RpcResponse<TerminalResponse["terminal"]>>(
       `/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminalId)}`,
       { label },
+      { token },
+    );
+  }
+
+  connectorTerminalSetPersistenceV2(
+    token: string,
+    connectorId: string,
+    terminalId: string,
+    persistent: boolean,
+  ): Promise<RpcResponse<TerminalResponse["terminal"]>> {
+    return this.client.patch<RpcResponse<TerminalResponse["terminal"]>>(
+      `/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminalId)}/persistence`,
+      { persistent },
       { token },
     );
   }

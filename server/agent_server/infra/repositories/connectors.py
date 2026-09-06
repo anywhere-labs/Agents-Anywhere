@@ -221,7 +221,13 @@ class ConnectorRepositoryMixin:
             )
 
 
-    async def create_connector(self, *, name: str, user_id: str) -> tuple[ConnectorView, str, str]:
+    async def create_connector(
+        self,
+        *,
+        name: str,
+        user_id: str,
+        connector_kind: ConnectorKind = "cli",
+    ) -> tuple[ConnectorView, str, str]:
         connector_id = f"conn_{secrets.token_urlsafe(10)}"
         token = _new_connector_token()
         prefix = token[:12]
@@ -232,6 +238,7 @@ class ConnectorRepositoryMixin:
                     id=connector_id,
                     user_id=user_id,
                     name=name,
+                    connector_kind=connector_kind,
                     status="offline",
                     token_hash=_hash_token(token),
                     token_prefix=prefix,
@@ -304,7 +311,11 @@ class ConnectorRepositoryMixin:
                 raise ValueError("invalid connector credential")
             token = connector_token
         else:
-            connector, token, _ = await self.create_connector(name=name, user_id=user_id)
+            connector, token, _ = await self.create_connector(
+                name=name,
+                user_id=user_id,
+                connector_kind="cli",
+            )
 
         values: dict[str, Any] = {
             "status": "claimed",
@@ -612,6 +623,7 @@ class ConnectorRepositoryMixin:
             id=row["id"],
             userId=row["user_id"],
             name=row["name"],
+            connectorKind=row["connector_kind"],
             deviceOs=row["device_os"],
             status=row["status"],
             lastSeenAt=row["last_seen_at"],

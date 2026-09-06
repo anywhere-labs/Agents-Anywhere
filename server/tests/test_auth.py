@@ -878,6 +878,44 @@ def test_first_party_oauth_authorize_json_returns_app_callback(tmp_path):
     assert params["code"]
 
 
+def test_desktop_oauth_authorization_code_pkce_round_trip(tmp_path):
+    client = make_client(tmp_path)
+    token = admin_token(client)
+    verifier = "desktop-test-verifier-value"
+    auth = client.get(
+        "/oauth/authorize",
+        headers=bearer(token),
+        params={
+            "response_type": "code",
+            "client_id": "agents-anywhere-desktop",
+            "redirect_uri": "agents-anywhere-desktop://oauth/callback",
+            "code_challenge": pkce_challenge(verifier),
+            "code_challenge_method": "S256",
+            "scope": "profile",
+            "state": "desktop-state",
+        },
+        follow_redirects=False,
+    )
+    assert auth.status_code in (302, 307), auth.text
+    redirected = urlparse(auth.headers["location"])
+    params = parse_qs(redirected.query)
+    assert redirected.scheme == "agents-anywhere-desktop"
+    assert params["state"] == ["desktop-state"]
+
+    exchanged = client.post(
+        "/oauth/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": params["code"][0],
+            "client_id": "agents-anywhere-desktop",
+            "redirect_uri": "agents-anywhere-desktop://oauth/callback",
+            "code_verifier": verifier,
+        },
+    )
+    assert exchanged.status_code == 200, exchanged.text
+    assert exchanged.json()["access_token"]
+
+
 def test_oauth_authorize_rejects_unregistered_redirects(tmp_path):
     client = make_client(tmp_path)
     token = admin_token(client)

@@ -25,6 +25,12 @@ TERMINAL_IDLE_TTL_SECONDS = 30 * 60
 TERMINAL_CLOSED_TTL_SECONDS = 15 * 60
 TERMINAL_MAX_RECORDS = 32
 TERMINAL_REAPER_POLL_SECONDS = 30
+TERMINAL_PERSISTENT_LEASE_TTL_SECONDS = 24 * 60 * 60
+TERMINAL_PERSISTENT_LEASE_MIN_SECONDS = 60
+
+
+class TerminalNotFoundError(RuntimeError):
+    code = "terminal_not_found"
 
 
 class TerminalBackend:
@@ -35,6 +41,7 @@ class TerminalBackend:
         idle_ttl_seconds: float | None = None,
         closed_ttl_seconds: float | None = None,
         reaper_poll_seconds: float | None = None,
+        persistent_lease_ttl_seconds: float | None = None,
     ) -> None:
         self.notify = notify
         self._terminals: dict[str, dict[str, Any]] = {}
@@ -54,6 +61,19 @@ class TerminalBackend:
                 "AGENT_CONNECTOR_TERMINAL_REAPER_POLL_SECONDS",
                 TERMINAL_REAPER_POLL_SECONDS,
                 reaper_poll_seconds,
+            ),
+        )
+        minimum_persistent_lease = (
+            0.1
+            if persistent_lease_ttl_seconds is not None
+            else TERMINAL_PERSISTENT_LEASE_MIN_SECONDS
+        )
+        self._persistent_lease_ttl_seconds = max(
+            minimum_persistent_lease,
+            _env_float(
+                "AGENT_CONNECTOR_TERMINAL_PERSISTENT_LEASE_TTL_SECONDS",
+                TERMINAL_PERSISTENT_LEASE_TTL_SECONDS,
+                persistent_lease_ttl_seconds,
             ),
         )
 
@@ -78,6 +98,9 @@ class TerminalBackend:
         label = params.get("label")
         if not isinstance(label, str) or not label.strip():
             label = "Shell"
+        raw_persistent = params.get("persistent", False)
+        if not isinstance(raw_persistent, bool):
+            raise ValueError("persistent must be a boolean")
         command = params.get("command")
         raw_args = params.get("args")
         if command is not None and not isinstance(command, str):
@@ -112,6 +135,12 @@ class TerminalBackend:
             "shell": shell_cmd,
             "command": command,
             "args": args,
+            "persistent": raw_persistent,
+            "persistentLeaseDeadlineMono": (
+                now_mono + self._persistent_lease_ttl_seconds
+                if raw_persistent
+                else None
+            ),
             "closed": False,
             "status": "running",
             "exitCode": None,
@@ -126,6 +155,7 @@ class TerminalBackend:
             "chunksBytes": 0,
             "seq": 0,
             "output": output,
+            "relayOnly": output is not None or params.get("outputTransport") == "relay",
         }
         record["task"] = asyncio.create_task(self._pump_terminal_output(record))
         record["reaperTask"] = asyncio.create_task(self._reap_terminal(record))
@@ -146,6 +176,7 @@ class TerminalBackend:
             "exitCode": record["exitCode"],
             "scrollbackBytes": 0,
             "scrollbackSeq": 0,
+            "persistent": record["persistent"],
             "createdAt": record["createdAt"],
         }
 
@@ -191,6 +222,16 @@ class TerminalBackend:
         record = self._terminals.get(terminal_id)
         if record is None:
             return {"terminalId": terminal_id, "closed": True}
+        if record.get("relayOnly"):
+            await self._notify(
+                "terminal.exited",
+                {
+                    "terminalId": terminal_id,
+                    "sessionId": record["sessionId"],
+                    "exitCode": record["exitCode"],
+                    "reason": "closed",
+                },
+            )
         await self._kill_terminal(record)
         self._forget_terminal(terminal_id)
         return {"terminalId": terminal_id, "closed": True}
@@ -207,13 +248,52 @@ class TerminalBackend:
         record["label"] = label
         return self._terminal_view(record)
 
-    async def release(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def set_persistent(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._gc()
+        terminal_id = required_string(params, "terminalId")
+        record = self._terminals.get(terminal_id)
+        if record is None:
+            raise TerminalNotFoundError(f"terminal not found: {terminal_id}")
+        persistent = params.get("persistent")
+        if not isinstance(persistent, bool):
+            raise ValueError("persistent must be a boolean")
+        record["persistent"] = persistent
+        record["persistentLeaseDeadlineMono"] = (
+            time.monotonic() + self._persistent_lease_ttl_seconds
+            if persistent
+            else None
+        )
+        return self._terminal_view(record)
+
+    def prepare_relay(self, params: dict[str, Any]) -> None:
+        terminal_id = required_string(params, "terminalId")
+        record = self._terminals.get(terminal_id)
+        if record is None or record["sessionId"] != required_string(
+            params, "sessionId"
+        ):
+            raise TerminalNotFoundError(f"terminal not found: {terminal_id}")
+        record["relayOnly"] = True
+
+    async def attach(
+        self, params: dict[str, Any], *, output: TerminalOutput
+    ) -> dict[str, Any]:
+        terminal_id = required_string(params, "terminalId")
+        self.prepare_relay(params)
+        record = self._terminals[terminal_id]
+        record["output"] = output
+        return await self.snapshot(params)
+
+    async def release(
+        self, params: dict[str, Any], *, output: TerminalOutput | None = None
+    ) -> dict[str, Any]:
         self._gc()
         terminal_id = required_string(params, "terminalId")
         record = self._terminals.get(terminal_id)
         if record is None:
             return {"terminalId": terminal_id, "released": True}
-        record["output"] = None
+        # A replaced relay must not detach the newer connection's output sink.
+        if output is None or record["output"] is output:
+            record["output"] = None
         return {"terminalId": terminal_id, "released": True}
 
     async def list(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -226,7 +306,9 @@ class TerminalBackend:
             items.append(self._terminal_view(record))
         return {"terminals": items}
 
-    async def snapshot(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def snapshot(
+        self, params: dict[str, Any], *, include_scrollback: bool = True
+    ) -> dict[str, Any]:
         self._gc()
         terminal_id = required_string(params, "terminalId")
         record = self._terminals.get(terminal_id)
@@ -242,7 +324,13 @@ class TerminalBackend:
             "terminal": self._terminal_view(record),
             "baseSeq": record["scrollbackBaseSeq"],
             "seq": record["seq"],
-            "dataBase64": base64.b64encode(bytes(record["scrollback"])).decode("ascii"),
+            # Incremental relay reads should not re-encode the entire 512 KiB
+            # buffer for each PTY chunk. A gap still requires a full replay.
+            "dataBase64": (
+                base64.b64encode(bytes(record["scrollback"])).decode("ascii")
+                if include_scrollback or from_seq < record["scrollbackBaseSeq"]
+                else ""
+            ),
             "outputs": outputs,
         }
 
@@ -339,12 +427,24 @@ class TerminalBackend:
                 last_activity_at = record.get("lastActivityAtMono")
                 if not isinstance(last_activity_at, (int, float)):
                     last_activity_at = record.get("createdAtMono") or now
+                if record["persistent"]:
+                    lease_deadline = record.get("persistentLeaseDeadlineMono")
+                    if not isinstance(lease_deadline, (int, float)) or now >= lease_deadline:
+                        await self._expire_terminal(record, reason="persistent_lease_expired")
+                        return
+                    await asyncio.sleep(
+                        min(
+                            self._reaper_poll_seconds,
+                            max(0.1, lease_deadline - now),
+                        )
+                    )
+                    continue
                 if self._idle_ttl_seconds <= 0:
                     await asyncio.sleep(self._reaper_poll_seconds)
                     continue
                 idle_for = now - last_activity_at
                 if idle_for >= self._idle_ttl_seconds:
-                    await self._expire_idle_terminal(record)
+                    await self._expire_terminal(record, reason="idle_timeout")
                     return
                 await asyncio.sleep(
                     min(
@@ -355,7 +455,7 @@ class TerminalBackend:
         except asyncio.CancelledError:
             raise
 
-    async def _expire_idle_terminal(self, record: dict[str, Any]) -> None:
+    async def _expire_terminal(self, record: dict[str, Any], *, reason: str) -> None:
         if record["closed"] or self._terminals.get(record["id"]) is not record:
             return
         try:
@@ -365,7 +465,7 @@ class TerminalBackend:
                     "terminalId": record["id"],
                     "sessionId": record["sessionId"],
                     "exitCode": None,
-                    "reason": "idle_timeout",
+                    "reason": reason,
                 },
             )
         finally:
@@ -379,6 +479,8 @@ class TerminalBackend:
             output = record.get("output") if record is not None else None
             if output is not None:
                 await output(method, params)
+                return
+            if record is not None and record.get("relayOnly"):
                 return
         if self.notify is not None:
             await self.notify(method, params)

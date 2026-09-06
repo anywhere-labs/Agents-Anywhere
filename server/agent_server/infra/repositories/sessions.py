@@ -5,14 +5,12 @@ from __future__ import annotations
 from sqlalchemy import case
 
 from agent_server.infra.repositories.store_support import *
+from agent_server.infra.repositories.projects import _clean_workspace_path
 from agent_server.core.models import TimelineItem
 
 
 SESSION_CURSOR_VERSION = 1
 _SESSION_INVENTORY_UPDATE_CHUNK_SIZE = 4_000
-RUNTIME_ARCHIVED_SOURCE_STATES = frozenset(
-    {"archived", "unavailable", "deleted", "missing"}
-)
 
 
 def _normalized_source_availability(value: Any) -> str:
@@ -32,14 +30,23 @@ def _normalized_source_availability(value: Any) -> str:
     return "unknown"
 
 
-def _effective_archived_expression() -> Any:
-    return or_(
-        sessions_t.c.archived == 1,
-        and_(
-            sessions_t.c.runtime != "dsh",
-            sessions_t.c.source_state.in_(RUNTIME_ARCHIVED_SOURCE_STATES),
-        ),
-    )
+def _source_archive_update(
+    previous_source_state: str | None,
+    source_state: str | None,
+    *,
+    archived: bool | int,
+    observed_at: str,
+) -> dict[str, Any]:
+    # Import a newly observed archive once. Repeated observations must not undo
+    # a later unarchive in AA. Missing/unavailable observations do not establish
+    # a new archive transition, and source recovery must not unarchive AA.
+    if (
+        source_state == "archived"
+        and previous_source_state in {None, "visible", "available"}
+        and not archived
+    ):
+        return {"archived": 1, "archived_at": observed_at, "dsh_archive_legacy": 0}
+    return {}
 
 
 def _latest_timeline_item_subquery() -> Any:
@@ -215,6 +222,7 @@ class SessionRepositoryMixin:
         self,
         *,
         connector_id: str,
+        project_id: str | None = None,
         user_id: str | None = None,
         runtime: str,
         runtime_id: str | None = None,
@@ -230,7 +238,11 @@ class SessionRepositoryMixin:
         session_id = f"sess_{secrets.token_urlsafe(10)}"
         now = utc_now()
         async with self._engine.begin() as conn:
-            connector_q = select(connectors_t.c.status).where(
+            connector_q = select(
+                connectors_t.c.status,
+                connectors_t.c.user_id,
+                connectors_t.c.device_os,
+            ).where(
                 connectors_t.c.id == connector_id, connectors_t.c.revoked == 0
             )
             if user_id is not None:
@@ -238,10 +250,38 @@ class SessionRepositoryMixin:
             connector = (await conn.execute(connector_q)).first()
             if connector is None:
                 raise KeyError(connector_id)
+            if not project_id:
+                raise ValueError("project_id is required for every session")
+            project_q = select(
+                projects_t.c.connector_id,
+                projects_t.c.user_id,
+                projects_t.c.workspace_path,
+                projects_t.c.workspace_key,
+            ).where(projects_t.c.id == project_id)
+            if user_id is not None:
+                project_q = project_q.where(projects_t.c.user_id == user_id)
+            project = (await conn.execute(project_q)).first()
+            if project is None:
+                raise KeyError(project_id)
+            if project.connector_id != connector_id:
+                raise ValueError("project connector and workspace must match the session")
+            if cwd is None:
+                cwd = project.workspace_path
+            else:
+                cleaned_cwd, cwd_key = _clean_workspace_path(
+                    cwd,
+                    connector.device_os,
+                )
+                if cwd_key != project.workspace_key:
+                    raise ValueError(
+                        "project connector and workspace must match the session"
+                    )
+                cwd = project.workspace_path or cleaned_cwd
             await conn.execute(
                 insert(sessions_t).values(
                     id=session_id,
                     connector_id=connector_id,
+                    project_id=project_id,
                     runtime=str(identity.runtime_type),
                     runtime_id=str(identity.runtime_id),
                     origin="platform",
@@ -355,7 +395,11 @@ class SessionRepositoryMixin:
         async with self._engine.begin() as conn:
             connector = (
                 await conn.execute(
-                    select(connectors_t.c.status).where(connectors_t.c.id == connector_id)
+                    select(
+                        connectors_t.c.status,
+                        connectors_t.c.user_id,
+                        connectors_t.c.device_os,
+                    ).where(connectors_t.c.id == connector_id)
                 )
             ).first()
             if connector is None:
@@ -366,10 +410,17 @@ class SessionRepositoryMixin:
                 )
             ).first()
             if existing is None:
+                project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                    conn,
+                    connector_id=connector_id,
+                    workspace_path=cwd,
+                    now=now,
+                )
                 await conn.execute(
                     insert(sessions_t).values(
                         id=session_id,
                         connector_id=connector_id,
+                        project_id=project_id,
                         runtime=runtime,
                         runtime_id=runtime_id,
                         origin=normalized_origin,
@@ -377,7 +428,7 @@ class SessionRepositoryMixin:
                         permission_selection_id=permission_selection_id,
                         external_session_id=external_session_id,
                         title=title,
-                        cwd=cwd,
+                        cwd=normalized_cwd,
                         status=status or "idle",
                         takeover=0,
                         last_synced_at=last_synced_at,
@@ -391,6 +442,9 @@ class SessionRepositoryMixin:
                         updated_seq=1,
                         created_at=now,
                         updated_at=now,
+                        **_source_archive_update(
+                            None, source_state, archived=False, observed_at=now
+                        ),
                     )
                 )
             else:
@@ -403,6 +457,7 @@ class SessionRepositoryMixin:
                             sessions_t.c.external_session_id,
                             sessions_t.c.title,
                             sessions_t.c.cwd,
+                            sessions_t.c.project_id,
                             sessions_t.c.status,
                             sessions_t.c.model_selection_id,
                             sessions_t.c.permission_selection_id,
@@ -423,8 +478,15 @@ class SessionRepositoryMixin:
                     values["external_session_id"] = external_session_id
                 if title is not None:
                     values["title"] = title
-                if cwd is not None:
-                    values["cwd"] = cwd
+                if cwd is not None or current.project_id is None:
+                    project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                        conn,
+                        connector_id=connector_id,
+                        workspace_path=cwd or current.cwd,
+                        now=now,
+                    )
+                    values["project_id"] = project_id
+                    values["cwd"] = normalized_cwd
                 if status is not None:
                     values["status"] = status
                 if last_synced_at is not None:
@@ -441,21 +503,21 @@ class SessionRepositoryMixin:
                     values["source_state"] = source_state
                     values["source_state_at"] = now
                     values["source_scan_token"] = None
-                if (
-                    runtime == "dsh"
-                    and source_state == "visible"
-                    and current.archived == 1
-                    and current.dsh_archive_legacy == 1
-                ):
-                    values["archived"] = 0
-                    values["archived_at"] = None
-                    values["dsh_archive_legacy"] = 0
+                    values.update(
+                        _source_archive_update(
+                            current.source_state,
+                            source_state,
+                            archived=current.archived,
+                            observed_at=now,
+                        )
+                    )
                 semantic_changed = any(
                     field in values and values[field] != getattr(current, field)
                     for field in (
                         "external_session_id",
                         "title",
                         "cwd",
+                        "project_id",
                         "status",
                         "model_selection_id",
                         "permission_selection_id",
@@ -532,6 +594,7 @@ class SessionRepositoryMixin:
         limit: int = 100,
         cursor: str | None = None,
         user_id: str | None = None,
+        project_id: str | None = None,
     ) -> tuple[list[SessionView], bool, str | None]:
         latest_item = _latest_timeline_item_subquery()
         latest_order_seq = func.coalesce(
@@ -539,15 +602,11 @@ class SessionRepositoryMixin:
             -1,
         )
         sort_at = _session_sort_at(latest_item)
-        effective_archived = _effective_archived_expression()
         query = (
             _session_view_query(latest_item)
             .where(
                 connectors_t.c.revoked == 0,
-                effective_archived if archived else ~effective_archived,
-                (sessions_t.c.runtime != "dsh")
-                | (sessions_t.c.source_state.in_(("visible", "available")))
-                | (sessions_t.c.archived == 1),
+                sessions_t.c.archived == int(archived),
             )
             .order_by(
                 sessions_t.c.pinned.desc(),
@@ -560,6 +619,8 @@ class SessionRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
+        if project_id is not None:
+            query = query.where(sessions_t.c.project_id == project_id)
         if cursor:
             pinned, cursor_sort_at, order_seq, updated_seq, session_id = (
                 _decode_session_cursor(cursor)
@@ -603,12 +664,14 @@ class SessionRepositoryMixin:
         limit: int = 100,
         cursor: str | None = None,
         user_id: str | None = None,
+        project_id: str | None = None,
     ) -> list[SessionView]:
         sessions, _, _ = await self.list_sessions_page(
             archived=archived,
             limit=limit,
             cursor=cursor,
             user_id=user_id,
+            project_id=project_id,
         )
         return sessions
 
@@ -678,12 +741,7 @@ class SessionRepositoryMixin:
             session_id = str(row["id"])
             observed_ids.add(session_id)
             source_state = str(entry["source_state"])
-            recover_legacy_archive = (
-                source_state == "visible"
-                and row["archived"] == 1
-                and row["dsh_archive_legacy"] == 1
-            )
-            if row["source_state"] != source_state or recover_legacy_archive:
+            if row["source_state"] != source_state:
                 if await self._complete_session_inventory_observation(
                     session_id=session_id,
                     scan_token=scan_token,
@@ -831,11 +889,6 @@ class SessionRepositoryMixin:
                 if row is None or row.source_scan_token != scan_token:
                     return False
                 source_state = str(entry["source_state"])
-                recover_legacy_archive = (
-                    source_state == "visible"
-                    and row.archived == 1
-                    and row.dsh_archive_legacy == 1
-                )
                 values: dict[str, Any] = {
                     "source_state": source_state,
                     "source_state_at": entry.get("observed_at") or now,
@@ -843,13 +896,15 @@ class SessionRepositoryMixin:
                     "source_observation_origin": "inventory",
                     "source_scan_token": None,
                 }
-                if recover_legacy_archive:
-                    values.update(
-                        archived=0,
-                        archived_at=None,
-                        dsh_archive_legacy=0,
+                values.update(
+                    _source_archive_update(
+                        row.source_state,
+                        source_state,
+                        archived=row.archived,
+                        observed_at=entry.get("observed_at") or now,
                     )
-                changed = row.source_state != source_state or recover_legacy_archive
+                )
+                changed = row.source_state != source_state
                 if changed:
                     await self._bump_session(conn, session_id)
                 await conn.execute(
@@ -946,17 +1001,10 @@ class SessionRepositoryMixin:
             if row.source_state_at is not None and effective_observed_at < row.source_state_at:
                 pass
             else:
-                recover_legacy_archive = (
-                    row.runtime == "dsh"
-                    and availability in {"available", "visible"}
-                    and row.archived == 1
-                    and row.dsh_archive_legacy == 1
-                )
                 changed = (
                     row.source_state != availability
                     or row.source_state_reason != reason
                     or row.source_observation_origin != observation_origin
-                    or recover_legacy_archive
                 )
                 if changed:
                     await self._bump_session(conn, session_id)
@@ -967,12 +1015,14 @@ class SessionRepositoryMixin:
                     "source_observation_origin": observation_origin,
                     "source_scan_token": None,
                 }
-                if recover_legacy_archive:
-                    values.update(
-                        archived=0,
-                        archived_at=None,
-                        dsh_archive_legacy=0,
+                values.update(
+                    _source_archive_update(
+                        row.source_state,
+                        availability,
+                        archived=row.archived,
+                        observed_at=effective_observed_at,
                     )
+                )
                 await conn.execute(
                     update(sessions_t)
                     .where(sessions_t.c.id == session_id)
@@ -1502,8 +1552,6 @@ class SessionRepositoryMixin:
             values["status"] = status
         if title is not None:
             values["title"] = title
-        if cwd is not None:
-            values["cwd"] = cwd
         if external_session_id is not None:
             values["external_session_id"] = external_session_id
         if last_synced_at is not None:
@@ -1520,6 +1568,8 @@ class SessionRepositoryMixin:
             row = (
                 await conn.execute(
                     select(
+                        sessions_t.c.connector_id,
+                        sessions_t.c.project_id,
                         sessions_t.c.status,
                         sessions_t.c.title,
                         sessions_t.c.cwd,
@@ -1534,19 +1584,28 @@ class SessionRepositoryMixin:
             ).first()
             if row is None:
                 raise KeyError(session_id)
-            if (
-                row.runtime == "dsh"
-                and source_state == "visible"
-                and row.archived == 1
-                and row.dsh_archive_legacy == 1
-            ):
-                values["archived"] = 0
-                values["archived_at"] = None
-                values["dsh_archive_legacy"] = 0
+            if cwd is not None or row.project_id is None:
+                project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                    conn,
+                    connector_id=row.connector_id,
+                    workspace_path=cwd if cwd is not None else row.cwd,
+                )
+                values["project_id"] = project_id
+                values["cwd"] = normalized_cwd
+            if source_state is not None:
+                values.update(
+                    _source_archive_update(
+                        row.source_state,
+                        source_state,
+                        archived=row.archived,
+                        observed_at=values["source_state_at"],
+                    )
+                )
             semantic_fields = {
                 "status",
                 "title",
                 "cwd",
+                "project_id",
                 "external_session_id",
                 "source_state",
                 "archived",
@@ -1621,25 +1680,12 @@ class SessionRepositoryMixin:
         last_read_seq = int(row["last_read_seq"] or 0)
         latest_turn_end_seq = int(row["latest_turn_end_seq"] or 0)
         updated_seq = int(row["updated_seq"] or 0)
-        user_archived = bool(row["archived"])
+        aa_archived = bool(row["archived"])
         source_availability = _normalized_source_availability(row["source_state"])
-        runtime_archived = (
-            runtime != "dsh"
-            and row["source_state"] in RUNTIME_ARCHIVED_SOURCE_STATES
-        )
-        effective_archived = user_archived or runtime_archived
-        archive_source = (
-            "both"
-            if user_archived and runtime_archived
-            else "user"
-            if user_archived
-            else "runtime"
-            if runtime_archived
-            else None
-        )
         return SessionView(
             id=session_id,
             connectorId=row["connector_id"],
+            projectId=row["project_id"],
             connectorStatus=row["connector_status"],
             runtime=runtime,
             runtimeId=runtime_id,
@@ -1652,16 +1698,14 @@ class SessionRepositoryMixin:
             takeover=bool(row["takeover"]),
             pinned=bool(row["pinned"]),
             pinnedAt=row["pinned_at"],
-            archived=effective_archived,
-            archivedAt=(
-                row["archived_at"] if user_archived else row["source_state_at"]
-            ),
-            userArchived=user_archived,
+            archived=aa_archived,
+            archivedAt=row["archived_at"],
+            userArchived=aa_archived,
             sourceAvailability=source_availability,
             sourceAvailabilityReason=row["source_state_reason"],
             sourceAvailabilityUpdatedAt=row["source_state_at"],
             sourceObservationOrigin=row["source_observation_origin"],
-            archiveSource=archive_source,
+            archiveSource="user" if aa_archived else None,
             unread=latest_turn_end_seq > last_read_seq,
             lastReadSeq=last_read_seq,
             latestTurnEndSeq=latest_turn_end_seq,

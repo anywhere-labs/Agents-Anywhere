@@ -25,6 +25,7 @@ class LocalRpcHandler:
         "terminal.resize",
         "terminal.close",
         "terminal.rename",
+        "terminal.setPersistent",
         "terminal.list",
         "terminal.release",
         "terminal.snapshot",
@@ -74,6 +75,8 @@ class LocalRpcHandler:
             return await self.local_ops.terminal_close(params)
         if method == "terminal.rename":
             return await self.local_ops.terminal_rename(params)
+        if method == "terminal.setPersistent":
+            return await self.local_ops.terminal_set_persistent(params)
         if method == "terminal.list":
             return await self.local_ops.terminal_list(params)
         if method == "terminal.release":

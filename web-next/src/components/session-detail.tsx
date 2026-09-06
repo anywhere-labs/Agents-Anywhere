@@ -1241,13 +1241,10 @@ export function SessionDetail({
         const sourceAvailability = sourceAvailabilityFromError(nextSourceErrorCode)
         const nextSession: SessionView = {
           ...session,
-          archived: true,
-          archivedAt: session.archivedAt ?? new Date().toISOString(),
           sourceAvailability,
           sourceAvailabilityReason: message,
           sourceAvailabilityUpdatedAt: new Date().toISOString(),
           sourceObservationOrigin: "operation",
-          archiveSource: session.userArchived ? "both" : "runtime",
         }
         setState((current) => current ? { ...current, session: nextSession } : current)
         onSessionUpdated?.(nextSession)

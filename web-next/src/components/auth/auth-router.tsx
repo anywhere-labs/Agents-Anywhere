@@ -8,7 +8,7 @@ import { RegisterScreen } from "./register-screen"
 import { OAuthNewUserScreen } from "./oauth-new-user-screen"
 import { OAuthLinkExistingScreen } from "./oauth-link-existing-screen"
 import { SignedOutScreen } from "./signed-out-screen"
-import { MobileOAuthFlow } from "./mobile-oauth-page"
+import { DesktopOAuthFlow, MobileOAuthFlow } from "./mobile-oauth-page"
 import { Demo } from "@/components/demo"
 import { FilePreviewPage } from "@/components/file-preview-page"
 import { LoadingState } from "@/components/loading-state"
@@ -28,6 +28,7 @@ function AuthRouterInner() {
   if (screen === "oauth-new-user") return <OAuthNewUserScreen />
   if (screen === "oauth-link-existing") return <OAuthLinkExistingScreen />
   if (screen === "mobile-oauth") return <MobileOAuthFlow />
+  if (screen === "desktop-oauth") return <DesktopOAuthFlow />
   if (screen === "preview") {
     return (
       <Suspense fallback={null}>

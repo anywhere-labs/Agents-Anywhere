@@ -1,4 +1,41 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type {
+  ConnectorConfigPatch,
+  ConnectorLogEntry,
+  ConnectorLogPage,
+  ConnectorLogQuery,
+  ConnectorPublicConfig,
+  ConnectorState,
+  DesktopDeviceAuthInput,
+  DesktopFactoryResetInput,
+  DesktopDeviceNameInput,
+  DesktopDeviceProvisionInput,
+  DesktopDeviceReconnectInput,
+  DesktopNotificationInput,
+  DesktopNotificationResult,
+  DesktopSettingsPatch,
+  PublicLocalDesktopBinding,
+} from "./connector-types";
+import type { DesktopOAuthResult } from "./desktop-oauth";
+
+function subscribe<T>(channel: string, callback: (value: T) => void): () => void {
+  const listener = (_event: Electron.IpcRendererEvent, value: T) => callback(value);
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
+}
+
+type BeforeQuitListener = () => void | Promise<void>;
+
+const beforeQuitListeners = new Set<BeforeQuitListener>();
+
+ipcRenderer.on("workbench:lifecycle:beforeQuit", async (_event, input: { requestId?: number }) => {
+  const requestId = input?.requestId;
+  if (typeof requestId !== "number") return;
+  await Promise.allSettled(
+    Array.from(beforeQuitListeners, (listener) => Promise.resolve().then(listener)),
+  );
+  ipcRenderer.send("workbench:lifecycle:quitReady", { requestId });
+});
 
 contextBridge.exposeInMainWorld("desktopWorkbench", {
   platform: process.platform,
@@ -7,6 +44,74 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
     electron: process.versions.electron,
     node: process.versions.node,
   },
-  openExternal: (url: string) => ipcRenderer.invoke("workbench:openExternal", url),
+  openExternal: (url: string): Promise<void> => ipcRenderer.invoke("workbench:openExternal", url),
+  auth: {
+    startOAuth: (): Promise<{ authorizeUrl: string }> =>
+      ipcRenderer.invoke("workbench:auth:startOAuth"),
+    consumeOAuthResult: (): Promise<DesktopOAuthResult | null> =>
+      ipcRenderer.invoke("workbench:auth:consumeOAuthResult"),
+    onOAuthResult: (callback: () => void): (() => void) =>
+      subscribe("workbench:auth:oauthResultReady", callback),
+  },
+  lifecycle: {
+    onBeforeQuit: (listener: BeforeQuitListener): (() => void) => {
+      beforeQuitListeners.add(listener);
+      return () => beforeQuitListeners.delete(listener);
+    },
+    trackTerminal: (input: { connectorId: string; terminalId: string; userId: string; token: string }): Promise<void> =>
+      ipcRenderer.invoke("workbench:lifecycle:trackTerminal", input),
+    closeTerminal: (input: { connectorId: string; terminalId: string }): Promise<{ handled: boolean }> =>
+      ipcRenderer.invoke("workbench:lifecycle:closeTerminal", input),
+    untrackTerminal: (input: { connectorId: string; terminalId: string }): Promise<void> =>
+      ipcRenderer.invoke("workbench:lifecycle:untrackTerminal", input),
+    updateTerminalAuth: (input: { userId: string; token: string }): Promise<void> =>
+      ipcRenderer.invoke("workbench:lifecycle:updateTerminalAuth", input),
+  },
+  development: {
+    clearCache: (): Promise<void> => ipcRenderer.invoke("workbench:development:clearCache"),
+  },
+  notifications: {
+    show: (input: DesktopNotificationInput): Promise<DesktopNotificationResult> =>
+      ipcRenderer.invoke("workbench:notifications:show", input),
+    onClick: (callback: (input: { sessionId?: string }) => void): (() => void) =>
+      subscribe("workbench:notifications:click", callback),
+  },
+  connector: {
+    getState: (): Promise<ConnectorState> => ipcRenderer.invoke("workbench:connector:getState"),
+    getConfig: (): Promise<ConnectorPublicConfig> => ipcRenderer.invoke("workbench:connector:getConfig"),
+    saveConfig: (patch: ConnectorConfigPatch): Promise<ConnectorState> =>
+      ipcRenderer.invoke("workbench:connector:saveConfig", patch),
+    start: (): Promise<ConnectorState> => ipcRenderer.invoke("workbench:connector:start"),
+    stop: (): Promise<ConnectorState> => ipcRenderer.invoke("workbench:connector:stop"),
+    restart: (): Promise<ConnectorState> => ipcRenderer.invoke("workbench:connector:restart"),
+    getLogs: (query?: ConnectorLogQuery): Promise<ConnectorLogPage> =>
+      ipcRenderer.invoke("workbench:connector:getLogs", query),
+    clearLogs: (): Promise<ConnectorLogPage> => ipcRenderer.invoke("workbench:connector:clearLogs"),
+    saveSettings: (patch: DesktopSettingsPatch): Promise<ConnectorState> =>
+      ipcRenderer.invoke("workbench:connector:saveSettings", patch),
+    openDataFolder: (): Promise<string> => ipcRenderer.invoke("workbench:connector:openDataFolder"),
+    openLogsFolder: (): Promise<string> => ipcRenderer.invoke("workbench:connector:openLogsFolder"),
+    exportLogs: (): Promise<{ canceled: boolean; filePath: string | null; count: number }> =>
+      ipcRenderer.invoke("workbench:connector:exportLogs"),
+    factoryReset: (input: DesktopFactoryResetInput): Promise<void> =>
+      ipcRenderer.invoke("workbench:connector:factoryReset", input),
+    onState: (callback: (state: ConnectorState) => void): (() => void) =>
+      subscribe("workbench:connector:state", callback),
+    onLog: (callback: (entry: ConnectorLogEntry) => void): (() => void) =>
+      subscribe("workbench:connector:log", callback),
+    onLogsCleared: (callback: () => void): (() => void) =>
+      subscribe("workbench:connector:logsCleared", callback),
+  },
+  device: {
+    createAndConnect: (input: DesktopDeviceProvisionInput): Promise<PublicLocalDesktopBinding> =>
+      ipcRenderer.invoke("workbench:device:createAndConnect", input),
+    reconnectAndConnect: (input: DesktopDeviceReconnectInput): Promise<PublicLocalDesktopBinding> =>
+      ipcRenderer.invoke("workbench:device:reconnectAndConnect", input),
+    disconnectLocal: (input: DesktopDeviceAuthInput): Promise<PublicLocalDesktopBinding> =>
+      ipcRenderer.invoke("workbench:device:disconnectLocal", input),
+    getLocalBinding: (): Promise<PublicLocalDesktopBinding | null> =>
+      ipcRenderer.invoke("workbench:device:getLocalBinding"),
+    updateLocalBindingName: (input: DesktopDeviceNameInput): Promise<PublicLocalDesktopBinding> =>
+      ipcRenderer.invoke("workbench:device:updateLocalBindingName", input),
+  },
 });
-

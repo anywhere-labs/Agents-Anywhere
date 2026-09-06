@@ -11,6 +11,7 @@ from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.attachments import AttachmentService
+from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.services.catalogs import CatalogService
 from agent_server.services.connector_files import ConnectorFileService
 from agent_server.services.connector_ingest import ConnectorIngestService
@@ -22,6 +23,7 @@ from agent_server.services.event_recovery import EventRecoveryService
 from agent_server.services.session_run import SessionRunService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.terminal import TerminalService
+from agent_server.services.terminal_relay import TerminalRelayService
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
 
@@ -103,8 +105,20 @@ def get_terminal_service(conn: HTTPConnection) -> TerminalService:
     )
 
 
+def get_terminal_relay_service(conn: HTTPConnection) -> TerminalRelayService:
+    return TerminalRelayService(
+        conn.app.state.store,
+        conn.app.state.rpc,
+        conn.app.state.terminal_broker,
+    )
+
+
 def get_rpc(conn: HTTPConnection) -> ConnectorRpcManager:
     return conn.app.state.rpc
+
+
+def get_terminal_broker(conn: HTTPConnection) -> TerminalBroker:
+    return conn.app.state.terminal_broker
 
 
 def get_fs_downloads(conn: HTTPConnection) -> FsDownloadRelayManager:

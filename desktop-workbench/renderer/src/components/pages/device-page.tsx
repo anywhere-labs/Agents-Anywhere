@@ -46,6 +46,7 @@ import { cn } from "@/lib/utils"
 import type {
   DeviceRuntimeStatus,
   DeviceRuntimeView,
+  ProjectView,
   RuntimeTypeView,
   SessionView as RealSessionView,
 } from "@/features/dashboard/types"
@@ -57,6 +58,7 @@ import type { ConnectorRevokeResponse } from "@/features/dashboard/types"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
+import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
 import { RuntimeConfigDialog } from "@/components/runtime-config-dialog"
 import { RuntimeInstanceNameDialog } from "@/components/runtime-instance-name-dialog"
 import {
@@ -96,13 +98,6 @@ const RUNTIME_STATUS_LABEL_KEYS = {
 
 const NEW_RUNTIME_SAVING_ID = "@new-runtime"
 
-type ConnectorWorkspace = {
-  path: string
-  name: string
-  sessionCount: number
-  lastActiveAt: string | null
-}
-
 type DeviceSession = {
   id: string
   connectorId: string
@@ -125,40 +120,34 @@ type DeviceSession = {
   lastItemAt?: string | null
 }
 
-// ── WorkspaceCard ──────────────────────────────────────────────
+// ── ProjectCard ────────────────────────────────────────────────
 
-function WorkspaceCard({
-  workspace,
-  onOpen,
+function ProjectCard({
+  project,
   onNewSession,
 }: {
-  workspace: ConnectorWorkspace
-  onOpen: () => void
+  project: ProjectView
   onNewSession: () => void
 }) {
   const t = useTranslations("dashboard.device")
   return (
     <div className="group grid grid-cols-[1fr_auto] items-stretch rounded-lg border border-border bg-card transition-colors hover:bg-accent/40">
-      <button
-        type="button"
-        onClick={onOpen}
-        className="flex min-w-0 items-center gap-3 px-4 py-3 text-left"
-      >
+      <div className="flex min-w-0 items-center gap-3 px-4 py-3">
         <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{workspace.name}</p>
-          <p className="text-xs text-muted-foreground">
-            {t("sessionCount", { count: workspace.sessionCount })}
+          <p className="truncate text-sm font-medium">{project.name}</p>
+          <p className="truncate text-xs text-muted-foreground" title={project.workspacePath}>
+            {project.workspacePath}
           </p>
         </div>
-      </button>
+      </div>
       <Button
         type="button"
         variant="ghost"
         size="icon"
         onClick={onNewSession}
         aria-label={t("newSession")}
-        className="m-2 self-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+        className="m-2 self-center"
       >
         <Plus />
       </Button>
@@ -226,12 +215,8 @@ function SessionRow({
 
 // ── DevicePage ─────────────────────────────────────────────────
 
-const DESKTOP_WORKSPACE_PAGE_SIZE = 6
-const MOBILE_WORKSPACE_PAGE_SIZE = 4
-
-function timeValue(value: string | null | undefined) {
-  return value ? new Date(value).getTime() : 0
-}
+const DESKTOP_PROJECT_PAGE_SIZE = 6
+const MOBILE_PROJECT_PAGE_SIZE = 4
 
 function sessionActivityAt(session: DeviceSession) {
   return session.sortAt ?? session.lastActivityAt ?? session.lastItemAt ?? session.updatedAt ?? null
@@ -282,27 +267,6 @@ function mergeRealSessions(prev: DeviceSession[], updates: RealSessionView[]) {
   return prev.map((session) => updated.get(session.id) ?? session)
 }
 
-function workspacesFromSessions(sessions: DeviceSession[]): ConnectorWorkspace[] {
-  const byPath = new Map<string, ConnectorWorkspace>()
-  for (const session of sessions) {
-    const path = session.cwd || "~"
-    const activeAt = sessionActivityAt(session)
-    const existing = byPath.get(path)
-    if (existing) {
-      existing.sessionCount += 1
-      if (timeValue(activeAt) > timeValue(existing.lastActiveAt)) existing.lastActiveAt = activeAt
-      continue
-    }
-    byPath.set(path, {
-      path,
-      name: path.split(/[\\/]/).filter(Boolean).at(-1) ?? path,
-      sessionCount: 1,
-      lastActiveAt: activeAt,
-    })
-  }
-  return Array.from(byPath.values()).sort((a, b) => timeValue(b.lastActiveAt) - timeValue(a.lastActiveAt))
-}
-
 function runtimeStatusDot(runtime: DeviceRuntimeView) {
   if (runtime.status === "running") return "bg-emerald-500"
   if (runtime.status === "error") return "bg-destructive"
@@ -327,17 +291,28 @@ export function DevicePage() {
   const {
     activeConnectorId,
     connectors,
+    projects,
     sessions: allSessions,
-    navigateToWorkspace,
+    startProjectSession,
     openSession,
     goHome,
     refreshData,
   } = useWorkspace()
   const { session: authSession } = useAuth()
+  const {
+    busy: desktopActionBusy,
+    connectionStatus: desktopConnectionStatus,
+    state: desktopConnectorState,
+    isLocalConnector,
+    reconnect: reconnectLocalDesktop,
+    disconnect: disconnectLocalDesktop,
+    start: startLocalDesktop,
+    updateLocalName,
+    explainRemoteReconnect,
+  } = useDesktopConnector()
   const isMobile = useIsMobile()
 
   const [connector, setConnector] = React.useState<(typeof connectors)[number] | null>(null)
-  const [workspaces, setWorkspaces] = React.useState<ConnectorWorkspace[]>([])
   const [runtimes, setRuntimes] = React.useState<DeviceRuntimeView[]>([])
   const [runtimeTypes, setRuntimeTypes] = React.useState<RuntimeTypeView[]>([])
   const [runtimesLoading, setRuntimesLoading] = React.useState(false)
@@ -345,7 +320,7 @@ export function DevicePage() {
   const [sessions, setSessions] = React.useState<DeviceSession[]>([])
   const [loading, setLoading] = React.useState(true)
 
-  const [showAllWorkspaces, setShowAllWorkspaces] = React.useState(false)
+  const [showAllProjects, setShowAllProjects] = React.useState(false)
   const [sessionTab, setSessionTab] = React.useState<SessionTabId>("active")
   const [configRuntime, setConfigRuntime] = React.useState<DeviceRuntimeView | null>(null)
   const [savingRuntimeId, setSavingRuntimeId] = React.useState<string | null>(null)
@@ -381,7 +356,7 @@ export function DevicePage() {
     previousConnectorIdRef.current = activeConnectorId
     if (connectorChanged) {
       setLoading(true)
-      setShowAllWorkspaces(false)
+      setShowAllProjects(false)
       setSessionTab("active")
       setRuntimes([])
       setRuntimeTypes([])
@@ -400,7 +375,6 @@ export function DevicePage() {
     setNameDraft(currentConnector?.name ?? "")
     setEditingName(false)
     setSessions(connectorSessions)
-    setWorkspaces(workspacesFromSessions(connectorSessions))
     setLoading(false)
   }, [activeConnectorId, connectors, allSessions])
 
@@ -426,9 +400,10 @@ export function DevicePage() {
     }
   }, [activeConnectorId, authSession?.accessToken, t])
 
-  const workspacePageSize = isMobile ? MOBILE_WORKSPACE_PAGE_SIZE : DESKTOP_WORKSPACE_PAGE_SIZE
-  const visibleWorkspaces = showAllWorkspaces ? workspaces : workspaces.slice(0, workspacePageSize)
-  const hiddenCount = workspaces.length - workspacePageSize
+  const connectorProjects = projects.filter((project) => project.connectorId === activeConnectorId)
+  const projectPageSize = isMobile ? MOBILE_PROJECT_PAGE_SIZE : DESKTOP_PROJECT_PAGE_SIZE
+  const visibleProjects = showAllProjects ? connectorProjects : connectorProjects.slice(0, projectPageSize)
+  const hiddenProjectCount = connectorProjects.length - projectPageSize
 
   const filteredSessions = sessions.filter((s) => {
     if (sessionTab === "active") return !s.archived
@@ -446,6 +421,19 @@ export function DevicePage() {
       <LoadingState className="h-full" />
     )
   }
+
+  const isDesktopConnector = connector.connectorKind === "desktop" || isLocalConnector(connector.id)
+  const isLocalDesktop = isDesktopConnector && isLocalConnector(connector.id)
+  const localDesktopNeedsReconnect = Boolean(
+    isLocalDesktop && (desktopConnectorState?.authFailed || desktopConnectorState?.manualDisconnected),
+  )
+  const localDesktopIsConnecting = Boolean(
+    isLocalDesktop &&
+    connector.status === "offline" &&
+    !localDesktopNeedsReconnect &&
+    (desktopActionBusy || desktopConnectorState?.running || desktopConnectionStatus === "connecting"),
+  )
+  const connectorActionBusy = tokenActionBusy || desktopActionBusy
 
   const handleRevoke = async () => {
     if (!authSession?.accessToken) return
@@ -466,6 +454,49 @@ export function DevicePage() {
     }
   }
 
+  const handleDesktopDisconnect = async () => {
+    if (!authSession?.accessToken) return
+    if (isLocalConnector(connector.id)) {
+      if (await disconnectLocalDesktop()) {
+        setConnector((previous) => previous ? { ...previous, status: "offline" } : previous)
+        setRevokeOpen(false)
+      }
+      return
+    }
+
+    setTokenActionBusy(true)
+    try {
+      await dashboardApi.revokeConnector(authSession.accessToken, connector.id)
+      setConnector((previous) => previous ? { ...previous, status: "offline" } : previous)
+      setRevokeOpen(false)
+      refreshData()
+      toast.success(t("disconnectSucceeded"))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("disconnectFailed"))
+    } finally {
+      setTokenActionBusy(false)
+    }
+  }
+
+  const handleDesktopReconnect = async () => {
+    if (isLocalDesktop) {
+      await reconnectLocalDesktop()
+      return
+    }
+    explainRemoteReconnect(connector.name)
+  }
+
+  const handleDesktopStart = async () => {
+    if (!isLocalDesktop) return
+    await startLocalDesktop()
+  }
+
+  const desktopActionLabel = (() => {
+    if (localDesktopIsConnecting) return t("desktopConnecting")
+    if (connector.status === "offline") return t("connect")
+    return isDesktopConnector ? t("disconnect") : t("revoke")
+  })()
+
   const submitName = async () => {
     if (!authSession?.accessToken) return
     const nextName = nameDraft.trim()
@@ -477,6 +508,9 @@ export function DevicePage() {
 
     try {
       const result = await dashboardApi.updateConnector(authSession.accessToken, connector.id, { name: nextName })
+      if (isLocalConnector(connector.id)) {
+        await updateLocalName(result.connector.name)
+      }
       setConnector(result.connector)
       setNameDraft(result.connector.name)
       setEditingName(false)
@@ -739,36 +773,43 @@ export function DevicePage() {
         {/* Header */}
         <div className="flex items-center gap-3">
           <DashboardSidebarToggle className="-ml-2" />
-          {editingName ? (
-            <Input
-              value={nameDraft}
-              onChange={(event) => setNameDraft(event.currentTarget.value)}
-              onBlur={() => void submitName()}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void submitName()
-                if (event.key === "Escape") {
+          <div className="flex min-w-0 items-baseline">
+            {editingName ? (
+              <Input
+                value={nameDraft}
+                onChange={(event) => setNameDraft(event.currentTarget.value)}
+                onBlur={() => void submitName()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void submitName()
+                  if (event.key === "Escape") {
+                    setNameDraft(connector.name)
+                    setEditingName(false)
+                  }
+                }}
+                className="h-9 max-w-xs rounded-lg px-2 text-2xl font-semibold tracking-tight"
+                aria-label={t("deviceName")}
+                autoFocus
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
                   setNameDraft(connector.name)
-                  setEditingName(false)
-                }
-              }}
-              className="h-9 max-w-xs rounded-lg px-2 text-2xl font-semibold tracking-tight"
-              aria-label={t("deviceName")}
-              autoFocus
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setNameDraft(connector.name)
-                setEditingName(true)
-              }}
-              className="truncate text-left text-2xl font-semibold tracking-tight underline-offset-4 hover:underline"
-              title={t("clickToRename")}
-            >
-              {connector.name}
-            </button>
-          )}
-          <div className="flex items-center gap-1.5 text-sm">
+                  setEditingName(true)
+                }}
+                className="min-w-0 truncate text-left text-2xl font-semibold tracking-tight underline-offset-4 hover:underline"
+                title={t("clickToRename")}
+              >
+                {connector.name}
+              </button>
+            )}
+            {isLocalDesktop ? (
+              <span className="shrink-0 text-2xl font-semibold tracking-tight">
+                {tCommon("localDeviceSuffix")}
+              </span>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5 text-sm">
             {connector.status === "online" ? (
               <CheckCircle2 className="size-4 text-emerald-500" />
             ) : (
@@ -790,18 +831,30 @@ export function DevicePage() {
               size="sm"
               className="max-sm:size-8 max-sm:px-0"
               onClick={() => {
+                if (isDesktopConnector) {
+                  if (!isLocalDesktop && connector.status === "offline") {
+                    void handleDesktopReconnect()
+                  } else if (isLocalDesktop && localDesktopNeedsReconnect) {
+                    void handleDesktopReconnect()
+                  } else if (isLocalDesktop && connector.status === "offline") {
+                    void handleDesktopStart()
+                  } else {
+                    setRevokeOpen(true)
+                  }
+                  return
+                }
                 if (connector.status === "offline") {
                   void handleRevoke()
                 } else {
                   setRevokeOpen(true)
                 }
               }}
-              disabled={tokenActionBusy}
-              aria-label={tokenActionBusy ? t("preparing") : connector.status === "offline" ? t("setup") : t("revoke")}
+              disabled={connectorActionBusy || localDesktopIsConnecting}
+              aria-label={connectorActionBusy ? t("preparing") : desktopActionLabel}
             >
-              <KeyRound />
+              {localDesktopIsConnecting ? <Loader2 className="animate-spin" /> : <KeyRound />}
               <span className="max-sm:sr-only">
-                {tokenActionBusy ? t("preparing") : connector.status === "offline" ? t("setup") : t("revoke")}
+                {connectorActionBusy ? t("preparing") : desktopActionLabel}
               </span>
             </Button>
             <Button
@@ -961,52 +1014,41 @@ export function DevicePage() {
           )}
         </section>
 
-        {/* Workspaces */}
+        {/* Projects */}
         <section className="mb-8">
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-3 flex items-center">
             <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-              {t("workspaces")}
+              {t("projects")}
             </h2>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => navigateToWorkspace(connector.id, "~")}
-              aria-label={t("newSession")}
-            >
-              <Plus />
-            </Button>
           </div>
 
-          {workspaces.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("noWorkspaces")}</p>
+          {connectorProjects.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("noProjects")}</p>
           ) : (
             <>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {visibleWorkspaces.map((ws) => (
-                  <WorkspaceCard
-                    key={ws.path}
-                    workspace={ws}
-                    onOpen={() => navigateToWorkspace(connector.id, ws.path)}
-                    onNewSession={() => navigateToWorkspace(connector.id, ws.path)}
+                {visibleProjects.map((project) => (
+                  <ProjectCard
+                    key={project.id}
+                    project={project}
+                    onNewSession={() => startProjectSession(project.id)}
                   />
                 ))}
               </div>
 
-              {(() => {
-                const nextWorkspace = workspaces[workspacePageSize]
-                if (showAllWorkspaces || hiddenCount <= 0 || !nextWorkspace) return null
-                return (
-                  <button
-                    type="button"
-                    onClick={() => navigateToWorkspace(connector.id, nextWorkspace.path)}
-                    className="mt-3 flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    <span className="mx-0.5 text-foreground">{t("showAllMore", { count: hiddenCount })}</span>
-                    <ChevronRight className="size-3.5" />
-                  </button>
-                )
-              })()}
+              {hiddenProjectCount > 0 && (
+                <button
+                  type="button"
+                  aria-expanded={showAllProjects}
+                  onClick={() => setShowAllProjects((current) => !current)}
+                  className="mt-3 flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <span className="mx-0.5 text-foreground">
+                    {showAllProjects ? t("showLess") : t("showAllMore", { count: hiddenProjectCount })}
+                  </span>
+                  <ChevronRight className={cn("size-3.5", showAllProjects && "-rotate-90")} />
+                </button>
+              )}
             </>
           )}
         </section>
@@ -1190,15 +1232,27 @@ export function DevicePage() {
       <AlertDialog open={revokeOpen} onOpenChange={setRevokeOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("revokeTitle")}</AlertDialogTitle>
+            <AlertDialogTitle>{t(isDesktopConnector ? "disconnectTitle" : "revokeTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t("revokeDescription", { name: connector.name })}
+              {t(
+                isDesktopConnector
+                  ? isLocalDesktop
+                    ? "localDisconnectDescription"
+                    : "remoteDisconnectDescription"
+                  : "revokeDescription",
+                { name: connector.name },
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRevoke} disabled={tokenActionBusy}>
-              {tokenActionBusy ? t("revoking") : t("revoke")}
+            <AlertDialogAction
+              onClick={() => void (isDesktopConnector ? handleDesktopDisconnect() : handleRevoke())}
+              disabled={connectorActionBusy}
+            >
+              {connectorActionBusy
+                ? t(isDesktopConnector ? "disconnecting" : "revoking")
+                : t(isDesktopConnector ? "disconnect" : "revoke")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

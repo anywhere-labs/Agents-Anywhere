@@ -57,6 +57,9 @@ import {
   preserveOptimisticItems,
   timelineClientMessageId,
 } from "@/components/session/optimistic-timeline"
+import { nextTimelineResetVersion } from "@/components/session/session-review-history"
+import { buildLatestChangedTurnReview } from "@/components/session/session-review-model"
+import { SessionReviewTag } from "@/components/session/session-review-tag"
 import { isVisibleTimelineItem, messageText, runtimeLabel, textOf } from "@/components/session/session-utils"
 import { stripInjectedAttachmentMentions } from "@/features/dashboard/attachments"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
@@ -66,6 +69,8 @@ type SessionDetailProps = {
   token: string
   sessionId: string
   fallbackSession: SessionView | null
+  connectorDeviceOs?: string | null
+  onOpenReview?: () => void
   onSessionUpdated?: (session: SessionView) => void
   onMemorySnapshotUpdated?: (snapshot: SessionMemorySnapshot | null) => void
   onStreamProgress?: (sessionId: string, nextSeq: number | null) => void
@@ -78,6 +83,7 @@ export type SessionMemorySnapshot = {
   notices: Notice[]
   nextSeq: number
   hasMore: boolean
+  timelineResetVersion: number
   serverTime: string
   pendingInteractionCount: number
 }
@@ -89,6 +95,7 @@ type SessionRemoteState = {
   notices: Notice[]
   nextSeq: number
   hasMore: boolean
+  timelineResetVersion: number
   serverTime: string
   eventCursor: string
   effectiveCapabilities: ProtocolCapabilitySet | null
@@ -103,6 +110,7 @@ function remoteStateFromOptimisticState(optimisticState: SessionLocalTimelineSta
   return {
     ...optimisticState,
     notices: optimisticState.notices ?? [],
+    timelineResetVersion: 0,
     eventCursor: `seq:${optimisticState.nextSeq}`,
     effectiveCapabilities: null,
     catalogs: {},
@@ -162,6 +170,7 @@ function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRem
     notices: snapshot.notices,
     nextSeq: snapshot.timeline.nextSeq,
     hasMore: snapshot.timeline.hasMore,
+    timelineResetVersion: 0,
     serverTime: snapshot.serverTime,
     eventCursor: snapshot.eventCursor,
     effectiveCapabilities: snapshot.effectiveCapabilities,
@@ -183,6 +192,7 @@ function mergeSessionSnapshot(
     ...incoming,
     items: timeline.items,
     nextSeq: timeline.nextSeq,
+    timelineResetVersion: nextTimelineResetVersion(current.timelineResetVersion, true),
     eventCursor: incoming.nextSeq >= current.nextSeq
       ? incoming.eventCursor
       : current.eventCursor,
@@ -295,6 +305,8 @@ export function SessionDetail({
   token,
   sessionId,
   fallbackSession,
+  connectorDeviceOs,
+  onOpenReview,
   onSessionUpdated,
   onMemorySnapshotUpdated,
   onStreamProgress,
@@ -671,6 +683,7 @@ export function SessionDetail({
       notices: state.notices,
       nextSeq: state.nextSeq,
       hasMore: state.hasMore,
+      timelineResetVersion: state.timelineResetVersion,
       serverTime: state.serverTime,
       pendingInteractionCount: blockingInteractions(state.notices, state.session.id).length,
     })
@@ -1098,13 +1111,10 @@ export function SessionDetail({
         const sourceAvailability = sourceAvailabilityFromError(nextSourceErrorCode)
         const nextSession: SessionView = {
           ...session,
-          archived: true,
-          archivedAt: session.archivedAt ?? new Date().toISOString(),
           sourceAvailability,
           sourceAvailabilityReason: message,
           sourceAvailabilityUpdatedAt: new Date().toISOString(),
           sourceObservationOrigin: "operation",
-          archiveSource: session.userArchived ? "both" : "runtime",
         }
         setState((current) => current ? { ...current, session: nextSession } : current)
         onSessionUpdated?.(nextSession)
@@ -1428,6 +1438,13 @@ export function SessionDetail({
     () => groupTimelineItems((state?.items ?? []).filter(isVisibleTimelineItem), interactionTargetIds),
     [interactionTargetIds, state?.items],
   )
+  const changedFileCount = React.useMemo(() => {
+    if (state?.session.id !== sessionId) return 0
+    return buildLatestChangedTurnReview(state.items.filter(isVisibleTimelineItem), {
+      root: state.session.cwd,
+      caseInsensitivePaths: connectorDeviceOs === "windows",
+    })?.files.length ?? 0
+  }, [connectorDeviceOs, sessionId, state?.items, state?.session.id, state?.session.cwd])
   const turnActionsByGroupKey = React.useMemo(
     () => buildTurnActionsByGroupKey(
       timelineGroups,
@@ -1490,7 +1507,7 @@ export function SessionDetail({
             ref={timelineContentRef}
             aria-busy={runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running"}
             className={cn(
-              "mx-auto flex w-full min-w-0 max-w-[calc(48rem+2rem)] flex-col gap-3 overflow-hidden px-4 pb-44 pt-20",
+              "mx-auto flex w-full min-w-0 max-w-[calc(48rem+2rem)] flex-col gap-3 overflow-hidden px-4 pb-44 pt-20 md:pt-6",
             )}
             style={{ paddingBottom: timelineBottomPadding }}
           >
@@ -1618,6 +1635,9 @@ export function SessionDetail({
           onRespondInteraction={handleRespondInteraction}
         />
         <div ref={composerContainerRef} className="pointer-events-auto relative">
+          {onOpenReview ? (
+            <SessionReviewTag fileCount={changedFileCount} onReview={onOpenReview} />
+          ) : null}
           <SessionComposer
             token={token}
             session={session}
@@ -2258,6 +2278,10 @@ function mergeSessionEvent(
     : item
       ? mergeTimelineItems(current.items, [item])
       : current.items
+  const timelineResetVersion = nextTimelineResetVersion(
+    current.timelineResetVersion,
+    timelineSnapshot !== null,
+  )
   const acceptsSession = Boolean(session && session.updatedSeq >= current.session.updatedSeq)
   const nextSession = acceptsSession && session && !sessionSemanticallyEqual(current.session, session)
     ? session
@@ -2314,6 +2338,7 @@ function mergeSessionEvent(
     nextEffectiveCapabilities === current.effectiveCapabilities &&
     nextCatalogs === current.catalogs &&
     nextSeq === current.nextSeq &&
+    timelineResetVersion === current.timelineResetVersion &&
     nextEventCursor === current.eventCursor
   ) {
     return current
@@ -2326,6 +2351,7 @@ function mergeSessionEvent(
     items: nextItems,
     notices: nextNotices,
     nextSeq,
+    timelineResetVersion,
     eventCursor: nextEventCursor,
     effectiveCapabilities: nextEffectiveCapabilities,
     catalogs: nextCatalogs,

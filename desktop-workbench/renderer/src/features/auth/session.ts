@@ -1,14 +1,6 @@
-import type { AuthResponse, StoredSession } from "@/features/auth/types";
+import type { StoredSession } from "@/features/auth/types";
 
 const SESSION_KEY = "aa.session.v1";
-
-export function authResponseToSession(auth: AuthResponse): StoredSession {
-  return {
-    accessToken: auth.accessToken,
-    userId: auth.userId,
-    role: auth.role
-  };
-}
 
 export function loadStoredSession(): StoredSession | null {
   if (typeof window === "undefined") return null;

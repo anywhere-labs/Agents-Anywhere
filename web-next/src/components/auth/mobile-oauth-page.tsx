@@ -24,6 +24,19 @@ type MobileOAuthParams = {
   state?: string
 }
 
+type NativeOAuthKind = "mobile" | "desktop"
+
+const NATIVE_OAUTH_CLIENTS: Record<NativeOAuthKind, { clientId: string; redirectUri: string }> = {
+  mobile: {
+    clientId: "agents-anywhere-mobile",
+    redirectUri: "agents-anywhere://oauth/callback",
+  },
+  desktop: {
+    clientId: "agents-anywhere-desktop",
+    redirectUri: "agents-anywhere-desktop://oauth/callback",
+  },
+}
+
 export function MobileOAuthPage() {
   return (
     <AuthProvider>
@@ -33,13 +46,23 @@ export function MobileOAuthPage() {
 }
 
 export function MobileOAuthFlow() {
-  const t = useTranslations("auth.mobileOAuth")
+  return <NativeOAuthFlow kind="mobile" />
+}
+
+export function DesktopOAuthFlow() {
+  return <NativeOAuthFlow kind="desktop" />
+}
+
+function NativeOAuthFlow({ kind }: { kind: NativeOAuthKind }) {
+  const mobileT = useTranslations("auth.mobileOAuth")
+  const desktopT = useTranslations("auth.desktopOAuth")
+  const t = kind === "desktop" ? desktopT : mobileT
   const params = useRouteSearchParams()
   const { me, screen, loading, isAuthenticated, session, signOut } = useAuth()
   const [error, setError] = React.useState<string | null>(null)
   const [authorizing, setAuthorizing] = React.useState(false)
 
-  const oauthParams = React.useMemo(() => readMobileOAuthParams(params), [params])
+  const oauthParams = React.useMemo(() => readNativeOAuthParams(params, kind), [kind, params])
   const accessToken = session?.accessToken ?? null
 
   const authorize = React.useCallback(async () => {
@@ -80,6 +103,7 @@ export function MobileOAuthFlow() {
   if (isAuthenticated && accessToken) {
     return (
       <MobileOAuthConsent
+        kind={kind}
         userId={me?.displayName || me?.email || ""}
         onCancel={cancel}
         onContinue={() => void authorize()}
@@ -94,12 +118,21 @@ export function MobileOAuthFlow() {
   return <LoginScreen />
 }
 
-function readMobileOAuthParams(params: { get(name: string): string | null }): MobileOAuthParams | null {
+function readNativeOAuthParams(
+  params: { get(name: string): string | null },
+  kind: NativeOAuthKind,
+): MobileOAuthParams | null {
   const responseType = params.get("response_type")
   const clientId = params.get("client_id")
   const redirectUri = params.get("redirect_uri")
   const codeChallenge = params.get("code_challenge")
-  if (!responseType || !clientId || !redirectUri || !codeChallenge) return null
+  const client = NATIVE_OAUTH_CLIENTS[kind]
+  if (
+    !responseType ||
+    clientId !== client.clientId ||
+    redirectUri !== client.redirectUri ||
+    !codeChallenge
+  ) return null
   return {
     response_type: responseType,
     client_id: clientId,
@@ -120,17 +153,21 @@ function mobileOAuthErrorRedirect(params: MobileOAuthParams, error: string, desc
 }
 
 function MobileOAuthConsent({
+  kind,
   userId,
   onCancel,
   onContinue,
   onSwitchAccount,
 }: {
+  kind: NativeOAuthKind
   userId: string
   onCancel: () => void
   onContinue: () => void
   onSwitchAccount: () => void
 }) {
-  const t = useTranslations("auth.mobileOAuth")
+  const mobileT = useTranslations("auth.mobileOAuth")
+  const desktopT = useTranslations("auth.desktopOAuth")
+  const t = kind === "desktop" ? desktopT : mobileT
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-6">
       <section className="w-full max-w-sm space-y-6 text-center">

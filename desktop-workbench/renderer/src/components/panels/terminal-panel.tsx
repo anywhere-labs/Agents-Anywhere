@@ -3,9 +3,9 @@
 import * as React from "react"
 import { Plus, SquareTerminal, X } from "lucide-react"
 import { useTranslations } from "next-intl"
+import { useTheme } from "next-themes"
 
 import "./runtime-panel.css"
-import { ChevronExternal } from "./runtime-icons"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
@@ -21,10 +21,15 @@ type TerminalPanelBodyProps = {
   root?: string | null
   variant?: "desktop" | "mobile"
   onClose?: () => void
-  onPopOut?: () => void
 }
 
-export function TerminalPanelBody({ token, connectorId, root, variant = "desktop", onClose, onPopOut }: TerminalPanelBodyProps) {
+export function TerminalPanelBody({
+  token,
+  connectorId,
+  root,
+  variant = "desktop",
+  onClose,
+}: TerminalPanelBodyProps) {
   const t = useTranslations("dashboard.panels.terminal")
   const effectiveRoot = root?.trim() || "."
   const [terms, setTerms] = React.useState<TerminalView[]>([])
@@ -36,6 +41,7 @@ export function TerminalPanelBody({ token, connectorId, root, variant = "desktop
   const termsRef = React.useRef<TerminalView[]>([])
   const renameTimerRef = React.useRef<number | null>(null)
   const generationRef = React.useRef(0)
+  const terminalTabRefs = React.useRef(new Map<string, HTMLButtonElement>())
 
   const canConnect = Boolean(token && connectorId)
 
@@ -165,12 +171,116 @@ export function TerminalPanelBody({ token, connectorId, root, variant = "desktop
     setError(message)
   }, [])
 
+  const handleTerminalTabKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).getAttribute("role") !== "tab") return
+    if (!activeId || terms.length === 0) return
+
+    const currentIndex = terms.findIndex((term) => term.terminalId === activeId)
+    let nextIndex = currentIndex
+    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + terms.length) % terms.length
+    else if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % terms.length
+    else if (event.key === "Home") nextIndex = 0
+    else if (event.key === "End") nextIndex = terms.length - 1
+    else return
+
+    event.preventDefault()
+    event.stopPropagation()
+    const nextTerminal = terms[nextIndex]
+    if (!nextTerminal) return
+    setActiveId(nextTerminal.terminalId)
+    window.requestAnimationFrame(() => terminalTabRefs.current.get(nextTerminal.terminalId)?.focus())
+  }
+
+  const terminalTabItems = (
+    <div className="aa-term-tabs">
+      {terms.map((term) =>
+        renamingId === term.terminalId ? (
+          <input
+            key={term.terminalId}
+            className="aa-term-tab active"
+            value={renameText}
+            autoFocus
+            onChange={(event) => setRenameText(event.target.value)}
+            onBlur={() => void renameTerminal(term.terminalId, renameText || term.label)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void renameTerminal(term.terminalId, renameText || term.label)
+              if (event.key === "Escape") setRenamingId(null)
+            }}
+            style={{ width: 120, padding: "0 8px" }}
+          />
+        ) : (
+          <button
+            ref={(element) => {
+              if (element) terminalTabRefs.current.set(term.terminalId, element)
+              else terminalTabRefs.current.delete(term.terminalId)
+            }}
+            key={term.terminalId}
+            role="tab"
+            type="button"
+            aria-selected={activeId === term.terminalId}
+            tabIndex={activeId === term.terminalId ? 0 : -1}
+            className={cn(
+              "aa-term-tab",
+              activeId === term.terminalId && "active",
+              term.status === "exited" && "exited",
+            )}
+            onClick={(event) => {
+              if (event.detail >= 3) {
+                cancelScheduledRename()
+                void closeTerminal(term.terminalId)
+                return
+              }
+              setActiveId(term.terminalId)
+            }}
+            onAuxClick={(event) => {
+              if (event.button !== 1) return
+              event.preventDefault()
+              void closeTerminal(term.terminalId)
+            }}
+            onMouseDown={(event) => {
+              if (event.button === 1) event.preventDefault()
+            }}
+            onDoubleClick={() => scheduleRename(term)}
+            title={`${term.label} · ${t("pid")} ${term.pid ?? "?"}${
+              term.status === "exited" ? ` (${t("exitCode", { code: term.exitCode ?? "?" })})` : ""
+            }`}
+          >
+            <span className="dot" />
+            <span className="label">{term.label}</span>
+            <span
+              className="close"
+              onClick={(event) => {
+                event.stopPropagation()
+                void closeTerminal(term.terminalId)
+              }}
+              aria-label={t("closeTerminal", { label: term.label })}
+            >
+              <X className="size-3" />
+            </span>
+          </button>
+        ),
+      )}
+      <button
+        className="aa-term-add"
+        type="button"
+        onClick={addTerminal}
+        disabled={!canConnect || busy}
+        title={t("newTerminal")}
+        aria-label={t("newTerminal")}
+      >
+        <Plus className="size-3.5" />
+      </button>
+    </div>
+  )
+
   const terminalTabs = (
     <ScrollArea
       className="aa-term-tabs-scroll"
       contentWide
       viewportProps={{
         role: "tablist",
+        "aria-label": t("title"),
+        onKeyDown: handleTerminalTabKeyDown,
         onWheel: (event: React.WheelEvent<HTMLDivElement>) => {
           const scroll = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
           if (!scroll) return
@@ -179,79 +289,7 @@ export function TerminalPanelBody({ token, connectorId, root, variant = "desktop
         },
       }}
     >
-      <div className="aa-term-tabs">
-        {terms.map((term) =>
-          renamingId === term.terminalId ? (
-            <input
-              key={term.terminalId}
-              className="aa-term-tab active"
-              value={renameText}
-              autoFocus
-              onChange={(event) => setRenameText(event.target.value)}
-              onBlur={() => void renameTerminal(term.terminalId, renameText || term.label)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void renameTerminal(term.terminalId, renameText || term.label)
-                if (event.key === "Escape") setRenamingId(null)
-              }}
-              style={{ width: 120, padding: "0 8px" }}
-            />
-          ) : (
-            <button
-              key={term.terminalId}
-              role="tab"
-              type="button"
-              className={cn(
-                "aa-term-tab",
-                activeId === term.terminalId && "active",
-                term.status === "exited" && "exited",
-              )}
-              onClick={(event) => {
-                if (event.detail >= 3) {
-                  cancelScheduledRename()
-                  void closeTerminal(term.terminalId)
-                  return
-                }
-                setActiveId(term.terminalId)
-              }}
-              onAuxClick={(event) => {
-                if (event.button !== 1) return
-                event.preventDefault()
-                void closeTerminal(term.terminalId)
-              }}
-              onMouseDown={(event) => {
-                if (event.button === 1) event.preventDefault()
-              }}
-              onDoubleClick={() => scheduleRename(term)}
-              title={`${term.label} · ${t("pid")} ${term.pid ?? "?"}${
-                term.status === "exited" ? ` (${t("exitCode", { code: term.exitCode ?? "?" })})` : ""
-              }`}
-            >
-              <span className="dot" />
-              <span className="label">{term.label}</span>
-              <span
-                className="close"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  void closeTerminal(term.terminalId)
-                }}
-                aria-label={t("closeTerminal", { label: term.label })}
-              >
-                <X className="size-3" />
-              </span>
-            </button>
-          ),
-        )}
-        <button
-          className="aa-term-add"
-          type="button"
-          onClick={addTerminal}
-          disabled={!canConnect || busy}
-          title={t("newTerminal")}
-          aria-label={t("newTerminal")}
-        >
-          <Plus className="size-3.5" />
-        </button>
-      </div>
+      {terminalTabItems}
       <ScrollBar orientation="horizontal" />
     </ScrollArea>
   )
@@ -314,19 +352,6 @@ export function TerminalPanelBody({ token, connectorId, root, variant = "desktop
         {terminalTabs}
         <Separator orientation="vertical" className="aa-rt-sep" />
         <div className="aa-rt-acts">
-          {onPopOut ? (
-            <Button
-              className="aa-rt-iconbtn"
-              variant="ghost"
-              size="icon-sm"
-              type="button"
-              title={t("openWindow")}
-              aria-label={t("openWindow")}
-              onClick={onPopOut}
-            >
-              <ChevronExternal />
-            </Button>
-          ) : null}
           {onClose ? (
             <Button
               className="aa-rt-iconbtn"
@@ -349,6 +374,51 @@ export function TerminalPanelBody({ token, connectorId, root, variant = "desktop
   )
 }
 
+type TerminalSessionPanelProps = {
+  token: string | null
+  connectorId: string | null
+  terminal: TerminalView | null
+  active: boolean
+  creationError: string | null
+}
+
+export function TerminalSessionPanel({
+  token,
+  connectorId,
+  terminal,
+  active,
+  creationError,
+}: TerminalSessionPanelProps) {
+  const t = useTranslations("dashboard.panels.terminal")
+  const [streamError, setStreamError] = React.useState<string | null>(null)
+  const error = creationError ?? streamError
+
+  return (
+    <Card size="sm" className="aa-rt-pane aa-rt-pane-tab aa-term">
+      <CardContent className="aa-rt-content">
+        <div className="aa-term-host">
+          {error ? <div className="aa-term-status text-destructive">{error}</div> : null}
+          {!token || !connectorId ? <div className="aa-term-status">{t("noConnector")}</div> : null}
+          {terminal && token && connectorId ? (
+            <div className={cn("aa-term-host-layer", active && "active")}>
+              <XtermHost
+                token={token}
+                connectorId={connectorId}
+                terminal={terminal}
+                active={active}
+                onError={setStreamError}
+              />
+            </div>
+          ) : null}
+          {!terminal && token && connectorId && !error ? (
+            <div className="aa-term-status">{t("connecting")}</div>
+          ) : null}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 function XtermHost({
   token,
   connectorId,
@@ -363,8 +433,17 @@ function XtermHost({
   onError: (message: string) => void
 }) {
   const t = useTranslations("dashboard.panels.terminal")
+  const { resolvedTheme } = useTheme()
   const hostRef = React.useRef<HTMLDivElement | null>(null)
+  const terminalRef = React.useRef<import("@xterm/xterm").Terminal | null>(null)
+  const resolvedThemeRef = React.useRef(resolvedTheme)
   const [status, setStatus] = React.useState<"connecting" | "open" | "exited">("connecting")
+
+  React.useEffect(() => {
+    resolvedThemeRef.current = resolvedTheme
+    if (!terminalRef.current) return
+    terminalRef.current.options.theme = terminalTheme(resolvedTheme, hostRef.current?.ownerDocument)
+  }, [resolvedTheme])
 
   React.useEffect(() => {
     let cancelled = false
@@ -416,16 +495,12 @@ function XtermHost({
         cursorStyle: "block",
         fontSize: 12.5,
         fontFamily: '"Menlo", "JetBrains Mono", "SF Mono", monospace',
-        theme: {
-          background: "#000000",
-          foreground: "#d4d4d4",
-          cursor: "#d4d4d4",
-          selectionBackground: "rgba(255,255,255,0.15)",
-        },
+        theme: terminalTheme(resolvedThemeRef.current, host.ownerDocument),
         scrollback: 5000,
         convertEol: true,
         allowProposedApi: true,
       })
+      terminalRef.current = term
       fit = new FitAddon()
       term.loadAddon(fit)
       term.loadAddon(new WebLinksAddon())
@@ -498,6 +573,7 @@ function XtermHost({
       if (resizeFrame != null) cancelAnimationFrame(resizeFrame)
       resizeObserver?.disconnect()
       socket?.close()
+      if (terminalRef.current === term) terminalRef.current = null
       term?.dispose()
     }
   }, [connectorId, onError, t, terminal.terminalId, token])
@@ -527,6 +603,49 @@ function XtermHost({
       ) : null}
     </>
   )
+}
+
+const LIGHT_TERMINAL_THEME: import("@xterm/xterm").ITheme = {
+  background: "#ffffff",
+  foreground: "#24292f",
+  cursor: "#24292f",
+  cursorAccent: "#ffffff",
+  selectionBackground: "rgba(9, 105, 218, 0.2)",
+  selectionInactiveBackground: "rgba(140, 149, 159, 0.2)",
+  black: "#24292f",
+  red: "#cf222e",
+  green: "#116329",
+  yellow: "#7d4e00",
+  blue: "#0969da",
+  magenta: "#8250df",
+  cyan: "#1b7c83",
+  white: "#6e7781",
+  brightBlack: "#57606a",
+  brightRed: "#a40e26",
+  brightGreen: "#1a7f37",
+  brightYellow: "#633c01",
+  brightBlue: "#0550ae",
+  brightMagenta: "#6639ba",
+  brightCyan: "#096b72",
+  brightWhite: "#24292f",
+}
+
+const DARK_TERMINAL_THEME: import("@xterm/xterm").ITheme = {
+  background: "#000000",
+  foreground: "#d4d4d4",
+  cursor: "#d4d4d4",
+  cursorAccent: "#000000",
+  selectionBackground: "rgba(255, 255, 255, 0.15)",
+}
+
+function terminalTheme(
+  resolvedTheme: string | undefined,
+  ownerDocument: Document | undefined,
+): import("@xterm/xterm").ITheme {
+  const isDark =
+    resolvedTheme === "dark" ||
+    (resolvedTheme !== "light" && ownerDocument?.documentElement.classList.contains("dark"))
+  return { ...(isDark ? DARK_TERMINAL_THEME : LIGHT_TERMINAL_THEME) }
 }
 
 function utf8ToBase64(value: string): string {

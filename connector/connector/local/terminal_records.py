@@ -20,6 +20,7 @@ def terminal_view(record: dict[str, Any], pid: int | None) -> dict[str, Any]:
         "exitCode": record["exitCode"],
         "scrollbackBytes": len(record["scrollback"]),
         "scrollbackSeq": record["seq"],
+        "persistent": record["persistent"],
         "createdAt": record["createdAt"],
     }
 

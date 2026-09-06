@@ -17,6 +17,7 @@ const build = spawn(yarnCommand, ["workspace", rendererPackage, "build"], {
     AGENTS_ANYWHERE_API: apiOrigin,
     AGENTS_ANYWHERE_API_NAMESPACE: apiNamespace,
     NEXT_OUTPUT: "export",
+    NEXT_PUBLIC_WORKBENCH_DEV_LOGIN: "0",
   },
 });
 

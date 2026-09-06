@@ -47,6 +47,7 @@ from agent_server.infra.db import (
     oauth_clients as oauth_clients_t,
     pairing_codes as pairing_codes_t,
     platform_user_activity as platform_user_activity_t,
+    projects as projects_t,
     sessions as sessions_t,
     session_shares as session_shares_t,
     timeline_items as timeline_items_t,
@@ -56,9 +57,11 @@ from agent_server.infra.db.engine import SQLITE_BACKEND
 from agent_server.infra.files import FileStorage, build_file_storage
 from agent_server.core.models import (
     ConnectorConfigBundle,
+    ConnectorKind,
     ConnectorView,
     OAuthClientView,
     PairingPollResponse,
+    ProjectView,
     SessionRuntimeState,
     SessionView,
     UserView,
