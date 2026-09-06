@@ -1,11 +1,5 @@
 "use client"
 
-/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
-/* Hallmark · component: desktop tool sidebar · genre: modern-minimal · theme: existing application system
- * states: default · hover · focus · active · disabled · loading · error · success
- * contrast: inherited from the application semantic tokens
- */
-
 import * as React from "react"
 import { createPortal } from "react-dom"
 import type { LucideIcon } from "lucide-react"
@@ -26,9 +20,11 @@ import { SessionReviewPanel } from "@/components/session/session-review-panel"
 import type { SessionReviewTarget } from "@/components/session/session-review-model"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useDashboardSidebarControls } from "@/components/dashboard-sidebar-controls"
+import { useDiscardFileChanges } from "@/components/discard-file-changes-dialog"
 import { useAuth } from "@/components/auth/auth-context"
 import { useWorkspace, type PanelId } from "@/components/workspace-context"
 import { Button } from "@/components/ui/button"
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -50,24 +46,30 @@ import {
   useStoredSessionToolSidebarIds,
   useStoredSessionToolSidebarState,
 } from "@/components/session-tool-sidebar-state"
+import { SessionFilePreviewProvider } from "@/components/session/session-file-preview-context"
 import type { SessionFilePreviewTarget } from "@/components/session/session-file-preview-context"
 import { dashboardApi } from "@/features/dashboard/api"
-import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { isApiError } from "@/lib/api/errors"
 import { createClientId } from "@/lib/id"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
+import { openWorkspaceTerminal } from "./session-terminal-lifecycle"
+import type { SessionTerminalPreference } from "./session-terminal-preferences"
 
 export type { SessionToolKind } from "@/components/session-tool-tabs"
 
 const TOOL_META: Record<
   SessionToolKind,
-  { icon: LucideIcon; labelKey: "review" | "terminal" | "files" }
+  {
+    icon: LucideIcon
+    labelKey: "review" | "terminal" | "files"
+    descriptionKey: "reviewDescription" | "terminalDescription" | "filesDescription"
+  }
 > = {
-  review: { icon: FileDiff, labelKey: "review" },
-  terminal: { icon: SquareTerminal, labelKey: "terminal" },
-  files: { icon: File, labelKey: "files" },
+  review: { icon: FileDiff, labelKey: "review", descriptionKey: "reviewDescription" },
+  terminal: { icon: SquareTerminal, labelKey: "terminal", descriptionKey: "terminalDescription" },
+  files: { icon: File, labelKey: "files", descriptionKey: "filesDescription" },
 }
 
 const TOOL_KINDS: SessionToolKind[] = ["review", "terminal", "files"]
@@ -85,6 +87,7 @@ export type SessionToolSidebarController = SessionToolTabsState & {
   openFilePreview: (target: SessionFilePreviewTarget) => void
   activateTab: (id: string) => void
   closeTab: (id: string) => Promise<boolean>
+  setTabDirty: (id: string, dirty: boolean) => void
   setTabTitle: (id: string, title: string | null) => void
   setPreferredWidth: (width: number) => void
   setResizing: (resizing: boolean) => void
@@ -98,6 +101,7 @@ type SessionToolSidebarOptions = {
   root: string
   terminalLabel: string
   onTerminalError?: (message: string) => void
+  restoreOnMount?: boolean
 }
 
 export function useSessionToolSidebar({
@@ -108,6 +112,7 @@ export function useSessionToolSidebar({
   root,
   terminalLabel,
   onTerminalError,
+  restoreOnMount = false,
 }: SessionToolSidebarOptions): SessionToolSidebarController {
   const effectiveRoot = root.trim() || "."
   const store = useSessionToolSidebarStore()
@@ -121,6 +126,35 @@ export function useSessionToolSidebar({
   const toggleSidebar = React.useCallback(() => dispatch({ type: "toggle-sidebar" }), [dispatch])
   const collapseSidebar = React.useCallback(() => dispatch({ type: "collapse-sidebar" }), [dispatch])
   const toggleExpanded = React.useCallback(() => dispatch({ type: "toggle-expanded" }), [dispatch])
+  const openTerminal = React.useCallback((restore?: SessionTerminalPreference) => {
+    if (!sessionId || !userId || !token || !connectorId || store.isShuttingDown()) return Promise.resolve()
+    store.setContext(sessionId, {
+      ...store.getContext(sessionId),
+      ownerUserId: userId, connectorId, root: effectiveRoot, terminalLabel,
+    })
+    return openWorkspaceTerminal({
+      store, sessionId, userId, connectorId, root: effectiveRoot, label: terminalLabel, restore,
+      operations: {
+        list: async () => (await dashboardApi.connectorTerminalListV2(token, connectorId)).result.terminals,
+        create: async (label) => (await dashboardApi.connectorTerminalCreateV2(token, connectorId, effectiveRoot, {
+          cols: 80, rows: 24, label,
+        })).result,
+        close: (terminalId) => closeTerminalWithRetry(token, connectorId, terminalId),
+      },
+    })
+  }, [connectorId, effectiveRoot, sessionId, store, terminalLabel, token, userId])
+
+  React.useEffect(() => {
+    if (!restoreOnMount || !sessionId) return
+    const restore = () => {
+      const preference = store.getTerminalPreference(sessionId)
+      if (preference?.connectorId !== connectorId || preference.root !== effectiveRoot) return
+      void openTerminal(preference).catch(() => undefined)
+    }
+    restore()
+    window.addEventListener("online", restore)
+    return () => window.removeEventListener("online", restore)
+  }, [connectorId, effectiveRoot, openTerminal, restoreOnMount, sessionId, store])
   const openReview = React.useCallback((target?: SessionReviewTarget) => {
     if (!sessionId || store.isShuttingDown()) return
     dispatch({
@@ -135,101 +169,10 @@ export function useSessionToolSidebar({
       return
     }
 
-    const tabId = createClientId("terminal_pending")
-    const title = nextTerminalTitle(store.getState(sessionId), terminalLabel)
-    dispatch({ type: "open-tool", tab: createSessionToolTab(tabId, "terminal", title) })
-
-    if (!userId || !token || !connectorId) return
-    const creation = dashboardApi.connectorTerminalCreateV2(token, connectorId, effectiveRoot, {
-      cols: 80,
-      rows: 24,
-      label: title,
-    }).then(async (response) => {
-      let terminal = response.result
-      let trackedByDesktop = false
-      try {
-        trackedByDesktop = await trackDesktopTerminal(
-          userId,
-          token,
-          connectorId,
-          terminal.terminalId,
-        )
-      } catch (error) {
-        await closeTerminalWithRetry(token, connectorId, terminal.terminalId).catch(() => undefined)
-        throw error
-      }
-      if (store.isShuttingDown()) {
-        if (!trackedByDesktop) {
-          await closeTerminalWithRetry(token, connectorId, terminal.terminalId)
-        }
-        return
-      }
-      if (trackedByDesktop) {
-        try {
-          const promoted = await dashboardApi.connectorTerminalSetPersistenceV2(
-            token,
-            connectorId,
-            terminal.terminalId,
-            true,
-          )
-          terminal = promoted.result
-        } catch (promotionError) {
-          try {
-            await closeDesktopTerminalOrFallback(token, connectorId, terminal.terminalId)
-          } catch (cleanupError) {
-            await trackDesktopTerminal(
-              userId,
-              token,
-              connectorId,
-              terminal.terminalId,
-            ).catch(() => undefined)
-            if (!store.isShuttingDown()) {
-              const tabStillExists = store.getState(sessionId).tabs.some((tab) => tab.id === tabId)
-              if (!tabStillExists) {
-                dispatch({ type: "open-tool", tab: createSessionToolTab(tabId, "terminal", title) })
-              }
-              dispatch({ type: "resolve-terminal", id: tabId, terminal })
-              onTerminalError?.(
-                cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-              )
-            }
-            return
-          }
-          await untrackDesktopTerminal(connectorId, terminal.terminalId).catch(() => undefined)
-          throw promotionError
-        }
-      }
-      if (store.isShuttingDown()) return
-      const tabStillExists = store.getState(sessionId).tabs.some((tab) => tab.id === tabId)
-      if (!tabStillExists) {
-        try {
-          await closeDesktopTerminalOrFallback(token, connectorId, terminal.terminalId)
-          await untrackDesktopTerminal(connectorId, terminal.terminalId).catch(() => undefined)
-        } catch (cleanupError) {
-          await trackDesktopTerminal(
-            userId,
-            token,
-            connectorId,
-            terminal.terminalId,
-          ).catch(() => undefined)
-          if (!store.isShuttingDown()) {
-            dispatch({ type: "open-tool", tab: createSessionToolTab(tabId, "terminal", title) })
-            dispatch({ type: "resolve-terminal", id: tabId, terminal })
-            onTerminalError?.(
-              cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-            )
-          }
-        }
-        return
-      }
-      dispatch({ type: "resolve-terminal", id: tabId, terminal })
-    }).catch((error: unknown) => {
-      if (store.isShuttingDown()) return
-      const message = error instanceof Error ? error.message : String(error)
-      dispatch({ type: "fail-terminal", id: tabId, error: message })
+    void openTerminal().catch((error: unknown) => {
+      if (!store.isShuttingDown()) onTerminalError?.(error instanceof Error ? error.message : String(error))
     })
-    store.trackTerminalTask(creation)
-  }, [connectorId, dispatch, effectiveRoot, sessionId, store, terminalLabel, token, userId])
+  }, [dispatch, onTerminalError, openTerminal, sessionId, store])
   const openFilePreview = React.useCallback((target: SessionFilePreviewTarget) => {
     if (!sessionId || store.isShuttingDown()) return
     const tabId = createClientId("files_preview")
@@ -252,20 +195,21 @@ export function useSessionToolSidebar({
     if (closingTerminalIdsRef.current.has(terminalId)) return false
 
     closingTerminalIdsRef.current.add(terminalId)
-    const closing = closeDesktopTerminalOrFallback(token, connectorId, terminalId)
+    const closing = closeTerminalWithRetry(token, connectorId, terminalId)
     try {
       await store.trackTerminalTask(closing)
-      await untrackDesktopTerminal(connectorId, terminalId).catch(() => undefined)
-      dispatch({ type: "close-tab", id })
+      store.removeTerminal(connectorId, terminalId)
       return true
     } catch (error: unknown) {
-      await trackDesktopTerminal(userId, token, connectorId, terminalId).catch(() => undefined)
       onTerminalError?.(error instanceof Error ? error.message : String(error))
       return false
     } finally {
       closingTerminalIdsRef.current.delete(terminalId)
     }
   }, [connectorId, dispatch, onTerminalError, sessionId, store, token, userId])
+  const setTabDirty = React.useCallback(
+    (id: string, dirty: boolean) => dispatch({ type: "set-tab-dirty", id, dirty }), [dispatch],
+  )
   const setTabTitle = React.useCallback(
     (id: string, title: string | null) => dispatch({ type: "set-tab-title", id, title }),
     [dispatch],
@@ -291,6 +235,7 @@ export function useSessionToolSidebar({
       activateTab,
       closeTab,
       setTabTitle,
+      setTabDirty,
       setPreferredWidth,
       setResizing,
     }),
@@ -302,6 +247,7 @@ export function useSessionToolSidebar({
       openTool,
       openReview,
       setTabTitle,
+      setTabDirty,
       setPreferredWidth,
       setResizing,
       state,
@@ -311,36 +257,7 @@ export function useSessionToolSidebar({
   )
 }
 
-async function trackDesktopTerminal(
-  userId: string,
-  token: string,
-  connectorId: string,
-  terminalId: string,
-) {
-  const trackTerminal = getDesktopWorkbenchBridge()?.lifecycle?.trackTerminal
-  if (!trackTerminal) return false
-  await trackTerminal({ connectorId, terminalId, userId, token })
-  return true
-}
-
-async function untrackDesktopTerminal(connectorId: string, terminalId: string) {
-  await getDesktopWorkbenchBridge()?.lifecycle?.untrackTerminal?.({ connectorId, terminalId })
-}
-
-async function closeDesktopTerminalOrFallback(
-  token: string,
-  connectorId: string,
-  terminalId: string,
-) {
-  const closeTerminal = getDesktopWorkbenchBridge()?.lifecycle?.closeTerminal
-  if (closeTerminal) {
-    const result = await closeTerminal({ connectorId, terminalId })
-    if (result.handled) return
-  }
-  await closeTerminalWithRetry(token, connectorId, terminalId)
-}
-
-async function closeTerminalWithRetry(
+export async function closeTerminalWithRetry(
   token: string,
   connectorId: string,
   terminalId: string,
@@ -365,18 +282,6 @@ async function closeTerminalWithRetry(
 
 function delay(milliseconds: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
-}
-
-function nextTerminalTitle(state: SessionToolTabsState, baseLabel: string) {
-  const labels = new Set(
-    state.tabs
-      .filter((tab) => tab.kind === "terminal" && tab.title)
-      .map((tab) => tab.title),
-  )
-  if (!labels.has(baseLabel)) return baseLabel
-  let sequence = 2
-  while (labels.has(`${baseLabel} ${sequence}`)) sequence += 1
-  return `${baseLabel} ${sequence}`
 }
 
 function sessionToolSidebarResizeBounds(hostWidth: number) {
@@ -416,7 +321,6 @@ export function SessionToolSidebarsHost() {
     connectors,
     setPanelMode,
   } = useWorkspace()
-  const isMobile = useIsMobile()
   const t = useTranslations("dashboard.session")
   const store = useSessionToolSidebarStore()
   const sessionIds = useStoredSessionToolSidebarIds()
@@ -445,7 +349,7 @@ export function SessionToolSidebarsHost() {
         <PersistentSessionToolSidebar
           key={store.getHostKey(sessionId)}
           sessionId={sessionId}
-          presented={!isMobile && page === "session" && activeSessionId === sessionId}
+          presented={page === "session" && activeSessionId === sessionId}
           token={authSession?.accessToken ?? null}
           userId={authSession?.userId ?? null}
           hostLeft={hostBounds.left}
@@ -484,6 +388,7 @@ function PersistentSessionToolSidebar({
     root: context?.root ?? ".",
     terminalLabel: context?.terminalLabel ?? "Terminal",
     onTerminalError: handleTerminalError,
+    restoreOnMount: presented,
   })
   const previousExpanded = usePreviousValue(controller.expanded)
   const defaultWidth = sessionToolSidebarWidth(hostWidth)
@@ -569,7 +474,11 @@ export function SessionToolSidebar({
   onOpenTool,
 }: SessionToolSidebarProps) {
   const t = useTranslations("dashboard.session.tools")
+  const isMobile = useIsMobile()
+  const fillsMain = controller.expanded || isMobile || hostWidth < 720
   const dashboardSidebarControls = useDashboardSidebarControls()
+  const showDashboardSidebarToggle = fillsMain && dashboardSidebarControls?.open === false
+  const { confirmDiscard, discardDialog } = useDiscardFileChanges()
   const domIdPrefix = React.useId()
   const tabButtonRefs = React.useRef(new Map<string, HTMLButtonElement>())
   const newTabButtonRef = React.useRef<HTMLButtonElement | null>(null)
@@ -582,7 +491,6 @@ export function SessionToolSidebar({
   } | null>(null)
   const restoreDocumentPointerStylesRef = React.useRef<(() => void) | null>(null)
   const resizeBounds = sessionToolSidebarResizeBounds(hostWidth)
-  const showDashboardSidebarToggle = controller.expanded && dashboardSidebarControls?.open === false
   const restoreDocumentPointerStyles = React.useCallback(() => {
     restoreDocumentPointerStylesRef.current?.()
     restoreDocumentPointerStylesRef.current = null
@@ -604,7 +512,7 @@ export function SessionToolSidebar({
 
   if (width === 0 || typeof document === "undefined") return null
 
-  const panelStyle: React.CSSProperties = controller.expanded
+  const panelStyle: React.CSSProperties = fillsMain
     ? { left: hostLeft, width: hostWidth, transform: "translateX(0)" }
     : {
         left: hostLeft + hostWidth - width,
@@ -618,6 +526,8 @@ export function SessionToolSidebar({
   }
 
   const closeTabAndRestoreFocus = async (id: string) => {
+    const tab = controller.tabs.find((tab) => tab.id === id)
+    if (tab?.dirty && !await confirmDiscard()) return
     const closedIndex = controller.tabs.findIndex((tab) => tab.id === id)
     const remainingTabs = controller.tabs.filter((tab) => tab.id !== id)
     const nextTabId = controller.activeTabId === id
@@ -679,15 +589,15 @@ export function SessionToolSidebar({
       inert={!presented || !controller.open ? true : undefined}
       className={cn(
         "fixed inset-y-0 z-40 flex min-w-0 flex-col overflow-hidden border-l border-border bg-background text-foreground",
-        presented ? "visible" : "invisible",
+        presented && controller.open ? "visible" : "invisible",
         presented && controller.open ? "pointer-events-auto" : "pointer-events-none",
-        motionEnabled && !controller.expanded
+        motionEnabled && !fillsMain
           ? "will-change-transform transition-transform duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
           : "transition-none",
       )}
       style={panelStyle}
     >
-      {controller.open && !controller.expanded ? (
+      {controller.open && !fillsMain ? (
         <div
           role="separator"
           aria-label={t("sidebarLabel")}
@@ -735,6 +645,7 @@ export function SessionToolSidebar({
         />
       ) : null}
 
+      {discardDialog}
       <div className="aa-window-drag flex h-11 shrink-0 items-center gap-1 bg-background pl-1.5 pr-3">
         {showDashboardSidebarToggle ? (
           <>
@@ -748,7 +659,7 @@ export function SessionToolSidebar({
         <div
           role="tablist"
           aria-label={t("tabsLabel")}
-          className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden"
+          className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
           onKeyDown={handleTabKeyDown}
         >
           {controller.tabs.map((tab) => {
@@ -761,7 +672,7 @@ export function SessionToolSidebar({
               <div
                 key={tab.id}
                 className={cn(
-                  "aa-window-no-drag group flex min-w-0 max-w-48 flex-1 basis-0 items-center overflow-hidden rounded-xl transition-colors hover:bg-secondary focus-within:bg-secondary",
+                  "aa-window-no-drag group flex min-w-24 max-w-48 shrink-0 items-center overflow-hidden rounded-xl transition-colors hover:bg-secondary focus-within:bg-secondary",
                   active && "bg-secondary text-secondary-foreground",
                 )}
               >
@@ -782,7 +693,7 @@ export function SessionToolSidebar({
                   className="h-8 min-w-0 flex-1 justify-start rounded-xl px-2 hover:bg-transparent"
                 >
                   <Icon data-icon="inline-start" />
-                  <span className="truncate">{label}</span>
+                  <span className="truncate">{label}{tab.dirty ? " •" : ""}</span>
                 </Button>
                 <Button
                   type="button"
@@ -815,6 +726,7 @@ export function SessionToolSidebar({
             type="button"
             variant="ghost"
             size="icon-sm"
+            disabled={isMobile || hostWidth < 720}
             aria-label={controller.expanded ? t("restore") : t("expand")}
             title={controller.expanded ? t("restore") : t("expand")}
             aria-pressed={controller.expanded}
@@ -823,6 +735,7 @@ export function SessionToolSidebar({
           >
             {controller.expanded ? <Minimize2 /> : <Maximize2 />}
           </Button>
+          {/* The native shell header keeps the collapse control above this panel. */}
           <div className="size-8 shrink-0" aria-hidden="true" />
         </div>
       </div>
@@ -836,7 +749,7 @@ export function SessionToolSidebar({
         ) : (
           controller.tabs.map((tab) => {
             const active = controller.activeTabId === tab.id
-            const panelActive = presented && active
+            const panelActive = presented && controller.open && active
             return (
               <section
                 key={tab.id}
@@ -844,12 +757,14 @@ export function SessionToolSidebar({
                 role="tabpanel"
                 aria-labelledby={`${domIdPrefix}-tab-${tab.id}`}
                 aria-hidden={!panelActive}
+                inert={!panelActive || undefined}
                 className={cn(
                   "absolute inset-0 min-h-0 overflow-hidden",
                   panelActive ? "visible pointer-events-auto" : "invisible pointer-events-none",
                 )}
               >
                 {tab.kind === "review" ? (
+                  <SessionFilePreviewProvider onOpenFilePreview={controller.openFilePreview}>
                   <SessionReviewPanel
                     sessionId={sessionId}
                     token={token}
@@ -859,6 +774,7 @@ export function SessionToolSidebar({
                     active={panelActive}
                     reviewTarget={tab.reviewTarget}
                   />
+                  </SessionFilePreviewProvider>
                 ) : null}
                 {tab.kind === "terminal" ? (
                   <TerminalSessionPanel
@@ -879,6 +795,7 @@ export function SessionToolSidebar({
                     connectorDeviceOs={connectorDeviceOs}
                     root={root}
                     onTitleChange={controller.setTabTitle}
+                    onDirtyChange={controller.setTabDirty}
                   />
                 ) : null}
               </section>
@@ -899,6 +816,7 @@ function SessionFilesToolPanel({
   connectorDeviceOs,
   root,
   onTitleChange,
+  onDirtyChange,
 }: {
   tabId: string
   filePreview: SessionFilePreviewTarget | null
@@ -906,8 +824,12 @@ function SessionFilesToolPanel({
   connectorId: string | null
   connectorDeviceOs?: string | null
   root: string
+  onDirtyChange: (id: string, dirty: boolean) => void
   onTitleChange: (id: string, title: string | null) => void
 }) {
+  const handleDirtyChange = React.useCallback(
+    (dirty: boolean) => onDirtyChange(tabId, dirty), [onDirtyChange, tabId],
+  )
   const handleTitleChange = React.useCallback(
     (title: string | null) => onTitleChange(tabId, title),
     [onTitleChange, tabId],
@@ -922,6 +844,7 @@ function SessionFilesToolPanel({
       variant="tab"
       initialFile={filePreview}
       onSelectedFileNameChange={handleTitleChange}
+      onDirtyChange={handleDirtyChange}
     />
   )
 }
@@ -976,26 +899,41 @@ function ToolLauncher({
   onOpenTool: (kind: SessionToolKind) => void
 }) {
   const t = useTranslations("dashboard.session.tools")
+  const id = React.useId()
 
   return (
-    <nav aria-label={t("navigationLabel")} className="flex h-full items-center justify-center p-8">
-      <div className="flex w-full max-w-md flex-col gap-2">
+    <nav aria-label={t("navigationLabel")} className="flex h-full justify-center overflow-y-auto p-6">
+      <div className="my-auto flex w-full max-w-72 flex-col gap-2">
         {TOOL_KINDS.map((kind, index) => {
           const meta = TOOL_META[kind]
           const Icon = meta.icon
+          const titleId = `${id}-${kind}-title`
+          const descriptionId = `${id}-${kind}-description`
           return (
-            <Button
-              ref={index === 0 ? firstButtonRef : undefined}
+            <Card
               key={kind}
-              type="button"
-              variant="secondary"
-              size="lg"
-              onClick={() => onOpenTool(kind)}
-              className="h-12 w-full justify-start rounded-xl px-4 text-base font-normal"
+              size="sm"
+              className="relative gap-0 rounded-xl py-3 focus-within:ring-2 focus-within:ring-ring/50"
             >
-              <Icon data-icon="inline-start" />
-              {t(meta.labelKey)}
-            </Button>
+              <Button
+                ref={index === 0 ? firstButtonRef : undefined}
+                type="button"
+                variant="ghost"
+                aria-labelledby={titleId}
+                aria-describedby={descriptionId}
+                onClick={() => onOpenTool(kind)}
+                className="absolute inset-0 h-full w-full rounded-[inherit]"
+              />
+              <CardHeader className="pointer-events-none relative gap-1 px-3">
+                <CardTitle id={titleId} className="flex items-center gap-2 text-sm">
+                  <Icon className="size-4 shrink-0" />
+                  {t(meta.labelKey)}
+                </CardTitle>
+                <CardDescription id={descriptionId} className="text-xs">
+                  {t(meta.descriptionKey)}
+                </CardDescription>
+              </CardHeader>
+            </Card>
           )
         })}
       </div>

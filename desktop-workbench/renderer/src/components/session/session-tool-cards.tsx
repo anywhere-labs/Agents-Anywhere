@@ -1,6 +1,8 @@
 "use client"
 
 import * as React from "react"
+import { toast } from "sonner"
+import { copyText } from "@/lib/clipboard"
 import { Bot, Check, ChevronDown, Code2, Copy, FilePenLine, Hammer, Loader2, TerminalSquare } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -333,6 +335,8 @@ function CodePanelFrame({
   action?: React.ReactNode
   children: React.ReactNode
 }) {
+  const tCommon = useTranslations("common")
+  const tSession = useTranslations("dashboard.session")
   const [copied, setCopied] = React.useState(false)
   return (
     <div className={cn("min-w-0 max-w-full overflow-hidden bg-background", !flush && "rounded-xl border border-border")}>
@@ -343,11 +347,17 @@ function CodePanelFrame({
           <button
             type="button"
             className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-            onClick={() => {
-              navigator.clipboard.writeText(code).catch(() => undefined)
-              setCopied(true)
-              setTimeout(() => setCopied(false), 1200)
+            onClick={async () => {
+              setCopied(false)
+              try {
+                await copyText(code)
+                setCopied(true)
+                setTimeout(() => setCopied(false), 1200)
+              } catch {
+                toast.error(tCommon("copyFailed"))
+              }
             }}
+            aria-label={copied ? tCommon("copied") : tSession("copyCode")}
           >
             {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
           </button>

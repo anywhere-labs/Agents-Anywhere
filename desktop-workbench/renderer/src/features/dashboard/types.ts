@@ -306,6 +306,7 @@ export type ProjectResponse = {
 };
 
 export type ProjectCreateRequest = {
+  manuallyCreated?: boolean;
   name: string;
   connectorId: string;
   workspacePath: string;

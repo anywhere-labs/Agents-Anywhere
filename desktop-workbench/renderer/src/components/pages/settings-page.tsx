@@ -27,14 +27,8 @@ import { toast } from "sonner"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { SettingsSection } from "@/components/settings/settings-section"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -151,20 +145,16 @@ const PYPI_MIRROR_OPTIONS = [
 function AccountTab({
   me,
   token,
-  fallbackUserId,
   onMeChange,
 }: {
   me: AuthMe
   token: string
-  fallbackUserId: string
   onMeChange: (me: AuthMe) => void
 }) {
   const t = useTranslations("pages.settings")
   const [passwordOpen, setPasswordOpen] = React.useState(false)
   const [avatarOpen, setAvatarOpen] = React.useState(false)
   const [clearingAvatar, setClearingAvatar] = React.useState(false)
-  const userId = me.userId?.trim() || fallbackUserId
-  const displayName = accountDisplayName(me)
 
   const clearAvatar = async () => {
     if (!token || clearingAvatar) return
@@ -178,25 +168,21 @@ function AccountTab({
 
   return (
     <div className="flex flex-col gap-4">
-      <section className="rounded-xl border border-border bg-card">
-        <div className="px-6 py-5">
-          <h2 className="text-base font-semibold">{t("account")}</h2>
-        </div>
-        <Separator />
+      <SettingsSection title={t("account")} contentClassName="p-0">
         <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
           <div className="flex min-w-0 items-center gap-4">
             <Avatar className="size-16 rounded-full">
-              {me.avatar && <AvatarImage src={me.avatar} alt={displayName} />}
+              {me.avatar && <AvatarImage src={me.avatar} alt={accountDisplayName(me)} />}
               <AvatarFallback className="rounded-full bg-primary text-xl text-primary-foreground">
-                {displayName.slice(0, 2).toUpperCase()}
+                {accountDisplayName(me).slice(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0">
-              <p className="truncate text-base font-semibold">{displayName}</p>
+              <p className="truncate text-base font-semibold">{accountDisplayName(me)}</p>
               <p className="text-sm capitalize text-muted-foreground">{me.role}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex max-w-full flex-wrap items-center gap-2">
             {me.avatar ? (
               <Button type="button" variant="outline" size="sm" onClick={clearAvatar} disabled={clearingAvatar}>
                 {clearingAvatar ? <Spinner /> : <Trash2 data-icon="inline-start" />}
@@ -210,42 +196,36 @@ function AccountTab({
           </div>
         </div>
         <Separator />
-        <div className="divide-y divide-border">
-          <div className="flex items-center px-6 py-4">
-            <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("userId")}</span>
-            <span className="code-mono text-sm">{userId}</span>
+        <dl className="divide-y divide-border">
+          <div className="grid grid-cols-1 gap-1 px-6 py-4 sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-center sm:gap-0">
+            <dt className="text-sm text-muted-foreground">{t("profile.email")}</dt>
+            <dd className="min-w-0 code-mono text-sm [overflow-wrap:anywhere]">{me.email ?? "—"}</dd>
           </div>
-          <div className="flex items-center px-6 py-4">
-            <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("role")}</span>
-            <span className="code-mono text-sm">{me.role}</span>
+          <div className="grid grid-cols-1 gap-1 px-6 py-4 sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-center sm:gap-0">
+            <dt className="text-sm text-muted-foreground">{t("role")}</dt>
+            <dd className="min-w-0 code-mono text-sm">{me.role}</dd>
           </div>
-          <div className="flex items-center px-6 py-4">
-            <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("accountStatus")}</span>
-            <span
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
-                me.disabled ? "bg-destructive/10 text-destructive" : "bg-emerald-500/10 text-emerald-600",
-              )}
-            >
-              <span className={cn("size-1.5 rounded-full", me.disabled ? "bg-destructive" : "bg-emerald-500")} />
-              {me.disabled ? t("disabled") : t("active")}
-            </span>
+          <div className="grid grid-cols-1 gap-1 px-6 py-4 sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-center sm:gap-0">
+            <dt className="text-sm text-muted-foreground">{t("accountStatus")}</dt>
+            <dd>
+              <Badge variant={me.disabled ? "destructive" : "secondary"}>
+                {me.disabled ? t("disabled") : t("active")}
+              </Badge>
+            </dd>
           </div>
-        </div>
-      </section>
+        </dl>
+      </SettingsSection>
 
-      <section className="rounded-xl border border-border bg-card">
-        <div className="flex items-center justify-between gap-4 px-6 py-5">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold">{t("password")}</h2>
-            <p className="mt-0.5 text-sm text-muted-foreground">{t("passwordDescription")}</p>
-          </div>
+      <SettingsSection
+        title={t("password")}
+        description={t("passwordDescription")}
+        action={
           <Button type="button" variant="destructive" size="sm" onClick={() => setPasswordOpen(true)}>
             <RotateCw data-icon="inline-start" />
             {t("resetPassword")}
           </Button>
-        </div>
-      </section>
+        }
+      />
 
       <AccountProfileCard me={me} token={token} onMeChange={onMeChange} />
 
@@ -253,7 +233,7 @@ function AccountTab({
       <AvatarCropDialog
         open={avatarOpen}
         token={token}
-        userId={displayName}
+        userId={accountDisplayName(me)}
         onMeChange={onMeChange}
         onOpenChange={setAvatarOpen}
       />
@@ -267,45 +247,37 @@ function MobileConnectionsTab({ token, userId }: { token: string; userId: string
   const [sidebarVisible, setSidebarVisible] = useMobileConnectionsSidebarVisibility()
 
   return (
-    <div className="flex max-w-3xl flex-col gap-4">
-      <Card className="border border-border">
-        <CardHeader className="border-b">
-          <CardTitle>{t("mobileSidebarTitle")}</CardTitle>
-          <CardDescription>{t("mobileSidebarDescription")}</CardDescription>
-        </CardHeader>
-        <CardContent className="px-0">
-          <FieldGroup className="gap-0">
-            <Field orientation="horizontal" className="px-6 py-1">
-              <FieldContent>
-                <FieldLabel htmlFor="mobile-connections-sidebar-visible">
-                  {t("mobileSidebarShow")}
-                </FieldLabel>
-                <FieldDescription>{t("mobileSidebarShowDescription")}</FieldDescription>
-              </FieldContent>
-              <Switch
-                id="mobile-connections-sidebar-visible"
-                checked={sidebarVisible}
-                onCheckedChange={setSidebarVisible}
-              />
-            </Field>
-          </FieldGroup>
-        </CardContent>
-      </Card>
+    <div className="flex flex-col gap-4">
+      <SettingsSection title={t("mobileSidebarTitle")} description={t("mobileSidebarDescription")}>
+        <FieldGroup>
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldLabel htmlFor="mobile-connections-sidebar-visible">
+                {t("mobileSidebarShow")}
+              </FieldLabel>
+              <FieldDescription>{t("mobileSidebarShowDescription")}</FieldDescription>
+            </FieldContent>
+            <Switch
+              id="mobile-connections-sidebar-visible"
+              checked={sidebarVisible}
+              onCheckedChange={setSidebarVisible}
+            />
+          </Field>
+        </FieldGroup>
+      </SettingsSection>
 
-      <Card className="border border-border">
-        <CardHeader>
-          <CardTitle>{tMobile("onboardingTitle")}</CardTitle>
-          <CardDescription>{tMobile("onboardingDescription")}</CardDescription>
-        </CardHeader>
-        <CardFooter className="justify-end border-t">
+      <SettingsSection
+        title={tMobile("onboardingTitle")}
+        description={tMobile("onboardingDescription")}
+        action={
           <MobileConnectionDialog token={token} userId={userId}>
-            <Button type="button">
+            <Button type="button" size="sm">
               <Smartphone data-icon="inline-start" />
               {tMobile("startConnection")}
             </Button>
           </MobileConnectionDialog>
-        </CardFooter>
-      </Card>
+        }
+      />
     </div>
   )
 }
@@ -1360,11 +1332,7 @@ function AppearanceTab() {
 
   return (
     <div className="flex flex-col gap-4">
-      <section className="rounded-xl border border-border bg-card">
-        <div className="px-6 py-5">
-          <h2 className="text-base font-semibold">{t("appearance")}</h2>
-        </div>
-        <Separator />
+      <SettingsSection title={t("appearance")} contentClassName="p-0">
         <RadioGroup value={selected} onValueChange={handleThemeChange} className="p-2">
           {themes.map((themeOption) => (
             <FieldLabel
@@ -1383,32 +1351,27 @@ function AppearanceTab() {
             </FieldLabel>
           ))}
         </RadioGroup>
-      </section>
+      </SettingsSection>
 
-      <section className="rounded-xl border border-border bg-card">
-        <div className="px-6 py-5">
-          <h2 className="text-base font-semibold">{t("desktopSidebar")}</h2>
-          <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopSidebarDescription")}</p>
-        </div>
-        <Separator />
-        <DesktopSettingSwitch
-          label={t("desktopSidebarShowSessions")}
-          description={t("desktopSidebarShowSessionsDescription")}
-          checked={sidebarShowsSessions}
-          disabled={false}
-          onCheckedChange={setSidebarShowsSessions}
-        />
-      </section>
+      <SettingsSection title={t("desktopSidebar")} description={t("desktopSidebarDescription")}>
+        <FieldGroup>
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldLabel htmlFor="settings-sidebar-shows-sessions">
+                {t("desktopSidebarShowSessions")}
+              </FieldLabel>
+              <FieldDescription>{t("desktopSidebarShowSessionsDescription")}</FieldDescription>
+            </FieldContent>
+            <Switch
+              id="settings-sidebar-shows-sessions"
+              checked={sidebarShowsSessions}
+              onCheckedChange={setSidebarShowsSessions}
+            />
+          </Field>
+        </FieldGroup>
+      </SettingsSection>
 
-      <section className="rounded-xl border border-border bg-card">
-        <div className="flex items-center justify-between gap-4 px-6 py-5">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold">{t("language")}</h2>
-            <p className="mt-0.5 text-sm text-muted-foreground">{t("languageDescription")}</p>
-          </div>
-          <LocaleSwitcher />
-        </div>
-      </section>
+      <SettingsSection title={t("language")} description={t("languageDescription")} action={<LocaleSwitcher />} />
     </div>
   )
 }
@@ -1543,7 +1506,6 @@ export function SettingsPage() {
               <AccountTab
                 me={me}
                 token={session?.accessToken ?? ""}
-                fallbackUserId={session?.userId ?? ""}
                 onMeChange={handleMeChange}
               />
             ) : (

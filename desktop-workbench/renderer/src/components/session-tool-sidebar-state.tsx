@@ -11,44 +11,51 @@ import {
 } from "@/components/session-tool-sidebar-store"
 import { useAuth } from "@/components/auth/auth-context"
 import { INITIAL_SESSION_TOOL_TABS_STATE } from "@/components/session-tool-tabs"
-import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
+import { getDesktopServerConnection } from "@/features/desktop/server-connection"
+import { API_NAMESPACE } from "@/lib/api"
+import { readTerminalPreferences, terminalPreferenceKey, writeTerminalPreferences } from "./session-terminal-preferences"
 
 const SessionToolSidebarStateContext = React.createContext<SessionToolSidebarStore | null>(null)
 
 export function SessionToolSidebarStateProvider({ children }: { children: React.ReactNode }) {
   const { session } = useAuth()
-  const [store] = React.useState(createSessionToolSidebarStore)
-  const sessionRef = React.useRef(session)
-  sessionRef.current = session
+  const connection = getDesktopServerConnection()
+  const server = JSON.stringify([
+    connection?.serverUrl ?? process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API ?? "",
+    connection?.apiNamespace ?? API_NAMESPACE,
+  ])
+  const storageKey = terminalPreferenceKey(server, session?.userId ?? "signed-out")
+  return (
+    <ScopedSessionToolSidebarStateProvider key={storageKey} storageKey={storageKey}>
+      {children}
+    </ScopedSessionToolSidebarStateProvider>
+  )
+}
 
-  React.useEffect(() => {
-    const bridge = getDesktopWorkbenchBridge()
-    if (!bridge?.lifecycle || !session) return
-
-    void bridge.lifecycle.updateTerminalAuth?.({
-      userId: session.userId,
-      token: session.accessToken,
+function ScopedSessionToolSidebarStateProvider({ children, storageKey }: {
+  children: React.ReactNode
+  storageKey: string
+}) {
+  const [store] = React.useState(() => {
+    let storage: Storage | null = null
+    try {
+      if (typeof window !== "undefined") storage = window.localStorage
+    } catch { /* Browser storage may be disabled. Inventory queries remain available. */ }
+    return createSessionToolSidebarStore({
+      terminalPreferences: readTerminalPreferences(storage, storageKey),
+      onTerminalPreferencesChange: (preferences) => writeTerminalPreferences(storage, storageKey, preferences),
     })
-  }, [session])
+  })
 
+  const lifecycleGeneration = React.useRef(0)
   React.useEffect(() => {
-    const bridge = getDesktopWorkbenchBridge()
-    if (!bridge?.lifecycle) return
-
-    return bridge.lifecycle.onBeforeQuit(async () => {
-      store.beginShutdown()
-      try {
-        const currentSession = sessionRef.current
-        if (currentSession) {
-          await bridge.lifecycle?.updateTerminalAuth?.({
-            userId: currentSession.userId,
-            token: currentSession.accessToken,
-          })
-        }
-      } finally {
-        await store.waitForTerminalTasks()
-      }
-    })
+    const generation = ++lifecycleGeneration.current
+    return () => {
+      queueMicrotask(() => {
+        if (lifecycleGeneration.current !== generation) return
+        store.beginShutdown()
+      })
+    }
   }, [store])
 
   return (

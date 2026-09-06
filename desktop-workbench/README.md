@@ -114,14 +114,18 @@ config.
 ## Checks
 
 ```bash
-yarn build:main
 yarn typecheck
 yarn test:main
 yarn renderer:typecheck
+yarn workspace agents-anywhere-desktop-renderer test
+yarn workspace agents-anywhere-desktop-renderer protocol:check
 ```
 
 `test:main` covers Desktop provisioning, account isolation, local disconnect,
-local-versus-remote reconnect behavior, and credential redaction in logs.
+local-versus-remote reconnect behavior, quit handling, API routing, and credential
+redaction in logs. Renderer tests cover pairing, project resolution and ordering,
+preferences, clipboard fallbacks, and terminal inventory/restore behavior. These
+checks run headlessly without starting Electron or a development server.
 
 ## Packaging
 
@@ -160,6 +164,22 @@ CI. `bundle:uv` verifies the upstream archive checksum before copying it into
   explicit second confirmation, `forceLocal: true` permits an offline local
   reset without a login session; it also clears Electron web storage and cache.
 
+## Workbench terminals
+
+Terminals use the same Connector lifecycle as Web. Opening the terminal tool
+queries the selected device and workspace before creating a shell. Reloading the
+renderer restores existing terminal IDs and output from the Connector; local
+storage holds only view preferences, scoped to the actual server and account.
+Closing a terminal tab closes that terminal. Leaving the page, signing out, or
+quitting Desktop does not send terminal-close requests.
+
+Electron does not track terminal credentials, promote terminals to persistent
+mode, or renew their leases. Ordinary Connector cleanup remains in charge:
+30 minutes of inactivity by default, with exited records retained for 15 minutes.
+The bundled local Connector still stops when Desktop quits, so its terminals
+end with that process. Terminals on a separately running Connector can remain
+available under its normal cleanup rules.
+
 ## Token boundary
 
 - The renderer supplies its user token only for an explicit create, reconnect,
@@ -179,3 +199,10 @@ CI. `bundle:uv` verifies the upstream archive checksum before copying it into
 - Desktop-owned behavior includes the Electron window and protocol bridge, renderer package identity and port, nested-workspace Next configuration, native title-bar spacing, window drag regions, the shell header, and Desktop sidebar behavior.
 - Do not copy generated or installed content such as `.next`, `node_modules`, `.yarn`, or `out` from `../web-next`.
 - Production/static mode expects `renderer/out`, or a custom `WORKBENCH_WEB_OUT_DIR`.
+
+Shared Web fixes synchronized on 2026-09-06 include device pairing, compact
+settings sections, project/directory defaults and creation, project ordering and
+expansion persistence, tool cards, file editing safeguards, and terminal restore.
+See the [frontend/Desktop handoff](../docs/migrations/main-to-v2/frontend-desktop-follow-up.md)
+for scope and verification. Pairing and mobile login use the selected public
+server address; native renderer URLs are never shared as connection addresses.

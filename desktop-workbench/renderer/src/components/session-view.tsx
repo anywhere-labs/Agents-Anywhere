@@ -88,10 +88,10 @@ export function SessionView() {
     toolSidebar.preferredWidth ?? defaultToolSidebarWidth,
     viewBounds.width,
   )
-  const reservedSidebarWidth = !isMobile && toolSidebar.open && !toolSidebar.expanded
+  const reservedSidebarWidth = toolSidebar.open && !toolSidebar.expanded && !isMobile && viewBounds.width >= 720
     ? toolSidebarWidth
     : 0
-  const toolSidebarExpanded = !isMobile && toolSidebar.open && toolSidebar.expanded
+  const toolSidebarExpanded = toolSidebar.open && (toolSidebar.expanded || isMobile || viewBounds.width < 720)
   const toolSidebarMotionEnabled = !toolSidebar.resizing
     && !toolSidebar.expanded
     && previousToolSidebarExpanded !== true
@@ -126,7 +126,8 @@ export function SessionView() {
   }, [detailSessionId, toolSidebarStore])
 
   React.useLayoutEffect(() => {
-    if (!session) return
+    // Keep mounted editors and terminals while a remounted view is being measured.
+    if (!session || viewBounds.width <= 0) return
     updateSessionToolSidebarHostBounds(toolSidebarStore, viewBounds)
   }, [session, toolSidebarStore, viewBounds])
 
@@ -242,7 +243,7 @@ export function SessionView() {
             onExportRemoteTimeline={handleExportRemoteTimeline}
             exporting={exporting}
             toolsOpen={toolSidebar.open}
-            toolsExpanded={toolSidebar.expanded}
+            toolsExpanded={toolSidebarExpanded}
             toolsOverlayWidth={reservedSidebarWidth}
             toolsMotionEnabled={toolSidebarMotionEnabled}
             onToggleTools={toolSidebar.toggleSidebar}

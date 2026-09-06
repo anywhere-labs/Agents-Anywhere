@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Smartphone, SquarePen } from "lucide-react"
+import { Plus, Smartphone } from "lucide-react"
 import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth/auth-context"
@@ -27,11 +27,10 @@ import {
   type ProjectSessionStatusFilter,
 } from "@/components/sidebar/sidebar-selectors"
 import { SidebarAccountFooter } from "@/components/sidebar/sidebar-account-footer"
+import { useProjectSidebarPreferences } from "@/components/sidebar/use-project-sidebar-preferences"
 import {
   Sidebar,
   SidebarContent,
-  SidebarGroup,
-  SidebarGroupContent,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -80,8 +79,8 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   const [mobileConnectionsSidebarVisible] = useMobileConnectionsSidebarVisibility()
   const t = useTranslations("dashboard")
   const [pairOpen, setPairOpen] = React.useState(false)
-  const [projectsExpanded, setProjectsExpanded] = React.useState(true)
-  const [expandedProjectIds, setExpandedProjectIds] = React.useState<string[]>([])
+  const { preferences: { projectsExpanded, expandedProjectIds }, setProjectExpanded, setProjectsExpanded } =
+    useProjectSidebarPreferences(authSession?.userId ?? "signed-out")
   const [projectEditor, setProjectEditor] = React.useState<ProjectEditorState>(null)
   const [projectToArchive, setProjectToArchive] = React.useState<ProjectView | null>(null)
   const [projectSessionStatus, setProjectSessionStatus] =
@@ -125,13 +124,24 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     refreshData()
   }, [authSession?.accessToken, refreshData, sessions])
 
-  const toggleProjectExpanded = React.useCallback((projectId: string, open: boolean) => {
-    setExpandedProjectIds((current) => {
-      if (open) return current.includes(projectId) ? current : [...current, projectId]
-      return current.filter((id) => id !== projectId)
-    })
-    if (open) void loadProjectSessions(projectId)
-  }, [loadProjectSessions])
+  const loadedExpandedProjects = React.useRef({ userId: authSession?.userId, ids: new Set<string>() })
+  React.useEffect(() => {
+    if (loadedExpandedProjects.current.userId !== authSession?.userId) {
+      loadedExpandedProjects.current = { userId: authSession?.userId, ids: new Set() }
+    }
+    const loaded = loadedExpandedProjects.current.ids
+    const visible = new Set([...pinnedProjects, ...regularProjects].map((project) => project.id))
+    const expanded = new Set(sidebarShowsSessions ? [] : expandedProjectIds.filter((id) => visible.has(id)))
+    for (const id of loaded) {
+      if (!expanded.has(id)) loaded.delete(id)
+    }
+    if (isLoading || !authSession?.accessToken) return
+    for (const id of expanded) {
+      if (loaded.has(id)) continue
+      loaded.add(id)
+      void loadProjectSessions(id)
+    }
+  }, [authSession?.accessToken, authSession?.userId, expandedProjectIds, isLoading, loadProjectSessions, pinnedProjects, regularProjects, sidebarShowsSessions])
 
   const toggleProjectPin = React.useCallback(async (project: ProjectView) => {
     const updated = await updateProject(project.id, { pinned: !project.pinned })
@@ -184,7 +194,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     expandedProjectIds,
     loadingProjectSessionIds,
     activeSessionId,
-    onExpandedChange: toggleProjectExpanded,
+    onExpandedChange: setProjectExpanded,
     onOpenSession: openSession,
     onNewSession: startProjectSession,
     onEdit: (project) => setProjectEditor({ mode: "edit", project }),
@@ -197,46 +207,40 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
 
   return (
     <Sidebar contained={contained} className="border-sidebar-border">
-      <SidebarHeader className="gap-0 px-4 pb-2 pt-3">
-        <div className="mb-3 mt-1 flex items-center">
-          <button type="button" onClick={goHome} className="aa-wordmark min-w-0 pr-px text-left text-xl leading-none">
+      <SidebarHeader className="gap-0 px-4 pb-2 pt-4">
+        <div className="flex min-h-7 items-center justify-between">
+          <button type="button" onClick={goHome} className="aa-wordmark min-w-0 text-left text-xl">
             Agents Anywhere
           </button>
         </div>
 
-        <SidebarMenu>
+        <SidebarMenu className="mt-3">
           <SidebarMenuItem>
             <SidebarMenuButton
-              className="h-9 font-medium"
+              className="h-10 font-medium"
               isActive={page === "home"}
               onClick={goHome}
             >
-              <SquarePen />
+              <Plus />
               <span>{t("actions.newSession")}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
+          {mobileConnectionsSidebarVisible ? (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                className="h-10 font-medium"
+                isActive={page === "mobile-connections"}
+                onClick={() => navigate("mobile-connections")}
+              >
+                <Smartphone />
+                <span>{t("actions.mobileConnections")}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ) : null}
         </SidebarMenu>
       </SidebarHeader>
 
       <SidebarContent className="px-2">
-        {mobileConnectionsSidebarVisible ? (
-          <SidebarGroup className="pb-0 pt-0">
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    className="h-9 font-medium"
-                    isActive={page === "mobile-connections"}
-                    onClick={() => navigate("mobile-connections")}
-                  >
-                    <Smartphone />
-                    <span>{t("actions.mobileConnections")}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        ) : null}
 
         <DevicesSection
           connectors={connectors}

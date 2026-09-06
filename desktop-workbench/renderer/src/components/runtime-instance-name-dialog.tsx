@@ -26,6 +26,7 @@ export function RuntimeInstanceNameDialog({
   cancelLabel,
   initialName = "",
   saving,
+  submitDisabled = false,
   onOpenChange,
   onSubmit,
 }: {
@@ -39,6 +40,7 @@ export function RuntimeInstanceNameDialog({
   cancelLabel: string
   initialName?: string
   saving: boolean
+  submitDisabled?: boolean
   onOpenChange: (open: boolean) => void
   onSubmit: (name: string) => Promise<void>
 }) {
@@ -56,7 +58,7 @@ export function RuntimeInstanceNameDialog({
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setSubmitted(true)
-    if (!name || saving) return
+    if (!name || saving || submitDisabled) return
     try {
       await onSubmit(name)
     } catch {
@@ -91,7 +93,7 @@ export function RuntimeInstanceNameDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
               {cancelLabel}
             </Button>
-            <Button type="submit" disabled={saving || !name}>
+            <Button type="submit" disabled={saving || submitDisabled || !name}>
               {saving ? <Spinner data-icon="inline-start" /> : null}
               {submitLabel}
             </Button>

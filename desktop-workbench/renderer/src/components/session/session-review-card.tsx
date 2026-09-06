@@ -38,13 +38,11 @@ export function SessionReviewCard({
   return (
     <Collapsible open={expanded} onOpenChange={setExpanded} asChild>
       <Card size="sm" className="gap-0 rounded-xl border py-0 shadow-none">
-        <CardHeader className="flex flex-row items-center gap-3 rounded-t-none border-b bg-muted/40 p-4">
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground" aria-hidden="true">
-            <FileDiff className="size-5" />
-          </span>
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <CardTitle>{t("reviewFilesEdited", { count: files.length })}</CardTitle>
-            <CardDescription>
+        <CardHeader className="flex flex-row items-center gap-2 rounded-t-none border-b bg-muted/40 px-3 py-2 [.border-b]:pb-2">
+          <FileDiff className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
+            <CardTitle className="text-sm">{t("reviewFilesEdited", { count: files.length })}</CardTitle>
+            <CardDescription className="text-xs">
               <LineCounts additions={additions} deletions={deletions} />
             </CardDescription>
           </div>
@@ -54,7 +52,7 @@ export function SessionReviewCard({
             </Button>
           </CardAction>
         </CardHeader>
-        <CardContent className="px-0 py-1">
+        <CardContent className="p-0">
           <FileRows files={files.slice(0, VISIBLE_FILE_COUNT)} />
           {remainingFiles.length > 0 ? (
             <CollapsibleContent>
@@ -65,7 +63,7 @@ export function SessionReviewCard({
         {remainingFiles.length > 0 ? (
           <CardFooter className="rounded-b-none bg-muted/40 p-0">
             <CollapsibleTrigger asChild>
-              <Button type="button" variant="ghost" className="h-auto w-full justify-start gap-2 rounded-none px-4 py-2.5">
+              <Button type="button" variant="ghost" className="h-auto w-full justify-start gap-2 rounded-none px-3 py-2">
                 {expanded ? t("reviewCollapseFiles") : t("reviewShowMoreFiles", { count: remainingFiles.length })}
                 {expanded ? <ChevronUp data-icon="inline-end" /> : <ChevronDown data-icon="inline-end" />}
               </Button>
@@ -83,7 +81,7 @@ function FileRows({ files }: { files: ReviewFileChange[] }) {
       {files.map((file) => {
         const nameStart = file.displayPath.lastIndexOf("/") + 1
         return (
-          <li key={file.path} className="flex items-center justify-between gap-3 px-4 py-2.5">
+          <li key={file.path} className="code-mono flex min-h-8 items-center justify-between gap-3 px-3 py-1.5 text-xs">
             <span className="min-w-0 truncate text-muted-foreground" title={file.displayPath}>
               {file.displayPath.slice(0, nameStart)}
               <span className="text-foreground">{file.displayPath.slice(nameStart)}</span>

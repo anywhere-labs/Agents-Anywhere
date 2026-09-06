@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { dashboardApi } from "@/features/dashboard/api"
+import { watchPairingConnector } from "@/features/dashboard/pairing-watcher"
 import { quickAddRuntime } from "@/features/dashboard/quick-add-runtime"
 import {
   discoverConnectorRuntimeOverview,
@@ -29,35 +30,85 @@ import { isTransientHttpStatus } from "@/lib/retry"
 
 export type AgentSetupConnector = { id: string; name: string }
 
-const AgentSetupContext = React.createContext<((connector: AgentSetupConnector) => void) | null>(null)
+type AgentSetupRequest = { connector: AgentSetupConnector; waitingOnline: boolean }
+type AgentSetupContextValue = {
+  requestAgentSetup: (connector: AgentSetupConnector) => void
+  waitForConnector: (connector: AgentSetupConnector) => void
+  readyConnectorIds: string[]
+}
+
+const AgentSetupContext = React.createContext<AgentSetupContextValue | null>(null)
 
 export function useAgentSetup() {
-  const requestAgentSetup = React.useContext(AgentSetupContext)
-  if (!requestAgentSetup) throw new Error("useAgentSetup must be used within AgentSetupProvider")
-  return requestAgentSetup
+  return useAgentSetupPairing().requestAgentSetup
+}
+
+export function useAgentSetupPairing() {
+  const context = React.useContext(AgentSetupContext)
+  if (!context) throw new Error("useAgentSetupPairing must be used within AgentSetupProvider")
+  return context
 }
 
 export function AgentSetupProvider({ children }: { children: React.ReactNode }) {
-  const [queue, setQueue] = React.useState<AgentSetupConnector[]>([])
+  const { refreshData } = useWorkspace()
+  const [queue, setQueue] = React.useState<AgentSetupRequest[]>([])
   const requestAgentSetup = React.useCallback((connector: AgentSetupConnector) => {
-    setQueue((current) => current.some((item) => item.id === connector.id)
-      ? current
-      : [...current, connector])
+    setQueue((current) => current.some((item) => item.connector.id === connector.id)
+      ? current.map((item) => item.connector.id === connector.id ? { connector, waitingOnline: false } : item)
+      : [...current, { connector, waitingOnline: false }])
   }, [])
-  const connector = queue[0]
+  const waitForConnector = React.useCallback((connector: AgentSetupConnector) => {
+    setQueue((current) => current.some((item) => item.connector.id === connector.id)
+      ? current
+      : [...current, { connector, waitingOnline: true }])
+  }, [])
+  const removeRequest = React.useCallback((connectorId: string) => {
+    setQueue((current) => current.filter((item) => item.connector.id !== connectorId))
+  }, [])
+  const handleOnline = React.useCallback((connector: AgentSetupConnector) => {
+    requestAgentSetup(connector)
+    refreshData()
+  }, [refreshData, requestAgentSetup])
+  const context = React.useMemo(() => ({
+    requestAgentSetup,
+    waitForConnector,
+    readyConnectorIds: queue.filter((item) => !item.waitingOnline).map((item) => item.connector.id),
+  }), [queue, requestAgentSetup, waitForConnector])
+  const connector = queue.find((item) => !item.waitingOnline)?.connector
 
   return (
-    <AgentSetupContext.Provider value={requestAgentSetup}>
+    <AgentSetupContext.Provider value={context}>
       {children}
+      {queue.filter((item) => item.waitingOnline).map((item) => (
+        <PendingPairing
+          key={item.connector.id}
+          connectorId={item.connector.id}
+          onOnline={handleOnline}
+          onUnavailable={removeRequest}
+        />
+      ))}
       {connector ? (
         <AgentSetupDialog
           key={connector.id}
           connector={connector}
-          onClose={() => setQueue((current) => current.filter((item) => item.id !== connector.id))}
+          onClose={() => removeRequest(connector.id)}
         />
       ) : null}
     </AgentSetupContext.Provider>
   )
+}
+
+function PendingPairing({ connectorId, onOnline, onUnavailable }: {
+  connectorId: string
+  onOnline: (connector: AgentSetupConnector) => void
+  onUnavailable: (connectorId: string) => void
+}) {
+  const { session } = useAuth()
+  React.useEffect(() => {
+    if (!session?.accessToken) return
+    return watchPairingConnector({ token: session.accessToken, connectorId, onOnline, onUnavailable })
+  }, [connectorId, onOnline, onUnavailable, session?.accessToken])
+  return null
 }
 
 function AgentSetupDialog({ connector, onClose }: { connector: AgentSetupConnector; onClose: () => void }) {

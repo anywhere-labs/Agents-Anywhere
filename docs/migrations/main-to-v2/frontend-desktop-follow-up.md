@@ -2,13 +2,18 @@
 
 更新时间：2026-09-06
 
+当前 Desktop 状态：本文记录的 Web 配对、剪贴板、项目选择与创建、项目侧栏、
+设置页和工具侧栏修复已同步到 `desktop-workbench/renderer`。Desktop 原生
+标题栏、导航与 Connector 控制保留；终端改用与 Web 一致的查询和回收规则，
+移除 Electron 续租与退出关闭终端的逻辑。范围和验证见文末“Desktop 同步完成”。
+
 后续工作台布局（2026-09-06）：Web 已接入 Desktop Workbench 的标签式工具栏、
 文件树、内嵌预览和会话 Review，保留 Web 原有顶部空间和侧栏外的开关。
 实现边界与验证见文末“Web 工作台布局同步”。下文原有业务基线说明保留其历史范围。
 
 后续账号变更（2026-09-05）：邮箱登录、绑定邮箱、统一 `displayName` 和服务页
 Resend 配置见[邮箱账号与昵称](./email-accounts.md)。该变更覆盖 Web 和移动端，
-不修改 Desktop；下文关于配对和 New Session 副本差异的说明仍单独适用。
+当时不修改 Desktop；其中共享账号设置组件现已随本次 renderer 同步更新。
 
 适用分支：`v2`
 
@@ -34,7 +39,7 @@ Resend 配置见[邮箱账号与昵称](./email-accounts.md)。该变更覆盖 W
 | 组件 | 本轮状态 | 跟进 |
 | --- | --- | --- |
 | `web-next` | 已实现 | 直接使用 `v2` 最新代码并运行前端回归检查。 |
-| `desktop-workbench/renderer` | 部分同步；配对和 New Session 主流程仍是旧副本 | 先同步下文列出的 shared renderer 逻辑，保留 Desktop 自有壳层差异。 |
+| `desktop-workbench/renderer` | 本文所列共享前端改动已同步 | 保留 Desktop 自有壳层差异；发布前完成原生设备集成手测。 |
 | `desktop-next` | Connector 控制层无需改业务接口 | 验证配对、重连和 Connector 状态展示，不创建 runtime。 |
 | Server/Connector | 已实现连接替换保护；ownership lease 竞态仍是已知限制 | 不需要客户端新增 endpoint 或 payload 字段。 |
 
@@ -49,7 +54,7 @@ git pull --ff-only origin v2
 git log --oneline -10
 ```
 
-重点查看 `web-next/src/components/task-composer.tsx`、`web-next/src/components/pair-device-dialog.tsx`、`web-next/src/features/dashboard/`，以及 Connector 的 Codex descriptor。`desktop-workbench/renderer` 是独立维护的复制副本；本轮已同步其中的 runtime helper、设备页和配置对话框，但配对和 Composer 主流程仍需要按下文清单跟进。
+重点查看 `web-next/src/components/task-composer.tsx`、`web-next/src/components/pair-device-dialog.tsx`、`web-next/src/features/dashboard/`，以及 Connector 的 Codex descriptor。`desktop-workbench/renderer` 是独立维护的复制副本；上述配对、Composer 和 runtime helper 已同步，后续维护仍应逐项保留 Desktop 集成差异。
 
 ## 业务行为变化
 
@@ -249,16 +254,16 @@ catalog 变空，composer 会清空当前选择；但设备、Agent 和 selectio
 Connector 行为，也没有按 Codex、Claude 等平台名称增加特判。它只影响 New
 Session composer；已有 session 的 selection 流程保持不变。
 
-## Desktop 需要跟进什么
+## Desktop 同步范围
 
 这里要区分两个 Desktop 代码面：
 
 - `desktop-next` 是独立的 Electron Connector 控制器，负责本机进程、配对和重连。
 - `desktop-workbench/renderer` 是一份手工 vendored 的 Web renderer，负责在 Desktop 窗口里展示 New Session、配对和 session UI。
 
-### Desktop Workbench 必须同步的内容
+### Desktop Workbench 共享代码
 
-当前 `desktop-workbench/renderer` 不是完整同步版本，不能只更新 Electron 主进程。本轮已经同步 runtime helper、设备页和 runtime config dialog 的 descriptor-driven 改动；仍请从 `web-next` 同步配对和 New Session 主流程，再保留 Desktop 自有集成层。至少需要核对：
+截至 2026-09-06，`desktop-workbench/renderer` 已同步下列共享配对与 New Session 主流程，保留 Desktop 自有集成层。后续更新应继续核对这些入口：
 
 - `src/components/task-composer.tsx`
 - `src/features/dashboard/new-session-preferences.ts`
@@ -269,13 +274,10 @@ Session composer；已有 session 的 selection 流程保持不变。
 - `src/components/runtime-instance-name-dialog.tsx`
 - `messages/en.json` 和 `messages/zh-CN.json` 中本轮 pairing 文案
 - `test/task-composer-preferences.test.mjs`
-- 对应的静态契约测试；renderer 当前可以直接运行 `node --test test/*.test.mjs`、`corepack yarn typecheck` 和 `corepack yarn protocol:check`（也可以同步 `web-next/package.json` 中的 `test` script）
+- 对应的行为与静态契约测试；renderer 已提供 `yarn test`，同时运行 `yarn typecheck` 和 `yarn protocol:check`。
 
-其中 `runtime-instances.ts`、`device-page.tsx`、`runtime-config-dialog.tsx` 和
-对应测试已经按本轮 descriptor 规则更新；`pair-device-dialog.tsx`、
-`task-composer.tsx` 及其 inventory/presence 逻辑仍需要单独同步。
-
-同步后应具备以下行为：
+其中 runtime descriptor 规则与对应测试沿用已有实现；配对、Composer、
+inventory/presence 和 preference 测试已补齐。当前行为：
 
 - 配对进入显式 `agents` 配置步骤，Connector online 不会直接关闭对话框。
 - Connector 离线时配置/启动按钮禁用，重连后重新加载 runtime inventory。
@@ -340,19 +342,19 @@ corepack yarn lint
 
 本轮受影响的回归测试已通过：Connector Codex/runtime-control 共 `202 passed`，
 Server runtime/connector RPC 共 `69 passed`（另有 1 个现有 deprecation warning），
-Web `64 passed` 且 typecheck、protocol check、lint 通过。Workbench renderer 当前
-基线静态测试为 `10 passed`，但尚未包含本次重连恢复修复；完成同步后必须重新
-执行下列验证。
+Web `64 passed` 且 typecheck、protocol check、lint 通过。以上为原业务基线的
+历史验证记录；2026-09-06 的 Desktop 同步验证见文末，已覆盖重连 preference。
 
 本轮没有修改 Android，也没有要求 Android 跟进。
 
-Desktop Workbench renderer 同步后至少再执行：
+Desktop Workbench 后续同步时执行：
 
 ```bash
-cd desktop-workbench/renderer
-node --test test/*.test.mjs
-corepack yarn typecheck
-corepack yarn protocol:check
+cd desktop-workbench
+yarn test:main
+yarn renderer:typecheck
+yarn workspace agents-anywhere-desktop-renderer test
+yarn workspace agents-anywhere-desktop-renderer protocol:check
 ```
 
 ## 代码提交范围
@@ -553,3 +555,68 @@ Chrome/WebKit 通过 12 组中英文、深浅色、1440px/390px/320px 布局检�
 项目选择、默认用户目录、已有家目录项目去重、项目列表延迟更新、自动创建、
 失败重试和模式切换。浏览器使用实际 Web
 组件和模拟设备接口；Server 测试使用隔离数据库，没有启动开发服务器。
+
+
+## Desktop 同步完成（2026-09-06）
+
+本次直接在 `v2` 将上述已确认的 Web 改动同步到 `desktop-workbench`，未修改
+`desktop-next`、iOS、Server 或 Connector。共享代码逐项同步，没有覆盖 renderer
+整个目录，也没有新增项目解析接口。
+
+- 配对入口使用 18px 标题、原有 672px 弹窗宽度和纵向桌面程序/命令行选项。
+  桌面程序提供 GitHub Releases 与安装指引；CLI 按确认、命名、配对方式排列，
+  配对码在 Token 上方。Agent 配置由全局 provider 处理，关闭等待中的配对
+  弹窗不丢失在线发现，完成后也不再由 Demo 提前关闭后续配置窗口。
+- 配对、预览、消息和服务配置的复制入口使用同一剪贴板回退，只在真实成功后
+  提示成功。配对命令和手机登录二维码使用当前 Desktop 登录的 Server 地址，
+  OAuth 指引使用对应 Web origin，避免生成 `aa-workbench://web` 内部地址。
+- 新会话、工作目录与项目创建完整同步 Web 行为：内容宽度下划线与相邻箭头，
+  两种模式都默认家目录，有现成项目则直接显示/复用；按设备、路径、名称填写
+  新项目，通过输入框末尾的按钮直接选择目录，名称自动去重且可修改，提交后
+  才创建。目录模式发起会话前复用或创建项目以取得 ID，沿用已有项目 API。
+  Desktop 对空 API namespace 的代理路径补充 `/projects`。
+- 项目展开状态持久化，置顶/普通分区分别按最新会话排序，仅手动创建且没有
+  session 的项目优先。项目偏好和终端偏好均以实际 Server 地址、API namespace
+  与账号隔离，避免多个服务端共用 Electron 的固定窗口 origin。
+- 账号、外观、手机连接与归档设置复用 `SettingsSection`；邮箱验证及 API Key
+  状态回到字段标题旁。侧栏字号、间距，Review 摘要、文件树及三张工具入口
+  卡片沿用用户确认的 Web 基线。文件未保存确认、同文件复用、凭据刷新和
+  工具尺寸变化时的状态保留同步。
+- 原生标题栏仍为 44px，保留红绿灯留位、窗口拖拽、侧栏开关、前进后退、
+  本机设备识别与重连提示。工具标签与标题栏对齐，路径栏紧接其下且高 36px；
+  展开/恢复、侧栏收起按钮仍可操作。Desktop OAuth、HTTP/下载代理、原生
+  WebSocket 地址处理和本机 Connector supervisor 保留。
+
+### 终端由 Connector 管理
+
+用户明确选择 Desktop 与 Web 一致：退出客户端保留终端，由 Connector 按
+原规则回收。Electron 的终端登记、访问令牌保留、20 秒续租、持久化提升和
+退出逐个关闭全部移除；Main/preload/renderer 不再暴露这组终端生命周期 IPC。
+
+首次打开先查询设备终端并按目录恢复，没有可复用终端才创建；页面刷新时从
+Connector 重新查询同一终端 ID、接收输出回放、恢复当前标签及侧栏开合状态。
+自动恢复不创建替代进程，查询失败保留重试入口。显式关闭终端标签才调用
+关闭 API，包含创建请求完成前已经主动关闭该标签的情形。同目录其他会话
+同步移除已关闭终端；退出账号或窗口不主动关闭远端终端。
+
+Connector 的普通终端默认空闲回收时间仍为 30 分钟，已退出记录保留 15 分钟。
+进程能否继续运行取决于所属 Connector：独立/远程 Connector 仍在运行时按
+上述规则保留；Desktop 退出仍会停止它内置的本机 Connector，所以该 Connector
+中的终端也随进程结束。此次没有引入系统后台服务或改变本机 Connector 的退出规则。
+旧版本已经创建的持久化终端仍按原租约到期回收，新建终端使用上述普通空闲规则。
+
+### 同步验证
+
+Desktop renderer 的 181 项测试、TypeScript 与协议生成检查通过；Main 的
+39 项测试通过，新增覆盖退出并发、取消退出、Connector 关闭失败以及空 API
+namespace 下的项目代理。全部为无头检查，不需要启动 Electron 或开发服务器。
+
+使用实际 Desktop renderer、原生标题栏组件与模拟接口进行了 Chrome/WebKit
+回归：项目流程 12 组布局与 48 项交互，设置页 60 组布局与 16 项交互，项目
+侧栏 18 项、终端刷新/输出恢复 20 项、工具与文件状态 40 项，以及工具空状态
+6 组布局与 4 组标题栏/路径间距检查。Chrome 另外通过 8 组配对流程与 7 组剪贴板场景。截图检查包含
+原生标题栏与工具行对齐、文件路径留白、家目录项目去重和配对入口。
+
+浏览器测试未加载 Electron 实例、真实 Connector、真实终端进程或生产账号，
+编辑器/接口/终端连接使用测试替身。没有执行完整 Next 构建、安装包构建或原生
+退出端到端测试；发布前仍需按上文路径完成真实 Desktop/设备集成验证。

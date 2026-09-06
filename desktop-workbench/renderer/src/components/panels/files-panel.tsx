@@ -1,6 +1,8 @@
 "use client"
 
 import * as React from "react"
+import { useCompactPanel } from "@/hooks/use-compact-panel"
+import { useDiscardFileChanges } from "@/components/discard-file-changes-dialog"
 import type { PanelImperativeHandle } from "react-resizable-panels"
 import {
   ChevronRight,
@@ -81,6 +83,7 @@ type FilesPanelBodyProps = {
   onPopOut?: () => void
   onPopupBlocked?: () => void
   initialFile?: SessionFilePreviewTarget | null
+  onDirtyChange?: (dirty: boolean) => void
   onSelectedFileNameChange?: (name: string | null) => void
 }
 
@@ -95,9 +98,13 @@ export function FilesPanelBody({
   onPopupBlocked,
   initialFile,
   onSelectedFileNameChange,
+  onDirtyChange,
 }: FilesPanelBodyProps) {
+  const { ref: panelRef, compact } = useCompactPanel()
   const t = useTranslations("dashboard.panels.files")
   const { appendPathToComposer } = useWorkspace()
+  const tokenRef = React.useRef(token)
+  tokenRef.current = token
   const effectiveRoot = root?.trim() || "."
   const treeAllowed = sessionFileTreeAllowed(initialFile)
   const [path, setPath] = React.useState(".")
@@ -115,6 +122,13 @@ export function FilesPanelBody({
   const [treeResizeActive, setTreeResizeActive] = React.useState(false)
   const loadRequestIdRef = React.useRef(0)
   const treePanelRef = React.useRef<PanelImperativeHandle | null>(null)
+
+  const { confirmDiscard, discardDialog } = useDiscardFileChanges()
+  const dirtyRef = React.useRef(false)
+  const handleDirtyChange = React.useCallback((dirty: boolean) => {
+    dirtyRef.current = dirty
+    onDirtyChange?.(dirty)
+  }, [onDirtyChange])
 
   const canLoad = Boolean(token && connectorId)
   const isWindowsConnector = connectorDeviceOs === "windows"
@@ -164,6 +178,7 @@ export function FilesPanelBody({
   )
 
   React.useEffect(() => {
+    const token = tokenRef.current
     const requestId = ++loadRequestIdRef.current
     const initialPath = isWindowsConnector ? "" : effectiveRoot
     setPath(initialPath)
@@ -320,7 +335,7 @@ export function FilesPanelBody({
     }
 
     void initialize()
-  }, [canLoad, connectorId, effectiveRoot, initialFile, isWindowsConnector, token, treeAllowed])
+  }, [canLoad, connectorId, effectiveRoot, initialFile, isWindowsConnector, treeAllowed])
 
   const parentPath = React.useMemo(
     () => sessionFileParentPath(currentPath || path),
@@ -352,7 +367,9 @@ export function FilesPanelBody({
     [connectorId, effectiveRoot, t, token],
   )
 
-  const openEntry = (entry: FsEntry) => {
+  const openEntry = async (entry: FsEntry) => {
+    if (variant === "tab" && entry.path === selectedFile?.path) return
+    if (entry.path !== selectedFile?.path && dirtyRef.current && !await confirmDiscard()) return
     if (entry.type === "directory") {
       void loadDir(entry.path)
       return
@@ -365,7 +382,9 @@ export function FilesPanelBody({
         root: effectiveRoot,
       }
       if (variant === "tab") {
+        handleDirtyChange(false)
         setSelectedFile(file)
+        if (compact) { treePanelRef.current?.collapse(); setTreeOpen(false) }
         setPanelTitle(file.name)
         return
       }
@@ -599,6 +618,7 @@ export function FilesPanelBody({
             sourceMediaType={selectedFile.mediaType}
             sourceSize={selectedFile.size}
             readOnly={selectedFile.source === "attachment"}
+            onDirtyChange={handleDirtyChange}
             mode="embedded"
             onOpenExternal={() => {
               openNativeFilePreviewWindow({
@@ -613,7 +633,7 @@ export function FilesPanelBody({
         ) : (
           <Empty className="h-full rounded-none border-0">
             <EmptyHeader>
-              <EmptyMedia variant="icon">
+              <EmptyMedia>
                 <FolderOpen />
               </EmptyMedia>
               <EmptyTitle>{t("openFile")}</EmptyTitle>
@@ -625,7 +645,8 @@ export function FilesPanelBody({
     )
 
     return (
-      <Card size="sm" className="aa-rt-pane aa-rt-pane-tab">
+      <Card ref={panelRef} size="sm" className="aa-rt-pane aa-rt-pane-tab">
+        {discardDialog}
         <CardContent className="aa-rt-content">
           <header className="aa-fs-shared-header">
             <FilePathBreadcrumb path={breadcrumbPath} />
@@ -655,7 +676,7 @@ export function FilesPanelBody({
           </header>
           {treeAllowed ? (
             <ResizablePanelGroup
-              direction="horizontal"
+              direction={compact ? "vertical" : "horizontal"}
               className={cn("aa-fs-workspace", treeResizeActive && "is-resizing")}
             >
               <ResizablePanel id="files-preview" defaultSize="60%" minSize="35%">
@@ -687,7 +708,7 @@ export function FilesPanelBody({
                 collapsible
                 collapsedSize="0px"
                 defaultSize="40%"
-                minSize="160px"
+                minSize={compact ? "20%" : "160px"}
                 maxSize="65%"
                 groupResizeBehavior="preserve-pixel-size"
                 onResize={(size) => {

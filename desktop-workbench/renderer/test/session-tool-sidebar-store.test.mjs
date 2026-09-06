@@ -4,6 +4,31 @@ import test from "node:test"
 import { createSessionToolSidebarStore } from "../src/components/session-tool-sidebar-store.ts"
 import { createSessionToolTab } from "../src/components/session-tool-tabs.ts"
 
+test("unsaved file state survives hiding, session ID migration, and late callbacks", () => {
+  const store = createSessionToolSidebarStore()
+  store.dispatch("pending", { type: "open-tool", tab: createSessionToolTab("file-a", "files", "a.ts") })
+  store.dispatch("pending", { type: "set-tab-dirty", id: "file-a", dirty: true })
+  store.dispatch("pending", { type: "collapse-sidebar" })
+  store.migrateSession("pending", "server-session")
+  assert.equal(store.getState("server-session").tabs[0].dirty, true)
+  assert.equal(store.getState("server-session").open, false)
+  store.dispatch("pending", { type: "set-tab-dirty", id: "file-a", dirty: false })
+  assert.equal(store.getState("server-session").tabs[0].dirty, false)
+})
+
+test("a file save only clears its own dirty state and closed files stay closed", () => {
+  const store = createSessionToolSidebarStore()
+  for (const id of ["session-a", "session-b"]) {
+    store.dispatch(id, { type: "open-tool", tab: createSessionToolTab("files", "files") })
+    store.dispatch(id, { type: "set-tab-dirty", id: "files", dirty: true })
+  }
+  store.dispatch("session-a", { type: "set-tab-dirty", id: "files", dirty: false })
+  assert.equal(store.getState("session-b").tabs[0].dirty, true)
+  store.dispatch("session-a", { type: "close-tab", id: "files" })
+  store.dispatch("session-a", { type: "set-tab-dirty", id: "files", dirty: true })
+  assert.equal(store.getState("session-a").tabs.length, 0)
+})
+
 test("sidebar state is isolated by session and survives collapse", () => {
   const store = createSessionToolSidebarStore()
 

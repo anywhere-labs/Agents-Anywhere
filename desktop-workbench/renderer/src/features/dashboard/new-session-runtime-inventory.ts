@@ -68,7 +68,8 @@ export function watchNewSessionRuntimeInventory({
       shouldRetry = runtimeInventoryNeedsReconnectSettling(runtimes)
     } catch {
       if (stopped) return
-      // Connector presence can arrive before its runtime HTTP path is ready.
+      // The online snapshot can race the HTTP path becoming ready. A bounded
+      // retry is safe here; permanent failures stop after the same small window.
     }
 
     settleInitial(connectorId)

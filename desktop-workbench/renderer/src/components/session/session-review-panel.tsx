@@ -1,6 +1,8 @@
 "use client"
 
 import * as React from "react"
+import { useSessionFilePreviewOpener } from "@/components/session/session-file-preview-context"
+import { useCompactPanel } from "@/hooks/use-compact-panel"
 import {
   ChevronDown,
   ChevronRight,
@@ -205,7 +207,7 @@ export function SessionReviewPanel({
     return (
       <Empty className="h-full rounded-none border-0">
         <EmptyHeader>
-          <EmptyMedia variant="icon">
+          <EmptyMedia>
             <FileDiff />
           </EmptyMedia>
           <EmptyTitle>{t("reviewEmptyTitle")}</EmptyTitle>
@@ -266,6 +268,7 @@ function ReviewWorkspace({
   caseInsensitivePaths: boolean
   loadingHistory: boolean
 }) {
+  const { ref: panelRef, compact } = useCompactPanel()
   const t = useTranslations("dashboard.session.tools")
   const [selectedPath, setSelectedPath] = React.useState<string | null>(null)
   const [collapsedPaths, setCollapsedPaths] = React.useState<Set<string>>(() => new Set())
@@ -323,8 +326,9 @@ function ReviewWorkspace({
   }, [setFileOpen])
 
   return (
-    <ResizablePanelGroup direction="horizontal" className="h-full min-h-0">
-      <ResizablePanel id="review-diffs" defaultSize="64%" minSize="180px">
+    <div ref={panelRef} className="h-full min-h-0">
+    <ResizablePanelGroup direction={compact ? "vertical" : "horizontal"} className="h-full min-h-0">
+      <ResizablePanel id="review-diffs" defaultSize="64%" minSize={compact ? "30%" : "180px"}>
         <ScrollArea className="h-full min-w-0">
           <TooltipProvider delayDuration={350}>
             <div className="min-w-0 divide-y divide-border pb-8">
@@ -355,7 +359,7 @@ function ReviewWorkspace({
       <ResizablePanel
         id="review-tree"
         defaultSize="36%"
-        minSize="140px"
+        minSize={compact ? "20%" : "140px"}
         maxSize="55%"
         groupResizeBehavior="preserve-pixel-size"
       >
@@ -393,6 +397,7 @@ function ReviewWorkspace({
         </aside>
       </ResizablePanel>
     </ResizablePanelGroup>
+    </div>
   )
 }
 
@@ -417,10 +422,15 @@ function ReviewFileSection({
   onSelect: () => void
   onOpenChange: (open: boolean) => void
 }) {
+  const openInSidebar = useSessionFilePreviewOpener()
   const t = useTranslations("dashboard.session.tools")
 
   const openFilePreview = React.useCallback(() => {
     onSelect()
+    if (openInSidebar) {
+      openInSidebar({ source: "workspace", root, name: file.name, path: file.path })
+      return
+    }
     openNativeFilePreviewWindow({
       token,
       connectorId,
@@ -428,7 +438,7 @@ function ReviewFileSection({
       file: { name: file.name, path: file.path },
       onBlocked: () => toast.error(t("reviewPreviewBlocked")),
     })
-  }, [connectorId, file.name, file.path, onSelect, root, t, token])
+  }, [connectorId, file.name, file.path, onSelect, openInSidebar, root, t, token])
 
   return (
     <Collapsible open={open} onOpenChange={onOpenChange} asChild>
