@@ -251,7 +251,7 @@ private struct RuntimeConfigurationFieldView: View {
             }
         case .boolean:
             Toggle(field.title, isOn: model.boolBinding(fieldId: field.id))
-                .toggleStyle(.switch).tint(nil).accentColor(nil)
+                .toggleStyle(.switch).tint(.green)
         case .number:
             TextField(field.title, text: model.textBinding(fieldId: field.id))
                 .keyboardType(.decimalPad)

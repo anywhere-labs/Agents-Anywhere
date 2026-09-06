@@ -58,6 +58,7 @@ final class DeviceAgentModel {
     }
     func schema(_ runtime: V2DeviceRuntime) throws -> V2RuntimeConfigSchema { try service.configSchema(runtime: runtime) }
     func schema(_ type: V2RuntimeType) throws -> V2RuntimeConfigSchema { try service.configSchema(type: type) }
+    func dismissError() { error = nil }
     func invalidate() { isValid = false; version += 1; inventory = .init(types: [], instances: []); connected = false }
 
     private func perform(_ id: String, action: () async throws -> Void) async throws {

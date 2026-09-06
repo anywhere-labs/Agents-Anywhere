@@ -234,9 +234,8 @@ private struct DeviceManagementToolbar: ToolbarContent {
     var body: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
             Button(action: onMenu) {
-                Label("Open sidebar", systemImage: "line.3.horizontal")
-                    .labelStyle(.iconOnly)
-            }
+                SidebarMenuIcon().foregroundStyle(.primary)
+            }.accessibilityLabel("打开侧栏")
         }
 
         ToolbarItem(placement: .principal) {

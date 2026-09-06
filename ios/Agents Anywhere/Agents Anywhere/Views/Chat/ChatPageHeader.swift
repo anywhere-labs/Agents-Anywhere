@@ -51,7 +51,7 @@ struct ChatPageHeader<Actions: View>: View {
     }
 }
 
-private struct SidebarMenuIcon: View {
+struct SidebarMenuIcon: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4.5) {
             Capsule().frame(width: 21, height: 2)

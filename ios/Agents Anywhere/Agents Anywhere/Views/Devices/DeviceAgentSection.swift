@@ -3,50 +3,47 @@ import SwiftUI
 struct DeviceAgentSection: View {
     @Bindable var model: DeviceAgentModel
     @State private var configuration: Configuration?
+    @State private var showsAddAgents = false
     @State private var deleting: V2DeviceRuntime?
     @State private var renaming: V2DeviceRuntime?
     @State private var proposedName = ""
     @State private var schemaError: String?
 
-    private enum Configuration: Identifiable {
-        case instance(V2DeviceRuntime, V2RuntimeConfigSchema)
-        case addition(V2RuntimeType, V2RuntimeConfigSchema)
-        var id: String {
-            switch self { case .instance(let item, _): "instance:" + item.id; case .addition(let item, _): "type:" + item.id }
-        }
+    private struct Configuration: Identifiable {
+        let runtime: V2DeviceRuntime
+        let schema: V2RuntimeConfigSchema
+        var id: String { runtime.id }
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text("Agent").font(.headline)
                 Spacer()
-                Button("重新发现", systemImage: "arrow.clockwise") { Task { await model.refresh(discover: true) } }
-                    .font(.subheadline).disabled(!model.connected || model.isLoading || model.busyID != nil)
+                AgentRediscoveryButton(model: model)
             }
             if !model.connected {
                 Label("设备或网络已离线，连接恢复后可继续。", systemImage: "wifi.slash")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            if model.isLoading { ProgressView("正在检查 Agent…").font(.footnote) }
             ForEach(model.inventory.configuredInstances) { runtime in
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle(isOn: Binding(get: { runtime.active }, set: { active in
-                        Task { try? await model.setActive(runtime, active) }
-                    })) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(runtime.sessionDisplayName).font(.headline)
-                            Text(runtime.sessionUnavailableReason ?? "已就绪")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }.disabled(!model.connected || model.busyID != nil)
-                    HStack {
-                        Text(runtime.typeDisplayName).font(.caption).foregroundStyle(.secondary)
-                        Spacer()
-                        if model.busyID == runtime.id { ProgressView().controlSize(.small) }
-                        Button("配置", systemImage: "slider.horizontal.3") {
-                            do { configuration = .instance(runtime, try model.schema(runtime)) }
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(runtime.sessionDisplayName).font(.headline)
+                        Text("\(runtime.typeDisplayName) · \(runtime.sessionUnavailableReason ?? "已就绪")")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 10) {
+                        AppGlassButton(systemImage: "slider.horizontal.3", isLoading: model.busyID == runtime.id,
+                            disabled: !model.connected || model.busyID != nil, maxWidth: nil) {
+                            do { configuration = .init(runtime: runtime, schema: try model.schema(runtime)) }
                             catch { schemaError = error.localizedDescription }
-                        }.font(.subheadline).disabled(!model.connected || model.busyID != nil)
+                        }
+                        .accessibilityLabel(Text("配置 \(runtime.sessionDisplayName)"))
+                        Toggle("启用 \(runtime.sessionDisplayName)", isOn: Binding(get: { runtime.active }, set: { active in
+                            Task { try? await model.setActive(runtime, active) }
+                        }))
+                        .labelsHidden().toggleStyle(.switch).tint(.green).fixedSize()
+                        .disabled(!model.connected || model.busyID != nil)
                     }
                 }
                 .padding(16).background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 18))
@@ -57,51 +54,15 @@ struct DeviceAgentSection: View {
                         .disabled(!model.connected || model.busyID != nil)
                 }
             }
-            if !model.addableTypes.isEmpty {
-                Text("可添加的 Agent").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-            }
-            ForEach(model.addableTypes) { type in
-                let hasInstance = model.inventory.configuredInstances.contains { $0.runtimeType == type.runtimeType }
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Text(type.displayName).font(.headline)
-                        if type.recommended { Text("推荐").font(.caption).foregroundStyle(.secondary) }
-                        Spacer()
-                    }
-                    if let description = type.reason ?? type.description, !description.isEmpty {
-                        Text(description).font(.footnote).foregroundStyle(.secondary)
-                    }
-                    HStack(spacing: 12) {
-                        AppGlassButton(hasInstance ? "添加实例" : "添加", systemImage: "plus", style: .prominent,
-                            isLoading: model.busyID == type.id, disabled: !model.connected || model.busyID != nil) {
-                            if hasInstance { configure(type) }
-                            else { Task { try? await model.add(type, name: nil, config: [:]) } }
-                        }
-                        if !hasInstance {
-                            AppGlassButton("配置后添加", disabled: !model.connected || model.busyID != nil) { configure(type) }
-                        }
-                    }
-                }.padding(16).background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 18))
-            }
-            if !model.isLoading && model.inventory.types.isEmpty && model.inventory.instances.isEmpty {
-                Text("尚未发现可用 Agent。在设备上安装并登录 Agent 后，重新发现即可添加。")
-                    .font(.subheadline).foregroundStyle(.secondary)
-            }
-            if let error = model.error ?? schemaError {
-                Text(error).font(.footnote).foregroundStyle(.secondary).textSelection(.enabled)
+            AppGlassButton("添加更多 Agent", systemImage: "plus", style: .prominent) {
+                showsAddAgents = true
             }
         }
         .task(id: model.connected) { await model.refresh() }
-        .sheet(item: $configuration) { item in
-            switch item {
-            case let .instance(runtime, schema):
-                RuntimeConfigurationSheet(runtime: runtime, schema: schema, startAfterSaving: false) {
-                    try await model.save(runtime, config: $0)
-                }
-            case let .addition(type, schema):
-                RuntimeConfigurationSheet(type: type, schema: schema, suggestedName: suggestedName(type)) { name, config in
-                    try await model.add(type, name: name, config: config, newInstance: true)
-                }
+        .sheet(isPresented: $showsAddAgents) { AddDeviceAgentSheet(model: model) }
+        .sheet(item: $configuration, onDismiss: model.dismissError) { item in
+            RuntimeConfigurationSheet(runtime: item.runtime, schema: item.schema, startAfterSaving: false) {
+                try await model.save(item.runtime, config: $0)
             }
         }
         .alert("删除这个 Agent 的配置？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
@@ -119,16 +80,30 @@ struct DeviceAgentSection: View {
                 Task { try? await model.rename(runtime, proposedName) }
             }.disabled(proposedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
+        .alert("Agent 操作未完成", isPresented: Binding(
+            get: { !showsAddAgents && configuration == nil && (schemaError != nil || model.error != nil) },
+            set: { if !$0 { schemaError = nil; model.dismissError() } }
+        )) {
+            Button("好", role: .cancel) { schemaError = nil; model.dismissError() }
+        } message: { Text(schemaError ?? model.error ?? "") }
     }
-    private func configure(_ type: V2RuntimeType) {
-        do { configuration = .addition(type, try model.schema(type)) }
-        catch { schemaError = error.localizedDescription }
-    }
-    private func suggestedName(_ type: V2RuntimeType) -> String {
-        let names = Set(model.inventory.instances.map { $0.name.lowercased() })
-        var name = type.displayName; var suffix = 2
-        while names.contains(name.lowercased()) { name = "\(type.displayName) \(suffix)"; suffix += 1 }
-        return name
+}
+
+struct AgentRediscoveryButton: View {
+    let model: DeviceAgentModel
+
+    var body: some View {
+        Button { Task { await model.refresh(discover: true) } } label: {
+            Image(systemName: "arrow.clockwise")
+                .opacity(model.isLoading ? 0 : 1)
+                .overlay {
+                    if model.isLoading { ProgressView().controlSize(.small).tint(.primary) }
+                }
+                .frame(width: 44, height: 44).contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(!model.connected || model.isLoading || model.busyID != nil)
+        .accessibilityLabel(model.isLoading ? "正在刷新 Agent" : "重新发现 Agent")
     }
 }
 
