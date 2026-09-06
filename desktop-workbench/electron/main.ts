@@ -734,6 +734,7 @@ async function initializeDesktopServices(): Promise<void> {
     fetcher: (input, init) => net.fetch(String(input), init),
     defaultServerUrl: apiOrigin,
     apiNamespace,
+    readLocalConnectorIds: () => machineState.readConnectorIds(),
     recordLocalConnector: (connectorId) => machineState.recordConnectorId(connectorId),
   });
   applyLoginItemSettings();

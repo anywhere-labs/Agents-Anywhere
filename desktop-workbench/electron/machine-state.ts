@@ -25,6 +25,10 @@ export function machineStatePath(home = userInfo().homedir): string {
 export class MachineStateStore {
   constructor(readonly filePath = machineStatePath()) {}
 
+  readConnectorIds(): string[] {
+    return this.read().connectorIds;
+  }
+
   recordInstallation(input: DesktopInstallation): void {
     if (!path.isAbsolute(input.appPath) || !path.isAbsolute(input.executablePath)) {
       throw new Error("Desktop installation paths must be absolute.");
@@ -44,7 +48,7 @@ export class MachineStateStore {
     });
   }
 
-  private read(): MachineState {
+  private read(repair = false): MachineState {
     let text: string;
     try { text = fs.readFileSync(this.filePath, "utf8"); }
     catch (error) {
@@ -54,13 +58,20 @@ export class MachineStateStore {
     let value: unknown;
     try { value = JSON.parse(text); }
     catch {
+      if (!repair) throw new Error("The local machine record contains invalid JSON.");
       // Preserve corrupt contents for diagnosis before repairing the startup record.
       fs.copyFileSync(this.filePath, `${this.filePath}.corrupt-${randomUUID()}`, fs.constants.COPYFILE_EXCL);
       return { version: 1, connectorIds: [] };
     }
-    if (!value || typeof value !== "object" || Array.isArray(value)) return { version: 1, connectorIds: [] };
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      if (!repair) throw new Error("The local machine record is invalid.");
+      return { version: 1, connectorIds: [] };
+    }
     const record = value as Record<string, unknown>;
-    if (record.version !== undefined && record.version !== 1) throw new Error("Unsupported machine record version.");
+    if (record.version !== 1 && (!repair || record.version !== undefined)) throw new Error("Unsupported machine record version.");
+    if (!repair && record.connectorIds !== undefined && (
+      !Array.isArray(record.connectorIds) || record.connectorIds.some(id => typeof id !== "string" || !id.trim())
+    )) throw new Error("The local Connector ID record is invalid.");
     const connectorIds = Array.isArray(record.connectorIds)
       ? [...new Set(record.connectorIds.filter((id): id is string => typeof id === "string" && Boolean(id.trim())).map(id => id.trim()))]
       : [];
@@ -69,7 +80,7 @@ export class MachineStateStore {
 
   private update(change: (state: MachineState) => MachineState): void {
     // Synchronous read/modify/write plus Electron's single-instance lock serializes all writers.
-    const next = change(this.read());
+    const next = change(this.read(true));
     const contents = `${JSON.stringify(next, null, 2)}\n`;
     try { if (fs.readFileSync(this.filePath, "utf8") === contents) return; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }

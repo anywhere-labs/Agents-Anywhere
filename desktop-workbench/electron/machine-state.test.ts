@@ -61,6 +61,31 @@ test("startup backs up and repairs corrupt JSON, while future schema versions ar
   } finally { h.cleanup(); }
 });
 
+test("reading local IDs returns fresh ordered snapshots without rewriting the record", (t) => {
+  const h = fixture();
+  t.after(h.cleanup);
+  assert.deepEqual(h.store.readConnectorIds(), []);
+  assert.equal(fs.existsSync(h.store.filePath), false);
+  h.store.recordConnectorId("first");
+  const contents = JSON.stringify({ ...h.read(), connectorIds: [" first ", "second", "first"] });
+  fs.writeFileSync(h.store.filePath, contents);
+  assert.deepEqual(h.store.readConnectorIds(), ["first", "second"]);
+  assert.equal(fs.readFileSync(h.store.filePath, "utf8"), contents);
+  h.store.recordConnectorId("third");
+  assert.deepEqual(h.store.readConnectorIds(), ["first", "second", "third"]);
+});
+
+test("reading invalid shared records fails without treating them as empty history", (t) => {
+  const h = fixture();
+  t.after(h.cleanup);
+  h.store.recordConnectorId("first");
+  for (const contents of ["{broken", "null", "[]", '{"version":2}', '{"connectorIds":[]}', '{"version":1,"connectorIds":"first"}', '{"version":1,"connectorIds":[""]}']) {
+    fs.writeFileSync(h.store.filePath, contents);
+    assert.throws(() => h.store.readConnectorIds(), /record|version/);
+    assert.equal(fs.readFileSync(h.store.filePath, "utf8"), contents);
+  }
+});
+
 test("packaged macOS and Windows records identify the app and dev records retain launch arguments", () => {
   assert.equal(desktopInstallation({ platform: "darwin", executablePath: "/Applications/Agents Anywhere.app/Contents/MacOS/Agents Anywhere", appPath: "/app.asar", packaged: true }).appPath, "/Applications/Agents Anywhere.app");
   const windows = desktopInstallation({ platform: "win32", executablePath: "D:\\Apps\\Agents Anywhere.exe", appPath: "D:\\Apps\\resources\\app.asar", packaged: true });

@@ -155,9 +155,13 @@ project path and launch arguments; packaged records contain the installed app
 and executable paths.
 
 Only newly created local Connectors append an ID to the ordered `connectorIds`
-history. Reconnecting an existing device does not append an ID. The DSH plugin
-reads this file and verifies ownership against the signed-in user's server
-device list before reusing an ID. Tokens remain private. See the
+history. Reconnecting an existing device does not append an ID. Desktop and the
+DSH plugin verify ownership against the signed-in user's server device list
+before pairing. First-login provisioning and pairing again after a deleted
+device both reuse the first matching ID in local record order and rotate its
+token. Only an empty intersection creates a device; list or token-rotation
+failures stop provisioning for retry. A local persistence failure never deletes
+a reused server device. Tokens remain private. See the
 [shared record contract](../contracts/local-machine/1.0/README.md).
 
 Sidebar devices use fixed Chinese pinyin/name ordering and an ID tie-breaker,
@@ -165,8 +169,8 @@ so polling, presence changes and same-name devices do not reorder the list.
 
 ## Connector lifecycle
 
-- Successful Desktop login provisions a `connectorKind: "desktop"` device with
-  the existing user-authenticated Connector API.
+- Successful Desktop login reuses a matching local device or provisions a
+  `connectorKind: "desktop"` device with the user-authenticated Connector API.
 - Electron Main persists the returned `connectorId` and `connectorToken`, then
   sends them to `anywhere-cli rpc` through `connector.saveConfig`.
 - Closing the window on macOS keeps the app and Connector running in the
