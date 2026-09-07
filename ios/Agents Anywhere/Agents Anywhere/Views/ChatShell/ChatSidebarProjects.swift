@@ -25,11 +25,15 @@ struct ChatSidebarProjects: View {
     }
     var body: some View {
         let projects = ProjectSidebarPresentation.projects(repository.projects, filter: filter, sessions: repository.sessions)
+        // Capture the value in this body, then pass it through the lazy builders.
+        // Pinning moves a row between sections before the request clears busy;
+        // cached row content must receive that final state change explicitly.
+        let busyProjects = busy
         LazyVStack(alignment: .leading, spacing: 4) {
             if projects.contains(where: \.pinned) {
                 Text(String(localized: "置顶项目")).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                     .padding(.horizontal, 10).padding(.top, 16).padding(.bottom, 6)
-                projectList(projects.filter(\.pinned))
+                projectList(projects.filter(\.pinned), busyProjects: busyProjects)
             }
             HStack {
                 Button { repository.sidebarPreferences.projectsExpanded.toggle() } label: {
@@ -51,7 +55,7 @@ struct ChatSidebarProjects: View {
                     .disabled(!repository.canWrite)
             }.padding(.horizontal, 10).padding(.top, 16)
             if repository.sidebarPreferences.projectsExpanded {
-                projectList(projects.filter { !$0.pinned })
+                projectList(projects.filter { !$0.pinned }, busyProjects: busyProjects)
                 if repository.isLoading && repository.projects.isEmpty { ProgressView().padding(12) }
                 if repository.hasLoaded && repository.projects.isEmpty {
                     Text(String(localized: "创建一个项目，开始新的任务。"))
@@ -87,21 +91,21 @@ struct ChatSidebarProjects: View {
 
     private var expanded: Set<String> { repository.sidebarPreferences.expandedProjects }
 
-    private func projectList(_ values: [V2Project]) -> some View {
+    private func projectList(_ values: [V2Project], busyProjects: Set<String>) -> some View {
         ForEach(values) { project in
-            projectRow(project)
+            projectRow(project, isBusy: busyProjects.contains(project.id))
             if expanded.contains(project.id) { projectSessions(project) }
         }
     }
 
-    private func projectRow(_ project: V2Project) -> some View {
+    private func projectRow(_ project: V2Project, isBusy: Bool) -> some View {
         HStack(spacing: 0) {
             Button { toggleProject(project.id) } label: {
                 HStack(spacing: 8) {
                     AppSymbol(expanded.contains(project.id) ? "folder.fill" : "folder", size: 18)
                     Text(project.name).font(.body).lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    if busy.contains(project.id) { ProgressView().controlSize(.mini) }
+                    if isBusy { ProgressView().controlSize(.mini) }
                 }
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(.rect)
             }
@@ -114,25 +118,25 @@ struct ChatSidebarProjects: View {
         .foregroundStyle(.primary)
         .padding(.leading, 10).buttonStyle(.plain)
         .contentShape(.rect)
-        .contextMenu { projectMenu(project) }
+        .contextMenu { projectMenu(project, isBusy: isBusy) }
     }
 
     @ViewBuilder
-    private func projectMenu(_ project: V2Project) -> some View {
+    private func projectMenu(_ project: V2Project, isBusy: Bool) -> some View {
         let deviceName = repository.connectors.first { $0.id == project.connectorId }?.name ?? String(localized: "设备不可用")
         Section(deviceName) {
             Button(String(localized: "新建会话"), systemImage: "square.and.pencil") { onNewSession(project.id) }
             Button(String(localized: "编辑项目"), systemImage: "pencil") { editing = project }
-                .disabled(!repository.canWrite || busy.contains(project.id))
+                .disabled(!repository.canWrite || isBusy)
             Button(project.pinned ? String(localized: "取消置顶") : String(localized: "置顶"), systemImage: "pin") {
                 perform(project.id) { try await repository.updateProject(project.id, pinned: !project.pinned) }
-            }.disabled(!repository.canWrite || busy.contains(project.id))
+            }.disabled(!repository.canWrite || isBusy)
         }
         Section {
             Button(String(localized: "归档项目会话"), systemImage: "archivebox", role: .destructive) { action = .init(project: project, deletes: false) }
-                .disabled(!repository.canWrite || busy.contains(project.id))
+                .disabled(!repository.canWrite || isBusy)
             Button(String(localized: "删除项目"), systemImage: "trash", role: .destructive) { action = .init(project: project, deletes: true) }
-                .disabled(!repository.canWrite || busy.contains(project.id))
+                .disabled(!repository.canWrite || isBusy)
         }
     }
 
