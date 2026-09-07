@@ -284,7 +284,7 @@ private struct ChatSidebarDeviceRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10)
             .frame(minHeight: 42)
-            .background(.primary.opacity(isSelected ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 9))
+            .background(.primary.opacity(isSelected ? 0.16 : 0), in: RoundedRectangle(cornerRadius: 9))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -327,7 +327,7 @@ struct ChatSidebarSessionRow: View {
             .padding(.leading, inset ? 36 : 10)
             .padding(.trailing, 10)
             .frame(minHeight: 42)
-            .background(.primary.opacity(isSelected ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 9))
+            .background(.primary.opacity(isSelected ? 0.16 : 0), in: RoundedRectangle(cornerRadius: 9))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
