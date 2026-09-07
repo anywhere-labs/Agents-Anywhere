@@ -3,36 +3,24 @@
 
   extension TextLayoutCollection {
     var startPosition: TextPosition {
-      TextPosition(
-        indexPath: .init(runSlice: 0, run: 0, line: 0, layout: 0),
-        affinity: layouts.count > 0 ? .downstream : .upstream
-      )
+      for index in layouts.indices {
+        if let position = firstPosition(in: index) { return position }
+      }
+      return TextPosition(indexPath: .init(layout: 0), affinity: .upstream)
     }
 
     var endPosition: TextPosition {
-      guard
-        let layout = layouts.last,
-        let line = layout.lines.last,
-        let run = line.runs.last
-      else {
-        return startPosition
+      for index in layouts.indices.reversed() {
+        if let position = lastPosition(in: index) { return position }
       }
-      return TextPosition(
-        indexPath: .init(
-          runSlice: run.slices.endIndex - 1,
-          run: line.runs.endIndex - 1,
-          line: layout.lines.endIndex - 1,
-          layout: layouts.endIndex - 1
-        ),
-        affinity: .upstream
-      )
+      return startPosition
     }
 
     func position(from position: TextPosition, offset: Int) -> TextPosition? {
-      let from = characterIndex(at: position)
-      let target = from + offset
+      guard let from = characterIndex(at: position) else { return nil }
+      let (target, overflow) = from.addingReportingOverflow(offset)
 
-      guard (0...stringLength).contains(target) else {
+      guard !overflow, (0...stringLength).contains(target) else {
         return nil
       }
 
@@ -44,22 +32,24 @@
       while layout < layouts.count {
         let length = layouts[layout].attributedString.length
 
-        guard localTarget > length else {
-          break
+        if localTarget <= length {
+          if let position = self.position(at: layout, localCharacterIndex: localTarget) {
+            return position
+          }
+          // A blank layout at this boundary has no glyph. Keep looking for the
+          // next real position, but never skip unresolved nonempty text.
+          if localTarget < length { return nil }
         }
 
         localTarget -= length
         layout += 1
       }
 
-      guard layout < layouts.count else {
-        return endPosition
-      }
-
-      return self.position(at: layout, localCharacterIndex: localTarget)
+      return contains(endPosition) ? endPosition : nil
     }
 
-    func characterIndex(at position: TextPosition) -> Int {
+    func characterIndex(at position: TextPosition) -> Int? {
+      guard contains(position) else { return nil }
       let base = layouts.prefix(position.indexPath.layout)
         .map(\.attributedString.length)
         .reduce(0, +)
@@ -75,6 +65,7 @@
     }
 
     func localCharacterRange(at indexPath: IndexPath) -> Range<Int> {
+      guard contains(indexPath) else { return 0..<0 }
       let line = layouts[indexPath.layout].lines[indexPath.line]
       return line.runs[indexPath.run]
         .slices[indexPath.runSlice]
@@ -82,38 +73,24 @@
     }
 
     func layoutDirection(at indexPath: IndexPath) -> LayoutDirection {
+      guard contains(indexPath) else { return .leftToRight }
       let line = layouts[indexPath.layout].lines[indexPath.line]
       return line.runs[indexPath.run].layoutDirection
     }
 
     func position(at layoutIndex: Int, localCharacterIndex: Int) -> TextPosition? {
+      guard let start = firstPosition(in: layoutIndex), let end = lastPosition(in: layoutIndex) else {
+        return nil
+      }
       guard localCharacterIndex > 0 else {
-        return TextPosition(
-          indexPath: .init(layout: layoutIndex),
-          affinity: .downstream
-        )
+        return start
       }
 
       let layout = layouts[layoutIndex]
       let stringLength = layout.attributedString.length
 
       guard localCharacterIndex <= stringLength else {
-        if let line = layout.lines.last, let run = line.runs.last {
-          return TextPosition(
-            indexPath: .init(
-              runSlice: run.slices.endIndex - 1,
-              run: line.runs.endIndex - 1,
-              line: layout.lines.endIndex - 1,
-              layout: layoutIndex
-            ),
-            affinity: .upstream
-          )
-        } else {
-          return TextPosition(
-            indexPath: .init(runSlice: 0, run: 0, line: 0, layout: layoutIndex),
-            affinity: .upstream
-          )
-        }
+        return end
       }
 
       for (i, line) in zip(layout.lines.indices, layout.lines) {
@@ -150,6 +127,7 @@
     func reconcileRange(_ range: TextRange, from other: any TextLayoutCollection) -> TextRange? {
       guard
         layouts.count == other.layouts.count,
+        other.contains(range),
         let start = reconcilePosition(range.start, from: other),
         let end = reconcilePosition(range.end, from: other)
       else {
@@ -163,7 +141,7 @@
     @available(iOS, unavailable)
     @available(visionOS, unavailable)
     func nextWord(from position: TextPosition) -> TextPosition? {
-      guard layouts.indices.contains(position.indexPath.layout) else {
+      guard contains(position) else {
         return nil
       }
       let layout = layouts[position.indexPath.layout]
@@ -192,7 +170,7 @@
     @available(iOS, unavailable)
     @available(visionOS, unavailable)
     func previousWord(from position: TextPosition) -> TextPosition? {
-      guard layouts.indices.contains(position.indexPath.layout) else {
+      guard contains(position) else {
         return nil
       }
       let layout = layouts[position.indexPath.layout]
@@ -226,70 +204,22 @@
     }
 
     func blockStart(for position: TextPosition) -> TextPosition? {
-      guard layouts.indices.contains(position.indexPath.layout) else {
-        return nil
-      }
-
-      let start = TextPosition(
-        indexPath: .init(layout: position.indexPath.layout),
-        affinity: .downstream
-      )
+      guard contains(position), let start = firstPosition(in: position.indexPath.layout) else { return nil }
 
       // if we are already at the start, move to the previous block
       if position == start, position.indexPath.layout > 0 {
-        return TextPosition(
-          indexPath: .init(layout: position.indexPath.layout - 1),
-          affinity: .downstream
-        )
+        return firstPosition(in: position.indexPath.layout - 1)
       }
 
       return start
     }
 
     func blockEnd(for position: TextPosition) -> TextPosition? {
-      guard layouts.indices.contains(position.indexPath.layout) else {
-        return nil
-      }
-
-      let layout = layouts[position.indexPath.layout]
-
-      guard
-        let line = layout.lines.last,
-        let run = line.runs.last
-      else {
-        return nil
-      }
-
-      let end = TextPosition(
-        indexPath: .init(
-          runSlice: run.slices.endIndex - 1,
-          run: line.runs.endIndex - 1,
-          line: layout.lines.endIndex - 1,
-          layout: position.indexPath.layout
-        ),
-        affinity: .upstream
-      )
+      guard contains(position), let end = lastPosition(in: position.indexPath.layout) else { return nil }
 
       // if we are already at the end, move to the next block
       if position == end, position.indexPath.layout + 1 < layouts.endIndex {
-        let layout = layouts[position.indexPath.layout + 1]
-
-        guard
-          let line = layout.lines.last,
-          let run = line.runs.last
-        else {
-          return nil
-        }
-
-        return TextPosition(
-          indexPath: .init(
-            runSlice: run.slices.endIndex - 1,
-            run: line.runs.endIndex - 1,
-            line: layout.lines.endIndex - 1,
-            layout: position.indexPath.layout + 1
-          ),
-          affinity: .upstream
-        )
+        return lastPosition(in: position.indexPath.layout + 1)
       }
 
       return end

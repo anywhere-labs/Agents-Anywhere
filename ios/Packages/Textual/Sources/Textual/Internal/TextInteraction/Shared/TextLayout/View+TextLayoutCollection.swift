@@ -12,11 +12,13 @@
 
   extension View {
     func overlayTextLayoutCollection(
+      size: CGSize,
       @ViewBuilder content: @escaping (any TextLayoutCollection) -> some View
     ) -> some View {
       overlayPreferenceValue(Text.LayoutKey.self) { value in
         GeometryReader { geometry in
           content(LiveTextLayoutCollection(base: value, geometry: geometry))
+            .id(size)
         }
       }
     }

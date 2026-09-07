@@ -232,7 +232,7 @@ struct TimelineCodePanel: View {
                                 Text(line.sign).frame(width: 10)
                                 Text(line.oldLine.map(String.init) ?? "").frame(width: 34, alignment: .trailing)
                                 Text(line.newLine.map(String.init) ?? "").frame(width: 34, alignment: .trailing)
-                                Text(line.text.isEmpty ? " " : line.text).textSelection(.enabled).fixedSize(horizontal: true, vertical: false)
+                                ChatSelectableText(text: line.text.isEmpty ? " " : line.text).fixedSize(horizontal: true, vertical: false)
                                 Spacer(minLength: 0)
                             }
                             .font(.system(.caption, design: .monospaced)).monospacedDigit()
@@ -241,7 +241,7 @@ struct TimelineCodePanel: View {
                         }
                     }.padding(.vertical, 8).fixedSize(horizontal: true, vertical: false)
                 } else {
-                    Text(displayCode).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                    ChatSelectableText(text: displayCode).font(.system(.caption, design: .monospaced))
                         .fixedSize(horizontal: true, vertical: false).padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }

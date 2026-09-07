@@ -6,7 +6,7 @@
     @available(iOS, unavailable)
     @available(visionOS, unavailable)
     func wordRange(for position: TextPosition) -> TextRange? {
-      guard layouts.indices.contains(position.indexPath.layout) else {
+      guard contains(position) else {
         return nil
       }
       let layout = layouts[position.indexPath.layout]
@@ -28,63 +28,20 @@
     }
 
     func blockRange(for position: TextPosition) -> TextRange? {
-      guard layouts.indices.contains(position.indexPath.layout) else {
+      guard contains(position) else {
         return nil
       }
 
-      let layout = layouts[position.indexPath.layout]
-
-      guard
-        let line = layout.lines.last,
-        let run = line.runs.last
-      else {
-        return nil
-      }
-
-      return TextRange(
-        start: .init(
-          indexPath: .init(layout: position.indexPath.layout),
-          affinity: .downstream
-        ),
-        end: .init(
-          indexPath: .init(
-            runSlice: run.slices.endIndex - 1,
-            run: line.runs.endIndex - 1,
-            line: layout.lines.endIndex - 1,
-            layout: position.indexPath.layout
-          ),
-          affinity: .upstream
-        )
-      )
+      guard let start = firstPosition(in: position.indexPath.layout),
+        let end = lastPosition(in: position.indexPath.layout)
+      else { return nil }
+      return TextRange(start: start, end: end)
     }
 
     func clampRange(_ range: TextRange, layoutIndex: Int) -> TextRange? {
-      guard layouts.indices.contains(layoutIndex) else {
-        return nil
-      }
-
-      let layout = layouts[layoutIndex]
-
-      guard
-        let lastLine = layout.lines.last,
-        let lastRun = lastLine.runs.last
-      else {
-        return nil
-      }
-
-      let start = TextPosition(
-        indexPath: .init(layout: layoutIndex),
-        affinity: .downstream
-      )
-      let end = TextPosition(
-        indexPath: .init(
-          runSlice: lastRun.slices.endIndex - 1,
-          run: lastLine.runs.endIndex - 1,
-          line: layout.lines.endIndex - 1,
-          layout: layoutIndex
-        ),
-        affinity: .upstream
-      )
+      guard contains(range), let start = firstPosition(in: layoutIndex),
+        let end = lastPosition(in: layoutIndex)
+      else { return nil }
 
       guard range.end > start && range.start < end else {
         return nil

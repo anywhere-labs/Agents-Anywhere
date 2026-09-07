@@ -8,4 +8,23 @@ snapshot test suite is not included.
 This local package keeps the text-selection crash fix reproducible in Xcode and
 on another development machine. Do not patch a DerivedData checkout.
 
-Selection changes and regression coverage are documented alongside the fix.
+The selection changes adapt the stale-position validation from
+[upstream PR 80](https://github.com/gonzalezreal/textual/pull/80) and the
+empty-paragraph/layout-size fixes from the first two commits of
+[upstream PR 88](https://github.com/gonzalezreal/textual/pull/88)
+(`2b29f6e` and `9bc4036`). They are not released in 0.5.0.
+
+Local additions apply the same validation to selected text, caret geometry,
+range traversal and layout reconciliation. Invalid positions yield an empty
+result instead of indexing a replaced layout. Traversal skips empty paragraphs,
+lines and runs; valid selections keep their original UTF-16 offsets.
+The renderer, formatter and clipboard exporter are unchanged.
+
+Run the headless regression tests from the repository root (no app or simulator):
+
+```sh
+swift test --package-path ios/Packages/Textual --scratch-path ios/.build/textual-tests
+```
+
+When upstream releases these fixes, compare the regression coverage before
+switching the Xcode project back to a remote package and removing this copy.

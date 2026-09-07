@@ -7,7 +7,7 @@
     }
 
     func attributedText(in range: TextRange) -> NSAttributedString {
-      guard !range.isCollapsed else { return NSAttributedString() }
+      guard contains(range), !range.isCollapsed else { return NSAttributedString() }
 
       let attributedText = NSMutableAttributedString()
       let start = range.start.indexPath.layout
@@ -25,7 +25,7 @@
           ? localCharacterIndex(at: range.end)
           : attributedString.length
 
-        if lowerBound < upperBound {
+        if 0 <= lowerBound, lowerBound < upperBound, upperBound <= attributedString.length {
           attributedText.append(
             attributedString.attributedSubstring(
               from: NSRange(lowerBound..<upperBound)

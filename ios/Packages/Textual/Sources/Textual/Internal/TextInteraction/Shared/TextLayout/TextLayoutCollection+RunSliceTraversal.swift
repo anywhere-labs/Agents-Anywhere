@@ -3,98 +3,55 @@
 
   extension TextLayoutCollection {
     func indexPathsForRunSlices(in range: TextRange) -> some Sequence<IndexPath> {
-      IndexPathSequence(
+      guard contains(range) else { return AnySequence<IndexPath>([]) }
+      return AnySequence(IndexPathSequence(
         range: range,
         next: self.indexPathForRunSlice(after:),
         previous: self.indexPathForRunSlice(before:)
-      )
+      ))
     }
-  }
 
-  extension TextLayoutCollection {
-    fileprivate func indexPathForRunSlice(after indexPath: IndexPath) -> IndexPath? {
-      let layout = layouts[indexPath.layout]
-      let line = layout.lines[indexPath.line]
-      let run = line.runs[indexPath.run]
-
-      if indexPath.runSlice + 1 < run.slices.count {
-        return IndexPath(
-          runSlice: indexPath.runSlice + 1,
-          run: indexPath.run,
-          line: indexPath.line,
-          layout: indexPath.layout
-        )
+    // Empty paragraphs, lines and runs must be skipped in either direction.
+    // Selection can span them, but they cannot name a selectable glyph.
+    private func indexPathForRunSlice(after path: IndexPath) -> IndexPath? {
+      guard contains(path) else { return nil }
+      for layoutIndex in path.layout..<layouts.count {
+        let layout = layouts[layoutIndex]
+        let firstLine = layoutIndex == path.layout ? path.line : 0
+        for lineIndex in firstLine..<layout.lines.count {
+          let line = layout.lines[lineIndex]
+          let sameLine = layoutIndex == path.layout && lineIndex == path.line
+          let firstRun = sameLine ? path.run : 0
+          for runIndex in firstRun..<line.runs.count {
+            let run = line.runs[runIndex]
+            let slice = sameLine && runIndex == path.run ? path.runSlice + 1 : 0
+            if run.slices.indices.contains(slice) {
+              return .init(runSlice: slice, run: runIndex, line: lineIndex, layout: layoutIndex)
+            }
+          }
+        }
       }
-
-      if indexPath.run + 1 < line.runs.count {
-        return IndexPath(
-          run: indexPath.run + 1,
-          line: indexPath.line,
-          layout: indexPath.layout
-        )
-      }
-
-      if indexPath.line + 1 < layout.lines.count {
-        return IndexPath(
-          line: indexPath.line + 1,
-          layout: indexPath.layout
-        )
-      }
-
-      if indexPath.layout + 1 < layouts.count {
-        return IndexPath(layout: indexPath.layout + 1)
-      }
-
       return nil
     }
 
-    fileprivate func indexPathForRunSlice(before indexPath: IndexPath) -> IndexPath? {
-      if indexPath.runSlice > 0 {
-        return IndexPath(
-          runSlice: indexPath.runSlice - 1,
-          run: indexPath.run,
-          line: indexPath.line,
-          layout: indexPath.layout
-        )
+    private func indexPathForRunSlice(before path: IndexPath) -> IndexPath? {
+      guard contains(path) else { return nil }
+      for layoutIndex in stride(from: path.layout, through: 0, by: -1) {
+        let layout = layouts[layoutIndex]
+        let lastLine = layoutIndex == path.layout ? path.line : layout.lines.count - 1
+        for lineIndex in stride(from: lastLine, through: 0, by: -1) {
+          let line = layout.lines[lineIndex]
+          let sameLine = layoutIndex == path.layout && lineIndex == path.line
+          let lastRun = sameLine ? path.run : line.runs.count - 1
+          for runIndex in stride(from: lastRun, through: 0, by: -1) {
+            let run = line.runs[runIndex]
+            let slice = sameLine && runIndex == path.run ? path.runSlice - 1 : run.slices.count - 1
+            if run.slices.indices.contains(slice) {
+              return .init(runSlice: slice, run: runIndex, line: lineIndex, layout: layoutIndex)
+            }
+          }
+        }
       }
-
-      if indexPath.run > 0 {
-        let previousRun = layouts[indexPath.layout].lines[indexPath.line].runs[indexPath.run - 1]
-        return IndexPath(
-          runSlice: previousRun.slices.endIndex - 1,
-          run: indexPath.run - 1,
-          line: indexPath.line,
-          layout: indexPath.layout
-        )
-      }
-
-      if indexPath.line > 0 {
-        let previousLine = layouts[indexPath.layout].lines[indexPath.line - 1]
-        let lastRunIndex = previousLine.runs.endIndex - 1
-        let lastRun = previousLine.runs[lastRunIndex]
-
-        return IndexPath(
-          runSlice: lastRun.slices.endIndex - 1,
-          run: lastRunIndex,
-          line: indexPath.line - 1,
-          layout: indexPath.layout
-        )
-      }
-
-      if indexPath.layout > 0 {
-        let previousLayout = layouts[indexPath.layout - 1]
-        let lastLineIndex = previousLayout.lines.endIndex - 1
-        let lastLine = previousLayout.lines[lastLineIndex]
-        let lastRunIndex = lastLine.runs.endIndex - 1
-        let lastRun = lastLine.runs[lastRunIndex]
-        return IndexPath(
-          runSlice: lastRun.slices.endIndex - 1,
-          run: lastRunIndex,
-          line: lastLineIndex,
-          layout: indexPath.layout - 1
-        )
-      }
-
       return nil
     }
   }

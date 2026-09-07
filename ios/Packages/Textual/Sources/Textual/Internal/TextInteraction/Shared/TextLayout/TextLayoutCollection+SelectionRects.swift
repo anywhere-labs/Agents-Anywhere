@@ -28,7 +28,7 @@
     }
 
     func selectionRects(for range: TextRange) -> [TextSelectionRect] {
-      guard !range.isCollapsed else { return [] }
+      guard contains(range), !range.isCollapsed else { return [] }
 
       let startX = self.caretRect(for: range.start).minX
       let endX = self.caretRect(for: range.end).minX

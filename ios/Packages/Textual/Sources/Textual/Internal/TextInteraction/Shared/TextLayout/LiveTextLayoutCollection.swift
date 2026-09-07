@@ -13,12 +13,14 @@
     }
 
     func isEqual(to other: any TextLayoutCollection) -> Bool {
-      base == (other as? LiveTextLayoutCollection)?.base
+      guard let other = other as? LiveTextLayoutCollection else { return false }
+      return base == other.base && geometry.size == other.geometry.size
     }
 
     func needsPositionReconciliation(with other: any TextLayoutCollection) -> Bool {
       // Same layouts with different origins do not need position reconciliation
-      base.map(\.layout) != (other as? LiveTextLayoutCollection)?.base.map(\.layout)
+      guard let other = other as? LiveTextLayoutCollection else { return true }
+      return base.map(\.layout) != other.base.map(\.layout) || geometry.size != other.geometry.size
     }
 
     func index(of layout: Text.Layout) -> Int? {

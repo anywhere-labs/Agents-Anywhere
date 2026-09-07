@@ -54,17 +54,16 @@
       self.layoutCollection = layoutCollection
 
       guard
-        let selectedRange,
-        layoutCollection.needsPositionReconciliation(with: oldLayoutCollection)
+        let selectedRange
       else {
         return
       }
 
-      // Try to reconcile the selected text range
-      self.selectedRange = layoutCollection.reconcileRange(
-        selectedRange,
-        from: oldLayoutCollection
-      )
+      if layoutCollection.needsPositionReconciliation(with: oldLayoutCollection) {
+        self.selectedRange = layoutCollection.reconcileRange(selectedRange, from: oldLayoutCollection)
+      } else if !layoutCollection.contains(selectedRange) {
+        self.selectedRange = nil
+      }
     }
 
     func setCoordinator(_ coordinator: TextSelectionCoordinator?) {
@@ -111,7 +110,10 @@
     }
 
     func offset(from: TextPosition, to: TextPosition) -> Int {
-      layoutCollection.characterIndex(at: to) - layoutCollection.characterIndex(at: from)
+      guard let start = layoutCollection.characterIndex(at: from),
+        let end = layoutCollection.characterIndex(at: to)
+      else { return 0 }
+      return end - start
     }
 
     func firstRect(for range: TextRange) -> CGRect {
@@ -135,6 +137,7 @@
     }
 
     func closestPosition(to point: CGPoint, within range: TextRange) -> TextPosition? {
+      guard layoutCollection.contains(range) else { return nil }
       guard let position = closestPosition(to: point) else { return nil }
       if position <= range.start { return range.start }
       if position >= range.end { return range.end }

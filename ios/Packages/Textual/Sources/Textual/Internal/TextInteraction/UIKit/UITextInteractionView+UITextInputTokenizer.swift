@@ -51,10 +51,10 @@
       }
 
       // Clamp the range to stay within the layout boundaries
-      let clampedRange = TextRange(
-        start: max(rawStart, blockRange.start),
-        end: min(rawEnd, blockRange.end)
-      )
+      let start = max(rawStart, blockRange.start)
+      let end = min(rawEnd, blockRange.end)
+      guard start <= end else { return nil }
+      let clampedRange = TextRange(start: start, end: end)
 
       return TextRangeBox(clampedRange)
     }
