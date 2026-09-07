@@ -111,6 +111,7 @@ export class SourceConnector implements ConnectorProcess {
     this.updateState({ running: false, authFailed: false })
     this.logs.record('starting')
     const executable = await resolveUv(this.config, settings)
+    const pypiIndexUrl = settings.uvPypiIndexUrl || 'https://pypi.org/simple'
     signal.throwIfAborted()
     const child = this.launch(executable ?? (settings.uvPath || this.config.uvPath), [
       'run', '--directory', this.config.connectorSourceDir,
@@ -126,7 +127,9 @@ export class SourceConnector implements ConnectorProcess {
         UV_PROJECT_ENVIRONMENT: join(this.config.stateRoot, 'connector-venv'),
         PYTHONDONTWRITEBYTECODE: '1',
         PYTHONUNBUFFERED: '1',
-        ...(settings.uvPypiIndexUrl ? { UV_DEFAULT_INDEX: settings.uvPypiIndexUrl, UV_INDEX_URL: settings.uvPypiIndexUrl, PIP_INDEX_URL: settings.uvPypiIndexUrl } : {}),
+        UV_DEFAULT_INDEX: pypiIndexUrl,
+        UV_INDEX_URL: pypiIndexUrl,
+        PIP_INDEX_URL: pypiIndexUrl,
       },
     })
     this.child = child

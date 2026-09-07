@@ -12,7 +12,7 @@ import { detectDesktop } from '../desktop/detect.js'
 import type { LocalMachineRegistry } from '../desktop/machine-state.js'
 import { acquireManagerLock, readJson, writeJson } from '../storage/files.js'
 import { LoopbackFlow } from './loopback.js'
-import { DEFAULT_CONNECTOR_SETTINGS, type ConnectorAction, type ConnectorFolder, type ConnectorSettings } from '../../contracts/connector.js'
+import type { ConnectorAction, ConnectorFolder, ConnectorSettings } from '../../contracts/connector.js'
 import { ConnectorSettingsStore, validateConnectorSettings } from '../connector/settings.js'
 import { canOpenFolders, openFolder, resolveUv } from '../connector/environment.js'
 import { MobileLogin } from '../account/mobile.js'
@@ -27,6 +27,7 @@ interface Dependencies {
   onlineTimeoutMs?: number
   pollIntervalMs?: number
   openFolder?: (path: string) => Promise<void>
+  systemLanguages?: () => Promise<string[]>
 }
 
 export class OnboardingManager {
@@ -60,7 +61,7 @@ export class OnboardingManager {
 
   constructor(private readonly config: ResolvedConfig, private readonly dependencies: Dependencies = {}) {
     this.settings = { apiBaseUrl: config.apiBaseUrl }
-    this.connectorSettings = new ConnectorSettingsStore(config)
+    this.connectorSettings = new ConnectorSettingsStore(config, dependencies.systemLanguages)
     this.connector = dependencies.connector ?? new SourceConnector(config, undefined, () => this.connectorSettings.get())
     this.detect = dependencies.detect ?? detectDesktop
     this.apiFactory = dependencies.api ?? (base => new AccountApi(base))
@@ -441,7 +442,7 @@ export class OnboardingManager {
         await rm(join(this.config.stateRoot, path), { force: true, recursive: true })
       }
       this.settings = { apiBaseUrl: this.config.apiBaseUrl }
-      await this.connectorSettings.save(DEFAULT_CONNECTOR_SETTINGS)
+      await this.connectorSettings.reset()
       this.resolvedUvPath = await resolveUv(this.config, this.connectorSettings.get())
       this.setProgress('idle', '已恢复出厂设置，请重新登录。')
       return null

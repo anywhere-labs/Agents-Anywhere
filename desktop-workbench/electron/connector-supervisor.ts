@@ -577,11 +577,12 @@ export class ConnectorSupervisor {
       environment.UV_PROJECT_ENVIRONMENT = path.join(this.options.dataPath, ".venv");
       environment.UV_CACHE_DIR = path.join(this.options.dataPath, "uv-cache");
     }
-    const pypiIndexUrl = this.options.settings.get().uvPypiIndexUrl;
-    if (pypiIndexUrl) {
-      environment.UV_INDEX_URL = pypiIndexUrl;
-      environment.PIP_INDEX_URL = pypiIndexUrl;
-    }
+    // Also make the official-index choice explicit: the bundled project or
+    // inherited shell environment may declare a different default index.
+    const pypiIndexUrl = this.options.settings.get().uvPypiIndexUrl || "https://pypi.org/simple";
+    environment.UV_DEFAULT_INDEX = pypiIndexUrl;
+    environment.UV_INDEX_URL = pypiIndexUrl;
+    environment.PIP_INDEX_URL = pypiIndexUrl;
     if (process.platform === "win32") {
       delete environment.Path;
       delete environment.path;

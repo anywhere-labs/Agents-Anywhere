@@ -205,6 +205,12 @@ so polling, presence changes and same-name devices do not reorder the list.
   tree.
 - Open-at-login, silent launch, automatic Connector start, `uv` path, PyPI
   mirror, and log retention are Desktop settings.
+- On first initialization without a saved mirror choice, Main checks the OS
+  preferred languages and selects Aliyun for Chinese systems, or official PyPI
+  otherwise. It persists the choice before any `uv` provisioning process and
+  applies it through `UV_DEFAULT_INDEX`, `UV_INDEX_URL`, and `PIP_INDEX_URL`,
+  without a renderer prompt. Existing choices, including official PyPI, are
+  preserved; factory reset reapplies the system default.
 - An authentication failure is surfaced to the renderer and is not retried
   automatically. Reconnection must be confirmed on that physical Desktop.
 - Factory reset revokes the current Desktop credential on the Server first. A

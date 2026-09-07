@@ -737,7 +737,7 @@ async function initializeDesktopServices(): Promise<void> {
   serverStore = new DesktopServerStore(path.join(app.getPath("userData"), "desktop-server.json"), activeDesktopServer());
   const dataPath = connectorDataPath();
   fs.mkdirSync(dataPath, { recursive: true, mode: 0o700 });
-  settingsStore = new DesktopSettingsStore(desktopSettingsPath());
+  settingsStore = new DesktopSettingsStore(desktopSettingsPath(), app.getPreferredSystemLanguages());
   logStore = new ConnectorLogStore(connectorLogsPath(), () => requireSettings().get());
   try {
     await machineState.recordInstallation(desktopInstallation({

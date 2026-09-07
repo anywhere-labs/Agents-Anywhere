@@ -68,6 +68,7 @@ async function fixture() {
     stateRoot: root, connectorSourceDir: root, uvPath: 'uv',
     apiBaseUrl: api.baseUrl,
   }, {
+    systemLanguages: async () => ['en-US'],
     api: base => base === api.baseUrl ? api : new FakeApi(base), connector, detect: async () => { detections++; return detection },
     checkServer: async (base) => { checkedServers.push(base); if (healthError) throw healthError },
     onlineTimeoutMs: 5000, pollIntervalMs: 10,

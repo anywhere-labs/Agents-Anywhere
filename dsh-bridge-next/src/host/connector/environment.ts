@@ -7,6 +7,24 @@ import { promisify } from 'node:util'
 import type { ResolvedConfig } from '../config.js'
 import type { ConnectorSettings } from '../../contracts/connector.js'
 
+/** Host-side locale detection also works before a Client connects or in headless mode. */
+export async function systemLanguages(): Promise<string[]> {
+  const languages = [Intl.DateTimeFormat().resolvedOptions().locale]
+  const locale = process.env['LC_ALL'] || process.env['LC_MESSAGES'] || process.env['LANG']
+  if (locale) languages.push(locale)
+  languages.push(...(process.env['LANGUAGE'] ?? '').split(':').filter(Boolean))
+  if (process.platform === 'darwin') {
+    try {
+      // Node can inherit an English shell locale even when macOS prefers Chinese.
+      const { stdout } = await promisify(execFile)('/usr/bin/defaults', ['read', '-g', 'AppleLanguages'], {
+        encoding: 'utf8', timeout: 1500, windowsHide: true,
+      })
+      languages.push(...(stdout.match(/[a-z]{2,3}(?:[-_][a-z0-9]+)*/gi) ?? []))
+    } catch { /* Use Intl and POSIX locales when system preferences are unavailable. */ }
+  }
+  return languages
+}
+
 export async function resolveUv(config: ResolvedConfig, settings: ConnectorSettings): Promise<string | null> {
   const command = settings.uvPath || config.uvPath
   const home = userInfo().homedir
