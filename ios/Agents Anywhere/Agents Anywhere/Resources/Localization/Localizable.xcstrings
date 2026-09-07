@@ -7861,19 +7861,19 @@
       }
     },
     "下载桌面应用": {
-      "comment": "Shared with Web: dashboard.pairDevice.githubReleases. Sync with ios/scripts/web_copy.py.",
+      "comment": "Opens the official website to download Agents Anywhere Desktop.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Download from GitHub Releases"
+            "value": "Download from official website"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "前往 GitHub Releases 下载"
+            "value": "前往官网下载"
           }
         }
       }

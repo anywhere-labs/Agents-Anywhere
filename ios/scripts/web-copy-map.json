@@ -234,7 +234,6 @@
     "dashboard.session.workspace": "dashboard.session.workspace",
     "上一级目录": "common.parent",
     "下载": "dashboard.panels.files.download",
-    "下载桌面应用": "dashboard.pairDevice.githubReleases",
     "为命令行设备命名": "dashboard.pairDevice.nameTitle",
     "从侧栏添加设备，连接后即可开始。": "dashboard.workspacePicker.noOnlineDeviceDescription",
     "会话": "common.sessions",
