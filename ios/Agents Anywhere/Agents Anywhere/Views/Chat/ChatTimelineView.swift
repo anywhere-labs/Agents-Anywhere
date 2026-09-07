@@ -370,8 +370,7 @@ private struct ChatTimelineContent: View, Equatable {
                 }
                 .id("tail")
         }
-        .padding(.horizontal, 24).padding(.top, 16)
-        .frame(maxWidth: 760).frame(maxWidth: .infinity)
+        .modifier(ChatPageContentColumn())
         .coordinateSpace(name: "chat.timeline.content")
         .traceChatLayout("timeline-content", state: "groups=\(groups.count), footers=\(actions.count), running=\(model.isRunning)")
     }

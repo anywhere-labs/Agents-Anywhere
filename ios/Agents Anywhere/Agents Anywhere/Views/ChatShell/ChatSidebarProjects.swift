@@ -12,7 +12,6 @@ struct ChatSidebarProjects: View {
     let onArchiveSession: (String) -> Void
     let onCopySession: (String) -> Void
     @State private var filter = V2DeviceSessionFilter.active
-    @State private var expanded: Set<String> = []
     @State private var createsProject = false
     @State private var editing: V2Project?
     @State private var action: ProjectAction?
@@ -25,32 +24,45 @@ struct ChatSidebarProjects: View {
         var id: String { project.id }
     }
     var body: some View {
+        let projects = ProjectSidebarPresentation.projects(repository.projects, filter: filter, sessions: repository.sessions)
         VStack(alignment: .leading, spacing: 4) {
+            if projects.contains(where: \.pinned) {
+                Text(String(localized: "置顶项目")).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 10).padding(.top, 16).padding(.bottom, 6)
+                projectList(projects.filter(\.pinned))
+            }
             HStack {
-                Text(String(localized: "项目")).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                Button { repository.sidebarPreferences.projectsExpanded.toggle() } label: {
+                    HStack(spacing: 6) {
+                        Text(String(localized: "项目"))
+                        AppSymbol("chevron.right", size: 12)
+                            .rotationEffect(.degrees(repository.sidebarPreferences.projectsExpanded ? 90 : 0))
+                    }.font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                        .frame(minHeight: 44).contentShape(.rect)
+                }.buttonStyle(.plain)
                 Spacer()
                 ChatSidebarListMenu(showsSessionList: $showsSessionList, onShowArchives: onShowArchives) {
                     Picker(String(localized: "会话"), selection: $filter) {
                         ForEach(V2DeviceSessionFilter.allCases) { Text($0.title).tag($0) }
                     }
                 }
-                Button(String(localized: "创建项目"), appSymbol: "folder.badge.plus") { createsProject = true }
+                Button(String(localized: "创建项目"), appSymbol: "plus") { createsProject = true }
                     .labelStyle(.iconOnly).frame(width: 44, height: 44).disabled(!repository.canWrite)
             }.padding(.horizontal, 10).padding(.top, 16)
-            ForEach(ProjectSidebarPresentation.projects(repository.projects, filter: filter)) { project in
-                projectRow(project)
-                if expanded.contains(project.id) {
-                    projectSessions(project)
+            if repository.sidebarPreferences.projectsExpanded {
+                projectList(projects.filter { !$0.pinned })
+                if repository.isLoading && repository.projects.isEmpty { ProgressView().padding(12) }
+                if repository.hasLoaded && repository.projects.isEmpty {
+                    Text(String(localized: "创建一个项目，开始新的任务。"))
+                        .font(.footnote).foregroundStyle(.secondary).padding(10)
                 }
-            }
-            if repository.isLoading && repository.projects.isEmpty { ProgressView().padding(12) }
-            if repository.hasLoaded && repository.projects.isEmpty {
-                Text(String(localized: "创建一个项目，开始新的任务。"))
-                    .font(.footnote).foregroundStyle(.secondary).padding(10)
             }
         }
         .sheet(isPresented: $createsProject) {
-            ProjectEditorSheet(repository: repository) { expanded.insert($0.id) }
+            ProjectEditorSheet(repository: repository) {
+                repository.sidebarPreferences.expandedProjects.insert($0.id)
+                repository.sidebarPreferences.projectsExpanded = true
+            }
         }
         .sheet(item: $editing) { ProjectEditorSheet(repository: repository, project: $0) }
         .alert(action?.deletes == true ? String(localized: "删除项目？") : String(localized: "归档这个项目的会话？"), isPresented: Binding(
@@ -65,51 +77,60 @@ struct ChatSidebarProjects: View {
                 }
             }
         } message: {
-            Text(action?.deletes == true ? String(localized: "只有没有会话的项目可以删除，设备上的文件会保留。") : String(localized: "当前活动会话将移到归档列表，可从归档中恢复。"))
+            Text(action?.deletes == true ? String(localized: "只有没有会话的项目可以删除，设备上的文件会保留。") : String(localized: "Archive all sessions in \(action?.project.name ?? "")? The project will remain available for future sessions."))
         }
         .alert(String(localized: "操作未完成"), isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button(String(localized: "好")) { error = nil }
         } message: { Text(error ?? "") }
     }
 
+    private var expanded: Set<String> { repository.sidebarPreferences.expandedProjects }
+
+    private func projectList(_ values: [V2Project]) -> some View {
+        ForEach(values) { project in
+            projectRow(project)
+            if expanded.contains(project.id) { projectSessions(project) }
+        }
+    }
+
     private func projectRow(_ project: V2Project) -> some View {
         HStack(spacing: 0) {
             Button { toggleProject(project.id) } label: {
-                HStack(spacing: 10) {
-                    AppSymbol(expanded.contains(project.id) ? "folder.fill" : "folder")
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(project.name).lineLimit(1)
-                        Text(repository.connectors.first { $0.id == project.connectorId }?.name ?? String(localized: "设备不可用"))
-                            .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
+                HStack(spacing: 8) {
+                    AppSymbol(expanded.contains(project.id) ? "folder.fill" : "folder", size: 18)
+                    Text(project.name).font(.body).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     if busy.contains(project.id) { ProgressView().controlSize(.mini) }
-                    else if project.pinned { AppSymbol("pin.fill", size: 12) }
                 }
-                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).contentShape(.rect)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(.rect)
             }
+            .accessibilityHint(expanded.contains(project.id) ? String(localized: "收起项目") : String(localized: "展开项目"))
             Button { onNewSession(project.id) } label: {
-                AppSymbol("plus").frame(width: 44, height: 48).contentShape(.rect)
+                AppSymbol("square.and.pencil", size: 18).frame(width: 44, height: 44).contentShape(.rect)
             }
             .accessibilityLabel(Text(String(localized: "在 \(project.name) 中新建会话")))
-            Button { toggleProject(project.id) } label: {
-                AppSymbol("chevron.right", size: 12)
-                    .rotationEffect(.degrees(expanded.contains(project.id) ? 90 : 0))
-                    .frame(width: 44, height: 48).contentShape(.rect)
-            }
-            .accessibilityLabel(expanded.contains(project.id) ? String(localized: "收起项目") : String(localized: "展开项目"))
         }
+        .foregroundStyle(.primary)
         .padding(.leading, 10).buttonStyle(.plain)
-        .contextMenu {
-            Button(String(localized: "新建会话"), appSymbol: "square.and.pencil") { onNewSession(project.id) }
-            Button(project.pinned ? String(localized: "取消置顶") : String(localized: "置顶"), appSymbol: "pin") {
+        .contentShape(.rect)
+        .contextMenu { projectMenu(project) }
+    }
+
+    @ViewBuilder
+    private func projectMenu(_ project: V2Project) -> some View {
+        let deviceName = repository.connectors.first { $0.id == project.connectorId }?.name ?? String(localized: "设备不可用")
+        Section(deviceName) {
+            Button(String(localized: "新建会话"), systemImage: "square.and.pencil") { onNewSession(project.id) }
+            Button(String(localized: "编辑项目"), systemImage: "pencil") { editing = project }
+                .disabled(!repository.canWrite || busy.contains(project.id))
+            Button(project.pinned ? String(localized: "取消置顶") : String(localized: "置顶"), systemImage: "pin") {
                 perform(project.id) { try await repository.updateProject(project.id, pinned: !project.pinned) }
             }.disabled(!repository.canWrite || busy.contains(project.id))
-            Button(String(localized: "编辑项目"), appSymbol: "pencil") { editing = project }
+        }
+        Section {
+            Button(String(localized: "归档项目会话"), systemImage: "archivebox", role: .destructive) { action = .init(project: project, deletes: false) }
                 .disabled(!repository.canWrite || busy.contains(project.id))
-            Button(String(localized: "归档项目会话"), appSymbol: "archivebox") { action = .init(project: project, deletes: false) }
-                .disabled(!repository.canWrite || busy.contains(project.id))
-            Button(String(localized: "删除项目"), appSymbol: "trash", role: .destructive) { action = .init(project: project, deletes: true) }
+            Button(String(localized: "删除项目"), systemImage: "trash", role: .destructive) { action = .init(project: project, deletes: true) }
                 .disabled(!repository.canWrite || busy.contains(project.id))
         }
     }
@@ -118,19 +139,22 @@ struct ChatSidebarProjects: View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(ProjectSidebarPresentation.sessions(repository.sessions, projectID: project.id, filter: filter)) { session in
                 ChatSidebarSessionRow(session: .init(session: session), isSelected: selectedSessionID == session.id,
+                    inset: true,
                     onOpen: { onOpenSession(session.id) }, onRename: { onRenameSession(session.id, $0) },
                     onTogglePinned: { onPinSession(session.id, !session.pinned) }, onArchive: { onArchiveSession(session.id) },
                     onCopyId: { onCopySession(session.id) })
             }
-            ForEach(scopes(project.id), id: \.self) { scope in DashboardPageButton(repository: repository, scope: scope) }
+            ForEach(scopes(project.id), id: \.self) { scope in
+                DashboardPageButton(repository: repository, scope: scope).padding(.leading, 26)
+            }
         }
         .task(id: "\(filter.rawValue):\(repository.canWrite)") {
-            for scope in scopes(project.id) where repository.pages[scope] == nil { await repository.loadPage(scope) }
+            for scope in scopes(project.id) { await repository.ensureProjectPage(scope) }
         }
     }
     private func toggleProject(_ id: String) {
-        if expanded.contains(id) { expanded.remove(id) }
-        else { expanded.insert(id) }
+        if expanded.contains(id) { repository.sidebarPreferences.expandedProjects.remove(id) }
+        else { repository.sidebarPreferences.expandedProjects.insert(id) }
     }
     private func scopes(_ id: String) -> [V2SessionListScope] {
         switch filter {
@@ -204,7 +228,7 @@ struct ArchivedSessionsSheet: View {
             .refreshable { await repository.loadPage(.init(archived: true), refresh: true) }
             .task { if repository.pages[.init(archived: true)] == nil { await repository.loadPage(.init(archived: true)) } }
         }
-        .presentationDetents([.large])
+        .appSheetPresentation(.compact)
         .alert(String(localized: "无法恢复会话，请稍后重试。"), isPresented: $restoreError) { Button(String(localized: "好"), role: .cancel) {} }
     }
 }

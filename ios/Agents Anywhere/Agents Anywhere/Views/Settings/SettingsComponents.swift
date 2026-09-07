@@ -15,14 +15,15 @@ struct SettingsRow: View {
     let symbol: String
     var value: String?
     var body: some View {
-        HStack(spacing: 14) {
-            AppSymbol(symbol).frame(width: 24)
-            Text(title)
-            Spacer(minLength: 12)
-            if let value, !value.isEmpty {
+        if let value, !value.isEmpty {
+            LabeledContent {
                 Text(value).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            } label: {
+                Label(title, appSymbol: symbol)
             }
-        }.frame(minHeight: 32)
+        } else {
+            Label(title, appSymbol: symbol)
+        }
     }
 }
 
@@ -31,7 +32,7 @@ private struct SettingsPageChrome: ViewModifier {
     @Environment(\.closeSettings) private var close
     func body(content: Content) -> some View {
         content
-            .scrollContentBackground(.hidden).background(Color(uiColor: .systemBackground))
+            .listStyle(.insetGrouped)
             .navigationTitle(title).navigationBarTitleDisplayMode(.inline)
             .toolbar { SheetCloseToolbar(action: close) }
     }

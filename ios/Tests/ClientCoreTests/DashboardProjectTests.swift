@@ -100,6 +100,26 @@ import Testing
         }
         _ = try await store.createProject(name: "Renamed", connectorID: "device", path: "/workspace", reusing: "project")
         #expect(http.calls.filter { $0.method == .post }.count == 1)
+        #expect(http.calls.last?.body?["manuallyCreated"] == .bool(true))
+    }
+
+    @Test func theManualFormPromotesAnAutomaticProjectWithoutChangingItsWorkspace() async throws {
+        let http = TestHTTPTransport()
+        let repository = self.repository(http)
+        repository.apply(try dashboard())
+        var value = try fixtureObject("project")["project"] as! [String: Any]
+        value["manuallyCreated"] = false
+        let name = value["name"] as! String
+        http.respond = { call in
+            if call.method == .get { return try JSONSerialization.data(withJSONObject: ["projects": [value], "serverTime": ""]) }
+            value["manuallyCreated"] = true
+            return try JSONSerialization.data(withJSONObject: ["project": value, "serverTime": ""])
+        }
+        let project = try await repository.createProject(name: name, connectorID: "device", path: "/workspace/./")
+        #expect(project.id == "project" && project.manuallyCreated && project.workspacePath == "/workspace")
+        #expect(http.calls.last?.body?["workspacePath"] == .string("/workspace"))
+        #expect(http.calls.last?.body?["name"] == .string(name))
+        #expect(http.calls.last?.body?["manuallyCreated"] == .bool(true))
     }
 
     @Test func projectVisibilityUsesServerCountsAndArchiveStateOnly() throws {

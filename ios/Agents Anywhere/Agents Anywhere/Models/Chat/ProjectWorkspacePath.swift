@@ -2,6 +2,48 @@ import Foundation
 
 /// Remote path comparison follows the server, not the filesystem of this phone.
 nonisolated enum ProjectWorkspacePath {
+    static func project(in projects: [V2Project], connectorID: String, path: String, deviceOS: String?) -> V2Project? {
+        guard let key = key(path, deviceOS: deviceOS) else { return nil }
+        return projects.first { $0.connectorId == connectorID && self.key($0.workspacePath, deviceOS: deviceOS) == key }
+    }
+
+    static func name(_ path: String) -> String {
+        let value = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        let windows = value.range(of: "^[A-Za-z]:[/\\\\]", options: .regularExpression) != nil || value.hasPrefix("\\\\")
+        let parts = (windows ? value.replacingOccurrences(of: "\\", with: "/") : value).split(separator: "/")
+        if parts.isEmpty || (windows && (parts.count == 1 || (value.hasPrefix("\\\\") && parts.count == 2))) {
+            return "Workspace"
+        }
+        return String(parts.last!)
+    }
+
+    static func availableName(_ name: String, projects: [V2Project], ignoring id: String? = nil) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = String((trimmed.isEmpty ? "Workspace" : trimmed).unicodeScalars.prefix(255))
+        let names = Set(projects.filter { $0.id != id }.map(\.name))
+        var candidate = base
+        var suffix = 1
+        while names.contains(candidate) {
+            let ending = " (\(suffix))"
+            candidate = String(base.unicodeScalars.prefix(255 - ending.count)) + ending
+            suffix += 1
+        }
+        return candidate
+    }
+
+    static func parent(_ path: String) -> String? {
+        guard let normalized = key(path, deviceOS: nil) else { return nil }
+        let windows = normalized.range(of: "^[a-z]:/", options: .regularExpression) != nil || path.hasPrefix("\\\\")
+        let slashes = windows ? path.replacingOccurrences(of: "\\", with: "/") : path
+        var parts = slashes.split(separator: "/")
+        if windows, parts.count == 1 { return "" } // Connector fs/list's Windows drive picker.
+        if slashes.hasPrefix("//"), parts.count <= 2 { return nil }
+        guard !parts.isEmpty else { return nil }
+        parts.removeLast()
+        if windows { return (slashes.hasPrefix("//") ? "//" : "") + parts.joined(separator: "/") + (parts.count == 1 ? "/" : "") }
+        return (slashes.hasPrefix("//") ? "//" : "/") + parts.joined(separator: "/")
+    }
+
     static func key(_ value: String, deviceOS: String?) -> String? {
         let path = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let drive = path.range(of: "^[A-Za-z]:[/\\\\]", options: .regularExpression) != nil

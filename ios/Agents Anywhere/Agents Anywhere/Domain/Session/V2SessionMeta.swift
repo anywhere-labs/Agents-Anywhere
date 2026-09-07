@@ -46,6 +46,7 @@ nonisolated struct V2SessionMeta: Codable, Identifiable, Hashable {
     let lastItemOrderSeq: Int?
     let sortAt: String?
     let updatedSeq: Int
+    var createdAt: String? = nil
 
     var effectiveRuntimeId: V2RuntimeID { runtimeId ?? runtime }
 }

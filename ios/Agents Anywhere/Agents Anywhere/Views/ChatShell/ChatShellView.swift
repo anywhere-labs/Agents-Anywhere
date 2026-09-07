@@ -7,42 +7,27 @@ struct ChatShellView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var sidebar = ChatSidebarState()
+    @State private var newSessionPresentationID = UUID()
     private var selection: ChatShellSelection {
         get { appState.chatSelection }
         nonmutating set { appState.chatSelection = newValue }
     }
 
     var body: some View {
-        SidebarDrawer(
-            isOpen: $sidebar.isOpen,
-            configuration: .chat
-        ) { _ in
-            ChatSidebarHeaderView()
-        } sidebar: { safeAreaInsets in
-            ChatSidebarView(
-                safeAreaInsets: safeAreaInsets,
-                devices: sidebarDevices,
-                pinnedSessions: sidebarSessions.filter(\.pinned),
-                recentSessions: sidebarSessions.filter { !$0.pinned },
-                repository: appState.nativeChatServices?.dashboardRepository,
-                onNewProjectSession: startProjectSession,
-                onRestoreSession: { await appState.setSessionArchived(sessionId: $0, archived: false) },
-                account: sidebarAccount,
-                selectedDeviceId: selectedDeviceId,
-                selectedSessionId: selectedSessionId,
-                isLoadingDevices: appState.isDashboardLoading && !appState.hasLoadedConnectors,
-                isLoadingSessions: appState.isDashboardLoading && !appState.hasLoadedSessions,
-                onNewSession: startNewSession,
-                onOpenDevice: openDevice,
-                onOpenSession: openSession,
-                onRenameSession: renameSession,
-                onToggleSessionPinned: setSessionPinned,
-                onArchiveSession: archiveSession,
-                onCopyDeviceId: copyDeviceId,
-                onCopySessionId: copySessionId
-            )
-        } content: { safeAreaInsets in
-            mainContent.modifier(ChatDetailNavigation(insets: safeAreaInsets))
+        // NavigationSplitView adapts to a single stack in a compact system size
+        // class. Use that same system trait for the drawer fallback, never a
+        // device model, screen measurement or custom window-width breakpoint.
+        let layout = ChatSidebarState.Layout.resolve(
+            hasRegularWidth: horizontalSizeClass == .regular
+        )
+        sidebarLayout(layout)
+        .onChange(of: layout, initial: true) { _, next in sidebar.setLayout(next) }
+        .task(id: NewSessionLoadKey(target: appState.nativeChatServices?.newSession.refreshKey,
+            presentationID: newSessionPresentationID)) {
+            // Warm the next draft even when launch restores a session/device.
+            // Remounting the welcome view no longer starts its first data load.
+            guard let model = appState.nativeChatServices?.newSession else { return }
+            await model.refresh(connectors: appState.connectors)
         }
         .alert(String(localized: "Could not update session"), isPresented: sessionActionErrorBinding) {
             Button(String(localized: "OK"), role: .cancel) {
@@ -62,7 +47,6 @@ struct ChatShellView: View {
         .onChange(of: visibleSessionID, initial: true) { _, id in
             appState.setVisibleSession(id)
         }
-        .onChange(of: sidebarLayout, initial: true) { _, layout in sidebar.setLayout(layout) }
         .onDisappear { appState.setVisibleSession(nil) }
     }
 
@@ -98,9 +82,47 @@ struct ChatShellView: View {
         scenePhase == .active && !sidebar.obscuresDetail ? selectedSessionId : nil
     }
 
-    private var sidebarLayout: ChatSidebarState.Layout {
-        guard UIDevice.current.userInterfaceIdiom == .pad else { return .drawer }
-        return horizontalSizeClass == .compact ? .compactSplit : .regularSplit
+    private func sidebarLayout(_ layout: ChatSidebarState.Layout) -> some View {
+        SidebarDrawer(
+            isOpen: sidebarBinding(for: layout),
+            presentation: layout == .regularSplit ? .nativeSidebar : .drawer,
+            configuration: .chat
+        ) { _ in
+            ChatSidebarHeaderView()
+        } sidebar: { safeAreaInsets in
+            ChatSidebarView(
+                safeAreaInsets: safeAreaInsets,
+                devices: sidebarDevices,
+                pinnedSessions: sidebarSessions.filter(\.pinned),
+                recentSessions: sidebarSessions.filter { !$0.pinned },
+                repository: appState.nativeChatServices?.dashboardRepository,
+                onNewProjectSession: startProjectSession,
+                onRestoreSession: { await appState.setSessionArchived(sessionId: $0, archived: false) },
+                account: sidebarAccount,
+                selectedDeviceId: selectedDeviceId,
+                selectedSessionId: selectedSessionId,
+                isLoadingDevices: appState.isDashboardLoading && !appState.hasLoadedConnectors,
+                isLoadingSessions: appState.isDashboardLoading && !appState.hasLoadedSessions,
+                onNewSession: startNewSession,
+                onOpenDevice: openDevice,
+                onOpenSession: openSession,
+                onRenameSession: renameSession,
+                onToggleSessionPinned: setSessionPinned,
+                onArchiveSession: archiveSession,
+                onCopyDeviceId: copyDeviceId,
+                onCopySessionId: copySessionId
+            )
+        } content: { safeAreaInsets in
+            mainContent
+                .modifier(ChatDetailNavigation(insets: safeAreaInsets))
+        }
+    }
+
+    private func sidebarBinding(for layout: ChatSidebarState.Layout) -> Binding<Bool> {
+        Binding(get: { sidebar.isOpen(in: layout) }, set: { isOpen in
+            sidebar.setLayout(layout)
+            sidebar.isOpen = isOpen
+        })
     }
 
     private var selectedDeviceId: V2ConnectorID? {
@@ -181,18 +203,19 @@ struct ChatShellView: View {
                 NewSessionView(model: services.newSession, connectors: appState.connectors, sessions: appState.sessions, repository: services.dashboardRepository,
                     dashboardLoading: appState.isDashboardLoading,
                     dashboardError: appState.connectorsError,
-                    onMenu: toggleSidebar, onManageDevice: openDevice,
+                    onMenu: toggleSidebar,
                     onCreated: { session in
                         appState.updateSession(session)
                         if case .newSession = selection { openSession(session.id) }
                     },
                     onRefresh: { await appState.refreshDashboard(); return appState.connectors })
                     .equatable()
+                    .id(newSessionPresentationID)
             }
         } else {
             ChatShellPlaceholderPage(
                 isConnecting: appState.isRetryingServerConnection,
-                title: selectedContentTitle ?? String(localized: "Agents Anywhere"),
+                title: selectedContentTitle ?? "",
                 onOpenSidebar: openSidebar
             )
         }
@@ -206,6 +229,9 @@ struct ChatShellView: View {
     }
 
     private func startNewSession() {
+        // Reselecting this destination must also remount its local presentation
+        // state, including the welcome reveal. The account still owns the draft.
+        newSessionPresentationID = UUID()
         selection = .newSession
         sidebar.selectDestination()
     }
@@ -262,6 +288,11 @@ struct ChatShellView: View {
     private func openSidebar() {
         sidebar.isOpen = true
     }
+}
+
+private struct NewSessionLoadKey: Equatable {
+    let target: NewSessionRefreshKey?
+    let presentationID: UUID
 }
 
 private struct ChatShellPlaceholderPage: View {

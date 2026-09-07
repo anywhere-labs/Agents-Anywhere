@@ -17,12 +17,7 @@ struct DeviceAgentSection: View {
         var id: String { runtime.id }
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text(String(localized: "Agent")).font(.headline)
-                Spacer()
-                AgentRediscoveryButton(model: model)
-            }
+        Section {
             if showsConnectionNotice && !model.connected {
                 Label(String(localized: "设备或网络已离线，连接恢复后可继续。"), appSymbol: "wifi.slash")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -31,7 +26,7 @@ struct DeviceAgentSection: View {
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(runtime.sessionDisplayName).font(.headline)
-                        Text(String(localized: "\(runtime.typeDisplayName) · \(runtime.sessionUnavailableReason ?? String(localized: "已就绪"))"))
+                        Text(String(localized: "\(runtime.typeDisplayName) · \(runtime.status.displayName)"))
                             .font(.footnote).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                     HStack(spacing: 10) {
@@ -48,17 +43,25 @@ struct DeviceAgentSection: View {
                         .disabled(!model.connected || model.busyID != nil)
                     }
                 }
-                .padding(16).background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 18))
+                .padding(.vertical, 6)
                 .contextMenu {
-                    Button(String(localized: "重命名"), appSymbol: "pencil") { proposedName = runtime.name; renaming = runtime }
+                    Button(String(localized: "重命名"), systemImage: "pencil") { proposedName = runtime.name; renaming = runtime }
                         .disabled(!model.connected || model.busyID != nil)
-                    Button(String(localized: "删除配置"), appSymbol: "trash", role: .destructive) { deleting = runtime }
+                    Button(String(localized: "删除配置"), systemImage: "trash", role: .destructive) { deleting = runtime }
                         .disabled(!model.connected || model.busyID != nil)
                 }
             }
+        } header: {
+            HStack {
+                Text(String(localized: "dashboard.device.agentRuntimes"))
+                Spacer()
+                AgentRediscoveryButton(model: model)
+            }
+        } footer: {
             AppGlassButton(String(localized: "添加更多 Agent"), systemImage: "plus", style: .prominent) {
                 showsAddAgents = true
             }
+            .font(.body).textCase(nil).padding(.top, 8)
         }
         .task(id: model.connected) { await model.refresh() }
         .sheet(isPresented: $showsAddAgents) { AddDeviceAgentSheet(model: model) }
@@ -73,6 +76,8 @@ struct DeviceAgentSection: View {
                 guard let runtime = deleting else { return }; deleting = nil
                 Task { try? await model.remove(runtime) }
             }
+        } message: {
+            Text(String(localized: "\(deleting?.sessionDisplayName ?? "") will be stopped and removed from the configured list. You can add it again later; its instance identity, sessions, and timeline history are kept, and the local installation is not deleted."))
         }
         .alert(String(localized: "重命名 Agent"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField(String(localized: "实例名称"), text: $proposedName)
@@ -121,17 +126,20 @@ struct AgentSetupSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    Text(String(localized: "添加你要使用的 Agent")).font(.title2.bold())
-                    Text(String(localized: "设备已连接。选择 Agent 后，就可以在项目中开始任务。"))
-                        .foregroundStyle(.secondary)
-                    DeviceAgentSection(model: model)
-                }.padding(22)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(String(localized: "添加你要使用的 Agent")).font(.title2.bold())
+                        Text(String(localized: "设备已连接。选择 Agent 后，就可以在项目中开始任务。"))
+                            .foregroundStyle(.secondary)
+                    }
+                    DeviceOverviewSections { DeviceAgentSection(model: model) }
+                }
+                .padding(22).frame(maxWidth: 560).frame(maxWidth: .infinity)
             }
             .navigationTitle(connector.name).navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 SheetCloseToolbar(disabled: model.busyID != nil, action: onFinish)
             }
         }
-        .presentationDetents([.large]).interactiveDismissDisabled()
+        .appSheetPresentation(.compact).interactiveDismissDisabled(model.busyID != nil)
     }
 }

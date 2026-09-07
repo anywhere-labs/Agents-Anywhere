@@ -458,7 +458,12 @@ Verified on 2026-09-06, without starting a server or simulator:
   environment unset/empty values, model/effort validation, reset and draft state.
 - The catalog check covers every compiler-extracted app string, English/Chinese
   translation completeness, interpolation argument types/order, plural rules,
-  permission dialogs and shared Web runtime metadata. A standalone Foundation
+  permission dialogs and shared Web copy, including runtime metadata. The reviewed
+  mappings in `scripts/web-copy-map.json` reuse `web-next/messages/en.json` and
+  `zh-CN.json`; `scripts/web_copy.py --write` updates those catalog entries without
+  replacing native-only offline, permissions, or unconfirmed-write messages.
+  Named Web arguments retain Swift argument positions, and ICU counts become
+  native plural variations. A standalone Foundation
   probe reads compiled `.lproj` files and checks translations, plural counts
   0/1/2, reordered arguments and both permission descriptions.
 - The Python backend contract fixture exporter reports that fixtures are current.
@@ -480,6 +485,7 @@ From the repository root:
 ```sh
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer swift test --package-path ios
 uv run --no-project python ios/scripts/check-localization.py
+uv run --no-project python -m unittest discover -s ios/Tests -p test_web_copy.py
 ```
 
 After a successful unsigned build, verify compiler-extracted coverage and the

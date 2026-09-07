@@ -5,6 +5,7 @@ import Observation
 /// fence, so a late read cannot replace a newer snapshot or user action.
 @MainActor @Observable
 final class V2DashboardRepository {
+    let sidebarPreferences: ProjectSidebarPreferences
     private(set) var connectors: [V2Connector] = []
     private(set) var projects: [V2Project] = []
     private(set) var sessions: [V2SessionMeta] = []
@@ -26,8 +27,12 @@ final class V2DashboardRepository {
     @ObservationIgnored private var firstPageIDs: Set<String> = []
     @ObservationIgnored private var projectPageIDs: [V2SessionListScope: Set<String>] = [:]
     @ObservationIgnored private var extendedScopes: Set<V2SessionListScope> = []
+    @ObservationIgnored private var refreshedProjectScopes: Set<V2SessionListScope> = []
 
-    init(service: V2DashboardService, localStore: V2LocalStore? = nil) { self.service = service; self.localStore = localStore }
+    init(service: V2DashboardService, localStore: V2LocalStore? = nil, scope: V2ClientScope? = nil, defaults: UserDefaults = .standard) {
+        self.service = service; self.localStore = localStore
+        sidebarPreferences = ProjectSidebarPreferences(scope: scope, defaults: defaults)
+    }
     func restoreCache() async {
         guard let localStore, let value = await localStore.dashboard(), isValid, !hasLoaded else { return }
         connectors = value.connectors; projects = value.projects; sessions = value.sessions.map(reconcile)
@@ -100,6 +105,7 @@ final class V2DashboardRepository {
         let projectIDs = Set(projects.map(\.id))
         pages = pages.filter { $0.key.projectID.map(projectIDs.contains) ?? true }
         projectPageIDs = projectPageIDs.filter { $0.key.projectID.map(projectIDs.contains) ?? false }
+        refreshedProjectScopes = refreshedProjectScopes.filter { $0.projectID.map(projectIDs.contains) ?? false }
         hasLoaded = true; isFresh = true; error = nil
         changed()
     }
@@ -130,6 +136,7 @@ final class V2DashboardRepository {
             pages[scope] = .init(hasMore: response.hasMore && next != nil && next != cursor, nextCursor: next)
             if cursor != nil { extendedScopes.insert(scope) }
             if scope.projectID != nil {
+                refreshedProjectScopes.insert(scope)
                 if refresh { projectPageIDs[scope] = [] }
                 projectPageIDs[scope, default: []].formUnion(response.sessions.map(\.id))
             }
@@ -138,6 +145,13 @@ final class V2DashboardRepository {
         } catch {
             if isValid, revision == generation, !Task.isCancelled { pageErrors[scope] = error.localizedDescription }
         }
+    }
+
+    /// An expanded project refreshes once per account repository, including
+    /// restored cached pages. Realtime snapshots and credentials do not reset it.
+    func ensureProjectPage(_ scope: V2SessionListScope) async {
+        guard scope.projectID != nil, !refreshedProjectScopes.contains(scope) else { return }
+        await loadPage(scope, refresh: true)
     }
 
     func upsert(_ values: [V2SessionMeta]) {
@@ -164,17 +178,25 @@ final class V2DashboardRepository {
 
     func createProject(name: String, connectorID: String, path: String, reusing projectID: String? = nil) async throws -> V2Project {
         try requireWritable()
+        guard connectors.contains(where: { $0.id == connectorID && $0.status == .online }) else { throw URLError(.notConnectedToInternet) }
         let latest = try await service.projectAPI.list()
         try requireWritable()
+        guard connectors.contains(where: { $0.id == connectorID && $0.status == .online }) else { throw URLError(.notConnectedToInternet) }
+        projects = latest.projects; changed()
         let os = connectors.first { $0.id == connectorID }?.deviceOs
         guard let key = ProjectWorkspacePath.key(path, deviceOS: os) else {
             throw V2BusinessError.workspaceFilesUnavailable(message: String(localized: "请输入设备上的完整绝对路径。"))
         }
-        if let existing = latest.projects.first(where: { $0.connectorId == connectorID && ProjectWorkspacePath.key($0.workspacePath, deviceOS: os) == key }), existing.id != projectID {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let existing = latest.projects.first { $0.connectorId == connectorID && ProjectWorkspacePath.key($0.workspacePath, deviceOS: os) == key }
+        if let existing, existing.name != name, existing.id != projectID {
             throw ProjectReuseRequired(project: existing)
         }
-        let response = try await service.projectAPI.create(.init(name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-            connectorId: connectorID, workspacePath: path.trimmingCharacters(in: .whitespacesAndNewlines)))
+        // The manual form uses the server's workspace upsert, including when an
+        // automatic project already owns the directory. It must become manual.
+        let response = try await service.projectAPI.create(.init(name: ProjectWorkspacePath.availableName(name, projects: latest.projects, ignoring: existing?.id),
+            connectorId: connectorID, workspacePath: existing?.workspacePath ?? path.trimmingCharacters(in: .whitespacesAndNewlines),
+            manuallyCreated: true))
         try requireValid()
         upsertProject(response.project)
         return response.project
@@ -202,10 +224,11 @@ final class V2DashboardRepository {
     func invalidate() {
         persistenceTask?.cancel(); persistenceTask = nil
         isValid = false; generation += 1; onChange = nil
-        sessions = []; connectors = []; projects = []; pages = [:]
+        sessions = []; connectors = []; projects = []; pages = [:]; refreshedProjectScopes = []
         loadingPages = []; pageErrors = [:]
     }
-    private func upsertProject(_ project: V2Project) {
+    func upsertProject(_ project: V2Project) {
+        guard isValid else { return }
         if let old = projects.first(where: { $0.id == project.id }), old.updatedAt > project.updatedAt { return }
         generation += 1
         projects.removeAll { $0.id == project.id }; projects.append(project); changed()

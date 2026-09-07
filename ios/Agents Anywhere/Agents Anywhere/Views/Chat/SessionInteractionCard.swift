@@ -113,7 +113,7 @@ struct SessionInteractionActions: View {
                     Menu {
                         ForEach(layout.more) { action in
                             Button(NoticeActionPresentation.title(action, notice: item.notice),
-                                appSymbol: NoticeActionPresentation.symbol(action), role: action.style == "danger" ? .destructive : nil) {
+                                systemImage: NoticeActionPresentation.symbol(action), role: action.style == "danger" ? .destructive : nil) {
                                     respond(action)
                                 }
                                 .disabled(isDisabled(action))

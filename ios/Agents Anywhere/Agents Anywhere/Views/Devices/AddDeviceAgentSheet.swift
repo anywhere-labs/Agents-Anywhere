@@ -37,7 +37,7 @@ struct AddDeviceAgentSheet: View {
                 SheetCloseToolbar(disabled: model.busyID != nil) { dismiss() }
             }
         }
-        .presentationDetents([.large])
+        .appSheetPresentation(.compact)
         .interactiveDismissDisabled(model.busyID != nil)
         .sheet(item: $configuration, onDismiss: model.dismissError) { item in
             RuntimeConfigurationSheet(type: item.type, schema: item.schema, suggestedName: suggestedName(item.type), canSave: model.connected) { name, config in

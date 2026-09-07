@@ -11,9 +11,9 @@ struct WorkspaceFilesSheet: View {
     var session: V2SessionModel?
     var permitsReading = true
     var onSelectDirectory: ((String) -> Void)? = nil
+    var initialPath = "."
     @State private var destination: FileDestination?
     @State private var transfer: FileTransferRequest?
-    @State private var detent: PresentationDetent = .medium
     @State private var previewErrorMessage: String?
 
     private enum FileDestination: Identifiable {
@@ -37,7 +37,7 @@ struct WorkspaceFilesSheet: View {
             WorkspaceDirectoryView(
                 connectorId: connectorId,
                 root: workspace.path,
-                path: ".",
+                path: initialPath,
                 title: deviceName,
                 service: service,
                 onOpenFile: openFile, onFileAction: startTransfer, canRead: canRead,
@@ -65,12 +65,13 @@ struct WorkspaceFilesSheet: View {
                         Spacer(minLength: 0)
                         Button(String(localized: "取消")) { self.transfer = nil }.font(.footnote)
                     }
-                    .padding(16).background(.regularMaterial)
+                    .padding(16)
+                    .glassEffect(.regular, in: .capsule)
+                    .padding(.horizontal, 16).padding(.bottom, 8)
                 }
             }
         }
-        .presentationDetents([.medium, .large], selection: $detent)
-        .presentationContentInteraction(.resizes).presentationDragIndicator(.visible)
+        .appSheetPresentation(.compact)
         .sheet(item: $destination) { destination in
             switch destination {
             case .preview(let entry):
@@ -148,6 +149,12 @@ private struct WorkspaceDirectoryView: View {
     let onSelectDirectory: ((String) -> Void)?
 
     @State private var model = WorkspaceDirectoryModel()
+    @State private var requestedPath: String?
+    @State private var address: String?
+    private var effectivePath: String { requestedPath ?? path }
+    private var canSelect: Bool {
+        canRead && !model.isLoading && model.selectablePath != nil && (address == nil || address == model.resolvedPath)
+    }
 
     var body: some View {
         List {
@@ -178,8 +185,7 @@ private struct WorkspaceDirectoryView: View {
             } else if model.entries.isEmpty {
                 ContentUnavailableView(
                     String(localized: "Empty Folder"),
-                    appSymbol: "folder",
-                    description: Text(String(localized: "This workspace folder has no files."))
+                    appSymbol: "folder"
                 )
             } else {
                 ForEach(model.entries) { entry in
@@ -189,11 +195,11 @@ private struct WorkspaceDirectoryView: View {
                         canRead: canRead
                     )
                     .contextMenu {
-                        Button(String(localized: "复制路径"), appSymbol: "document.on.document") { UIPasteboard.general.string = entry.path }
+                        Button(String(localized: "复制路径"), systemImage: "doc.on.doc") { UIPasteboard.general.string = entry.path }
                         if entry.isFile {
-                            Button(String(localized: "下载"), appSymbol: "arrow.down.to.line") { onFileAction(entry, .download) }
+                            Button(String(localized: "下载"), systemImage: "arrow.down.to.line") { onFileAction(entry, .download) }
                                 .disabled(!canTransfer)
-                            Button(String(localized: "其他打开方式…"), appSymbol: "square.and.arrow.up") { onFileAction(entry, .openIn) }
+                            Button(String(localized: "其他打开方式…"), systemImage: "square.and.arrow.up") { onFileAction(entry, .openIn) }
                                 .disabled(!canTransfer)
                         }
                     }
@@ -206,28 +212,49 @@ private struct WorkspaceDirectoryView: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .scrollContentBackground(.hidden)
+        .scrollEdgeEffectStyle(.soft, for: .all)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .top, spacing: 0) {
-            Text(currentDirectoryPath)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20).padding(.vertical, 12)
-                .background(.bar)
-                .accessibilityLabel(String(localized: "当前目录：\(currentDirectoryPath)"))
-                .contextMenu {
-                    Button(String(localized: "复制路径"), appSymbol: "document.on.document") {
-                        UIPasteboard.general.string = currentDirectoryPath
-                    }
+            VStack(alignment: .leading, spacing: 8) {
+                if onSelectDirectory != nil {
+                    HStack(spacing: 8) {
+                        Button(String(localized: "上一级目录"), appSymbol: "arrow.up") {
+                            if let parent = ProjectWorkspacePath.parent(model.resolvedPath) { navigate(parent) }
+                        }.labelStyle(.iconOnly).frame(width: 44, height: 44)
+                            .disabled(!canRead || model.isLoading || ProjectWorkspacePath.parent(model.resolvedPath) == nil)
+                        TextField(String(localized: "设备上的完整路径"), text: Binding(get: { address ?? currentDirectoryPath }, set: { address = $0 }))
+                            .textFieldStyle(.plain)
+                            .font(.system(.footnote, design: .monospaced)).textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .padding(.horizontal, 14).frame(minHeight: 44)
+                            .glassEffect(.regular, in: .capsule)
+                            .onSubmit { navigate(address ?? currentDirectoryPath) }
+                        Button(String(localized: "打开目录"), appSymbol: "arrow.right") { navigate(address ?? currentDirectoryPath) }
+                            .labelStyle(.iconOnly).frame(width: 44, height: 44).disabled(!canRead)
+                    }.padding(.horizontal, 12)
                 }
+                Text(currentDirectoryPath)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20).padding(.vertical, 12)
+                    .accessibilityLabel(String(localized: "当前目录：\(currentDirectoryPath)"))
+                    .contextMenu {
+                        Button(String(localized: "复制路径"), systemImage: "doc.on.doc") {
+                            UIPasteboard.general.string = currentDirectoryPath
+                        }
+                    }
+            }
         }
         .safeAreaInset(edge: .bottom) {
             if let onSelectDirectory {
                 AppGlassButton(String(localized: "使用此目录"), style: .prominent,
-                    disabled: !canRead || model.isLoading || model.resolvedPath.isEmpty || model.errorMessage != nil) {
-                    onSelectDirectory(currentDirectoryPath)
-                }.padding(16).background(.bar)
+                    disabled: !canSelect) {
+                    guard canSelect, let path = model.selectablePath else { return }
+                    onSelectDirectory(path)
+                }.padding(16)
             }
         }
         .navigationTitle(title)
@@ -235,7 +262,7 @@ private struct WorkspaceDirectoryView: View {
         .refreshable {
             await loadDirectory()
         }
-        .task(id: "\(path):\(canRead)") {
+        .task(id: DirectoryRequest(connector: connectorId, root: root, path: effectivePath, canRead: canRead)) {
             await loadDirectory()
         }
     }
@@ -244,17 +271,31 @@ private struct WorkspaceDirectoryView: View {
         // fs/list returns the device's resolved absolute directory. Keep its
         // POSIX/Windows spelling rather than interpreting it on the iOS host.
         if !model.resolvedPath.isEmpty { return model.resolvedPath }
-        return path == "." ? root : path
+        return effectivePath == "." ? root : effectivePath
+    }
+
+    private struct DirectoryRequest: Equatable { let connector: String; let root: String; let path: String; let canRead: Bool }
+    private func navigate(_ path: String) {
+        guard canRead else { return }
+        let value = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        let reloadsCurrent = effectivePath == value
+        address = value; requestedPath = value
+        if reloadsCurrent { Task { await loadDirectory() } }
     }
 
     private func loadDirectory() async {
         guard canRead else { return }
+        let requested = effectivePath, previousAddress = address
         await model.load(
             connectorId: connectorId,
             root: root,
-            path: path,
+            path: requested,
             service: service
         )
+        // A successfully resolved '~', symlink or normalized path is a valid
+        // directory too. Keep any address the user edited during this request.
+        if !Task.isCancelled, !model.isLoading, effectivePath == requested,
+           address == previousAddress, model.selectablePath != nil { address = nil }
     }
 }
 

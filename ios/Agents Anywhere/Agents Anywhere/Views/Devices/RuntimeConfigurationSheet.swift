@@ -34,12 +34,11 @@ struct RuntimeConfigurationSheet: View {
     var body: some View {
         NavigationStack {
             ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 28) {
+                Form {
+                    Group {
                         if allowsNaming {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text(String(localized: "Instance name")).font(.headline)
-                                TextField(String(localized: "Name"), text: $instanceName)
+                            Section(String(localized: "Instance name")) {
+                                TextField(String(localized: "dashboard.device.runtimeNamePlaceholder"), text: $instanceName)
                                     .runtimeConfigInput()
                             }
                         }
@@ -50,8 +49,9 @@ struct RuntimeConfigurationSheet: View {
                             Label(String(localized: "Device disconnected. Your changes are kept until it reconnects."), appSymbol: "wifi.slash")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
-                    }.padding(22).frame(maxWidth: 720).frame(maxWidth: .infinity)
+                    }
                 }
+                .frame(maxWidth: 720).frame(maxWidth: .infinity)
                 .scrollDismissesKeyboard(.interactively)
                 .onChange(of: model.errors) { _, errors in
                     if let first = model.schema.fields.first(where: { errors[$0.id] != nil }) {
@@ -87,7 +87,7 @@ struct RuntimeConfigurationSheet: View {
             }
             .overlay(alignment: .top) { ChatErrorToasts(store: toasts, isRetrying: false, onRetry: { _ in }) }
         }
-        .presentationDetents([.large]).interactiveDismissDisabled(isSaving || hasChanges)
+        .appSheetPresentation(.expanded).interactiveDismissDisabled(isSaving || hasChanges)
         .confirmDiscardChanges($confirmsDiscard) { dismiss() }
     }
     private var hasChanges: Bool { model.hasChanges || instanceName != initialName }

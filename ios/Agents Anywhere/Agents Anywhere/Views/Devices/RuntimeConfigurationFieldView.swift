@@ -9,27 +9,22 @@ struct RuntimeConfigurationFieldView: View {
     private var description: String? { RuntimeConfigCopy.description(field, locale: locale) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        Section {
             if field.kind == .boolean {
-                Toggle(isOn: binding(model.boolValues[field.id] ?? false) { model.boolValues[field.id] = $0 }) {
-                    heading
-                }.toggleStyle(.switch).tint(.green)
+                Toggle(title, isOn: binding(\.boolValues, default: false))
+                    .toggleStyle(.switch).tint(.green)
             } else {
-                heading
                 editor
             }
             if let error = model.errors[field.id] {
                 Label(error, appSymbol: "exclamationmark.circle")
                     .font(.footnote).foregroundStyle(.red).accessibilityIdentifier("configuration.error.\(field.id)")
             }
-        }
-    }
-
-    private var heading: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title + (field.isRequired ? " *" : "")).font(.headline)
+        } header: {
+            if field.kind != .boolean { Text(title + (field.isRequired ? " *" : "")) }
+        } footer: {
             if let description, !description.isEmpty {
-                Text(description).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(description)
             }
         }
     }
@@ -38,16 +33,16 @@ struct RuntimeConfigurationFieldView: View {
         switch field.kind {
         case let .text(_, _, secure):
             if secure {
-                RuntimeSecretInput(title: title, text: binding(model.textValues[field.id] ?? "") { model.textValues[field.id] = $0 })
+                RuntimeSecretInput(title: title, text: binding(\.textValues, default: ""))
             } else {
-                TextField(field.defaultValue?.stringValue ?? title, text: binding(model.textValues[field.id] ?? "") { model.textValues[field.id] = $0 })
+                TextField(field.defaultValue?.stringValue ?? title, text: binding(\.textValues, default: ""))
                     .runtimeConfigInput().accessibilityLabel(title)
             }
         case .number:
-            TextField(title, text: binding(model.textValues[field.id] ?? "") { model.textValues[field.id] = $0 })
+            TextField(title, text: binding(\.textValues, default: ""))
                 .keyboardType(.numbersAndPunctuation).runtimeConfigInput()
         case let .choice(options):
-            Picker(title, selection: binding(model.choiceValues[field.id] ?? .null) { model.choiceValues[field.id] = $0 }) {
+            Picker(title, selection: binding(\.choiceValues, default: .null)) {
                 Text(String(localized: "Choose an option")).tag(JSONValue.null)
                 ForEach(options) { Text($0.title).tag($0.value) }
             }.pickerStyle(.menu).runtimeConfigInput()
@@ -58,9 +53,9 @@ struct RuntimeConfigurationFieldView: View {
         case .customModels:
             models
         case .json:
-            TextEditor(text: binding(model.textValues[field.id] ?? "") { model.textValues[field.id] = $0 })
+            TextEditor(text: binding(\.textValues, default: ""))
                 .font(.footnote.monospaced()).frame(minHeight: 140)
-                .scrollContentBackground(.hidden).runtimeConfigInput().accessibilityLabel(title)
+                .runtimeConfigInput().accessibilityLabel(title)
         case .boolean: EmptyView()
         }
     }
@@ -73,108 +68,64 @@ struct RuntimeConfigurationFieldView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(RuntimeConfigCopy.schemaText(urlSchema, key: "labelKey", fallback: String(localized: "Gateway URL"), locale: locale))
                     .font(.subheadline.weight(.medium))
-                TextField("https://", text: binding(model.gateways[field.id, default: .init()].baseURL) {
-                    model.gateways[field.id, default: .init()].baseURL = $0
-                }).keyboardType(.URL).runtimeConfigInput().accessibilityLabel(String(localized: "Gateway URL"))
+                TextField("https://", text: binding(\.gateways, default: .init()).baseURL)
+                    .keyboardType(.URL).runtimeConfigInput().accessibilityLabel(String(localized: "Gateway URL"))
                 Text(RuntimeConfigCopy.schemaText(urlSchema, key: "descriptionKey", fallback: urlSchema["description"]?.stringValue ?? "", locale: locale))
                     .font(.footnote).foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 8) {
                 Text(RuntimeConfigCopy.schemaText(keySchema, key: "labelKey", fallback: String(localized: "Gateway API key"), locale: locale))
                     .font(.subheadline.weight(.medium))
-                RuntimeSecretInput(title: RuntimeConfigCopy.lookup(String(localized: "Gateway API key"), locale: locale), text:
-                    binding(model.gateways[field.id, default: .init()].apiKey) { model.gateways[field.id, default: .init()].apiKey = $0 })
+                RuntimeSecretInput(title: RuntimeConfigCopy.lookup(String(localized: "Gateway API key"), locale: locale),
+                    text: binding(\.gateways, default: .init()).apiKey,
+                    showTitle: String(localized: "dashboard.device.showModelGatewayApiKey"),
+                    hideTitle: String(localized: "dashboard.device.hideModelGatewayApiKey"))
                 Text(RuntimeConfigCopy.schemaText(keySchema, key: "descriptionKey", fallback: keySchema["description"]?.stringValue ?? "", locale: locale))
                     .font(.footnote).foregroundStyle(.secondary)
             }
-        }.padding(16).background(.quaternary.opacity(0.35), in: .rect(cornerRadius: 22))
+        }.padding(.vertical, 8)
     }
 
-    private var environment: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if model.environments[field.id, default: []].isEmpty {
-                Text(String(localized: "No environment overrides.")).font(.subheadline).foregroundStyle(.secondary)
+    @ViewBuilder private var environment: some View {
+        if model.environments[field.id, default: []].isEmpty {
+            Text(String(localized: "No environment overrides.")).font(.subheadline).foregroundStyle(.secondary)
+        }
+        ForEach(model.environments[field.id] ?? []) { row in
+            RuntimeEnvironmentRowEditor(row: row) {
+                model.removeEnvironmentRow(row.id, fieldID: field.id)
             }
-            ForEach(Binding(get: { model.environments[field.id] ?? [] }, set: { model.environments[field.id] = $0 })) { $row in
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .top, spacing: 10) {
-                        VStack(spacing: 10) {
-                            TextField(String(localized: "Variable name"), text: $row.key).runtimeConfigInput()
-                            TextField(row.removesInherited ? String(localized: "Remove inherited variable") : String(localized: "Value"), text: $row.value)
-                                .runtimeConfigInput().disabled(row.removesInherited)
-                        }
-                        Menu {
-                            Toggle(String(localized: "Remove inherited variable"), isOn: $row.removesInherited)
-                            Button(String(localized: "Remove variable"), appSymbol: "trash", role: .destructive) {
-                                model.environments[field.id]?.removeAll { $0.id == row.id }
-                            }
-                        } label: { AppSymbol("ellipsis").frame(width: 44, height: 44) }
-                            .accessibilityLabel(String(localized: "Variable actions"))
-                    }
-                    if row.removesInherited {
-                        Label(String(localized: "Inherited variable will be removed."), appSymbol: "minus.circle")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                }
-            }
-            AppGlassButton(String(localized: "Add variable"), systemImage: "plus", maxWidth: nil) {
-                model.environments[field.id, default: []].append(.init())
-            }
-        }.padding(16).background(.quaternary.opacity(0.35), in: .rect(cornerRadius: 22))
-    }
-
-    private var models: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if model.customModels[field.id, default: []].isEmpty {
-                Text(String(localized: "No custom models.")).font(.subheadline).foregroundStyle(.secondary)
-            }
-            ForEach(Binding(get: { model.customModels[field.id] ?? [] }, set: { model.customModels[field.id] = $0 })) { $row in
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(spacing: 10) {
-                        Text(String(localized: "Custom model")).font(.subheadline.weight(.medium))
-                        Spacer()
-                        Button(String(localized: "Remove model"), appSymbol: "trash", role: .destructive) {
-                            model.customModels[field.id]?.removeAll { $0.id == row.id }
-                        }.labelStyle(.iconOnly).frame(width: 44, height: 44)
-                    }
-                    TextField(String(localized: "Model ID"), text: $row.modelID).runtimeConfigInput()
-                    TextField(String(localized: "Display name"), text: $row.displayName).runtimeConfigInput()
-                    HStack {
-                        Text(String(localized: "Reasoning efforts")).font(.subheadline.weight(.medium))
-                        Spacer()
-                        Button(String(localized: "Add effort"), appSymbol: "plus") { row.efforts.append(.init()) }
-                            .labelStyle(.iconOnly).frame(width: 44, height: 44)
-                    }
-                    if row.efforts.isEmpty {
-                        Text(String(localized: "This model has no custom reasoning efforts.")).font(.footnote).foregroundStyle(.secondary)
-                    }
-                    ForEach($row.efforts) { $effort in
-                        HStack(alignment: .top, spacing: 10) {
-                            VStack(spacing: 10) {
-                                TextField(String(localized: "Effort ID"), text: $effort.effortID).runtimeConfigInput()
-                                TextField(String(localized: "Display name"), text: $effort.displayName).runtimeConfigInput()
-                            }
-                            Button(String(localized: "Remove effort"), appSymbol: "trash", role: .destructive) {
-                                row.efforts.removeAll { $0.id == effort.id }
-                            }.labelStyle(.iconOnly).frame(width: 44, height: 44)
-                        }
-                    }
-                }.padding(16).background(.quaternary.opacity(0.35), in: .rect(cornerRadius: 22))
-            }
-            AppGlassButton(String(localized: "Add custom model"), systemImage: "plus", maxWidth: nil) {
-                model.customModels[field.id, default: []].append(.init())
-            }
+        }
+        AppGlassButton(String(localized: "Add variable"), systemImage: "plus", maxWidth: nil) {
+            model.environments[field.id, default: []].append(.init())
         }
     }
 
-    private func binding<T>(_ value: T, set: @escaping (T) -> Void) -> Binding<T> {
-        Binding(get: { value }, set: set)
+    @ViewBuilder private var models: some View {
+        if model.customModels[field.id, default: []].isEmpty {
+            Text(String(localized: "No custom models.")).font(.subheadline).foregroundStyle(.secondary)
+        }
+        ForEach(model.customModels[field.id] ?? []) { row in
+            RuntimeCustomModelRowEditor(row: row) {
+                model.removeCustomModel(row.id, fieldID: field.id)
+            }
+        }
+        AppGlassButton(String(localized: "Add custom model"), systemImage: "plus", maxWidth: nil) {
+            model.customModels[field.id, default: []].append(.init())
+        }
+    }
+
+    private func binding<T>(_ keyPath: ReferenceWritableKeyPath<RuntimeConfigurationModel, [String: T]>,
+        default fallback: T) -> Binding<T> {
+        Binding(get: { model[keyPath: keyPath][field.id] ?? fallback },
+            set: { model[keyPath: keyPath][field.id] = $0 })
     }
 }
 
 struct RuntimeSecretInput: View {
     let title: String
     @Binding var text: String
+    var showTitle = String(localized: "Show secret")
+    var hideTitle = String(localized: "Hide secret")
     @State private var isVisible = false
     var body: some View {
         HStack(spacing: 8) {
@@ -182,7 +133,7 @@ struct RuntimeSecretInput: View {
                 if isVisible { TextField(title, text: $text) }
                 else { SecureField(title, text: $text) }
             }.textContentType(nil).accessibilityLabel(title)
-            Button(isVisible ? String(localized: "Hide secret") : String(localized: "Show secret"), appSymbol: isVisible ? "eye.slash" : "eye") {
+            Button(isVisible ? hideTitle : showTitle, appSymbol: isVisible ? "eye.slash" : "eye") {
                 isVisible.toggle()
             }.labelStyle(.iconOnly).frame(width: 32, height: 32)
         }.runtimeConfigInput()
@@ -192,8 +143,8 @@ struct RuntimeSecretInput: View {
 extension View {
     func runtimeConfigInput() -> some View {
         self.textInputAutocapitalization(.never).autocorrectionDisabled()
-            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 14))
+            .textFieldStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

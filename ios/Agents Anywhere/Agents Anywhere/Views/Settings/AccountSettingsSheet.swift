@@ -1,12 +1,15 @@
 import SwiftUI
 
 struct AccountSettingsSheet: View {
-    @EnvironmentObject private var appState: AppState
+    @ObservedObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @AppStorage(AppAppearance.storageKey) private var appearanceValue = AppAppearance.system.rawValue
+    @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
     @State private var confirmsSignOut = false
     @State private var signOutError: String?
     @State private var toasts = ChatToastStore()
+    @State private var drafts = AccountSettingsDrafts()
+    @State private var confirmsDiscard = false
 
     var body: some View {
         NavigationStack {
@@ -23,19 +26,19 @@ struct AccountSettingsSheet: View {
                             }
                             Spacer(minLength: 0)
                         }.padding(.vertical, 12)
-                    }.listRowBackground(Color.clear).listRowSeparator(.hidden)
+                    }.listRowSeparator(.hidden)
 
                     Section(String(localized: "Account")) {
-                        NavigationLink { AccountIdentitySettingsView(mode: .nickname) } label: {
+                        NavigationLink { AccountIdentitySettingsView(mode: .nickname, draft: $drafts.nickname) } label: {
                             SettingsRow(title: String(localized: "Nickname"), symbol: "person.text.rectangle", value: me.displayName)
                         }
-                        NavigationLink { AccountIdentitySettingsView(mode: .email) } label: {
+                        NavigationLink { AccountIdentitySettingsView(mode: .email, draft: $drafts.email) } label: {
                             SettingsRow(title: String(localized: "Email"), symbol: "envelope", value: me.email)
                         }
-                        NavigationLink { AvatarSettingsView() } label: {
+                        NavigationLink { AvatarSettingsView(draft: $drafts.avatar) } label: {
                             SettingsRow(title: String(localized: "Profile photo"), symbol: "person.crop.circle")
                         }
-                        NavigationLink { PasswordSettingsView() } label: {
+                        NavigationLink { PasswordSettingsView(draft: $drafts.password) } label: {
                             SettingsRow(title: String(localized: "Password"), symbol: "key")
                         }
                     }
@@ -49,6 +52,13 @@ struct AccountSettingsSheet: View {
                     NavigationLink { SettingsLanguageView() } label: {
                         SettingsRow(title: String(localized: "Language"), symbol: "globe", value: SettingsLanguageView.currentLanguage)
                     }
+                    Toggle(isOn: Binding(
+                        get: { !showsSessionList },
+                        set: { showsSessionList = !$0 }
+                    )) {
+                        Label(String(localized: "Project mode"), appSymbol: "folder")
+                            .labelStyle(.titleAndIcon)
+                    }.tint(.green)
                 }
                 Section(String(localized: "Workspace")) {
                     NavigationLink { SettingsServerView() } label: {
@@ -70,10 +80,9 @@ struct AccountSettingsSheet: View {
                         .font(.footnote).frame(maxWidth: .infinity).padding(.top, 16)
                 }
             }
-            .listStyle(.insetGrouped).scrollContentBackground(.hidden)
-            .background(Color(uiColor: .systemBackground))
+            .listStyle(.insetGrouped)
             .navigationTitle(String(localized: "Settings")).navigationBarTitleDisplayMode(.inline)
-            .toolbar { SheetCloseToolbar(disabled: appState.isAccountWorking) { dismiss() } }
+            .toolbar { SheetCloseToolbar(disabled: isWorking, action: close) }
             .refreshable { _ = await appState.refreshAccount() }
             .alert(String(localized: "Sign out?"), isPresented: $confirmsSignOut) {
                 Button(String(localized: "Cancel"), role: .cancel) {}
@@ -91,9 +100,19 @@ struct AccountSettingsSheet: View {
             toasts.update(source: "account", failure: .init(kind: .rejected, message: error))
             appState.dismissAccountError()
         }
-        .environment(\.closeSettings, { dismiss() })
-        .presentationDetents([.large]).presentationDragIndicator(.visible)
-        .interactiveDismissDisabled(appState.isAccountWorking)
+        .environment(\.closeSettings, close)
+        // Native sheet presentation can create a new hosting boundary on Mac.
+        // Use the caller's store here and provide it to every settings subpage.
+        .environmentObject(appState)
+        .appSheetPresentation(.expanded)
+        .interactiveDismissDisabled(drafts.hasChanges || isWorking)
+        .confirmDiscardChanges($confirmsDiscard) { dismiss() }
+    }
+
+    private var isWorking: Bool { appState.isAccountWorking || drafts.isWorking }
+    private func close() {
+        guard !isWorking else { return }
+        if drafts.hasChanges { confirmsDiscard = true } else { dismiss() }
     }
 
     private func signOut() {

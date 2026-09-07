@@ -53,7 +53,7 @@ final class AppState: ObservableObject {
     private var lastDashboardRefreshAt: Date?
     private var dashboardUpdatesTask: Task<Void, Never>?
     private var cachedServices: V2ClientServices?
-    private var cachedServicesToken: String?
+    private var cachedServicesTokenProvider: MutableAuthTokenProvider?
     private var isInBackground = false
     private var visibleSessionID: V2SessionID?
 
@@ -172,9 +172,11 @@ final class AppState: ObservableObject {
         do {
             let client = APIClient(serverURL: serverURL)
             let auth = try await client.login(email: email, password: password)
+            let profile = try await client.me(token: auth.accessToken)
+            try Task.checkCancellation()
             try saveSession(serverURL: serverURL, token: auth.accessToken)
             self.serverURL = serverURL
-            me = try await client.me(token: auth.accessToken)
+            me = profile
             route = .signedIn
             await refreshDashboard()
             startDashboardUpdates()
@@ -202,9 +204,11 @@ final class AppState: ObservableObject {
         defer { isWorking = false }
         do {
             let client = APIClient(serverURL: serverURL)
+            let profile = try await client.me(token: auth.accessToken)
+            try Task.checkCancellation()
             try saveSession(serverURL: serverURL, token: auth.accessToken)
             self.serverURL = serverURL
-            me = try await client.me(token: auth.accessToken)
+            me = profile
             if showSignedInRoute {
                 route = .signedIn
                 await refreshDashboard()
@@ -280,9 +284,11 @@ final class AppState: ObservableObject {
             let serverURL = try URL.agentsServer(from: payload.webUrl)
             let client = APIClient(serverURL: serverURL)
             let exchange = try await client.exchangeMobileLogin(payload: payload)
+            let profile = try await client.me(token: exchange.auth.accessToken)
+            try Task.checkCancellation()
             try saveSession(serverURL: serverURL, token: exchange.auth.accessToken)
             self.serverURL = serverURL
-            me = try await client.me(token: exchange.auth.accessToken)
+            me = profile
             if showSignedInRoute {
                 route = .signedIn
                 await refreshDashboard()
@@ -325,7 +331,10 @@ final class AppState: ObservableObject {
         services.sessionReads.updateConnectivity(repository.isFresh ? services.connectivity.status : .init(availability: .offline))
         services.sessionRepository.applyMetadata(sessions)
         services.updateAgentConnections()
-        if repository.hasLoaded { services.newSession.updateProjects(projects) }
+        if repository.hasLoaded {
+            services.newSession.updateProjects(projects)
+            services.newSession.updateConnectors(connectors)
+        }
     }
 
     /// Opens the dashboard WebSocket and continuously replaces the global Connector and Session projections.
@@ -650,7 +659,8 @@ final class AppState: ObservableObject {
         restoration.clear(scope: cachedServices?.scope)
         cachedServices?.shutdown(removingCache: true)
         cachedServices = nil
-        cachedServicesToken = nil
+        cachedServicesTokenProvider?.update(nil)
+        cachedServicesTokenProvider = nil
         chatSelection = .newSession; restoreConnectionError = nil
         visibleSessionID = nil
         me = nil
@@ -761,20 +771,23 @@ final class AppState: ObservableObject {
             return nil
         }
         let scope = V2ClientScope(serverURL: serverURL, accountID: accountID)
-        if let cachedServices, cachedServices.scope == scope, cachedServicesToken == token {
+        if let cachedServices, cachedServices.scope == scope, let provider = cachedServicesTokenProvider {
+            provider.update(token)
             return cachedServices
         }
         dashboardUpdatesTask?.cancel()
         dashboardUpdatesTask = nil
         isDashboardLoading = false
+        cachedServicesTokenProvider?.update(nil)
         cachedServices?.shutdown()
+        let tokenProvider = MutableAuthTokenProvider(token: token)
         let api = V2APIClient(
             serverURL: serverURL,
-            tokenProvider: StaticAuthTokenProvider(token: token)
+            tokenProvider: tokenProvider
         )
         let services = V2ClientServices(api: api, accountID: accountID)
         cachedServices = services
-        cachedServicesToken = token
+        cachedServicesTokenProvider = tokenProvider
         services.dashboardRepository.reconcile = { [weak services] in services?.sessionReads.ingest($0) ?? $0 }
         services.dashboardRepository.onChange = { [weak self, weak services] in
             guard let services else { return }
@@ -812,11 +825,13 @@ final class AppState: ObservableObject {
     }
 
     private func saveSession(serverURL: URL, token: String) throws {
+        // A failed Keychain write must not replace the saved server or invalidate
+        // the existing session. Commit in-memory/defaults changes only on success.
+        try keychain.saveString(token, account: tokenAccount)
         authenticationEpoch = UUID(); accountSyncID = UUID()
         accountSyncTask?.cancel(); accountSyncTask = nil; isRetryingServerConnection = false
         restoreConnectionError = nil
         UserDefaults.standard.set(serverURL.absoluteString, forKey: serverDefaultsKey)
-        try keychain.saveString(token, account: tokenAccount)
     }
 
     private func currentDeviceName() -> String {

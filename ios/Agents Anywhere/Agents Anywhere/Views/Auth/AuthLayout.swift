@@ -24,31 +24,23 @@ struct AuthScreen<Content: View>: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(title)
-                            .font(.system(size: 40, weight: .bold))
-                            .foregroundStyle(AppTheme.primaryText(colorScheme))
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        if let subtitle {
-                            Text(subtitle)
-                                .font(.title3)
-                                .foregroundStyle(AppTheme.secondaryText(colorScheme))
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-
-                    content
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.horizontal, 22)
-                .padding(.top, 22)
-                .padding(.bottom, 34)
+
+                content
             }
+            .padding(.horizontal, 22)
+            .padding(.top, 22)
+            .padding(.bottom, 34)
         }
-        .background(AppTheme.appBackground(colorScheme))
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.large)
         .toolbar {
             if showsCancel {
                 SheetCloseToolbar(action: onCancel)

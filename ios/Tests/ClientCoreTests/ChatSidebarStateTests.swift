@@ -2,6 +2,11 @@ import Testing
 @testable import ClientCore
 
 @Suite struct ChatSidebarStateTests {
+    @Test func currentWindowSizeClassDeterminesSidebarAvailability() {
+        #expect(ChatSidebarState.Layout.resolve(hasRegularWidth: true) == .regularSplit)
+        #expect(ChatSidebarState.Layout.resolve(hasRegularWidth: false) == .drawer)
+    }
+
     @Test func regularSplitStartsOpenAndNavigationKeepsBothColumnsVisible() {
         var sidebar = ChatSidebarState()
         sidebar.setLayout(.regularSplit)
@@ -12,15 +17,14 @@ import Testing
         }
     }
 
-    @Test func phoneAndCompactIPadDismissTheOverlayAfterSelection() {
-        for layout in [ChatSidebarState.Layout.drawer, .compactSplit] {
-            var sidebar = ChatSidebarState()
-            sidebar.setLayout(layout)
-            sidebar.isOpen = true
-            #expect(sidebar.obscuresDetail)
-            sidebar.selectDestination()
-            #expect(!sidebar.isOpen && !sidebar.obscuresDetail)
-        }
+    @Test func compactWindowDismissesTheOverlayAfterSelection() {
+        let layout = ChatSidebarState.Layout.resolve(hasRegularWidth: false)
+        var sidebar = ChatSidebarState()
+        sidebar.setLayout(layout)
+        sidebar.isOpen = true
+        #expect(sidebar.obscuresDetail)
+        sidebar.selectDestination()
+        #expect(!sidebar.isOpen && !sidebar.obscuresDetail)
     }
 
     @Test func resizingRestoresRegularSplitWithoutUndoingAnExplicitToggle() {
@@ -30,13 +34,26 @@ import Testing
         sidebar.setLayout(.regularSplit)
         sidebar.selectDestination()
         #expect(!sidebar.isOpen && !sidebar.obscuresDetail)
-        sidebar.setLayout(.compactSplit)
+        sidebar.setLayout(.drawer)
         sidebar.isOpen = true
         #expect(sidebar.obscuresDetail)
         sidebar.setLayout(.regularSplit)
         #expect(sidebar.isOpen && !sidebar.obscuresDetail)
-        sidebar.setLayout(.compactSplit)
+        sidebar.setLayout(.drawer)
         #expect(!sidebar.isOpen)
+    }
+
+    @Test func resizedHostGetsItsOpenStateBeforeTheLayoutChangeIsCommitted() {
+        var sidebar = ChatSidebarState()
+        sidebar.setLayout(.regularSplit)
+        #expect(!sidebar.isOpen(in: .drawer))
+        sidebar.setLayout(.drawer)
+        #expect(!sidebar.isOpen)
+        #expect(sidebar.isOpen(in: .regularSplit))
+        sidebar.setLayout(.regularSplit)
+        #expect(sidebar.isOpen)
+        sidebar.isOpen = false
+        #expect(!sidebar.isOpen(in: .regularSplit))
     }
 
     @Test func openPhoneDrawerDisablesTheUntranslatedPageAndEnablesSidebarActions() {

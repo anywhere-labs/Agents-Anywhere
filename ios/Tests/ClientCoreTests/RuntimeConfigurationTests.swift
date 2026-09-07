@@ -1,4 +1,7 @@
 import Foundation
+import Observation
+import SwiftUI
+import Synchronization
 import Testing
 @testable import ClientCore
 
@@ -115,5 +118,105 @@ import Testing
         let defaults = RuntimeConfigurationModel(schema: try schema(), config: nil)
         defaults.resetDefaults()
         #expect(!defaults.hasChanges)
+    }
+
+    @Test func emptyRowsCanBeDeletedWhileNativeFieldBindingsAreStillAlive() throws {
+        let draft = RuntimeConfigurationModel(schema: try schema(), config: nil)
+        for _ in 0..<20 {
+            @Bindable var variable = RuntimeEnvironmentRow()
+            @Bindable var model = RuntimeCustomModelRow()
+            @Bindable var effort = RuntimeEffortRow()
+            draft.environments["environment", default: []].append(variable)
+            draft.customModels["customModels", default: []].append(model)
+            model.efforts.append(effort)
+            let variableInput = $variable.key
+            let modelInput = $model.modelID
+            let effortInput = $effort.effortID
+
+            model.removeEffort(effort.id)
+            draft.removeCustomModel(model.id, fieldID: "customModels")
+            draft.removeEnvironmentRow(variable.id, fieldID: "environment")
+            // UIKit may finish an edit as its row disappears. These bindings
+            // must remain safe without recreating the removed configuration.
+            variableInput.wrappedValue = "LATE_EDIT"
+            modelInput.wrappedValue = "late-model"
+            effortInput.wrappedValue = "late-effort"
+            #expect(variableInput.wrappedValue == "LATE_EDIT")
+            #expect(modelInput.wrappedValue == "late-model")
+            #expect(effortInput.wrappedValue == "late-effort")
+            #expect(!draft.hasChanges)
+            let config = try draft.makeConfig()
+            #expect(config["environment"] == .object([:]))
+            #expect(config["customModels"] == .array([]))
+        }
+    }
+
+    @Test func deletingEarlierRowsDoesNotRetargetSurvivingFieldBindings() throws {
+        let draft = RuntimeConfigurationModel(schema: try schema(), config: nil)
+        let removedVariable = RuntimeEnvironmentRow()
+        @Bindable var variable = RuntimeEnvironmentRow(key: "KEEP", value: "before")
+        draft.environments["environment"] = [removedVariable, variable]
+        let variableInput = $variable.value
+
+        let removedModel = RuntimeCustomModelRow()
+        let removedEffort = RuntimeEffortRow()
+        @Bindable var effort = RuntimeEffortRow(effortID: "high", displayName: "High")
+        @Bindable var model = RuntimeCustomModelRow(modelID: "keep", displayName: "Before", efforts: [removedEffort, effort])
+        draft.customModels["customModels"] = [removedModel, model]
+        let modelInput = $model.displayName
+        let effortInput = $effort.displayName
+
+        draft.removeEnvironmentRow(removedVariable.id, fieldID: "environment")
+        draft.removeCustomModel(removedModel.id, fieldID: "customModels")
+        model.removeEffort(removedEffort.id)
+        variableInput.wrappedValue = "after"
+        modelInput.wrappedValue = "After"
+        effortInput.wrappedValue = "More reasoning"
+
+        let config = try draft.makeConfig()
+        #expect(config["environment"] == .object(["KEEP": .string("after")]))
+        let models = try #require(config["customModels"]?.configArray)
+        #expect(models.count == 1)
+        #expect(models[0]["modelId"] == .string("keep"))
+        #expect(models[0]["displayName"] == .string("After"))
+        #expect(models[0]["efforts"]?.configArray == [.object([
+            "effortId": .string("high"), "displayName": .string("More reasoning")
+        ])])
+    }
+
+    @Test func resettingConfigurationDetachesAllPreviouslyBoundRows() throws {
+        let draft = RuntimeConfigurationModel(schema: try schema(), config: nil)
+        @Bindable var variable = RuntimeEnvironmentRow(key: "TOKEN", value: "before")
+        @Bindable var effort = RuntimeEffortRow(effortID: "high", displayName: "High")
+        @Bindable var model = RuntimeCustomModelRow(modelID: "before", displayName: "Before", efforts: [effort])
+        draft.environments["environment"] = [variable]
+        draft.customModels["customModels"] = [model]
+        let variableInput = $variable.value
+        let modelInput = $model.displayName
+        let effortInput = $effort.displayName
+        draft.resetDefaults()
+        let reset = try draft.makeConfig()
+        variableInput.wrappedValue = "late value"
+        modelInput.wrappedValue = "Late model"
+        effortInput.wrappedValue = "Late effort"
+        #expect(try draft.makeConfig() == reset)
+        #expect(!draft.hasChanges)
+    }
+
+    @Test func editsInsideRowObjectsStillNotifyTheUnsavedChangesObserver() throws {
+        let draft = RuntimeConfigurationModel(schema: try schema(), config: .object([
+            "customModels": .array([.object([
+                "modelId": .string("model"), "displayName": .string("Model"),
+                "efforts": .array([.object(["effortId": .string("high"), "displayName": .string("High")])])
+            ])])
+        ]))
+        let changed = Mutex(false)
+        withObservationTracking { _ = draft.hasChanges } onChange: { changed.withLock { $0 = true } }
+        let effort = try #require(draft.customModels["customModels"]?.first?.efforts.first)
+        effort.displayName = "More reasoning"
+        #expect(changed.withLock { $0 })
+        #expect(draft.hasChanges)
+        effort.displayName = "High"
+        #expect(!draft.hasChanges)
     }
 }

@@ -2,115 +2,104 @@ import SwiftUI
 
 struct SessionTargetSheet: View {
     @Bindable var model: NewSessionModel
-    let onManageDevice: (String) -> Void
-    @State private var path: [String] = []
-    @State private var applying = false
+    @State private var expandedDeviceID: String?
+    @State private var applying: TargetSelection?
+    @State private var selectionError: String?
     @Environment(\.dismiss) private var dismiss
 
-    var body: some View {
-        NavigationStack(path: $path) {
-            List {
-                Section {
-                    ForEach(model.connectors.sorted { ($0.status == .online ? 0 : 1, $0.name) < ($1.status == .online ? 0 : 1, $1.name) }) { device in
-                        NavigationLink(value: device.id) {
-                            HStack(spacing: 14) {
-                                AppSymbol(device.deviceOs?.lowercased().contains("linux") == true ? "server.rack" : "desktopcomputer")
-                                    .font(.title3).foregroundStyle(.primary).frame(width: 30)
-                                VStack(alignment: .leading, spacing: 5) {
-                                    Text(device.name).font(.headline)
-                                    Text(device.status == .online ? String(localized: "在线 · 选择此设备上的 Agent") : String(localized: "离线 · 可查看上次的实例"))
-                                        .font(.footnote).foregroundStyle(.secondary)
-                                }
-                                Spacer(minLength: 4)
-                                if device.id == model.connectorID { AppSymbol("checkmark").foregroundStyle(.primary) }
-                            }
-                            .padding(.vertical, 8)
-                        }
-                    }
-                } header: { Text(String(localized: "1 · 选择设备")) } footer: {
-                    Text(String(localized: "接下来选择这台设备上的 Agent。选完后才会更改当前运行目标。"))
-                }
-                if model.connectors.isEmpty {
-                    ContentUnavailableView(String(localized: "没有设备"), appSymbol: "desktopcomputer", description: Text(String(localized: "请先从侧栏添加并连接设备。")))
-                }
-            }
-            .navigationTitle(String(localized: "运行目标"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { SheetCloseToolbar { dismiss() } }
-            .navigationDestination(for: String.self) { deviceID in agents(on: deviceID) }
+    private var devices: [V2Connector] {
+        model.connectors.sorted {
+            ($0.status == .online ? 0 : 1, $0.name, $0.id) < ($1.status == .online ? 0 : 1, $1.name, $1.id)
         }
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
-        .interactiveDismissDisabled(applying)
-        .disabled(applying)
     }
 
-    private func agents(on deviceID: String) -> some View {
-        let device = model.connectors.first { $0.id == deviceID }
-        let connected = device?.status == .online && model.network.availability != .offline
-        let instances = (model.inventories[deviceID] ?? []).sorted {
-            ($0.isReadyForSession ? 0 : 1, $0.sessionDisplayName) < ($1.isReadyForSession ? 0 : 1, $1.sessionDisplayName)
-        }
-        return List {
-            Section {
-                Label(device?.name ?? String(localized: "设备已移除"), appSymbol: "desktopcomputer")
-                if !connected {
-                    Label(model.network.availability == .offline ? String(localized: "手机网络已断开") : String(localized: "设备离线"), appSymbol: "wifi.slash")
-                        .foregroundStyle(.secondary)
-                    Text(String(localized: "连接恢复前无法应用新目标。返回不会更改原来的选择。"))
-                        .font(.footnote).foregroundStyle(.secondary)
+    var body: some View {
+        NavigationStack {
+            List {
+                if devices.isEmpty {
+                    ContentUnavailableView(String(localized: "No devices"), appSymbol: "desktopcomputer")
                 }
-            }
-            Section {
-                ForEach(instances) { runtime in
-                    Button {
-                        applying = true
-                        Task { @MainActor in
-                            let applied = await model.selectTarget(connectorID: deviceID, runtimeID: runtime.id)
-                            applying = false
-                            if applied { dismiss() }
+                Section {
+                    ForEach(devices) { device in
+                        InlineSelectionGroup(title: device.name, detail: deviceDetail(device),
+                            isSelected: model.connectorID == device.id,
+                            isExpanded: Binding(get: { expandedDeviceID == device.id }, set: { expandedDeviceID = $0 ? device.id : nil })) {
+                            agents(on: device)
                         }
-                    } label: {
-                        HStack(spacing: 14) {
-                            AppSymbol("sparkle", size: 20).foregroundStyle(.primary).frame(width: 30)
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(runtime.sessionDisplayName).font(.headline).foregroundStyle(.primary)
-                                Text(runtime.typeDisplayName).font(.subheadline).foregroundStyle(.secondary)
-                                if let reason = runtime.sessionUnavailableReason {
-                                    Text(reason).font(.footnote).foregroundStyle(.secondary)
-                                }
-                            }
-                            Spacer(minLength: 8)
-                            if deviceID == model.connectorID && runtime.id == model.runtimeID {
-                                AppSymbol("checkmark").foregroundStyle(.primary)
-                            }
+                        .task(id: TargetInventoryKey(id: device.id, isExpanded: expandedDeviceID == device.id, connected: connected(device))) {
+                            guard expandedDeviceID == device.id else { return }
+                            await model.loadInventory(device.id)
                         }
-                        .padding(.vertical, 9)
-                        .contentShape(Rectangle())
                     }
-                    .disabled(!connected || !runtime.isReadyForSession || applying)
                 }
-                if model.loadingDevices.contains(deviceID) { ProgressView(String(localized: "正在检查 Agent…")) }
-                if instances.isEmpty && !model.loadingDevices.contains(deviceID) {
-                    Text(String(localized: "这台设备尚无已配置的 Agent。"))
-                        .foregroundStyle(.secondary)
+                if let error = selectionError ?? model.error {
+                    Section { Text(error).font(.footnote).foregroundStyle(.secondary) }
                 }
-                if let error = model.inventoryErrors[deviceID] {
-                    Text(error).font(.footnote).foregroundStyle(.secondary)
-                    Button(String(localized: "重新加载")) { Task { await model.loadInventory(deviceID) } }.disabled(!connected)
-                }
-            } header: { Text(String(localized: "2 · 选择 Agent 实例")) } footer: {
-                Text(String(localized: "同一种 Agent 可以有不同实例；这里显示的是设备上的实际实例名称。"))
             }
-            Section {
-                Button(String(localized: "管理这台设备"), appSymbol: "slider.horizontal.3") { onManageDevice(deviceID) }
+            .navigationTitle(String(localized: "运行目标")).navigationBarTitleDisplayMode(.inline)
+            .toolbar { SheetCloseToolbar(disabled: applying != nil) { dismiss() } }
+            .refreshable {
+                if let id = expandedDeviceID { await model.loadInventory(id) }
             }
         }
-        .navigationTitle(String(localized: "选择 Agent"))
-        .navigationBarTitleDisplayMode(.inline)
-        .task(id: TargetInventoryKey(id: deviceID, connected: connected)) { await model.loadInventory(deviceID) }
-        .refreshable { await model.loadInventory(deviceID) }
+        .appSheetPresentation(.compact)
+        .interactiveDismissDisabled(applying != nil)
+        .disabled(applying != nil)
+    }
+
+    @ViewBuilder private func agents(on device: V2Connector) -> some View {
+        let inventory = instances(on: device.id)
+        let loading = model.loadingDevices.contains(device.id)
+        let error = model.inventoryErrors[device.id]
+        if loading || (connected(device) && model.inventories[device.id] == nil && error == nil) {
+            ProgressView(String(localized: "正在检查 Agent…"))
+        } else if inventory.isEmpty, error == nil, connected(device) {
+            Text(String(localized: "这台设备尚无已配置的 Agent。")).font(.footnote).foregroundStyle(.secondary)
+        }
+        ForEach(inventory) { runtime in
+            InlineSelectionButton(title: runtime.sessionDisplayName, detail: runtime.sessionUnavailableReason,
+                isSelected: model.connectorID == device.id && model.runtimeID == runtime.id,
+                isWorking: applying == TargetSelection(connectorID: device.id, runtimeID: runtime.id)) {
+                apply(device: device, runtime: runtime)
+            }
+            .disabled(!connected(device) || !runtime.isReadyForSession || !model.isValid || model.isCreating)
+        }
+        if !connected(device) {
+            Text(model.network.availability == .offline ? String(localized: "手机网络已断开") : String(localized: "目标设备离线"))
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+        if let error {
+            Text(error).font(.footnote).foregroundStyle(.secondary)
+            Button(String(localized: "重新加载")) { Task { await model.loadInventory(device.id) } }
+                .disabled(!connected(device) || loading)
+        }
+    }
+
+    private func connected(_ device: V2Connector) -> Bool {
+        device.status == .online && model.network.availability != .offline
+    }
+    private func deviceDetail(_ device: V2Connector) -> String {
+        let status = model.network.availability == .offline ? String(localized: "手机网络已断开") :
+            device.status == .online ? String(localized: "Online") : String(localized: "Offline")
+        return [device.deviceOs, status].compactMap { $0 }.joined(separator: " · ")
+    }
+    private func instances(on id: String) -> [V2DeviceRuntime] {
+        (model.inventories[id] ?? []).sorted {
+            ($0.isReadyForSession ? 0 : 1, $0.sessionDisplayName, $0.id) < ($1.isReadyForSession ? 0 : 1, $1.sessionDisplayName, $1.id)
+        }
+    }
+    private func apply(device: V2Connector, runtime: V2DeviceRuntime) {
+        guard applying == nil, connected(device), runtime.isReadyForSession else { return }
+        let target = TargetSelection(connectorID: device.id, runtimeID: runtime.id)
+        applying = target; selectionError = nil
+        Task { @MainActor in
+            let accepted = await model.selectTarget(connectorID: target.connectorID, runtimeID: target.runtimeID)
+            applying = nil
+            if accepted { dismiss() }
+            else { selectionError = model.error ?? String(localized: "当前设置未保存，请稍后重试。") }
+        }
     }
 }
 
-private struct TargetInventoryKey: Equatable { let id: String; let connected: Bool }
+private struct TargetSelection: Equatable { let connectorID: String; let runtimeID: String }
+private struct TargetInventoryKey: Equatable { let id: String; let isExpanded: Bool; let connected: Bool }

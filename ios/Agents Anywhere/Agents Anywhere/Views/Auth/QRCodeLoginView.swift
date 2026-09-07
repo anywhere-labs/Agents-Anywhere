@@ -52,6 +52,7 @@ struct QRCodeLoginView: View {
                 }
             }
         }
+        .appSheetPresentation(.expanded)
     }
 }
 

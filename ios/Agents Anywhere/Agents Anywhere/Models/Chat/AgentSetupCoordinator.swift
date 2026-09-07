@@ -12,6 +12,7 @@ final class AgentSetupCoordinator {
         var id: String { connector.id }
     }
     private(set) var requests: [Request] = []
+    private(set) var selectedSetupID: String?
     var pairingFormPresented = false
     @ObservationIgnored var onOnline: ((V2Connector) -> Void)?
     @ObservationIgnored private let service: V2DevicePairingService
@@ -27,7 +28,7 @@ final class AgentSetupCoordinator {
     }
     var presentedConnector: V2Connector? {
         guard !pairingFormPresented else { return nil }
-        return requests.first { $0.ready }?.connector
+        return requests.first { $0.ready && $0.id == selectedSetupID }?.connector
     }
     func watch(_ connector: V2Connector) {
         guard isValid else { return }
@@ -40,7 +41,14 @@ final class AgentSetupCoordinator {
             if requests.contains(where: { $0.id == connector.id && !$0.ready }) { markReady(connector) }
         }
     }
-    func finish(_ id: String) { tasks.removeValue(forKey: id)?.cancel(); requests.removeAll { $0.id == id } }
+    func configure(_ id: String) {
+        guard isValid, requests.contains(where: { $0.id == id && $0.ready }) else { return }
+        selectedSetupID = id
+    }
+    func finish(_ id: String) {
+        tasks.removeValue(forKey: id)?.cancel(); requests.removeAll { $0.id == id }
+        if selectedSetupID == id { selectedSetupID = nil }
+    }
     func retry(_ id: String) {
         if let index = requests.firstIndex(where: { $0.id == id }) { requests[index].error = nil }
         resume()
@@ -48,7 +56,7 @@ final class AgentSetupCoordinator {
     func setActive(_ active: Bool) { isActive = active; restart() }
     func updateNetwork(_ network: V2NetworkStatus) { isOnline = network.availability != .offline; restart() }
     func invalidate() {
-        isValid = false; pause(); requests = []; onOnline = nil
+        isValid = false; pause(); requests = []; selectedSetupID = nil; onOnline = nil
     }
     private func restart() { pause(); resume() }
     private func pause() {

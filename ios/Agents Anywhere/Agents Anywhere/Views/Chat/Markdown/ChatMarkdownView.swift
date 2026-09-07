@@ -56,10 +56,12 @@ private struct MarkdownBlockView: View, Equatable {
         // Only changed blocks reach Textual's parser. The complete document was
         // parsed above, so cross-block references and nested structures survive.
         MarkdownBlockLayout(dynamicType: dynamicType, displayScale: displayScale, direction: direction) {
-            StructuredText(String(block.content.hashValue), parser: ParsedBlock(content: block.content))
+            StructuredText(String(block.content.hashValue), parser: ParsedMarkdownText(content: block.content))
                 .textual.structuredTextStyle(ChatMarkdownStyle(headingLedger: headingLedger))
                 .textual.imageAttachmentLoader(ChatImageLoader())
-                .textual.textSelection(.enabled)
+                // Controls own their gestures. Only paragraph/heading labels and
+                // the native code/table text areas install selection overlays.
+                .textual.textSelection(.disabled)
                 .environment(\.streamingGlyphAnimation, isStreaming && !hasSettled)
                 .font(.body)
                 .foregroundStyle(.primary)
@@ -78,11 +80,6 @@ private struct MarkdownBlockView: View, Equatable {
     }
 }
 
-private struct ParsedBlock: MarkupParser {
-    let content: AttributedString
-    func attributedString(for input: String) throws -> AttributedString { content }
-}
-
 /// Apply one complete style. A default bundle closer to StructuredText would
 /// override individual styles applied outside it, silently bypassing our renderer.
 private struct ChatMarkdownStyle: StructuredText.Style {
@@ -90,7 +87,6 @@ private struct ChatMarkdownStyle: StructuredText.Style {
     let headingStyle: ChatHeadingStyle
     let paragraphStyle = ChatParagraphStyle()
     let codeBlockStyle = ChatCodeBlockStyle()
-    let tableCellStyle = ChatTableCellStyle()
 
     init(headingLedger: GlyphRevealLedger) {
         headingStyle = ChatHeadingStyle(ledger: headingLedger)
@@ -101,7 +97,8 @@ private struct ChatMarkdownStyle: StructuredText.Style {
     var listItemStyle: StructuredText.DefaultListItemStyle { defaults.listItemStyle }
     var unorderedListMarker: StructuredText.SymbolListMarker { defaults.unorderedListMarker }
     var orderedListMarker: StructuredText.DecimalListMarker { defaults.orderedListMarker }
-    var tableStyle: StructuredText.DefaultTableStyle { defaults.tableStyle }
+    var tableStyle: ChatTableStyle { ChatTableStyle() }
+    var tableCellStyle: StructuredText.DefaultTableCellStyle { defaults.tableCellStyle }
     var thematicBreakStyle: StructuredText.DividerThematicBreakStyle { defaults.thematicBreakStyle }
 }
 
@@ -111,6 +108,7 @@ private struct ChatParagraphStyle: StructuredText.ParagraphStyle {
             .textual.lineSpacing(.fontScaled(0.23))
             .textual.blockSpacing(.fontScaled(top: 0.8))
             .modifier(StreamingGlyphReveal())
+            .textual.textSelectionScope()
     }
 }
 
@@ -125,106 +123,26 @@ private struct ChatHeadingStyle: StructuredText.HeadingStyle {
             // Textual identifies headings by their changing slug. Keep births
             // in the stable outer block so an append doesn't replay the heading.
             .modifier(StreamingGlyphReveal(ledger: ledger))
+            .textual.textSelectionScope()
     }
 }
 
 private struct ChatCodeBlockStyle: StructuredText.CodeBlockStyle {
     func makeBody(configuration: Configuration) -> some View {
-        CodeBlockCard(configuration: configuration)
+        ChatMarkdownCodeBlock(code: configuration.codeBlock.text, language: configuration.languageHint) {
+            configuration.label
+                .monospaced()
+                .textual.fontScale(0.86)
+                .textual.lineSpacing(.fontScaled(0.35))
+                .modifier(StreamingGlyphReveal())
+        }
+        .textual.blockSpacing(.fontScaled(top: 0.9, bottom: 0.5))
+    }
+}
+
+private struct ChatTableStyle: StructuredText.TableStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        ChatMarkdownTable(rows: configuration.rows, columns: configuration.columns)
             .textual.blockSpacing(.fontScaled(top: 0.9, bottom: 0.5))
     }
-}
-
-private struct ChatTableCellStyle: StructuredText.TableCellStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        StructuredText.DefaultTableCellStyle().makeBody(configuration: configuration)
-            .modifier(StreamingGlyphReveal())
-    }
-}
-
-private struct CodeBlockCard: View {
-    let configuration: StructuredText.CodeBlockStyleConfiguration
-    @State private var copied = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text(configuration.languageHint ?? "text").font(.caption.weight(.medium))
-                Spacer()
-                Button {
-                    configuration.codeBlock.copyToPasteboard()
-                    copied = true
-                } label: {
-                    Label(copied ? String(localized: "已复制") : String(localized: "复制代码"), appSymbol: copied ? "checkmark" : "document.on.document")
-                        .font(.caption)
-                        .padding(.vertical, 8)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(copied ? String(localized: "代码已复制") : String(localized: "复制代码"))
-                .task(id: copied) {
-                    guard copied else { return }
-                    do { try await Task.sleep(for: .seconds(2)); copied = false } catch {}
-                }
-            }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 4)
-            .background(.primary.opacity(0.04))
-            Divider().opacity(0.5)
-            Overflow {
-                configuration.label
-                    .monospaced()
-                    .textual.fontScale(0.86)
-                    .textual.lineSpacing(.fontScaled(0.35))
-                    .modifier(StreamingGlyphReveal())
-                    .padding(14)
-            }
-        }
-        .background(Color(uiColor: .secondarySystemBackground))
-        .clipShape(.rect(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(.primary.opacity(0.07), lineWidth: 0.5))
-    }
-
-}
-
-nonisolated private struct ChatImageLoader: AttachmentLoader {
-    func attachment(for url: URL, text: String, environment: ColorEnvironmentValues) async throws -> ChatImageAttachment {
-        if let path = SessionFileReference.path(from: url), let link = SessionFileReference.link(path) {
-            return ChatImageAttachment(base: WorkspaceImageAttachment(url: link, description: text.isEmpty ? (path as NSString).lastPathComponent : text))
-        }
-        let loader = URLAttachmentLoader.image()
-        return ChatImageAttachment(base: try await loader.attachment(for: url, text: text, environment: environment))
-    }
-}
-
-/// Device images open the scoped Web preview on demand; URL images render inline.
-nonisolated private struct WorkspaceImageAttachment: Attachment {
-    let url: URL
-    let description: String
-    @MainActor var body: some View {
-        Link(destination: url) {
-            Label(description.isEmpty ? String(localized: "查看图片") : description, appSymbol: "photo")
-                .font(.subheadline).lineLimit(2).padding(12).frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 14))
-        }.buttonStyle(.plain)
-    }
-    func sizeThatFits(_ proposal: ProposedViewSize, in environment: TextEnvironmentValues) -> CGSize {
-        CGSize(width: min(300, proposal.width ?? 300), height: 68)
-    }
-}
-
-/// A small adapter lets Web-preview links and URL images share the same loader.
-/// The labeled initializer avoids Textual 0.5's overlapping eraser overloads.
-nonisolated private struct ChatImageAttachment: Attachment {
-    let base: any Attachment
-    var description: String { base.description }
-    var selectionStyle: AttachmentSelectionStyle { base.selectionStyle }
-    @MainActor var body: some View { AnyView(base.body) }
-    func baselineOffset(in environment: TextEnvironmentValues) -> CGFloat { base.baselineOffset(in: environment) }
-    func sizeThatFits(_ proposal: ProposedViewSize, in environment: TextEnvironmentValues) -> CGSize {
-        base.sizeThatFits(proposal, in: environment)
-    }
-    func pngData() -> Data? { base.pngData() }
-    static func == (lhs: Self, rhs: Self) -> Bool { AnyHashable(lhs.base) == AnyHashable(rhs.base) }
-    func hash(into hasher: inout Hasher) { hasher.combine(base) }
 }

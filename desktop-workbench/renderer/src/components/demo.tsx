@@ -7,6 +7,7 @@ import { SidebarProvider, SidebarInset, useSidebar } from "@/components/ui/sideb
 import { DashboardSidebarControlsContext } from "@/components/dashboard-sidebar-controls"
 import { AppSidebar } from "@/components/app-sidebar"
 import { DesktopShellHeader } from "@/components/desktop/desktop-shell-header"
+import { WindowsTitleBarControlsContext } from "@/components/desktop/windows-title-bar"
 import { DesktopSessionNotifications } from "@/components/desktop/desktop-session-notifications"
 import { TaskComposer } from "@/components/task-composer"
 import { SessionView } from "@/components/session-view"
@@ -40,6 +41,7 @@ import {
 } from "@/components/ui/resizable"
 import { useTranslations } from "next-intl"
 import { DesktopConnectorProvider } from "@/features/desktop/desktop-connector-context"
+import { cn } from "@/lib/utils"
 
 const SIDEBAR_LAYOUT_STORAGE_KEY = "agents-anywhere-dashboard-sidebar-layout"
 const DEFAULT_DESKTOP_LAYOUT = {
@@ -83,6 +85,7 @@ function DashboardShell() {
 
 function DesktopResizableShell() {
   const { open, setOpen } = useSidebar()
+  const titleBarControls = React.useContext(WindowsTitleBarControlsContext)
   const desktopShellRef = React.useRef<HTMLDivElement | null>(null)
   const sidebarPanelRef = React.useRef<PanelImperativeHandle | null>(null)
   const sidebarMotionActiveRef = React.useRef(false)
@@ -178,20 +181,24 @@ function DesktopResizableShell() {
   const panelMotionClassName = sidebarResizeActive
     ? "[&>[data-panel]]:transition-none"
     : "[&>[data-panel]]:transition-[flex-grow] [&>[data-panel]]:duration-[220ms] [&>[data-panel]]:ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:[&>[data-panel]]:transition-none"
+  const shellHeader = (
+    <DesktopShellHeader
+      key="desktop-shell-header"
+      sidebarOpen={open}
+      sidebarResizing={sidebarResizeActive}
+    />
+  )
 
   return (
     <DashboardSidebarControlsContext.Provider value={sidebarControls}>
       <div
         ref={desktopShellRef}
-        className="flex h-svh min-h-0 w-full flex-col overflow-hidden overscroll-none bg-background"
+        className={cn("flex h-svh min-h-0 w-full flex-col overflow-hidden overscroll-none bg-background", titleBarControls && "relative")}
         style={{
           "--desktop-sidebar-width": `${Math.max(sidebarWidth, DESKTOP_SIDEBAR_MIN_WIDTH)}px`,
         } as React.CSSProperties}
       >
-        <DesktopShellHeader
-          sidebarOpen={open}
-          sidebarResizing={sidebarResizeActive}
-        />
+        {titleBarControls ? null : shellHeader}
         <ResizablePanelGroup
           id="agents-anywhere-dashboard-sidebar"
           defaultLayout={defaultLayout}
@@ -251,11 +258,12 @@ function DesktopResizableShell() {
             onLostPointerCapture={() => setSidebarResizeActive(false)}
           />
           <ResizablePanel id="dashboard-main" minSize={0} className="min-w-0">
-            <SidebarInset className="h-full min-h-0 overflow-hidden overscroll-none bg-background">
+            <SidebarInset className={cn("h-full min-h-0 overflow-hidden overscroll-none bg-background", titleBarControls && "pt-11")}>
               <WorkspaceMain />
             </SidebarInset>
           </ResizablePanel>
         </ResizablePanelGroup>
+        {titleBarControls ? shellHeader : null}
       </div>
       <SessionToolSidebarsHost />
     </DashboardSidebarControlsContext.Provider>

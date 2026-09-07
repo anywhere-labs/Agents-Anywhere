@@ -40,13 +40,8 @@ struct SessionTimelineRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .traceChatLayout("row:\(row.id)", state: "generation=\(row.layoutGeneration), status=\(row.value.status.rawValue)")
-        .contextMenu {
-            Button(String(localized: "复制内容"), appSymbol: "document.on.document") {
-                UIPasteboard.general.string = row.text.isEmpty ? row.value.raw["content"]?.formattedJSON : row.text
-            }
-            Button(String(localized: "复制条目 ID"), appSymbol: "number") { UIPasteboard.general.string = row.id }
-            Button(String(localized: "复制原始 JSON"), appSymbol: "curlybraces") { UIPasteboard.general.string = row.value.raw.formattedJSON }
-        }
+        // Long presses belong to the text selection interaction inside the row.
+        // A row-wide context menu would intercept them and highlight the item.
     }
 
     private var markdown: some View {
@@ -73,7 +68,7 @@ struct UserMessageBubble: View {
                     ChatMessageAttachments(files: attachments, onOpen: onAttachment, loadThumbnail: loadThumbnail)
                 }
                 if !text.isEmpty {
-                    Text(text).font(.body).textSelection(.enabled)
+                    ChatSelectableText(text: text).font(.body)
                         .padding(.horizontal, 17).padding(.vertical, 12)
                         .background(colorScheme == .dark ? Color(white: 0.13) : Color(white: 0.94), in: .rect(cornerRadius: 24))
                 }

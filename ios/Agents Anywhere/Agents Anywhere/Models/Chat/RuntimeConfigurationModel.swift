@@ -1,23 +1,6 @@
 import Foundation
 import Observation
 
-struct RuntimeEnvironmentRow: Identifiable, Equatable {
-    var id = UUID()
-    var key = ""
-    var value = ""
-    var removesInherited = false
-}
-struct RuntimeEffortRow: Identifiable, Equatable {
-    var id = UUID()
-    var effortID = ""
-    var displayName = ""
-}
-struct RuntimeCustomModelRow: Identifiable, Equatable {
-    var id = UUID()
-    var modelID = ""
-    var displayName = ""
-    var efforts: [RuntimeEffortRow] = []
-}
 struct RuntimeGatewayDraft: Equatable {
     var baseURL = ""
     var apiKey = ""
@@ -81,6 +64,14 @@ final class RuntimeConfigurationModel {
         base = values
         errors = [:]
         load(values)
+    }
+
+    func removeEnvironmentRow(_ id: UUID, fieldID: String) {
+        environments[fieldID]?.removeAll { $0.id == id }
+    }
+
+    func removeCustomModel(_ id: UUID, fieldID: String) {
+        customModels[fieldID]?.removeAll { $0.id == id }
     }
 
     func makeConfig() throws -> [String: JSONValue] {

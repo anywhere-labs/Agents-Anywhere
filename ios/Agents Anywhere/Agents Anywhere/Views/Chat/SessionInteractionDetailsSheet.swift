@@ -12,6 +12,6 @@ struct SessionInteractionDetailsSheet: View {
             }
             .navigationTitle(String(localized: "操作详情")).navigationBarTitleDisplayMode(.inline)
             .toolbar { SheetCloseToolbar { dismiss() } }
-        }.presentationDetents([.large])
+        }.appSheetPresentation(.compact)
     }
 }

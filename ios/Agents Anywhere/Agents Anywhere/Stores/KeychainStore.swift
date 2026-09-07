@@ -1,8 +1,21 @@
 import Foundation
 import Security
 
-enum KeychainStoreError: Error {
+enum KeychainStoreError: LocalizedError {
     case unhandledStatus(OSStatus)
+
+    var errorDescription: String? {
+        guard case let .unhandledStatus(status) = self else { return nil }
+        // Status codes are identifiers, not locale-formatted numbers.
+        let code = String(status)
+        if status == errSecMissingEntitlement {
+            return String(localized: "The app's signing configuration does not allow access to sign-in credentials in the Keychain (error \(code)).")
+        }
+        if let reason = SecCopyErrorMessageString(status, nil) as String? {
+            return String(localized: "Could not access sign-in credentials in the Keychain (error \(code)): \(reason)")
+        }
+        return String(localized: "Could not access sign-in credentials in the Keychain (error \(code)).")
+    }
 }
 
 struct KeychainStore {
@@ -60,4 +73,3 @@ struct KeychainStore {
         guard status == errSecSuccess else { throw KeychainStoreError.unhandledStatus(status) }
     }
 }
-

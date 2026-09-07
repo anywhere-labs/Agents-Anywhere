@@ -107,8 +107,8 @@ struct SessionChatView: View, Equatable {
                     .accessibilityLabel(String(localized: "文件管理"))
                     .disabled(session.metadata?.cwd?.isEmpty != false)
                 Menu {
-                    Button(String(localized: "会话详情与导出"), appSymbol: "info.circle") { sheet = .details }
-                    Button(String(localized: "复制会话 ID"), appSymbol: "number") { UIPasteboard.general.string = session.id }
+                    Button(String(localized: "会话详情与导出"), systemImage: "info.circle") { sheet = .details }
+                    Button(String(localized: "复制会话 ID"), systemImage: "number") { UIPasteboard.general.string = session.id }
                 } label: { AppSymbol("ellipsis") }
                 .accessibilityLabel(String(localized: "会话菜单"))
             }
@@ -117,6 +117,10 @@ struct SessionChatView: View, Equatable {
             model.error = nil
             if !(await model.setTakeover(enabled)), let error = model.takeoverError { model.error = error }
         })
+        .completionFeedback(trigger: model.isRunning) { wasRunning, isRunning in
+            wasRunning && !isRunning && model.isOpeningReady && session.runtime.isFresh
+                && session.runtime.state?.status == .idle
+        }
         .task(id: sidebarIsTransitioning) {
             guard !hasStartedLoading, !sidebarIsTransitioning else { return }
             // Show feedback immediately, but let the drawer's completed

@@ -108,6 +108,9 @@ export type DesktopServerConnection = {
 
 export type DesktopWorkbenchBridge = {
   platform: string
+  window?: {
+    setTitleBarColors: (colors: { color: string; symbolColor: string }) => Promise<void>
+  }
   versions: {
     chrome: string
     electron: string

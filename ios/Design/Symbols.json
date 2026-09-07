@@ -82,7 +82,7 @@
   "qrcode.viewfinder": "ScanQrCode",
   "rectangle.portrait.and.arrow.forward": "LogOut",
   "server.rack": "Server",
-  "sidebar.left": "PanelLeft",
+  "sidebar.left": "TextAlignStart",
   "slider.horizontal.3": "Settings",
   "sparkle": "Sparkles",
   "sparkles": "Sparkles",

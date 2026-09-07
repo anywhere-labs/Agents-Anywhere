@@ -5,8 +5,9 @@ struct NewSessionPreference: Codable {
     var draftText: String? = nil
     var connectorID = ""
     var runtimeID = ""
-    var workspaces: [String: String] = [:] // Legacy directory preference, used only to match an existing project.
+    var workspaces: [String: String] = [:]
     var projectIDs: [String: String]? = nil
+    var homePaths: [String: String]? = nil
     var selections: [String: [String: String]] = [:]
 }
 
@@ -19,6 +20,10 @@ final class NewSessionModel {
     private(set) var connectors: [V2Connector] = []
     private(set) var projects: [V2Project] = []
     private(set) var projectID: String?
+    private(set) var workspace = ""
+    private(set) var homePaths: [String: String] = [:]
+    private(set) var homeErrors: [String: String] = [:]
+    private(set) var loadingHomes: Set<String> = []
     private(set) var hasLoadedProjects = false
     private(set) var inventories: [String: [V2DeviceRuntime]] = [:]
     private(set) var inventoryErrors: [String: String] = [:]
@@ -35,65 +40,138 @@ final class NewSessionModel {
     @ObservationIgnored var onStaged: ((NewSessionSubmission) async -> Void)?
     @ObservationIgnored var onFailed: ((NewSessionSubmission) -> Void)?
     @ObservationIgnored var onBound: ((NewSessionSubmission, V2SessionCreateResponse) -> Void)?
+    @ObservationIgnored var onProjectResolved: ((V2Project) -> Void)?
     @ObservationIgnored private let devices: V2DeviceManagementService
     @ObservationIgnored private let preparation: V2SessionPreparationService
     @ObservationIgnored private let creation: V2SessionCreationService
     @ObservationIgnored private let projectAPI: V2ProjectAPI
+    @ObservationIgnored private let files: V2WorkspaceFilesService
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let preferenceKey: String
     @ObservationIgnored private var preference: NewSessionPreference
     @ObservationIgnored private var preparationVersion = 0
     @ObservationIgnored private var inventoryTasks: [String: Task<[V2DeviceRuntime], Error>] = [:]
+    @ObservationIgnored private var homeTasks: [String: Task<String, Error>] = [:]
+    @ObservationIgnored private var resolvedHomes: Set<String> = []
 
     init(scope: V2ClientScope, devices: V2DeviceManagementService,
          preparation: V2SessionPreparationService, creation: V2SessionCreationService, projectAPI: V2ProjectAPI,
          defaults: UserDefaults = .standard) {
         self.projectAPI = projectAPI
+        files = V2WorkspaceFilesService(connectorAPI: devices.connectorAPI, serverURL: scope.serverURL)
         self.devices = devices; self.preparation = preparation; self.creation = creation; self.defaults = defaults
         preferenceKey = "aa.native.new-session.v1." + Data((scope.serverURL.absoluteString + "\n" + scope.accountID).utf8).base64EncodedString()
         preference = defaults.data(forKey: preferenceKey).flatMap { try? JSONDecoder().decode(NewSessionPreference.self, from: $0) } ?? .init()
         connectorID = preference.connectorID; runtimeID = preference.runtimeID
         projectID = preference.projectIDs?[preference.connectorID]
+        workspace = preference.workspaces[preference.connectorID] ?? ""
+        homePaths = preference.homePaths ?? [:]
         draft.text = preference.draftText ?? ""
     }
 
     var connector: V2Connector? { connectors.first { $0.id == connectorID } }
     var runtime: V2DeviceRuntime? { inventories[connectorID]?.first { $0.id == runtimeID } }
     var project: V2Project? { projects.first { $0.id == projectID && $0.connectorId == connectorID } }
-    var workspace: String { project?.workspacePath ?? "" }
+    var homePath: String? { homePaths[connectorID] }
+    var isHome: Bool {
+        guard let homePath else { return false }
+        return ProjectWorkspacePath.key(workspace, deviceOS: connector?.deviceOs) == ProjectWorkspacePath.key(homePath, deviceOS: connector?.deviceOs)
+    }
     var availableProjects: [V2Project] { projects.filter { $0.connectorId == connectorID }.sorted { $0.name < $1.name } }
+    var refreshKey: NewSessionRefreshKey {
+        .init(connectorID: connectorID, isOnline: connector?.status == .online, network: network)
+    }
+
+    /// Restore the display target with the dashboard cache, before the page is
+    /// mounted. Remote inventory and catalog validation happen independently.
+    func updateConnectors(_ values: [V2Connector]) {
+        guard isValid else { return }
+        connectors = values
+        if !values.isEmpty, !values.contains(where: { $0.id == connectorID }) {
+            connectorID = values.first { $0.id == preference.connectorID }?.id
+                ?? values.first { $0.status == .online }?.id ?? values.first?.id ?? ""
+            runtimeID = ""
+            restoreProjectForDevice()
+        }
+    }
 
     func updateProjects(_ values: [V2Project]) {
         guard isValid else { return }
         projects = values; hasLoadedProjects = true
-        // A removed selection stays unresolved; never silently send a draft to a different project.
-        if let projectID, !values.contains(where: { $0.id == projectID && $0.connectorId == connectorID }) {
-            self.projectID = nil
-            error = String(localized: "原来选择的项目已不可用，请重新选择。草稿已保留。")
-        }
+        // The path is the draft's identity. Late lists, renames and display-mode
+        // changes may discover a project without changing the chosen directory.
+        if workspace.isEmpty, let saved = project { workspace = saved.workspacePath }
+        identifyProject()
     }
 
     @discardableResult func selectProject(_ id: String) -> Bool {
         guard !isCreating, isValid, let value = projects.first(where: { $0.id == id }) else { return false }
         if connectorID != value.connectorId { focusDevice(value.connectorId, workspace: nil) }
-        projectID = id
-        var saved = preference.projectIDs ?? [:]; saved[connectorID] = id; preference.projectIDs = saved
-        preference.connectorID = connectorID
-        persist()
+        workspace = value.workspacePath
+        identifyProject()
         return true
     }
 
     private func restoreProjectForDevice() {
-        if let saved = preference.projectIDs?[connectorID], projects.contains(where: { $0.id == saved && $0.connectorId == connectorID }) {
-            projectID = saved
-        } else if let path = preference.workspaces[connectorID], let match = availableProjects.first(where: { $0.workspacePath == path }) {
-            projectID = match.id
-        } else { projectID = nil }
+        workspace = preference.workspaces[connectorID] ?? ""
+        projectID = preference.projectIDs?[connectorID]
+        if workspace.isEmpty { workspace = project?.workspacePath ?? homePaths[connectorID] ?? "" }
+        identifyProject()
+    }
+
+    @discardableResult func selectWorkspace(_ path: String) -> Bool {
+        guard isValid, !isCreating, !connectorID.isEmpty,
+              ProjectWorkspacePath.key(path, deviceOS: connector?.deviceOs) != nil else { return false }
+        workspace = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        identifyProject()
+        return true
+    }
+
+    private func identifyProject() {
+        projectID = ProjectWorkspacePath.project(in: projects, connectorID: connectorID, path: workspace, deviceOS: connector?.deviceOs)?.id
+        guard !connectorID.isEmpty else { return }
+        preference.connectorID = connectorID
+        preference.workspaces[connectorID] = workspace
+        var saved = preference.projectIDs ?? [:]; saved[connectorID] = projectID; preference.projectIDs = saved
+        persist()
+    }
+
+    /// The connector expands '~'. URL/FileManager on the phone must never
+    /// participate in resolving a remote home or comparing remote paths.
+    func resolveHome() async {
+        let device = connectorID
+        guard isValid, connector?.status == .online, network.availability != .offline,
+              !resolvedHomes.contains(device) else { return }
+        let task: Task<String, Error>
+        let ownsTask = homeTasks[device] == nil
+        if let existing = homeTasks[device] { task = existing }
+        else {
+            let os = connector?.deviceOs
+            task = Task {
+                let directory = try await files.directory(connectorId: device, root: "~", path: ".")
+                guard directory.targetType == nil || directory.targetType == "directory",
+                      ProjectWorkspacePath.key(directory.path, deviceOS: os) != nil else { throw HTTPError.invalidResponse }
+                return directory.path
+            }
+            homeTasks[device] = task; loadingHomes.insert(device); homeErrors[device] = nil
+        }
+        defer { if ownsTask { homeTasks[device] = nil; loadingHomes.remove(device) } }
+        do {
+            let path = try await task.value
+            guard isValid, !Task.isCancelled else { return }
+            homePaths[device] = path
+            resolvedHomes.insert(device)
+            preference.homePaths = homePaths; persist()
+            if connectorID == device, ProjectWorkspacePath.key(workspace, deviceOS: connector?.deviceOs) == nil {
+                workspace = path; identifyProject()
+            }
+        } catch { if isValid, !Task.isCancelled { homeErrors[device] = error.localizedDescription } }
     }
     var canAttach: Bool { prepared?.capabilities.allows("runtime.attachment") == true }
     var canCreate: Bool {
         isValid && !isCreating && !isPreparing && !creationUncertain && network.availability != .offline
-            && project != nil && connector?.status == .online && runtime?.isReadyForSession == true && prepared != nil
+            && ProjectWorkspacePath.key(workspace, deviceOS: connector?.deviceOs) != nil
+            && connector?.status == .online && runtime?.isReadyForSession == true && prepared != nil
             && settings.hasValidSelections && draft.canAttemptSend && (draft.attachments.isEmpty || canAttach)
     }
 
@@ -109,24 +187,19 @@ final class NewSessionModel {
         runtimeID = preference.connectorID == id ? preference.runtimeID : ""
         prepared = nil; preparationVersion += 1
         restoreProjectForDevice()
-        if let workspace, let match = availableProjects.first(where: { $0.workspacePath == workspace }) { projectID = match.id }
+        if let workspace { _ = selectWorkspace(workspace) }
     }
 
     func refresh(connectors: [V2Connector]) async {
-        guard isValid else { return }
-        self.connectors = connectors
-        if !connectors.isEmpty, !connectors.contains(where: { $0.id == connectorID }) {
-            connectorID = connectors.first { $0.id == preference.connectorID }?.id
-                ?? connectors.first { $0.status == .online }?.id ?? connectors.first?.id ?? ""
-            runtimeID = ""
-            restoreProjectForDevice()
-        }
+        guard isValid, !Task.isCancelled else { return }
+        updateConnectors(connectors)
         guard connector?.status == .online, network.availability != .offline else {
             prepared = nil; preparationVersion += 1; isPreparing = false; return
         }
         let device = connectorID
+        async let home: Void = resolveHome()
         await loadInventory(device)
-        guard isValid, connectorID == device else { return }
+        guard isValid, !Task.isCancelled, connectorID == device else { return }
         let available = inventories[device] ?? []
         if !available.contains(where: { $0.id == runtimeID }) {
             let saved = preference.connectorID == device ? preference.runtimeID : ""
@@ -134,6 +207,7 @@ final class NewSessionModel {
                 ?? available.first { $0.isReadyForSession }?.id ?? ""
         }
         await prepareTarget()
+        await home
     }
 
     func loadInventory(_ deviceID: String) async {
@@ -164,7 +238,9 @@ final class NewSessionModel {
         if changedDevice { restoreProjectForDevice() }
         preference.connectorID = connectorID; preference.runtimeID = runtimeID
         persist()
+        async let home: Void = resolveHome()
         await prepareTarget()
+        await home
         return true
     }
 
@@ -196,24 +272,45 @@ final class NewSessionModel {
     }
 
     func create(text: String) async -> V2SessionMeta? {
-        guard canCreate, let runtime, let project else { return nil }
+        guard canCreate, let runtime else { return nil }
         draft.text = text
         guard draft.canAttemptSend else { return nil }
         let files = draft.attachments
         isCreating = true; error = nil
         saveSelections()
+        defer { isCreating = false; saveDraft() }
+        let selectedDevice = connectorID, selectedPath = workspace
+        let project: V2Project
+        do {
+            project = try await V2WorkspaceProjectResolver(api: projectAPI).resolve(
+                projects: projects, connectorID: selectedDevice, path: selectedPath, deviceOS: connector?.deviceOs,
+                validate: { [self] in
+                    guard isValid, !Task.isCancelled else { throw CancellationError() }
+                    guard connectorID == selectedDevice, workspace == selectedPath,
+                          network.availability != .offline, connector?.status == .online else { throw URLError(.notConnectedToInternet) }
+                })
+            guard isValid, !Task.isCancelled else { return nil }
+            guard project.connectorId == selectedDevice,
+                  ProjectWorkspacePath.key(project.workspacePath, deviceOS: connector?.deviceOs) == ProjectWorkspacePath.key(selectedPath, deviceOS: connector?.deviceOs) else {
+                throw HTTPError.invalidResponse
+            }
+            projects.removeAll { $0.id == project.id }; projects.append(project)
+            workspace = project.workspacePath; identifyProject()
+            onProjectResolved?(project)
+        } catch {
+            if isValid { self.error = error.localizedDescription }
+            return nil
+        }
         let submission = NewSessionSubmission(project: project, runtime: runtime, text: text, attachments: files)
         draft.clear(); saveDraft()
         var completed = false
         defer {
-            isCreating = false
             if !completed, isValid {
                 let failure = V2ClientFailure(kind: .unavailable, message: error ?? String(localized: "未能完成创建，请检查设备连接和运行选项。"))
                 submission.pending.update(creationUncertain ? .uncertain(failure) : .rejected(failure))
                 onFailed?(submission)
                 if draft.text.isEmpty, draft.attachments.isEmpty { draft.text = text; draft.attachments = files }
             }
-            saveDraft()
         }
         await onStaged?(submission)
         guard isValid, !Task.isCancelled else { return nil }
@@ -228,9 +325,6 @@ final class NewSessionModel {
         }
         var didSubmit = false
         do {
-            // Project deletion/rebinding may happen on another client while the composer is open.
-            let latest = try await projectAPI.list()
-            updateProjects(latest.projects)
             guard isValid, !Task.isCancelled, projectID == target.2,
                   let current = self.project, current.connectorId == target.0,
                   current.workspacePath == project.workspacePath,
@@ -279,6 +373,7 @@ final class NewSessionModel {
     func invalidate() {
         isValid = false; preparationVersion += 1; prepared = nil
         inventoryTasks.values.forEach { $0.cancel() }; inventoryTasks = [:]
+        homeTasks.values.forEach { $0.cancel() }; homeTasks = [:]
         draft.invalidate(); inventories = [:]; settings.replace(.init()); error = nil
     }
 
@@ -291,6 +386,14 @@ final class NewSessionModel {
     private func persist() {
         if let data = try? JSONEncoder().encode(preference) { defaults.set(data, forKey: preferenceKey) }
     }
+}
+
+/// Session activity, device names and last-seen timestamps do not invalidate
+/// the target catalogs on every dashboard update.
+struct NewSessionRefreshKey: Equatable {
+    let connectorID: String
+    let isOnline: Bool
+    let network: V2NetworkStatus
 }
 
 extension V2DeviceRuntime {

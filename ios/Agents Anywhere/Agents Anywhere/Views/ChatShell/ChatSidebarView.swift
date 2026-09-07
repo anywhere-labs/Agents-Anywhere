@@ -25,7 +25,7 @@ struct ChatSidebarView: View {
 
     @State private var isShowingPairing = false
     @State private var showsArchives = false
-    @AppStorage("aa.native.sidebar.session-list") private var showsSessionList = false
+    @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
 
     var body: some View {
         ScrollView {
@@ -43,17 +43,20 @@ struct ChatSidebarView: View {
                 }
 
                 if let setup = appState.nativeChatServices?.agentSetup {
-                    ForEach(setup.requests.filter { !$0.ready }) { request in
+                    ForEach(setup.requests) { request in
                         HStack {
-                            if request.error == nil { ProgressView().controlSize(.small) }
+                            if request.ready { AppSymbol("checkmark.circle") }
+                            else if request.error == nil { ProgressView().controlSize(.small) }
                             VStack(alignment: .leading) {
                                 Text(request.connector.name).font(.subheadline)
-                                Text(request.error ?? String(localized: "等待设备连接…")).font(.caption).foregroundStyle(.secondary)
+                                Text(request.ready ? String(localized: "设备已连接") : request.error ?? String(localized: "等待设备连接…"))
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 0)
                             Menu {
+                                if request.ready { Button(String(localized: "配置 Agent")) { setup.configure(request.id) } }
                                 if request.error != nil { Button(String(localized: "重试")) { setup.retry(request.id) } }
-                                Button(String(localized: "停止等待")) { setup.finish(request.id) }
+                                Button(request.ready ? String(localized: "稍后配置") : String(localized: "停止等待")) { setup.finish(request.id) }
                             } label: { AppSymbol("ellipsis").frame(width: 36, height: 36) }
                         }.padding(.horizontal, 10).padding(.vertical, 8)
                     }
@@ -116,6 +119,7 @@ struct ChatSidebarView: View {
         .overlay(alignment: .bottom) {
             if let account {
                 ChatSidebarBottomControls(
+                    appState: appState,
                     account: account,
                     onNewSession: onNewSession
                 )
@@ -149,7 +153,7 @@ struct ChatSidebarListMenu<Filters: View>: View {
             }
             filters()
             Divider()
-            Button(String(localized: "归档会话"), appSymbol: "archivebox", action: onShowArchives)
+            Button(String(localized: "归档会话"), systemImage: "archivebox", action: onShowArchives)
         } label: {
             Label(String(localized: "列表选项"), appSymbol: "ellipsis")
                 .labelStyle(.iconOnly).frame(width: 44, height: 44)
@@ -160,9 +164,8 @@ struct ChatSidebarListMenu<Filters: View>: View {
 struct ChatSidebarHeaderView: View {
     var body: some View {
         AAWordmark(fontSize: 24)
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 10)
+            .foregroundStyle(.primary)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -282,17 +285,17 @@ private struct ChatSidebarDeviceRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10)
             .frame(minHeight: 42)
-            .background(.primary.opacity(isSelected ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 9))
+            .background(.primary.opacity(isSelected ? 0.16 : 0), in: RoundedRectangle(cornerRadius: 9))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .contextMenu {
             Button(action: onOpen) {
-                Label(String(localized: "Open"), appSymbol: "folder")
+                Label(String(localized: "Open"), systemImage: "folder.fill")
             }
             Divider()
             Button(action: onCopyId) {
-                Label(String(localized: "Copy device ID"), appSymbol: "doc.on.doc")
+                Label(String(localized: "Copy device ID"), systemImage: "doc.on.doc")
             }
         }
     }
@@ -301,6 +304,7 @@ private struct ChatSidebarDeviceRow: View {
 struct ChatSidebarSessionRow: View {
     let session: ChatSidebarSession
     let isSelected: Bool
+    var inset = false
     let onOpen: () -> Void
     let onRename: (String) -> Void
     let onTogglePinned: () -> Void
@@ -319,33 +323,36 @@ struct ChatSidebarSessionRow: View {
                 ChatSidebarSessionIndicator(indicator: session.presentation.indicator)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
+            // Match Web's inset session rows while keeping the selection and
+            // the touch target across the full sidebar width.
+            .padding(.leading, inset ? 36 : 10)
+            .padding(.trailing, 10)
             .frame(minHeight: 42)
-            .background(.primary.opacity(isSelected ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 9))
+            .background(.primary.opacity(isSelected ? 0.16 : 0), in: RoundedRectangle(cornerRadius: 9))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .contextMenu {
             Button(action: onOpen) {
-                Label(String(localized: "Open"), appSymbol: "folder")
+                Label(String(localized: "Open"), systemImage: "folder.fill")
             }
             Button(action: beginRename) {
-                Label(String(localized: "Rename"), appSymbol: "pencil")
+                Label(String(localized: "Rename"), systemImage: "pencil")
             }.disabled(session.id.hasPrefix("local:"))
             Button(action: onTogglePinned) {
                 if session.pinned {
-                    Label(String(localized: "Unpin"), appSymbol: "pin.slash")
+                    Label(String(localized: "Unpin"), systemImage: "pin")
                 } else {
-                    Label(String(localized: "Pin"), appSymbol: "pin")
+                    Label(String(localized: "Pin"), systemImage: "pin")
                 }
             }
             .disabled(session.id.hasPrefix("local:"))
             Button(action: onArchive) {
-                Label(session.archived ? String(localized: "Restore") : String(localized: "Archive"), appSymbol: session.archived ? "tray.and.arrow.up" : "archivebox")
+                Label(session.archived ? String(localized: "Restore") : String(localized: "Archive"), systemImage: "archivebox")
             }.disabled(session.id.hasPrefix("local:"))
             Divider()
             Button(action: onCopyId) {
-                Label(String(localized: "Copy session ID"), appSymbol: "doc.on.doc")
+                Label(String(localized: "Copy session ID"), systemImage: "doc.on.doc")
             }
         }
         .alert(String(localized: "Rename session"), isPresented: $isRenaming) {
@@ -417,6 +424,7 @@ private struct ChatSidebarEmptyRow: View {
 }
 
 private struct ChatSidebarBottomControls: View {
+    let appState: AppState
     let account: ChatSidebarAccount
     let onNewSession: () -> Void
 
@@ -445,7 +453,7 @@ private struct ChatSidebarBottomControls: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .sheet(isPresented: $isShowingSettings) {
-            AccountSettingsSheet()
+            AccountSettingsSheet(appState: appState)
         }
     }
 }

@@ -68,6 +68,7 @@ extension EnvironmentValues {
 struct SidebarDrawer<SidebarHeader: View, SidebarContent: View, MainContent: View>: View {
     @Binding private var isOpen: Bool
 
+    private let presentation: SidebarDrawerPresentation
     private let configuration: SidebarDrawerConfiguration
     private let sidebarHeader: (EdgeInsets) -> SidebarHeader
     private let sidebarContent: (EdgeInsets) -> SidebarContent
@@ -75,12 +76,14 @@ struct SidebarDrawer<SidebarHeader: View, SidebarContent: View, MainContent: Vie
 
     init(
         isOpen: Binding<Bool>,
+        presentation: SidebarDrawerPresentation,
         configuration: SidebarDrawerConfiguration,
         @ViewBuilder sidebarHeader: @escaping (EdgeInsets) -> SidebarHeader,
         @ViewBuilder sidebar: @escaping (EdgeInsets) -> SidebarContent,
         @ViewBuilder content: @escaping (EdgeInsets) -> MainContent
     ) {
         _isOpen = isOpen
+        self.presentation = presentation
         self.configuration = configuration
         self.sidebarHeader = sidebarHeader
         self.sidebarContent = sidebar
@@ -88,7 +91,7 @@ struct SidebarDrawer<SidebarHeader: View, SidebarContent: View, MainContent: Vie
     }
 
     var body: some View {
-        if usesNativeSidebar {
+        if presentation == .nativeSidebar {
             SidebarDrawerNativeSplitView(
                 isOpen: $isOpen,
                 sidebarHeaderEdgeEffectStyle: configuration.sidebarHeaderEdgeEffectStyle,
@@ -105,14 +108,6 @@ struct SidebarDrawer<SidebarHeader: View, SidebarContent: View, MainContent: Vie
                 mainContent: mainContent
             )
         }
-    }
-
-    private var usesNativeSidebar: Bool {
-#if os(iOS)
-        UIDevice.current.userInterfaceIdiom == .pad
-#else
-        false
-#endif
     }
 }
 
@@ -170,7 +165,7 @@ private struct SidebarDrawerInteractive<
                     drawerSystemBackground
 
                     SidebarDrawerSidebar(
-                        width: revealWidth,
+                        size: CGSize(width: revealWidth, height: screenSize.height),
                         safeAreaInsets: safeAreaInsets,
                         scale: sidebarScale,
                         overlayOpacity: sidebarOverlayOpacity,
@@ -183,7 +178,6 @@ private struct SidebarDrawerInteractive<
 
                     SidebarDrawerMainCard(
                         size: screenSize,
-                        containerCornerInsets: fullScreenGeometry.containerCornerInsets,
                         progress: progress,
                         offset: revealWidth * progress,
                         overlayOpacity: contentOverlayOpacity,
@@ -477,10 +471,8 @@ private struct SidebarDrawerNativeSplitView<
     private let sidebarHeaderEdgeEffectStyle: ScrollEdgeEffectStyle
 
     @State private var columnVisibility: NavigationSplitViewVisibility
-    @State private var preferredCompactColumn: NavigationSplitViewColumn
     @State private var isAnimating = false
     @State private var animationGeneration = 0
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
@@ -492,7 +484,6 @@ private struct SidebarDrawerNativeSplitView<
     ) {
         _isOpen = isOpen
         _columnVisibility = State(initialValue: isOpen.wrappedValue ? .all : .detailOnly)
-        _preferredCompactColumn = State(initialValue: isOpen.wrappedValue ? .sidebar : .detail)
         self.sidebarHeaderEdgeEffectStyle = sidebarHeaderEdgeEffectStyle
         self.sidebarHeader = sidebarHeader
         self.sidebarContent = sidebarContent
@@ -500,7 +491,7 @@ private struct SidebarDrawerNativeSplitView<
     }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility, preferredCompactColumn: $preferredCompactColumn) {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             GeometryReader { geometry in
                 let safeAreaInsets = geometry.safeAreaInsets
 
@@ -509,9 +500,7 @@ private struct SidebarDrawerNativeSplitView<
                     header: sidebarHeader(safeAreaInsets),
                     content: sidebarContent(safeAreaInsets)
                 )
-                .toolbar(removing: .sidebarToggle)
             }
-            .toolbar(.hidden, for: .navigationBar)
             .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 360)
         } detail: {
             GeometryReader { geometry in
@@ -526,7 +515,6 @@ private struct SidebarDrawerNativeSplitView<
             updateColumns(open: newValue)
         }
         .onChange(of: columnVisibility) { _, newValue in
-            guard horizontalSizeClass != .compact else { return }
             switch newValue {
             case .all, .doubleColumn:
                 if !isOpen {
@@ -542,11 +530,6 @@ private struct SidebarDrawerNativeSplitView<
                 break
             }
         }
-        .onChange(of: preferredCompactColumn) { _, column in
-            guard horizontalSizeClass == .compact else { return }
-            isOpen = column == .sidebar
-        }
-        .onChange(of: horizontalSizeClass) { _, _ in updateColumns(open: isOpen) }
     }
 
     private func updateColumns(open: Bool) {
@@ -555,14 +538,12 @@ private struct SidebarDrawerNativeSplitView<
         isAnimating = true
         withAnimation(reduceMotion ? nil : .smooth(duration: 0.3), completionCriteria: .removed) {
             columnVisibility = open ? .all : .detailOnly
-            preferredCompactColumn = open ? .sidebar : .detail
         } completion: {
             if animationGeneration == generation { isAnimating = false }
         }
     }
 
     private var columnsNeedUpdate: Bool {
-        if horizontalSizeClass == .compact { return preferredCompactColumn != (isOpen ? .sidebar : .detail) }
         switch columnVisibility {
         case .all, .doubleColumn: return !isOpen
         case .detailOnly: return isOpen
@@ -580,31 +561,30 @@ private struct SidebarDrawerNativeSidebar<Header: View, Content: View>: View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .scrollEdgeEffectStyle(edgeEffectStyle, for: .top)
-            .safeAreaBar(edge: .top, spacing: 0) {
-                SidebarDrawerHeaderBar(
-                    safeAreaInsets: EdgeInsets(),
-                    header: header
-                )
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .modifier(SidebarDrawerToolbar(header: header))
     }
 }
 
-private struct SidebarDrawerHeaderBar<Header: View>: View {
-    let safeAreaInsets: EdgeInsets
+/// Both sidebar presentations use the native bar for the wordmark and its
+/// scroll-edge effect. The split view provides its host; the drawer provides
+/// its own stack inside the sidebar, separate from the moving detail card.
+private struct SidebarDrawerToolbar<Header: View>: ViewModifier {
     let header: Header
 
-    var body: some View {
-        header
-            .padding(.top, safeAreaInsets.top)
-            .padding(.leading, safeAreaInsets.leading)
-            .padding(.trailing, safeAreaInsets.trailing)
-            .frame(maxWidth: .infinity)
+    func body(content: Content) -> some View {
+        content
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.visible, for: .navigationBar)
+            .toolbar(removing: .sidebarToggle)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { header }
+                    .sharedBackgroundVisibility(.hidden)
+            }
     }
 }
 
 private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
-    let width: CGFloat
+    let size: CGSize
     let safeAreaInsets: EdgeInsets
     let scale: CGFloat
     let overlayOpacity: CGFloat
@@ -613,50 +593,42 @@ private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
     let content: Content
 
     var body: some View {
-        content
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .scrollEdgeEffectStyle(edgeEffectStyle, for: .top)
-            .safeAreaBar(edge: .top, spacing: 0) {
-                SidebarDrawerHeaderBar(
-                    safeAreaInsets: safeAreaInsets,
-                    header: header
-                )
-            }
-            .frame(width: width)
-            .frame(maxHeight: .infinity, alignment: .leading)
+        NavigationStack {
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .scrollEdgeEffectStyle(edgeEffectStyle, for: .top)
+                .modifier(SidebarDrawerToolbar(header: header))
+        }
+            .ignoresSafeArea(.keyboard)
+            // Restore only the stable top inset here. Sidebar content already
+            // owns its horizontal margins and bottom controls/home-indicator gap.
+            .padding(.top, safeAreaInsets.top)
+            .frame(width: size.width, height: size.height)
             .background(drawerSystemBackground)
             .overlay {
                 drawerSystemBackground
                     .opacity(overlayOpacity)
                     .allowsHitTesting(false)
             }
-            .scaleEffect(scale, anchor: .leading)
+            // Transform one composited sidebar, including the native glass
+            // controls, rather than letting their effects resolve separately.
+            .compositingGroup()
+            .modifier(SidebarDrawerScale(scale: scale).ignoredByLayout())
     }
 }
 
 private struct SidebarDrawerMainCard<Content: View>: View {
     let size: CGSize
-    let containerCornerInsets: RectangleCornerInsets
     let progress: CGFloat
     let offset: CGFloat
     let overlayOpacity: CGFloat
     let content: Content
 
     var body: some View {
-        let screenShape = ConcentricRectangle(
-            topLeadingCorner: .concentric(
-                minimum: .fixed(containerCornerInsets.topLeading.drawerCornerRadius)
-            ),
-            topTrailingCorner: .concentric(
-                minimum: .fixed(containerCornerInsets.topTrailing.drawerCornerRadius)
-            ),
-            bottomLeadingCorner: .concentric(
-                minimum: .fixed(containerCornerInsets.bottomLeading.drawerCornerRadius)
-            ),
-            bottomTrailingCorner: .concentric(
-                minimum: .fixed(containerCornerInsets.bottomTrailing.drawerCornerRadius)
-            )
-        )
+        // Resolve the actual container shape. containerCornerInsets also includes
+        // iPad window controls, so converting those insets into minimum radii
+        // incorrectly enlarges the top corners in a windowed drawer.
+        let screenShape = ConcentricRectangle()
 
         content
             // The untransformed host supplies all original insets, including
@@ -709,12 +681,6 @@ private extension CGFloat {
 private extension Double {
     func clamped(to range: ClosedRange<Double>) -> Double {
         Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
-    }
-}
-
-private extension CGSize {
-    var drawerCornerRadius: CGFloat {
-        max(width, height)
     }
 }
 

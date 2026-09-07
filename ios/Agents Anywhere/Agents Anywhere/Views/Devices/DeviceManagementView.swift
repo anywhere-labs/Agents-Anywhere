@@ -21,6 +21,7 @@ struct DeviceManagementView: View {
     let onSetSessionsArchived: ([V2SessionID], Bool) async -> Bool
 
     @State private var model = DeviceManagementModel()
+    @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
     @State private var tab = DeviceOverviewTab.projects
     @State private var toasts = ChatToastStore()
     @State private var isRenaming = false
@@ -30,6 +31,8 @@ struct DeviceManagementView: View {
     @State private var confirmsArchiveAll = false
     @State private var credential: V2ConnectorRevokeResponse?
     @State private var selectedWorkspace: V2DeviceWorkspace?
+    @State private var choosesDirectory = false
+    @State private var pendingDirectory: String?
     @State private var createsProject = false
     @State private var editingProject: V2Project?
     @State private var pendingProject: V2Project?
@@ -44,6 +47,13 @@ struct DeviceManagementView: View {
     }
     private var canManage: Bool { dashboard.canWrite && !model.isDeviceActionRunning && !model.isArchiveActionRunning && !busy }
     private var canReadFiles: Bool { dashboard.canWrite && connector.status == .online }
+    private var workspaceChoices: [WorkspaceDirectoryChoice] {
+        WorkspaceDirectoryChoice.recent(connectorID: connector.id, deviceOS: connector.deviceOs,
+            home: nil, projects: deviceProjects, sessions: model.sessions)
+    }
+    private var collectionTitle: String {
+        showsSessionList ? String(localized: "工作目录") : String(localized: "Projects")
+    }
     private var pageScopes: [V2SessionListScope] {
         switch model.sessionFilter {
         case .active: [.init(projectID: model.projectID)]
@@ -54,46 +64,54 @@ struct DeviceManagementView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 32) {
-                DeviceAgentSection(model: agents, showsConnectionNotice: false) { report($0, source: "agents") }
-                VStack(alignment: .leading, spacing: 20) {
-                    Picker(String(localized: "Device content"), selection: $tab) {
-                        Text(String(localized: "Projects")).tag(DeviceOverviewTab.projects)
-                        Text(String(localized: "Sessions")).tag(DeviceOverviewTab.sessions)
-                    }.pickerStyle(.segmented).accessibilityIdentifier("device.content")
-                    if tab == .projects {
-                        DeviceProjectGrid(projects: deviceProjects, canManage: canManage, canReadFiles: canReadFiles,
-                            onCreate: { createsProject = true }, onOpen: openProjectSessions,
-                            onNewSession: { onNewProjectSession($0.id) }, onFiles: openProjectFiles,
-                            onEdit: { editingProject = $0 },
-                            onPin: { project in perform { try await dashboard.updateProject(project.id, pinned: !project.pinned) } },
-                            onArchive: { pendingProject = $0; projectActionIsDeletion = false },
-                            onDelete: { pendingProject = $0; projectActionIsDeletion = true })
-                    } else {
-                        DeviceSessionList(model: model, projects: deviceProjects, canManage: canManage,
+            VStack(alignment: .leading, spacing: 28) {
+                DeviceOverviewSections {
+                    DeviceAgentSection(model: agents, showsConnectionNotice: false) { report($0, source: "agents") }
+                }
+                contentSwitcher
+                if tab == .projects {
+                    DeviceOverviewSections {
+                        if showsSessionList {
+                            DeviceWorkspaceList(workspaces: workspaceChoices, canReadFiles: canReadFiles,
+                                onBrowse: { choosesDirectory = true }, onOpen: openWorkspace,
+                                onNewSession: { onNewSession($0.path) })
+                        } else {
+                            DeviceProjectList(projects: deviceProjects, canManage: canManage, canReadFiles: canReadFiles,
+                                onCreate: { createsProject = true }, onOpen: openProjectSessions,
+                                onNewSession: { onNewProjectSession($0.id) }, onFiles: openProjectFiles,
+                                onEdit: { editingProject = $0 },
+                                onPin: { project in perform { try await dashboard.updateProject(project.id, pinned: !project.pinned) } },
+                                onArchive: { pendingProject = $0; projectActionIsDeletion = false },
+                                onDelete: { pendingProject = $0; projectActionIsDeletion = true })
+                        }
+                    }
+                } else {
+                    DeviceOverviewSections {
+                        DeviceSessionList(model: model, projects: deviceProjects, showsProjectNames: !showsSessionList, canManage: canManage,
                             isWorking: busy || model.isArchiveActionRunning, onNewSession: { onNewSession(nil) },
                             onOpen: selectSession,
                             onArchive: { performArchive([$0.id], archived: !$0.archived) },
                             onArchiveAll: { confirmsArchiveAll = true })
-                        ForEach(pageScopes, id: \.self) { DashboardPageButton(repository: dashboard, scope: $0) }
                     }
+                    ForEach(pageScopes, id: \.self) { DashboardPageButton(repository: dashboard, scope: $0) }
                 }
             }
-            .padding(.horizontal, 22).padding(.top, 18).padding(.bottom, 28)
-            .frame(maxWidth: 1040).frame(maxWidth: .infinity, alignment: .center)
+            .padding(.bottom, 24)
+            .modifier(ChatPageContentColumn())
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .scrollIndicators(.hidden).scrollEdgeEffectStyle(.soft, for: .all)
         .refreshable { await dashboard.refresh(); await agents.refresh() }
         .modifier(ChatPageToolbar(title: connector.name, subtitle: connectionDescription, onMenu: onMenu))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button(String(localized: "New session"), appSymbol: "square.and.pencil") { onNewSession(nil) }
-                    Button(String(localized: "Copy device ID"), appSymbol: "doc.on.doc") { UIPasteboard.general.string = connector.id }
+                    Button(String(localized: "New session"), systemImage: "square.and.pencil") { onNewSession(nil) }
+                    Button(String(localized: "Copy device ID"), systemImage: "doc.on.doc") { UIPasteboard.general.string = connector.id }
                     Divider()
-                    Button(String(localized: "Rename device"), appSymbol: "pencil") { proposedName = connector.name; isRenaming = true }.disabled(!canManage)
-                    Button(String(localized: "Rotate credential"), appSymbol: "key") { confirmsRotation = true }.disabled(!canManage)
-                    Button(String(localized: "Delete device"), appSymbol: "trash", role: .destructive) { confirmsDeletion = true }.disabled(!canManage)
+                    Button(String(localized: "Rename device"), systemImage: "pencil") { proposedName = connector.name; isRenaming = true }.disabled(!canManage)
+                    Button(String(localized: "Rotate credential"), systemImage: "key") { confirmsRotation = true }.disabled(!canManage)
+                    Button(String(localized: "Delete device"), systemImage: "trash", role: .destructive) { confirmsDeletion = true }.disabled(!canManage)
                 } label: {
                     AppSymbol("ellipsis")
                 }.accessibilityLabel(String(localized: "Device actions"))
@@ -124,6 +142,15 @@ struct DeviceManagementView: View {
             WorkspaceFilesSheet(connectorId: connector.id, deviceName: connector.name, workspace: $0,
                 service: workspaceFilesService, permitsReading: canReadFiles)
         }
+        .sheet(isPresented: $choosesDirectory, onDismiss: startDirectorySession) {
+            WorkspaceFilesSheet(connectorId: connector.id, deviceName: connector.name,
+                workspace: .init(path: "~", name: "", sessionCount: 0, lastActiveAt: nil),
+                service: workspaceFilesService, permitsReading: canReadFiles,
+                onSelectDirectory: { path in
+                    pendingDirectory = path
+                    choosesDirectory = false
+                })
+        }
         .sheet(item: $credential) { ConnectorCredentialSheet(connector: $0.connector, connectorToken: $0.connectorToken, serverURL: serverURL) }
         .alert(String(localized: "Rename device"), isPresented: $isRenaming) {
             TextField(String(localized: "Device name"), text: $proposedName)
@@ -138,7 +165,7 @@ struct DeviceManagementView: View {
         .alert(String(localized: "Delete this device?"), isPresented: $confirmsDeletion) {
             Button(String(localized: "Cancel"), role: .cancel) {}
             Button(String(localized: "Delete device"), role: .destructive) { Task { await deleteDevice() } }
-        } message: { Text(String(localized: "The device and its server-owned metadata will be removed. This action cannot be undone.")) }
+        } message: { Text(String(localized: "This will permanently remove \(connector.name) and all its associated data. This action cannot be undone.")) }
         .alert(model.sessionFilter == .archived ? String(localized: "Restore these sessions?") : String(localized: "Archive these sessions?"), isPresented: $confirmsArchiveAll) {
             Button(String(localized: "Cancel"), role: .cancel) {}
             Button(model.sessionFilter == .archived ? String(localized: "Restore") : String(localized: "Archive")) { archiveAll() }
@@ -156,8 +183,32 @@ struct DeviceManagementView: View {
             }
         } message: {
             Text(projectActionIsDeletion ? String(localized: "Only empty projects can be deleted. Files on the device are kept.") :
-                String(localized: "Active sessions in this project will be archived. You can restore them later."))
+                String(localized: "Archive all sessions in \(pendingProject?.name ?? "")? The project will remain available for future sessions."))
         }
+    }
+
+    private var contentPicker: some View {
+        Picker(String(localized: "Device content"), selection: $tab) {
+            Text(collectionTitle).tag(DeviceOverviewTab.projects)
+            Text(String(localized: "Sessions")).tag(DeviceOverviewTab.sessions)
+        }.pickerStyle(.segmented)
+        .labelsHidden()
+        .accessibilityLabel(String(localized: "Device content"))
+        .accessibilityIdentifier("device.content")
+    }
+
+    private var contentSwitcher: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) {
+                Text(String(localized: "Device content")).font(.headline).fixedSize()
+                Spacer(minLength: 0)
+                contentPicker.fixedSize(horizontal: true, vertical: false)
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                Text(String(localized: "Device content")).font(.headline)
+                contentPicker
+            }
+        }.padding(.vertical, 4)
     }
 
     private var connectionDescription: String {
@@ -175,6 +226,15 @@ struct DeviceManagementView: View {
     private func openProjectFiles(_ project: V2Project) {
         selectedWorkspace = .init(path: project.workspacePath, name: project.name,
             sessionCount: project.activeSessionCount, lastActiveAt: project.lastActivityAt)
+    }
+    private func openWorkspace(_ workspace: WorkspaceDirectoryChoice) {
+        selectedWorkspace = .init(path: workspace.path, name: workspace.name,
+            sessionCount: 0, lastActiveAt: nil)
+    }
+    private func startDirectorySession() {
+        guard let path = pendingDirectory else { return }
+        pendingDirectory = nil
+        onNewSession(path)
     }
     private func selectSession(_ id: String) {
         if model.isSelectingSessions { model.toggleSessionSelection(id) } else { onOpenSession(id) }

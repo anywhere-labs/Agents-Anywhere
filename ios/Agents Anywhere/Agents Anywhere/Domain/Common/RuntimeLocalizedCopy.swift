@@ -13,16 +13,16 @@ enum RuntimeLocalizedCopy {
 extension V2DeviceRuntimeStatus {
     var displayName: String {
         switch self {
-        case .stopped: String(localized: "Stopped")
-        case .discovering: String(localized: "Discovering…")
-        case .available: String(localized: "Available")
-        case .unavailable: String(localized: "Unavailable")
-        case .validating: String(localized: "Validating…")
-        case .starting: String(localized: "Starting…")
-        case .running: String(localized: "Running")
-        case .stopping: String(localized: "Stopping…")
-        case .error: String(localized: "Error")
-        case .unknown: String(localized: "Unknown")
+        case .stopped: String(localized: "dashboard.device.runtimeStatus.stopped")
+        case .discovering: String(localized: "dashboard.device.runtimeStatus.discovering")
+        case .available: String(localized: "dashboard.device.runtimeStatus.available")
+        case .unavailable: String(localized: "dashboard.device.runtimeStatus.unavailable")
+        case .validating: String(localized: "dashboard.device.runtimeStatus.validating")
+        case .starting: String(localized: "dashboard.device.runtimeStatus.starting")
+        case .running: String(localized: "dashboard.device.runtimeStatus.running")
+        case .stopping: String(localized: "dashboard.device.runtimeStatus.stopping")
+        case .error: String(localized: "dashboard.device.runtimeStatus.error")
+        case .unknown: String(localized: "dashboard.device.runtimeStatus.unknown")
         }
     }
 }

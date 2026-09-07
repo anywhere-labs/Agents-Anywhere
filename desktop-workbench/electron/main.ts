@@ -31,6 +31,7 @@ import { desktopInstallation, MachineStateStore } from "./machine-state";
 import { DesktopSettingsStore } from "./desktop-settings";
 import { ConnectorLogStore } from "./log-store";
 import { readShellEnvironment } from "./shell-environment";
+import { validateTitleBarColors } from "./title-bar";
 import config from "../config.json";
 import { proxyDesktopApi } from "./api-proxy";
 import {
@@ -292,7 +293,10 @@ function createMainWindow(showOnReady = true): BrowserWindow {
     show: false,
     title: APP_NAME,
     icon: appWindowIcon(),
-    titleBarStyle: process.platform === "darwin" ? "hidden" : "default",
+    titleBarStyle: process.platform === "darwin" || process.platform === "win32" ? "hidden" : "default",
+    titleBarOverlay: process.platform === "win32"
+      ? { color: "#171717", symbolColor: "#fafafa", height: 32 }
+      : undefined,
     trafficLightPosition: process.platform === "darwin" ? { x: 17, y: 16 } : undefined,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -470,6 +474,11 @@ function syncDesktopUpdateSession(serverUrl: unknown) {
 }
 
 function registerIpcHandlers(): void {
+  ipcMain.handle("workbench:window:setTitleBarColors", (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    if (process.platform !== "win32" || event.sender !== mainWindow?.webContents) return;
+    mainWindow.setTitleBarOverlay(validateTitleBarColors(input));
+  });
   ipcMain.handle("workbench:updates:syncSession", (event, serverUrl: unknown) => {
     assertTrustedRenderer(event);
     return syncDesktopUpdateSession(serverUrl);
