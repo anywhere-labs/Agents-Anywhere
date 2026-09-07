@@ -31,14 +31,14 @@ class AttachmentService:
         data: bytes,
         media_type: str | None = None,
     ) -> dict[str, Any]:
-        await self._store.get_session(session_id, user_id=user_id)
-        return await self._persist_file_blob(
-            session_id=session_id,
-            data=data,
-            name=name,
-            media_type=media_type,
-            origin="user",
-        )
+        async with self._store.attachment_write_fence(session_id, user_id=user_id):
+            return await self._persist_file_blob(
+                session_id=session_id,
+                data=data,
+                name=name,
+                media_type=media_type,
+                origin="user",
+            )
 
     async def read_user_file(
         self,
