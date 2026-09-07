@@ -9,7 +9,7 @@ from typing import Any
 from connector.logging import logger
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.dsh.bridge.client import BridgeClient
-from connector.runtimes.dsh.bridge.models import capability_set, notice as session_notice, timeline_item
+from connector.runtimes.dsh.bridge.models import capability_set, model_catalog, permission_catalog, notice as session_notice, timeline_item
 
 
 class SyncRelay:
@@ -96,6 +96,20 @@ class SyncRelay:
                     await self.host.runtime_capabilities_update(capability_set(
                         notice["params"], connector_id=self.host.connector_id,
                     ))
+                    continue
+                if notice.get("method") == "session.capability.updated":
+                    await publish_pending()
+                    await self.host.session_capabilities_update(capability_set(
+                        notice["params"], connector_id=self.host.connector_id,
+                    ))
+                    continue
+                if notice.get("method") == "catalog.model.update":
+                    await publish_pending()
+                    await self.host.model_catalog_update(model_catalog(notice["params"]))
+                    continue
+                if notice.get("method") == "catalog.permission.update":
+                    await publish_pending()
+                    await self.host.permission_catalog_update(permission_catalog(notice["params"]))
                     continue
                 if notice.get("method") == "timeline.itemUpsert":
                     item = timeline_item(notice["params"]["item"])
