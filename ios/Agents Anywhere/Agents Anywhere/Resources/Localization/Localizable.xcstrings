@@ -1890,6 +1890,40 @@
         }
       }
     },
+    "Could not access sign-in credentials in the Keychain (error %@).": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not access sign-in credentials in the Keychain (error %@)."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法访问钥匙串中的登录凭据（错误 %@）。"
+          }
+        }
+      }
+    },
+    "Could not access sign-in credentials in the Keychain (error %@): %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not access sign-in credentials in the Keychain (error %@): %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法访问钥匙串中的登录凭据（错误 %@）：%@"
+          }
+        }
+      }
+    },
     "Could not check the login status.": {
       "extractionState": "manual",
       "localizations": {
@@ -4907,6 +4941,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "跟随系统"
+          }
+        }
+      }
+    },
+    "The app's signing configuration does not allow access to sign-in credentials in the Keychain (error %@).": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The app's signing configuration does not allow access to sign-in credentials in the Keychain (error %@)."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用签名缺少钥匙串访问权限，无法访问登录凭据（错误 %@）。"
           }
         }
       }

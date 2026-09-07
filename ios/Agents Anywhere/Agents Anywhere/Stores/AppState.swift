@@ -825,11 +825,13 @@ final class AppState: ObservableObject {
     }
 
     private func saveSession(serverURL: URL, token: String) throws {
+        // A failed Keychain write must not replace the saved server or invalidate
+        // the existing session. Commit in-memory/defaults changes only on success.
+        try keychain.saveString(token, account: tokenAccount)
         authenticationEpoch = UUID(); accountSyncID = UUID()
         accountSyncTask?.cancel(); accountSyncTask = nil; isRetryingServerConnection = false
         restoreConnectionError = nil
         UserDefaults.standard.set(serverURL.absoluteString, forKey: serverDefaultsKey)
-        try keychain.saveString(token, account: tokenAccount)
     }
 
     private func currentDeviceName() -> String {
