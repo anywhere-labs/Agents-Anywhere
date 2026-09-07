@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -17,10 +18,8 @@ from connector.core.control_config import (
 )
 from connector.core.runtime_owner import (
     ConnectorAlreadyRunningError,
-    assert_can_start,
-    clear_runtime,
+    RuntimeLease,
     runtime_path,
-    write_runtime,
 )
 from connector.logging import logger
 from connector.server.auth import ConnectorAuthenticationError
@@ -52,6 +51,8 @@ class ConnectorController:
         self.notifier = notifier
         self.client_factory = client_factory
         self.runtime_path = runtime_path(self.config_path)
+        self.lease = RuntimeLease(self.runtime_path, kind=os.environ.get("AA_CONNECTOR_OWNER_KIND", "cli"), delegated=True,
+                                  legacy_paths=[self.config_path.with_name("connector-runtime.json")])
         self._runtime_task: asyncio.Task[None] | None = None
         self._pairing_task: asyncio.Task[None] | None = None
         self._last_error: str | None = None
@@ -82,6 +83,7 @@ class ConnectorController:
         return config_to_payload(ConnectorConfig.load(self.config_path))
 
     async def save_config(self, params: Any) -> dict[str, Any]:
+        self.lease.claim()
         config = config_from_params(params)
         saved_path = config.save(self.config_path)
         self._auth_failed = False
@@ -102,12 +104,11 @@ class ConnectorController:
         self._last_error = None
         self._auth_failed = False
         try:
-            assert_can_start(self.runtime_path, config)
+            self.lease.claim(config)
         except ConnectorAlreadyRunningError as exc:
             self._last_error = str(exc)
             await self._emit_state()
             raise
-        write_runtime(self.runtime_path, config, kind="desktop")
         self._runtime_task = asyncio.create_task(self._run_runtime(config))
         logger.info("starting connector runtime")
         await self._emit_state()
@@ -121,7 +122,6 @@ class ConnectorController:
             except asyncio.CancelledError:
                 pass
         self._runtime_task = None
-        clear_runtime(self.runtime_path)
         logger.info("stopped connector runtime")
         await self._emit_state()
         return self.get_state()
@@ -131,6 +131,7 @@ class ConnectorController:
         return await self.start(params)
 
     async def start_pairing(self, params: Any) -> dict[str, Any]:
+        self.lease.claim()
         if self._pairing_task is not None and not self._pairing_task.done():
             self._pairing_task.cancel()
         server = str_param(params, "server") or str_param(params, "serverUrl")
@@ -159,7 +160,10 @@ class ConnectorController:
     async def shutdown(self) -> None:
         if self._pairing_task is not None and not self._pairing_task.done():
             self._pairing_task.cancel()
-        await self.stop()
+        try:
+            await self.stop()
+        finally:
+            self.lease.release()
 
     async def _run_runtime(self, config: ConnectorConfig) -> None:
         try:
@@ -174,7 +178,6 @@ class ConnectorController:
             self._last_error = str(exc) or exc.__class__.__name__
             logger.exception("connector runtime failed")
         finally:
-            clear_runtime(self.runtime_path)
             if self._runtime_task is asyncio.current_task():
                 self._runtime_task = None
             await self._emit_state()

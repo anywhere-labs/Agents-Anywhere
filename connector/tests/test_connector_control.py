@@ -65,6 +65,11 @@ def test_connector_controller_saves_config_and_starts_runtime(tmp_path) -> None:
         assert FakeBackendRpcClient.started[0].server_url == "http://127.0.0.1:8000"
         assert state["running"] is True
         await controller.stop()
+        from connector.core.runtime_owner import read_runtime
+        assert read_runtime(controller.runtime_path) is not None, "Stop must retain ownership until RPC shutdown"
+        await controller.shutdown()
+        assert read_runtime(controller.runtime_path) is None
+        assert controller.runtime_path.exists(), "Shared identity must outlive the process"
         return saved, events
 
     saved, events = asyncio.run(exercise())
@@ -158,7 +163,7 @@ def test_config_to_payload_keeps_optional_state_path() -> None:
 
 
 def test_connector_controller_rejects_existing_runtime_owner(tmp_path) -> None:
-    from connector.core.runtime_owner import write_runtime
+    from connector.core.runtime_owner import RuntimeLease
 
     async def exercise() -> dict[str, Any]:
         controller = ConnectorController(
@@ -171,7 +176,7 @@ def test_connector_controller_rejects_existing_runtime_owner(tmp_path) -> None:
             connector_token="cxt_secret",
         )
         config.save(tmp_path / "connector.json")
-        write_runtime(tmp_path / "connector-runtime.json", config, kind="cli")
+        RuntimeLease(controller.runtime_path, kind="cli").claim(config)
         try:
             await controller.start()
         except RuntimeError:
@@ -181,4 +186,4 @@ def test_connector_controller_rejects_existing_runtime_owner(tmp_path) -> None:
     state = asyncio.run(exercise())
 
     assert state["status"] == "error"
-    assert "already running" in state["lastError"]
+    assert "Another Connector is running" in state["lastError"]

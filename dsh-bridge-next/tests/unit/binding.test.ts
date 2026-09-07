@@ -47,7 +47,7 @@ test('shared IDs are matched against this user, with local order winning over se
   const api = new Api('https://server.test')
   const account = { apiBaseUrl: api.baseUrl, userId: 'user', displayName: 'User', accessToken: 'USER', expiresAt: Date.now() + 60000 }
   const run = async (ids: string[]) => {
-    await writeJson(machineStatePath(root), { version: 1, connectorIds: ids })
+    await writeJson(machineStatePath(root), { version: 2, connectorIds: ids })
     return ensureBinding(root, account, api, new AbortController().signal, { renew: true, machineState: localMachineRegistry(root) })
   }
   try {

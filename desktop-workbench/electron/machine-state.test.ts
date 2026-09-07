@@ -47,17 +47,16 @@ test("an install move repairs paths while preserving ID order and future shared 
   } finally { h.cleanup(); }
 });
 
-test("startup backs up and repairs corrupt JSON, while future schema versions are not overwritten", async () => {
+test("startup refuses corrupt JSON and future schema versions without erasing ownership", async () => {
   const h = fixture();
   try {
     fs.mkdirSync(path.dirname(h.store.filePath), { recursive: true });
     fs.writeFileSync(h.store.filePath, "{broken");
-    await h.store.recordInstallation(h.installation);
-    const backup = fs.readdirSync(path.dirname(h.store.filePath)).find(name => name.includes(".corrupt-"))!;
-    assert.equal(fs.readFileSync(path.join(path.dirname(h.store.filePath), backup), "utf8"), "{broken");
-    fs.writeFileSync(h.store.filePath, '{"version":2,"connectorIds":["future"]}');
+    await assert.rejects(h.store.recordInstallation(h.installation));
+    assert.equal(fs.readFileSync(h.store.filePath, "utf8"), "{broken");
+    fs.writeFileSync(h.store.filePath, '{"version":3,"connectorIds":["future"]}');
     await assert.rejects(h.store.recordInstallation(h.installation), /version/);
-    assert.equal(h.read().version, 2);
+    assert.equal(h.read().version, 3);
   } finally { h.cleanup(); }
 });
 
@@ -79,9 +78,9 @@ test("reading invalid shared records fails without treating them as empty histor
   const h = fixture();
   t.after(h.cleanup);
   await h.store.recordConnectorId("first");
-  for (const contents of ["{broken", "null", "[]", '{"version":2}', '{"connectorIds":[]}', '{"version":1,"connectorIds":"first"}', '{"version":1,"connectorIds":[""]}']) {
+  for (const contents of ["{broken", "null", "[]", '{"version":3}', '{"connectorIds":[]}', '{"version":1,"connectorIds":"first"}', '{"version":1,"connectorIds":[""]}']) {
     fs.writeFileSync(h.store.filePath, contents);
-    assert.throws(() => h.store.readConnectorIds(), /record|version/);
+    assert.throws(() => h.store.readConnectorIds(), /record|version|记录/);
     assert.equal(fs.readFileSync(h.store.filePath, "utf8"), contents);
   }
 });

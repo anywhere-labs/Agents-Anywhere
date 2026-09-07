@@ -1,4 +1,13 @@
 {
+  "localOwnership": {
+    "title": "Another Connector is running",
+    "description": "Exit the other app or stop its process, then check again.",
+    "errorTitle": "Unable to check Connector status",
+    "errorDescription": "Check the format and permissions of the local Connector record, then try again.",
+    "quit": "Quit Desktop",
+    "recheck": "Check again",
+    "checking": "Checking…"
+  },
   "app": {
     "name": "Agents Anywhere"
   },

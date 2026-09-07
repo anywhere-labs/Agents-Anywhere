@@ -1,4 +1,13 @@
 {
+  "localOwnership": {
+    "title": "已有其他 Connector 在运行",
+    "description": "请先退出对应应用或手动结束进程，再点击“重新检查”。",
+    "errorTitle": "暂时无法检查 Connector 状态",
+    "errorDescription": "请检查本机 Connector 记录的格式与访问权限，然后重新检查。",
+    "quit": "退出桌面端",
+    "recheck": "重新检查",
+    "checking": "正在检查…"
+  },
   "app": {
     "name": "Agents Anywhere"
   },

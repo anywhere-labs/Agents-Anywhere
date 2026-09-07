@@ -13,10 +13,7 @@ from connector.control import ConnectorController
 from connector.core.config import ConnectorConfig
 from connector.core.json_rpc import JsonRpcStdioServer, open_stdio_server
 from connector.core.runtime_owner import (
-    assert_can_start,
-    clear_runtime,
-    runtime_path,
-    write_runtime,
+    RuntimeLease,
 )
 from connector.logging import configure_connector_logging, install_rpc_log_sink
 from connector.server.client import BackendRpcClient
@@ -165,6 +162,7 @@ async def _rpc(args: argparse.Namespace) -> None:
             await server.notify(method, params)
 
     controller = ConnectorController(config_path=args.config, notifier=notify)
+    controller.lease.claim()
     handlers = {
         "connector.getState": controller.get_state,
         "connector.getPaths": controller.get_paths,
@@ -191,6 +189,17 @@ async def _rpc(args: argparse.Namespace) -> None:
 
 
 async def _pair(args: argparse.Namespace) -> None:
+    lease = RuntimeLease(legacy_paths=[Path(args.config).with_name("connector-runtime.json")])
+    if not args.no_start:
+        lease.claim()
+    try:
+        await _pair_with_lease(args, lease)
+    finally:
+        if not args.no_start:
+            lease.release()
+
+
+async def _pair_with_lease(args: argparse.Namespace, lease: RuntimeLease) -> None:
     server_url = await _resolve_server_url_for_pair(args.server, timeout=10)
     async with httpx.AsyncClient(timeout=30) as client:
         pairing = await start_pairing(client, server_url, args.timeout)
@@ -217,7 +226,7 @@ async def _pair(args: argparse.Namespace) -> None:
                 if args.no_start:
                     return
                 print("Starting connector...")
-                await _run_cli_connector(config, config_path=args.config)
+                await _run_cli_connector(config, config_path=args.config, lease=lease)
                 return
             if payload["status"] in {"expired", "consumed"}:
                 raise RuntimeError(f"pairing ended with status: {payload['status']}")
@@ -227,16 +236,15 @@ async def _pair(args: argparse.Namespace) -> None:
 
 
 async def _run_cli_connector(
-    config: ConnectorConfig, *, config_path: str | Path | None
+    config: ConnectorConfig, *, config_path: str | Path | None, lease: RuntimeLease | None = None
 ) -> None:
-    runtime_file = runtime_path(config_path)
-    assert_can_start(runtime_file, config)
-    write_runtime(runtime_file, config, kind="cli")
+    lease = lease or RuntimeLease(legacy_paths=[Path(config_path).with_name("connector-runtime.json")] if config_path else [])
+    lease.claim(config)
     print(SHELL_LIFETIME_WARNING)
     try:
         await BackendRpcClient(config).run_forever()
     finally:
-        clear_runtime(runtime_file)
+        lease.release()
 
 
 async def _resolve_server_url_for_pair(

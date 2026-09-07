@@ -34,6 +34,7 @@ function quitFixture(options: { confirm?: boolean; shutdown?: () => Promise<void
       isDestroyed: () => false,
       destroy: () => calls.push("destroy-renderer"),
     },
+    localLease: { release: async () => { calls.push("release-local-owner"); } },
     connector: { shutdown: async () => { calls.push("stop-local-connector"); await options.shutdown?.(); } },
     updates: { dispose: () => calls.push("stop-updates") },
     app: { quit: () => calls.push("quit") },
@@ -48,7 +49,7 @@ function quitFixture(options: { confirm?: boolean; shutdown?: () => Promise<void
 test("quit stops the owned local Connector without closing or renewing remote terminals", async () => {
   const fixture = quitFixture();
   await fixture.requestQuit();
-  assert.deepEqual(fixture.calls, ["stop-updates", "destroy-renderer", "stop-local-connector", "quit"]);
+  assert.deepEqual(fixture.calls, ["stop-updates", "destroy-renderer", "stop-local-connector", "release-local-owner", "quit"]);
   assert.equal(fixture.globals.shutdownComplete, true);
 });
 
@@ -61,7 +62,7 @@ test("repeated quit requests wait for the same local Connector shutdown", async 
   assert.deepEqual(fixture.calls, ["stop-updates", "destroy-renderer", "stop-local-connector"]);
   finish();
   await Promise.all([first, second]);
-  assert.deepEqual(fixture.calls, ["stop-updates", "destroy-renderer", "stop-local-connector", "quit"]);
+  assert.deepEqual(fixture.calls, ["stop-updates", "destroy-renderer", "stop-local-connector", "release-local-owner", "quit"]);
 });
 
 test("cancelling native quit leaves the renderer and Connector running", async () => {

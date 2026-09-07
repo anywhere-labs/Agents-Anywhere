@@ -1,3 +1,4 @@
+import type { LocalRuntimeLease } from '../desktop/local-runtime.js'
 import { execFile, spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from 'node:child_process'
 import { access, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -47,7 +48,8 @@ export class SourceConnector implements ConnectorProcess {
   private readonly closed = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly logs: ConnectorLogs
   constructor(private readonly config: ResolvedConfig, private readonly launch: ConnectorLauncher = spawn,
-    private readonly settings: () => ConnectorSettings = () => DEFAULT_CONNECTOR_SETTINGS) {
+    private readonly settings: () => ConnectorSettings = () => DEFAULT_CONNECTOR_SETTINGS,
+    private readonly ownership?: LocalRuntimeLease) {
     this.logs = new ConnectorLogs(join(config.stateRoot, 'logs'))
   }
 
@@ -71,6 +73,7 @@ export class SourceConnector implements ConnectorProcess {
   }
 
   async prepare(settings = this.settings()): Promise<void> {
+    await this.ownership?.require()
     try {
       await access(join(this.config.connectorSourceDir, 'pyproject.toml'))
       await access(join(this.config.connectorSourceDir, 'connector', 'cli.py'))
@@ -87,6 +90,7 @@ export class SourceConnector implements ConnectorProcess {
   }
 
   async start(binding: BoundDevice, apiBaseUrl: string, signal: AbortSignal): Promise<void> {
+    await this.ownership?.require()
     if (this.stopping) await this.stopping
     if (this.running) return
     if (this.alive) await this.stop()
@@ -122,6 +126,7 @@ export class SourceConnector implements ConnectorProcess {
       detached: process.platform !== 'win32',
       env: {
         ...process.env,
+        ...this.ownership?.environment(),
         ...(this.config.dshHome ? { DSH_HOME: this.config.dshHome } : {}),
         AGENT_CONNECTOR_DATA_DIR: dataDir,
         UV_PROJECT_ENVIRONMENT: join(this.config.stateRoot, 'connector-venv'),

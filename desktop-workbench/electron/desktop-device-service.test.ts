@@ -445,7 +445,7 @@ test("a failed public ID write rolls back the new device before replacing local 
   });
   t.after(harness.cleanup);
   harness.machineState.recordConnectorId = () => { throw new Error("Cannot write machine record"); };
-  await assert.rejects(harness.service.createAndConnect({ userId: "user-1", userToken: "user-token", name: "Local" }), /machine record/);
+  await assert.rejects(harness.service.createAndConnect({ userId: "user-1", userToken: "user-token", name: "Local" }), /machine record|记录/);
   assert.deepEqual(requests, ["GET /api/v2/connectors", "POST /api/v2/connectors", "DELETE /api/v2/connectors/new-device"]);
   assert.equal(harness.binding.get(), null);
   assert.equal(harness.mock.saveCalls.length, 0);
@@ -574,7 +574,7 @@ test("an unreadable machine record stops provisioning before server changes", as
   await harness.machineState.recordConnectorId("shared");
   fs.writeFileSync(harness.machineState.filePath, "{broken");
 
-  await assert.rejects(harness.service.createAndConnect({ userId: "user-1", userToken: "user-token", name: "Local" }), /machine record/);
+  await assert.rejects(harness.service.createAndConnect({ userId: "user-1", userToken: "user-token", name: "Local" }), /machine record|记录/);
 
   assert.equal(harness.binding.get(), null);
   assert.equal(harness.mock.saveCalls.length, 0);

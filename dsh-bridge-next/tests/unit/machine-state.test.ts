@@ -29,7 +29,7 @@ test('real Desktop writer and plugin reader share the same path, install record 
     assert.equal((await detectDesktop(home)).status, 'installed')
     assert.deepEqual(await readLocalConnectorIds(home), ['conn-second-on-server', 'conn-first-on-server'])
     assert.equal((await stat(path)).mtimeMs, before.mtimeMs)
-    await writeFile(path, JSON.stringify({ version: 1, connectorIds: ['conn-history'], desktop: { platform: process.platform, executablePath: join(home, 'removed-app') } }))
+    await writeFile(path, JSON.stringify({ version: 2, connectorIds: ['conn-history'], desktop: { platform: process.platform, executablePath: join(home, 'removed-app') } }))
     assert.equal((await detectDesktop(home)).status, 'absent')
     assert.deepEqual(await readLocalConnectorIds(home), ['conn-history'])
   } finally { await rm(home, { recursive: true, force: true }) }
@@ -40,7 +40,7 @@ test('unreadable or malformed machine state is not mistaken for an empty pairing
   const writer = new MachineStateStore(machineStatePath(home))
   try {
     await writer.recordConnectorId('conn-test')
-    for (const body of ['{bad', 'null', '{"version":2}', '{"version":1,"connectorIds":[42]}']) {
+    for (const body of ['{bad', 'null', '{"version":3}', '{"version":1,"connectorIds":[42]}']) {
       await writeFile(writer.filePath, body)
       await assert.rejects(readLocalConnectorIds(home))
     }
@@ -52,7 +52,7 @@ test('plugin publishes IDs before Desktop is installed and preserves installatio
   t.after(() => rm(home, { recursive: true, force: true }))
   const path = machineStatePath(home)
   await recordLocalConnectorId('plugin-first', home)
-  assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), { version: 1, connectorIds: ['plugin-first'] })
+  assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), { version: 2, connectorIds: ['plugin-first'], legacyMachineMigrated: true })
   assert.equal((await detectDesktop(home)).status, 'absent')
   const writer = new MachineStateStore(path)
   const installation = desktopInstallation({ executablePath: process.execPath, appPath: home, packaged: false, platform: process.platform })
@@ -74,7 +74,7 @@ test('plugin refuses to overwrite invalid shared history', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'aa-plugin-invalid-'))
   t.after(() => rm(home, { recursive: true, force: true }))
   await recordLocalConnectorId('known', home)
-  for (const contents of ['{broken', 'null', '{"version":2}', '{"version":1,"connectorIds":[42]}']) {
+  for (const contents of ['{broken', 'null', '{"version":3}', '{"version":1,"connectorIds":[42]}']) {
     await writeFile(machineStatePath(home), contents)
     await assert.rejects(recordLocalConnectorId('new', home))
     assert.equal(await readFile(machineStatePath(home), 'utf8'), contents)
@@ -92,7 +92,7 @@ test('Desktop waits for a plugin shared-record write before merging its ID', asy
     desktopWrite = desktop.recordConnectorId('desktop').then(() => { completed = true })
     await delay(60)
     assert.equal(completed, false)
-    await writeFile(path, JSON.stringify({ version: 1, connectorIds: ['plugin'] }))
+    await writeFile(path, JSON.stringify({ version: 2, connectorIds: ['plugin'] }))
   })
   await desktopWrite
   assert.deepEqual(await readLocalConnectorIds(home), ['plugin', 'desktop'])

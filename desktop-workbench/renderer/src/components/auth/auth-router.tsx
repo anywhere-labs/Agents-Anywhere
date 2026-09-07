@@ -1,5 +1,6 @@
 "use client"
 
+import { LocalOwnershipGate } from "@/features/desktop/local-ownership-gate"
 import { Suspense } from "react"
 import { AuthProvider, useAuth } from "./auth-context"
 import { LoginScreen } from "./login-screen"
@@ -32,12 +33,14 @@ function AuthRouterInner() {
 
 export function AuthRouter() {
   return (
-    <AuthProvider>
-      <DesktopUpdateProvider>
-        <SessionToolSidebarStateProvider>
-          <AuthRouterInner />
-        </SessionToolSidebarStateProvider>
-      </DesktopUpdateProvider>
-    </AuthProvider>
+    <LocalOwnershipGate>
+      <AuthProvider>
+        <DesktopUpdateProvider>
+          <SessionToolSidebarStateProvider>
+            <AuthRouterInner />
+          </SessionToolSidebarStateProvider>
+        </DesktopUpdateProvider>
+      </AuthProvider>
+    </LocalOwnershipGate>
   )
 }

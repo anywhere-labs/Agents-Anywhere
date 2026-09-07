@@ -1,3 +1,4 @@
+import { LocalRuntimeLease, localRuntimePath } from '../../src/host/desktop/local-runtime.js'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -83,6 +84,7 @@ for (const entry of ['first-login', 'deleted-local-device'] as const) {
     const manager = new OnboardingManager({
       stateRoot: join(home, 'plugin'), apiBaseUrl: server.origin, connectorSourceDir: home, uvPath: 'uv',
     }, {
+      ownership: new LocalRuntimeLease('dsh-plugin', localRuntimePath(home)),
       api: () => new AccountApi(server.origin, server.fetch), connector: pluginConnector,
       detect: async () => ({ status: 'absent', message: 'Desktop not installed yet' }),
       checkServer: async () => {}, machineState: localMachineRegistry(home), pollIntervalMs: 10, onlineTimeoutMs: 3000,

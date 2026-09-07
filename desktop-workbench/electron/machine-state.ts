@@ -1,8 +1,6 @@
 import fs from "node:fs";
-import { randomUUID } from "node:crypto";
-import { userInfo } from "node:os";
 import path from "node:path";
-import { withMachineStateLock } from "./machine-state-lock";
+import { localRuntimePath, readLocalState, updateLocalState } from "./local-runtime";
 
 export type DesktopInstallation = {
   platform: NodeJS.Platform;
@@ -12,22 +10,14 @@ export type DesktopInstallation = {
   packaged: boolean;
 };
 
-type MachineState = Record<string, unknown> & {
-  version: 1;
-  desktop?: DesktopInstallation;
-  connectorIds: string[];
-};
-
-export function machineStatePath(home = userInfo().homedir): string {
-  return path.join(home, ".agentsanywhere", "machine.json");
-}
+export const machineStatePath = localRuntimePath;
 
 /** Both apps append IDs; only Desktop records installation paths. Never credentials. */
 export class MachineStateStore {
   constructor(readonly filePath = machineStatePath()) {}
 
   readConnectorIds(): string[] {
-    return this.read().connectorIds;
+    return readLocalState(this.filePath).connectorIds;
   }
 
   async recordInstallation(input: DesktopInstallation): Promise<void> {
@@ -38,63 +28,15 @@ export class MachineStateStore {
     const desktop = { ...input, appPath: fs.realpathSync(input.appPath), executablePath: fs.realpathSync(input.executablePath) };
     if (!fs.statSync(desktop.executablePath).isFile()) throw new Error("Desktop executable is not a file.");
     fs.accessSync(desktop.executablePath, input.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
-    await this.update(state => ({ ...state, desktop: { ...state.desktop, ...desktop } }), true);
+    await updateLocalState(this.filePath, state => { state.desktop = { ...(state.desktop as object | undefined), ...desktop }; });
   }
 
   async recordConnectorId(id: string): Promise<void> {
     const connectorId = id.trim();
     if (!connectorId) throw new Error("A local Connector ID is required.");
-    await this.update(state => state.connectorIds.includes(connectorId) ? state : {
-      ...state, connectorIds: [...state.connectorIds, connectorId],
+    await updateLocalState(this.filePath, state => {
+      if (!state.connectorIds.includes(connectorId)) state.connectorIds.push(connectorId);
     });
-  }
-
-  private read(repair = false): MachineState {
-    let text: string;
-    try { text = fs.readFileSync(this.filePath, "utf8"); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, connectorIds: [] };
-      throw error;
-    }
-    let value: unknown;
-    try { value = JSON.parse(text); }
-    catch {
-      if (!repair) throw new Error("The local machine record contains invalid JSON.");
-      // Preserve corrupt contents for diagnosis before repairing the startup record.
-      fs.copyFileSync(this.filePath, `${this.filePath}.corrupt-${randomUUID()}`, fs.constants.COPYFILE_EXCL);
-      return { version: 1, connectorIds: [] };
-    }
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      if (!repair) throw new Error("The local machine record is invalid.");
-      return { version: 1, connectorIds: [] };
-    }
-    const record = value as Record<string, unknown>;
-    if (record.version !== 1 && (!repair || record.version !== undefined)) throw new Error("Unsupported machine record version.");
-    if (!repair && record.connectorIds !== undefined && (
-      !Array.isArray(record.connectorIds) || record.connectorIds.some(id => typeof id !== "string" || !id.trim())
-    )) throw new Error("The local Connector ID record is invalid.");
-    const connectorIds = Array.isArray(record.connectorIds)
-      ? [...new Set(record.connectorIds.filter((id): id is string => typeof id === "string" && Boolean(id.trim())).map(id => id.trim()))]
-      : [];
-    return { ...record, version: 1, connectorIds } as MachineState;
-  }
-
-  private async update(change: (state: MachineState) => MachineState, repair = false): Promise<void> {
-    await withMachineStateLock(this.filePath, () => this.write(change(this.read(repair))));
-  }
-
-  private write(next: MachineState): void {
-    const contents = `${JSON.stringify(next, null, 2)}\n`;
-    try { if (fs.readFileSync(this.filePath, "utf8") === contents) return; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
-    const temporaryPath = `${this.filePath}.${randomUUID()}.tmp`;
-    try {
-      const fd = fs.openSync(temporaryPath, "wx", 0o600);
-      try { fs.writeFileSync(fd, contents, "utf8"); fs.fsyncSync(fd); }
-      finally { fs.closeSync(fd); }
-      fs.renameSync(temporaryPath, this.filePath);
-    } finally { fs.rmSync(temporaryPath, { force: true }); }
   }
 }
 

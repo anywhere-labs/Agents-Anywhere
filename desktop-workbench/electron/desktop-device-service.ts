@@ -11,6 +11,7 @@ import type {
 type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 type DesktopDeviceServiceOptions = {
+  requireOwnership?: () => Promise<void>;
   binding: DesktopBindingStore;
   connector: ConnectorSupervisor;
   fetcher: Fetcher;
@@ -51,6 +52,7 @@ export class DesktopDeviceService {
   async createAndConnect(
     input: DesktopDeviceProvisionInput,
   ): Promise<PublicLocalDesktopBinding> {
+    await this.options.requireOwnership?.();
     const userId = requireUserId(input?.userId);
     const serverUrl = this.resolveServerUrl(input?.serverUrl);
     const existing = this.options.binding.get();
@@ -174,6 +176,7 @@ export class DesktopDeviceService {
   async reconnectAndConnect(
     input: DesktopDeviceReconnectInput,
   ): Promise<PublicLocalDesktopBinding> {
+    await this.options.requireOwnership?.();
     const binding = this.requireBinding();
     this.assertOwner(input, binding.ownerUserId);
     if (input.connectorId && input.connectorId !== binding.connectorId) {
@@ -220,6 +223,7 @@ export class DesktopDeviceService {
   async disconnectLocal(
     input: DesktopDeviceAuthInput,
   ): Promise<PublicLocalDesktopBinding> {
+    await this.options.requireOwnership?.();
     const binding = this.requireBinding();
     this.assertOwner(input, binding.ownerUserId);
     const serverUrl = this.resolveServerUrl(input.serverUrl || binding.serverUrl);

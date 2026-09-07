@@ -1,139 +1,261 @@
+"""Per-user Connector ownership, compatible with electron/local-runtime.ts."""
 from __future__ import annotations
 
+import errno
+import hashlib
 import json
 import os
+import socket
+import subprocess
 import sys
+import time
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from connector.core.config import ConnectorConfig
+
+
+def system_home() -> Path:
+    if sys.platform != "win32":
+        import pwd
+
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    return Path.home()
+
+
+def runtime_path(config_path: str | Path | None = None) -> Path:
+    # Credentials may be relocated; the per-user mutex may not.
+    return system_home() / ".agents-anywhere" / "connector-runtime.json"
+
+
+@contextmanager
+def state_lock(path: Path, timeout: float = 5) -> Iterator[None]:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    identity = str(path.parent.resolve() / path.name)
+    if sys.platform == "win32":
+        identity = identity.lower()
+    digest = hashlib.sha256(f"aa-machine-state-v1\n{identity}".encode()).digest()
+    port = 49152 + int.from_bytes(digest[:2], "big") % 16384
+    deadline = time.monotonic() + timeout
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as lease:
+        if sys.platform == "win32":
+            lease.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            lease.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        while True:
+            try:
+                lease.bind(("127.0.0.1", port))
+                lease.listen()
+                break
+            except OSError as exc:
+                if exc.errno not in {errno.EADDRINUSE, errno.EACCES}:
+                    raise
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("The local Connector record is busy. Please retry.") from exc
+                time.sleep(0.02)
+        yield
+
+
+def _json(path: Path) -> dict[str, Any] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("Cannot read the local Connector record. Check its format and permissions.") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError("Invalid local Connector record.")
+    return value
+
+
+def _ids(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(not isinstance(v, str) or not v.strip() for v in value):
+        raise RuntimeError("Invalid local Connector IDs.")
+    return list(dict.fromkeys(v.strip() for v in value))
+
+
+def _validate_owner(value: Any) -> dict[str, Any]:
+    if (not isinstance(value, dict) or type(value.get("pid")) is not int or value["pid"] <= 0
+            or not isinstance(value.get("kind"), str) or not isinstance(value.get("instanceId"), str)
+            or not value["instanceId"] or not isinstance(value.get("startedAt"), str)
+            or ("childPid" in value and (type(value["childPid"]) is not int or value["childPid"] <= 0))
+            or any(key in value and not isinstance(value[key], str) for key in ("processStartedAt", "childStartedAt"))):
+        raise RuntimeError("Invalid local Connector owner.")
+    return value
+
+
+def read_state(path: str | Path) -> dict[str, Any]:
+    value = _json(Path(path))
+    if value is None:
+        return {"version": 2, "connectorIds": []}
+    if "version" not in value and type(value.get("pid")) is int and isinstance(value.get("kind"), str):
+        owner = _validate_owner({**value, "instanceId": f"legacy-{value['pid']}", "startedAt": value.get("startedAt", "")})
+        return {"version": 2, "connectorIds": [value["connectorId"]] if value.get("connectorId") else [], "runtime": owner}
+    if value.get("version") != 2:
+        raise RuntimeError("Unsupported local Connector record version.")
+    value["connectorIds"] = _ids(value.get("connectorIds"))
+    if "runtime" in value:
+        _validate_owner(value["runtime"])
+    return value
+
+
+def _write(path: Path, state: dict[str, Any]) -> None:
+    contents = json.dumps(state, indent=2, ensure_ascii=False) + "\n"
+    temporary = path.with_name(f"{path.name}.{uuid.uuid4()}.tmp")
+    try:
+        fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(contents)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+@contextmanager
+def state_transaction(path: str | Path) -> Iterator[dict[str, Any]]:
+    file = Path(path)
+    with state_lock(file):
+        state = read_state(file)
+        if state.get("legacyMachineMigrated") is True:
+            yield state
+            _write(file, state)
+            return
+        legacy = file.parent.parent / ".agentsanywhere" / "machine.json"
+        installation = legacy.parent / "desktop" / "install.json"
+        with state_lock(legacy):
+            machine, desktop = _json(legacy), _json(installation)
+            if machine and machine.get("version") != 1:
+                raise RuntimeError("Unsupported legacy machine record version.")
+            if desktop and desktop.get("version") != 1:
+                raise RuntimeError("Unsupported legacy installation record version.")
+            if machine:
+                state = {**machine, **state, "version": 2, "connectorIds": _ids([*_ids(machine.get("connectorIds")), *state["connectorIds"]])}
+            if "desktop" not in state and desktop:
+                state["desktop"] = desktop
+            state["legacyMachineMigrated"] = True
+            yield state
+            _write(file, state)
+            if machine:
+                legacy.unlink()
+            if desktop:
+                installation.unlink()
+
+
+def process_identity(pid: int) -> str | None:
+    command = (["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", f"(Get-Process -Id {pid}).StartTime.ToUniversalTime().Ticks"]
+               if sys.platform == "win32" else ["ps", "-o", "lstart=", "-p", str(pid)])
+    try:
+        result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=2, env={**os.environ, "LC_ALL": "C", "TZ": "UTC"})
+        return " ".join(result.stdout.split()) or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _pid_alive(pid: int | None, identity: str | None = None) -> bool:
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError as exc:
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 87:
+            return False
+        return True  # Access denied does not mean the owner exited.
+    current = process_identity(pid) if identity else None
+    return not identity or not current or identity == current
+
+
+def owner_alive(value: dict[str, Any]) -> bool:
+    return _pid_alive(value["pid"], value.get("processStartedAt")) or _pid_alive(value.get("childPid"), value.get("childStartedAt"))
 
 
 @dataclass(slots=True)
 class RuntimeOwner:
     pid: int
     kind: str
-    connector_id: str
-    server_url: str
+    connector_id: str = ""
+    server_url: str = ""
     started_at: str | None = None
+
+    @classmethod
+    def from_record(cls, value: dict[str, Any]) -> RuntimeOwner:
+        return cls(value["pid"], value["kind"], value.get("connectorId", ""), value.get("serverUrl", ""), value.get("startedAt"))
 
 
 class ConnectorAlreadyRunningError(RuntimeError):
     def __init__(self, owner: RuntimeOwner) -> None:
-        super().__init__(f"connector {owner.connector_id} is already running in {owner.kind} pid {owner.pid}")
+        super().__init__(f"Another Connector is running ({owner.kind}, PID {owner.pid}). Exit that app or stop its process, then retry.")
         self.owner = owner
 
 
-def runtime_path(config_path: str | Path | None = None) -> Path:
-    base = Path(config_path) if config_path is not None else ConnectorConfig.default_path()
-    return base.with_name("connector-runtime.json")
+class RuntimeLease:
+    def __init__(self, path: str | Path | None = None, *, kind: str = "cli", delegated: bool = False,
+                 legacy_paths: list[Path] | None = None) -> None:
+        self.path = Path(path) if path is not None else runtime_path()
+        self.kind = kind
+        self.parent_instance = os.environ.get("AA_CONNECTOR_OWNER_INSTANCE") if delegated else None
+        self.parent_pid = int(os.environ.get("AA_CONNECTOR_OWNER_PID", "0")) if self.parent_instance else 0
+        self.instance_id = self.parent_instance or str(uuid.uuid4())
+        self.identity = process_identity(os.getpid())
+        self.legacy_paths = legacy_paths or []
+
+    def claim(self, config: ConnectorConfig | None = None) -> None:
+        with state_transaction(self.path) as state:
+            owner = state.get("runtime")
+            if self.parent_instance:
+                if (not owner or owner["instanceId"] != self.parent_instance or owner["pid"] != self.parent_pid
+                        or not _pid_alive(owner["pid"], owner.get("processStartedAt"))):
+                    raise RuntimeError("The Connector host no longer owns this machine. Restart the host application.")
+                if owner.get("childPid") != os.getpid() and _pid_alive(owner.get("childPid"), owner.get("childStartedAt")):
+                    raise ConnectorAlreadyRunningError(RuntimeOwner.from_record(owner))
+                owner["childPid"] = os.getpid()
+                if self.identity:
+                    owner["childStartedAt"] = self.identity
+            else:
+                if owner and owner["instanceId"] != self.instance_id and owner_alive(owner):
+                    raise ConnectorAlreadyRunningError(RuntimeOwner.from_record(owner))
+                for legacy in self.legacy_paths:
+                    if legacy.resolve() == self.path.resolve():
+                        continue
+                    previous = read_state(legacy).get("runtime")
+                    if previous and owner_alive(previous):
+                        raise ConnectorAlreadyRunningError(RuntimeOwner.from_record(previous))
+                if not owner or owner["instanceId"] != self.instance_id:
+                    owner = {"instanceId": self.instance_id, "pid": os.getpid(), "kind": self.kind, "startedAt": datetime.now(UTC).isoformat()}
+                    if self.identity:
+                        owner["processStartedAt"] = self.identity
+                state["runtime"] = owner
+            if config:
+                owner.update(connectorId=config.connector_id, serverUrl=config.server_url)
+                state["connectorIds"] = _ids([*state["connectorIds"], config.connector_id])
+
+    def release(self) -> None:
+        with state_transaction(self.path) as state:
+            owner = state.get("runtime")
+            if not owner or owner["instanceId"] != self.instance_id:
+                return
+            if self.parent_instance:
+                if owner.get("childPid") != os.getpid():
+                    return
+                owner.pop("childPid", None)
+                owner.pop("childStartedAt", None)
+                if _pid_alive(owner["pid"], owner.get("processStartedAt")):
+                    return
+            elif _pid_alive(owner.get("childPid"), owner.get("childStartedAt")):
+                return
+            state.pop("runtime", None)
 
 
 def read_runtime(path: str | Path) -> RuntimeOwner | None:
-    try:
-        data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError):
-        return None
-    pid = data.get("pid")
-    kind = data.get("kind")
-    connector_id = data.get("connectorId")
-    server_url = data.get("serverUrl")
-    if not isinstance(pid, int) or not isinstance(kind, str) or not isinstance(connector_id, str) or not isinstance(server_url, str):
-        return None
-    return RuntimeOwner(
-        pid=pid,
-        kind=kind,
-        connector_id=connector_id,
-        server_url=server_url,
-        started_at=data.get("startedAt") if isinstance(data.get("startedAt"), str) else None,
-    )
-
-
-def assert_can_start(path: str | Path, config: ConnectorConfig, *, current_pid: int | None = None) -> None:
-    owner = read_runtime(path)
-    if owner is None:
-        return
-    if current_pid is not None and owner.pid == current_pid:
-        return
-    if not _pid_alive(owner.pid):
-        clear_runtime(path)
-        return
-    raise ConnectorAlreadyRunningError(owner)
-
-
-def write_runtime(path: str | Path, config: ConnectorConfig, *, kind: str, pid: int | None = None) -> Path:
-    import datetime as _dt
-
-    runtime_file = Path(path)
-    runtime_file.parent.mkdir(parents=True, exist_ok=True)
-    runtime_file.write_text(
-        json.dumps(
-            {
-                "pid": int(pid if pid is not None else os.getpid()),
-                "kind": kind,
-                "connectorId": config.connector_id,
-                "serverUrl": config.server_url,
-                "startedAt": _dt.datetime.now(_dt.UTC).isoformat(),
-            },
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    try:
-        runtime_file.chmod(0o600)
-    except OSError:
-        pass
-    return runtime_file
-
-
-def clear_runtime(path: str | Path, *, pid: int | None = None) -> None:
-    runtime_file = Path(path)
-    if pid is not None:
-        owner = read_runtime(runtime_file)
-        if owner is not None and owner.pid != pid:
-            return
-    try:
-        runtime_file.unlink()
-    except FileNotFoundError:
-        return
-    except OSError:
-        return
-
-
-def _pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    if pid == os.getpid():
-        return True
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        if sys.platform != "win32":
-            return False
-        return _windows_pid_alive(pid)
-    return True
-
-
-def _windows_pid_alive(pid: int) -> bool:
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not handle:
-            return False
-        exit_code = wintypes.DWORD()
-        try:
-            if not ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
-                return False
-            return exit_code.value == 259
-        finally:
-            ctypes.windll.kernel32.CloseHandle(handle)
-    except Exception:
-        return False
+    owner = read_state(path).get("runtime")
+    return RuntimeOwner.from_record(owner) if owner else None

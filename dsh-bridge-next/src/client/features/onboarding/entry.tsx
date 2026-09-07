@@ -21,6 +21,7 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
   const state = useOnboardingState(host, open)
   const snapshot = state.snapshot
   const standalone = snapshot?.desktop.status === 'absent'
+  const ownershipError = standalone && snapshot?.ownership && snapshot.ownership.status !== 'owned' ? snapshot.ownership.message || '暂时无法检查本机 Connector 状态，请稍后重试。' : null
   const showLogin = standalone && !snapshot.account && tab === 'connection'
   const detectionError = snapshot?.desktop.status === 'error' ? snapshot.desktop.message : !snapshot ? state.readError : null
   const detectionMessage = detectionError ?? (snapshot?.desktop.status === 'installed'
@@ -110,7 +111,7 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
       contentClassName={clsx(css.dialogContent)}
     >
       <div ref={content}>
-        {!standalone ? <>
+        {ownershipError ? <p className={css.placeholder} role="alert">{ownershipError}</p> : !standalone ? <>
           <p className={css.placeholder} role={detectionError ? 'alert' : 'status'}>{detectionMessage}</p>
           {detectionError ? <Button variant="outline" disabled={state.busy} onClick={() => void state.run(state.refresh)}>重新检查</Button> : null}
         </> : <>

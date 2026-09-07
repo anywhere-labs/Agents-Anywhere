@@ -1,3 +1,4 @@
+import { localRuntimePath } from "./local-runtime";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -23,6 +24,8 @@ type PendingRequest = {
 };
 
 type ConnectorSupervisorOptions = {
+  requireOwnership?: () => Promise<void>;
+  ownerEnvironment?: () => Record<string, string>;
   configPath: string;
   dataPath: string;
   connectorDir: string;
@@ -72,7 +75,7 @@ export class ConnectorSupervisor {
       manualDisconnected: false,
       setupIssue: "",
       configPath: options.configPath,
-      runtimePath: path.join(path.dirname(options.configPath), "connector-runtime.json"),
+      runtimePath: localRuntimePath(),
       dataPath: options.dataPath,
       connectorDir: options.connectorDir,
       resolvedUvPath: "",
@@ -164,6 +167,7 @@ export class ConnectorSupervisor {
   }
 
   async saveCredentials(config: ConnectorPrivateConfig): Promise<ConnectorPublicConfig> {
+    await this.options.requireOwnership?.();
     const normalized = parsePrivateConfig(config);
     // Persist first so a sidecar crash after the Server creates a device does
     // not lose the only copy of its one-time Connector token.
@@ -242,7 +246,6 @@ export class ConnectorSupervisor {
       this.log({ level: "WARNING", message: errorMessage(error) });
     }
     removeFile(this.options.configPath);
-    removeFile(this.state.runtimePath);
     this.mergeRuntimeState({
       status: "stopped",
       running: false,
@@ -277,6 +280,7 @@ export class ConnectorSupervisor {
     params?: unknown,
     options: { requiresConfig?: boolean; timeoutMs?: number } = {},
   ): Promise<unknown> {
+    if (method !== "connector.stop") await this.options.requireOwnership?.();
     this.ensureRpcProcess(options.requiresConfig !== false);
     const child = this.rpcProcess;
     if (!child?.stdin.writable) throw new Error("Connector RPC is not available.");
@@ -568,6 +572,7 @@ export class ConnectorSupervisor {
     const environment: NodeJS.ProcessEnv = {
       ...process.env,
       ...this.shellEnvironment,
+      ...this.options.ownerEnvironment?.(),
       PATH: [...new Set(entries)].join(path.delimiter),
       PYTHONUNBUFFERED: "1",
       PYTHONDONTWRITEBYTECODE: "1",

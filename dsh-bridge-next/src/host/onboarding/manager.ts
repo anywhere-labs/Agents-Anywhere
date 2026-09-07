@@ -1,3 +1,4 @@
+import { LocalRuntimeLease, type OwnershipState } from '../desktop/local-runtime.js'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -19,6 +20,8 @@ import { MobileLogin } from '../account/mobile.js'
 import type { MobileLoginSnapshot } from '../../contracts/mobile.js'
 
 interface Dependencies {
+  ownership?: LocalRuntimeLease
+  rolePollIntervalMs?: number
   connector?: ConnectorProcess
   detect?: () => Promise<DesktopDetection>
   api?: (baseUrl: string) => AccountApi
@@ -57,12 +60,17 @@ export class OnboardingManager {
   private readonly apiFactory: (base: string) => AccountApi
   private readonly connectorSettings: ConnectorSettingsStore
   private readonly mobile = new MobileLogin()
+  private readonly ownership: LocalRuntimeLease
+  private ownershipState: OwnershipState | null = null
+  private roleCheck: Promise<void> | null = null
+  private roleTimer: ReturnType<typeof setInterval> | null = null
   private resolvedUvPath: string | null = null
 
   constructor(private readonly config: ResolvedConfig, private readonly dependencies: Dependencies = {}) {
+    this.ownership = dependencies.ownership ?? new LocalRuntimeLease('dsh-plugin', undefined, [join(config.stateRoot, 'connector', 'connector-runtime.json')])
     this.settings = { apiBaseUrl: config.apiBaseUrl }
     this.connectorSettings = new ConnectorSettingsStore(config, dependencies.systemLanguages)
-    this.connector = dependencies.connector ?? new SourceConnector(config, undefined, () => this.connectorSettings.get())
+    this.connector = dependencies.connector ?? new SourceConnector(config, undefined, () => this.connectorSettings.get(), this.ownership)
     this.detect = dependencies.detect ?? detectDesktop
     this.apiFactory = dependencies.api ?? (base => new AccountApi(base))
     this.unsubscribeConnector = this.connector.onState(state => {
@@ -80,7 +88,7 @@ export class OnboardingManager {
   private async load(): Promise<void> {
     this.releaseLock = await acquireManagerLock(join(this.config.stateRoot, 'manager.lock'), () => this.loseOwnership())
     try {
-      this.desktop = await this.detect()
+      await this.refreshRole()
       await this.connectorSettings.load()
       this.resolvedUvPath = await resolveUv(this.config, this.connectorSettings.get())
       const settings = await readJson<ConnectionSettings>(join(this.config.stateRoot, 'settings.json'))
@@ -99,7 +107,17 @@ export class OnboardingManager {
       }
       if (this.account?.apiBaseUrl !== this.settings.apiBaseUrl) this.account = null
       if (this.account) this.binding = await readBoundDevice(this.config.stateRoot, this.account)
+      this.roleTimer = setInterval(() => {
+        const wasBlocked = this.desktop.status !== 'absent' || this.ownershipState?.status !== 'owned'
+        void this.refreshRole().then(() => {
+          if (wasBlocked && !this.disposed && this.desktop.status === 'absent' && this.ownershipState?.status === 'owned' && this.account) {
+            void this.begin().catch(error => this.setProgress('error', safeMessage(error)))
+          }
+        }).catch(error => { this.ownershipState = { status: 'error', message: safeMessage(error) } })
+      }, this.dependencies.rolePollIntervalMs ?? 1500)
+      this.roleTimer.unref()
     } catch (error) {
+      await this.ownership.release().catch(() => undefined)
       await this.releaseLock?.()
       this.releaseLock = null
       throw error
@@ -108,7 +126,7 @@ export class OnboardingManager {
 
   async resume(): Promise<void> {
     await this.initialize()
-    if (this.account && this.desktop.status === 'absent') {
+    if (this.account && this.desktop.status === 'absent' && this.ownershipState?.status === 'owned') {
       // This starts only a previously authorized device. Fresh installs are idle.
       try { await this.begin() } catch (error) { this.setProgress('error', safeMessage(error)) }
     }
@@ -116,8 +134,8 @@ export class OnboardingManager {
 
   async inspect(): Promise<OnboardingSnapshot> {
     await this.initialize()
-    this.desktop = await this.detect()
-    if (this.desktop.status === 'absent') this.refreshProfile()
+    await this.refreshRole()
+    if (this.desktop.status === 'absent' && this.ownershipState?.status === 'owned') this.refreshProfile()
     else this.mobile.clear()
     return this.snapshot()
   }
@@ -153,8 +171,7 @@ export class OnboardingManager {
     if (input && input.target !== 'cloud' && input.target !== 'server') throw new Error('请选择云端或自建服务器。')
     const next = this.validateSettings({ apiBaseUrl: input?.target === 'cloud' ? CLOUD_API_BASE_URL
       : input?.target === 'server' ? input.serverUrl : this.settings.apiBaseUrl })
-    this.desktop = await this.detect()
-    if (this.desktop.status !== 'absent') throw new Error(this.desktop.message)
+    await this.requireStandalone()
     await (this.dependencies.checkServer ?? checkServer)(next.apiBaseUrl)
     if (this.disposed) throw new Error('插件已关闭。')
     await this.connector.prepare()
@@ -199,6 +216,8 @@ export class OnboardingManager {
   }
 
   private async connect(flow: LoopbackFlow, signal: AbortSignal, code?: string): Promise<void> {
+    await this.requireStandalone()
+    signal.throwIfAborted()
     const api = this.apiFactory(this.settings.apiBaseUrl)
     if (code) {
       this.mobile.clear()
@@ -289,8 +308,7 @@ export class OnboardingManager {
     return this.serial(async () => {
       await this.initialize()
       if (this.disposed) throw new Error('插件已关闭。')
-      this.desktop = await this.detect()
-      if (this.desktop.status !== 'absent') throw new Error(this.desktop.message)
+      await this.requireStandalone()
       const recovery = this.recovery, account = this.account
       if (!recovery || !account) throw new Error('设备状态已变化，请重新打开插件。')
       if (action === 'check') { await this.checkDeviceRecovery(recovery.connectorId); return null }
@@ -333,9 +351,10 @@ export class OnboardingManager {
   private async requireStandalone(): Promise<void> {
     await this.initialize()
     if (this.disposed) throw new Error('插件已关闭。')
-    this.desktop = await this.detect()
+    await this.refreshRole()
     if (this.disposed) throw new Error('插件已关闭。')
     if (this.desktop.status !== 'absent') { this.mobile.clear(); throw new Error(this.desktop.message) }
+    if (this.ownershipState?.status !== 'owned') throw new Error(this.ownershipState?.message ?? '无法检查本机 Connector 状态。')
   }
 
   private requireAccount(): Account {
@@ -365,6 +384,7 @@ export class OnboardingManager {
   }
 
   private async startConnector(): Promise<void> {
+    await this.requireStandalone()
     if (this.disposed) throw new Error('插件已关闭。')
     const account = this.requireAccount()
     const controller = new AbortController()
@@ -437,7 +457,7 @@ export class OnboardingManager {
       this.mobile.clear()
       await this.connector.stop()
       this.account = null; this.binding = null; this.recovery = null; this.profileCheckedAt = 0
-      // Never remove stateRoot itself, shared machine.json, or the DSH runtime.
+      // Never remove stateRoot itself, the shared Connector record, or the DSH runtime.
       for (const path of ['account.json', 'settings.json', 'bindings', 'connector', 'logs']) {
         await rm(join(this.config.stateRoot, path), { force: true, recursive: true })
       }
@@ -501,27 +521,60 @@ export class OnboardingManager {
 
   async dispose(): Promise<void> {
     this.disposed = true
+    if (this.roleTimer) clearInterval(this.roleTimer)
+    this.roleTimer = null
     this.mobile.clear()
     this.unsubscribeConnector()
     this.controller?.abort()
     this.profileController.abort()
     await this.profileRefresh
+    await this.roleCheck
     await this.serial(async () => {
       await this.initialized?.catch(() => undefined)
-      try { await this.cancelFlow(); await this.connector.stop() } finally { await this.releaseLock?.(); this.releaseLock = null }
+      try { await this.cancelFlow(); await this.connector.stop(); await this.ownership.release() } finally { await this.releaseLock?.(); this.releaseLock = null }
     })
   }
 
   private loseOwnership(): void {
     this.disposed = true
+    if (this.roleTimer) clearInterval(this.roleTimer)
+    this.roleTimer = null
     this.mobile.clear()
     this.controller?.abort()
     this.profileController.abort()
     this.releaseLock = null
     const report = () => this.setProgress('error', '本机管理锁已失效，连接已停止。请重新加载插件。')
     void this.serial(async () => {
-      try { await this.cancelFlow(); await this.connector.stop() } finally { report() }
+      try { await this.cancelFlow(); await this.connector.stop(); await this.ownership.release() } finally { report() }
     }).catch(report)
+  }
+
+  private refreshRole(): Promise<void> {
+    if (this.disposed) return Promise.resolve()
+    this.roleCheck ??= (async () => {
+      const desktop = await this.detect()
+      if (this.disposed) return
+      this.desktop = desktop
+      if (desktop.status === 'absent') {
+        this.ownershipState = await this.ownership.claim()
+        return
+      }
+      // Installation changes are observed even when the plugin panel is closed.
+      // Abort first; never await the flow from inside that same flow's guard.
+      this.controller?.abort()
+      this.recoveryController?.abort()
+      this.mobile.clear()
+      if (this.ownershipState) {
+        await this.connector.stop()
+        await this.ownership.release()
+        this.ownershipState = null
+        const flow = this.flow
+        this.flow = null
+        if (flow) await flow.close()
+        this.setProgress('idle', desktop.message)
+      }
+    })().finally(() => { this.roleCheck = null })
+    return this.roleCheck
   }
 
   private validateSettings(settings: ConnectionSettings): ConnectionSettings {
@@ -542,6 +595,7 @@ export class OnboardingManager {
 
   private snapshot(): OnboardingSnapshot {
     return {
+      ownership: this.ownershipState ? { status: this.ownershipState.status, message: this.ownershipState.message } : null,
       desktop: this.desktop, settings: { ...this.settings }, stage: this.stage, message: this.message,
       account: this.account ? publicProfile(this.account) : null,
       webAppUrl: resolveWebAppUrl(this.settings.apiBaseUrl),

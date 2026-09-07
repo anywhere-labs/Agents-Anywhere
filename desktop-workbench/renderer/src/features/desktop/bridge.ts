@@ -1,3 +1,4 @@
+export type LocalOwnershipState = { status: "owned" | "conflict" | "error"; message?: string }
 import type { DesktopUpdateState } from "../../../../shared/desktop-updates"
 export type { DesktopUpdateState } from "../../../../shared/desktop-updates"
 
@@ -108,6 +109,12 @@ export type DesktopServerConnection = {
 
 export type DesktopWorkbenchBridge = {
   platform: string
+  ownership?: {
+    getState: () => Promise<LocalOwnershipState>
+    recheck: () => Promise<LocalOwnershipState>
+    quit: () => Promise<void>
+    onState: (listener: (state: LocalOwnershipState) => void) => () => void
+  }
   window?: {
     setTitleBarColors: (colors: { color: string; symbolColor: string }) => Promise<void>
   }

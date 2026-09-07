@@ -34,6 +34,7 @@ export interface AccountProfile {
 
 /** Public snapshots never contain account or Connector credentials. */
 export interface OnboardingSnapshot {
+  ownership?: { status: 'owned' | 'conflict' | 'error'; message?: string | undefined } | null
   desktop: DesktopDetection
   settings: ConnectionSettings
   stage: FlowStage

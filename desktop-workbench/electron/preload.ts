@@ -1,3 +1,4 @@
+import type { OwnershipState } from "./local-runtime";
 import { contextBridge, ipcRenderer } from "electron";
 import type { DesktopUpdateState } from "../shared/desktop-updates";
 import type {
@@ -31,6 +32,12 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
   window: {
     setTitleBarColors: (colors: { color: string; symbolColor: string }): Promise<void> =>
       ipcRenderer.invoke("workbench:window:setTitleBarColors", colors),
+  },
+  ownership: {
+    getState: (): Promise<OwnershipState> => ipcRenderer.invoke("workbench:ownership:getState"),
+    recheck: (): Promise<OwnershipState> => ipcRenderer.invoke("workbench:ownership:recheck"),
+    quit: (): Promise<void> => ipcRenderer.invoke("workbench:ownership:quit"),
+    onState: (callback: (state: OwnershipState) => void): (() => void) => subscribe("workbench:ownership:state", callback),
   },
   versions: {
     chrome: process.versions.chrome,
