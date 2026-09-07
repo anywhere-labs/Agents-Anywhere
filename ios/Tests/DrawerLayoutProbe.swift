@@ -42,7 +42,6 @@ import AppKit
     static func main() {
         verifyCloseHitRegion()
         verifySidebarScale()
-        verifySharedSidebarPivot()
         var ordinaryOrigins = Set<CGFloat>()
         var stableOrigins = Set<CGFloat>()
         var stableWidths = Set<CGFloat>()
@@ -122,51 +121,6 @@ import AppKit
         precondition(!shifted.contains(CGPoint(x: 200, y: 100)))
         precondition(shifted.contains(CGPoint(x: 350, y: 100)))
         print("PASS: close contentShape excludes sidebar points and includes only the exposed main card.")
-    }
-
-    private static func verifySharedSidebarPivot() {
-        for size in [CGSize(width: 302, height: 874), CGSize(width: 240, height: 500)] {
-            // Deliberately asymmetric bars: the list center differs from the
-            // whole surface center, including after a compact-window resize.
-            let viewport = CGRect(x: 0, y: 96, width: size.width, height: size.height - 150)
-            let pivot = CGPoint(x: viewport.midX, y: viewport.midY)
-            let center = CGPoint(x: size.width / 2, y: size.height / 2)
-            let anchor = UnitPoint(x: pivot.x / size.width, y: pivot.y / size.height)
-            let row = CGPoint(x: 24, y: viewport.minY + 80)
-            let controls = [CGPoint(x: 50, y: size.height - 60),
-                CGPoint(x: size.width - 40, y: size.height - 60)]
-            for scale: CGFloat in [0.95, 0.975, 0.9999, 1, 1.0001] {
-                let effect = SidebarDrawerScale(scale: scale, anchor: anchor)
-                let nativeTransform = effect.viewTransform(size: size)
-                func nativePoint(_ point: CGPoint) -> CGPoint {
-                    // UIKit transforms coordinates around UIView's bounds center.
-                    let relative = CGPoint(x: point.x - center.x, y: point.y - center.y)
-                        .applying(nativeTransform)
-                    return CGPoint(x: relative.x + center.x, y: relative.y + center.y)
-                }
-                func near(_ actual: CGPoint, _ expected: CGPoint) -> Bool {
-                    abs(actual.x - expected.x) < 0.0001 && abs(actual.y - expected.y) < 0.0001
-                }
-                precondition(near(nativePoint(pivot), pivot), "List viewport pivot moved during scaling")
-                let renderedRow = nativePoint(row)
-                for control in controls {
-                    let renderedControl = nativePoint(control)
-                    precondition(near(
-                        CGPoint(x: renderedControl.x - renderedRow.x, y: renderedControl.y - renderedRow.y),
-                        CGPoint(x: (control.x - row.x) * scale, y: (control.y - row.y) * scale)
-                    ), "Toolbar control moved independently of its list")
-                }
-                // The existing SwiftUI geometry effect and the UIKit surface
-                // must agree despite their different transform origins.
-                let projection = effect.effectValue(size: size)
-                for point in [pivot, row] + controls {
-                    let projected = CGPoint(x: point.x * projection.m11 + projection.m31,
-                        y: point.y * projection.m22 + projection.m32)
-                    precondition(near(nativePoint(point), projected), "Native and SwiftUI transforms disagree")
-                }
-            }
-        }
-        print("PASS: list viewport pivot stays fixed; both toolbar controls share the list transform through scaling and resize.")
     }
 }
 

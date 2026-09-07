@@ -95,15 +95,6 @@ Semantic error and availability colors remain separate from the primary color.
   and page controls reactivate only after closing settles, not when the spring's
   target first becomes zero. There is no bitmap snapshot, width freeze or gesture
   quantization. iPad keeps its default native split layout and animation.
-  The phone sidebar hosts its list, navigation bar and bottom toolbar in one
-  UIKit surface and transforms that surface with the same drawer transaction.
-  The pivot is the measured list viewport center, not the full window or the
-  scrolling content center. A background marker is converted inside that common
-  surface, so scaling and scrolling cannot feed back into its measurement.
-  Safe areas come from the untransformed parent once; the detail keyboard does
-  not reposition sidebar controls. The two bottom buttons retain their native
-  styles and content sizes; the toolbar owns list clearance without a fixed
-  footer spacer.
 - Both history prompts support a fresh 24-point outward pull and release when
   already visible: pulling past the top loads older messages, and pulling past
   the bottom loads newer records. The prompt changes to “松开加载”; tapping remains
@@ -485,10 +476,6 @@ Verified on 2026-09-06, without starting a server or simulator:
   at fractional reveal widths. These are layout and hit-region checks, not an
   end-to-end touch dispatch test; on-device interaction still needs the manual
   drawer checks below.
-  It also verifies that the native surface's list pivot remains fixed and both
-  toolbar control positions share the list's scale at fractional values and
-  different viewport sizes. Native toolbar/glass rendering still requires the
-  manual device check; the headless renderer does not cover those UIKit layers.
 - The complete unsigned iOS Debug target builds for `generic/platform=iOS`, using
   the checked-in package resolutions and the Xcode beta toolchain. The app's
   existing iOS 26.5 deployment target remains unchanged.
@@ -516,7 +503,6 @@ Native transform regression on macOS, without launching the app:
 ```sh
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcrun swiftc -parse-as-library \
   'ios/Agents Anywhere/Agents Anywhere/Views/Components/SidebarDrawerTranslation.swift' \
-  'ios/Agents Anywhere/Agents Anywhere/Views/Components/SidebarDrawerScale.swift' \
   'ios/Agents Anywhere/Agents Anywhere/Views/Components/SidebarDrawerCloseRegion.swift' \
   ios/Tests/DrawerLayoutProbe.swift -o /tmp/aa-drawer-layout-probe
 /tmp/aa-drawer-layout-probe
