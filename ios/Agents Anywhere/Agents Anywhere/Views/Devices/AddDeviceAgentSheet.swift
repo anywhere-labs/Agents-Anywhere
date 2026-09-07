@@ -53,8 +53,7 @@ struct AddDeviceAgentSheet: View {
     }
 
     private func agentCard(_ type: V2RuntimeType) -> some View {
-        let hasInstance = model.inventory.configuredInstances.contains { $0.runtimeType == type.runtimeType }
-        return VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text(type.displayName).font(.headline)
                 if type.recommended { Text(String(localized: "推荐")).font(.caption).foregroundStyle(.secondary) }
@@ -64,14 +63,11 @@ struct AddDeviceAgentSheet: View {
                 Text(description).font(.footnote).foregroundStyle(.secondary)
             }
             HStack(spacing: 12) {
-                AppGlassButton(hasInstance ? String(localized: "添加实例") : String(localized: "添加"), systemImage: "plus", style: .prominent,
+                AppGlassButton(String(localized: "dashboard.pairDevice.quickAdd"), systemImage: "plus", style: .prominent,
                     isLoading: model.busyID == type.id, disabled: !model.connected || model.busyID != nil) {
-                    if hasInstance { configure(type) }
-                    else { Task { try? await model.add(type, name: nil, config: [:]) } }
+                    Task { try? await model.add(type, name: nil, config: [:]) }
                 }
-                if !hasInstance {
-                    AppGlassButton(String(localized: "配置后添加"), disabled: !model.connected || model.busyID != nil) { configure(type) }
-                }
+                AppGlassButton(String(localized: "dashboard.device.configure"), disabled: !model.connected || model.busyID != nil) { configure(type) }
             }
         }.padding(16).background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 18))
     }

@@ -229,6 +229,7 @@
     "dashboard.pairDevice.nameDescription": "dashboard.pairDevice.nameDescription",
     "dashboard.pairDevice.namePlaceholder": "dashboard.pairDevice.namePlaceholder",
     "dashboard.pairDevice.nameTitle": "dashboard.pairDevice.nameTitle",
+    "dashboard.pairDevice.quickAdd": "dashboard.pairDevice.quickAdd",
     "dashboard.pairDevice.tokenDescription": "dashboard.pairDevice.tokenDescription",
     "dashboard.projects.workspace": "dashboard.projects.workspace",
     "dashboard.session.workspace": "dashboard.session.workspace",

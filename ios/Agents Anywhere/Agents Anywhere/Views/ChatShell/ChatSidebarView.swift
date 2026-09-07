@@ -265,6 +265,8 @@ private struct ChatSidebarSectionLabel: View {
 }
 
 private struct ChatSidebarDeviceRow: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     let device: ChatSidebarDevice
     let isSelected: Bool
     let onOpen: () -> Void
@@ -285,7 +287,7 @@ private struct ChatSidebarDeviceRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10)
             .frame(minHeight: 42)
-            .background(.primary.opacity(isSelected ? 0.16 : 0), in: RoundedRectangle(cornerRadius: 9))
+            .background(isSelected ? AppTheme.sidebarSelectionFill(colorScheme) : .clear, in: RoundedRectangle(cornerRadius: 9))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -302,6 +304,8 @@ private struct ChatSidebarDeviceRow: View {
 }
 
 struct ChatSidebarSessionRow: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     let session: ChatSidebarSession
     let isSelected: Bool
     var inset = false
@@ -328,7 +332,7 @@ struct ChatSidebarSessionRow: View {
             .padding(.leading, inset ? 36 : 10)
             .padding(.trailing, 10)
             .frame(minHeight: 42)
-            .background(.primary.opacity(isSelected ? 0.16 : 0), in: RoundedRectangle(cornerRadius: 9))
+            .background(isSelected ? AppTheme.sidebarSelectionFill(colorScheme) : .clear, in: RoundedRectangle(cornerRadius: 9))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

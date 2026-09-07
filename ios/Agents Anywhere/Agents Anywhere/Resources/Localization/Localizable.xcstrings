@@ -7634,6 +7634,24 @@
         }
       }
     },
+    "dashboard.pairDevice.quickAdd": {
+      "comment": "Shared with Web: dashboard.pairDevice.quickAdd. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quick add"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "快速添加"
+          }
+        }
+      }
+    },
     "dashboard.pairDevice.tokenDescription": {
       "comment": "Shared with Web: dashboard.pairDevice.tokenDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
