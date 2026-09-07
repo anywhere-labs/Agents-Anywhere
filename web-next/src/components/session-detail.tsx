@@ -351,6 +351,10 @@ export function SessionDetail({
   const [showScrollBottom, setShowScrollBottom] = React.useState(false)
   const [loadingOlder, setLoadingOlder] = React.useState(false)
   const [pendingTakeover, setPendingTakeover] = React.useState<boolean | null>(null)
+  const interactionTakeoverRef = React.useRef<{
+    sessionId: string
+    resolve: (confirmed: boolean) => void
+  } | null>(null)
   const [sourceErrorCode, setSourceErrorCode] = React.useState<SessionSourceErrorCode | null>(null)
   const [commandQuery, setCommandQuery] = React.useState<string | null>(null)
   const [runtimeCommands, setRuntimeCommands] = React.useState<RuntimeCommand[]>([])
@@ -454,6 +458,14 @@ export function SessionDetail({
 
   React.useEffect(() => {
     setSourceErrorCode(null)
+  }, [sessionId])
+
+  React.useEffect(() => {
+    setPendingTakeover(null)
+    return () => {
+      interactionTakeoverRef.current?.resolve(false)
+      interactionTakeoverRef.current = null
+    }
   }, [sessionId])
 
   React.useEffect(() => {
@@ -1245,8 +1257,15 @@ export function SessionDetail({
     }
   }
 
+  const handleDismissTakeover = () => {
+    setPendingTakeover(null)
+    interactionTakeoverRef.current?.resolve(false)
+    interactionTakeoverRef.current = null
+  }
+
   const handleConfirmTakeover = async () => {
-    if (!session) return
+    if (!session || takeoverBusy) return
+    const interactionTakeover = interactionTakeoverRef.current
     const nextTakeover = pendingTakeover ?? !session.takeover
     setTakeoverBusy(true)
     try {
@@ -1256,6 +1275,11 @@ export function SessionDetail({
       setState((current) => current ? { ...current, session: result.session } : current)
       onSessionUpdated?.(result.session)
       setPendingTakeover(null)
+      if (interactionTakeover?.sessionId === session.id
+        && interactionTakeoverRef.current === interactionTakeover) {
+        interactionTakeoverRef.current = null
+        interactionTakeover.resolve(result.session.takeover)
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : tSession("updateTakeoverFailed"))
     } finally {
@@ -1316,11 +1340,17 @@ export function SessionDetail({
     actionId: string,
     input?: Record<string, unknown>,
   ) => {
-    if (resolvingNoticeId) return
+    if (!session || resolvingNoticeId || interactionTakeoverRef.current) return
     setResolvingNoticeId(noticeId)
     setResolvingActionId(actionId)
     try {
-      if (!session) return
+      if (!session.takeover) {
+        const confirmed = await new Promise<boolean>((resolve) => {
+          interactionTakeoverRef.current = { sessionId: session.id, resolve }
+          setPendingTakeover(true)
+        })
+        if (!confirmed) return
+      }
       const response = await dashboardApi.respondInteraction(token, session.id, noticeId, actionId, input)
       if (response.ok) {
         removeNoticeFromState(noticeId)
@@ -1752,7 +1782,7 @@ export function SessionDetail({
       <Dialog
         open={pendingTakeover !== null}
         onOpenChange={(open: boolean) => {
-          if (!open && !takeoverBusy) setPendingTakeover(null)
+          if (!open && !takeoverBusy) handleDismissTakeover()
         }}
       >
         <DialogContent>
@@ -1769,7 +1799,7 @@ export function SessionDetail({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPendingTakeover(null)} disabled={takeoverBusy}>
+            <Button variant="outline" onClick={handleDismissTakeover} disabled={takeoverBusy}>
               {tCommon("cancel")}
             </Button>
             <Button onClick={handleConfirmTakeover} disabled={takeoverBusy}>
