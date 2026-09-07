@@ -115,25 +115,27 @@ export function AgentSetupContent({ connector, onContinue, onSkip, onChanged, co
       {loading ? <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground" role="status"><Loader2 className="size-4 animate-spin" />{t(waitingOnline ? 'waitingReconnectTitle' : 'discoveringAgents')}</div> : null}
       {!loading && !loadFailed ? <>
         {configured.map(runtime => {
+          const instanceName = runtimeInstanceName(runtime)
+          const displayName = runtime.runtimeType === 'dsh' && instanceName === 'DeepSeek Harness' ? 'DSH' : instanceName
           const ready = runtime.active && runtime.status === 'running'
           const starting = runtime.active && runtime.status === 'starting'
           const needsSetup = inline ? !ready && !starting : !runtime.active || runtime.status === 'error' || runtime.status === 'stopped'
           return <div key={runtime.runtimeId} className={rowClassName}>
             {!inline ? <CheckCircle2 className="size-5 shrink-0 text-primary" /> : null}
             <div className="min-w-0 flex-1">
-              <p className={inline ? 'truncate text-base font-medium' : 'truncate text-sm font-medium'}>{runtimeInstanceName(runtime)}</p>
+              <p className={inline ? 'truncate text-base font-medium' : 'truncate text-sm font-medium'}>{displayName}</p>
               <p className="text-xs text-muted-foreground">{inline ? ready ? '已就绪' : starting ? '正在启动' : '未就绪' : t(runtime.status === 'running' ? 'agentRunning' : 'agentConfigured')}</p>
             </div>
             {inline && ready ? <CheckCircle2 className="size-5 shrink-0 text-[var(--success)]" /> : null}
             {inline && starting ? <Loader2 className="mx-1 size-4 shrink-0 animate-spin text-muted-foreground" /> : null}
             {needsSetup ? <Button size="sm" variant={inline ? 'default' : 'outline'} className={buttonClassName} disabled={busy} onClick={() => void start(runtime)}>
               {addingType === runtime.runtimeType ? <Loader2 data-icon="inline-start" className="animate-spin" /> : inline ? <Plus data-icon="inline-start" /> : null}
-              {inline ? '一键配置' : tDevice('activateRuntime', { name: runtimeInstanceName(runtime) })}
+              {inline ? '一键配置' : tDevice('activateRuntime', { name: displayName })}
             </Button> : null}
           </div>
         })}
         {addable.map(runtimeType => <div key={runtimeType.runtimeType} className={rowClassName}>
-          <div className="min-w-0 flex-1"><p className={inline ? 'text-base font-medium' : 'text-sm font-medium'}>{runtimeType.displayName}</p>{inline ? <p className="text-xs text-muted-foreground">可添加</p> : runtimeType.description ? <p className="text-xs text-muted-foreground">{runtimeType.description}</p> : null}</div>
+          <div className="min-w-0 flex-1"><p className={inline ? 'text-base font-medium' : 'text-sm font-medium'}>{runtimeType.runtimeType === 'dsh' ? 'DSH' : runtimeType.displayName}</p>{inline ? <p className="text-xs text-muted-foreground">可添加</p> : runtimeType.description ? <p className="text-xs text-muted-foreground">{runtimeType.description}</p> : null}</div>
           <Button size="sm" className={buttonClassName} disabled={busy} onClick={() => void add(runtimeType)}>{addingType === runtimeType.runtimeType ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Plus data-icon="inline-start" />}{inline ? '一键配置' : t('quickAdd')}</Button>
         </div>)}
         {configured.length === 0 && addable.length === 0 ? <p className="py-4 text-sm text-muted-foreground">{t('noAgentsFound')}</p> : null}

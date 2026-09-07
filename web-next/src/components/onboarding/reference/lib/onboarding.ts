@@ -1,5 +1,5 @@
 export const onboarding = {
-  agents: ["Codex", "Claude Code", "DeepSeek Harness"],
+  agents: ["Codex", "Claude Code", "DSH"],
   downloadsUrl: "https://github.com/anywhere-labs/Agents-Anywhere/releases",
   learnMoreUrl: "https://github.com/anywhere-labs/Agents-Anywhere",
 } as const
