@@ -4,6 +4,8 @@ import { HOST_NAMESPACE, type DeviceRecoveryAction, type LoginRequest, type Onbo
 import { Config, resolveConfig } from '../config.js'
 import { OnboardingManager } from '../onboarding/manager.js'
 import type {} from '../dsh-runtime/index.js'
+import type { ConnectorAction, ConnectorFolder, ConnectorSettings } from '../../contracts/connector.js'
+import type { MobileLoginSnapshot } from '../../contracts/mobile.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context { agentsAnywhereOnboarding: OnboardingService }
@@ -37,6 +39,21 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   async logout(): Promise<null> { await this.manager.logout(); return null }
   @Remote('recoverDevice')
   recoverDevice(action: DeviceRecoveryAction): Promise<null> { return this.manager.recoverDevice(action) }
+
+  @Remote('controlConnector')
+  controlConnector(action: ConnectorAction): Promise<null> { return this.manager.controlConnector(action) }
+  @Remote('saveConnectorSettings')
+  saveConnectorSettings(settings: ConnectorSettings): Promise<null> { return this.manager.saveConnectorSettings(settings) }
+  @Remote('openConnectorFolder')
+  openConnectorFolder(folder: ConnectorFolder): Promise<null> { return this.manager.openConnectorFolder(folder) }
+  @Remote('resetConnector')
+  resetConnector(forceLocal: boolean): Promise<null> { return this.manager.resetConnector(forceLocal) }
+  @Remote('createMobileLogin')
+  createMobileLogin(): Promise<MobileLoginSnapshot> { return this.manager.createMobileLogin() }
+  @Remote('inspectMobileLogin')
+  inspectMobileLogin(id: string): Promise<MobileLoginSnapshot> { return this.manager.inspectMobileLogin(id) }
+  @Remote('confirmMobileLogin')
+  confirmMobileLogin(id: string, approved: boolean): Promise<MobileLoginSnapshot> { return this.manager.confirmMobileLogin(id, approved) }
 
   @Remote('selection')
   async selection(input: { clientId: string, revision: number, current: string | null }): Promise<null> {

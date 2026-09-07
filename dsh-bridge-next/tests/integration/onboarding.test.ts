@@ -9,6 +9,7 @@ import { AccountApi, ApiError, type Account, type Device } from '../../src/host/
 import type { ConnectorProcess, ConnectorState } from '../../src/host/connector/process.js'
 import { CLOUD_API_BASE_URL, type DesktopDetection } from '../../src/contracts/index.js'
 import { readJson, writeJson } from '../../src/host/storage/files.js'
+import { DEFAULT_CONNECTOR_SETTINGS } from '../../src/contracts/connector.js'
 
 class FakeApi extends AccountApi {
   registrations = 0
@@ -100,6 +101,118 @@ async function until(check: () => Promise<boolean>) {
   for (let count = 0; count < 200; count++) { if (await check()) return; await delay(10) }
   assert.fail('expected state did not arrive')
 }
+
+test('Connector controls and settings persist without repeating OAuth, rotating tokens or starting stopped devices', async () => {
+  const h = await fixture(true)
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    const credential = await readJson(join(h.root, 'account.json'))
+    const settings = { ...DEFAULT_CONNECTOR_SETTINGS, autoStart: false }
+    await h.manager.saveConnectorSettings(settings)
+    assert.equal(h.connector.starts, 1, 'Changing only auto-start must not interrupt a running task')
+    h.setLocalIds(['conn_other', 'conn_test'])
+    h.api.knownDevices = [{ id: 'conn_other', userId: 'user-test', name: 'Another local binding', status: 'online' }]
+    settings.syncIntervalSeconds = 60
+    await h.manager.saveConnectorSettings(settings)
+    assert.equal(h.connector.starts, 2, 'Runtime configuration applies by restarting the owned Connector')
+    assert.equal(h.api.renewals, 0)
+    assert.equal(h.api.exchanges, 1)
+    await h.manager.controlConnector('stop')
+    assert.equal((await h.manager.inspect()).connectorRunning, false)
+    await h.manager.saveConnectorSettings({ ...settings, syncIntervalSeconds: 300 })
+    assert.equal(h.connector.starts, 2, 'Saving while stopped must not start a process')
+    await h.reopen()
+    await h.manager.resume()
+    const snapshot = await h.manager.inspect()
+    assert.equal(snapshot.connectorId, 'conn_test', 'Identity is restored for management even with auto-start disabled')
+    assert.equal(snapshot.connector.settings.syncIntervalSeconds, 300)
+    assert.equal(snapshot.connector.settings.autoStart, false)
+    assert.equal(h.connector.starts, 2)
+    await h.manager.controlConnector('start')
+    assert.equal(h.connector.starts, 3)
+    await h.manager.controlConnector('restart')
+    assert.equal(h.connector.starts, 4)
+    assert.equal((await h.manager.inspect()).connectorId, 'conn_test', 'Maintenance must not switch to another shared local ID')
+    assert.equal(h.api.registrations, 1)
+    assert.equal(h.api.renewals, 0)
+    const persisted = await readJson<Account>(join(h.root, 'account.json'))
+    assert.equal(persisted?.accessToken, (credential as Account).accessToken)
+    assert.equal(persisted?.expiresAt, (credential as Account).expiresAt)
+  } finally { await h.close() }
+})
+
+test('invalid configuration and unavailable executables leave a working Connector intact', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    const settings = (await h.manager.inspect()).connector.settings
+    for (const patch of [{ heartbeatSeconds: 0 }, { reconnectSeconds: 0.5 }, { uvPath: 'relative/uv' },
+      { uvPypiIndexUrl: 'https://untrusted.example/simple' }, { connectorToken: 'override' }]) {
+      await assert.rejects(h.manager.saveConnectorSettings({ ...settings, ...patch }))
+    }
+    h.connector.prepare = async () => { throw new Error('未找到可用的 uv') }
+    await assert.rejects(h.manager.saveConnectorSettings({ ...settings, uvPath: '/missing/uv' }), /未找到/)
+    assert.equal(h.connector.running, true)
+    assert.deepEqual((await h.manager.inspect()).connector.settings, settings)
+  } finally { await h.close() }
+})
+
+test('device recovery remains explicit when starting from settings', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    await h.manager.controlConnector('stop')
+    h.api.validCredential = false
+    await assert.rejects(h.manager.controlConnector('start'), /断开连接/)
+    assert.equal((await h.manager.inspect()).deviceRecovery?.status, 'disconnected')
+    await assert.rejects(h.manager.controlConnector('restart'), /恢复设备连接/)
+    assert.equal(h.api.renewals, 0)
+    assert.equal(h.api.registrations, 1)
+  } finally { await h.close() }
+})
+
+test('reset preserves credentials on failed revoke and explicit local reset removes only plugin-owned data', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    const account = await readJson(join(h.root, 'account.json'))
+    await writeJson(join(h.root, 'connector', 'cache.json'), { cached: true })
+    await writeJson(join(h.root, 'unrelated.json'), { preserve: true })
+    h.api.renewConnector = async () => { throw new ApiError(503) }
+    await assert.rejects(h.manager.resetConnector(false), /无法撤销设备连接/)
+    assert.deepEqual(await readJson(join(h.root, 'account.json')), account)
+    assert.equal(h.connector.running, true)
+    await h.manager.resetConnector(true)
+    assert.equal((await h.manager.inspect()).account, null)
+    assert.equal((await h.manager.inspect()).connectorId, null)
+    assert.equal(h.connector.running, false)
+    assert.equal(await readJson(join(h.root, 'connector', 'cache.json')), null)
+    assert.deepEqual(await readJson(join(h.root, 'unrelated.json')), { preserve: true })
+  } finally { await h.close() }
+})
+
+test('installed Desktop blocks every new standalone management and phone endpoint', async () => {
+  const h = await fixture()
+  try {
+    h.setDesktop({ status: 'installed', message: 'managed by Desktop', executablePath: '/example/Desktop' })
+    for (const action of [
+      () => h.manager.controlConnector('start'), () => h.manager.controlConnector('stop'),
+      () => h.manager.saveConnectorSettings(DEFAULT_CONNECTOR_SETTINGS), () => h.manager.openConnectorFolder('data'),
+      () => h.manager.resetConnector(true), () => h.manager.createMobileLogin(),
+      () => h.manager.inspectMobileLogin('qr'), () => h.manager.confirmMobileLogin('qr', true),
+    ]) await assert.rejects(action, /managed by Desktop/)
+    assert.equal(h.connector.starts, 0)
+    assert.equal(h.connector.stops, 0)
+  } finally { await h.close() }
+})
 
 test('OAuth callback pairs once, waits for actual online state, then redirects to Web without secrets', async () => {
   const h = await fixture()

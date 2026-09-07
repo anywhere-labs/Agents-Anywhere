@@ -1,0 +1,8 @@
+.connection { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.connection .button { width: 100%; height: 40px; gap: 8px; border-radius: 8px; }
+.content { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px 0; border-top: 1px solid var(--dsw-alias-border-l2); }
+.qr { display: block; width: min(256px, 100%); height: auto; border-radius: 12px; }
+.status { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0; text-align: center; overflow-wrap: anywhere; }
+.hint { margin: 0; color: var(--dsw-alias-label-tertiary); font: var(--dsw-font-xs-13); }
+.actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.error { margin: 0; color: var(--dsw-alias-state-error-primary); overflow-wrap: anywhere; }

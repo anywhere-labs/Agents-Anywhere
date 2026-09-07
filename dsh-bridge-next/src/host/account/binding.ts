@@ -26,6 +26,28 @@ function bindingPath(root: string, account: Account): string {
   return join(root, 'bindings', `${key}.json`)
 }
 
+/** Loading an identity for display never renews credentials or contacts the server. */
+export async function readBoundDevice(root: string, account: Account): Promise<BoundDevice | null> {
+  const binding = await readJson<Binding>(bindingPath(root, account))
+  return binding?.connectorId && binding.connectorToken ? binding as BoundDevice : null
+}
+
+/** Process maintenance stays on the existing device, independent of the shared discovery order. */
+export async function verifyBoundDevice(binding: BoundDevice, account: Account, api: AccountApi, signal: AbortSignal): Promise<BoundDevice> {
+  let device
+  try { device = await api.device(account.accessToken, binding.connectorId, signal) }
+  catch (error) {
+    if (error instanceof ApiError && error.status === 404) throw new DeviceRecoveryRequired(binding.connectorId, 'deleted')
+    throw error
+  }
+  signal.throwIfAborted()
+  if (device.userId !== account.userId) throw new Error('设备归属与当前账号不一致。')
+  if (!await api.verifyConnector(binding.connectorId, binding.connectorToken, signal)) {
+    throw new DeviceRecoveryRequired(binding.connectorId, 'disconnected')
+  }
+  return { ...binding, name: device.name }
+}
+
 export async function ensureBinding(root: string, account: Account, api: AccountApi, signal: AbortSignal, options: {
   machineState?: LocalMachineRegistry
   renew?: boolean

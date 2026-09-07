@@ -1,6 +1,6 @@
 # Onboarding 业务方案
 
-状态：无 AA Desktop 的登录、设备上线、Web Agent 配置、可选手机连接和完成页已实现。按最新开发范围，本轮止于 onboarding 结束，不实现 DSH runtime，也不改造 Connector 的 DSH 适配器。
+状态：无 AA Desktop 的登录、设备上线、Web Agent 配置、可选手机连接和完成页已实现。插件现在另有「登录和连接」「设置」两页，支持在插件内直接扫码连接手机、确认授权和管理本机 Connector；本页后续的下载步骤仅指 Web onboarding。Runtime 的后续实现见 [会话读取](./RUNTIME_READS.md)、[实时同步](./RUNTIME_SYNC_PLAN.md)和[用户问答](./USER_QUESTIONS.md)。
 
 运行与验证说明见 [README](./README.md)。以下同时保留后续 Desktop 和 runtime 的目标设计；尚未接入的部分不代表当前已可用。
 

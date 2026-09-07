@@ -36,11 +36,11 @@ export function useOnboardingState(host: OnboardingHostApi, active: boolean) {
   }, [active, refresh])
 
   const run = async (action: () => Promise<unknown>) => {
-    if (running.current) return
+    if (running.current) return false
     running.current = true
     setBusy(true); setError(null)
-    try { await action(); await refresh() }
-    catch (error) { setError(error instanceof Error ? error.message : '操作失败，请重试。') }
+    try { await action(); await refresh(); return true }
+    catch (error) { setError(error instanceof Error ? error.message : '操作失败，请重试。'); return false }
     finally { running.current = false; setBusy(false) }
   }
 

@@ -1,4 +1,7 @@
-// Shared settings API types will live here. The Connector bridge protocol stays in contracts/dsh-bridge.
+import type { ConnectorAction, ConnectorFolder, ConnectorManagement, ConnectorSettings } from './connector.js'
+import type { MobileLoginSnapshot } from './mobile.js'
+
+// The Connector bridge protocol stays in contracts/dsh-bridge.
 export const HOST_NAMESPACE = 'agentsAnywhereOnboarding'
 export const OAUTH_CLIENT_ID = 'agents-anywhere-dsh-plugin'
 export const CLOUD_API_BASE_URL = 'https://web.agents-anywhere.com'
@@ -41,6 +44,7 @@ export interface OnboardingSnapshot {
   connectorRunning: boolean
   deviceRecovery: DeviceRecovery | null
   flowId: string | null
+  connector: ConnectorManagement
 }
 
 export interface OnboardingHostApi {
@@ -50,4 +54,11 @@ export interface OnboardingHostApi {
   cancel(): Promise<null>
   logout(): Promise<null>
   recoverDevice(action: DeviceRecoveryAction): Promise<null>
+  controlConnector(action: ConnectorAction): Promise<null>
+  saveConnectorSettings(settings: ConnectorSettings): Promise<null>
+  openConnectorFolder(folder: ConnectorFolder): Promise<null>
+  resetConnector(forceLocal: boolean): Promise<null>
+  createMobileLogin(): Promise<MobileLoginSnapshot>
+  inspectMobileLogin(id: string): Promise<MobileLoginSnapshot>
+  confirmMobileLogin(id: string, approved: boolean): Promise<MobileLoginSnapshot>
 }

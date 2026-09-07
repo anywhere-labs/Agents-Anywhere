@@ -1,6 +1,6 @@
 # DSH Bridge Next
 
-Agents Anywhere 的 DSH 插件。当前已实现**没有安装 AA Desktop 时，从 Web 登录到完成 onboarding** 的流程。AA Desktop 与承载插件的 DSH Desktop 是两个应用。
+Agents Anywhere 的 DSH 插件。支持没有安装 AA Desktop 时的账号登录、手机扫码连接、本机 Connector 管理及 Web onboarding。AA Desktop 与承载插件的 DSH Desktop 是两个应用。
 
 职责与后续开发见 [开发计划](./DEVELOPMENT_PLAN.md)，完整产品设计见 [Onboarding 业务方案](./ONBOARDING_PLAN.md)。
 
@@ -22,6 +22,14 @@ DSH 左侧边栏「设置」上方 → 手机连接 → 云端登录或连接自
 - Agent 配置展示设备上全部可添加项，可稍后添加。手机连接可跳过；下载和扫码内容直接嵌入页面。
 - Web 完成页的桌面端下载和官网地址目前为空，显示“暂未开放”和“官网即将上线”。地址统一在 `web-next/src/lib/product-links.ts` 配置。Android 沿用现有 Releases 入口，iOS 下载入口暂未开放。
 - 引导页关闭后，已上线的 Connector 继续运行；退出插件账号或卸载 Host 服务会停止插件自己的进程。
+
+无 AA Desktop 时，侧栏「手机连接」打开两个标签页：
+
+- **登录和连接**：登录前可选云端或自建服务器；登录后显示头像、账号和 Connector 运行状态，提供打开 Web、手机连接和退出登录。手机连接按钮下方直接展开二维码，不显示安装链接；扫码后可确认或拒绝，过期可刷新，完成后显示手机已连接。关闭或切换页签停止前端轮询，退出登录和 Host 卸载清除内存中的二维码流程。
+- **设置**：查看设备 ID 与服务器，启动、停止或重启 Connector；设置 uv 绝对路径（留空自动查找）、PyPI 镜像、自动启动和同步间隔。高级参数包含心跳、重连间隔和连接时同步已有会话。运行参数保存后重启正在运行的 Connector；停止状态下保存不会启动进程，仅修改自动启动开关也不会重启。
+- **维护**：打开数据或日志目录；headless 环境显示可复制的路径。日志仅记录经过筛选的生命周期事件，滚动保留约两份 512 KiB 文件，不记录原始进程输出和凭据。重置本机连接先撤销当前设备凭据，再清理本插件的账号、绑定、同步缓存、日志及设置；服务端撤销失败时先保留本地状态，用户可另行确认仅清理本地。DSH 会话、运行时端点、共享 `machine.json` 和下载好的 Python 环境保留。
+
+已安装 AA Desktop 时仍显示原占位页，管理权限不自动切换。手机连接复用已有 `/auth/mobile-login/qr`、`status`、`confirm` 接口；二维码包含手机扫描协议要求的临时登录凭据，使用当前账号的后端地址，不使用 DSH 地址或 OAuth Web 开发端口。无需新增 AA Server 接口。
 
 Runtime 已实现 DSH 一键配置、官方侧栏过滤、原生会话和历史读取、首次完整校准、实时事件同步、纯文本新建/续聊及中断，以及 `ask_user_question` 问答。内部 notice 不进入 Timeline，DSH 不再定时扫描历史；连接恢复后用现有后端完整替换接口校准。附件、模型/权限目录和工具权限审批应答暂未开放。实现与消息映射见 [会话读取](./RUNTIME_READS.md)、[事件同步方案](./RUNTIME_SYNC_PLAN.md)和[用户问答](./USER_QUESTIONS.md)。
 
@@ -111,7 +119,9 @@ Host 配置位于 DSH 的插件配置行。常用项如下：
 | `stateRoot` | 操作系统用户主目录下 `.agentsanywhere/dsh-bridge-next` |
 | `connectorSourceDir` | 包内 `lib/bundled-connector`；覆盖时必须为绝对路径 |
 | `uvPath` | `UV_PATH` 环境变量或 PATH 中的 `uv`；GUI 找不到时填写 uv 可执行文件的绝对路径 |
-| `autoStart` | `true`；Host 重载时尝试恢复已授权设备，首次安装不会自动启动 Connector |
+| `autoStart` | `true`；首次设置默认值。设置页保存后的开关优先，Host 重载时据此恢复已授权设备；首次安装不会自动启动 Connector |
+
+设置页将完整配置原子写入 `connector-settings.json`；下次启动时恢复，uv 路径覆盖配置行中的 `uvPath`。PyPI 镜像传给实际 uv 子进程，心跳/重连/同步选项写入实际 `connector/connector.json`。`logs/connector.jsonl` 记录本机 Connector 生命周期。
 
 数据目录中保存 `settings.json`、`account.json`、按服务和账号隔离的 `bindings/`、`connector/` 与 `connector-venv/`。`settings.json` 只保存 `apiBaseUrl`，不保存 Web 或 OAuth 地址；加载旧配置时自动移除旧的 `webBaseUrl`，保留匹配后端的账号。切换服务器前先检查健康状态，地址无效或无法连接时保留已有账号和连接。凭据文件以原子替换方式写入，POSIX 权限为 `0600`。退出登录删除用户凭据并停止连接，保留设备绑定供下次复用。
 

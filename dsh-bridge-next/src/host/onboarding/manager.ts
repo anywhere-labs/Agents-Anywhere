@@ -4,7 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { CLOUD_API_BASE_URL, type ConnectionSettings, type DesktopDetection, type DeviceRecovery, type DeviceRecoveryAction, type FlowStage, type LoginRequest, type OnboardingSnapshot } from '../../contracts/index.js'
 import { resolveWebAppUrl } from '../../contracts/web-address.js'
 import { AccountApi, ApiError, publicProfile, type Account } from '../account/api.js'
-import { DeviceRecoveryRequired, ensureBinding, recoverBinding, type BoundDevice } from '../account/binding.js'
+import { DeviceRecoveryRequired, ensureBinding, readBoundDevice, recoverBinding, verifyBoundDevice, type BoundDevice } from '../account/binding.js'
 import { checkServer, normalizeServerOrigin, resolveOAuthWebOrigin } from '../account/server.js'
 import type { ResolvedConfig } from '../config.js'
 import { ConnectorCredentialError, SourceConnector, type ConnectorProcess } from '../connector/process.js'
@@ -12,6 +12,11 @@ import { detectDesktop } from '../desktop/detect.js'
 import type { LocalMachineRegistry } from '../desktop/machine-state.js'
 import { acquireManagerLock, readJson, writeJson } from '../storage/files.js'
 import { LoopbackFlow } from './loopback.js'
+import { DEFAULT_CONNECTOR_SETTINGS, type ConnectorAction, type ConnectorFolder, type ConnectorSettings } from '../../contracts/connector.js'
+import { ConnectorSettingsStore, validateConnectorSettings } from '../connector/settings.js'
+import { canOpenFolders, openFolder, resolveUv } from '../connector/environment.js'
+import { MobileLogin } from '../account/mobile.js'
+import type { MobileLoginSnapshot } from '../../contracts/mobile.js'
 
 interface Dependencies {
   connector?: ConnectorProcess
@@ -21,6 +26,7 @@ interface Dependencies {
   machineState?: LocalMachineRegistry
   onlineTimeoutMs?: number
   pollIntervalMs?: number
+  openFolder?: (path: string) => Promise<void>
 }
 
 export class OnboardingManager {
@@ -48,10 +54,14 @@ export class OnboardingManager {
   private readonly connector: ConnectorProcess
   private readonly detect: () => Promise<DesktopDetection>
   private readonly apiFactory: (base: string) => AccountApi
+  private readonly connectorSettings: ConnectorSettingsStore
+  private readonly mobile = new MobileLogin()
+  private resolvedUvPath: string | null = null
 
   constructor(private readonly config: ResolvedConfig, private readonly dependencies: Dependencies = {}) {
     this.settings = { apiBaseUrl: config.apiBaseUrl }
-    this.connector = dependencies.connector ?? new SourceConnector(config)
+    this.connectorSettings = new ConnectorSettingsStore(config)
+    this.connector = dependencies.connector ?? new SourceConnector(config, undefined, () => this.connectorSettings.get())
     this.detect = dependencies.detect ?? detectDesktop
     this.apiFactory = dependencies.api ?? (base => new AccountApi(base))
     this.unsubscribeConnector = this.connector.onState(state => {
@@ -70,6 +80,8 @@ export class OnboardingManager {
     this.releaseLock = await acquireManagerLock(join(this.config.stateRoot, 'manager.lock'), () => this.loseOwnership())
     try {
       this.desktop = await this.detect()
+      await this.connectorSettings.load()
+      this.resolvedUvPath = await resolveUv(this.config, this.connectorSettings.get())
       const settings = await readJson<ConnectionSettings>(join(this.config.stateRoot, 'settings.json'))
       if (settings) {
         this.settings = this.validateSettings(settings)
@@ -85,6 +97,7 @@ export class OnboardingManager {
         await writeJson(join(this.config.stateRoot, 'settings.json'), this.settings)
       }
       if (this.account?.apiBaseUrl !== this.settings.apiBaseUrl) this.account = null
+      if (this.account) this.binding = await readBoundDevice(this.config.stateRoot, this.account)
     } catch (error) {
       await this.releaseLock?.()
       this.releaseLock = null
@@ -94,7 +107,7 @@ export class OnboardingManager {
 
   async resume(): Promise<void> {
     await this.initialize()
-    if (this.config.autoStart && this.account && this.desktop.status === 'absent') {
+    if (this.connectorSettings.get().autoStart && this.account && this.desktop.status === 'absent') {
       // This starts only a previously authorized device. Fresh installs are idle.
       try { await this.begin() } catch (error) { this.setProgress('error', safeMessage(error)) }
     }
@@ -104,6 +117,7 @@ export class OnboardingManager {
     await this.initialize()
     this.desktop = await this.detect()
     if (this.desktop.status === 'absent') this.refreshProfile()
+    else this.mobile.clear()
     return this.snapshot()
   }
 
@@ -186,6 +200,7 @@ export class OnboardingManager {
   private async connect(flow: LoopbackFlow, signal: AbortSignal, code?: string): Promise<void> {
     const api = this.apiFactory(this.settings.apiBaseUrl)
     if (code) {
+      this.mobile.clear()
       const account = await api.exchange(code, flow.verifier, flow.redirectUri, signal)
       signal.throwIfAborted()
       if (this.account?.userId !== account.userId) await this.connector.stop()
@@ -265,6 +280,7 @@ export class OnboardingManager {
   private async connectionFailed(error: unknown): Promise<void> {
     if (error instanceof DeviceRecoveryRequired) this.setRecovery(error.connectorId, error.reason, error.message)
     else if (error instanceof ConnectorCredentialError && this.binding) await this.checkDeviceRecovery(this.binding.connectorId)
+    else if (error instanceof ApiError && error.status === 401 && this.binding) this.setRecovery(this.binding.connectorId, 'login_required', '账号登录已失效，请重新登录后恢复设备连接。')
     else if (!this.recovery) this.setProgress('error', safeMessage(error))
   }
 
@@ -313,6 +329,142 @@ export class OnboardingManager {
 
   cancel(): Promise<void> { return this.serial(() => this.cancelFlow()) }
 
+  private async requireStandalone(): Promise<void> {
+    await this.initialize()
+    if (this.disposed) throw new Error('插件已关闭。')
+    this.desktop = await this.detect()
+    if (this.disposed) throw new Error('插件已关闭。')
+    if (this.desktop.status !== 'absent') { this.mobile.clear(); throw new Error(this.desktop.message) }
+  }
+
+  private requireAccount(): Account {
+    if (!this.account) throw new Error('请先在“登录和连接”中登录。')
+    if (this.account.expiresAt <= Date.now()) throw new Error('登录已失效，请重新登录。')
+    return this.account
+  }
+
+  controlConnector(action: ConnectorAction): Promise<null> {
+    return this.serial(async () => {
+      await this.requireStandalone()
+      if (!['start', 'stop', 'restart'].includes(action)) throw new Error('不支持的 Connector 操作。')
+      await this.cancelFlow()
+      if (action === 'stop') {
+        await this.connector.stop()
+        this.setProgress('idle', 'Connector 已停止。')
+      } else {
+        if (this.recovery) throw new Error('请先在“登录和连接”中恢复设备连接。')
+        this.requireAccount()
+        // Validate the executable before interrupting a working connection.
+        await this.connector.prepare()
+        if (action === 'restart') await this.connector.stop()
+        if (!this.connector.running) await this.startConnector()
+      }
+      return null
+    })
+  }
+
+  private async startConnector(): Promise<void> {
+    if (this.disposed) throw new Error('插件已关闭。')
+    const account = this.requireAccount()
+    const controller = new AbortController()
+    this.controller = controller
+    try {
+      const api = this.apiFactory(account.apiBaseUrl)
+      this.setProgress('pairing', '正在检查本机设备…')
+      this.binding = this.binding ? await verifyBoundDevice(this.binding, account, api, controller.signal)
+        : await ensureBinding(this.config.stateRoot, account, api, controller.signal, {
+          ...(this.dependencies.machineState ? { machineState: this.dependencies.machineState } : {}),
+        })
+      controller.signal.throwIfAborted()
+      if (this.disposed) throw new Error('插件已关闭。')
+      this.setProgress('starting', '正在启动 Connector…')
+      await this.connector.start(this.binding, account.apiBaseUrl, controller.signal)
+      await this.waitOnline(api, account, this.binding.connectorId, controller.signal)
+      this.setProgress('ready', '本机设备已连接。')
+    } catch (error) {
+      await this.connectionFailed(error)
+      await this.connector.stop()
+      throw error
+    } finally { if (this.controller === controller) this.controller = null }
+  }
+
+  saveConnectorSettings(input: ConnectorSettings): Promise<null> {
+    return this.serial(async () => {
+      await this.requireStandalone()
+      if (this.stage === 'authorizing' || this.stage === 'pairing' || this.stage === 'starting') throw new Error('连接正在进行，请完成或取消后再保存设置。')
+      const next = validateConnectorSettings(input)
+      const previous = this.connectorSettings.get()
+      if (JSON.stringify(next) === JSON.stringify(previous)) return null
+      const restart = this.connector.running && Object.keys(next).some(key => key !== 'autoStart'
+        && next[key as keyof ConnectorSettings] !== previous[key as keyof ConnectorSettings])
+      if (restart) this.requireAccount()
+      if (restart || next.uvPath !== previous.uvPath) await this.connector.prepare(next)
+      if (this.disposed) throw new Error('插件已关闭。')
+      await this.connectorSettings.save(next)
+      this.resolvedUvPath = await resolveUv(this.config, next)
+      if (restart) {
+        await this.cancelFlow()
+        await this.connector.stop()
+        await this.startConnector()
+      }
+      return null
+    })
+  }
+
+  openConnectorFolder(folder: ConnectorFolder): Promise<null> {
+    return this.serial(async () => {
+      await this.requireStandalone()
+      if (folder !== 'data' && folder !== 'logs') throw new Error('不支持的目录。')
+      await (this.dependencies.openFolder ?? openFolder)(join(this.config.stateRoot, folder === 'data' ? 'connector' : 'logs'))
+      return null
+    })
+  }
+
+  resetConnector(forceLocal: boolean): Promise<null> {
+    return this.serial(async () => {
+      await this.requireStandalone()
+      if (typeof forceLocal !== 'boolean') throw new Error('重置参数无效。')
+      if (this.binding && this.account && !forceLocal) {
+        try {
+          // Reuse Desktop's revoke-and-discard semantics. A failed revoke leaves
+          // local credentials intact, allowing retry or a separate local-only reset.
+          await this.apiFactory(this.account.apiBaseUrl).renewConnector(this.account.accessToken, this.binding.connectorId, this.profileController.signal)
+        } catch (error) {
+          if (!(error instanceof ApiError) || error.status !== 404) throw new Error(`无法撤销设备连接。${safeMessage(error)}`)
+        }
+      }
+      await this.cancelFlow()
+      this.mobile.clear()
+      await this.connector.stop()
+      this.account = null; this.binding = null; this.recovery = null; this.profileCheckedAt = 0
+      // Never remove stateRoot itself, shared machine.json, or the DSH runtime.
+      for (const path of ['account.json', 'settings.json', 'bindings', 'connector', 'logs']) {
+        await rm(join(this.config.stateRoot, path), { force: true, recursive: true })
+      }
+      this.settings = { apiBaseUrl: this.config.apiBaseUrl }
+      await this.connectorSettings.save({ ...DEFAULT_CONNECTOR_SETTINGS, autoStart: this.config.autoStart })
+      this.resolvedUvPath = await resolveUv(this.config, this.connectorSettings.get())
+      this.setProgress('idle', '本机连接已重置，请重新登录。')
+      return null
+    })
+  }
+
+  createMobileLogin(): Promise<MobileLoginSnapshot> {
+    return this.serial(async () => {
+      await this.requireStandalone()
+      const account = this.requireAccount()
+      return this.mobile.create(account, this.apiFactory(account.apiBaseUrl))
+    })
+  }
+  async inspectMobileLogin(id: string): Promise<MobileLoginSnapshot> {
+    await this.requireStandalone()
+    return this.mobile.inspect(id, this.requireAccount())
+  }
+  async confirmMobileLogin(id: string, approved: boolean): Promise<MobileLoginSnapshot> {
+    await this.requireStandalone()
+    return this.mobile.confirm(id, approved, this.requireAccount())
+  }
+
   private async cancelFlow(): Promise<void> {
     this.recoveryController?.abort()
     this.recoveryCheck = null
@@ -327,6 +479,7 @@ export class OnboardingManager {
   }
 
   logout(): Promise<void> {
+    this.mobile.clear()
     return this.serial(async () => {
       await this.initialize()
       if (this.disposed) throw new Error('插件已关闭。')
@@ -335,6 +488,7 @@ export class OnboardingManager {
   }
 
   private async logoutFlow(): Promise<void> {
+    this.mobile.clear()
     await this.cancelFlow()
     await this.connector.stop()
     this.account = null
@@ -347,6 +501,7 @@ export class OnboardingManager {
 
   async dispose(): Promise<void> {
     this.disposed = true
+    this.mobile.clear()
     this.unsubscribeConnector()
     this.controller?.abort()
     this.profileController.abort()
@@ -359,6 +514,7 @@ export class OnboardingManager {
 
   private loseOwnership(): void {
     this.disposed = true
+    this.mobile.clear()
     this.controller?.abort()
     this.profileController.abort()
     this.releaseLock = null
@@ -391,6 +547,12 @@ export class OnboardingManager {
       webAppUrl: resolveWebAppUrl(this.settings.apiBaseUrl),
       connectorId: this.binding?.connectorId ?? null, connectorRunning: this.connector.running, flowId: this.flow?.id ?? null,
       deviceRecovery: this.recovery ? { ...this.recovery } : null,
+      connector: {
+        settings: this.connectorSettings.get(), resolvedUvPath: this.resolvedUvPath,
+        dataPath: join(this.config.stateRoot, 'connector'), logsPath: join(this.config.stateRoot, 'logs'),
+        canOpenFolders: canOpenFolders(), deviceName: this.binding?.name ?? null,
+        lastError: this.connector.lastError ?? null,
+      },
     }
   }
 }

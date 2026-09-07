@@ -100,7 +100,9 @@
     "@types/react": "~18.3.31",
     "@types/react-dom": "18.3.7",
     "jsdom": "26.1.0",
+    "jsqr": "1.4.0",
     "lightningcss": "1.32.0",
+    "pngjs": "5.0.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "tsdown": "0.22.14",
@@ -114,6 +116,7 @@
   "license": "MIT",
   "dependencies": {
     "clsx": "2.1.1",
-    "lucide-react": "1.41.0"
+    "lucide-react": "1.41.0",
+    "qrcode": "1.5.4"
   }
 }

@@ -1,4 +1,17 @@
 import { OAUTH_CLIENT_ID, type AccountProfile } from '../../contracts/index.js'
+import type { MobileLoginStatus } from '../../contracts/mobile.js'
+
+export interface MobileQr {
+  userId: string
+  loginToken: string
+  expiresAt: string
+  serverTime: string
+}
+export interface MobileStatus {
+  status: MobileLoginStatus
+  userId?: string | null
+  deviceName?: string | null
+}
 
 export interface Account extends AccountProfile {
   apiBaseUrl: string
@@ -97,6 +110,22 @@ export class AccountApi {
     const result = await this.request<{ connector: Device; connectorToken: string }>(`/connectors/${encodeURIComponent(id)}/revoke`, { method: 'POST', headers: this.auth(token) }, signal)
     if (result.connector?.id !== id || !result.connectorToken) throw new Error('无法恢复设备凭据。')
     return result.connectorToken
+  }
+
+  createMobileQr(token: string, signal: AbortSignal): Promise<MobileQr> {
+    return this.request('/auth/mobile-login/qr', { method: 'POST', headers: this.auth(token) }, signal)
+  }
+
+  mobileStatus(token: string, loginToken: string, signal: AbortSignal): Promise<MobileStatus> {
+    return this.request('/auth/mobile-login/status', {
+      method: 'POST', headers: { ...this.auth(token), 'Content-Type': 'application/json' }, body: JSON.stringify({ loginToken }),
+    }, signal)
+  }
+
+  confirmMobile(token: string, loginToken: string, approved: boolean, signal: AbortSignal): Promise<MobileStatus> {
+    return this.request('/auth/mobile-login/confirm', {
+      method: 'POST', headers: { ...this.auth(token), 'Content-Type': 'application/json' }, body: JSON.stringify({ loginToken, approved }),
+    }, signal)
   }
 
   private auth(token: string): Record<string, string> { return { Authorization: `Bearer ${token}` } }

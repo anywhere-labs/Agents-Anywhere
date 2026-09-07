@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SourceConnector } from '../../src/host/connector/process.js'
 import { readJson } from '../../src/host/storage/files.js'
+import { DEFAULT_CONNECTOR_SETTINGS, type ConnectorSettings } from '../../src/contracts/connector.js'
 
 // A real stdio subprocess, without running Python, Agents or an AA service.
 const fixtureSource = `
@@ -30,7 +31,7 @@ lines.on('close', () => process.exit(0));
 `
 const binding = { installationId: 'test-installation', name: 'Test device', connectorId: 'conn_test', connectorToken: 'PRIVATE-DEVICE-TOKEN' }
 
-async function fixture(mode = 'normal') {
+async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CONNECTOR_SETTINGS) {
   const root = await mkdtemp(join(tmpdir(), 'aa-process-中文 '))
   const source = join(root, 'source')
   await mkdir(join(source, 'connector'), { recursive: true })
@@ -49,9 +50,13 @@ async function fixture(mode = 'normal') {
     assert.doesNotMatch(JSON.stringify(args), /PRIVATE-DEVICE-TOKEN/)
     assert.equal(options.env?.UV_PROJECT_ENVIRONMENT, join(root, 'data', 'connector-venv'))
     assert.equal(options.env?.DSH_HOME, join(root, 'dsh-home'))
+    if (settings.uvPypiIndexUrl) {
+      assert.equal(options.env?.UV_DEFAULT_INDEX, settings.uvPypiIndexUrl)
+      assert.equal(options.env?.PIP_INDEX_URL, settings.uvPypiIndexUrl)
+    }
     child = spawn(command, [script, mode], options)
     return child
-  })
+  }, () => settings)
   return {
     connector, root, get child() { return child },
     async close() { await connector.stop(); await rm(root, { recursive: true, force: true }) },
@@ -71,6 +76,30 @@ test('source Connector uses stdio RPC and a private config, then exits on plugin
     assert.equal(h.connector.running, false)
     assert.equal(h.child?.exitCode, 0)
     await assert.rejects(h.connector.assertHealthy())
+  } finally { await h.close() }
+})
+
+test('saved runtime settings reach the actual child config and mirror environment on every restart', async () => {
+  const settings = { ...DEFAULT_CONNECTOR_SETTINGS, syncIntervalSeconds: 60, heartbeatSeconds: 15,
+    reconnectSeconds: 5, syncExistingOnConnect: false, uvPypiIndexUrl: 'https://pypi.tuna.tsinghua.edu.cn/simple' }
+  const h = await fixture('normal', settings)
+  try {
+    await h.connector.prepare()
+    for (const interval of [60, 300]) {
+      settings.syncIntervalSeconds = interval
+      await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
+      const config = await readJson<Record<string, unknown>>(join(h.root, 'data', 'connector', 'connector.json'))
+      assert.equal(config?.syncIntervalSeconds, interval)
+      assert.equal(config?.heartbeatSeconds, 15)
+      assert.equal(config?.reconnectSeconds, 5)
+      assert.equal(config?.syncExistingOnConnect, false)
+      assert.equal(config?.connectorId, binding.connectorId)
+      assert.equal(config?.connectorToken, binding.connectorToken)
+      await h.connector.stop()
+    }
+    const logs = await readFile(join(h.root, 'data', 'logs', 'connector.jsonl'), 'utf8')
+    assert.match(logs, /"event":"running"/)
+    assert.doesNotMatch(logs, /PRIVATE|connectorToken/)
   } finally { await h.close() }
 })
 

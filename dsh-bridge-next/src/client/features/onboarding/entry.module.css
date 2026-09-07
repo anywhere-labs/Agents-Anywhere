@@ -34,11 +34,15 @@
 }
 
 .dialog {
-  width: min(640px, 100%);
+  width: min(560px, 100%);
   max-height: calc(100dvh - 48px);
 }
 
 .accountDialog { width: min(480px, 100%); }
+
+.tabs { display: flex; gap: 8px; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--dsw-alias-border-l2); }
+.tabs > button { flex: 1; border-radius: 8px; }
+.loginDescription { margin: 0 0 24px; color: var(--dsw-alias-label-secondary); font: var(--dsw-font-s-14); }
 
 .placeholder {
   margin: 0;

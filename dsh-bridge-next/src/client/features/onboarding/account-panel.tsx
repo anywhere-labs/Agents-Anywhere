@@ -4,8 +4,9 @@ import type { AccountProfile, OnboardingHostApi, OnboardingSnapshot } from '../.
 import { resolveWebAppUrl } from '../../../contracts/web-address.js'
 import type { OnboardingState } from './state.js'
 import css from './account-panel.module.css'
+import { MobileConnection } from './mobile-connection.js'
 
-function connectorStatus(snapshot: OnboardingSnapshot, readError: string | null): { label: string; state: StateDotState; detail?: string } {
+export function connectorStatus(snapshot: OnboardingSnapshot, readError: string | null): { label: string; state: StateDotState; detail?: string } {
   if (readError) return { label: '状态暂不可用', state: 'warning', detail: readError }
   if (snapshot.stage === 'pairing' || snapshot.stage === 'starting' || snapshot.stage === 'authorizing') {
     return { label: '正在启动', state: 'ongoing', detail: snapshot.message }
@@ -16,6 +17,7 @@ function connectorStatus(snapshot: OnboardingSnapshot, readError: string | null)
       state: recovery.status === 'checking' ? 'ongoing' : 'warning', detail: recovery.message }
   }
   if (snapshot.stage === 'error') return { label: '运行异常', state: 'error', detail: snapshot.message }
+  if (snapshot.connector?.lastError) return { label: '运行异常', state: 'error', detail: snapshot.connector.lastError }
   return snapshot.connectorRunning ? { label: '运行中', state: 'done' } : { label: '未运行', state: 'warning' }
 }
 
@@ -75,6 +77,7 @@ export function AccountPanel({ host, state, snapshot, account }: {
         disabled={state.busy}
         onClick={() => window.open(webAppUrl, '_blank', 'noopener,noreferrer')}
       >打开 Web</Button>
+      <MobileConnection host={host} disabled={state.busy || Boolean(state.readError)} />
       <Button variant="ghost" className={css.button} disabled={state.busy} onClick={() => void state.run(async () => {
         setLoggingOut(true)
         try { await host.logout() } finally { setLoggingOut(false) }
