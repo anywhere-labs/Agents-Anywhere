@@ -3,7 +3,7 @@ import SwiftUI
 struct ServiceEntryView: View {
     @EnvironmentObject private var appState: AppState
     @State private var showsPrivacyPolicy = false
-    var onEnterServer: () -> Void = {}
+    var onManualLogin: () -> Void = {}
     var onQRCodeLogin: () -> Void = {}
 
     var body: some View {
@@ -12,12 +12,12 @@ struct ServiceEntryView: View {
                 AuthBrandLockup()
 
                 VStack(spacing: 12) {
-                    AuthPrimaryButton(title: String(localized: "Enter Server"), systemImage: "link") {
-                        onEnterServer()
+                    AuthPrimaryButton(title: String(localized: "QR Code Login"), systemImage: "qrcode.viewfinder") {
+                        onQRCodeLogin()
                     }
 
-                    AuthGlassButton(String(localized: "QR Code Login"), systemImage: "qrcode.viewfinder") {
-                        onQRCodeLogin()
+                    AuthGlassButton(String(localized: "Manual Login"), systemImage: "link") {
+                        onManualLogin()
                     }
                 }
                 .frame(maxWidth: 340)

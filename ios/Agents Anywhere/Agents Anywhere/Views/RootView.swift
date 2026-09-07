@@ -3,7 +3,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.colorScheme) private var colorScheme
-    @State private var showingEnterServer = false
+    @State private var showingManualLogin = false
     @State private var showingQRCodeLogin = false
 
     var body: some View {
@@ -13,17 +13,17 @@ struct RootView: View {
                 Color(uiColor: .systemBackground)
             case .signedOut:
                 ServiceEntryView(
-                    onEnterServer: { showingEnterServer = true },
+                    onManualLogin: { showingManualLogin = true },
                     onQRCodeLogin: { showingQRCodeLogin = true },
                 )
             case .signedIn:
                 ChatShellView()
             }
         }
-        .sheet(isPresented: $showingEnterServer) {
-            EnterServerView {
+        .sheet(isPresented: $showingManualLogin) {
+            ManualLoginView {
                 appState.activateSignedInRoute()
-                showingEnterServer = false
+                showingManualLogin = false
             }
         }
         .sheet(isPresented: $showingQRCodeLogin) {

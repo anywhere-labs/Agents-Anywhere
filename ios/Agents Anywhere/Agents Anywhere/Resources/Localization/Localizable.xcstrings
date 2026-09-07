@@ -1665,19 +1665,53 @@
         }
       }
     },
-    "Connect this iPhone to your self-hosted workspace.": {
+    "Connect this device to your workspace.": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Connect this iPhone to your self-hosted workspace."
+            "value": "Connect this device to your workspace."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "将此设备连接到你自行托管的工作空间。"
+            "value": "将此设备连接到你的工作空间。"
+          }
+        }
+      }
+    },
+    "Connect to Anywhere Cloud": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect to Anywhere Cloud"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接到 Anywhere Cloud"
+          }
+        }
+      }
+    },
+    "Connect to your self-hosted instance": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect to your self-hosted instance"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接到自己部署的实例"
           }
         }
       }
@@ -3152,6 +3186,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "登录成功"
+          }
+        }
+      }
+    },
+    "Manual Login": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Manual Login"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手动登录"
           }
         }
       }

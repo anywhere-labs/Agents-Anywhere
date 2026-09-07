@@ -75,7 +75,7 @@ struct AuthBrandLockup: View {
             AAWordmark(fontSize: 42)
                 .foregroundStyle(AppTheme.primaryText(colorScheme))
 
-            Text(String(localized: "Connect this iPhone to your self-hosted workspace."))
+            Text(String(localized: "Connect this device to your workspace."))
                 .font(.body)
                 .foregroundStyle(AppTheme.secondaryText(colorScheme))
                 .multilineTextAlignment(.center)
