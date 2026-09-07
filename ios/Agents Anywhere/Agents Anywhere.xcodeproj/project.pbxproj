@@ -101,7 +101,7 @@
 			mainGroup = 000000000000000000000001;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				000000000000000300000000 /* XCRemoteSwiftPackageReference "textual" */,
+				000000000000000300000000 /* XCLocalSwiftPackageReference "../Packages/Textual" */,
 			);
 			preferredProjectObjectVersion = 90;
 			productRefGroup = 000000000000000000000020 /* Products */;
@@ -375,21 +375,17 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		000000000000000300000000 /* XCRemoteSwiftPackageReference "textual" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/gonzalezreal/textual";
-			requirement = {
-				kind = exactVersion;
-				version = 0.5.0;
-			};
+/* Begin XCLocalSwiftPackageReference section */
+		000000000000000300000000 /* XCLocalSwiftPackageReference "../Packages/Textual" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../Packages/Textual;
 		};
-/* End XCRemoteSwiftPackageReference section */
+/* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		000000000000000300000001 /* Textual */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 000000000000000300000000 /* XCRemoteSwiftPackageReference "textual" */;
+			package = 000000000000000300000000 /* XCLocalSwiftPackageReference "../Packages/Textual" */;
 			productName = Textual;
 		};
 /* End XCSwiftPackageProductDependency section */
