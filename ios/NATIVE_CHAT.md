@@ -160,8 +160,11 @@ Semantic error and availability colors remain separate from the primary color.
   directives describe recorded actions, with HTTP(S) PR links opening on tap.
   Appending text preserves completed block identities and equality boundaries.
 - Session, New Session and Device use native SwiftUI navigation bars through
-  `ChatPageToolbar`. The title uses `navigationTitle`; Agent/device names and
-  live status share the native subtitle placement. The subtitle stays one line
+  `ChatPageToolbar`. Session titles, Agent/device names and live status share a
+  leading toolbar item on every window width; the default centered title is
+  removed while `navigationTitle` retains its semantic value. Other pages keep
+  the system title/subtitle placements. Takeover and error indicators below the
+  session toolbar also align to the leading edge. The subtitle stays one line
   tall, including while syncing or idle, so status changes cannot resize the
   timeline. The device ID is used when its name is not yet available. The sidebar
   action uses the same Lucide PanelLeft icon as Web. Toolbar items get their

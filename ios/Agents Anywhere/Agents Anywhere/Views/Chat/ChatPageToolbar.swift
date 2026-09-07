@@ -31,21 +31,39 @@ struct ChatPageToolbar: ViewModifier {
     let title: String
     var subtitle: String?
     var status: ChatHeaderStatus?
+    var alignsTitleLeading = false
     let onMenu: () -> Void
 
     func body(content: Content) -> some View {
         content
             .navigationTitle(title)
-            .navigationSubtitle(subtitle ?? "")
+            .navigationSubtitle(alignsTitleLeading ? "" : subtitle ?? "")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(.visible, for: .navigationBar)
             .toolbar(removing: .sidebarToggle)
+            .toolbar(removing: alignsTitleLeading ? .title : nil)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: onMenu) { SidebarMenuIcon() }
                         .accessibilityLabel(String(localized: "打开侧栏"))
                 }
-                if subtitle != nil || status != nil {
+                if alignsTitleLeading {
+                    // The native inline title is centered in compact widths.
+                    // Keep both lines in one leading toolbar item so their
+                    // alignment does not depend on device or window width.
+                    ToolbarItem(placement: .topBarLeading) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(title).font(.headline).lineLimit(1)
+                                .accessibilityAddTraits(.isHeader)
+                            if subtitle != nil || status != nil {
+                                ChatToolbarSubtitle(subtitle: subtitle, status: status)
+                            }
+                        }
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                } else if subtitle != nil || status != nil {
                     ToolbarItem(placement: .subtitle) {
                         ChatToolbarSubtitle(subtitle: subtitle, status: status)
                     }

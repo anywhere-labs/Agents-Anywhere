@@ -92,8 +92,8 @@ struct SessionChatView: View, Equatable {
                     // Native safe-area layout owns both the visible scroll
                     // region and the dock's space; do not add a second margin.
                 }
-                .overlay(alignment: .top) {
-                    VStack(spacing: 4) {
+                .overlay(alignment: .topLeading) {
+                    VStack(alignment: .leading, spacing: 4) {
                         // Metadata can arrive after history. Transient controls
                         // float below the header instead of resizing its inset.
                         if requiresTakeover { takeoverPill }
@@ -104,7 +104,7 @@ struct SessionChatView: View, Equatable {
         .modifier(ChatPageToolbar(title: session.metadata?.title ?? String(localized: "会话"),
             subtitle: [session.metadata?.runtimeName ?? session.metadata?.runtime ?? String(localized: "Agent"),
                 deviceName ?? session.metadata?.connectorId].compactMap { $0 }.joined(separator: " · "),
-            status: model.headerStatus, onMenu: onMenu))
+            status: model.headerStatus, alignsTitleLeading: true, onMenu: onMenu))
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button { sheet = .files } label: { AppSymbol("folder") }
