@@ -1,9 +1,10 @@
 import { LocalRuntimeLease, type OwnershipState } from '../desktop/local-runtime.js'
+import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { CLOUD_API_BASE_URL, type ConnectionSettings, type DesktopDetection, type DeviceRecovery, type DeviceRecoveryAction, type FlowStage, type LoginRequest, type OnboardingSnapshot } from '../../contracts/index.js'
-import { resolveWebAppUrl } from '../../contracts/web-address.js'
+import { CLOUD_API_BASE_URL, type ConnectionSettings, type DesktopDetection, type DeviceRecovery, type DeviceRecoveryAction, type DeviceRecoveryResult, type FlowStage, type LoginRequest, type OnboardingSnapshot } from '../../contracts/index.js'
+import { resolveOnboardingUrl, resolveWebAppUrl } from '../../contracts/web-address.js'
 import { AccountApi, ApiError, publicProfile, type Account } from '../account/api.js'
 import { DeviceRecoveryRequired, ensureBinding, readBoundDevice, recoverBinding, verifyBoundDevice, type BoundDevice } from '../account/binding.js'
 import { checkServer, normalizeServerOrigin, resolveOAuthWebOrigin } from '../account/server.js'
@@ -242,11 +243,10 @@ export class OnboardingManager {
     await this.connector.start(this.binding, this.settings.apiBaseUrl, signal)
     await this.waitOnline(api, account, this.binding.connectorId, signal)
     signal.throwIfAborted()
-    const url = new URL(`${resolveOAuthWebOrigin(this.settings.apiBaseUrl)}/`)
-    url.hash = `/onboarding?${new URLSearchParams({ source: 'dsh-plugin', connectorId: this.binding.connectorId, flowId: flow.id })}`
+    const redirectUrl = resolveOnboardingUrl(this.settings.apiBaseUrl, this.binding.connectorId, flow.id)
     this.stage = 'ready'
     this.message = '设备已上线，正在继续 Web 引导…'
-    flow.update({ stage: 'ready', message: this.message, redirectUrl: url.href })
+    flow.update({ stage: 'ready', message: this.message, redirectUrl })
   }
 
   private async waitOnline(api: AccountApi, account: Account, id: string, signal: AbortSignal): Promise<void> {
@@ -304,7 +304,7 @@ export class OnboardingManager {
     else if (!this.recovery) this.setProgress('error', safeMessage(error))
   }
 
-  recoverDevice(action: DeviceRecoveryAction): Promise<null> {
+  recoverDevice(action: DeviceRecoveryAction): Promise<DeviceRecoveryResult> {
     return this.serial(async () => {
       await this.initialize()
       if (this.disposed) throw new Error('插件已关闭。')
@@ -331,6 +331,10 @@ export class OnboardingManager {
         await this.waitOnline(this.apiFactory(account.apiBaseUrl), account, this.binding.connectorId, controller.signal)
         controller.signal.throwIfAborted()
         this.setProgress('ready', '本机设备已连接。')
+        if (action === 'recreate') {
+          // A fresh flow always starts at Welcome, even if the browser finished an earlier setup.
+          return { url: resolveOnboardingUrl(account.apiBaseUrl, this.binding.connectorId, randomUUID()) }
+        }
       } catch (error) {
         if (!controller.signal.aborted) {
           if (error instanceof DeviceRecoveryRequired || error instanceof ConnectorCredentialError) await this.connectionFailed(error)

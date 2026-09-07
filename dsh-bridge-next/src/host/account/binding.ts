@@ -17,7 +17,7 @@ export interface Binding {
 export type BoundDevice = Binding & { connectorId: string; connectorToken: string }
 export class DeviceRecoveryRequired extends Error {
   constructor(readonly connectorId: string, readonly reason: 'deleted' | 'disconnected') {
-    super(reason === 'deleted' ? '本机设备已被删除，是否重新创建？' : '本机设备已断开连接，是否重新连接？')
+    super(reason === 'deleted' ? '本机设备已被删除，请重新配置以恢复连接。' : '本机设备已断开连接，是否重新连接？')
   }
 }
 

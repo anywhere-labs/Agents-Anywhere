@@ -90,6 +90,8 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     let failInspect = false
     let inspectGate: Promise<void> | null = null
     let failLogout = false
+    let failRecovery = false
+    const reconfigurationUrl = 'http://127.0.0.1:5174/#/onboarding?source=dsh-plugin&connectorId=conn_reconfigured&flowId=4c7b8c71-134e-4495-a3ee-b704962414f9'
     type EntryProps = { host: OnboardingHostApi; wide: boolean }
     let entry: { Component: ComponentType<EntryProps>; props: { host: OnboardingHostApi } } | undefined
     let entryCount = 0
@@ -121,7 +123,13 @@ export async function checkClient(source: string, packageId: string): Promise<vo
         if (endpoint.endsWith('/controlConnector')) {
           snapshot = { ...snapshot, connectorRunning: (payload as { args: { action: string } }).args.action !== 'stop' }
         }
-        if (endpoint.endsWith('/recoverDevice')) snapshot = { ...snapshot, deviceRecovery: null, stage: 'ready', connectorRunning: true }
+        if (endpoint.endsWith('/recoverDevice')) {
+          if (failRecovery) return { ok: false, error: { message: '设备创建失败，请重试。' } }
+          const action = (payload as { args: { action: string } }).args.action
+          snapshot = { ...snapshot, deviceRecovery: null, stage: 'ready', connectorRunning: true,
+            connectorId: action === 'recreate' ? 'conn_reconfigured' : snapshot.connectorId }
+          return { ok: true, value: action === 'recreate' ? { url: reconfigurationUrl } : null }
+        }
         if (endpoint.endsWith('/logout')) {
           if (failLogout) return { ok: false, error: { message: '退出失败，请重试。' } }
           snapshot = { ...snapshot, account: null, stage: 'idle', connectorRunning: false, connectorId: null, flowId: null }
@@ -354,7 +362,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       await act(async () => { trigger.click() })
     }
     for (const [status, label, action, message] of [
-      ['deleted', '重新创建', 'recreate', '本机设备已被删除，是否重新创建？'],
+      ['deleted', '重新配置', 'recreate', '本机设备已被删除，请重新配置以恢复连接。'],
       ['disconnected', '重新连接', 'reconnect', '本机设备已断开连接，是否重新连接？'],
       ['unavailable', '重新检查', 'check', '暂时无法确认设备状态，请检查网络后重试。'],
     ] as const) {
@@ -363,12 +371,31 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       assert.ok(button(label).closest('[role="status"]'), 'Recovery action belongs inside the Connector status area')
       assert.ok(dialog()!.textContent!.includes(message))
       assert.equal(document.querySelectorAll('[role="dialog"]').length, 1)
-      await act(async () => { button(label).click() })
+      const openedBeforeRecovery = openedUrls.length
+      await act(async () => { button(label).click(); button(label).click() })
+      assert.equal(openedUrls.length, openedBeforeRecovery + (action === 'recreate' ? 1 : 0))
+      if (action === 'recreate') {
+        assert.equal(openedUrls.at(-1)?.url, reconfigurationUrl)
+        assert.equal(dialog()!.querySelector<HTMLAnchorElement>('a[href*="onboarding?"]')?.href, reconfigurationUrl)
+        assert.match(dialog()!.textContent!, /点击继续配置/)
+        assert.doesNotMatch(dialog()!.textContent!, /重新创建/)
+      }
       assert.deepEqual(JSON.parse(JSON.stringify(calls.filter(call => call.endpoint.endsWith('/recoverDevice')).at(-1)?.payload)), { args: { action } })
       assert.match(dialog()!.textContent!, /Connector运行中/)
       assert.equal(button('退出登录').disabled, false)
     }
-    snapshot = { ...snapshot, connectorRunning: false }
+    snapshot = { ...snapshot, stage: 'error', connectorRunning: false, deviceRecovery: {
+      connectorId: 'conn_test', status: 'deleted', message: '本机设备已被删除，请重新配置以恢复连接。',
+    } }
+    failRecovery = true
+    await reopen()
+    const openedBeforeFailure = openedUrls.length
+    await act(async () => { button('重新配置').click() })
+    assert.equal(openedUrls.length, openedBeforeFailure)
+    assert.match(dialog()!.textContent!, /设备创建失败/)
+    assert.equal(button('重新配置').disabled, false)
+    failRecovery = false
+    snapshot = { ...snapshot, stage: 'ready', deviceRecovery: null, connectorRunning: false }
     await reopen()
     assert.match(dialog()!.textContent!, /Connector未运行/)
     assert.equal(dialog()!.querySelector('[data-state]')?.getAttribute('data-state'), 'warning')

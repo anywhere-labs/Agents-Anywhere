@@ -19,6 +19,7 @@ export interface ConnectionSettings {
 
 export type LoginRequest = { target: 'cloud' } | { target: 'server'; serverUrl: string }
 export type DeviceRecoveryAction = 'check' | 'reconnect' | 'recreate'
+export type DeviceRecoveryResult = { url: string } | null
 export interface DeviceRecovery {
   connectorId: string
   status: 'checking' | 'deleted' | 'disconnected' | 'unavailable' | 'login_required'
@@ -54,7 +55,7 @@ export interface OnboardingHostApi {
   begin(input?: LoginRequest): Promise<{ url: string }>
   cancel(): Promise<null>
   logout(): Promise<null>
-  recoverDevice(action: DeviceRecoveryAction): Promise<null>
+  recoverDevice(action: DeviceRecoveryAction): Promise<DeviceRecoveryResult>
   controlConnector(action: ConnectorAction): Promise<null>
   saveConnectorSettings(settings: ConnectorSettings): Promise<null>
   openConnectorFolder(folder: ConnectorFolder): Promise<null>

@@ -1,3 +1,4 @@
+import { readOnboardingTarget, restoreOnboardingStep, saveOnboardingStep } from '../../../web-next/src/features/onboarding/flow.ts'
 import { LocalRuntimeLease, localRuntimePath } from '../../src/host/desktop/local-runtime.js'
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -340,7 +341,7 @@ test('a live auth-failure notification prompts reconnection of the same ID witho
     assert.equal((await h.manager.inspect()).account?.userId, 'user-test')
     assert.equal((await h.manager.inspect()).connectorRunning, false)
     assert.equal(h.api.renewals, 0)
-    await h.manager.recoverDevice('reconnect')
+    assert.equal(await h.manager.recoverDevice('reconnect'), null)
     assert.deepEqual(h.api.renewedIds, ['conn_test'])
     assert.equal(h.api.registrations, 1)
     assert.equal((await h.manager.inspect()).deviceRecovery, null)
@@ -351,12 +352,13 @@ test('a live auth-failure notification prompts reconnection of the same ID witho
 })
 
 for (const restarting of [false, true]) {
-  test(`deleted device waits for the recreate button (restart: ${restarting})`, async () => {
+  test(`reconfiguring a deleted device opens a fresh complete Web onboarding (restart: ${restarting})`, async () => {
     const h = await fixture()
     h.api.online = true
     try {
       await callback((await h.manager.begin()).url)
       await until(async () => (await h.manager.inspect()).stage === 'ready')
+      const previousFlowId = (await h.manager.inspect()).flowId!
       h.api.deleted = true
       if (restarting) { await h.reopen(); await h.manager.resume() }
       else h.connector.expire()
@@ -364,7 +366,24 @@ for (const restarting of [false, true]) {
       assert.equal(h.api.registrations, 1)
       assert.equal(h.api.renewals, 0)
       await assert.rejects(h.manager.recoverDevice('reconnect'))
-      await h.manager.recoverDevice('recreate')
+      const result = await h.manager.recoverDevice('recreate')
+      assert.ok(result?.url)
+      assert.equal(new URL(result.url).origin, h.api.baseUrl)
+      const target = readOnboardingTarget(new URLSearchParams(new URL(result.url).hash.split('?')[1]))
+      assert.ok(target, 'The actual Web entry must accept the recovery link')
+      assert.equal(target.connectorId, 'conn_recreated')
+      assert.notEqual(target.flowId, previousFlowId)
+      assert.equal((await h.manager.inspect()).connectorRunning, true)
+      assert.doesNotMatch(result.url, /SECRET|token|authorization/i)
+      const saved = new Map<string, string>()
+      const storage = { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => { saved.set(key, value) } }
+      saveOnboardingStep({ ...target, flowId: previousFlowId }, 'user-test', 'complete', storage)
+      assert.equal(restoreOnboardingStep(target, 'user-test', storage), 'welcome', 'Reconfiguration starts at the screenshot welcome page')
+      for (const step of ['device', 'phone', 'complete'] as const) {
+        saveOnboardingStep(target, 'user-test', step, storage)
+        assert.equal(restoreOnboardingStep(target, 'user-test', storage), step)
+      }
+      await assert.rejects(h.manager.recoverDevice('recreate'), /设备状态已变化/)
       assert.equal((await h.manager.inspect()).connectorId, 'conn_recreated')
       assert.equal((await h.manager.inspect()).deviceRecovery, null)
       assert.equal(h.api.registrations, 2)
@@ -637,5 +656,26 @@ test('installing Desktop stops the plugin and releases ownership while its panel
     const desktop = new LocalRuntimeLease('desktop-workbench', localRuntimePath(join(h.root, 'home')))
     await until(async () => (await desktop.claim()).status === 'owned')
     await desktop.release()
+  } finally { await h.close() }
+})
+
+test('failed device reconfiguration returns no browser destination and remains recoverable', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    h.api.deleted = true
+    h.connector.expire()
+    await until(async () => (await h.manager.inspect()).deviceRecovery?.status === 'deleted')
+    const register = h.api.register.bind(h.api)
+    h.api.register = async () => { throw new ApiError(503) }
+    assert.equal(await h.manager.recoverDevice('recreate'), null)
+    assert.equal(h.api.registrations, 1)
+    assert.equal((await h.manager.inspect()).deviceRecovery?.status, 'unavailable')
+    h.api.register = register
+    await h.manager.recoverDevice('check')
+    assert.ok((await h.manager.recoverDevice('recreate'))?.url)
+    assert.equal(h.api.registrations, 2)
   } finally { await h.close() }
 })

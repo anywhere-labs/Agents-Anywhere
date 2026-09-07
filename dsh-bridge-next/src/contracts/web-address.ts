@@ -8,3 +8,9 @@ export function resolveOAuthWebOrigin(apiBaseUrl: string): string {
 export function resolveWebAppUrl(apiBaseUrl: string): string {
   return `${resolveOAuthWebOrigin(apiBaseUrl)}/#/`
 }
+
+export function resolveOnboardingUrl(apiBaseUrl: string, connectorId: string, flowId: string): string {
+  const url = new URL(`${resolveOAuthWebOrigin(apiBaseUrl)}/`)
+  url.hash = `/onboarding?${new URLSearchParams({ source: 'dsh-plugin', connectorId, flowId })}`
+  return url.href
+}
