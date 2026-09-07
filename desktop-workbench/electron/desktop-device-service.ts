@@ -16,6 +16,8 @@ type DesktopDeviceServiceOptions = {
   fetcher: Fetcher;
   defaultServerUrl: () => string;
   apiNamespace: () => string;
+  readLocalConnectorIds: () => readonly string[];
+  recordLocalConnector: (connectorId: string) => Promise<void>;
 };
 
 type ConnectorCredentialResponse = {
@@ -99,13 +101,18 @@ export class DesktopDeviceService {
 
     const name = input?.name?.trim() || await systemDeviceName();
     let credential: ConnectorCredentialResponse;
+    let reusedConnectorId: string | undefined;
     try {
+      reusedConnectorId = await this.findLocalConnector(serverUrl, userId, input?.userToken);
       credential = await this.requestCredential(
         serverUrl,
-        "/connectors",
+        reusedConnectorId ? `/connectors/${encodeURIComponent(reusedConnectorId)}/revoke` : "/connectors",
         input?.userToken,
-        { name, connectorKind: "desktop" },
+        reusedConnectorId ? undefined : { name, connectorKind: "desktop" },
       );
+      if (reusedConnectorId && credential.connector.id !== reusedConnectorId) {
+        throw new Error("The server returned credentials for a different Connector.");
+      }
     } catch (error) {
       await this.resumePreviousConnector(resumePrevious);
       throw error;
@@ -118,9 +125,11 @@ export class DesktopDeviceService {
       manualDisconnected: false,
     };
     try {
+      // Only POST /connectors creates a new local identity. Token rotation never appends one.
+      if (!reusedConnectorId) await this.options.recordLocalConnector(credential.connector.id);
       this.options.binding.save(nextBinding);
     } catch (error) {
-      const rollbackError = await this.tryRollbackCreatedConnector(
+      const rollbackError = reusedConnectorId ? null : await this.tryRollbackCreatedConnector(
         serverUrl,
         credential.connector.id,
         input?.userToken,
@@ -139,7 +148,8 @@ export class DesktopDeviceService {
       // acknowledge it. Only roll back when even that recovery copy is absent.
       const persisted = this.options.connector.loadPrivateConfig();
       const recoveredNewCredential = Boolean(
-        persisted?.connectorId === credential.connector.id && persisted.serverUrl === serverUrl,
+        persisted?.connectorId === credential.connector.id && persisted.serverUrl === serverUrl &&
+        persisted.connectorToken === credential.connectorToken,
       );
       if (recoveredNewCredential) {
         this.options.connector.bindingChanged();
@@ -148,7 +158,7 @@ export class DesktopDeviceService {
       if (previousBinding) this.options.binding.save(previousBinding);
       else this.options.binding.clear();
       this.options.connector.bindingChanged();
-      const rollbackError = await this.tryRollbackCreatedConnector(
+      const rollbackError = reusedConnectorId ? null : await this.tryRollbackCreatedConnector(
         serverUrl,
         credential.connector.id,
         input?.userToken,
@@ -179,7 +189,7 @@ export class DesktopDeviceService {
       );
     } catch (error) {
       if (!(error instanceof ConnectorApiError) || error.status !== 404) throw error;
-      // A deleted device needs a new registration. Reuse first-login provisioning
+      // A deleted device needs pairing again. Reuse first-login provisioning
       // without letting createAndConnect return the stale local binding.
       return this.provisionAndConnect({
         userId: binding.ownerUserId,
@@ -237,10 +247,28 @@ export class DesktopDeviceService {
     userToken: unknown,
     body?: Record<string, unknown>,
   ): Promise<ConnectorCredentialResponse> {
+    return parseCredentialResponse(await this.request(serverUrl, path, userToken, "POST", body));
+  }
+
+  private async findLocalConnector(serverUrl: string, userId: string, userToken: unknown): Promise<string | undefined> {
+    const localIds = this.options.readLocalConnectorIds();
+    const devices = parseConnectorList(await this.request(serverUrl, "/connectors", userToken, "GET"));
+    const ownedIds = new Set(devices.filter(device => device.userId === userId).map(device => device.id));
+    // Match the plugin's order: the first shared local ID owned by this account wins.
+    return localIds.find(id => ownedIds.has(id));
+  }
+
+  private async request(
+    serverUrl: string,
+    path: string,
+    userToken: unknown,
+    method: "GET" | "POST",
+    body?: Record<string, unknown>,
+  ): Promise<unknown> {
     const token = typeof userToken === "string" ? userToken.trim() : "";
     if (!token) throw new Error("A signed-in user session is required.");
     const response = await this.options.fetcher(this.apiUrl(serverUrl, path), {
-      method: "POST",
+      method,
       headers: {
         accept: "application/json",
         authorization: `Bearer ${token}`,
@@ -257,7 +285,7 @@ export class DesktopDeviceService {
     if (!response.ok) {
       throw new ConnectorApiError(response.status, payload);
     }
-    return parseCredentialResponse(payload);
+    return payload;
   }
 
   private async rollbackCreatedConnector(
@@ -345,6 +373,15 @@ export class DesktopDeviceService {
     if (!binding) throw new Error("This Desktop has not created its local Connector yet.");
     return binding;
   }
+}
+
+function parseConnectorList(value: unknown): Array<{ id: string; userId: string }> {
+  const connectors = value && typeof value === "object" ? (value as { connectors?: unknown }).connectors : undefined;
+  if (!Array.isArray(connectors) || connectors.some(connector => !connector || typeof connector !== "object" ||
+    typeof connector.id !== "string" || !connector.id.trim() ||
+    typeof connector.userId !== "string" || !connector.userId.trim()
+  )) throw new Error("The server returned an invalid Connector list.");
+  return connectors;
 }
 
 function parseCredentialResponse(value: unknown): ConnectorCredentialResponse {

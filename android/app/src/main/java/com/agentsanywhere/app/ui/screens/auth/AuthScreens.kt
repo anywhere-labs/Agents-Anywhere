@@ -1,8 +1,15 @@
 package com.agentsanywhere.app.ui.screens.auth
 
 import android.content.res.Configuration
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,16 +20,26 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -33,10 +50,8 @@ import com.agentsanywhere.app.ui.designsystem.AAWordmark
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereTheme
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
-import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.QrCode
-import com.composables.icons.lucide.Server
 
 @Composable
 fun LoginMethodsScreen(navigate: (AppDestination) -> Unit) {
@@ -70,15 +85,17 @@ fun LoginMethodsScreen(navigate: (AppDestination) -> Unit) {
                 )
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
                 LoginMethodButton(
                     label = stringResource(R.string.auth_continue_qr),
                     icon = Lucide.QrCode,
+                    primary = true,
                     onClick = { navigate(AppDestination.QrLogin) },
                 )
                 LoginMethodButton(
                     label = stringResource(R.string.auth_password_login),
-                    icon = Lucide.Server,
+                    icon = ImageVector.vectorResource(R.drawable.ic_user_key),
+                    primary = false,
                     onClick = { navigate(AppDestination.ServerSetup) },
                 )
             }
@@ -87,27 +104,71 @@ fun LoginMethodsScreen(navigate: (AppDestination) -> Unit) {
 }
 
 @Composable
-private fun LoginMethodButton(label: String, icon: ImageVector, onClick: () -> Unit) {
+internal fun LoginMethodButton(
+    label: String,
+    primary: Boolean,
+    icon: ImageVector? = null,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
     val colors = LocalAAColors.current
+    val shape = RoundedCornerShape(12.dp)
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val hovered by interactionSource.collectIsHoveredAsState()
+    val focused by interactionSource.collectIsFocusedAsState()
+    val highlighted = enabled && (pressed || hovered || focused)
+    val background by animateColorAsState(
+        targetValue = when {
+            primary && !enabled -> if (colors.isDark) Color(0xFF737373) else Color(0xFFBDBDBD)
+            primary -> if (pressed) Color(0xFFD4D4D4) else Color(0xFFE5E5E5)
+            highlighted -> if (colors.isDark) Color(0xFF121212) else Color(0xFFF0F0F0)
+            else -> Color.Transparent
+        },
+        animationSpec = tween(100),
+        label = "loginButtonBackground",
+    )
+    val foreground by animateColorAsState(
+        targetValue = when {
+            primary -> Color(0xFF171717)
+            highlighted -> colors.ink
+            else -> colors.muted
+        },
+        animationSpec = tween(100),
+        label = "loginButtonForeground",
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(62.dp)
-            .clip(RoundedCornerShape(17.dp))
-            .background(colors.raisedSurface)
-            .border(1.2.dp, colors.border, RoundedCornerShape(17.dp))
-            .noRippleClickable(onClick = onClick)
+            .height(56.dp)
+            .shadow(
+                elevation = if (!primary && highlighted) 3.dp else 0.dp,
+                shape = shape,
+                ambientColor = Color.Black.copy(alpha = 0.12f),
+                spotColor = Color.Black.copy(alpha = 0.12f),
+            )
+            .clip(shape)
+            .background(background)
+            .clickable(
+                enabled = enabled,
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            )
             .padding(horizontal = 18.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = null, tint = colors.onRaisedSurface, modifier = Modifier.size(22.dp))
+        if (icon != null) {
+            Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(22.dp))
+        }
         Text(
-            modifier = Modifier.padding(start = 10.dp),
+            modifier = Modifier.padding(start = if (icon != null) 10.dp else 0.dp),
             text = label,
-            color = colors.onRaisedSurface,
+            color = foreground,
             fontSize = 15.3.sp,
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = FontWeight.Medium,
             lineHeight = 18.sp,
             textAlign = TextAlign.Center,
         )
@@ -122,6 +183,7 @@ internal fun AuthInputRow(
     icon: ImageVector,
     isPassword: Boolean = false,
     enabled: Boolean = true,
+    onSubmit: (() -> Unit)? = null,
 ) {
     val colors = LocalAAColors.current
     Row(
@@ -142,6 +204,11 @@ internal fun AuthInputRow(
             onValueChange = onValueChange,
             enabled = enabled,
             singleLine = true,
+            keyboardOptions = if (onSubmit == null) KeyboardOptions.Default else KeyboardOptions(
+                keyboardType = KeyboardType.Uri,
+                imeAction = ImeAction.Go,
+            ),
+            keyboardActions = KeyboardActions(onGo = { if (enabled) onSubmit?.invoke() }),
             textStyle = androidx.compose.ui.text.TextStyle(
                 color = colors.ink,
                 fontSize = 15.3.sp,
@@ -168,33 +235,6 @@ internal fun AuthInputRow(
                     innerTextField()
                 }
             },
-        )
-    }
-}
-
-@Composable
-internal fun AuthContinueButton(
-    isLoading: Boolean,
-    label: String = stringResource(R.string.common_continue),
-    loadingLabel: String = stringResource(R.string.auth_opening_web_login),
-    onClick: () -> Unit,
-) {
-    val colors = LocalAAColors.current
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(62.dp)
-            .clip(RoundedCornerShape(17.dp))
-            .background(colors.primaryAction)
-            .noRippleClickable(enabled = !isLoading, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = if (isLoading) loadingLabel else label,
-            color = colors.onPrimaryAction,
-            fontSize = 15.3.sp,
-            fontWeight = FontWeight.SemiBold,
-            lineHeight = 18.sp,
         )
     }
 }

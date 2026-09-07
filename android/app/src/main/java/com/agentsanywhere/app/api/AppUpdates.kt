@@ -1,36 +1,26 @@
 package com.agentsanywhere.app.api
 
-import org.json.JSONObject
+import com.agentsanywhere.app.config.AppConfig
 
 data class AndroidAppRelease(
-    val versionCode: Int,
     val versionName: String,
     val downloadUrl: String,
 )
 
 class AppUpdatesApi(private val client: ApiClient = ApiClient()) {
-    fun check(serverUrl: String, currentVersionCode: Int): AndroidAppRelease? {
+    fun check(serverUrl: String, currentVersionName: String): AndroidAppRelease? {
         val payload = client.getJson(
             serverUrl = serverUrl,
-            path = "/client-releases/check?platform=android&versionCode=$currentVersionCode",
+            path = "/health",
         )
-        if (!payload.optBoolean("updateAvailable")) return null
-        val downloadUrl = payload.optString("downloadUrl").trim()
-        if (downloadUrl.isBlank()) return null
+        if (payload.optString("status") != "ok") throw ApiException("Server health check failed.")
+        val latestVersion = payload.optString("version").trim()
+        val comparison = compareUpdateVersions(latestVersion, currentVersionName)
+            ?: throw ApiException("Server health response has no valid version.")
+        if (comparison <= 0) return null
         return AndroidAppRelease(
-            versionCode = payload.requirePositiveInt("latestVersionCode"),
-            versionName = payload.requireText("latestVersionName"),
-            downloadUrl = downloadUrl,
+            versionName = latestVersion,
+            downloadUrl = AppConfig.UPDATE_DOWNLOAD_URL,
         )
     }
-}
-
-private fun JSONObject.requirePositiveInt(name: String): Int {
-    return optInt(name).takeIf { it > 0 }
-        ?: throw ApiException("Update response is missing $name.")
-}
-
-private fun JSONObject.requireText(name: String): String {
-    return optString(name).trim().takeIf(String::isNotBlank)
-        ?: throw ApiException("Update response is missing $name.")
 }

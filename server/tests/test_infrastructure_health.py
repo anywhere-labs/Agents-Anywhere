@@ -1,9 +1,27 @@
 from __future__ import annotations
 
+import tomllib
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from agent_server.app import create_app
 from agent_server.infra.db.migrations import CURRENT_SCHEMA_VERSION
+
+
+def test_health_reports_the_application_version_and_releases_are_retired(tmp_path) -> None:
+    app = create_app(tmp_path / "versions.sqlite3")
+    client = TestClient(app)
+    expected = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]["version"]
+    for route in ("/api/v2/health", "/api/v2/health/live"):
+        response = client.get(route)
+        assert response.status_code == 200
+        assert response.json()["version"] == app.version == expected
+        assert response.json()["status"] == "ok"
+    assert not any("client-releases" in route for route in app.openapi()["paths"])
+    assert client.get("/api/v2/client-releases/check?platform=desktop&versionCode=1").status_code == 404
+    assert client.get("/api/v2/admin/client-releases").status_code == 404
+    assert client.post("/api/v2/admin/client-releases", json={}).status_code == 404
 
 
 def test_liveness_and_readiness_are_separate(tmp_path) -> None:

@@ -4,7 +4,6 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from agent_server.infra.repositories.active_runs_facade import ActiveRunRepositoryMixin
-from agent_server.infra.repositories.app_releases import AppReleaseRepositoryMixin
 from agent_server.infra.repositories.attachments import AttachmentRepositoryMixin
 from agent_server.infra.repositories.connectors import ConnectorRepositoryMixin
 from agent_server.infra.repositories.device_runtimes import DeviceRuntimeRepositoryMixin
@@ -20,7 +19,6 @@ from agent_server.infra.repositories.store_support import *
 
 
 class Store(
-    AppReleaseRepositoryMixin,
     DeviceRuntimeRepositoryMixin,
     ProtocolCatalogRepositoryMixin,
     UserRepositoryMixin,

@@ -15,7 +15,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -32,16 +31,16 @@ import java.util.Locale
 fun AppUpdatePromptDialog(
     state: AppUpdateUiState,
     onUpdate: () -> Unit,
-    onLater: () -> Unit,
-    onCancelDownload: () -> Unit,
+    onIgnore: () -> Unit,
 ) {
     val release = state.release ?: return
     if (!state.promptVisible) return
     val colors = LocalAAColors.current
     val shape = RoundedCornerShape(20.dp)
+    val busy = state.downloading || state.preparingInstall || state.ignoring
     Dialog(
-        onDismissRequest = { if (!state.downloading) onLater() },
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        onDismissRequest = {},
+        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false, dismissOnBackPress = false),
     ) {
         Column(
             modifier = Modifier
@@ -99,42 +98,31 @@ fun AppUpdatePromptDialog(
                     lineHeight = 18.sp,
                 )
             }
-            if (state.downloading) {
+            if (state.ignoreFailed || state.downloadUnavailable) {
+                Text(
+                    text = stringResource(if (state.ignoreFailed) R.string.update_ignore_failed else R.string.update_download_unavailable),
+                    color = colors.errorText,
+                    fontSize = 13.sp,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 UpdateDialogButton(
-                    label = stringResource(R.string.update_cancel_download),
+                    label = stringResource(R.string.update_ignore_version),
                     primary = false,
-                    enabled = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = onCancelDownload,
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                    onClick = onIgnore,
                 )
-            } else if (state.preparingInstall) {
                 UpdateDialogButton(
-                    label = stringResource(R.string.update_preparing_install),
+                    label = stringResource(R.string.update_now),
                     primary = true,
-                    enabled = false,
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = {},
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                    onClick = onUpdate,
                 )
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    UpdateDialogButton(
-                        label = stringResource(R.string.update_later),
-                        primary = false,
-                        enabled = true,
-                        modifier = Modifier.weight(1f),
-                        onClick = onLater,
-                    )
-                    UpdateDialogButton(
-                        label = stringResource(if (state.downloadFailed) R.string.update_retry else R.string.update_now),
-                        primary = true,
-                        enabled = true,
-                        modifier = Modifier.weight(1f),
-                        onClick = onUpdate,
-                    )
-                }
             }
         }
     }
@@ -203,14 +191,13 @@ private fun UpdateDialogButton(
         modifier = modifier
             .height(46.dp)
             .clip(shape)
-            .background(if (primary) colors.primaryAction.copy(alpha = if (enabled) 1f else 0.42f) else Color.Transparent)
-            .then(if (primary) Modifier else Modifier.border(1.dp, colors.border, shape))
+            .background(if (primary) colors.primaryAction.copy(alpha = if (enabled) 1f else 0.42f) else colors.secondaryActionSurface)
             .noRippleClickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
-            color = if (primary) colors.onPrimaryAction else colors.ink,
+            color = (if (primary) colors.onPrimaryAction else colors.ink).copy(alpha = if (enabled) 1f else 0.55f),
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
         )

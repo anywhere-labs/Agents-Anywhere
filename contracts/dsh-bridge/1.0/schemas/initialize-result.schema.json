@@ -34,7 +34,10 @@
         "sessionDiscovery": { "type": "boolean" },
         "timelineSuffixRead": { "type": "boolean" },
         "approval": { "type": "boolean" },
-        "userQuestions": { "type": "boolean" }
+        "userQuestions": { "type": "boolean" },
+        "syncMode": { "enum": ["events", "polling"] },
+        "projectionVersion": { "type": "integer", "minimum": 1 },
+        "readOnly": { "type": "boolean" }
       },
       "additionalProperties": true
     }

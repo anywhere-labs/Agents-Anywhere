@@ -98,7 +98,7 @@ async def seed_dashboard_activity(client: TestClient) -> dict[str, str]:
         runtime="claude",
         external_session_id="thr_bob",
         title="Bob Claude",
-        cwd="/repo",
+        cwd="C:/repo",
         status="idle",
         origin="platform",
     )

@@ -76,11 +76,22 @@ class RuntimeSyncRunner:
             await self.push_preferences_if_changed()
             await asyncio.sleep(self.config.sync_interval_seconds)
 
+    async def reconnect_event_runtimes(self) -> None:
+        for runtime_id in self.supervisor.runtimes:
+            try:
+                runtime = self.supervisor.resolve_runtime(runtime_id)
+                if runtime.sync_mode == "events":
+                    await runtime.resynchronize()
+            except Exception:
+                logger.exception("runtime event recovery deferred runtime={}", runtime_id)
+
     async def sync_existing_once(self) -> None:
         for runtime_id in self.supervisor.runtimes:
             runtime_started_at = time.monotonic()
             try:
                 runtime = self.supervisor.resolve_runtime(runtime_id)
+                if runtime.sync_mode == "events":
+                    continue
                 logger.info(
                     "existing session sync runtime started runtime={}", runtime_id
                 )

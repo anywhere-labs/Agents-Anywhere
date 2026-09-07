@@ -5,7 +5,6 @@ import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth/auth-context"
-import { useAgentSetup } from "@/components/agent-setup-provider"
 import { useWorkspace } from "@/components/workspace-context"
 import {
   AlertDialog,
@@ -18,7 +17,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { dashboardApi } from "@/features/dashboard/api"
-import { DesktopAgentSetup } from "@/features/desktop/agent-setup"
 import {
   type DesktopConnectorConfigPatch,
   getDesktopWorkbenchBridge,
@@ -131,7 +129,6 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
   const t = useTranslations("desktopConnector")
   const { session } = useAuth()
   const { refreshData } = useWorkspace()
-  const requestAgentSetup = useAgentSetup()
   const [supported, setSupported] = React.useState(false)
   const [loading, setLoading] = React.useState(true)
   const [busy, setBusy] = React.useState(false)
@@ -146,10 +143,8 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
   const provisionAttemptRef = React.useRef<{
     key: string
     promise: Promise<DesktopLocalBinding>
-    previousConnectorId: string | null
     completed: boolean
   } | null>(null)
-  const agentSetupRef = React.useRef(new DesktopAgentSetup())
   const connectionCheckRef = React.useRef<AbortController | null>(null)
   const reconnectPromptDismissedRef = React.useRef<string | null>(null)
   const intentionalDisconnectConnectorIdRef = React.useRef<string | null>(null)
@@ -224,8 +219,6 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
         setConnectionStatus("online")
         setProvisionError(null)
         refreshData()
-        const pairedConnector = agentSetupRef.current.takeOnline(connectorId)
-        if (pairedConnector) requestAgentSetup(pairedConnector)
       } else if (result === "reconnect-required") {
         setConnectionStatus("disconnected")
       } else if (result === "timeout") {
@@ -235,7 +228,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     } finally {
       if (!providedController) finishConnectionCheck(controller)
     }
-  }, [applyState, beginConnectionCheck, finishConnectionCheck, refreshData, requestAgentSetup, showConnectionFailure, t])
+  }, [applyState, beginConnectionCheck, finishConnectionCheck, refreshData, showConnectionFailure, t])
 
   const retryProvision = React.useCallback(() => {
     if (busy) return
@@ -323,7 +316,6 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
           attempt = {
             key: attemptKey,
             promise: deviceBridge.createAndConnect({ userToken, userId: ownerUserId }),
-            previousConnectorId: existingBinding?.connectorId ?? null,
             completed: false,
           }
           provisionAttemptRef.current = attempt
@@ -332,7 +324,6 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
         const created = await attempt.promise
         if (cancelled) return
         setBinding(created)
-        agentSetupRef.current.trackBinding(attempt.previousConnectorId, created)
 
         const onlineResult = await waitUntilOnline({
           userToken,
@@ -405,7 +396,6 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
         userId,
         connectorId: binding?.connectorId ?? state?.connectorId ?? undefined,
       })
-      agentSetupRef.current.trackBinding(binding?.connectorId ?? state?.connectorId, reconnected)
       intentionalDisconnectConnectorIdRef.current = null
       reconnectPromptDismissedRef.current = null
       setBinding(reconnected)

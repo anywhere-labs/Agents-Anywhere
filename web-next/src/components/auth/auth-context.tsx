@@ -10,6 +10,7 @@ import {
 } from "@/features/auth/session"
 import type { AuthMe, OAuthFinalizePayload, StoredSession } from "@/features/auth/types"
 import { useTranslations } from "next-intl"
+import { authFlowHash, clearAuthFlow, rememberAuthFlow, takeAuthFlow } from "@/features/auth/continuation"
 
 export type AuthScreen =
   | "bootstrap"
@@ -20,6 +21,8 @@ export type AuthScreen =
   | "oauth-link-existing"
   | "mobile-oauth"
   | "desktop-oauth"
+  | "plugin-oauth"
+  | "onboarding"
   | "preview"
   | "app"
 
@@ -72,6 +75,8 @@ function hashToScreen(hash: string): AuthScreen {
     "oauth/link": "oauth-link-existing",
     "mobile-oauth": "mobile-oauth",
     "desktop-oauth": "desktop-oauth",
+    "plugin-oauth": "plugin-oauth",
+    onboarding: "onboarding",
     preview: "preview",
   }
   if (exactMap[path]) return exactMap[path]
@@ -104,6 +109,8 @@ function screenToHash(s: AuthScreen): string {
     "oauth-link-existing": "#/oauth/link",
     "mobile-oauth": "#/mobile-oauth",
     "desktop-oauth": "#/desktop-oauth",
+    "plugin-oauth": "#/plugin-oauth",
+    onboarding: "#/onboarding",
     preview: "#/preview",
     app: "#/",
   }
@@ -223,7 +230,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return
         setSession(null)
         setMe(null)
-        setScreenState("login")
+        setScreenState(authFlowHash(window.location.hash) ? hashToScreen(window.location.hash) : "login")
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -239,6 +246,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const navigate = React.useCallback((s: AuthScreen) => {
+    if (s === "login" || s === "register" || s === "oauth-new-user" || s === "oauth-link-existing") {
+      rememberAuthFlow(window.location.hash, window.sessionStorage)
+    }
     window.location.hash = screenToHash(s)
     if (s === "login") setOauthPending(null)
     setScreenState(s)
@@ -252,9 +262,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setMe(currentUser)
     setError(null)
     setOauthPending(null)
-    const postAuthScreen = hashToScreen(window.location.hash)
-    if (postAuthScreen === "mobile-oauth" || postAuthScreen === "desktop-oauth") {
-      setScreenState(postAuthScreen)
+    const continuation = takeAuthFlow(window.location.hash, window.sessionStorage)
+    if (continuation) {
+      window.location.hash = continuation
+      setScreenState(hashToScreen(continuation))
       return
     }
     window.location.hash = "#/"
@@ -361,6 +372,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const cancelOAuth = React.useCallback(() => {
     setOauthPending(null)
     setError(null)
+    rememberAuthFlow(window.location.hash, window.sessionStorage)
     window.location.hash = "#/login"
     setScreenState("login")
   }, [])
@@ -376,6 +388,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [session?.accessToken])
 
   const signOut = React.useCallback(() => {
+    clearAuthFlow(window.sessionStorage)
     clearStoredSession()
     setSession(null)
     setMe(null)

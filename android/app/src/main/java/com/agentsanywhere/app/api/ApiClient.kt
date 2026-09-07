@@ -37,7 +37,7 @@ class ApiClient(
                 val contentType = response.header("Content-Type").orEmpty()
                 if (!response.isSuccessful || !contentType.contains("text/html", ignoreCase = true)) {
                     throw ApiException(
-                        message = "This address does not host the web login. Enter the Web URL instead of the API URL.",
+                        message = "The web login is unavailable at $origin. Check the server's web login deployment.",
                         statusCode = response.code,
                     )
                 }
@@ -215,6 +215,7 @@ class ApiClient(
                     throw ApiException(
                         message = parseErrorMessage(responseText) ?: defaultErrorMessage(responseCode),
                         statusCode = responseCode,
+                        errorCode = parseErrorCode(responseText),
                     )
                 }
                 if (responseText.isBlank()) JSONObject() else JSONObject(responseText)
@@ -277,6 +278,7 @@ class ApiClient(
                         throw ApiException(
                             message = parseErrorMessage(responseText) ?: defaultErrorMessage(response.code),
                             statusCode = response.code,
+                            errorCode = parseErrorCode(responseText),
                         )
                     }
 
@@ -317,6 +319,11 @@ class ApiClient(
         }
         return stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
     }
+
+    private fun parseErrorCode(responseText: String): String? = runCatching {
+        val body = JSONObject(responseText)
+        (body.optJSONObject("detail") ?: body).optString("code").takeIf(String::isNotBlank)
+    }.getOrNull()
 
     private fun parseErrorMessage(responseText: String): String? {
         return runCatching {
@@ -390,4 +397,5 @@ class ApiException(
     override val message: String,
     val statusCode: Int? = null,
     cause: Throwable? = null,
+    val errorCode: String? = null,
 ) : Exception(message, cause)

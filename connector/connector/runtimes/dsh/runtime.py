@@ -1,28 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 from collections.abc import Mapping
 from contextlib import suppress
-from dataclasses import dataclass, field, replace
 from typing import Any
 
 from connector.runtime_protocol import (
-    CAPABILITY_CATALOG_PERMISSION,
     AgentRuntime,
-    PreparedSessionTimelineSync,
-    RuntimeAttachment,
     RuntimeCapabilitySet,
-    RuntimeCommand,
-    RuntimeCommandResult,
     RuntimeConfig,
-    RuntimeConflictError,
     RuntimeIdentity,
-    RuntimeInvalidRequestError,
-    RuntimeModelCatalog,
+    RuntimeAttachment,
     RuntimeOperationResult,
-    RuntimePermissionCatalog,
-    RuntimeTimelineItem,
+    RuntimeInvalidRequestError,
     RuntimeTimelineSnapshot,
     RuntimeUnavailableError,
     RuntimeUnsupportedError,
@@ -32,44 +22,49 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.dsh import discovery
-from connector.runtimes.dsh.bridge import BridgeClient, BridgeRpcError
-from connector.runtimes.dsh.bridge import models as bridge_models
-from connector.runtimes.session_identity import stable_runtime_session_id
-
-DSH_SESSION_INVENTORY_LIMIT = 10_000
+from connector.runtimes.dsh import discovery, provider_config
+from connector.runtimes.dsh.bridge import models
+from connector.runtimes.dsh.bridge.client import BridgeClient, BridgeRpcError
+from connector.runtimes.dsh.bridge.sync import SyncRelay
 
 
-@dataclass(slots=True)
 class DshRuntime(AgentRuntime):
-    config: RuntimeConfig
-    host: RuntimeHostClient
-    client_version: str = "0.1.7.2"
-    _client: BridgeClient | None = field(default=None, init=False)
-    _identity: RuntimeIdentity = field(
-        default_factory=lambda: RuntimeIdentity(
-            runtime="dsh",
-            runtime_version="unknown",
-            display_name="DeepSeek Harness",
-            protocol_version="1.0",
-        ),
-        init=False,
-    )
-    _stopping: bool = field(default=False, init=False)
-    _restart_attempts: int = field(default=0, init=False)
-    _restart_task: asyncio.Task[None] | None = field(default=None, init=False)
-    _connect_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
-    _notification_locks: dict[str, asyncio.Lock] = field(
-        default_factory=dict, init=False
-    )
-    _known_sessions: dict[str, str | None] = field(default_factory=dict, init=False)
-    _bridge_session_ids: dict[str, str] = field(default_factory=dict, init=False)
-    _bridge_platform_ids: dict[str, str] = field(default_factory=dict, init=False)
-    _concurrent_writer_sessions: set[str] = field(default_factory=set, init=False)
-    _client_message_ids: dict[tuple[str, str], str] = field(
-        default_factory=dict,
-        init=False,
-    )
+    """Protocol adapter; all DSH reads and timeline projection belong to the plugin."""
+
+    def __init__(
+        self,
+        config: RuntimeConfig,
+        host: RuntimeHostClient,
+        client_version: str = "1.0",
+    ) -> None:
+        self.config = config
+        self.host = host
+        self.client_version = client_version
+        self._identity = RuntimeIdentity("dsh", "unknown", "DeepSeek Harness")
+        self._client: BridgeClient | None = None
+        self._connect_lock = asyncio.Lock()
+        # Each connection owns one inventory and one history capture.
+        self._read_lock = asyncio.Lock()
+        self._stopping = False
+        self._restart_task: asyncio.Task[None] | None = None
+        self._sync: SyncRelay | None = None
+        self._sync_mode = "events"
+
+    @property
+    def sync_mode(self) -> str:
+        return self._sync_mode
+
+    async def resynchronize(self, session_id: str | None = None, external_session_id: str | None = None) -> None:
+        if session_id:
+            await self._request("runtime.sync.refresh", _session_params(session_id, external_session_id))
+            return
+        await self._ensure_client()
+        async with self._connect_lock:
+            if self._sync is not None:
+                await self._sync.close()
+            if not self._stopping and self._client is not None and self.sync_mode == "events":
+                self._sync = SyncRelay(self._client, self.host)
+                self._sync.start()
 
     @property
     def identity(self) -> RuntimeIdentity:
@@ -81,44 +76,25 @@ class DshRuntime(AgentRuntime):
 
     async def stop(self) -> None:
         self._stopping = True
+        if self._sync is not None:
+            await self._sync.close()
+            self._sync = None
         if self._restart_task is not None:
             self._restart_task.cancel()
             await asyncio.gather(self._restart_task, return_exceptions=True)
             self._restart_task = None
-        client = self._client
-        self._client = None
-        if client is not None:
-            await client.close()
+        async with self._connect_lock:
+            client, self._client = self._client, None
+            if client is not None:
+                await client.close()
 
     async def get_config(self) -> RuntimeConfig:
-        result = await self._request("runtime.getConfig")
-        metadata = dict(self.config.metadata)
-        if isinstance(result, Mapping):
-            metadata.update(_safe_metadata(result.get("metadata")))
-        return replace(self.config, metadata=metadata)
+        return self.config
 
     async def get_runtime_capabilities(self) -> RuntimeCapabilitySet:
-        return bridge_models.capability_set(
+        return models.capability_set(
             await self._request("runtime.getCapabilities"),
             connector_id=self.host.connector_id,
-        )
-
-    async def list_model_catalog(
-        self,
-        query: str | None = None,
-        limit: int = 100,
-    ) -> RuntimeModelCatalog:
-        return bridge_models.model_catalog(
-            await self._request("catalog.listModels", _query_params(query, limit))
-        )
-
-    async def list_permission_catalog(
-        self,
-        query: str | None = None,
-        limit: int = 100,
-    ) -> RuntimePermissionCatalog:
-        return bridge_models.permission_catalog(
-            await self._request("catalog.listPermissions", _query_params(query, limit))
         )
 
     async def list_sessions(
@@ -127,138 +103,38 @@ class DshRuntime(AgentRuntime):
         cursor: str | None = None,
         force: bool = False,
     ) -> tuple[SessionMeta, ...]:
-        sessions, _next_cursor = await self._list_session_page(
-            limit=limit,
-            cursor=cursor,
-            force=force,
-        )
-        return sessions
+        async with self._read_lock:
+            result = await self._request(
+                "session.list", {"limit": limit, "cursor": cursor, "force": force}
+            )
+            return tuple(
+                models.session_meta(item) for item in _array(result, "sessions")
+            )
 
     async def list_complete_session_inventory(
         self,
         page_size: int = 100,
         force: bool = False,
     ) -> tuple[SessionMeta, ...]:
-        sessions: list[SessionMeta] = []
-        session_ids: set[str] = set()
-        external_session_ids: set[str] = set()
-        seen_cursors: set[str] = set()
-        cursor: str | None = None
-        while True:
-            page, next_cursor = await self._list_session_page(
-                limit=page_size,
-                cursor=cursor,
-                force=force,
-            )
-            for session in page:
-                external_session_id = session.external_session_id
-                if session.session_id in session_ids or (
-                    external_session_id is not None
-                    and external_session_id in external_session_ids
-                ):
-                    raise RuntimeUpstreamError(
-                        "DSH session.list returned a duplicate Session"
-                    )
-                session_ids.add(session.session_id)
-                if external_session_id is not None:
-                    external_session_ids.add(external_session_id)
-                sessions.append(session)
-                if len(sessions) > DSH_SESSION_INVENTORY_LIMIT:
-                    raise RuntimeUpstreamError(
-                        f"DSH session inventory exceeds {DSH_SESSION_INVENTORY_LIMIT} entries"
-                    )
-            if next_cursor is None:
-                return tuple(sessions)
-            if not page:
-                raise RuntimeUpstreamError(
-                    "DSH session.list returned an empty page with nextCursor"
+        async with self._read_lock:
+            output: list[SessionMeta] = []
+            cursors: set[str] = set()
+            identities: set[str] = set()
+            cursor: str | None = None
+            while True:
+                result = await self._request(
+                    "session.list",
+                    {"limit": page_size, "cursor": cursor, "force": force},
                 )
-            if next_cursor in seen_cursors:
-                raise RuntimeUpstreamError(
-                    "DSH session.list returned a repeated nextCursor"
-                )
-            seen_cursors.add(next_cursor)
-            cursor = next_cursor
-
-    async def _list_session_page(
-        self,
-        *,
-        limit: int,
-        cursor: str | None,
-        force: bool,
-    ) -> tuple[tuple[SessionMeta, ...], str | None]:
-        params: dict[str, Any] = {"limit": limit, "force": force}
-        if cursor is not None:
-            params["cursor"] = cursor
-        result = await self._request("session.list", params)
-        raw_sessions = result.get("sessions") if isinstance(result, Mapping) else result
-        next_cursor = result.get("nextCursor") if isinstance(result, Mapping) else None
-        if not isinstance(raw_sessions, list):
-            raise RuntimeUpstreamError("DSH session.list result is invalid")
-        if next_cursor is not None and (
-            not isinstance(next_cursor, str) or not next_cursor
-        ):
-            raise RuntimeUpstreamError("DSH session.list nextCursor is invalid")
-        sessions: list[SessionMeta] = []
-        for raw in raw_sessions:
-            if not isinstance(raw, Mapping):
-                raise RuntimeUpstreamError("DSH session.list entry is invalid")
-            external_id = raw.get("externalSessionId")
-            if not isinstance(external_id, str) or not external_id:
-                raise RuntimeUpstreamError(
-                    "DSH session.list entry has no externalSessionId"
-                )
-            bridge_session_id = _optional_string(raw.get("sessionId"))
-            platform_id = stable_runtime_session_id(
-                getattr(self.host, "session_namespace", self.host.connector_id),
-                "dsh",
-                external_id,
-            )
-            if bridge_session_id is not None:
-                self._bridge_session_ids[platform_id] = bridge_session_id
-                self._bridge_platform_ids[bridge_session_id] = platform_id
-            data = dict(raw)
-            data["sessionId"] = platform_id
-            metadata = _safe_metadata(data.get("metadata"))
-            for key in (
-                "hidden",
-                "localArchived",
-                "local_archived",
-                "localDeleted",
-                "local_deleted",
-                "resumeSupported",
-                "resumable",
-                "localState",
-                "local_state",
-            ):
-                if key in data:
-                    metadata[key] = data[key]
-            revision = data.get("revision")
-            if isinstance(revision, str) and revision:
-                metadata["revision"] = revision
-                sync_key = _history_cursor_key(external_id)
-                previous = await self.host.sync_state_read(sync_key)
-                previous_revision = (
-                    previous.get("revision") if isinstance(previous, Mapping) else None
-                )
-                changed = (
-                    force
-                    or platform_id not in self._known_sessions
-                    or previous_revision != revision
-                )
-                metadata["sync"] = {
-                    "key": sync_key,
-                    "revision": revision,
-                    "previous_revision": previous_revision,
-                    "changed": changed,
-                    "requires_timeline_sync": changed,
-                    "history_cursor_missing": previous is None,
-                }
-            data["metadata"] = metadata
-            session = bridge_models.session_meta(data)
-            self._known_sessions[session.session_id] = session.external_session_id
-            sessions.append(session)
-        return tuple(sessions), next_cursor
+                for item in _array(result, "sessions"):
+                    meta = models.session_meta(item)
+                    if meta.session_id in identities:
+                        raise RuntimeUpstreamError("DSH inventory repeated a session")
+                    identities.add(meta.session_id)
+                    output.append(meta)
+                cursor = _next_cursor(result, cursors)
+                if cursor is None:
+                    return tuple(output)
 
     async def get_session_snapshot(
         self,
@@ -266,107 +142,71 @@ class DshRuntime(AgentRuntime):
         external_session_id: str | None = None,
         limit: int | None = None,
     ) -> RuntimeTimelineSnapshot:
-        params = self._session_params(session_id, external_session_id)
+        params = _session_params(session_id, external_session_id)
         if limit is not None:
             params["limit"] = limit
-        result = await self._request("session.getSnapshot", params)
-        if not isinstance(result, Mapping):
-            raise RuntimeUpstreamError("DSH snapshot result is invalid")
-        raw_items = result.get("items")
-        if not isinstance(raw_items, list):
-            raise RuntimeUpstreamError("DSH snapshot items are invalid")
-        items = tuple(
-            [
-                await self._with_client_message_id(
-                    replace(
-                        bridge_models.timeline_item(
-                            item,
-                            default_session_id=session_id,
-                        ),
-                        session_id=session_id,
+        async with self._read_lock:
+            items = []
+            ids: set[str] = set()
+            cursors: set[str] = set()
+            first: dict[str, Any] | None = None
+            while True:
+                result = _object(await self._request("session.getSnapshot", params))
+                if result.get("sessionId") != session_id:
+                    raise RuntimeUpstreamError(
+                        "DSH snapshot returned a different session"
                     )
-                )
-                for item in raw_items
-            ]
-        )
-        resolved_external_id = (
-            _optional_string(result.get("externalSessionId")) or external_session_id
-        )
-        self._known_sessions[session_id] = resolved_external_id
-        return RuntimeTimelineSnapshot(
-            session_id=session_id,
-            external_session_id=resolved_external_id,
-            runtime="dsh",
-            items=items,
-            complete=result.get("complete") is True,
-            metadata=_snapshot_metadata(result),
-        )
-
-    async def prepare_session_timeline_sync(
-        self,
-        session_id: str,
-        external_session_id: str | None = None,
-    ) -> PreparedSessionTimelineSync | None:
-        snapshot = await self.get_session_snapshot(session_id, external_session_id)
-        if snapshot.external_session_id is None:
-            return PreparedSessionTimelineSync(snapshot=snapshot)
-        resolved_external_session_id = snapshot.external_session_id
-        revision = snapshot.metadata.get("revision")
-        if not isinstance(revision, str) or not revision:
-            return PreparedSessionTimelineSync(snapshot=snapshot)
-        key = _history_cursor_key(snapshot.external_session_id)
-
-        async def commit() -> None:
-            await self.host.sync_state_write(
-                key,
-                {
-                    "revision": revision,
-                    "externalSessionIdHash": _sha256(resolved_external_session_id),
-                },
-            )
-
-        return PreparedSessionTimelineSync(snapshot=snapshot, commit=commit)
+                native_id = result.get("externalSessionId")
+                if not isinstance(native_id, str) or not native_id:
+                    raise RuntimeUpstreamError(
+                        "DSH snapshot has no native session identity"
+                    )
+                if external_session_id and external_session_id != native_id:
+                    raise RuntimeUpstreamError(
+                        "DSH snapshot returned a different native session"
+                    )
+                if first is None:
+                    first = result
+                elif result.get("watermark") != first.get(
+                    "watermark"
+                ) or native_id != first.get("externalSessionId"):
+                    raise RuntimeUpstreamError("DSH snapshot changed during pagination")
+                for value in _array(result, "items"):
+                    item = models.timeline_item(value)
+                    if item.session_id != session_id or item.id in ids:
+                        raise RuntimeUpstreamError(
+                            "DSH snapshot has duplicate or foreign items"
+                        )
+                    ids.add(item.id)
+                    items.append(item)
+                cursor = _next_cursor(result, cursors)
+                if cursor is None:
+                    complete = (
+                        first.get("snapshotComplete", first.get("complete")) is True
+                    )
+                    metadata = dict(first.get("metadata") or {})
+                    total = metadata.get("totalItems")
+                    if total is not None and total != len(items):
+                        raise RuntimeUpstreamError("DSH snapshot is missing a page")
+                    return RuntimeTimelineSnapshot(
+                        session_id=session_id,
+                        external_session_id=native_id,
+                        runtime="dsh",
+                        items=tuple(items),
+                        complete=complete,
+                        metadata=metadata,
+                    )
+                params["cursor"] = cursor
 
     async def get_session_state(
         self,
         session_id: str,
         external_session_id: str | None = None,
-    ) -> SessionState | None:
-        result = await self._request(
-            "session.getState",
-            self._session_params(session_id, external_session_id),
-        )
-        if result is None:
-            return None
-        state = replace(
-            bridge_models.session_state(result),
-            session_id=session_id,
-            external_session_id=(
-                _optional_string(result.get("externalSessionId"))
-                if isinstance(result, Mapping)
-                else external_session_id
+    ) -> SessionState:
+        return models.session_state(
+            await self._request(
+                "session.getState", _session_params(session_id, external_session_id)
             )
-            or external_session_id,
-        )
-        if not _is_concurrent_writer_state(state):
-            self._concurrent_writer_sessions.discard(session_id)
-        return state
-
-    async def get_session_notices(
-        self,
-        session_id: str,
-        external_session_id: str | None = None,
-    ) -> tuple[SessionNotice, ...]:
-        result = await self._request(
-            "session.getNotices",
-            self._session_params(session_id, external_session_id),
-        )
-        raw_notices = result.get("notices") if isinstance(result, Mapping) else result
-        if not isinstance(raw_notices, list):
-            raise RuntimeUpstreamError("DSH notices result is invalid")
-        return tuple(
-            replace(bridge_models.notice(item), session_id=session_id)
-            for item in raw_notices
         )
 
     async def get_session_capabilities(
@@ -374,292 +214,123 @@ class DshRuntime(AgentRuntime):
         session_id: str,
         external_session_id: str | None = None,
     ) -> RuntimeCapabilitySet:
-        capabilities = bridge_models.capability_set(
+        return models.capability_set(
             await self._request(
                 "session.getCapabilities",
-                self._session_params(session_id, external_session_id),
+                _session_params(session_id, external_session_id),
             ),
             connector_id=self.host.connector_id,
         )
-        capabilities = replace(
-            capabilities,
-            session_id=session_id,
-            capabilities=tuple(
-                replace(capability, session_id=session_id)
-                if capability.scope == "session"
-                else capability
-                for capability in capabilities.capabilities
-            ),
-        )
-        if not any(
-            capability.capability_id == CAPABILITY_CATALOG_PERMISSION
-            for capability in capabilities.capabilities
-        ):
-            runtime_capabilities = await self.get_runtime_capabilities()
-            permission_capability = next(
-                (
-                    capability
-                    for capability in runtime_capabilities.capabilities
-                    if capability.capability_id == CAPABILITY_CATALOG_PERMISSION
-                ),
-                None,
-            )
-            if permission_capability is not None:
-                capabilities = replace(
-                    capabilities,
-                    revision=max(capabilities.revision, runtime_capabilities.revision),
-                    capabilities=(
-                        *capabilities.capabilities,
-                        replace(
-                            permission_capability,
-                            scope="session",
-                            session_id=session_id,
-                        ),
-                    ),
-                )
-        return self._disable_writes_for_conflict(capabilities, session_id)
 
-    async def create_and_start_session(
-        self,
-        session_id: str,
-        content: str,
-        title: str | None = None,
-        cwd: str | None = None,
-        selections: Mapping[str, str | None] | None = None,
-        attachments: tuple[RuntimeAttachment, ...] = (),
-        client_message_id: str | None = None,
-    ) -> RuntimeOperationResult:
-        _reject_attachments(attachments)
-        if client_message_id is not None:
-            await self._remember_client_message_id(session_id, client_message_id)
-        params: dict[str, Any] = {
-            "sessionId": session_id,
-            "content": content,
-            "selections": dict(selections or {}),
-            "attachments": [],
-        }
-        _set_optional(params, "title", title)
-        _set_optional(params, "cwd", cwd)
-        _set_optional(params, "clientMessageId", client_message_id)
-        operation = _operation_result(
-            await self._request("session.createAndStart", params)
+    async def get_session_notices(
+        self, session_id: str, external_session_id: str | None = None,
+    ) -> tuple[SessionNotice, ...]:
+        result = await self._request(
+            "session.getNotices", _session_params(session_id, external_session_id)
         )
-        external_id = _optional_string(operation.result.get("externalSessionId"))
-        if operation.ok and external_id is None:
-            raise RuntimeUpstreamError("DSH create result has no externalSessionId")
-        self._known_sessions[session_id] = external_id
-        if external_id is not None:
-            await self.host.sync_state_write(
-                _binding_key(external_id),
-                {
-                    "sessionId": session_id,
-                    "externalSessionIdHash": _sha256(external_id),
-                },
-            )
-        return operation
-
-    async def start_turn(
-        self,
-        session_id: str,
-        external_session_id: str | None,
-        content: str,
-        selections: Mapping[str, str | None] | None = None,
-        attachments: tuple[RuntimeAttachment, ...] = (),
-        client_message_id: str | None = None,
-        cwd: str | None = None,
-    ) -> RuntimeOperationResult:
-        self._assert_session_writable(session_id)
-        _reject_attachments(attachments)
-        if client_message_id is not None:
-            await self._remember_client_message_id(session_id, client_message_id)
-        params = self._session_params(
-            session_id,
-            external_session_id,
-            require_external=True,
-        )
-        params.update(
-            {
-                "content": content,
-                "selections": dict(selections or {}),
-                "attachments": [],
-            }
-        )
-        _set_optional(params, "clientMessageId", client_message_id)
-        _set_optional(params, "cwd", cwd)
-        return _operation_result(await self._request("session.startTurn", params))
-
-    async def steer_turn(
-        self,
-        session_id: str,
-        external_session_id: str | None,
-        content: str,
-        attachments: tuple[RuntimeAttachment, ...] = (),
-        client_message_id: str | None = None,
-    ) -> RuntimeOperationResult:
-        self._assert_session_writable(session_id)
-        _reject_attachments(attachments)
-        if client_message_id is not None:
-            await self._remember_client_message_id(session_id, client_message_id)
-        params = self._session_params(
-            session_id,
-            external_session_id,
-            require_external=True,
-        )
-        params.update({"content": content, "attachments": []})
-        _set_optional(params, "clientMessageId", client_message_id)
-        return _operation_result(await self._request("session.steer", params))
-
-    async def interrupt_session(
-        self,
-        session_id: str,
-        reason: str | None = None,
-    ) -> RuntimeOperationResult:
-        params = {"sessionId": self._native_session_id(session_id)}
-        _set_optional(params, "reason", reason)
-        return _operation_result(await self._request("session.interrupt", params))
-
-    async def update_session_selections(
-        self,
-        session_id: str,
-        external_session_id: str | None,
-        selections: Mapping[str, str | None],
-    ) -> RuntimeOperationResult:
-        self._assert_session_writable(session_id)
-        params = self._session_params(
-            session_id,
-            external_session_id,
-            require_external=True,
-        )
-        params["selections"] = dict(selections)
-        return _operation_result(
-            await self._request("session.updateSelections", params)
-        )
-
-    async def list_commands(
-        self,
-        session_id: str,
-        external_session_id: str | None = None,
-        query: str | None = None,
-        limit: int = 50,
-    ) -> tuple[RuntimeCommand, ...]:
-        params = self._session_params(
-            session_id,
-            external_session_id,
-            require_external=True,
-        )
-        params.update(_query_params(query, limit))
-        return bridge_models.commands(
-            await self._request("session.listCommands", params)
-        )
-
-    async def execute_command(
-        self,
-        session_id: str,
-        command: str,
-        external_session_id: str | None = None,
-        raw: str | None = None,
-        args: tuple[str, ...] = (),
-    ) -> RuntimeCommandResult:
-        self._assert_session_writable(session_id)
-        params = self._session_params(
-            session_id,
-            external_session_id,
-            require_external=True,
-        )
-        params.update({"command": command, "args": list(args)})
-        _set_optional(params, "raw", raw)
-        return bridge_models.command_result(
-            await self._request("session.executeCommand", params),
-            command,
-        )
+        return tuple(models.notice(item) for item in _array(result, "notices"))
 
     async def respond_interaction(
-        self,
-        session_id: str,
-        notice_id: str,
-        action_id: str,
+        self, session_id: str, notice_id: str, action_id: str,
         input_data: Mapping[str, Any] | None = None,
     ) -> RuntimeOperationResult:
-        params: dict[str, Any] = {
-            "sessionId": self._native_session_id(session_id),
-            "noticeId": notice_id,
-            "actionId": action_id,
-        }
-        if input_data is not None:
-            params["inputData"] = dict(input_data)
-        return _operation_result(
-            await self._request("session.respondInteraction", params)
+        result = _object(await self._request("session.respondInteraction", {
+            "sessionId": session_id, "noticeId": notice_id,
+            "actionId": action_id, "inputData": dict(input_data or {}),
+        }))
+        return RuntimeOperationResult(
+            ok=result.get("ok") is True,
+            code=result.get("code"), message=result.get("message"),
+            result=_object(result.get("result") or {}),
         )
 
+    async def create_and_start_session(
+        self, session_id: str, content: str, title: str | None = None,
+        cwd: str | None = None, selections: Mapping[str, str | None] | None = None,
+        attachments: tuple[RuntimeAttachment, ...] = (), client_message_id: str | None = None,
+    ) -> RuntimeOperationResult:
+        return await self._send_text("session.createAndStart", session_id, None, content, cwd, attachments, client_message_id)
+
+    async def start_turn(
+        self, session_id: str, external_session_id: str | None, content: str,
+        selections: Mapping[str, str | None] | None = None,
+        attachments: tuple[RuntimeAttachment, ...] = (), client_message_id: str | None = None,
+        cwd: str | None = None,
+    ) -> RuntimeOperationResult:
+        return await self._send_text("session.startTurn", session_id, external_session_id, content, cwd, attachments, client_message_id)
+
+    async def _send_text(
+        self, method: str, session_id: str, external_id: str | None, content: str,
+        cwd: str | None, attachments: tuple[RuntimeAttachment, ...], client_message_id: str | None,
+    ) -> RuntimeOperationResult:
+        if attachments:
+            raise RuntimeUnsupportedError("DSH attachments are not supported yet")
+        if not content.strip() or not client_message_id:
+            raise RuntimeInvalidRequestError("Text and a stable clientMessageId are required")
+        params = {**_session_params(session_id, external_id), "content": content,
+                  "clientMessageId": client_message_id, "cwd": cwd}
+        return RuntimeOperationResult(result=_object(await self._request(method, params)))
+
+    async def interrupt_session(self, session_id: str, reason: str | None = None) -> RuntimeOperationResult:
+        return RuntimeOperationResult(result=_object(await self._request("session.interrupt", {"sessionId": session_id})))
+
     async def _start_client(self) -> None:
-        values = dict(self.config.values)
+        values = provider_config.normalized_config_values(dict(self.config.values))
         try:
             endpoint = discovery.load_endpoint(values)
         except (OSError, ValueError) as exc:
             raise RuntimeUnavailableError(
-                "DSH Web bridge endpoint is unavailable; start dsh web"
+                "Start DSH with the phone connection plugin"
             ) from exc
         client = BridgeClient(
             endpoint=endpoint,
             connector_id=self.host.connector_id,
+            session_namespace=getattr(
+                self.host, "session_namespace", self.host.connector_id
+            ),
             client_version=self.client_version,
             startup_timeout=int(values["startupTimeoutMs"]) / 1000,
             request_timeout=int(values["requestTimeoutMs"]) / 1000,
             notification_handler=self._handle_notification,
             exit_handler=self._handle_exit,
         )
-        self._client = client
         try:
             result = await client.start()
+            identity = result["identity"]
+            self._identity = RuntimeIdentity(
+                runtime="dsh",
+                runtime_version=identity.get("runtimeVersion", "unknown"),
+                display_name="DeepSeek Harness",
+                protocol_version=identity["protocolVersion"],
+            )
+            # Bootstrap only declared capabilities; read-only startup needs no model catalog.
+            capabilities = models.capability_set(
+                await client.request("runtime.getCapabilities"),
+                connector_id=self.host.connector_id,
+            )
+            await self.host.runtime_capabilities_update(capabilities)
+            if self._stopping or not client.connected:
+                raise RuntimeUnavailableError("DSH bridge is stopping")
+            self._client = client
+            self._sync_mode = "events" if result.get("features", {}).get("syncMode") == "events" else "polling"
+            if self._sync_mode == "events":
+                self._sync = SyncRelay(client, self.host)
+                self._sync.start()
         except BaseException:
-            if self._client is client:
-                self._client = None
             await client.close()
             raise
-        identity = result["identity"]
-        metadata = dict(self.config.metadata)
-        bridge_version = identity.get("bridgeVersion")
-        if isinstance(bridge_version, str) and bridge_version:
-            metadata["bridgeVersion"] = bridge_version
-        self.config = replace(self.config, metadata=metadata)
-        discovered_version = metadata.get("dshVersion")
-        self._identity = RuntimeIdentity(
-            runtime="dsh",
-            runtime_version=(
-                discovered_version
-                if isinstance(discovered_version, str) and discovered_version
-                else str(identity.get("runtimeVersion") or "unknown")
-            ),
-            display_name="DeepSeek Harness",
-            protocol_version=str(identity.get("protocolVersion") or "1.0"),
-        )
-        try:
-            await self._publish_bootstrap()
-        except BaseException:
-            if self._client is client:
-                self._client = None
-            await client.close()
-            raise
-        self._restart_attempts = 0
 
     async def _ensure_client(self) -> None:
-        if self._client is not None:
+        if self._client is not None and self._client.connected:
             return
         async with self._connect_lock:
-            if self._client is not None:
-                return
             if self._stopping:
                 raise RuntimeUnavailableError("DSH bridge is stopping")
-            await self._start_client()
-
-    async def _publish_bootstrap(self) -> None:
-        await self.host.runtime_capabilities_update(
-            await self.get_runtime_capabilities()
-        )
-        await self.host.model_catalog_update(await self.list_model_catalog(limit=500))
-        await self.host.permission_catalog_update(
-            await self.list_permission_catalog(limit=500)
-        )
+            if self._client is not None and not self._client.connected:
+                client, self._client = self._client, None
+                await client.close()
+            if self._client is None:
+                await self._start_client()
 
     async def _request(
         self,
@@ -668,587 +339,102 @@ class DshRuntime(AgentRuntime):
     ) -> Any:
         try:
             await self._ensure_client()
-            client = self._client
-            if client is None:
+            if self._client is None:
                 raise RuntimeUnavailableError("DSH bridge is not running")
-            return await client.request(method, params)
+            return await self._client.request(method, params)
         except BridgeRpcError as exc:
-            if exc.bridge_code == "DSH_CONCURRENT_WRITER_DETECTED":
-                bridge_session_id = _optional_string((params or {}).get("sessionId"))
-                if bridge_session_id is not None:
-                    session_id = self._platform_session_id(
-                        bridge_session_id,
-                        _optional_string((params or {}).get("externalSessionId")),
-                    )
-                    self._concurrent_writer_sessions.add(session_id)
-                    with suppress(Exception):
-                        await self._publish_concurrent_writer_error(
-                            session_id, params or {}
-                        )
-            raise _runtime_error(method, exc) from exc
-        except TimeoutError as exc:
-            raise RuntimeUnavailableError(str(exc)) from exc
-        except (ConnectionError, RuntimeError) as exc:
+            if exc.bridge_code in {"UNSUPPORTED_OPERATION", "METHOD_NOT_FOUND"}:
+                raise RuntimeUnsupportedError(method) from exc
+            if exc.bridge_code in {
+                "INVALID_REQUEST",
+                "INVALID_PARAMS",
+                "SESSION_NOT_FOUND",
+            }:
+                raise RuntimeInvalidRequestError(str(exc)) from exc
+            if exc.retryable:
+                raise RuntimeUnavailableError(str(exc)) from exc
+            raise RuntimeUpstreamError(str(exc)) from exc
+        except (OSError, TimeoutError, ConnectionError, RuntimeError) as exc:
             raise RuntimeUnavailableError("DSH bridge is unavailable") from exc
         except ValueError as exc:
             raise RuntimeUpstreamError(str(exc)) from exc
 
-    def _assert_session_writable(self, session_id: str) -> None:
-        if session_id in self._concurrent_writer_sessions:
-            raise RuntimeConflictError(
-                "another DeepSeek Harness process is writing this session; "
-                "stop it and force-refresh the session before retrying"
-            )
-
-    def _native_session_id(self, session_id: str) -> str:
-        return self._bridge_session_ids.get(session_id, session_id)
-
-    def _platform_session_id(
-        self,
-        bridge_session_id: str,
-        external_session_id: str | None,
-    ) -> str:
-        existing = self._bridge_platform_ids.get(bridge_session_id)
-        if existing is not None:
-            return existing
-        source_id = external_session_id or bridge_session_id
-        platform_id = stable_runtime_session_id(
-            getattr(self.host, "session_namespace", self.host.connector_id),
-            "dsh",
-            source_id,
-        )
-        self._bridge_session_ids[platform_id] = bridge_session_id
-        self._bridge_platform_ids[bridge_session_id] = platform_id
-        return platform_id
-
-    def _session_params(
-        self,
-        session_id: str,
-        external_session_id: str | None,
-        *,
-        require_external: bool = False,
-    ) -> dict[str, Any]:
-        native_session_id = self._native_session_id(session_id)
-        self._bridge_session_ids.setdefault(session_id, native_session_id)
-        self._bridge_platform_ids.setdefault(native_session_id, session_id)
-        return _session_params(
-            native_session_id,
-            external_session_id,
-            require_external=require_external,
-        )
-
-    def _disable_writes_for_conflict(
-        self,
-        capability_set: RuntimeCapabilitySet,
-        session_id: str,
-    ) -> RuntimeCapabilitySet:
-        if session_id not in self._concurrent_writer_sessions:
-            return capability_set
-        blocked = {
-            "session.send_message",
-            "session.steer",
-            "session.commands",
-            "catalog.model",
-            "catalog.permission",
-        }
-        return replace(
-            capability_set,
-            revision=capability_set.revision + 1,
-            capabilities=tuple(
-                replace(
-                    capability,
-                    available=False,
-                    allowed=False,
-                    unavailable_reason="another DSH process is writing this native session",
-                )
-                if capability.capability_id in blocked
-                else capability
-                for capability in capability_set.capabilities
-            ),
-        )
-
-    async def _publish_concurrent_writer_error(
-        self,
-        session_id: str,
-        params: Mapping[str, Any],
-    ) -> None:
-        external_session_id = _optional_string(params.get("externalSessionId"))
-        await self.host.runtime_error(
-            "dsh",
-            "DSH_CONCURRENT_WRITER_DETECTED",
-            "Another DeepSeek Harness process is writing this native session",
-            session_id=session_id,
-            external_session_id=external_session_id,
-            details={"retryable": True},
-        )
-        await self.host.session_state_update(
-            session_id,
-            "dsh",
-            status="error",
-            external_session_id=external_session_id,
-            status_reason="concurrent_writer",
-            error={
-                "code": "DSH_CONCURRENT_WRITER_DETECTED",
-                "message": "Stop the other DSH process, then refresh and retry",
-            },
-        )
-        client = self._client
-        if client is None:
-            return
-        raw = await client.request(
-            "session.getCapabilities",
-            self._session_params(session_id, external_session_id),
-        )
-        capabilities = bridge_models.capability_set(
-            raw,
-            connector_id=self.host.connector_id,
-        )
-        await self.host.session_capabilities_update(
-            self._disable_writes_for_conflict(capabilities, session_id)
-        )
-
     async def _handle_notification(
-        self,
-        method: str,
-        params: Mapping[str, Any],
+        self, method: str, params: Mapping[str, Any]
     ) -> None:
-        session_key = _optional_string(params.get("sessionId")) or "runtime"
-        lock = self._notification_locks.setdefault(session_key, asyncio.Lock())
-        async with lock:
-            await self._publish_notification(method, params)
-
-    async def _remember_client_message_id(
-        self,
-        session_id: str,
-        client_message_id: str,
-    ) -> None:
-        native_message_id = _dsh_message_id(session_id, client_message_id)
-        self._client_message_ids[(session_id, native_message_id)] = client_message_id
-        await self.host.sync_state_write(
-            _client_message_key(session_id, native_message_id),
-            {"clientMessageId": client_message_id},
-        )
-
-    async def _with_client_message_id(
-        self,
-        item: RuntimeTimelineItem,
-    ) -> RuntimeTimelineItem:
-        if item.type != "message" or item.role != "user":
-            return item
-        source = dict(item.source)
-        if _optional_string(source.get("clientMessageId")) is not None:
-            return item
-        native_message_id = _optional_string(source.get("itemId"))
-        if native_message_id is None or not native_message_id.startswith("aa-"):
-            return item
-        cache_key = (item.session_id, native_message_id)
-        client_message_id = self._client_message_ids.get(cache_key)
-        if client_message_id is None:
-            stored = await self.host.sync_state_read(
-                _client_message_key(item.session_id, native_message_id)
-            )
-            client_message_id = (
-                _optional_string(stored.get("clientMessageId"))
-                if isinstance(stored, Mapping)
-                else None
-            )
-            if client_message_id is None:
-                return item
-            self._client_message_ids[cache_key] = client_message_id
-        source["clientMessageId"] = client_message_id
-        return replace(item, source=source)
-
-    async def _publish_notification(
-        self,
-        method: str,
-        params: Mapping[str, Any],
-    ) -> None:
+        # Additive 1.x notification support stays mechanical; never interpret native DSH events here.
         if method == "runtime.capabilities.update":
             await self.host.runtime_capabilities_update(
-                bridge_models.capability_set(
-                    params, connector_id=self.host.connector_id
-                )
+                models.capability_set(params, connector_id=self.host.connector_id)
             )
-            return
-        if method == "session.capabilities.update":
-            capabilities = bridge_models.capability_set(
-                params,
-                connector_id=self.host.connector_id,
+        elif method == "timeline.item.upsert" and self.sync_mode != "events":
+            await self.host.timeline_item_upsert(
+                models.timeline_item(params.get("item", params))
             )
-            bridge_session_id = _optional_string(params.get("sessionId"))
-            external_session_id = _optional_string(params.get("externalSessionId"))
-            if bridge_session_id is not None:
-                session_id = self._platform_session_id(
-                    bridge_session_id,
-                    external_session_id,
-                )
-                capabilities = replace(
-                    capabilities,
-                    session_id=session_id,
-                    capabilities=tuple(
-                        replace(capability, session_id=session_id)
-                        if capability.scope == "session"
-                        else capability
-                        for capability in capabilities.capabilities
-                    ),
-                )
-            await self.host.session_capabilities_update(capabilities)
-            return
-        if method == "catalog.model.update":
-            await self.host.model_catalog_update(bridge_models.model_catalog(params))
-            return
-        if method == "catalog.permission.update":
-            await self.host.permission_catalog_update(
-                bridge_models.permission_catalog(params)
-            )
-            return
-        if method == "session.meta.upsert":
-            native_session = bridge_models.session_meta(params)
-            session = replace(
-                native_session,
-                session_id=self._platform_session_id(
-                    native_session.session_id,
-                    native_session.external_session_id,
-                ),
-            )
-            self._known_sessions[session.session_id] = session.external_session_id
-            await self.host.session_meta_upsert(
-                session.session_id,
-                "dsh",
-                external_session_id=session.external_session_id,
-                title=session.title,
-                cwd=session.cwd,
-                ordering_time=session.ordering_time,
-                metadata=session.metadata,
-            )
-            return
-        if method == "session.state.update":
-            native_state = bridge_models.session_state(params)
-            state = replace(
-                native_state,
-                session_id=self._platform_session_id(
-                    native_state.session_id,
-                    native_state.external_session_id,
-                ),
-            )
-            self._known_sessions[state.session_id] = state.external_session_id
-            await self.host.session_state_update(
-                state.session_id,
-                "dsh",
-                status=state.status,
-                selections=state.selections,
-                external_session_id=state.external_session_id,
-                status_reason=state.status_reason,
-                error=state.error,
-                metadata=state.metadata,
-            )
-            return
-        if method == "timeline.item.upsert":
-            bridge_session_id = _required_string(
-                params.get("sessionId"),
-                "sessionId",
-            )
-            session_id = self._platform_session_id(
-                bridge_session_id,
-                _optional_string(params.get("externalSessionId")),
-            )
-            raw_item = params.get("item")
-            if isinstance(raw_item, Mapping):
-                item = await self._with_client_message_id(
-                    replace(
-                        bridge_models.timeline_item(
-                            raw_item,
-                            default_session_id=bridge_session_id,
-                        ),
-                        session_id=session_id,
-                    )
-                )
-            else:
-                # Keep accepting the early bridge-v1 draft shape where the
-                # timeline item itself was used as the notification params.
-                item = await self._with_client_message_id(
-                    replace(
-                        bridge_models.timeline_item(params),
-                        session_id=session_id,
-                    )
-                )
-            await self.host.timeline_item_upsert(item)
-            return
-        if method == "timeline.sync":
-            bridge_session_id = _required_string(
-                params.get("sessionId"),
-                "sessionId",
-            )
-            external_session_id = _optional_string(params.get("externalSessionId"))
-            session_id = self._platform_session_id(
-                bridge_session_id,
-                external_session_id,
-            )
-            raw_items = params.get("items")
-            if not isinstance(raw_items, list):
-                raise ValueError("DSH timeline.sync items must be an array")
-            items = tuple(
-                [
-                    await self._with_client_message_id(
-                        replace(
-                            bridge_models.timeline_item(
-                                item,
-                                default_session_id=bridge_session_id,
-                            ),
-                            session_id=session_id,
-                        )
-                    )
-                    for item in raw_items
-                ]
-            )
-            await self.host.timeline_sync(
-                session_id,
-                "dsh",
-                items,
-                external_session_id=external_session_id,
-                complete=params.get("complete") is True,
-                metadata=_safe_metadata(params.get("metadata")),
-            )
-            return
-        if method == "notice.upsert":
-            native_notice = bridge_models.notice(params)
-            await self.host.notice_upsert(
-                replace(
-                    native_notice,
-                    session_id=self._platform_session_id(
-                        native_notice.session_id,
-                        _optional_string(params.get("externalSessionId")),
-                    ),
-                )
-            )
-            return
-        if method == "runtime.error":
-            details = _safe_error_details(params.get("details"))
-            bridge_session_id = _optional_string(params.get("sessionId"))
-            external_session_id = _optional_string(params.get("externalSessionId"))
-            await self.host.runtime_error(
-                "dsh",
-                _required_string(params.get("code"), "runtime error code"),
-                _required_string(params.get("message"), "runtime error message"),
-                session_id=(
-                    self._platform_session_id(
-                        bridge_session_id,
-                        external_session_id,
-                    )
-                    if bridge_session_id is not None
-                    else None
-                ),
-                external_session_id=external_session_id,
-                details=details,
-            )
-            return
-        # Protocol 1.x permits additive notifications.
+        elif method == "runtime.sync.batch" and self._sync is not None:
+            try:
+                self._sync.accept(params)
+            except asyncio.QueueFull:
+                if self._client and self._client.writer:
+                    self._client.writer.close()
 
     async def _handle_exit(self, return_code: int | None) -> None:
+        self._client = None
+        if self._sync is not None:
+            await self._sync.close()
+            self._sync = None
         if self._stopping:
             return
-        self._client = None
-        await self.host.runtime_error(
-            "dsh",
-            "DSH_BRIDGE_EXITED",
-            "DeepSeek Harness bridge exited unexpectedly",
-            details={"exitCode": return_code, "retryable": True},
-        )
-        for session_id, external_id in tuple(self._known_sessions.items()):
-            await self.host.session_state_update(
-                session_id,
+        with suppress(Exception):
+            await self.host.runtime_error(
                 "dsh",
-                status="disconnected",
-                external_session_id=external_id,
-                status_reason="bridge_exited",
+                "DSH_BRIDGE_EXITED",
+                "DeepSeek Harness bridge disconnected",
+                details={"retryable": True},
             )
         if self._restart_task is None or self._restart_task.done():
             self._restart_task = asyncio.create_task(self._restart_loop())
 
     async def _restart_loop(self) -> None:
-        max_attempts = int(self.config.values.get("maxRestartAttempts", 3))
-        base_delay = int(self.config.values.get("restartBackoffMs", 1000)) / 1000
-        while not self._stopping and self._restart_attempts < max_attempts:
-            delay = base_delay * (2**self._restart_attempts)
-            self._restart_attempts += 1
-            await asyncio.sleep(delay)
+        values = provider_config.normalized_config_values(dict(self.config.values))
+        for attempt in range(int(values["maxRestartAttempts"])):
+            if self._stopping:
+                return
+            await asyncio.sleep(int(values["restartBackoffMs"]) / 1000 * 2**attempt)
             try:
                 await self._ensure_client()
-                await self.list_sessions(limit=500, force=True)
                 return
-            except Exception as exc:  # noqa: BLE001
-                await self.host.runtime_error(
-                    "dsh",
-                    "DSH_BRIDGE_RESTART_FAILED",
-                    "DeepSeek Harness bridge restart failed",
-                    details={
-                        "attempt": self._restart_attempts,
-                        "errorType": exc.__class__.__name__,
-                        "retryable": self._restart_attempts < max_attempts,
-                    },
-                )
+            except (
+                Exception
+            ):  # A later user request can retry after this bounded recovery loop.
+                continue
 
 
-def _operation_result(value: Any) -> RuntimeOperationResult:
-    if not isinstance(value, Mapping):
-        raise RuntimeUpstreamError("DSH operation result is invalid")
-    nested = value.get("result")
-    result = (
-        dict(nested)
-        if isinstance(nested, Mapping)
-        else {
-            str(key): item
-            for key, item in value.items()
-            if key not in {"ok", "code", "message"}
-        }
-    )
-    return RuntimeOperationResult(
-        ok=value.get("ok") is not False,
-        code=_optional_string(value.get("code")),
-        message=_optional_string(value.get("message")),
-        result=result,
-    )
-
-
-def _runtime_error(method: str, error: BridgeRpcError) -> Exception:
-    code = error.bridge_code or "BRIDGE_ERROR"
-    message = str(error)
-    if code == "UNSUPPORTED_OPERATION":
-        return RuntimeUnsupportedError(method)
-    if code in {
-        "SESSION_CONFLICT",
-        "SESSION_BINDING_CONFLICT",
-        "IDEMPOTENCY_CONFLICT",
-        "INTERACTION_ALREADY_CLOSED",
-        "INTERACTION_NOT_PENDING",
-        "DSH_CONCURRENT_WRITER_DETECTED",
-        "SESSION_RUNNING",
-    }:
-        return RuntimeConflictError(message)
-    if code in {
-        "INVALID_SELECTION",
-        "SESSION_NOT_FOUND",
-        "COMMAND_NOT_FOUND",
-        "INVALID_INTERACTION_RESPONSE",
-    } or error.rpc_code in {-32600, -32601, -32602}:
-        return RuntimeInvalidRequestError(message)
-    if code in {
-        "DSH_SERVICE_UNAVAILABLE",
-        "NOT_INITIALIZED",
-        "SHUTTING_DOWN",
-        "REQUEST_TIMEOUT",
-    }:
-        return RuntimeUnavailableError(message)
-    return RuntimeUpstreamError(message)
-
-
-def _session_params(
-    session_id: str,
-    external_session_id: str | None,
-    *,
-    require_external: bool = False,
-) -> dict[str, Any]:
-    if not session_id:
-        raise RuntimeInvalidRequestError("session_id must not be empty")
-    if require_external and not external_session_id:
-        raise RuntimeInvalidRequestError(
-            "DSH write operations require external_session_id"
-        )
-    params: dict[str, Any] = {"sessionId": session_id}
-    _set_optional(params, "externalSessionId", external_session_id)
-    return params
-
-
-def _query_params(query: str | None, limit: int) -> dict[str, Any]:
-    params: dict[str, Any] = {"limit": limit}
-    _set_optional(params, "query", query)
-    return params
-
-
-def _reject_attachments(attachments: tuple[RuntimeAttachment, ...]) -> None:
-    if attachments:
-        raise RuntimeUnsupportedError("attachments")
-
-
-def _set_optional(target: dict[str, Any], key: str, value: Any) -> None:
-    if value is not None:
-        target[key] = value
-
-
-def _optional_string(value: Any) -> str | None:
-    return value if isinstance(value, str) and value else None
-
-
-def _required_string(value: Any, label: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"DSH {label} must be a non-empty string")
+def _object(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise RuntimeUpstreamError("DSH response must be an object")
     return value
 
 
-def _safe_metadata(value: Any) -> dict[str, Any]:
-    if not isinstance(value, Mapping):
-        return {}
-    blocked = {
-        "environment",
-        "credentials",
-        "apiKey",
-        "settings",
-        "prompt",
-        "stderr",
-        "executablePath",
-        "dshHome",
-    }
-    return {
-        str(key): item
-        for key, item in value.items()
-        if isinstance(key, str) and key not in blocked
-    }
+def _array(value: Any, key: str) -> list[Any]:
+    field = _object(value).get(key)
+    if not isinstance(field, list):
+        raise RuntimeUpstreamError(f"DSH response {key} must be an array")
+    return field
 
 
-def _snapshot_metadata(result: Mapping[str, Any]) -> dict[str, Any]:
-    metadata = _safe_metadata(result.get("metadata"))
-    watermark = result.get("watermark")
-    if not isinstance(watermark, Mapping):
-        return metadata
-    revision = _optional_string(watermark.get("revision"))
-    if revision is not None:
-        metadata["revision"] = revision
-    sequence = watermark.get("seq")
-    if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence >= 0:
-        metadata["watermarkSeq"] = sequence
-    return metadata
+def _next_cursor(value: Any, seen: set[str]) -> str | None:
+    cursor = _object(value).get("nextCursor")
+    if cursor is None:
+        return None
+    if not isinstance(cursor, str) or not cursor or cursor in seen:
+        raise RuntimeUpstreamError("DSH returned an invalid or repeated cursor")
+    seen.add(cursor)
+    return cursor
 
 
-def _safe_error_details(value: Any) -> dict[str, Any]:
-    if not isinstance(value, Mapping):
-        return {}
-    allowed = {"method", "bridgeCode", "retryable", "exitCode", "attempt", "errorType"}
-    return {str(key): item for key, item in value.items() if key in allowed}
-
-
-def _is_concurrent_writer_state(state: SessionState) -> bool:
-    return (
-        state.status == "error"
-        and isinstance(state.error, Mapping)
-        and state.error.get("code") == "DSH_CONCURRENT_WRITER_DETECTED"
-    )
-
-
-def _sha256(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def _binding_key(external_session_id: str) -> str:
-    return f"dsh/bindings/{_sha256(external_session_id)}"
-
-
-def _history_cursor_key(external_session_id: str) -> str:
-    return f"dsh/history/cursor/{_sha256(external_session_id)}"
-
-
-def _dsh_message_id(session_id: str, client_message_id: str) -> str:
-    return f"aa-{_sha256(f'{session_id}\0{client_message_id}')}"
-
-
-def _client_message_key(session_id: str, native_message_id: str) -> str:
-    return f"dsh/client-messages/{_sha256(f'{session_id}\0{native_message_id}')}"
+def _session_params(session_id: str, external_session_id: str | None) -> dict[str, Any]:
+    params: dict[str, Any] = {"sessionId": session_id}
+    if external_session_id is not None:
+        params["externalSessionId"] = external_session_id
+    return params

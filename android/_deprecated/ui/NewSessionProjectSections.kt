@@ -1,3 +1,4 @@
+// Previous inline project editor, replaced by NewProjectScreen.
 package com.agentsanywhere.app.ui.screens.home
 
 import androidx.compose.animation.core.animateDpAsState
@@ -11,7 +12,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,11 +22,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -335,125 +337,130 @@ internal fun CreateProjectSection(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .windowInsetsPadding(WindowInsets.navigationBars),
+            .windowInsetsPadding(WindowInsets.navigationBars)
+            .padding(bottom = 10.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(32.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                text = stringResource(R.string.new_session_create_project),
-                color = colors.ink,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.ExtraBold,
-                lineHeight = 21.sp,
-            )
-            SmallPill(darkMode = darkMode, onClick = onCancel) {
-                BackGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(32.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
-                    text = stringResource(R.string.common_cancel),
-                    color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
-                    fontSize = 13.sp,
+                    text = stringResource(R.string.new_session_create_project),
+                    color = colors.ink,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.ExtraBold,
+                    lineHeight = 21.sp,
+                )
+                SmallPill(darkMode = darkMode, onClick = onCancel) {
+                    BackGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555))
+                    Text(
+                        text = stringResource(R.string.common_cancel),
+                        color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
+            }
+            Text(
+                text = stringResource(R.string.new_session_project_name),
+                color = colors.inkSoft,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 2.dp),
+            )
+            BasicTextField(
+                value = name,
+                onValueChange = onNameChange,
+                enabled = !creating,
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(54.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(colors.raisedSurface)
+                    .border(1.dp, colors.border, RoundedCornerShape(18.dp))
+                    .padding(horizontal = 16.dp),
+                textStyle = TextStyle(
+                    color = colors.ink,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = FontFamily.SansSerif,
+                ),
+                cursorBrush = SolidColor(colors.ink),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (canCreate) onCreate() }),
+                decorationBox = { inner ->
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        if (name.isBlank()) {
+                            Text(
+                                text = stringResource(R.string.new_session_project_name_placeholder),
+                                color = colors.faint,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        inner()
+                    }
+                },
+            )
+            Text(
+                text = stringResource(R.string.new_session_project_directory),
+                color = colors.inkSoft,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 2.dp),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(colors.raisedSurface)
+                    .border(1.dp, colors.border, RoundedCornerShape(18.dp))
+                    .noRippleClickable(enabled = canBrowse, onClick = onChooseDirectory)
+                    .padding(horizontal = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Lucide.Folder,
+                    contentDescription = null,
+                    tint = colors.inkSoft.copy(alpha = if (canBrowse) 1f else 0.45f),
+                    modifier = Modifier.size(20.dp),
+                )
+                Text(
+                    text = workspacePath.ifBlank { stringResource(R.string.new_session_choose_directory) },
+                    color = if (workspacePath.isBlank()) colors.muted else colors.ink,
+                    fontSize = 15.sp,
+                    fontFamily = if (workspacePath.isBlank()) FontFamily.SansSerif else FontFamily.Monospace,
+                    maxLines = 2,
+                    overflow = TextOverflow.StartEllipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                ForwardGlyph(color = colors.muted.copy(alpha = if (canBrowse) 1f else 0.45f))
+            }
+            error?.let { message ->
+                Text(
+                    text = message,
+                    color = colors.errorText,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    lineHeight = 17.sp,
+                    modifier = Modifier.padding(horizontal = 2.dp),
                 )
             }
         }
-        Text(
-            text = stringResource(R.string.new_session_project_name),
-            color = colors.inkSoft,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(start = 2.dp),
-        )
-        BasicTextField(
-            value = name,
-            onValueChange = onNameChange,
-            enabled = !creating,
-            singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(54.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(colors.raisedSurface)
-                .border(1.dp, colors.border, RoundedCornerShape(18.dp))
-                .padding(horizontal = 16.dp),
-            textStyle = TextStyle(
-                color = colors.ink,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                fontFamily = FontFamily.SansSerif,
-            ),
-            cursorBrush = SolidColor(colors.ink),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { if (canCreate) onCreate() }),
-            decorationBox = { inner ->
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.CenterStart,
-                ) {
-                    if (name.isBlank()) {
-                        Text(
-                            text = stringResource(R.string.new_session_project_name_placeholder),
-                            color = colors.faint,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                    inner()
-                }
-            },
-        )
-        Text(
-            text = stringResource(R.string.new_session_project_directory),
-            color = colors.inkSoft,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(start = 2.dp),
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(colors.raisedSurface)
-                .border(1.dp, colors.border, RoundedCornerShape(18.dp))
-                .then(if (canBrowse) Modifier.noRippleClickable(onClick = onChooseDirectory) else Modifier)
-                .padding(horizontal = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = Lucide.Folder,
-                contentDescription = null,
-                tint = colors.inkSoft.copy(alpha = if (canBrowse) 1f else 0.45f),
-                modifier = Modifier.size(20.dp),
-            )
-            Text(
-                text = workspacePath.ifBlank { stringResource(R.string.new_session_choose_directory) },
-                color = colors.ink.copy(alpha = if (canBrowse) 1f else 0.45f),
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.MiddleEllipsis,
-                modifier = Modifier.weight(1f),
-            )
-            ForwardGlyph(color = colors.muted.copy(alpha = if (canBrowse) 1f else 0.45f))
-        }
-        error?.let { message ->
-            Text(
-                text = message,
-                color = colors.errorText,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                lineHeight = 17.sp,
-                modifier = Modifier.padding(horizontal = 2.dp),
-            )
-        }
-        Spacer(Modifier.weight(1f))
         StartChatButton(
             label = if (creating) {
                 stringResource(R.string.new_session_project_creating)

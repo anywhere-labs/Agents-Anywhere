@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowImportingTsExtensions": true,
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "skipLibCheck": true
+  },
+  "include": ["scripts/**/*.ts", "tsdown.config.ts"]
+}

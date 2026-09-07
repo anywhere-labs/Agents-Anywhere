@@ -2,6 +2,7 @@ package com.agentsanywhere.app.ui.screens.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,15 +14,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -33,6 +41,7 @@ import com.agentsanywhere.app.ui.designsystem.BackGlyph
 import com.agentsanywhere.app.ui.designsystem.CheckGlyph
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.Lucide
@@ -48,11 +57,20 @@ internal fun ChoosePathSection(
     darkMode: Boolean,
     canUseCurrent: Boolean,
     modifier: Modifier,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)?,
     onParent: () -> Unit,
-    onUseCurrent: () -> Unit,
+    onUseCurrent: (() -> Unit)? = null,
     onOpenEntry: (NewSessionPathEntry) -> Unit,
+    title: String? = null,
+    enabled: Boolean = true,
+    currentSelected: Boolean = false,
+    onRetry: (() -> Unit)? = null,
+    collapsible: Boolean = false,
 ) {
+    var expanded by rememberSaveable { mutableStateOf(true) }
+    val listExpanded = !collapsible || expanded
+    val listState = rememberLazyListState()
+    val haptic = LocalHapticFeedback.current
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -65,13 +83,13 @@ internal fun ChoosePathSection(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = stringResource(R.string.new_session_choose_path),
+                text = title ?: stringResource(R.string.new_session_choose_path),
                 color = LocalAAColors.current.ink,
                 fontSize = 17.sp,
                 fontWeight = FontWeight.ExtraBold,
                 lineHeight = 21.sp,
             )
-            SmallPill(darkMode = darkMode, onClick = onBack) {
+            if (onBack != null) SmallPill(darkMode = darkMode, onClick = onBack, enabled = enabled) {
                 BackGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555))
                 Text(
                     text = stringResource(R.string.common_back),
@@ -85,28 +103,44 @@ internal fun ChoosePathSection(
         CurrentDirectoryBar(
             currentPath = currentPathLabel,
             darkMode = darkMode,
-            canGoParent = parentPath != null,
-            canUseCurrent = canUseCurrent,
+            canGoParent = parentPath != null && enabled && !loading,
+            canUseCurrent = canUseCurrent && enabled && !loading && error == null,
+            currentSelected = currentSelected,
             onParent = onParent,
             onUseCurrent = onUseCurrent,
+            enabled = enabled,
+            listExpanded = listExpanded,
+            onToggleList = if (collapsible) ({
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                expanded = !expanded
+            }) else null,
         )
-        Box(
+        if (listExpanded || loading || error != null) Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
         ) {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(modifier = Modifier.fillMaxSize(), state = listState) {
                 when {
                     loading -> item {
                         PathMessage(stringResource(R.string.new_session_loading_directory), darkMode)
                     }
                     error != null -> item {
-                        PathMessage(error, darkMode)
+                        Column {
+                            PathMessage(error, darkMode)
+                            onRetry?.let { retry ->
+                                Text(
+                                    text = stringResource(R.string.common_retry),
+                                    color = LocalAAColors.current.inkSoft,
+                                    modifier = Modifier.clickable(enabled = enabled, onClick = retry).padding(vertical = 12.dp),
+                                )
+                            }
+                        }
                     }
                     else -> {
                         if (parentPath != null) {
                             item(key = "$currentPath/..") {
-                                PathRow(name = "..", icon = Lucide.Folder, darkMode = darkMode, onClick = onParent)
+                                PathRow(name = "..", icon = Lucide.Folder, darkMode = darkMode, enabled = enabled, onClick = onParent)
                             }
                         }
                         if (entries.isEmpty()) {
@@ -117,6 +151,7 @@ internal fun ChoosePathSection(
                                 name = entry.name,
                                 icon = Lucide.Folder,
                                 darkMode = darkMode,
+                                enabled = enabled,
                                 onClick = { onOpenEntry(entry) },
                             )
                         }
@@ -133,8 +168,12 @@ private fun CurrentDirectoryBar(
     darkMode: Boolean,
     canGoParent: Boolean,
     canUseCurrent: Boolean,
+    currentSelected: Boolean,
     onParent: () -> Unit,
-    onUseCurrent: () -> Unit,
+    onUseCurrent: (() -> Unit)?,
+    enabled: Boolean,
+    listExpanded: Boolean,
+    onToggleList: (() -> Unit)?,
 ) {
     Row(
         modifier = Modifier
@@ -169,14 +208,32 @@ private fun CurrentDirectoryBar(
                 BackGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777))
             }
         }
-        CircleMiniButton(
+        if (onToggleList != null) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .noRippleClickable(enabled = enabled, onClick = onToggleList),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (listExpanded) Lucide.ChevronDown else Lucide.ChevronRight,
+                    contentDescription = stringResource(
+                        if (listExpanded) R.string.new_session_collapse_directory else R.string.new_session_expand_directory,
+                    ),
+                    tint = LocalAAColors.current.inkSoft,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        } else if (onUseCurrent != null) CircleMiniButton(
             darkMode = darkMode,
-            selected = !darkMode && canUseCurrent,
+            selected = currentSelected || (!darkMode && canUseCurrent),
             enabled = canUseCurrent,
             onClick = onUseCurrent,
         ) {
             val checkColor = when {
                 !canUseCurrent -> if (darkMode) Color(0xFF52525B) else Color(0xFFBDBDBD)
+                currentSelected -> Color(0xFF16A34A)
                 darkMode -> Color(0xFFA1A1AA)
                 else -> Color(0xFF16A34A)
             }
@@ -190,6 +247,7 @@ private fun PathRow(
     name: String,
     icon: ImageVector,
     darkMode: Boolean,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     Row(
@@ -197,7 +255,7 @@ private fun PathRow(
             .fillMaxWidth()
             .height(58.dp)
             .clip(RoundedCornerShape(12.dp))
-            .noRippleClickable(onClick = onClick)
+            .noRippleClickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),

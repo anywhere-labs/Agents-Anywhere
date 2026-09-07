@@ -5,9 +5,6 @@ import type {
   AdminDashboardSettings,
   AdminDashboardSettingsUpdate,
   AdminDashboardSnapshotResponse,
-  AppReleaseCreateRequest,
-  AppReleaseListResponse,
-  AppReleaseView,
   ArchiveAllResponse,
   BulkArchiveResponse,
   ArchiveAllScope,
@@ -113,17 +110,6 @@ export class DashboardApi {
       {},
       { token, query: { tz } },
     );
-  }
-
-  listAdminClientReleases(token: string): Promise<AppReleaseListResponse> {
-    return this.client.get<AppReleaseListResponse>("/admin/client-releases", { token });
-  }
-
-  createAdminClientRelease(
-    token: string,
-    body: AppReleaseCreateRequest,
-  ): Promise<AppReleaseView> {
-    return this.client.post<AppReleaseView>("/admin/client-releases", body, { token });
   }
 
   listConnectors(token: string): Promise<ConnectorListResponse> {

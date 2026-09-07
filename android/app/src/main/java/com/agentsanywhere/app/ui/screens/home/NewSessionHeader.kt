@@ -40,8 +40,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.agentsanywhere.app.ui.designsystem.BackIconButton
 import com.agentsanywhere.app.ui.designsystem.CheckGlyph
-import com.agentsanywhere.app.ui.designsystem.CloseGlyph
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.composables.icons.lucide.Lucide
@@ -57,9 +57,9 @@ internal fun NewSessionHeader(
     onSubmitTitle: () -> Unit,
     onClose: () -> Unit,
     onEditToggle: () -> Unit,
+    editable: Boolean = true,
 ) {
     val colors = LocalAAColors.current
-    val iconColor = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777)
     var titleField by remember { mutableStateOf(title.textFieldValueAtEnd()) }
 
     LaunchedEffect(editing) {
@@ -82,9 +82,7 @@ internal fun NewSessionHeader(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        HeaderCircleButton(darkMode = darkMode, onClick = onClose) {
-            CloseGlyph(color = iconColor, sizeDp = 17)
-        }
+        BackIconButton(onClick = onClose)
         if (editing) {
             Column(
                 modifier = Modifier.width(210.dp),
@@ -140,7 +138,7 @@ internal fun NewSessionHeader(
                     .padding(horizontal = 16.dp),
             )
         }
-        HeaderCircleButton(darkMode = darkMode, onClick = onEditToggle) {
+        if (editable) HeaderCircleButton(darkMode = darkMode, onClick = onEditToggle) {
             if (editing) {
                 CheckGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF333333))
             } else {
@@ -151,7 +149,7 @@ internal fun NewSessionHeader(
                     modifier = Modifier.size(18.dp),
                 )
             }
-        }
+        } else Box(Modifier.size(40.dp))
     }
 }
 

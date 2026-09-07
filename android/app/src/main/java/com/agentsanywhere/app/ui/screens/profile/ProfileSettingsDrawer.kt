@@ -35,6 +35,7 @@ import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.composables.icons.lucide.Archive
 import com.composables.icons.lucide.ChevronsUpDown
+import com.composables.icons.lucide.Download
 import com.composables.icons.lucide.Globe
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.List as ListIcon
@@ -186,7 +187,7 @@ fun ProfileSettingsDrawer(
                         ProfileDetailPage.Updates -> item("updates-detail") {
                             UpdateDetailPage(
                                 state = appUpdateViewModel.state,
-                                onUpdate = appUpdateViewModel::downloadUpdate,
+                                onUpdate = appUpdateViewModel::showUpdatePrompt,
                                 onCancelDownload = appUpdateViewModel::cancelDownload,
                             )
                         }
@@ -199,10 +200,7 @@ fun ProfileSettingsDrawer(
                     item("identity") {
                         IdentityCard(
                             account = account,
-                            serviceLabel = if (
-                                AppConfig.OFFICIAL_WEB_LOGIN_URL.isNotBlank() &&
-                                serverUrl.trimEnd('/') == AppConfig.OFFICIAL_WEB_LOGIN_URL.trimEnd('/')
-                            ) {
+                            serviceLabel = if (AppConfig.isOfficialServer(serverUrl)) {
                                 stringResource(R.string.profile_official_service)
                             } else {
                                 stringResource(R.string.profile_self_hosted)
@@ -274,12 +272,16 @@ fun ProfileSettingsDrawer(
                             ProfileRow(
                                 icon = Lucide.Server,
                                 title = stringResource(R.string.profile_check_updates),
-                                trailingTag = if (appUpdateViewModel.state.release != null) {
-                                    stringResource(R.string.update_new_version_badge)
-                                } else {
-                                    null
+                                trailingIcon = if (appUpdateViewModel.state.release != null) Lucide.Download else null,
+                                trailingAttention = appUpdateViewModel.state.release != null,
+                                showChevron = appUpdateViewModel.state.release == null,
+                                onClick = {
+                                    if (appUpdateViewModel.state.release != null) appUpdateViewModel.showUpdatePrompt()
+                                    else {
+                                        detailPage = ProfileDetailPage.Updates
+                                        appUpdateViewModel.checkForUpdate(showPrompt = false)
+                                    }
                                 },
-                                onClick = { detailPage = ProfileDetailPage.Updates },
                             )
                         }
                     }

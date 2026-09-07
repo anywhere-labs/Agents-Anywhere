@@ -12,6 +12,8 @@ data class RemoteProject(
     val lastActivityAt: String?,
     val createdAt: String,
     val updatedAt: String,
+    val manuallyCreated: Boolean = false,
+    val sidebarSessionCounts: com.agentsanywhere.app.model.ProjectSessionCounts? = null,
 )
 
 data class RemoteProjectListResponse(

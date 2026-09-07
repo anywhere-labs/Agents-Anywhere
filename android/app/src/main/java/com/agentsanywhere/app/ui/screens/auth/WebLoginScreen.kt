@@ -11,6 +11,9 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,15 +23,15 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,8 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -56,15 +58,11 @@ import com.agentsanywhere.app.feature.auth.WebLoginState
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
 import com.agentsanywhere.app.feature.auth.webLoginApiOriginBridgeScript
 import com.agentsanywhere.app.navigation.AppDestination
-import com.agentsanywhere.app.ui.designsystem.AAWordmark
 import com.agentsanywhere.app.ui.designsystem.AuthErrorNotice
 import com.agentsanywhere.app.ui.designsystem.BackPill
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
-import com.agentsanywhere.app.ui.designsystem.noRippleClickable
-import com.composables.icons.lucide.Cloud
 import com.composables.icons.lucide.Lucide
-import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Info
 import com.composables.icons.lucide.Server
 
@@ -94,53 +92,25 @@ fun WebLoginHostScreen(
 
     when (state) {
         is WebLoginState.HostChoice -> HostChoiceScreen(
-            officialServiceAvailable = state.officialServiceAvailable,
-            openingOfficial = state.openingOfficial,
-            errorMessage = state.errorMessage,
+            state = state,
             onSelfHost = viewModel::selectSelfHost,
             onOfficial = viewModel::startOfficialLogin,
+            onServerUrlChanged = viewModel::updateServerUrl,
+            onConnect = viewModel::start,
             onBack = { navigate(AppDestination.LoginMethods) },
         )
-        is WebLoginState.ServerEntry -> ServerEntryScreen(
-            serverUrl = state.serverUrl,
-            errorMessage = state.errorMessage,
-            checking = false,
-            onServerUrlChanged = viewModel::updateServerUrl,
-            onContinue = viewModel::start,
-            onBack = viewModel::returnToHostChoice,
-        )
-        is WebLoginState.Checking -> ServerEntryScreen(
-            serverUrl = state.serverUrl,
-            errorMessage = null,
-            checking = true,
-            onServerUrlChanged = {},
-            onContinue = {},
-            onBack = {
-                viewModel.returnToHostChoice()
-            },
-        )
         is WebLoginState.WebLogin, is WebLoginState.Exchanging -> Unit
-        is WebLoginState.Error -> ServerEntryScreen(
-            serverUrl = state.serverUrl,
-            errorMessage = state.message,
-            checking = false,
-            onServerUrlChanged = viewModel::updateServerUrl,
-            onContinue = viewModel::start,
-            onBack = {
-                viewModel.returnToHostChoice()
-            },
-        )
         WebLoginState.Success -> LaunchedEffect(Unit) { navigate(AppDestination.Sessions) }
     }
 }
 
 @Composable
 private fun HostChoiceScreen(
-    officialServiceAvailable: Boolean,
-    openingOfficial: Boolean,
-    errorMessage: String?,
+    state: WebLoginState.HostChoice,
     onSelfHost: () -> Unit,
     onOfficial: () -> Unit,
+    onServerUrlChanged: (String) -> Unit,
+    onConnect: (String) -> Unit,
     onBack: () -> Unit,
 ) {
     val colors = LocalAAColors.current
@@ -149,6 +119,8 @@ private fun HostChoiceScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 32.dp)
                 .padding(top = 74.dp, bottom = 30.dp),
         ) {
@@ -162,197 +134,102 @@ private fun HostChoiceScreen(
                     fontWeight = FontWeight.SemiBold,
                     lineHeight = 34.sp,
                 )
-                Text(
-                    text = stringResource(R.string.auth_host_choice_description),
-                    color = colors.muted,
-                    fontSize = 15.sp,
-                    lineHeight = 21.sp,
-                )
+                Row(verticalAlignment = Alignment.Top) {
+                    Icon(
+                        imageVector = Lucide.Info,
+                        contentDescription = null,
+                        tint = colors.faint,
+                        modifier = Modifier.size(17.dp),
+                    )
+                    Text(
+                        modifier = Modifier.padding(start = 9.dp),
+                        text = stringResource(R.string.auth_host_choice_hint),
+                        color = colors.muted,
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp,
+                    )
+                }
             }
             Spacer(Modifier.height(30.dp))
-            errorMessage?.let {
+            state.errorMessage?.let {
                 AuthErrorNotice(message = it)
                 Spacer(Modifier.height(18.dp))
             }
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                HostChoiceButton(
-                    title = stringResource(R.string.auth_official_service),
-                    description = stringResource(R.string.auth_official_service_description),
-                    icon = Lucide.Cloud,
-                    badge = if (!officialServiceAvailable) {
-                        stringResource(R.string.auth_coming_soon)
-                    } else null,
-                    enabled = officialServiceAvailable && !openingOfficial,
-                    loading = openingOfficial,
+            Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                LoginMethodButton(
+                    label = stringResource(
+                        if (state.openingOfficial) R.string.auth_opening_web_login else R.string.auth_official_service,
+                    ),
+                    primary = true,
+                    enabled = state.officialServiceAvailable && !state.isBusy,
                     onClick = onOfficial,
                 )
-                HostChoiceButton(
-                    title = stringResource(R.string.auth_self_host_service),
-                    description = stringResource(R.string.auth_self_host_service_description),
-                    icon = Lucide.Server,
-                    enabled = !openingOfficial,
-                    onClick = onSelfHost,
-                )
-            }
-            Spacer(Modifier.height(22.dp))
-            Row(verticalAlignment = Alignment.Top) {
-                Icon(
-                    imageVector = Lucide.Info,
-                    contentDescription = null,
-                    tint = colors.faint,
-                    modifier = Modifier.size(17.dp),
-                )
-                Text(
-                    modifier = Modifier.padding(start = 9.dp),
-                    text = stringResource(R.string.auth_host_choice_hint),
-                    color = colors.muted,
-                    fontSize = 13.sp,
-                    lineHeight = 19.sp,
-                )
+                if (!state.selfHostExpanded) {
+                    LoginMethodButton(
+                        label = stringResource(R.string.auth_self_host_service),
+                        primary = false,
+                        enabled = !state.isBusy,
+                        onClick = onSelfHost,
+                    )
+                }
+                AnimatedVisibility(
+                    visible = state.selfHostExpanded,
+                    enter = expandVertically() + fadeIn(),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            HorizontalDivider(Modifier.weight(1f), color = colors.ink.copy(alpha = 0.12f))
+                            Text(stringResource(R.string.auth_or), color = colors.muted, fontSize = 14.sp)
+                            HorizontalDivider(Modifier.weight(1f), color = colors.ink.copy(alpha = 0.12f))
+                        }
+                        SelfHostLoginForm(state, onServerUrlChanged, onConnect)
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun HostChoiceButton(
-    title: String,
-    description: String,
-    icon: ImageVector,
-    badge: String? = null,
-    enabled: Boolean = true,
-    loading: Boolean = false,
-    onClick: () -> Unit,
-) {
-    val colors = LocalAAColors.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(88.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(colors.raisedSurface)
-            .border(1.2.dp, colors.border, RoundedCornerShape(14.dp))
-            .then(if (enabled) Modifier.noRippleClickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 18.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(42.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(colors.subtle),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(icon, contentDescription = null, tint = colors.ink, modifier = Modifier.size(21.dp))
-        }
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(start = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-            Text(
-                text = title,
-                color = if (enabled) colors.ink else colors.muted,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                lineHeight = 20.sp,
-            )
-            Text(
-                text = description,
-                color = colors.muted,
-                fontSize = 12.5.sp,
-                lineHeight = 17.sp,
-            )
-        }
-        if (loading) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(19.dp),
-                color = colors.faint,
-                strokeWidth = 2.dp,
-            )
-        } else if (badge != null) {
-            Text(
-                text = badge,
-                color = if (enabled) colors.inkSoft else colors.faint,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                lineHeight = 15.sp,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(colors.subtle)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-            )
-        } else {
-            Spacer(Modifier.width(10.dp))
-            Icon(
-                imageVector = Lucide.ChevronRight,
-                contentDescription = null,
-                tint = colors.faint,
-                modifier = Modifier.size(19.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun ServerEntryScreen(
-    serverUrl: String,
-    errorMessage: String?,
-    checking: Boolean,
+private fun SelfHostLoginForm(
+    state: WebLoginState.HostChoice,
     onServerUrlChanged: (String) -> Unit,
-    onContinue: (String) -> Unit,
-    onBack: () -> Unit,
+    onConnect: (String) -> Unit,
 ) {
     val colors = LocalAAColors.current
-    BackHandler(onBack = onBack)
-    ScreenScaffold {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 32.dp)
-                .padding(top = 74.dp, bottom = 30.dp),
-            verticalArrangement = Arrangement.spacedBy(30.dp),
-        ) {
-            BackPill(label = stringResource(R.string.common_back), onClick = onBack)
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = stringResource(R.string.auth_self_host_login_title),
-                    color = colors.ink,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Medium,
-                    lineHeight = 26.sp,
-                )
-                AAWordmark(color = colors.ink, fontSize = 42.sp, lineHeight = 44.sp)
-                Text(
-                    text = stringResource(R.string.auth_web_login_subtitle),
-                    color = colors.muted,
-                    fontSize = 14.sp,
-                    lineHeight = 19.sp,
-                )
-            }
-            errorMessage?.let { AuthErrorNotice(message = it) }
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                AuthInputRow(
-                    value = serverUrl,
-                    onValueChange = onServerUrlChanged,
-                    placeholder = stringResource(R.string.common_server_url),
-                    icon = Lucide.Server,
-                    enabled = !checking,
-                )
-                AuthContinueButton(
-                    isLoading = checking,
-                    label = stringResource(R.string.auth_continue_in_web),
-                    loadingLabel = stringResource(R.string.common_checking),
-                ) { onContinue(serverUrl) }
-                Text(
-                    text = stringResource(R.string.auth_web_login_help),
-                    color = colors.muted,
-                    fontSize = 13.sp,
-                    lineHeight = 18.sp,
-                )
-            }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val canConnect = state.serverUrl.isNotBlank() && !state.isBusy
+    val connect = {
+        if (canConnect) {
+            keyboard?.hide()
+            onConnect(state.serverUrl)
         }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            text = stringResource(R.string.auth_self_host_service),
+            color = colors.ink,
+            fontSize = 15.3.sp,
+            fontWeight = FontWeight.Medium,
+            lineHeight = 21.sp,
+        )
+        AuthInputRow(
+            value = state.serverUrl,
+            onValueChange = onServerUrlChanged,
+            placeholder = stringResource(R.string.auth_backend_url),
+            icon = Lucide.Server,
+            enabled = !state.isBusy,
+            onSubmit = connect,
+        )
+        LoginMethodButton(
+            label = stringResource(if (state.checkingSelfHost) R.string.common_checking else R.string.auth_connect_server),
+            primary = true,
+            enabled = canConnect,
+            onClick = connect,
+        )
     }
 }
 
@@ -397,8 +274,8 @@ private fun EmbeddedWebLogin(
                         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                             WebViewCompat.addDocumentStartJavaScript(
                                 this,
-                                webLoginApiOriginBridgeScript(session.serverUrl),
-                                setOf(session.serverUrl),
+                                webLoginApiOriginBridgeScript(session.oauthWebOrigin),
+                                setOf(session.oauthWebOrigin),
                             )
                         } else {
                             onWebError("Update Android System WebView to continue signing in.")

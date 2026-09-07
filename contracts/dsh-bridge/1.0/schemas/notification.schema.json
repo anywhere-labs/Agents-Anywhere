@@ -11,7 +11,7 @@
         "session.meta.upsert", "session.state.update",
         "runtime.capabilities.update", "session.capabilities.update",
         "catalog.model.update", "catalog.permission.update", "timeline.sync",
-        "timeline.item.upsert", "notice.upsert", "runtime.error",
+        "timeline.item.upsert", "notice.upsert", "runtime.error", "runtime.sync.batch",
         "$/cancelRequest"
       ]
     },

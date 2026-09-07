@@ -26,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
@@ -39,11 +40,11 @@ import androidx.compose.ui.window.PopupProperties
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.ui.designsystem.AAAppearanceMode
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereColors
+import com.agentsanywhere.app.ui.designsystem.BackIconButton
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.agentsanywhere.app.ui.screens.home.HomeSidebarViewMode
 import com.composables.icons.lucide.Check
-import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Circle
 import com.composables.icons.lucide.Folder
@@ -59,26 +60,13 @@ internal fun ProfileHeader(
     onClose: () -> Unit,
 ) {
     val colors = LocalAAColors.current
-    val darkMode = colors.canvas == Color(0xFF09090B)
-    val iconSurface = colors.raisedSurface
-    val iconBorder = if (darkMode) colors.border else Color(0xFFE7E6E2)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(64.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(iconSurface)
-                .border(1.dp, iconBorder, CircleShape)
-                .noRippleClickable(onClick = onClose),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(Lucide.ChevronLeft, contentDescription = stringResource(R.string.common_back), tint = colors.ink, modifier = Modifier.size(22.dp))
-        }
+        BackIconButton(onClick = onClose)
         Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
             Text(
                 text = title ?: stringResource(R.string.profile_settings),
@@ -115,6 +103,7 @@ internal fun ProfileRow(
     trailing: String? = null,
     trailingTag: String? = null,
     trailingIcon: ImageVector? = null,
+    trailingAttention: Boolean = false,
     enabled: Boolean = true,
     showChevron: Boolean = true,
     onClick: (() -> Unit)? = null,
@@ -179,12 +168,17 @@ internal fun ProfileRow(
             )
         }
         if (trailingIcon != null) {
-            Icon(
-                trailingIcon,
-                contentDescription = null,
-                tint = colors.faint.copy(alpha = alpha),
-                modifier = Modifier.size(20.dp),
-            )
+            Box {
+                Icon(
+                    trailingIcon,
+                    contentDescription = if (trailingAttention) stringResource(R.string.update_new_version_badge) else null,
+                    tint = colors.faint.copy(alpha = alpha),
+                    modifier = Modifier.size(20.dp),
+                )
+                if (trailingAttention) {
+                    Box(Modifier.align(Alignment.TopEnd).size(5.dp).background(colors.errorText, CircleShape))
+                }
+            }
         }
         if (showChevron) {
             Icon(Lucide.ChevronRight, contentDescription = null, tint = colors.faint.copy(alpha = alpha), modifier = Modifier.size(20.dp))
@@ -215,9 +209,10 @@ internal fun AppearancePopup(
             Column(
                 modifier = Modifier
                     .width(204.dp)
+                    .shadow(24.dp, RoundedCornerShape(14.dp), ambientColor = colors.appShadow, spotColor = colors.appShadow)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(colors.raisedSurface)
-                    .border(1.dp, colors.border, RoundedCornerShape(14.dp)),
+                    .background(if (colors.isDark) Color(0xFF303030) else Color(0xFFF4F3EF))
+                    .border(1.dp, if (colors.isDark) Color(0xFF4A4A4A) else Color(0xFFD6D3CD), RoundedCornerShape(14.dp)),
             ) {
                 AppearanceMenuRow(
                     title = stringResource(R.string.profile_follow_system),
@@ -267,9 +262,10 @@ internal fun SidebarViewPopup(
             Column(
                 modifier = Modifier
                     .width(204.dp)
+                    .shadow(24.dp, RoundedCornerShape(14.dp), ambientColor = colors.appShadow, spotColor = colors.appShadow)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(colors.raisedSurface)
-                    .border(1.dp, colors.border, RoundedCornerShape(14.dp)),
+                    .background(if (colors.isDark) Color(0xFF303030) else Color(0xFFF4F3EF))
+                    .border(1.dp, if (colors.isDark) Color(0xFF4A4A4A) else Color(0xFFD6D3CD), RoundedCornerShape(14.dp)),
             ) {
                 AppearanceMenuRow(
                     title = stringResource(R.string.profile_project_view),

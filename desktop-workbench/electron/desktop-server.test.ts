@@ -73,8 +73,14 @@ test("the selected backend survives restart and corrupt stored configuration fal
   const fallback = resolveDesktopServer();
   const custom = resolveDesktopServer("https://self.example");
   const store = new DesktopServerStore(file, fallback);
+  assert.equal(store.getSaved(), null, "defaults are not a saved server");
   store.save(custom);
-  assert.deepEqual(new DesktopServerStore(file, fallback).get(), custom);
+  assert.deepEqual(store.getSaved(), custom);
+  const restarted = new DesktopServerStore(file, fallback);
+  assert.deepEqual(restarted.get(), custom);
+  assert.deepEqual(restarted.getSaved(), custom);
   fs.writeFileSync(file, JSON.stringify({ serverUrl: "file:///tmp/unsafe", apiNamespace: "/api/v2" }));
-  assert.deepEqual(new DesktopServerStore(file, fallback).get(), fallback);
+  const corrupt = new DesktopServerStore(file, fallback);
+  assert.deepEqual(corrupt.get(), fallback);
+  assert.equal(corrupt.getSaved(), null);
 });

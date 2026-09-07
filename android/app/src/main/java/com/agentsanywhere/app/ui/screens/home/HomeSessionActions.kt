@@ -62,6 +62,7 @@ import kotlin.math.roundToInt
 internal data class HomeSessionActionMenu(
     val session: AgentSession,
     val rowBounds: Rect,
+    val projectView: Boolean = false,
 )
 
 private const val SESSION_TITLE_DISPLAY_MAX_CHARS = 15
@@ -115,7 +116,16 @@ internal fun HomeSessionActionOverlay(
                 .clip(highlightShape)
                 .background(highlightSurface),
         ) {
-            HomeSessionHighlightRow(session = menu.session, darkMode = darkMode)
+            if (menu.projectView) {
+                HomeProjectSessionRow(
+                    session = menu.session,
+                    inset = !menu.session.pinned || menu.session.archived,
+                    onClick = {},
+                    onLongPress = {},
+                )
+            } else {
+                HomeSessionHighlightRow(session = menu.session, darkMode = darkMode)
+            }
         }
         HomeSessionActionMenuCard(
             session = menu.session,

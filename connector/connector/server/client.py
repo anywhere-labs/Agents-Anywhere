@@ -77,6 +77,7 @@ class BackendRpcClient:
             notifier=self.send_backend_notification,
             attachment_downloader=self.download_attachment,
             sync_state_store=self.sync_state_store,
+            ingest_notifications=self.ingest_notifications,
         )
         if agent_runtime_providers is None:
             agent_runtime_providers = default_runtime_providers()
@@ -238,6 +239,7 @@ class BackendRpcClient:
                 ),
             )
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+            await self._runtime_sync.reconnect_event_runtimes()
             if self._runtime_sync_task is None or self._runtime_sync_task.done():
                 self._runtime_sync_task = asyncio.create_task(
                     self._runtime_sync.sync_existing_loop()

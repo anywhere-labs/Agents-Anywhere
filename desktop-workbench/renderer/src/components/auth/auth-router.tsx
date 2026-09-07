@@ -8,6 +8,7 @@ import { Demo } from "@/components/demo"
 import { FilePreviewPage } from "@/components/file-preview-page"
 import { LoadingState } from "@/components/loading-state"
 import { SessionToolSidebarStateProvider } from "@/components/session-tool-sidebar-state"
+import { DesktopUpdateProvider } from "@/features/desktop/desktop-update-provider"
 
 function AuthRouterInner() {
   const { screen, loading, isAuthenticated } = useAuth()
@@ -32,9 +33,11 @@ function AuthRouterInner() {
 export function AuthRouter() {
   return (
     <AuthProvider>
-      <SessionToolSidebarStateProvider>
-        <AuthRouterInner />
-      </SessionToolSidebarStateProvider>
+      <DesktopUpdateProvider>
+        <SessionToolSidebarStateProvider>
+          <AuthRouterInner />
+        </SessionToolSidebarStateProvider>
+      </DesktopUpdateProvider>
     </AuthProvider>
   )
 }

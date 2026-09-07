@@ -180,41 +180,41 @@ def session_state(value: Any) -> SessionState:
 def timeline_item(
     value: Any, *, default_session_id: str | None = None
 ) -> RuntimeTimelineItem:
+    """Decode canonical platform items; native DSH projection belongs to the plugin."""
     data = _mapping(value, "timeline item")
-    native_type = _required_string(data.get("type"), "timeline type")
-    native_payload = (
-        _dict(data.get("payload")) if isinstance(data.get("payload"), Mapping) else None
-    )
-    if native_payload is not None:
-        item_type, status, role, content = _project_payload_timeline_item(
-            native_type,
-            native_payload,
-        )
-    else:
-        item_type = native_type
-        status = _required_string(data.get("status"), "timeline status")
-        role = _optional_string(data.get("role"))
-        content = _dict(data.get("content"))
+    if "payload" in data:
+        raise ValueError("DSH native payload projection is no longer supported")
+    item_type = _required_string(data.get("type"), "timeline type")
+    status = _required_string(data.get("status"), "timeline status")
+    role = _optional_string(data.get("role"))
+    if item_type not in {
+        "message",
+        "tool",
+        "artifact",
+        "marker",
+        "system",
+        "turn.start",
+        "turn.end",
+    }:
+        raise ValueError("DSH timeline type is invalid")
+    if status not in {
+        "pending",
+        "inProgress",
+        "running",
+        "waiting_approval",
+        "done",
+        "failed",
+        "cancelled",
+        "interrupted",
+        "hidden",
+    }:
+        raise ValueError("DSH timeline status is invalid")
+    if role not in {None, "user", "assistant", "system", "tool"}:
+        raise ValueError("DSH timeline role is invalid")
+    content = _mapping(data.get("content"), "timeline content")
     computed_hash = timeline_content_hash(item_type, status, role, content)  # type: ignore[arg-type]
-    supplied_hash = _optional_string(data.get("contentHash"))
-    if (
-        data.get("payload") is None
-        and supplied_hash is not None
-        and supplied_hash != computed_hash
-    ):
+    if data.get("contentHash") != computed_hash:
         raise ValueError("DSH timeline contentHash does not match canonical content")
-    source = _dict(data.get("source"))
-    source.setdefault("runtime", "dsh")
-    source.setdefault("itemType", native_type)
-    if native_payload is not None:
-        native_message_id = _optional_string(native_payload.get("messageId"))
-        if native_message_id is not None:
-            source.setdefault("itemId", native_message_id)
-        client_message_id = _optional_string(native_payload.get("clientMessageId"))
-        if client_message_id is not None:
-            source.setdefault("clientMessageId", client_message_id)
-    if supplied_hash is not None and isinstance(data.get("payload"), Mapping):
-        source.setdefault("nativeContentHash", supplied_hash)
     return RuntimeTimelineItem(
         id=_required_string(data.get("id"), "timeline id"),
         session_id=default_session_id
@@ -224,106 +224,12 @@ def timeline_item(
         order_seq=_nonnegative_int(data.get("orderSeq"), "orderSeq"),
         content_hash=computed_hash,
         role=role,
+        turn_id=_optional_string(data.get("turnId")),
         content=content,
-        source=source,
-        revision=max(1, _nonnegative_int(data.get("revision", 1), "revision")),
+        source=_mapping(data.get("source"), "timeline source"),
+        revision=max(1, _nonnegative_int(data.get("revision"), "revision")),
         metadata=_dict(data.get("metadata")),
     )
-
-
-def _project_payload_timeline_item(
-    native_type: str,
-    payload: dict[str, Any],
-) -> tuple[str, str, str | None, dict[str, Any]]:
-    """Translate the bridge's native payload envelope to the AA timeline model."""
-    if native_type == "message":
-        role = _optional_string(payload.get("role"))
-        if role not in {"user", "assistant", "system", "tool"}:
-            role = None
-        content = {
-            "kind": "markdown",
-            "format": "markdown",
-            "text": str(payload.get("text") or ""),
-            **({"reasoning": payload["reasoning"]} if payload.get("reasoning") else {}),
-        }
-        return "message", "done", role, content
-    if native_type == "assistant_activity":
-        native_status = _optional_string(payload.get("status"))
-        status = "running" if native_status == "streaming" else "done"
-        return (
-            "message",
-            status,
-            "assistant",
-            {
-                "kind": "markdown",
-                "format": "markdown",
-                "text": str(payload.get("text") or ""),
-                **(
-                    {"reasoning": payload["reasoning"]}
-                    if payload.get("reasoning")
-                    else {}
-                ),
-            },
-        )
-    if native_type == "tool_call":
-        return (
-            "tool",
-            "running",
-            "assistant",
-            {
-                "kind": "tool_call",
-                "title": str(payload.get("name") or "tool"),
-                "input": payload.get("arguments", {}),
-                "callId": payload.get("callId"),
-            },
-        )
-    if native_type == "tool_result":
-        failed = payload.get("isError") is True
-        return (
-            "tool",
-            "failed" if failed else "done",
-            "tool",
-            {
-                "kind": "tool_result",
-                "output": payload.get("text", ""),
-                "callId": payload.get("callId"),
-                **({"error": payload["error"]} if "error" in payload else {}),
-            },
-        )
-    if native_type == "command":
-        native_status = _optional_string(payload.get("status")) or "running"
-        status = {
-            "running": "running",
-            "error": "failed",
-            "failed": "failed",
-            "cancelled": "cancelled",
-            "interrupted": "interrupted",
-        }.get(native_status, "done")
-        name = str(payload.get("name") or "command")
-        args = _optional_string(payload.get("args"))
-        return (
-            "tool",
-            status,
-            "system",
-            {
-                "kind": "command",
-                "title": name,
-                "command": name if args is None else f"{name} {args}",
-                **({"output": payload["text"]} if "text" in payload else {}),
-            },
-        )
-    if native_type == "turn_status":
-        running = payload.get("status") == "running"
-        return (
-            "turn.start" if running else "turn.end",
-            "running" if running else "done",
-            "system",
-            {
-                "kind": "turn_start" if running else "turn_end",
-                **({"reason": payload["reason"]} if "reason" in payload else {}),
-            },
-        )
-    raise ValueError(f"unsupported DSH timeline payload type: {native_type}")
 
 
 def notice(value: Any) -> SessionNotice:

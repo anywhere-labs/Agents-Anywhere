@@ -23,8 +23,15 @@ class AuthApi(
         ).toAuthConfigResponse()
     }
 
-    fun requireWebLoginHost(serverUrl: String) {
-        client.requireHtmlDocument(serverUrl = serverUrl)
+    fun requireHealthyServer(serverUrl: String) {
+        val health = client.getJson(serverUrl = serverUrl, path = "/health")
+        if (health.optString("status") != "ok") {
+            throw ApiException("The address did not return a healthy Agents Anywhere server.")
+        }
+    }
+
+    fun requireWebLoginHost(webOrigin: String) {
+        client.requireHtmlDocument(serverUrl = webOrigin)
     }
 
     fun oauthToken(
