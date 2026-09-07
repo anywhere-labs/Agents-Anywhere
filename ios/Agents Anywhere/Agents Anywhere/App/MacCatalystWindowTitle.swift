@@ -2,8 +2,8 @@
 import SwiftUI
 import UIKit
 
-/// Configure the containing scene, including additional windows, without
-/// replacing SwiftUI's scene delegate or its native navigation toolbar.
+/// Remove Catalyst's extra title bar; page controls remain in their UIKit
+/// navigation bars. Configure each containing scene without replacing its delegate.
 struct MacCatalystWindowTitle: UIViewRepresentable {
     func makeUIView(context: Context) -> TitlebarView { TitlebarView() }
 
@@ -18,9 +18,10 @@ struct MacCatalystWindowTitle: UIViewRepresentable {
         }
 
         func hideWindowTitle() {
-            guard let titlebar = window?.windowScene?.titlebar,
-                  titlebar.titleVisibility != .hidden else { return }
+            guard let titlebar = window?.windowScene?.titlebar else { return }
             titlebar.titleVisibility = .hidden
+            // Hiding only the title leaves the window toolbar's empty strip.
+            titlebar.toolbar = nil
         }
     }
 }
