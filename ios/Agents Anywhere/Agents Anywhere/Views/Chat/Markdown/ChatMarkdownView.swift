@@ -75,7 +75,10 @@ private struct MarkdownBlockView: View, Equatable {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .traceChatLayout("markdown:\(traceOwner):\(block.id):layout")
-        .task(id: isTail) {
+        .task(id: RevealPhase(isStreaming: isStreaming, isTail: isTail)) {
+            // Opening static history must not schedule delayed state changes
+            // for every paragraph. A live append still settles completed blocks.
+            guard isStreaming else { return }
             hasSettled = false
             guard !isTail else { return }
             do { try await Task.sleep(for: ReplyPresentation.settleDelay) } catch { return }
@@ -83,6 +86,11 @@ private struct MarkdownBlockView: View, Equatable {
             // completed block even while the rest of the response streams.
             hasSettled = true
         }
+    }
+
+    private struct RevealPhase: Equatable {
+        let isStreaming: Bool
+        let isTail: Bool
     }
 }
 

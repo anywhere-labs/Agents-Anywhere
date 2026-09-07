@@ -14,6 +14,9 @@ nonisolated struct GlyphRevealEffect {
 nonisolated final class GlyphRevealLedger: @unchecked Sendable {
     private let lock = NSLock()
     private let duration: TimeInterval
+    private var settledCount = 0
+    // Only the newly revealed suffix needs per-glyph birth times. Static
+    // history must not allocate a character-sized array on every draw.
     private var births: [TimeInterval] = []
 
     init(duration: TimeInterval = ReplyPresentation.revealSeconds) {
@@ -28,13 +31,22 @@ nonisolated final class GlyphRevealLedger: @unchecked Sendable {
         // fragment. That intermediate draw must not erase earlier glyph births.
         guard count > 0 else { return nil }
         guard enabled else {
-            births = Array(repeating: now - duration - 1, count: count)
+            settledCount = count
+            births.removeAll(keepingCapacity: false)
             return nil
         }
-        if count < births.count { births.removeLast(births.count - count) }
-        if count > births.count { births.append(contentsOf: repeatElement(now, count: count - births.count)) }
-        guard births.contains(where: { now - $0 < duration }) else { return nil }
-        return births.map { born in
+        settledCount = min(settledCount, count)
+        let revealingCount = count - settledCount
+        if revealingCount < births.count { births.removeLast(births.count - revealingCount) }
+        if revealingCount > births.count {
+            births.append(contentsOf: repeatElement(now, count: revealingCount - births.count))
+        }
+        guard births.contains(where: { now - $0 < duration }) else {
+            settledCount = count
+            births.removeAll(keepingCapacity: true)
+            return nil
+        }
+        return Array(repeating: 1, count: settledCount) + births.map { born in
             let progress = min(1, max(0, (now - born) / duration))
             return 1 - pow(1 - progress, 3)
         }

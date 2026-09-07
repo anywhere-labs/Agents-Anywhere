@@ -243,7 +243,7 @@ private struct ChatSidebarSessionSection: View {
     let onCopyId: (V2SessionID) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        LazyVStack(alignment: .leading, spacing: 4) {
             if let title { ChatSidebarSectionLabel(title: title) }
 
             if isLoading {

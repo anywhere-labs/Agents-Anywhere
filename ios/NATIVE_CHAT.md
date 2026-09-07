@@ -31,6 +31,11 @@ Semantic error and availability colors remain separate from the primary color.
 - Textual is pinned to 0.5.0 and renders Markdown headings, lists, code, tables,
   quotes, links, images and math. Code copying and native selection remain
   available. Completed Markdown blocks keep their identity and layout.
+  Static blocks do not schedule delayed reveal-state changes. The glyph ledger
+  stores settled text as a count and allocates birth times only for new glyphs,
+  avoiding character-sized allocations when historical text is redrawn.
+  The app opts into iPhone ProMotion refresh rates; the system still chooses the
+  actual cadence. This is not a measured 120 FPS guarantee.
 - `SessionTimelinePresentation` stages received projections separately from
   observable rows. It publishes at 30 Hz while work is pending; static history
   does not keep a polling clock awake. New glyphs use a 240 ms opacity, blur and
@@ -107,6 +112,9 @@ Semantic error and availability colors remain separate from the primary color.
   boundary for stable safe-area inputs. A pan changes the motion/decoration
   subtree without repeatedly mapping and sorting sidebar data or constructing
   the current page. Real selection, environment and size changes still propagate.
+  Sidebar session sections and project lists use lazy stacks for their plain
+  text rows. The main conversation keeps its ordinary stacks and measured
+  Markdown geometry, avoiding a new estimated-height/scroll-restoration path.
 - Both history prompts support a fresh 24-point outward pull and release when
   already visible: pulling past the top loads older messages, and pulling past
   the bottom loads newer records. The prompt changes to “松开加载”; tapping remains
@@ -639,7 +647,9 @@ keyboard layout and real mobile-network behavior still need manual validation:
     At the bottom of a long session, slowly open/close the iPhone drawer and leave
     it open; check stable footer spacing and no repeated vertical corrections.
     Check the two gesture directions separately, especially revealing the session
-    from an already open drawer. Debug builds log vertical geometry changes during
+    from an already open drawer. Set the `AA_CHAT_LAYOUT_TRACE=1` launch environment
+    variable to enable debug geometry diagnostics; normal debug runs do not
+    install per-row/per-block observers. Enabled builds log vertical changes during
     drawer navigation under OSLog category `drawer-layout`: content/viewport height
     and offset distinguish reflow or scrolling from a drawing-only flash. These
     logs contain no message text and do not require a diagnostics overlay.

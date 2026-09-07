@@ -25,7 +25,7 @@ struct ChatSidebarProjects: View {
     }
     var body: some View {
         let projects = ProjectSidebarPresentation.projects(repository.projects, filter: filter, sessions: repository.sessions)
-        VStack(alignment: .leading, spacing: 4) {
+        LazyVStack(alignment: .leading, spacing: 4) {
             if projects.contains(where: \.pinned) {
                 Text(String(localized: "置顶项目")).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                     .padding(.horizontal, 10).padding(.top, 16).padding(.bottom, 6)
@@ -137,7 +137,7 @@ struct ChatSidebarProjects: View {
     }
 
     private func projectSessions(_ project: V2Project) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        LazyVStack(alignment: .leading, spacing: 2) {
             ForEach(ProjectSidebarPresentation.sessions(repository.sessions, projectID: project.id, filter: filter)) { session in
                 ChatSidebarSessionRow(session: .init(session: session), isSelected: selectedSessionID == session.id,
                     inset: true,

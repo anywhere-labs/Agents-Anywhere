@@ -102,7 +102,7 @@ struct ChatTimelineView: View {
                 // A device recording cannot distinguish a changed native
                 // offset from an upstream reflow. Record only vertical changes
                 // during drawer navigation, without logging message contents.
-                if navigationIsSuspended,
+                if ChatLayoutDiagnostics.isEnabled, navigationIsSuspended,
                    abs(value.contentHeight - previous.contentHeight) > 1
                     || abs(value.visibleHeight - previous.visibleHeight) > 1
                     || abs(value.offsetY - previous.offsetY) > 1 {

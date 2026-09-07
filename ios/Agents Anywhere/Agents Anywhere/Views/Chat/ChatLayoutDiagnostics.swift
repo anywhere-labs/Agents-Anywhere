@@ -4,10 +4,15 @@ import OSLog
 #endif
 
 extension View {
-    /// Debug-only measurements. Never feed the measured size back into layout.
-    @ViewBuilder func traceChatLayout(_ name: String, state: String = "") -> some View {
+    /// Opt-in measurements; ordinary debug runs have no per-row observers.
+    @ViewBuilder func traceChatLayout(_ name: @autoclosure () -> String,
+                                     state: @autoclosure () -> String = "") -> some View {
 #if DEBUG
-        modifier(ChatLayoutTrace(name: name, state: state))
+        if ChatLayoutDiagnostics.isEnabled {
+            modifier(ChatLayoutTrace(name: name(), state: state()))
+        } else {
+            self
+        }
 #else
         self
 #endif
@@ -15,6 +20,10 @@ extension View {
 }
 
 #if DEBUG
+enum ChatLayoutDiagnostics {
+    static let isEnabled = ProcessInfo.processInfo.environment["AA_CHAT_LAYOUT_TRACE"] == "1"
+}
+
 private struct ChatLayoutTrace: ViewModifier {
     let name: String
     let state: String
