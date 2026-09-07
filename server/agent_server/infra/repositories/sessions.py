@@ -36,19 +36,17 @@ def _source_archive_update(
     *,
     archived: bool | int,
     observed_at: str,
-    archive_latched: bool | None = None,
 ) -> dict[str, Any]:
-    # A missing/failed read does not reset the archive edge. Preserve an AA
-    # unarchive until DSH becomes available and archives the session again.
-    if source_state in {"available", "visible"}:
-        return {"source_archive_latched": False}
-    if source_state != "archived":
-        return {}
-    latched = archive_latched if archive_latched is not None else previous_source_state == "archived"
-    values: dict[str, Any] = {"source_archive_latched": True}
-    if not latched and not archived:
-        values.update(archived=1, archived_at=observed_at, dsh_archive_legacy=0)
-    return values
+    # Import a newly observed archive once. Repeated observations must not undo
+    # a later unarchive in AA. Missing/unavailable observations do not establish
+    # a new archive transition, and source recovery must not unarchive AA.
+    if (
+        source_state == "archived"
+        and previous_source_state in {None, "visible", "available"}
+        and not archived
+    ):
+        return {"archived": 1, "archived_at": observed_at, "dsh_archive_legacy": 0}
+    return {}
 
 
 def _latest_timeline_item_subquery() -> Any:
@@ -412,10 +410,9 @@ class SessionRepositoryMixin:
                 )
             ).first()
             if existing is None:
-                project_id, normalized_cwd = await self._ensure_project_for_session(
+                project_id, normalized_cwd = await self._ensure_project_for_workspace(
                     conn,
                     connector_id=connector_id,
-                    runtime_id=runtime_id, session_id=session_id,
                     workspace_path=cwd,
                     now=now,
                 )
@@ -467,7 +464,6 @@ class SessionRepositoryMixin:
                             sessions_t.c.source_state,
                             sessions_t.c.archived,
                             sessions_t.c.dsh_archive_legacy,
-                            sessions_t.c.source_archive_latched,
                         ).where(sessions_t.c.id == session_id)
                     )
                 ).first()
@@ -483,10 +479,9 @@ class SessionRepositoryMixin:
                 if title is not None:
                     values["title"] = title
                 if cwd is not None or current.project_id is None:
-                    project_id, normalized_cwd = await self._ensure_project_for_session(
+                    project_id, normalized_cwd = await self._ensure_project_for_workspace(
                         conn,
                         connector_id=connector_id,
-                        runtime_id=runtime_id, session_id=session_id,
                         workspace_path=cwd or current.cwd,
                         now=now,
                     )
@@ -513,7 +508,6 @@ class SessionRepositoryMixin:
                             current.source_state,
                             source_state,
                             archived=current.archived,
-                            archive_latched=current.source_archive_latched,
                             observed_at=now,
                         )
                     )
@@ -721,7 +715,6 @@ class SessionRepositoryMixin:
                         sessions_t.c.source_scan_token,
                         sessions_t.c.archived,
                         sessions_t.c.dsh_archive_legacy,
-                            sessions_t.c.source_archive_latched,
                     ).where(
                         sessions_t.c.connector_id == connector_id,
                         sessions_t.c.runtime == runtime,
@@ -888,7 +881,6 @@ class SessionRepositoryMixin:
                             sessions_t.c.source_scan_token,
                             sessions_t.c.archived,
                             sessions_t.c.dsh_archive_legacy,
-                            sessions_t.c.source_archive_latched,
                         )
                         .where(sessions_t.c.id == session_id)
                         .with_for_update()
@@ -909,7 +901,6 @@ class SessionRepositoryMixin:
                         row.source_state,
                         source_state,
                         archived=row.archived,
-                        archive_latched=row.source_archive_latched,
                         observed_at=entry.get("observed_at") or now,
                     )
                 )
@@ -1002,7 +993,6 @@ class SessionRepositoryMixin:
                         sessions_t.c.runtime,
                         sessions_t.c.archived,
                         sessions_t.c.dsh_archive_legacy,
-                            sessions_t.c.source_archive_latched,
                     ).where(sessions_t.c.id == session_id)
                 )
             ).first()
@@ -1030,7 +1020,6 @@ class SessionRepositoryMixin:
                         row.source_state,
                         availability,
                         archived=row.archived,
-                        archive_latched=row.source_archive_latched,
                         observed_at=effective_observed_at,
                     )
                 )
@@ -1588,20 +1577,17 @@ class SessionRepositoryMixin:
                         sessions_t.c.last_activity_at,
                         sessions_t.c.source_state,
                         sessions_t.c.runtime,
-                        sessions_t.c.runtime_id,
                         sessions_t.c.archived,
                         sessions_t.c.dsh_archive_legacy,
-                            sessions_t.c.source_archive_latched,
                     ).where(sessions_t.c.id == session_id)
                 )
             ).first()
             if row is None:
                 raise KeyError(session_id)
             if cwd is not None or row.project_id is None:
-                project_id, normalized_cwd = await self._ensure_project_for_session(
+                project_id, normalized_cwd = await self._ensure_project_for_workspace(
                     conn,
                     connector_id=row.connector_id,
-                    runtime_id=row.runtime_id, session_id=session_id,
                     workspace_path=cwd if cwd is not None else row.cwd,
                 )
                 values["project_id"] = project_id
@@ -1612,7 +1598,6 @@ class SessionRepositoryMixin:
                         row.source_state,
                         source_state,
                         archived=row.archived,
-                        archive_latched=row.source_archive_latched,
                         observed_at=values["source_state_at"],
                     )
                 )

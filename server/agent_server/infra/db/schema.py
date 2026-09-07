@@ -390,33 +390,6 @@ projects = Table(
 )
 
 
-runtime_workspaces = Table(
-    "runtime_workspaces", metadata,
-    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
-    Column("runtime_id", Text, nullable=False),
-    Column("external_id", Text, nullable=False),
-    Column("project_id", Text, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
-    Column("source_name", Text, nullable=False),
-    Column("assigned_name", Text, nullable=False),
-    Column("created_project", Boolean, nullable=False, server_default=false()),
-    PrimaryKeyConstraint("connector_id", "runtime_id", "external_id"),
-)
-
-runtime_workspace_sessions = Table(
-    "runtime_workspace_sessions", metadata,
-    Column("connector_id", Text, nullable=False),
-    Column("runtime_id", Text, nullable=False),
-    Column("session_id", Text, nullable=False),
-    Column("workspace_id", Text, nullable=False),
-    PrimaryKeyConstraint("connector_id", "runtime_id", "session_id"),
-    ForeignKeyConstraint(
-        ["connector_id", "runtime_id", "workspace_id"],
-        ["runtime_workspaces.connector_id", "runtime_workspaces.runtime_id", "runtime_workspaces.external_id"],
-        ondelete="CASCADE",
-    ),
-)
-
-
 sessions = Table(
     "sessions",
     metadata,
@@ -432,8 +405,6 @@ sessions = Table(
         ),
     ),
     Column("runtime", Text, nullable=False),
-    # Retain the last definitive archive observation across missing/unknown reads.
-    Column("source_archive_latched", Boolean, nullable=False, server_default=false()),
     Column(
         "runtime_id",
         Text,

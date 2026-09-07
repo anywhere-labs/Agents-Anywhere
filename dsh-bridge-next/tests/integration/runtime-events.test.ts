@@ -96,7 +96,7 @@ test('fast mixed native events flush at 30 Hz with complete final text, tool res
   } finally { feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })
 
-test('baseline buffers native changes, official filtering and workspace/archive events stay live', { timeout: 30_000 }, async () => {
+test('baseline buffers native changes and archive events without syncing native projects', { timeout: 30_000 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'dsh-sync-'))
   const fixture = await nativeRuntime(home)
   const native = fixture.ctx.agentsAnywhereRuntime.native
@@ -135,22 +135,16 @@ test('baseline buffers native changes, official filtering and workspace/archive 
     assert.ok(notifications(ops()).some(n => n.method === 'timeline.itemUpsert' && JSON.stringify(n.params.item).includes('baseline race')))
     const workspace = await fixture.ctx.workspaceRegistry.create(home)
     await workspace.attachSession(fixture.session.id)
-    await until(() => ops().some(op => op.kind === 'workspace.inventory' && JSON.stringify(op).includes(workspace.id)), 'workspace event')
     await workspace.setTitle('DSH 项目名称')
-    await until(() => ops().some(op => op.kind === 'workspace.inventory' && JSON.stringify(op).includes('DSH 项目名称')), 'native rename event')
+    await fixture.ctx.workspaceRegistry.delete(workspace.id)
     native.presence.report('test-client', 1, 'empty-native')
     await until(() => ops().some(op => op.kind === 'snapshot.begin' && op.sessionId === sessionId('test', 'empty-native')), 'selected blank visible')
     native.presence.report('test-client', 2, null)
     await until(() => notifications(ops()).some(n => n.method === 'session.source.updated' && n.params.sessionId === sessionId('test', 'empty-native')), 'deselected blank removed')
     await fixture.ctx.workspaceRegistry.archiveSession(fixture.session.id)
     await until(() => notifications(ops()).some(n => n.method === 'session.source.updated' && n.params.sessionId === sessionId('test', fixture.session.id) && n.params.availability === 'archived'), 'explicit archive event')
-    assert.ok(ops().filter(op => op.kind === 'workspace.inventory').some(op =>
-      JSON.stringify(op.workspaces).includes(sessionId('test', fixture.session.id))), 'membership includes archived sessions')
-    await fixture.ctx.workspaceRegistry.delete(workspace.id)
-    await until(() => {
-      const last = ops().findLast(op => op.kind === 'workspace.inventory')
-      return !!last && !JSON.stringify(last.workspaces).includes(workspace.id)
-    }, 'workspace deletion event')
+    assert.ok(!ops().some(op => op.kind === 'workspace.inventory'), 'native projects are not synchronized')
+    assert.ok(!JSON.stringify(ops()).includes('DSH 项目名称'))
     assert.deepEqual(errors, [])
     assert.deepEqual(batches.map(b => b.batchSeq), batches.map((_, n) => n + 1))
   } finally { feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
@@ -195,14 +189,10 @@ test('fresh detail and send checks distinguish archives from persisted and blank
     assert.equal(sent.ok, false)
     assert.equal(sent.code, 'session_archived')
     assert.equal(adapter.requests.length, 0)
-    const workspace = await fixture.ctx.workspaceRegistry.create(home)
-    await workspace.setTitle('离线改名')
-    await workspace.attachSession(fixture.session.id)
     stream = follow(native)
     await until(() => notifications(stream!.ops()).some(n => n.method === 'session.inventory.complete'), 'offline calibration')
     const operations = stream.ops()
-    assert.ok(operations.findIndex(op => op.kind === 'workspace.inventory') < operations.findIndex(op => op.kind === 'snapshot.begin'))
-    assert.ok(JSON.stringify(operations.find(op => op.kind === 'workspace.inventory')).includes('离线改名'))
+    assert.ok(!operations.some(op => op.kind === 'workspace.inventory'))
     const complete = notifications(operations).find(n => n.method === 'session.inventory.complete')!
     assert.ok(JSON.stringify(complete.params.sessions).includes('archived'))
     assert.ok(!operations.some(op => op.kind === 'snapshot.begin' && op.sessionId === sessionId('test', fixture.session.id)))
@@ -261,13 +251,13 @@ test('official native loop crosses Python adapter and authenticated backend, inc
   const mutations = (async () => {
     while (!closed) {
       const marker = join(home, 'native-action.json')
-      const action = await readFile(marker, 'utf8').then(text => JSON.parse(text).action as string).catch(() => undefined)
+      const action = await readFile(marker, 'utf8').then(text => JSON.parse(text) as { action: string, sessionId: string }).catch(() => undefined)
       if (action) {
         const workspace = fixture.ctx.workspaceRegistry.list().find(workspace => workspace.path === home)!
-        if (action === 'rename') await workspace.setTitle('DSH 项目改名')
-        else if (action === 'archive') await fixture.ctx.workspaceRegistry.archiveSession(fixture.session.id)
-        else if (action === 'delete') await fixture.ctx.workspaceRegistry.delete(workspace.id)
-        else throw new Error(`Unknown test action: ${action}`)
+        if (action.action === 'rename') await workspace.setTitle('DSH 项目改名')
+        else if (action.action === 'archive') await fixture.ctx.workspaceRegistry.archiveSession(SessionId(action.sessionId))
+        else if (action.action === 'delete') await fixture.ctx.workspaceRegistry.delete(workspace.id)
+        else throw new Error(`Unknown test action: ${action.action}`)
         await rm(marker)
       }
       await delay(20)

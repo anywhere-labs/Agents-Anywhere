@@ -20,7 +20,7 @@ export type NativeChange = { type: 'event', id: string, event: SessionEvent }
   | { type: 'session', id: string } | { type: 'status', id: string }
   | { type: 'refresh', id: string }
   | { type: 'question', id: string } | { type: 'capabilities' }
-  | { type: 'visibility' } | { type: 'workspace' }
+  | { type: 'visibility' }
 export interface NativeWorkspace { id: string, title: string, path: string, sessionIds: string[] }
 
 /** All native interpretation stays in the Host; observers never await transport work. */
@@ -31,7 +31,6 @@ export class NativeRuntime {
   readonly source: NativeSessionSource
   private owned = new Set<AgentHandle>()
   private writes = new Map<string, Promise<unknown>>()
-  private workspaceTimer: ReturnType<typeof setTimeout> | undefined
   private closed = false
 
   constructor(readonly ctx: Context) {
@@ -64,11 +63,6 @@ export class NativeRuntime {
           }
         }
       }
-      // Entity caches settle after the durable write's observer callbacks.
-      this.workspaceTimer ??= setTimeout(() => {
-        this.workspaceTimer = undefined
-        if (!this.closed) this.emit({ type: 'workspace' })
-      }, 0)
     })
   }
 
@@ -90,7 +84,9 @@ export class NativeRuntime {
   async inventory(signal?: AbortSignal): Promise<SessionRecord[]> {
     await this.source.refresh(signal)
     const result: SessionRecord[] = []
-    for (const entry of this.source.records.values()) {
+    // Concurrent detail reads may refresh the source map while visibility awaits I/O.
+    // Capture this inventory once so pagination cannot repeat reinserted records.
+    for (const entry of [...this.source.records.values()]) {
       signal?.throwIfAborted()
       if (await this.visible(entry.header.id)) result.push(entry)
     }
@@ -182,7 +178,6 @@ export class NativeRuntime {
   }
   async close(): Promise<void> {
     this.closed = true
-    clearTimeout(this.workspaceTimer)
     this.presence.close()
     await this.questions.close()
     this.listeners.clear()

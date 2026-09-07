@@ -147,7 +147,6 @@ class ProjectView(BaseModel):
     name: str
     workspacePath: str
     manuallyCreated: bool = False
-    hasNativeWorkspace: bool = False
     pinned: bool = False
     pinnedAt: str | None = None
     activeSessionCount: int = 0

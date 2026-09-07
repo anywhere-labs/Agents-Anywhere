@@ -14,7 +14,6 @@
 - `router.ts`：会话查询、当前状态、分页捕获、订阅与文本请求；纯读取不调用 Agent create/resume。
 - `native.ts`、`visibility.ts`、`sync.ts`：官方事件与读写、侧栏过滤、初始校准及实时推送。
 - `sessions/source.ts`：官方会话清单、明确的归档/不可见/缺失状态及即时可用性检查。
-- `workspaces.ts`：包含空项目和归档成员的项目清单；实际服务端映射由 `infra/repositories/runtime_workspaces.py` 管理。未实现功能的空占位目录已移除。
 - `history.ts`、`tools.ts`：原始事件转换为统一 Timeline。Python 不解释 DSH 原始消息。
 - `identity.ts`：沿用共享协议的会话 ID、Timeline ID 和内容哈希算法；握手传入 runtime instance 的 `sessionNamespace`，区分平台归属。
 
@@ -32,7 +31,9 @@ Connector 先验证发现文件、进程与回环地址，再执行限时鉴权�
 
 列表通过 `sessionQuery.listSessions()` 合并 live 和 persisted 会话，使用官方顺序，并按官方侧栏规则排除子代理、归档和非当前空会话。按页批量调用 `readTitleSnapshots`，标题读取失败时保留错误标记。详情与分页也校验可见性，不把 live 标记当作正在运行。
 
-`session.getState` 每次即时读官方清单并返回 sourceState；归档时返回 blocked，不尝试加载 Agent。发送前再次检查来源。项目和归档只从 DSH 同步到 AA，AA 元数据操作不会调用官方 workspace 修改接口。
+`session.getState` 每次即时读官方清单并返回 sourceState；归档时返回 blocked，不尝试加载 Agent。发送前再次检查来源。明确归档状态通过现有通知同步到 AA，AA 元数据操作不会修改 DSH。插件不推送 DSH 项目名称或分组，后端沿用 CWD 分类和末段命名。
+
+未实现功能的空占位目录已移除；`sessions/` 承载实际使用的来源状态模块，其余文件按当前职责保留，后续有实现再拆分目录。
 
 详情先取得官方校验过的完整 raw log，再执行纯转换。消息类型与处理如下：
 

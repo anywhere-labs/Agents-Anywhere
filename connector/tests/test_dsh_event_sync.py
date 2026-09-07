@@ -145,21 +145,17 @@ def test_instance_binds_existing_notifications_and_propagates_ingest_failure():
     asyncio.run(exercise())
 
 
-def test_workspace_inventory_reaches_server_with_instance_binding_and_requires_completeness():
+def test_legacy_workspace_inventory_does_not_write_projects_or_local_state():
     async def exercise():
         ingest = AsyncMock()
         base = ConnectorRuntimeHost("device", AsyncMock(), AsyncMock(), ingest_notifications=ingest)
         host = RuntimeInstanceHost(base, RuntimeInstanceSpec(runtime_id="rti_dsh", runtime_type="dsh", name="DSH"))
         relay = SyncRelay(Mock(), host)
-        projects = [{"id": "native", "title": "真实项目名", "path": "/repo", "sessionIds": ["archived-session"]}]
-        with pytest.raises(ValueError, match="Incomplete"):
-            await relay.operation({"kind": "workspace.inventory", "workspaces": []})
-        ingest.assert_not_awaited()
+        base.sync_state_write = AsyncMock()
+        projects = [{"id": "native", "title": "DSH name", "path": "/repo", "sessionIds": ["session"]}]
         await relay.operation({"kind": "workspace.inventory", "complete": True, "workspaces": projects})
-        notice = ingest.call_args.args[0][0]
-        assert notice == {"method": "workspace.inventory", "params": {
-            "runtime": "dsh", "runtimeId": "rti_dsh", "complete": True, "workspaces": projects,
-        }}
+        ingest.assert_not_awaited()
+        base.sync_state_write.assert_not_awaited()
     asyncio.run(exercise())
 
 

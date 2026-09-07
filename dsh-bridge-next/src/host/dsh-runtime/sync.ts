@@ -6,7 +6,6 @@ import { sessionId } from './identity.js'
 import type { NativeChange, NativeRuntime } from './native.js'
 import { record, type TimelineItem } from './types.js'
 import { capabilities } from './capabilities.js'
-import { workspaceInventory } from './workspaces.js'
 
 export type SyncOperation = { kind: string, [key: string]: unknown }
 export interface SyncBatch { streamId: string, batchSeq: number, projectionVersion: number, operations: SyncOperation[] }
@@ -23,7 +22,6 @@ export class SyncFeed {
   private projections = new Map<string, SessionProjection>()
   private published = new Map<string, string>()
   private sourceAvailability = new Map<string, string>()
-  private lastWorkspaces: string | undefined
   private waitAck: { seq: number, resolve: () => void, reject: (error: Error) => void } | undefined
   private wake: (() => void) | undefined
   private closed = false
@@ -177,33 +175,24 @@ export class SyncFeed {
     }
     // Selection can make a previously blank session visible without a new native event.
     for (const id of this.native.candidates()) if (!this.published.has(id)) await this.baseline(id)
-    await this.projects()
-  }
-  private async projects(): Promise<void> {
-    const inventory = workspaceInventory(this.native, this.namespace)
-    const serialized = JSON.stringify(inventory)
-    if (serialized === this.lastWorkspaces) return
-    await this.send([inventory])
-    this.lastWorkspaces = serialized
   }
   private async changes(changes: NativeChange[]): Promise<void> {
     const touched = new Set<string>(), statuses = new Set<string>()
     const ended: [string, Record<string, unknown>][] = []
-    let reconcile = false, projects = false
+    let reconcile = false
     for (const change of changes) {
       if (change.type === 'capabilities') {
         await this.notification('runtime.capability.updated', capabilities(undefined, Boolean(this.native.ctx.get('agents')), this.native.questions.available))
         continue
       }
       if (change.type === 'visibility') { reconcile = true; continue }
-      if (change.type === 'workspace') { projects = true; continue }
       const { id } = change
       if (!await this.native.visible(id)) {
         if (this.published.has(id)) reconcile = true
         continue
       }
-      if (change.type === 'refresh') { await this.baseline(id); projects = true; continue }
-      if (!this.published.has(id)) { await this.baseline(id); projects = true }
+      if (change.type === 'refresh') { await this.baseline(id); continue }
+      if (!this.published.has(id)) await this.baseline(id)
       if (!this.published.has(id)) continue
       if (change.type === 'question') await this.notices(id)
       if (change.type === 'event') {
@@ -235,17 +224,13 @@ export class SyncFeed {
     for (const [id, params] of ended) if (await this.native.visible(id)) await this.notification('session.turnEnded', params)
     for (const id of statuses) await this.state(id)
     if (reconcile) await this.reconcile()
-    else if (projects) await this.projects()
     this.trimProjections()
   }
   private async run(): Promise<void> {
     await this.notification('session.inventory.begin', { scanToken: this.id })
     const inventory = await this.native.inventory(this.abort.signal)
-    // Bind project identities before session snapshots can fall back to cwd names.
-    await this.projects()
     for (const entry of inventory) await this.baseline(entry.header.id)
     await this.changes(this.takeChanges())
-    await this.projects()
     const sessions = []
     for (const id of this.native.candidates()) sessions.push({ sessionId: sessionId(this.namespace, id),
       externalSessionId: id, sourceState: await this.native.source.state(id) })

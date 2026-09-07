@@ -1,6 +1,6 @@
 """Headless integration probe called by the plugin's real SDK fixture.
 
-Uses the backend app through ASGI and a temporary SQLite database.
+Uses the unchanged backend app through ASGI and a temporary SQLite database.
 No dev server, user credentials, or actual model provider is used.
 """
 # Import the app only after isolating its database URL and local module paths.
@@ -109,11 +109,11 @@ async def main(home: Path) -> None:
                     i for i in items if i.type == "message" and i.role == "assistant" and i.status == "done"
                 ]) == expected)
 
-            async def native_action(action):
+            async def native_action(action, session_id="native-main"):
                 # The fixture performs official native UI-side mutations; this
                 # is test-only IPC, never an AA -> DSH management capability.
                 marker = home / "native-action.json"
-                marker.write_text(json.dumps({"action": action}))
+                marker.write_text(json.dumps({"action": action, "sessionId": session_id}))
                 async def acknowledged():
                     return not marker.exists()
                 await until(acknowledged, f"native {action} was not handled")
@@ -166,35 +166,39 @@ async def main(home: Path) -> None:
                 assert any(Path(w["path"]).resolve() == home.resolve() and external_id in w["sessionIds"] for w in workspaces["workspaces"])
                 main = next(s for s in sessions if s.externalSessionId == "native-main")
                 project_id = (await store.get_session(main.id)).projectId
+                assert (await store.get_project(project_id, user_id="dsh-test")).name == Path(main.cwd).name
                 await store.update_project(project_id, user_id="dsh-test", pinned=True, name="AA only")
                 assert all(w["title"] != "AA only" for w in (await runtime._request("workspace.list"))["workspaces"])
                 await native_action("rename")
-                async def renamed():
-                    return (await store.get_project(project_id, user_id="dsh-test")).name == "DSH 项目改名"
-                await until(renamed, "native project rename was not ingested")
-                assert (await store.get_project(project_id, user_id="dsh-test")).pinned
+
+                # An explicit native archive event uses the existing ingestion path.
+                await native_action("archive")
+                async def archived_event():
+                    session = await store.get_session(main.id)
+                    return session.sourceAvailability == "archived" and session.archived
+                await until(archived_event, "native archive event did not archive AA")
 
                 # Skip the event feed: entering details must still see an archive.
                 await runtime._sync.close()
                 runtime._sync = None
-                await native_action("archive")
-                state = await runtime.get_session_state(main.id, main.externalSessionId)
+                await native_action("archive", cold.externalSessionId)
+                state = await runtime.get_session_state(cold.id, cold.externalSessionId)
                 assert state.status == "blocked"
-                archived = await store.get_session(main.id)
+                archived = await store.get_session(cold.id)
                 assert archived.sourceAvailability == "archived" and archived.archived
-                denied = await runtime.start_turn(main.id, main.externalSessionId, "must not send", client_message_id="archived")
+                denied = await runtime.start_turn(cold.id, cold.externalSessionId, "must not send", client_message_id="archived")
                 assert not denied.ok and denied.code == "session_archived"
                 history = [(item.id, item.contentHash) for item in await stored(main.id)]
+                await native_action("delete")
                 count = completed_inventories()
                 await runtime.resynchronize()
                 async def calibrated():
                     return completed_inventories() > count
                 await until(calibrated, "offline archive calibration did not complete")
                 assert (await store.get_session(main.id)).sourceAvailability == "archived"
-                await native_action("delete")
-                async def detached():
-                    return not (await store.get_project(project_id, user_id="dsh-test")).hasNativeWorkspace
-                await until(detached, "native project deletion was not ingested")
+                project = await store.get_project(project_id, user_id="dsh-test")
+                assert project.name == "AA only" and project.pinned
+                assert not any(n["method"] == "workspace.inventory" for n in transport.notifications)
                 assert (await store.get_session(main.id)).projectId == project_id
                 assert [(item.id, item.contentHash) for item in await stored(main.id)] == history
                 assert runtime.sync_mode == "events"

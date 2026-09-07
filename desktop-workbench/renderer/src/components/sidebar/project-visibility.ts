@@ -18,11 +18,11 @@ export function projectSessionMatchesStatus(
 }
 
 export function projectHasVisibleSessions(
-  project: Pick<ProjectView, "id" | "manuallyCreated" | "hasNativeWorkspace" | "sidebarSessionCounts">,
+  project: Pick<ProjectView, "id" | "manuallyCreated" | "sidebarSessionCounts">,
   sessions: readonly ProjectSession[],
   status: ProjectSessionStatusFilter,
 ): boolean {
-  if (project.manuallyCreated || project.hasNativeWorkspace) return true
+  if (project.manuallyCreated) return true
 
   // These counts cover all pages, including projects the user has not expanded.
   const counts = project.sidebarSessionCounts

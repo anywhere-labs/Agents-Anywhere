@@ -285,7 +285,6 @@ export type ProjectView = {
   name: string;
   workspacePath: string;
   manuallyCreated?: boolean;
-  hasNativeWorkspace?: boolean;
   sidebarSessionCounts?: { active: number; archived: number };
   pinned: boolean;
   pinnedAt: string | null;
@@ -310,7 +309,6 @@ export type ProjectCreateRequest = {
   connectorId: string;
   workspacePath: string;
   manuallyCreated?: boolean;
-  hasNativeWorkspace?: boolean;
 };
 
 export type ProjectCreateResponse = ProjectResponse & {

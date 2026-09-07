@@ -5,8 +5,7 @@ from __future__ import annotations
 import posixpath
 from pathlib import PurePosixPath, PureWindowsPath
 
-from sqlalchemy import case, exists
-from agent_server.infra.db.schema import runtime_workspaces
+from sqlalchemy import case
 
 from agent_server.infra.repositories.store_support import *
 
@@ -77,7 +76,6 @@ def _project_from_row(row: Any) -> ProjectView:
         name=row["name"],
         workspacePath=row["workspace_path"],
         manuallyCreated=bool(row["manually_created"]),
-        hasNativeWorkspace=bool(row.get("has_native_workspace")),
         pinned=bool(row["pinned"]),
         pinnedAt=row["pinned_at"],
         activeSessionCount=int(row.get("active_session_count") or 0),
@@ -126,7 +124,6 @@ def _project_view_query() -> Any:
     return (
         select(
             projects_t,
-            exists(select(runtime_workspaces.c.project_id).where(runtime_workspaces.c.project_id == projects_t.c.id)).label("has_native_workspace"),
             active_count,
             sidebar_active_count,
             sidebar_archived_count,

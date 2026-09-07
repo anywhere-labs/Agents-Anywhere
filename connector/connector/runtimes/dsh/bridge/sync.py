@@ -106,12 +106,9 @@ class SyncRelay:
             # Returning here means accepted by that existing path, not a new DB ACK contract.
             await publish_pending()
         elif kind == "workspace.inventory":
-            if op.get("complete") is not True or not isinstance(op.get("workspaces"), list):
-                raise ValueError("Incomplete native workspace inventory")
-            await self.host.publish_runtime_notifications("dsh", [{
-                "method": "workspace.inventory",
-                "params": {"complete": True, "workspaces": op["workspaces"]},
-            }])
+            # Older plugin builds sent native project facts. Ignore those batches;
+            # all project grouping and naming use the existing session cwd path.
+            return
         else:
             raise ValueError(f"Unsupported bridge operation: {kind}")
 

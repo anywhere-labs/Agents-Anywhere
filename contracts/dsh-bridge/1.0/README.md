@@ -82,18 +82,18 @@ platform protocol. Question ACK means handoff to those publishers; reconnect and
 `runtime.sync.unsubscribe` stops delivery. Event runtimes bypass periodic history
 scanning. History and live events share stable item identities and ordering.
 
-`workspace.list` returns native `{id,title,path,sessionIds}` facts. Workspace events
-also send complete `workspace.inventory` operations (including empty workspaces
-and archived members). The relay awaits `workspace.inventory` ingestion before
-ACK. The server persists `(connectorId, runtimeId, nativeWorkspaceId)` mappings,
-imports titles with stable `（n）` collision suffixes, and uses explicit membership
-before cwd fallback. Only complete, validated inventories can remove mappings.
+`workspace.list` remains a read-only native query. The plugin does not publish
+workspace inventories or native project names. The relay ignores legacy
+`workspace.inventory` operations without storing or forwarding them. The unchanged
+backend groups sessions by cwd and derives project names from its final segment,
+using the same path as other runtimes.
 
 The official sidebar filter is applied before import and on every read/send path.
-Never-imported hidden sessions produce no history rows. An explicit native archive
-is `archived`; blank/filtered sessions are `unavailable`, not implicitly archived.
-The full inventory includes archived source observations for offline reconciliation.
-`session.getState` freshly queries the official catalog and returns `sourceState`;
-the relay persists it before returning the state RPC. Sends recheck availability
-and return `{ok:false,code:"session_archived",result:{sourceState,...}}` on archive.
-AA metadata mutations never invoke native project or archive mutations.
+Never-imported hidden sessions produce no history rows. Explicit native archives
+use the existing source notification with `availability: "archived"`; blank or
+filtered sessions use `unavailable`. Complete inventories carry these source facts.
+`session.getState` freshly reads the official catalog and returns `sourceState`;
+the adapter forwards that fact through existing ingestion before returning state.
+Sends recheck availability and return
+`{ok:false,code:"session_archived",result:{sourceState,...}}` for archived sessions.
+No server logic, tables, migrations, or additional AA unarchive protection are added.

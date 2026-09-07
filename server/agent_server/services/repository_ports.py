@@ -227,10 +227,6 @@ class ConnectorNotificationRepository(
 ):
     async def clear_active_run(self, session_id: str) -> None: ...
 
-    async def sync_runtime_workspaces(
-        self, *, connector_id: str, runtime_id: str, workspaces: list[dict[str, Any]],
-    ) -> tuple[bool, list[str]]: ...
-
     async def begin_session_inventory(
         self,
         connector_id: str,
