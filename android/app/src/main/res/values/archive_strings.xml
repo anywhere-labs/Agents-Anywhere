@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="archive_page_hint">Archived sessions stay here. Restore one to continue the conversation.</string>
+    <string name="archive_filter_label">Filter by project</string>
+    <string name="archive_filter_expanded">Project filter expanded</string>
+    <string name="archive_filter_collapsed">Project filter collapsed</string>
+    <string name="archive_archived_at">Archived %1$s</string>
+    <string name="archive_loading">Loading archived sessions…</string>
+    <string name="archive_load_failed">Could not load archived sessions</string>
+    <string name="archive_retry_hint">Check your connection and try again.</string>
+    <string name="archive_empty_hint">Sessions you archive will appear here, ready to restore whenever you need them.</string>
+    <string name="archive_project_empty">No archived sessions in this project</string>
+    <string name="archive_project_empty_hint">Choose another project to find archived conversations.</string>
+    <string name="archive_show_all_projects">View all projects</string>
+    <string name="archive_page_empty">No sessions to display on this page</string>
+    <string name="archive_more_hint">Load more to see earlier archived sessions.</string>
+    <string name="archive_more_failed">Could not load more sessions</string>
+    <string name="archive_restore_session_description">Restore session: %1$s</string>
+    <string name="archive_restore_project_description">Restore all archived sessions in %1$s</string>
+</resources>

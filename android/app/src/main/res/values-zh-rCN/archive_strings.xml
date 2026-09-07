@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="archive_page_hint">归档的会话会保留在这里，恢复后可继续聊天。</string>
+    <string name="archive_filter_label">按项目筛选</string>
+    <string name="archive_filter_expanded">项目筛选已展开</string>
+    <string name="archive_filter_collapsed">项目筛选已收起</string>
+    <string name="archive_archived_at">归档于 %1$s</string>
+    <string name="archive_loading">正在加载归档会话…</string>
+    <string name="archive_load_failed">暂时无法加载归档会话</string>
+    <string name="archive_retry_hint">检查网络连接后再试一次。</string>
+    <string name="archive_empty_hint">暂时不需要的会话可以归档到这里，需要时再恢复。</string>
+    <string name="archive_project_empty">这个项目还没有归档会话</string>
+    <string name="archive_project_empty_hint">可以切换项目，查看其他已归档的会话。</string>
+    <string name="archive_show_all_projects">查看全部项目</string>
+    <string name="archive_page_empty">当前没有可显示的会话</string>
+    <string name="archive_more_hint">继续加载，查看更早的归档会话。</string>
+    <string name="archive_more_failed">暂时无法加载更多会话</string>
+    <string name="archive_restore_session_description">恢复会话：%1$s</string>
+    <string name="archive_restore_project_description">恢复 %1$s 的全部归档会话</string>
+</resources>

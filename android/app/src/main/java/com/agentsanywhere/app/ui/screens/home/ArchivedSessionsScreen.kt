@@ -3,16 +3,17 @@ package com.agentsanywhere.app.ui.screens.home
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessions.ArchivedSessionsState
 import com.agentsanywhere.app.feature.sessions.SessionPageAppend
@@ -27,7 +28,6 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ArchivedSessionsScreen(
     projects: List<AgentProject>,
@@ -42,6 +42,7 @@ fun ArchivedSessionsScreen(
     val snackbar = remember { SnackbarHostState() }
     var projectId by rememberSaveable { mutableStateOf<String?>(null) }
     var filterOpen by remember { mutableStateOf(false) }
+    var filterBounds by remember { mutableStateOf(Rect.Zero) }
     var state by remember { mutableStateOf(ArchivedSessionsState()) }
     var requestVersion by remember { mutableStateOf(0L) }
     var restoredIds by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -50,9 +51,12 @@ fun ArchivedSessionsScreen(
     val restoreSuccess = stringResource(R.string.archived_restored)
     val viewNow = stringResource(R.string.archived_view_now)
     val restoreFailed = stringResource(R.string.archived_restore_failed)
+    val loadFailed = stringResource(R.string.archive_load_failed)
     val timeUnavailable = stringResource(R.string.archived_time_unavailable)
     val formatter = remember { DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault()) }
     val mutating = restoringIds.isNotEmpty() || restoringProjectId != null
+    val selectedProject = projects.firstOrNull { it.id == projectId }
+    val groups = remember(state.sessions, projects) { groupArchivedSessions(state.sessions, projects) }
 
     suspend fun load(reset: Boolean) {
         if (!reset && (state.loading || state.loadingMore || !state.hasMore)) return
@@ -67,7 +71,7 @@ fun ArchivedSessionsScreen(
             result.onSuccess { page -> state = state.accept(page, reset, restoredIds) }
                 .onFailure { error ->
                     if (error is CancellationException) throw error
-                    state = state.copy(loading = false, loadingMore = false, error = error.message ?: restoreFailed)
+                    state = state.copy(loading = false, loadingMore = false, error = error.message ?: loadFailed)
                 }
         } catch (error: CancellationException) { throw error }
     }
@@ -111,90 +115,120 @@ fun ArchivedSessionsScreen(
     Scaffold(
         containerColor = colors.canvas,
         contentWindowInsets = WindowInsets(0),
-        snackbarHost = { SnackbarHost(snackbar) },
-        topBar = {
-            Row(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack) { Icon(Lucide.ChevronLeft, stringResource(R.string.common_back), tint = colors.ink) }
-                Text(stringResource(R.string.profile_archived_sessions), Modifier.weight(1f).padding(start = 8.dp), color = colors.ink, style = MaterialTheme.typography.titleMedium)
-                IconButton(enabled = !state.loading && !mutating, onClick = { scope.launch { load(true) } }) { Icon(Lucide.RefreshCw, stringResource(R.string.archived_refresh), tint = colors.muted) }
+        snackbarHost = {
+            SnackbarHost(snackbar) { data ->
+                Snackbar(
+                    snackbarData = data,
+                    containerColor = colors.primaryAction,
+                    contentColor = colors.onPrimaryAction,
+                    actionColor = colors.onPrimaryAction,
+                )
             }
         },
+        topBar = {
+            ArchivedPageHeader(
+                refreshing = state.loading,
+                refreshEnabled = !state.loading && !state.loadingMore && !mutating,
+                onBack = onBack,
+                onRefresh = { scope.launch { load(true) } },
+            )
+        },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 18.dp)) {
-            OutlinedButton(onClick = { filterOpen = true }, modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
-                    val selected = projects.firstOrNull { it.id == projectId }
-                    Text(selected?.name ?: stringResource(R.string.archived_all_projects), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    selected?.let { Text(it.workspacePath, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                }
-                Icon(Lucide.ChevronDown, null)
-            }
+        Column(Modifier.fillMaxSize().padding(padding).navigationBarsPadding().padding(horizontal = 18.dp)) {
+            Text(
+                stringResource(R.string.archive_page_hint),
+                modifier = Modifier.padding(top = 8.dp, bottom = 20.dp),
+                color = archiveSecondaryInk(),
+                fontSize = 13.sp,
+                lineHeight = 20.sp,
+            )
+            ArchivedProjectSelector(
+                project = selectedProject,
+                expanded = filterOpen,
+                enabled = !mutating,
+                onClick = { filterOpen = true },
+                modifier = Modifier.onGloballyPositioned { filterBounds = it.boundsInWindow() },
+            )
             when {
-                state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                state.sessions.isEmpty() -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Lucide.Archive, null, tint = colors.muted, modifier = Modifier.size(36.dp))
-                    Text(state.error ?: stringResource(R.string.archived_empty), color = colors.muted, modifier = Modifier.padding(18.dp))
-                    if (state.error != null) TextButton(onClick = { scope.launch { load(true) } }) { Text(stringResource(R.string.archived_retry)) }
-                    if (state.hasMore) TextButton(enabled = !state.loadingMore, onClick = { scope.launch { load(false) } }) {
-                        Text(stringResource(if (state.loadingMore) R.string.archived_loading_more else R.string.archived_load_more))
-                    }
-                }
-                else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 16.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    groupArchivedSessions(state.sessions, projects).forEach { group ->
-                        item("group:${group.projectId}") {
-                            Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Lucide.Folder, null, tint = colors.muted, modifier = Modifier.size(20.dp))
-                                Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                                    Text(group.project?.name ?: stringResource(R.string.archived_unknown_project), color = colors.ink, fontWeight = FontWeight.SemiBold)
-                                    group.project?.let { Text(it.workspacePath, style = MaterialTheme.typography.bodySmall, color = colors.muted, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-                                    Text(stringResource(R.string.archived_loaded_count, group.sessions.size), color = colors.muted, style = MaterialTheme.typography.labelSmall)
-                                }
-                                group.project?.let { project ->
-                                    TextButton(enabled = !mutating, onClick = {
-                                        restoringProjectId = project.id
-                                        scope.launch { restoreProject(project.id) }
-                                    }) { Text(stringResource(if (restoringProjectId == project.id) R.string.archived_restoring else R.string.archived_restore_project)) }
-                                }
+                state.loading -> ArchivedStatusPanel(
+                    title = stringResource(R.string.archive_loading),
+                    loading = true,
+                )
+                state.sessions.isEmpty() && state.error != null -> ArchivedStatusPanel(
+                    title = loadFailed,
+                    description = stringResource(R.string.archive_retry_hint),
+                    icon = Lucide.CircleAlert,
+                    actionLabel = stringResource(R.string.archived_retry),
+                    onAction = { scope.launch { load(reset = !state.hasMore) } },
+                )
+                state.sessions.isEmpty() && state.hasMore -> ArchivedStatusPanel(
+                    title = stringResource(R.string.archive_page_empty),
+                    description = stringResource(R.string.archive_more_hint),
+                    actionLabel = stringResource(R.string.archived_load_more),
+                    actionLoading = state.loadingMore,
+                    onAction = { scope.launch { load(false) } },
+                )
+                state.sessions.isEmpty() -> ArchivedStatusPanel(
+                    title = stringResource(if (projectId == null) R.string.archived_empty else R.string.archive_project_empty),
+                    description = stringResource(if (projectId == null) R.string.archive_empty_hint else R.string.archive_project_empty_hint),
+                    actionLabel = if (projectId != null) stringResource(R.string.archive_show_all_projects) else null,
+                    onAction = { projectId = null },
+                )
+                else -> key(projectId) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
+                    ) {
+                        groups.forEach { group ->
+                            item("group:${group.projectId}", contentType = "project") {
+                                ArchivedProjectHeader(
+                                    project = group.project,
+                                    restoring = restoringProjectId != null && restoringProjectId == group.projectId,
+                                    enabled = !mutating,
+                                    onRestore = {
+                                        group.project?.let { project ->
+                                            restoringProjectId = project.id
+                                            scope.launch { restoreProject(project.id) }
+                                        }
+                                    },
+                                )
                             }
-                        }
-                        items(group.sessions, key = { "session:${it.id}" }) { session ->
-                            Surface(color = colors.raisedSurface, shape = MaterialTheme.shapes.medium) {
-                                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Column(Modifier.weight(1f)) {
-                                        Text(session.title, color = colors.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                        val time = runCatching { formatter.format(Instant.parse(session.archivedAt ?: session.sortKey)) }.getOrDefault(timeUnavailable)
-                                        Text(time, color = colors.muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 5.dp))
-                                    }
-                                    TextButton(enabled = !mutating, onClick = {
+                            itemsIndexed(group.sessions, key = { _, session -> "session:${session.id}" }, contentType = { _, _ -> "session" }) { index, session ->
+                                val time = remember(session.archivedAt, session.sortKey, formatter, timeUnavailable) {
+                                    runCatching { formatter.format(Instant.parse(session.archivedAt ?: session.sortKey)) }.getOrDefault(timeUnavailable)
+                                }
+                                ArchivedSessionRow(
+                                    session = session,
+                                    archivedTime = time,
+                                    first = index == 0,
+                                    last = index == group.sessions.lastIndex,
+                                    restoring = session.id in restoringIds || (restoringProjectId != null && restoringProjectId == session.projectId),
+                                    enabled = !mutating,
+                                    onRestore = {
                                         restoringIds = restoringIds + session.id
                                         scope.launch { restoreSession(session.id) }
-                                    }) { Text(stringResource(if (session.id in restoringIds) R.string.archived_restoring else R.string.archived_restore)) }
-                                }
+                                    },
+                                )
                             }
                         }
-                    }
-                    state.error?.let { message -> item("error") { Text(message, color = MaterialTheme.colorScheme.error) } }
-                    if (state.hasMore) item("more") {
-                        TextButton(enabled = !state.loadingMore, onClick = { scope.launch { load(false) } }, modifier = Modifier.fillMaxWidth()) {
-                            Text(stringResource(if (state.loadingMore) R.string.archived_loading_more else R.string.archived_load_more))
+                        if (state.error != null || state.hasMore) item("more", contentType = "footer") {
+                            ArchivedListFooter(
+                                failed = state.error != null,
+                                loading = state.loadingMore,
+                                enabled = !mutating,
+                                onLoadMore = { scope.launch { load(false) } },
+                            )
                         }
                     }
                 }
             }
         }
     }
-    if (filterOpen) ModalBottomSheet(onDismissRequest = { filterOpen = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = colors.canvas) {
-        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 480.dp), contentPadding = PaddingValues(18.dp)) {
-            item { TextButton(onClick = { projectId = null; filterOpen = false }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.archived_all_projects)) } }
-            items(projects, key = { it.id }) { project ->
-                TextButton(onClick = { projectId = project.id; filterOpen = false }, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
-                        Text(project.name)
-                        Text(project.workspacePath, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    }
-                    if (project.id == projectId) Icon(Lucide.Check, stringResource(R.string.workspace_selected))
-                }
-            }
-        }
-    }
+    if (filterOpen && filterBounds != Rect.Zero) ArchivedProjectPicker(
+        projects = projects,
+        selectedId = projectId,
+        anchorBounds = filterBounds,
+        onDismiss = { filterOpen = false },
+        onSelect = { projectId = it; filterOpen = false },
+    )
 }
