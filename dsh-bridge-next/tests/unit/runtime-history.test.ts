@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
-import { projectHistory } from '../../src/host/dsh-runtime/history.js'
+import { createProjection, projectHistory } from '../../src/host/dsh-runtime/history.js'
 import { contentHash, sessionId, itemId } from '../../src/host/dsh-runtime/identity.js'
 import { RuntimeRouter } from '../../src/host/dsh-runtime/router.js'
 import { readFile } from 'node:fs/promises'
@@ -76,6 +76,51 @@ test('preserves nested CodeMode calls, structured contextual edits and historica
   assert.equal(approvals.length, 1)
   assert.equal(approvals[0]?.content.readOnly, true)
   assert.equal(approvals[0]?.content.outcome, 'allowed-once')
+})
+
+function writeLog(content: string, outcome = 'Created', diffs: unknown[] = [], failed = false) {
+  return log([...start,
+    { type: 'tool/call', data: { turn: 1, step: 1, callId: 'write', name: 'write', arguments: JSON.stringify({ file_path: '/workspace/index.html', content }) } },
+    { type: 'tool/result', data: { turn: 1, step: 1, meta: { diffs }, message: {
+      content: [{ type: 'tool-result', toolCallId: 'write', isError: failed, content: [{ type: 'text',
+        text: `<path>/workspace/index.html</path>\n<type>file</type>\n<content>\n${outcome} file\n</content>` }] }],
+    } } },
+  ])
+}
+
+test('native write creation with empty diffs becomes one added file in history and live events', () => {
+  for (const [content, diff] of [['<html>\n</html>\n', '+<html>\n+</html>'], ['one\r\ntwo\r\n', '+one\n+two'], ['', '']]) {
+    const snapshot = writeLog(content!)
+    const projection = createProjection('native', 'platform')
+    for (const event of snapshot.events.slice(0, -1)) projection.apply(event)
+    const pending = projection.drain().items.find(item => item.type === 'tool')!
+    assert.equal(pending.status, 'running')
+    projection.apply(snapshot.events.at(-1)!)
+    const item = projection.drain().items.find(item => item.type === 'tool')!
+    assert.equal(item.id, pending.id, 'Completion updates the original tool item')
+    assert.equal(item.orderSeq, pending.orderSeq)
+    assert.equal(item.status, 'done')
+    assert.equal(item.content.kind, 'file_change')
+    assert.deepEqual(item.content.changes, [{ path: '/workspace/index.html', kind: 'add', diff, contextual: false }])
+    assert.equal(item.contentHash, contentHash(item))
+    assert.deepEqual(projection.snapshot(), projectHistory(snapshot, 'platform'))
+  }
+})
+
+test('write overwrite hunks remain modifications and do not invent a deleted empty line', () => {
+  const snapshot = writeLog('before\ninserted\n', 'Updated', [{ path: '/workspace/index.html', oldText: null, newText: 'inserted' }])
+  const item = projectHistory(snapshot, 'platform').find(item => item.type === 'tool')!
+  assert.equal(item.content.kind, 'file_change')
+  assert.deepEqual(item.content.changes, [{ path: '/workspace/index.html', kind: 'update', diff: '+inserted', contextual: true }])
+})
+
+test('unchanged overwrites, unknown acknowledgements and failed writes never become new files', () => {
+  for (const snapshot of [writeLog('same', 'Updated'), writeLog('new', 'Possibly Created'), writeLog('new', 'Created', [], true),
+    writeLog('new', 'Created', [{ path: '/workspace/index.html', oldText: null, newText: 'new' }], true)]) {
+    const item = projectHistory(snapshot, 'platform').find(item => item.type === 'tool')!
+    assert.equal(item.content.kind, 'tool_call')
+    assert.equal(item.content.changes, undefined)
+  }
 })
 
 test('cancelled streams drop undispatched tools and retain image references without fake attachment IDs', () => {

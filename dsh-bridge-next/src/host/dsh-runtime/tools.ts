@@ -48,6 +48,21 @@ export function resultContent(blocks: unknown): { output: string, result: Json }
 export function enrichToolResult(content: Data, meta: unknown): Data {
   const result: Data = { ...content }
   if (meta !== undefined) result.dshResultMeta = json(meta)
+  if (content.isError === true) return result
+
+  // Native write creates deliberately have empty meta.diffs. The successful
+  // result identifies the operation; the call arguments hold the full new file.
+  const writeStatus = content.toolName === 'write' && typeof content.output === 'string'
+    ? /^<path>[\s\S]*<\/path>\r?\n<type>file<\/type>\r?\n<content>\r?\n(Created|Updated) file\r?\n<\/content>$/.exec(content.output.trim())?.[1]
+    : undefined
+  const input = record(content.input)
+  if (writeStatus === 'Created' && typeof input.file_path === 'string' && input.file_path.trim()
+      && typeof input.content === 'string') {
+    result.kind = 'file_change'
+    result.changes = [{ path: input.file_path, kind: 'add', diff: diffLines(input.content, '+'), contextual: false }]
+    return result
+  }
+
   const diffs = record(meta).diffs
   if (['write', 'edit', 'str_replace_editor'].includes(String(content.toolName)) &&
       Array.isArray(diffs) && diffs.length && diffs.every(diff => {
@@ -58,12 +73,18 @@ export function enrichToolResult(content: Data, meta: unknown): Data {
     // Native diffs are contextual excerpts, NOT complete before/after files.
     result.changes = diffs.map(diff => {
       const d = record(diff)
-      return { path: d.path as string, kind: d.oldText === null ? 'add' : 'update',
-        diff: `${String(d.oldText ?? '').split('\n').map(s => `-${s}`).join('\n')}\n${String(d.newText).split('\n').map(s => `+${s}`).join('\n')}`,
+      // A pure insertion hunk can have oldText=null even in an existing file.
+      return { path: d.path as string, kind: writeStatus === 'Updated' ? 'update' : d.oldText === null ? 'add' : 'update',
+        diff: [diffLines(d.oldText as string | null, '-'), diffLines(d.newText as string, '+')].filter(Boolean).join('\n'),
         contextual: true }
     })
   }
   return result
+}
+
+function diffLines(text: string | null, prefix: '+' | '-'): string {
+  if (!text) return ''
+  return text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n').map(line => `${prefix}${line}`).join('\n')
 }
 
 export function parentToolItem(externalId: string, callId: string): string {
