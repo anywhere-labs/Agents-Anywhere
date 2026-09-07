@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct AccountSettingsSheet: View {
-    @EnvironmentObject private var appState: AppState
+    @ObservedObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @AppStorage(AppAppearance.storageKey) private var appearanceValue = AppAppearance.system.rawValue
     @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
@@ -101,6 +101,9 @@ struct AccountSettingsSheet: View {
             appState.dismissAccountError()
         }
         .environment(\.closeSettings, close)
+        // Native sheet presentation can create a new hosting boundary on Mac.
+        // Use the caller's store here and provide it to every settings subpage.
+        .environmentObject(appState)
         .appSheetPresentation(.expanded)
         .interactiveDismissDisabled(drafts.hasChanges || isWorking)
         .confirmDiscardChanges($confirmsDiscard) { dismiss() }

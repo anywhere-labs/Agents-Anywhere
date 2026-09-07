@@ -119,6 +119,7 @@ struct ChatSidebarView: View {
         .overlay(alignment: .bottom) {
             if let account {
                 ChatSidebarBottomControls(
+                    appState: appState,
                     account: account,
                     onNewSession: onNewSession
                 )
@@ -423,6 +424,7 @@ private struct ChatSidebarEmptyRow: View {
 }
 
 private struct ChatSidebarBottomControls: View {
+    let appState: AppState
     let account: ChatSidebarAccount
     let onNewSession: () -> Void
 
@@ -451,7 +453,7 @@ private struct ChatSidebarBottomControls: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .sheet(isPresented: $isShowingSettings) {
-            AccountSettingsSheet()
+            AccountSettingsSheet(appState: appState)
         }
     }
 }

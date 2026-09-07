@@ -15,6 +15,14 @@ struct AgentsAnywhereApp: App {
             RootView()
                 .environmentObject(appState)
                 .preferredColorScheme(appearance.colorScheme)
+                .background {
+                    #if targetEnvironment(macCatalyst)
+                    MacCatalystWindowTitle()
+                        .frame(width: 0, height: 0)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                    #endif
+                }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .background { appState.setAppInBackground(true) }
                     else if phase == .active { appState.setAppInBackground(false) }
