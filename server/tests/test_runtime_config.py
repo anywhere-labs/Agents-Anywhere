@@ -743,6 +743,15 @@ def test_delete_running_config_stops_then_returns_to_unconfigured(tmp_path):
         == 200
     )
     rpc.requests.clear()
+    session = asyncio.run(
+        client.app.state.store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id="sess_legacy_deleted",
+            runtime="codex",
+            external_session_id="legacy-deleted",
+            cwd="/repo",
+        )
+    )
 
     response = client.delete(config_url, headers=headers)
 
@@ -751,6 +760,9 @@ def test_delete_running_config_stops_then_returns_to_unconfigured(tmp_path):
     assert response.json()["active"] is False
     assert response.json()["status"] == "stopped"
     assert [request[1] for request in rpc.requests] == ["runtime.stop"]
+    assert (
+        client.get(f"/sessions/{session.id}/meta", headers=headers).status_code == 404
+    )
 
 
 def test_deactivation_settles_sessions_without_persisted_notices(tmp_path):

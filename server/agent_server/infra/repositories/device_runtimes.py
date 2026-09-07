@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import case, func, insert, or_, select, update
+from sqlalchemy import case, delete, func, insert, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from agent_server.core.device_runtime import RuntimeInventoryItem, RuntimeTypeDescriptor
@@ -16,8 +16,10 @@ from agent_server.core.runtime_identity import (
 )
 from agent_server.core.utc import utc_now
 from agent_server.infra.db import connector_runtime_types as runtime_types_t
+from agent_server.infra.db import connector_terminal_roots as terminal_roots_t
 from agent_server.infra.db import connectors as connectors_t
 from agent_server.infra.db import device_runtimes as device_runtimes_t
+from agent_server.infra.db import sessions as sessions_t
 
 _CONTROL_V2_DESCRIPTOR_KEY = "__runtimeControlV2Descriptor"
 
@@ -633,15 +635,49 @@ class DeviceRuntimeRepositoryMixin:
         self,
         connector_id: str,
         runtime_id: str,
-    ) -> dict[str, Any]:
-        return await self._update_device_runtime(
-            connector_id,
-            runtime_id,
-            config_json=None,
-            active=0,
-            status="stopped",
-            error_json=None,
+    ) -> list[str]:
+        """Clear an instance and physically delete its sessions; return their IDs."""
+        session_query = select(sessions_t.c.id).where(
+            sessions_t.c.connector_id == connector_id,
+            sessions_t.c.runtime_id == runtime_id,
         )
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                update(device_runtimes_t)
+                .where(
+                    device_runtimes_t.c.connector_id == connector_id,
+                    device_runtimes_t.c.runtime_id == runtime_id,
+                )
+                .values(
+                    config_json=None,
+                    active=0,
+                    status="stopped",
+                    error_json=None,
+                    updated_at=utc_now(),
+                )
+            )
+            if result.rowcount == 0:
+                raise KeyError(runtime_id)
+            session_ids = list((await conn.execute(session_query)).scalars())
+            # Terminal roots have no session FK. Timeline, active runs and shares
+            # cascade from sessions; projects can be shared by other instances.
+            await conn.execute(
+                delete(terminal_roots_t).where(
+                    terminal_roots_t.c.connector_id == connector_id,
+                    terminal_roots_t.c.session_id.in_(session_query),
+                )
+            )
+            await conn.execute(
+                delete(sessions_t).where(
+                    sessions_t.c.connector_id == connector_id,
+                    sessions_t.c.runtime_id == runtime_id,
+                )
+            )
+            # As with connector deletion, retain the DB records for retry if
+            # attachment cleanup fails before the transaction commits.
+            for session_id in session_ids:
+                await self.files.delete_session(session_id)
+        return session_ids
 
     async def _update_device_runtime(
         self,

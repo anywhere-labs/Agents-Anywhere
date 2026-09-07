@@ -222,6 +222,8 @@ def create_app(
         app.state.timeline_broker,
         app.state.redis,
         app.state.session_runtime_state_cache,
+        timeline_write_buffer=app.state.timeline_write_buffer,
+        terminal_broker=app.state.terminal_broker,
     )
     app.state.ws_tickets = ClientWsTicketManager(app.state.redis)
     app.state.setup_token = SetupToken()
