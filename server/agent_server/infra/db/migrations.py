@@ -22,8 +22,8 @@ from agent_server.infra.db.engine import POSTGRES_BACKEND, resolve_db_url
 
 LEGACY_V1_REVISION = "v1_legacy"
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_31"
-CURRENT_SCHEMA_VERSION = "2.31"
+CURRENT_SCHEMA_REVISION = "v2_32"
+CURRENT_SCHEMA_VERSION = "2.32"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -301,7 +301,11 @@ def _classify_sync(connection) -> UnversionedDatabase:
                 and "name_key" in runtime_columns
             )
             if runtime_instance_layout:
-                if "app_releases" in tables:
+                if (
+                    "app_releases" in tables
+                    or "_deprecated_app_releases" in tables
+                    or "manually_created" in _column_names(inspector, "projects")
+                ):
                     release_columns = _column_names(inspector, "app_releases")
                     session_share_layout = "session_shares" in tables
                     sequence_column_layout = "seq_allocated_high" in session_columns
@@ -386,6 +390,8 @@ def _classify_sync(connection) -> UnversionedDatabase:
                                 in _column_names(inspector, "projects")
                                 else "v2_30"
                             )
+                            if revision == "v2_31" and "app_releases" not in tables:
+                                revision = "v2_32"
                         else:
                             return UnversionedDatabase("unknown")
                     elif connector_kind_layout:

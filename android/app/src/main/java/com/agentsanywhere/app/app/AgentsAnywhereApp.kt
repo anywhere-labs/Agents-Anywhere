@@ -93,6 +93,9 @@ fun AgentsAnywhereApp(
 ) {
     val context = LocalContext.current
     val sessionStore = remember(context) { AuthSessionStore(context) }
+    LaunchedEffect(sessionStore.readServerUrl()) {
+        appUpdateViewModel.refreshForServer()
+    }
     var destinationName by rememberSaveable {
         mutableStateOf(
             if (sessionStore.hasAuthSession()) {
@@ -865,8 +868,7 @@ fun AgentsAnywhereApp(
     AppUpdatePromptDialog(
         state = appUpdateViewModel.state,
         onUpdate = appUpdateViewModel::downloadUpdate,
-        onLater = appUpdateViewModel::dismissPrompt,
-        onCancelDownload = appUpdateViewModel::cancelDownload,
+        onIgnore = appUpdateViewModel::ignoreVersion,
     )
     LaunchedEffect(appUpdateViewModel.state.installFile) {
         appUpdateViewModel.state.installFile?.let(onInstallUpdate)

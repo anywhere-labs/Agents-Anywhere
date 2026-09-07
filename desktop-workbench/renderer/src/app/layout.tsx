@@ -4,6 +4,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ToasterProvider } from "@/components/toaster-provider";
 import { I18nProvider } from "@/i18n/client-provider";
+import { DesktopUpdateProvider } from "@/features/desktop/desktop-update-provider";
 
 const sans = Geist({
   subsets: ["latin"],
@@ -85,7 +86,7 @@ export default function RootLayout({
       <body className={`${sans.variable} ${mono.variable} ${serif.variable} antialiased`}>
         <I18nProvider>
           <ThemeProvider defaultTheme="dark">
-            {children}
+            <DesktopUpdateProvider>{children}</DesktopUpdateProvider>
             <ToasterProvider />
           </ThemeProvider>
         </I18nProvider>

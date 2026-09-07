@@ -26,6 +26,7 @@ import {
 } from "./desktop-oauth";
 import { DesktopBindingStore } from "./desktop-binding";
 import { DesktopDeviceService } from "./desktop-device-service";
+import { DesktopUpdateService } from "./desktop-updates";
 import { desktopInstallation, MachineStateStore } from "./machine-state";
 import { DesktopSettingsStore } from "./desktop-settings";
 import { ConnectorLogStore } from "./log-store";
@@ -80,6 +81,7 @@ let bindingStore: DesktopBindingStore | null = null;
 let logStore: ConnectorLogStore | null = null;
 let connector: ConnectorSupervisor | null = null;
 let devices: DesktopDeviceService | null = null;
+let updates: DesktopUpdateService | null = null;
 let isQuitting = false;
 let shutdownComplete = false;
 let shutdownPromise: Promise<void> | null = null;
@@ -175,6 +177,7 @@ async function handleDesktopOAuthCallback(rawUrl: string): Promise<void> {
     if (pending.attempt !== desktopOAuthAttempt) return;
     if (!serverStore) throw new Error("Desktop server settings are not ready.");
     serverStore.save(pending.server);
+    void updates?.check(pending.server);
     publishDesktopOAuthResult({ status: "success", accessToken, server: pending.server });
   } catch (error) {
     if (pending.attempt !== desktopOAuthAttempt) return;
@@ -454,6 +457,17 @@ function appendMainLog(entry: string | Partial<ConnectorLogEntry>): void {
 }
 
 function registerIpcHandlers(): void {
+  for (const [method, action] of Object.entries({
+    getState: () => updates?.getState() ?? null,
+    open: () => updates?.showPrompt() ?? null,
+    ignore: () => updates?.ignoreVersion() ?? null,
+    download: () => updates?.download() ?? null,
+  })) {
+    ipcMain.handle(`workbench:updates:${method}`, (event) => {
+      assertTrustedRenderer(event);
+      return action();
+    });
+  }
   ipcMain.handle("workbench:openExternal", async (event, url: string) => {
     assertTrustedRenderer(event);
     if (!/^https?:\/\//i.test(url)) throw new Error("Only http(s) URLs can be opened externally.");
@@ -774,6 +788,7 @@ async function requestQuit({ confirm = false }: { confirm?: boolean } = {}): Pro
   isQuitting = true;
   shutdownPromise = (async () => {
     try {
+      updates?.dispose();
       quiesceRendererForShutdown();
       await connector?.shutdown();
     } finally {
@@ -808,6 +823,21 @@ if (hasSingleInstanceLock) {
     Menu.setApplicationMenu(null);
     registerStaticWebProtocol();
     await initializeDesktopServices();
+    updates = new DesktopUpdateService({
+      directory: path.join(app.getPath("userData"), "updates"),
+      currentVersion: app.getVersion(),
+      downloadUrl: config.updates.downloadUrl,
+      platform: process.platform,
+      healthTimeoutMs: config.healthTimeoutMs,
+      fetcher: (input, init) => net.fetch(String(input), init),
+      openInstaller: async (filePath) => {
+        if (process.platform === "linux") await fs.promises.chmod(filePath, 0o700);
+        const error = await shell.openPath(filePath);
+        if (error) throw new Error(error);
+      },
+      onState: (state) => sendToRenderer("workbench:updates:state", state),
+    });
+    void updates.check(activeDesktopServer());
     const settings = requireSettings().get();
     const showOnLaunch = !settings.silentLaunch || !launchedAsLoginItem() || Boolean(process.env.WORKBENCH_WEB_URL);
     createMainWindow(showOnLaunch);

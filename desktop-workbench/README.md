@@ -146,6 +146,25 @@ The build expects signing/notarization credentials to be supplied by release
 CI. `bundle:uv` verifies the upstream archive checksum before copying it into
 `build/uv`.
 
+## Desktop updates
+
+Main checks the selected server's `/api/v2/health` on launch and after a server
+login. Its `version` is compared numerically with `app.getVersion()`, including
+four-part Server versions such as `0.1.7.2`. No dedicated release API is used.
+
+An older Desktop opens an update dialog with **Ignore this version** and
+**Update now**. Outside clicks and Escape do not dismiss it; there is no close
+icon. Ignoring persists the exact server version in
+`<Electron userData>/updates/state.json`, scoped to the server. A newer server
+version prompts again. The download icon beside the account avatar remains
+visible whenever Desktop is behind, including after ignoring a version.
+
+Set `updates.downloadUrl` in `config.json` to the fixed HTTPS installer address
+before distribution. The `.invalid` URL is an explicit placeholder and does not
+download an installer. Downloads stream into `<Electron userData>/updates/downloads`
+with progress, remove incomplete files on failure/quit, and open the completed
+installer with the OS. Installing the new app remains an installer operation.
+
 ## Shared local machine record
 
 On every launch, including `yarn dev`, Main checks its current installation and

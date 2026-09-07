@@ -620,9 +620,11 @@
     <string name="profile_language_chinese_description">始终显示简体中文。</string>
     <string name="update_available_title">发现新版本</string>
     <string name="update_new_version_badge">有新版本</string>
-    <string name="update_available_message">新版本 v%1$s 已可用，是否立即更新？</string>
+    <string name="update_available_message">新版本 v%1$s 已可用，建议更新以保持服务兼容。继续使用旧版本可能导致部分功能无法使用。</string>
+    <string name="update_ignore_version">忽略此版本</string>
+    <string name="update_ignore_failed">无法保存忽略记录，请重试。</string>
+    <string name="update_download_unavailable">更新下载暂未开放，请稍后再试。</string>
     <string name="update_now">立即更新</string>
-    <string name="update_later">稍后更新</string>
     <string name="update_retry">重新下载</string>
     <string name="update_downloading_title">正在下载更新</string>
     <string name="update_downloading_version">正在下载 v%1$s</string>

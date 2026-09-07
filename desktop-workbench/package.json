@@ -37,6 +37,7 @@
     "productName": "Agents Anywhere",
     "files": [
       "dist/electron/**",
+      "dist/shared/**",
       "dist/config.json",
       "!dist/electron/development-login.js",
       "!dist/electron/*.test.js",

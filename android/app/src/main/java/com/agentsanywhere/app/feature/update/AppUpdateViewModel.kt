@@ -1,6 +1,7 @@
 package com.agentsanywhere.app.feature.update
 
 import android.app.Application
+import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -8,7 +9,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.agentsanywhere.app.api.AndroidAppRelease
 import com.agentsanywhere.app.api.AppUpdatesApi
+import com.agentsanywhere.app.api.compareUpdateVersions
+import com.agentsanywhere.app.BuildConfig
 import com.agentsanywhere.app.config.AppConfig
+import com.agentsanywhere.app.feature.auth.AuthSessionStore
 import java.io.File
 import java.io.FileOutputStream
 import kotlinx.coroutines.CancellationException
@@ -34,6 +38,9 @@ data class AppUpdateUiState(
     val preparingInstall: Boolean = false,
     val downloadFailed: Boolean = false,
     val checkFailed: Boolean = false,
+    val ignoring: Boolean = false,
+    val ignoreFailed: Boolean = false,
+    val downloadUnavailable: Boolean = false,
     val installFile: File? = null,
 )
 
@@ -41,34 +48,48 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
     private val api = AppUpdatesApi()
     private val downloadClient = OkHttpClient()
     private var downloadJob: Job? = null
+    private var checkJob: Job? = null
+    private var checkGeneration = 0
+    private var currentUpdateServer = ""
+    private val authSessionStore = AuthSessionStore(application)
     @Volatile
     private var activeDownloadCall: Call? = null
-    @Suppress("DEPRECATION")
-    private val currentVersionCode = application.packageManager
-        .getPackageInfo(application.packageName, 0)
-        .versionCode
+    private val updatePreferences = application.getSharedPreferences("app-updates", Context.MODE_PRIVATE)
+    private val ignoredVersionKey: String get() = "ignored:$currentUpdateServer"
 
     var state by mutableStateOf(AppUpdateUiState())
         private set
 
-    fun checkForUpdate(showPrompt: Boolean) {
-        if (state.checking || state.downloading) return
+    fun checkForUpdate(showPrompt: Boolean, forcePrompt: Boolean = false) {
+        val serverUrl = authSessionStore.readServerUrl().ifBlank { AppConfig.UPDATE_SERVICE_URL }
+        if (state.downloading || state.preparingInstall || state.ignoring) return
+        if (state.checking && serverUrl == currentUpdateServer) return
+        checkJob?.cancel()
+        val generation = ++checkGeneration
+        if (serverUrl != currentUpdateServer) state = AppUpdateUiState()
+        currentUpdateServer = serverUrl
         state = state.copy(checking = true, checkFailed = false)
-        viewModelScope.launch {
+        checkJob = viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    api.check(AppConfig.UPDATE_SERVICE_URL, currentVersionCode)
+                    api.check(serverUrl, BuildConfig.VERSION_NAME)
                 }
             }.onSuccess { release ->
+                if (generation != checkGeneration) return@onSuccess
+                val ignored = release != null && updatePreferences.getString(ignoredVersionKey, null)
+                    ?.let { compareUpdateVersions(it, release.versionName) == 0 } == true
                 state = state.copy(
                     checking = false,
                     checked = true,
                     release = release,
-                    promptVisible = release != null && (showPrompt || state.promptVisible),
+                    promptVisible = release != null && (state.promptVisible || (showPrompt && (!ignored || forcePrompt))),
                     checkFailed = false,
                     downloadFailed = false,
+                    ignoreFailed = false,
+                    downloadUnavailable = false,
                 )
             }.onFailure {
+                if (generation != checkGeneration || it is CancellationException) return@onFailure
                 state = state.copy(
                     checking = false,
                     checked = true,
@@ -78,19 +99,52 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun dismissPrompt() {
-        if (!state.downloading) state = state.copy(promptVisible = false)
+    fun refreshForServer() {
+        val serverUrl = authSessionStore.readServerUrl().ifBlank { AppConfig.UPDATE_SERVICE_URL }
+        if (serverUrl != currentUpdateServer) checkForUpdate(showPrompt = true)
+    }
+
+    fun showUpdatePrompt() {
+        if (state.release != null) state = state.copy(promptVisible = true)
+        else checkForUpdate(showPrompt = true, forcePrompt = true)
+    }
+
+    fun ignoreVersion() {
+        val release = state.release ?: return
+        if (state.downloading || state.preparingInstall || state.ignoring) return
+        val preferenceKey = ignoredVersionKey
+        state = state.copy(ignoring = true, ignoreFailed = false)
+        viewModelScope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                runCatching { updatePreferences.edit().putString(preferenceKey, release.versionName).commit() }.getOrDefault(false)
+            }
+            val sameVersion = preferenceKey == ignoredVersionKey && state.release?.versionName == release.versionName
+            state = state.copy(
+                ignoring = false,
+                ignoreFailed = !saved && sameVersion,
+                promptVisible = if (saved && sameVersion) false else state.promptVisible,
+            )
+        }
     }
 
     fun downloadUpdate() {
         val release = state.release ?: return
-        if (state.downloading || state.installFile != null) return
+        if (state.downloading || state.installFile != null || state.ignoring) return
+        val downloadConfigured = runCatching {
+            val url = java.net.URI(release.downloadUrl)
+            url.scheme == "https" && url.userInfo == null && url.host?.endsWith(".invalid") == false
+        }.getOrDefault(false)
+        if (!downloadConfigured) {
+            state = state.copy(downloadUnavailable = true, promptVisible = true)
+            return
+        }
         state = state.copy(
             downloading = true,
             downloadedBytes = 0,
             totalBytes = null,
             preparingInstall = false,
             downloadFailed = false,
+            downloadUnavailable = false,
         )
         downloadJob = viewModelScope.launch {
             try {
@@ -143,14 +197,19 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
         val updatesDir = File(getApplication<Application>().cacheDir, "app-updates").apply {
             mkdirs()
         }
-        val target = File(updatesDir, "agents-anywhere-${release.versionCode}.apk")
+        val target = File(updatesDir, "agents-anywhere-${release.versionName}.apk")
         try {
             val request = Request.Builder().url(release.downloadUrl).get().build()
             val call = downloadClient.newCall(request)
             activeDownloadCall = call
             call.execute().use { response ->
                 if (!response.isSuccessful) error("Update download failed with status ${response.code}.")
+                if (!response.request.url.isHttps) error("The APK download must use HTTPS.")
                 val body = response.body ?: error("Update download was empty.")
+                val contentType = body.contentType()?.toString().orEmpty()
+                if (contentType.startsWith("text/") || contentType.contains("json") || contentType.contains("xml")) {
+                    error("The download address returned a page instead of an APK.")
+                }
                 val totalBytes = body.contentLength().takeIf { it > 0 }
                 publishDownloadProgress(downloadedBytes = 0, totalBytes = totalBytes)
                 FileOutputStream(target).use { output ->
@@ -170,6 +229,7 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
                                 lastPublishedAt = now
                             }
                         }
+                        if (downloadedBytes == 0L || (totalBytes != null && downloadedBytes != totalBytes)) error("Update download is incomplete.")
                         publishDownloadProgress(downloadedBytes, totalBytes)
                     }
                 }
@@ -189,5 +249,10 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
 
     companion object {
         private const val PROGRESS_UPDATE_INTERVAL_NANOS = 100_000_000L
+    }
+
+    override fun onCleared() {
+        cancelDownload()
+        super.onCleared()
     }
 }

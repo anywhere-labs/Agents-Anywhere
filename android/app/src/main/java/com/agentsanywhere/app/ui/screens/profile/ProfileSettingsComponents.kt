@@ -103,6 +103,7 @@ internal fun ProfileRow(
     trailing: String? = null,
     trailingTag: String? = null,
     trailingIcon: ImageVector? = null,
+    trailingAttention: Boolean = false,
     enabled: Boolean = true,
     showChevron: Boolean = true,
     onClick: (() -> Unit)? = null,
@@ -167,12 +168,17 @@ internal fun ProfileRow(
             )
         }
         if (trailingIcon != null) {
-            Icon(
-                trailingIcon,
-                contentDescription = null,
-                tint = colors.faint.copy(alpha = alpha),
-                modifier = Modifier.size(20.dp),
-            )
+            Box {
+                Icon(
+                    trailingIcon,
+                    contentDescription = if (trailingAttention) stringResource(R.string.update_new_version_badge) else null,
+                    tint = colors.faint.copy(alpha = alpha),
+                    modifier = Modifier.size(20.dp),
+                )
+                if (trailingAttention) {
+                    Box(Modifier.align(Alignment.TopEnd).size(5.dp).background(colors.errorText, CircleShape))
+                }
+            }
         }
         if (showChevron) {
             Icon(Lucide.ChevronRight, contentDescription = null, tint = colors.faint.copy(alpha = alpha), modifier = Modifier.size(20.dp))

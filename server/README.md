@@ -206,3 +206,20 @@ AGENT_SERVER_STATIC_DIR=/path/to/legacy/dist \
 uv run ruff check . --exclude .venv
 uv run pytest -q
 ```
+
+## Client version checks
+
+`GET /api/v2/health` and `/api/v2/health/live` include `version`, matching the
+Server application version. Desktop and Android compare their installed version
+with this value and use fixed download addresses from their own configuration.
+The `/client-releases/check` and `/admin/client-releases` APIs and the release
+management page have been retired.
+
+Apply schema migration `v2_32` before restarting an existing server:
+
+```bash
+uv run python -m agent_server.infra.db.migrations upgrade
+```
+
+It archives the former release table as `_deprecated_app_releases`; historical
+release data is retained without a runtime release API.

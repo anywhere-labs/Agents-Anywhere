@@ -34,6 +34,7 @@ function quitFixture(options: { confirm?: boolean; shutdown?: () => Promise<void
       destroy: () => calls.push("destroy-renderer"),
     },
     connector: { shutdown: async () => { calls.push("stop-local-connector"); await options.shutdown?.(); } },
+    updates: { dispose: () => calls.push("stop-updates") },
     app: { quit: () => calls.push("quit") },
     net: { fetch: () => assert.fail("Desktop quit must not close or renew terminals through the API") },
   };
@@ -46,7 +47,7 @@ function quitFixture(options: { confirm?: boolean; shutdown?: () => Promise<void
 test("quit stops the owned local Connector without closing or renewing remote terminals", async () => {
   const fixture = quitFixture();
   await fixture.requestQuit();
-  assert.deepEqual(fixture.calls, ["destroy-renderer", "stop-local-connector", "quit"]);
+  assert.deepEqual(fixture.calls, ["stop-updates", "destroy-renderer", "stop-local-connector", "quit"]);
   assert.equal(fixture.globals.shutdownComplete, true);
 });
 
@@ -56,10 +57,10 @@ test("repeated quit requests wait for the same local Connector shutdown", async 
   const fixture = quitFixture({ shutdown: () => pending });
   const first = fixture.requestQuit();
   const second = fixture.requestQuit();
-  assert.deepEqual(fixture.calls, ["destroy-renderer", "stop-local-connector"]);
+  assert.deepEqual(fixture.calls, ["stop-updates", "destroy-renderer", "stop-local-connector"]);
   finish();
   await Promise.all([first, second]);
-  assert.deepEqual(fixture.calls, ["destroy-renderer", "stop-local-connector", "quit"]);
+  assert.deepEqual(fixture.calls, ["stop-updates", "destroy-renderer", "stop-local-connector", "quit"]);
 });
 
 test("cancelling native quit leaves the renderer and Connector running", async () => {
@@ -72,7 +73,7 @@ test("cancelling native quit leaves the renderer and Connector running", async (
 test("quit still completes if the window is already gone or local shutdown fails", async () => {
   const fixture = quitFixture({ window: false, shutdown: async () => { throw new Error("already stopped"); } });
   await assert.rejects(fixture.requestQuit(), /already stopped/);
-  assert.deepEqual(fixture.calls, ["stop-local-connector", "quit"]);
+  assert.deepEqual(fixture.calls, ["stop-updates", "stop-local-connector", "quit"]);
   assert.equal(fixture.globals.shutdownComplete, true);
 });
 

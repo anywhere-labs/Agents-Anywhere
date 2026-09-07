@@ -99,13 +99,14 @@ def test_empty_database_upgrades_to_current_schema(tmp_path) -> None:
         tables = set(inspect(engine).get_table_names())
         assert {
             "alembic_version",
-            "app_releases",
+            "_deprecated_app_releases",
             "device_runtimes",
             "session_shares",
             "sessions",
         }.issubset(tables)
         assert "approvals" not in tables
         assert "notices" not in tables
+        assert "app_releases" not in tables
     finally:
         engine.dispose()
     async_engine = create_async_engine(_sqlite_url(path))
@@ -380,6 +381,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_28", "v2_29"),
         ("v2_29", "v2_30"),
         ("v2_30", "v2_31"),
+        ("v2_31", "v2_32"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -1064,9 +1066,40 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_31() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_31"
-    assert CURRENT_SCHEMA_VERSION == "2.31"
+def test_current_schema_version_is_v2_32() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_32"
+    assert CURRENT_SCHEMA_VERSION == "2.32"
+
+
+def test_retiring_releases_preserves_history(tmp_path) -> None:
+    path = tmp_path / "retired-releases.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_31")
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO app_releases (platform, version_code, version_name, "
+                    "download_url, published, created_at, updated_at) "
+                    "VALUES ('desktop', 1, '0.1.0', 'https://example.test/desktop', "
+                    "1, '2026-01-01', '2026-01-01')"
+                )
+            )
+            original_rows = connection.execute(
+                text("SELECT * FROM app_releases ORDER BY platform, version_code")
+            ).all()
+        upgrade_database(db_url=url)
+        assert not inspect(engine).has_table("app_releases")
+        with engine.connect() as connection:
+            assert connection.execute(
+                text(
+                    "SELECT * FROM _deprecated_app_releases "
+                    "ORDER BY platform, version_code"
+                )
+            ).all() == original_rows
+    finally:
+        engine.dispose()
 
 
 def test_v2_20_adds_session_source_observation_details(tmp_path) -> None:

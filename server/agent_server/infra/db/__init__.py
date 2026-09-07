@@ -1,6 +1,5 @@
 from agent_server.infra.db.engine import build_engine
 from agent_server.infra.db.schema import (
-    app_releases,
     connector_protocol_capabilities,
     connector_runtime_catalogs,
     connector_runtime_types,
@@ -28,7 +27,6 @@ from agent_server.infra.db.schema import (
 )
 
 __all__ = [
-    "app_releases",
     "build_engine",
     "connector_protocol_capabilities",
     "connector_runtime_catalogs",

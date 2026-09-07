@@ -621,9 +621,11 @@
     <string name="profile_language_chinese_description">Always show Simplified Chinese.</string>
     <string name="update_available_title">New version available</string>
     <string name="update_new_version_badge">New version</string>
-    <string name="update_available_message">Version v%1$s is available. Update now?</string>
+    <string name="update_available_message">Version v%1$s is available. Update to stay compatible with the service. Some features may stop working on older versions.</string>
+    <string name="update_ignore_version">Ignore this version</string>
+    <string name="update_ignore_failed">Unable to save your preference. Please try again.</string>
+    <string name="update_download_unavailable">The update download is not available yet. Please try again later.</string>
     <string name="update_now">Update now</string>
-    <string name="update_later">Later</string>
     <string name="update_retry">Try again</string>
     <string name="update_downloading_title">Downloading update</string>
     <string name="update_downloading_version">Downloading version v%1$s</string>
