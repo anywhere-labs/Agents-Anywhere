@@ -36,6 +36,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -60,6 +61,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -113,8 +117,6 @@ private const val SESSION_WELCOME_ERASE_MS = 22L
 private const val SESSION_WELCOME_HOLD_MS = 15_000L
 private const val LOAD_OLDER_VISIBLE_THRESHOLD = 3
 private const val RETURN_TO_LATEST_ANIMATION_WINDOW = 12
-private val AUTO_FOLLOW_RESUME_THRESHOLD = 8.dp
-private val AUTO_FOLLOW_DRAG_PAUSE_THRESHOLD = 32.dp
 private val SessionWelcomeFontFamily = FontFamily(
     Font(R.font.newsreader_opsz_wght, FontWeight(650)),
 )
@@ -271,9 +273,6 @@ internal fun MessageList(
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    val density = LocalDensity.current
-    val resumeThresholdPx = with(density) { AUTO_FOLLOW_RESUME_THRESHOLD.roundToPx() }
-    val dragPauseThresholdPx = with(density) { AUTO_FOLLOW_DRAG_PAUSE_THRESHOLD.toPx() }
     val displayMessages = messages
     val displayWorkingLabel = workingLabel
     val openInteractions = remember(notices, sessionId) {
@@ -295,16 +294,41 @@ internal fun MessageList(
     var showScrollToBottom by remember { mutableStateOf(false) }
     var autoFollowLatest by remember(sessionId) { mutableStateOf(true) }
     var userPausedAutoFollow by remember(sessionId) { mutableStateOf(false) }
+    var userScrollDirection by remember(sessionId) { mutableIntStateOf(0) }
+    var returnToLatestJob by remember(sessionId) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val scrollButtonBottomPadding = bottomContentPadding.coerceAtLeast(24.dp)
+
+    DisposableEffect(sessionId) {
+        onDispose { returnToLatestJob?.cancel() }
+    }
 
     fun releaseReadLock() {
         userPausedAutoFollow = false
         autoFollowLatest = true
+        userScrollDirection = 0
     }
 
     fun pauseAutoFollowWithSnapshot() {
+        returnToLatestJob?.cancel()
+        returnToLatestJob = null
         userPausedAutoFollow = true
         autoFollowLatest = false
+    }
+
+    fun observeUserScroll(deltaY: Float) {
+        if (deltaY == 0f) return
+        // This LazyColumn is reversed: a downward finger motion reveals older items.
+        userScrollDirection = if (deltaY > 0f) 1 else -1
+        pauseAutoFollowWithSnapshot()
+    }
+
+    val scrollInput = remember(sessionId) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput) observeUserScroll(available.y)
+                return Offset.Zero
+            }
+        }
     }
 
     LaunchedEffect(listState) {
@@ -327,32 +351,32 @@ internal fun MessageList(
         }
     }
 
-    LaunchedEffect(listState, resumeThresholdPx) {
+    LaunchedEffect(listState, sessionId) {
         snapshotFlow {
             Triple(
                 listState.isAtLatest(),
-                listState.isNearLatest(resumeThresholdPx),
+                userScrollDirection,
                 listState.isScrollInProgress,
             )
         }
             .distinctUntilChanged()
-            .collectLatest { (atLatest, nearLatest, scrolling) ->
-                if (atLatest && !scrolling) {
+            .collectLatest { (atLatest, direction, scrolling) ->
+                // A stale bottom measurement during the start of an upward
+                // gesture must not re-enable following before the list moves.
+                if (atLatest && !scrolling && direction < 0) {
                     releaseReadLock()
-                } else if (nearLatest && !scrolling && !userPausedAutoFollow) {
-                    autoFollowLatest = true
                 }
             }
     }
 
-    LaunchedEffect(forceLatestRequest) {
+    LaunchedEffect(forceLatestRequest, sessionId) {
         if (forceLatestRequest > 0) {
             releaseReadLock()
             listState.scrollToItem(0)
         }
     }
 
-    LaunchedEffect(streamLatestRequest) {
+    LaunchedEffect(streamLatestRequest, sessionId, userPausedAutoFollow, autoFollowLatest) {
         if (shouldAutoFollowRealtime(
                 hasRealtimeUpdate = streamLatestRequest > 0,
                 autoFollowLatest = autoFollowLatest,
@@ -387,7 +411,8 @@ internal fun MessageList(
                 modifier = Modifier
                     .fillMaxSize()
                     .imePadding()
-                    .pointerInput(sessionId, dragPauseThresholdPx) {
+                    .nestedScroll(scrollInput)
+                    .pointerInput(sessionId) {
                         awaitPointerEventScope {
                             while (true) {
                                 val down = awaitPointerEvent(PointerEventPass.Initial)
@@ -395,7 +420,7 @@ internal fun MessageList(
                                     .firstOrNull { it.pressed && !it.previousPressed }
                                     ?: continue
                                 val pointerId = down.id
-                                val startY = down.position.y
+                                var previousY = down.position.y
 
                                 while (true) {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -403,9 +428,8 @@ internal fun MessageList(
                                         ?: event.changes.firstOrNull { it.pressed }
                                         ?: break
                                     if (!change.pressed) break
-                                    if (abs(change.position.y - startY) >= dragPauseThresholdPx) {
-                                        pauseAutoFollowWithSnapshot()
-                                    }
+                                    observeUserScroll(change.position.y - previousY)
+                                    previousY = change.position.y
                                 }
                             }
                         }
@@ -493,7 +517,8 @@ internal fun MessageList(
         if (showScrollToBottom) {
             ScrollToBottomButton(
                 onClick = {
-                    scope.launch {
+                    returnToLatestJob?.cancel()
+                    returnToLatestJob = scope.launch {
                         listState.animateToLatestFromAnywhere()
                         releaseReadLock()
                         listState.scrollToItem(0)
@@ -513,10 +538,6 @@ private suspend fun LazyListState.animateToLatestFromAnywhere() {
         scrollToItem(RETURN_TO_LATEST_ANIMATION_WINDOW)
     }
     animateScrollToItem(0)
-}
-
-private fun LazyListState.isNearLatest(thresholdPx: Int): Boolean {
-    return firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset <= thresholdPx
 }
 
 internal fun shouldAutoFollowRealtime(
