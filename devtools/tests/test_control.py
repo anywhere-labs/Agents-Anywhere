@@ -348,6 +348,7 @@ def test_start_desktop_pins_local_backend_and_renderer_port(
         "AGENTS_ANYWHERE_API=http://127.0.0.1:8000",
         "WORKBENCH_API_NAMESPACE=/api/v2",
         "AGENTS_ANYWHERE_API_NAMESPACE=/api/v2",
+        "WORKBENCH_OAUTH_WEB_ORIGIN=http://127.0.0.1:5174",
         "WORKBENCH_WEB_PORT=5184",
         "corepack",
         "yarn",
@@ -487,3 +488,32 @@ def test_stop_desktop_cleans_orphaned_owned_process_group(
     control.stop_desktop()
 
     assert terminated == [({200, 201}, "Desktop")]
+
+
+def test_clear_desktop_endpoint_updates_shared_runtime_file(
+    control_server: tuple[str, list[tuple[str, str | None]]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(control._connector_runtime(), "system_home", lambda: tmp_path)
+    runtime_file = tmp_path / ".agents-anywhere" / "connector-runtime.json"
+    runtime_file.parent.mkdir()
+    runtime_file.write_text(json.dumps({
+        "version": 2, "legacyMachineMigrated": True,
+        "desktop": {"appPath": "/test/Desktop"}, "connectorIds": ["conn_test"],
+    }))
+    host, calls = control_server
+    connection = http.client.HTTPConnection(host)
+    try:
+        connection.request("POST", "/api/desktop/clear-installation", body="{}", headers={
+            "Content-Type": "application/json", "Origin": f"http://{host}",
+        })
+        response = connection.getresponse()
+        assert response.status == 200
+        assert json.loads(response.read()) == {"ok": True}
+    finally:
+        connection.close()
+    assert json.loads(runtime_file.read_text()) == {
+        "version": 2, "legacyMachineMigrated": True, "connectorIds": ["conn_test"],
+    }
+    assert calls == []

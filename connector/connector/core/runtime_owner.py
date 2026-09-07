@@ -15,9 +15,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from connector.core.config import ConnectorConfig
+if TYPE_CHECKING:
+    from connector.core.config import ConnectorConfig
 
 
 def system_home() -> Path:
