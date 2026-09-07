@@ -165,7 +165,7 @@ private struct SidebarDrawerInteractive<
                     drawerSystemBackground
 
                     SidebarDrawerSidebar(
-                        size: CGSize(width: revealWidth, height: screenSize.height),
+                        width: revealWidth,
                         safeAreaInsets: safeAreaInsets,
                         scale: sidebarScale,
                         overlayOpacity: sidebarOverlayOpacity,
@@ -500,7 +500,9 @@ private struct SidebarDrawerNativeSplitView<
                     header: sidebarHeader(safeAreaInsets),
                     content: sidebarContent(safeAreaInsets)
                 )
+                .toolbar(removing: .sidebarToggle)
             }
+            .toolbar(.hidden, for: .navigationBar)
             .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 360)
         } detail: {
             GeometryReader { geometry in
@@ -561,30 +563,31 @@ private struct SidebarDrawerNativeSidebar<Header: View, Content: View>: View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .scrollEdgeEffectStyle(edgeEffectStyle, for: .top)
-            .modifier(SidebarDrawerToolbar(header: header))
+            .safeAreaBar(edge: .top, spacing: 0) {
+                SidebarDrawerHeaderBar(
+                    safeAreaInsets: EdgeInsets(),
+                    header: header
+                )
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-/// Both sidebar presentations use the native bar for the wordmark and its
-/// scroll-edge effect. The split view provides its host; the drawer provides
-/// its own stack inside the sidebar, separate from the moving detail card.
-private struct SidebarDrawerToolbar<Header: View>: ViewModifier {
+private struct SidebarDrawerHeaderBar<Header: View>: View {
+    let safeAreaInsets: EdgeInsets
     let header: Header
 
-    func body(content: Content) -> some View {
-        content
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar(.visible, for: .navigationBar)
-            .toolbar(removing: .sidebarToggle)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) { header }
-                    .sharedBackgroundVisibility(.hidden)
-            }
+    var body: some View {
+        header
+            .padding(.top, safeAreaInsets.top)
+            .padding(.leading, safeAreaInsets.leading)
+            .padding(.trailing, safeAreaInsets.trailing)
+            .frame(maxWidth: .infinity)
     }
 }
 
 private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
-    let size: CGSize
+    let width: CGFloat
     let safeAreaInsets: EdgeInsets
     let scale: CGFloat
     let overlayOpacity: CGFloat
@@ -593,27 +596,24 @@ private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
     let content: Content
 
     var body: some View {
-        NavigationStack {
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .scrollEdgeEffectStyle(edgeEffectStyle, for: .top)
-                .modifier(SidebarDrawerToolbar(header: header))
-        }
-            .ignoresSafeArea(.keyboard)
-            // Restore only the stable top inset here. Sidebar content already
-            // owns its horizontal margins and bottom controls/home-indicator gap.
-            .padding(.top, safeAreaInsets.top)
-            .frame(width: size.width, height: size.height)
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .scrollEdgeEffectStyle(edgeEffectStyle, for: .top)
+            .safeAreaBar(edge: .top, spacing: 0) {
+                SidebarDrawerHeaderBar(
+                    safeAreaInsets: safeAreaInsets,
+                    header: header
+                )
+            }
+            .frame(width: width)
+            .frame(maxHeight: .infinity, alignment: .leading)
             .background(drawerSystemBackground)
             .overlay {
                 drawerSystemBackground
                     .opacity(overlayOpacity)
                     .allowsHitTesting(false)
             }
-            // Transform one composited sidebar, including the native glass
-            // controls, rather than letting their effects resolve separately.
-            .compositingGroup()
-            .modifier(SidebarDrawerScale(scale: scale).ignoredByLayout())
+            .scaleEffect(scale, anchor: .leading)
     }
 }
 

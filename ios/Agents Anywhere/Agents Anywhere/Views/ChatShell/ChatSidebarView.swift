@@ -179,8 +179,9 @@ struct ChatSidebarIconControlStyle: ViewModifier {
 struct ChatSidebarHeaderView: View {
     var body: some View {
         AAWordmark(fontSize: 24)
-            .foregroundStyle(.primary)
-            .accessibilityAddTraits(.isHeader)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
     }
 }
 
