@@ -264,7 +264,40 @@ def test_text_runtime_requires_message_identity_and_does_not_expose_catalogs() -
         with pytest.raises(RuntimeInvalidRequestError):
             await runtime.start_turn("a", "native-a", "hello")
         assert runtime.calls == []
-        assert await runtime.get_session_notices("a") == ()
+        assert await _Pages([{"notices": []}]).get_session_notices("a") == ()
+
+    asyncio.run(run())
+
+
+def test_dsh_questions_forward_existing_notices_and_answers_without_reinterpretation() -> None:
+    async def run() -> None:
+        input_spec = {"required": True, "uiSchema": {
+            "component": "inputRequest", "version": 1,
+            "questions": [{"id": "q", "prompt": "选择", "multiple": False,
+                           "allowCustom": True, "options": [{"id": "o_0", "label": "好"}]}],
+        }}
+        runtime = _Pages([
+            {"notices": [{"noticeId": "question-1", "sessionId": "a", "runtime": "dsh",
+                          "type": "interaction", "interactionType": "input_request", "title": "需要你的回答",
+                          "status": "open", "responseRequired": True,
+                          "blocking": {"scope": "session", "targetId": "a"},
+                          "actions": [{"actionId": "submit", "label": "提交回答", "input": input_spec}]}]},
+            {"ok": True, "result": {"resolved": True}},
+            {"ok": False, "code": "dsh_question_not_pending", "message": "已处理"},
+        ])
+        notices = await runtime.get_session_notices("a", "native-a")
+        assert notices[0].interaction_type == "input_request"
+        assert notices[0].actions[0]["input"] == input_spec
+        assert notices[0].blocking == {"scope": "session", "targetId": "a"}
+        answer = {"answers": {"q": {"optionIds": ["o_0"]}}}
+        result = await runtime.respond_interaction("a", "question-1", "submit", answer)
+        assert result.ok and result.result == {"resolved": True}
+        assert runtime.calls == [
+            ("session.getNotices", {"sessionId": "a", "externalSessionId": "native-a"}),
+            ("session.respondInteraction", {"sessionId": "a", "noticeId": "question-1", "actionId": "submit", "inputData": answer}),
+        ]
+        result = await runtime.respond_interaction("a", "question-1", "cancel")
+        assert not result.ok and result.code == "dsh_question_not_pending"
 
     asyncio.run(run())
 

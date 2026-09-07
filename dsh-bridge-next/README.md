@@ -23,7 +23,7 @@ DSH 左侧边栏「设置」上方 → 手机连接 → 云端登录或连接自
 - Web 完成页的桌面端下载和官网地址目前为空，显示“暂未开放”和“官网即将上线”。地址统一在 `web-next/src/lib/product-links.ts` 配置。Android 沿用现有 Releases 入口，iOS 下载入口暂未开放。
 - 引导页关闭后，已上线的 Connector 继续运行；退出插件账号或卸载 Host 服务会停止插件自己的进程。
 
-Runtime 已实现 DSH 一键配置、官方侧栏过滤、原生会话和历史读取、首次完整校准、实时事件同步、纯文本新建/续聊及中断。内部 notice 不进入 Timeline，DSH 不再定时扫描历史；连接恢复后用现有后端完整替换接口校准。附件、模型/权限目录和交互审批应答暂未开放。实现与消息映射见 [会话读取](./RUNTIME_READS.md)和[事件同步方案](./RUNTIME_SYNC_PLAN.md)。
+Runtime 已实现 DSH 一键配置、官方侧栏过滤、原生会话和历史读取、首次完整校准、实时事件同步、纯文本新建/续聊及中断，以及 `ask_user_question` 问答。内部 notice 不进入 Timeline，DSH 不再定时扫描历史；连接恢复后用现有后端完整替换接口校准。附件、模型/权限目录和工具权限审批应答暂未开放。实现与消息映射见 [会话读取](./RUNTIME_READS.md)、[事件同步方案](./RUNTIME_SYNC_PLAN.md)和[用户问答](./USER_QUESTIONS.md)。
 
 ## 本地构建与安装
 

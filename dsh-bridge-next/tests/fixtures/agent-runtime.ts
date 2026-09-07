@@ -27,7 +27,7 @@ export class TextAdapter extends LlmAdapter {
   }
 }
 
-export async function mountAgents(ctx: Context, adapter: TextAdapter): Promise<void> {
+export async function mountAgents(ctx: Context, adapter: LlmAdapter): Promise<void> {
   await ctx.plugin(LlmRuntime).await()
   await ctx.plugin(SessionProjection).await()
   await ctx.plugin(SystemPrompt).await()

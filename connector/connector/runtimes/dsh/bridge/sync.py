@@ -9,7 +9,7 @@ from typing import Any
 from connector.logging import logger
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.dsh.bridge.client import BridgeClient
-from connector.runtimes.dsh.bridge.models import timeline_item
+from connector.runtimes.dsh.bridge.models import capability_set, notice as session_notice, timeline_item
 
 
 class SyncRelay:
@@ -77,14 +77,34 @@ class SyncRelay:
             else:
                 self.clear_snapshot()
         elif kind == "notifications":
+            pending = []
+
+            async def publish_pending():
+                if pending:
+                    await self.host.publish_runtime_notifications("dsh", list(pending))
+                    pending.clear()
+
             for notice in op["notifications"]:
+                # Use the platform's existing interaction/capability publishers.
+                # Its synchronous history publisher intentionally accepts only history.
+                if notice.get("method") == "notice.upsert":
+                    await publish_pending()
+                    await self.host.notice_upsert(session_notice(notice["params"]))
+                    continue
+                if notice.get("method") == "runtime.capability.updated":
+                    await publish_pending()
+                    await self.host.runtime_capabilities_update(capability_set(
+                        notice["params"], connector_id=self.host.connector_id,
+                    ))
+                    continue
                 if notice.get("method") == "timeline.itemUpsert":
                     item = timeline_item(notice["params"]["item"])
                     if item.session_id != notice["params"].get("sessionId"):
                         raise ValueError("Incremental item belongs to a different session")
+                pending.append(notice)
             # The Host binds connector/runtime identity and uses /connector/ingest.
             # Returning here means accepted by that existing path, not a new DB ACK contract.
-            await self.host.publish_runtime_notifications("dsh", op["notifications"])
+            await publish_pending()
         elif kind == "workspace.inventory":
             # Preserve native workspace facts locally. Existing backend project grouping
             # comes from session cwd; it has no Connector workspace-write notification.

@@ -18,6 +18,7 @@ from connector.runtime_protocol import (
     RuntimeUnsupportedError,
     RuntimeUpstreamError,
     SessionMeta,
+    SessionNotice,
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
@@ -219,6 +220,28 @@ class DshRuntime(AgentRuntime):
                 _session_params(session_id, external_session_id),
             ),
             connector_id=self.host.connector_id,
+        )
+
+    async def get_session_notices(
+        self, session_id: str, external_session_id: str | None = None,
+    ) -> tuple[SessionNotice, ...]:
+        result = await self._request(
+            "session.getNotices", _session_params(session_id, external_session_id)
+        )
+        return tuple(models.notice(item) for item in _array(result, "notices"))
+
+    async def respond_interaction(
+        self, session_id: str, notice_id: str, action_id: str,
+        input_data: Mapping[str, Any] | None = None,
+    ) -> RuntimeOperationResult:
+        result = _object(await self._request("session.respondInteraction", {
+            "sessionId": session_id, "noticeId": notice_id,
+            "actionId": action_id, "inputData": dict(input_data or {}),
+        }))
+        return RuntimeOperationResult(
+            ok=result.get("ok") is True,
+            code=result.get("code"), message=result.get("message"),
+            result=_object(result.get("result") or {}),
         )
 
     async def create_and_start_session(

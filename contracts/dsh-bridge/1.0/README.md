@@ -14,8 +14,10 @@ The Next plugin implements authenticated `initialize`, `ping`, `runtime.getConfi
 `runtime.getCapabilities`, `session.list`, `session.getSnapshot`, `session.getState`,
 `session.getNotices`, and `session.getCapabilities`. With the native Agent service,
 `session.createAndStart`, `session.startTurn` and `session.interrupt` are enabled.
-Text sends require a stable `clientMessageId`; attachments and catalog/interaction
-operations remain unsupported. Native model and preset selection stay in the Host.
+Text sends require a stable `clientMessageId`. `session.respondInteraction` handles
+native `ask_user_question` requests via the existing platform inputRequest v1 form.
+Attachments, catalogs, permission approval and plan-review responses remain unsupported.
+Native model and preset selection stay in the Host.
 
 `initialize.params.sessionNamespace` is optional and defaults to `connectorId`.
 The Connector sends its RuntimeHost `session_namespace` so the plugin can produce
@@ -69,6 +71,12 @@ binds its immutable runtime instance and awaits the existing `/connector/ingest`
 path. It does not parse native events or add a backend persistence API. An ACK means
 page receipt or acceptance by existing ingest, not a new durable DB transaction.
 Failed/ambiguous ingest closes the stream and triggers full recalibration.
+
+The private batch also carries the existing `notice.upsert` and
+`runtime.capability.updated` notifications. The DSH adapter forwards these through
+the existing RuntimeHost notice/capability publishers, without extending the
+platform protocol. Question ACK means handoff to those publishers; reconnect and
+`session.getNotices` reconcile current pending state from the official Gateway.
 
 `runtime.sync.refresh` takes a session identity and requests its complete baseline;
 `runtime.sync.unsubscribe` stops delivery. Event runtimes bypass periodic history

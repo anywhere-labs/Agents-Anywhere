@@ -69,4 +69,4 @@ uv run pytest tests/test_dsh_contracts.py tests/test_dsh_provider.py tests/test_
 
 链接安装的插件完成构建后，手动重启 DSH Host 以加载新后端；正在运行的旧 Connector 也需要重新启动以加载新的 Python 适配器。在 Web 设备页面或 onboarding 点击 DeepSeek Harness 的“一键配置”，然后查看该设备已有的 DSH 会话与历史。
 
-纯文本新建/续聊、实时消息、工具状态与中断已接入官方 Agent 服务。下一阶段处理附件、模型/权限目录、审批与提问应答。Windows 实机、长时间运行及真实模型界面验收仍需手动进行。
+纯文本新建/续聊、实时消息、工具状态与中断已接入官方 Agent 服务。`ask_user_question` 已接入平台现有问答表单，包含回答、取消、多端收起和断线恢复，见 [用户问答](./USER_QUESTIONS.md)。下一阶段处理附件、模型/权限目录和权限审批。Windows 实机、长时间运行及真实模型界面验收仍需手动进行。

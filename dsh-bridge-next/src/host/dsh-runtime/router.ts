@@ -83,7 +83,7 @@ export class RuntimeRouter {
       case 'ping': return { ok: true }
       case 'runtime.getConfig': return { runtime: 'dsh', revision: 2, values: {}, metadata: { readOnly: !this.reader.native?.ctx.get('agents'), storageMode: 'dsh-native' } }
       case 'workspace.list': return { workspaces: this.reader.native?.workspaces() ?? [] }
-      case 'runtime.getCapabilities': return capabilities(undefined, Boolean(this.reader.native?.ctx.get('agents')))
+      case 'runtime.getCapabilities': return capabilities(undefined, Boolean(this.reader.native?.ctx.get('agents')), this.reader.native?.questions.available)
       case 'session.list': return this.list(params, signal)
       case 'session.getSnapshot': return this.snapshot(params, signal)
       case 'session.getState': {
@@ -93,14 +93,20 @@ export class RuntimeRouter {
         const lastEnd = native.events.findLast(event => event.type === 'turn/end')
         const liveStatus = this.reader.status(id)
         return { runtime: 'dsh', sessionId: sessionId(this.namespace, id), externalSessionId: id,
-          status: liveStatus ?? (lastEnd?.data.reason.kind === 'error' ? 'error' : 'idle'), selections: {},
+          status: this.reader.native?.questions.waiting(id) ? 'waiting_approval' : liveStatus ?? (lastEnd?.data.reason.kind === 'error' ? 'error' : 'idle'), selections: {},
           metadata: { readOnly: !this.reader.native?.ctx.get('agents'), attached: liveStatus !== undefined } }
       }
-      case 'session.getNotices':
-        await this.resolve(params, signal)
-        return { notices: [] }
+      case 'session.getNotices': {
+        const id = await this.resolve(params, signal)
+        return { notices: this.reader.native?.questions.notices(this.namespace, id) ?? [] }
+      }
+      case 'session.respondInteraction': {
+        const id = await this.resolve(params, signal)
+        if (!this.reader.native || typeof params.noticeId !== 'string' || typeof params.actionId !== 'string') throw new BridgeError('INVALID_PARAMS', 'A question and action are required.')
+        return this.reader.native.questions.respond(this.namespace, id, params.noticeId, params.actionId, params.inputData)
+      }
       case 'session.getCapabilities':
-        return capabilities(sessionId(this.namespace, await this.resolve(params, signal)), Boolean(this.reader.native?.ctx.get('agents')))
+        return capabilities(sessionId(this.namespace, await this.resolve(params, signal)), Boolean(this.reader.native?.ctx.get('agents')), this.reader.native?.questions.available)
       default:
         throw new BridgeError('UNSUPPORTED_OPERATION', `The DSH runtime does not support ${method}.`)
     }

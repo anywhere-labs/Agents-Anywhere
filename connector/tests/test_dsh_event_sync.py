@@ -142,3 +142,33 @@ def test_instance_binds_existing_notifications_and_propagates_ingest_failure():
         with pytest.raises(ValueError):
             await base.publish_runtime_notifications("dsh", [{"method": "unknown", "params": {}}])
     asyncio.run(exercise())
+
+
+def test_dsh_question_batches_use_existing_publishers_in_order_with_instance_binding():
+    async def exercise():
+        forwarded = []
+
+        async def notify(method, params):
+            forwarded.append({"method": method, "params": params})
+
+        async def ingest(notifications):
+            forwarded.extend(notifications)
+
+        base = ConnectorRuntimeHost("connector", notify, AsyncMock(), ingest_notifications=ingest)
+        scoped = RuntimeInstanceHost(base, RuntimeInstanceSpec(runtime_id="rti_phone", runtime_type="dsh", name="DSH"))
+        relay = SyncRelay(Mock(), scoped)
+        await relay.operation({"kind": "notifications", "notifications": [
+            {"method": "timeline.itemUpsert", "params": {"sessionId": "session", "item": item()}},
+            {"method": "notice.upsert", "params": {"noticeId": "q", "sessionId": "session", "runtime": "dsh",
+                "type": "interaction", "interactionType": "input_request", "title": "回答问题", "status": "open",
+                "responseRequired": True, "blocking": {"scope": "session", "targetId": "session"}}},
+            {"method": "runtime.capability.updated", "params": {"runtime": "dsh", "revision": 2,
+                "capabilities": [{"capabilityId": "session.interaction.approval", "scope": "runtime", "supported": True}]}},
+            {"method": "session.state.updated", "params": {"sessionId": "session", "status": "waiting_approval"}},
+        ]})
+        assert [n["method"] for n in forwarded] == ["timeline.itemUpsert", "notice.upsert", "runtime.capability.updated", "session.state.updated"]
+        assert forwarded[0]["params"]["runtimeId"] == "rti_phone"
+        assert forwarded[1]["params"]["source"]["runtimeId"] == "rti_phone"
+        assert forwarded[1]["params"]["blocking"]["targetId"] == "session"
+        assert forwarded[2]["params"]["capabilities"][0]["runtimeId"] == "rti_phone"
+    asyncio.run(exercise())

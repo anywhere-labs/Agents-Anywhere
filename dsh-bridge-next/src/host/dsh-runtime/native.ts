@@ -13,16 +13,19 @@ import { userMessageId } from './identity.js'
 import { BridgeError } from './errors.js'
 import { ClientPresence, sessionVisible } from './visibility.js'
 import { record } from './types.js'
+import { UserQuestions } from './questions.js'
 
 export type NativeChange = { type: 'event', id: string, event: SessionEvent }
   | { type: 'session', id: string } | { type: 'status', id: string }
   | { type: 'refresh', id: string }
+  | { type: 'question', id: string } | { type: 'capabilities' }
   | { type: 'visibility' } | { type: 'workspace' }
 export interface NativeWorkspace { id: string, title: string, path: string, sessionIds: string[] }
 
 /** All native interpretation stays in the Host; observers never await transport work. */
 export class NativeRuntime {
   readonly presence: ClientPresence
+  readonly questions: UserQuestions
   private listeners = new Set<(change: NativeChange) => void>()
   private archived: Set<string>
   private turns = new Map<string, boolean>()
@@ -35,6 +38,7 @@ export class NativeRuntime {
   constructor(readonly ctx: Context) {
     this.archived = new Set(ctx.workspaceRegistry.archivedSessionIds)
     this.presence = new ClientPresence(() => this.emit({ type: 'visibility' }))
+    this.questions = new UserQuestions(ctx, id => this.visible(id), id => this.emit(id ? { type: 'question', id } : { type: 'capabilities' }))
     ctx.on('session/created', session => {
       // The session may leave memory while an earlier transport batch waits for
       // ACK. Keep its header so the queued event can still read persisted history.
@@ -44,6 +48,7 @@ export class NativeRuntime {
     }, { global: true })
     ctx.on('session/event', (session, event) => {
       if (event.type === 'turn/start') this.turns.set(session.id, true)
+      this.questions.observe(session.id, event)
       this.emit({ type: 'event', id: session.id, event })
     }, { global: true })
     ctx.on('session/disposed', session => this.emit({ type: 'session', id: session.id }), { global: true })
@@ -188,6 +193,7 @@ export class NativeRuntime {
     this.closed = true
     clearTimeout(this.workspaceTimer)
     this.presence.close()
+    await this.questions.close()
     this.listeners.clear()
     await Promise.allSettled([...this.writes.values()])
     await Promise.allSettled([...this.owned].map(handle => handle.dispose()))

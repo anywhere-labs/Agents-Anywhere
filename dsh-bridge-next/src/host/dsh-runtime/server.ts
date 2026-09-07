@@ -164,7 +164,7 @@ export class RuntimeServer {
           send({ jsonrpc: '2.0', id, result: {
             identity: { runtime: 'dsh', runtimeVersion: '0.1.2-rc.1', bridgeVersion: '0.1.0-dev.0', protocolVersion: '1.0', displayName: 'DeepSeek Harness' },
             storage: { mode: 'dsh-native', sameSessionWriterLimit: 1, crossProcessWriterExclusion: false },
-            features: { attachments: false, sessionDiscovery: true, timelineSuffixRead: false, approval: false, userQuestions: false,
+            features: { attachments: false, sessionDiscovery: true, timelineSuffixRead: false, approval: false, userQuestions: this.reader.native?.questions.available ?? false,
               readOnly: !this.reader.native?.ctx.get('agents'), snapshotPagination: true, syncMode: this.reader.native ? 'events' : 'polling', projectionVersion: 2 },
           } })
           return

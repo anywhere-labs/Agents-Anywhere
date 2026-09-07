@@ -5,6 +5,7 @@ import { createProjection, type SessionProjection } from './history.js'
 import { sessionId } from './identity.js'
 import type { NativeChange, NativeRuntime } from './native.js'
 import { record, type TimelineItem } from './types.js'
+import { capabilities } from './capabilities.js'
 
 export type SyncOperation = { kind: string, [key: string]: unknown }
 export interface SyncBatch { streamId: string, batchSeq: number, projectionVersion: number, operations: SyncOperation[] }
@@ -140,7 +141,11 @@ export class SyncFeed {
     // that evicted session; no background history scans are introduced.
     this.trimProjections()
     this.published.set(id, platformId)
+    await this.notices(id)
     await this.state(id)
+  }
+  private async notices(id: string): Promise<void> {
+    for (const notice of this.native.questions.notices(this.namespace, id)) await this.notification('notice.upsert', notice)
   }
   private async state(id: string): Promise<void> {
     if (!this.published.has(id) || !await this.native.visible(id)) return
@@ -151,7 +156,7 @@ export class SyncFeed {
       if (String(e.type) === 'approval/decided') pending.delete(String(record(e.data).id))
     }
     const last = log?.snapshotEvents().findLast(e => e.type === 'turn/end')
-    const status = pending.size ? 'waiting_approval' : this.native.status(id as SessionId)
+    const status = pending.size || this.native.questions.waiting(id) ? 'waiting_approval' : this.native.status(id as SessionId)
       ?? (last?.type === 'turn/end' && last.data.reason.kind === 'error' ? 'error' : 'idle')
     await this.notification('session.state.updated', { sessionId: this.published.get(id), externalSessionId: id, status })
   }
@@ -175,6 +180,10 @@ export class SyncFeed {
     const ended: [string, Record<string, unknown>][] = []
     let reconcile = false, projects = false
     for (const change of changes) {
+      if (change.type === 'capabilities') {
+        await this.notification('runtime.capability.updated', capabilities(undefined, Boolean(this.native.ctx.get('agents')), this.native.questions.available))
+        continue
+      }
       if (change.type === 'visibility') { reconcile = true; continue }
       if (change.type === 'workspace') { projects = true; continue }
       const { id } = change
@@ -185,6 +194,7 @@ export class SyncFeed {
       if (change.type === 'refresh') { await this.baseline(id); projects = true; continue }
       if (!this.published.has(id)) { await this.baseline(id); projects = true }
       if (!this.published.has(id)) continue
+      if (change.type === 'question') await this.notices(id)
       if (change.type === 'event') {
         if (change.event.type === 'turn/end') ended.push([id, {
           sessionId: this.published.get(id), externalSessionId: id,
