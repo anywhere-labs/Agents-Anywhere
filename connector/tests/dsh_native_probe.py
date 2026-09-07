@@ -30,6 +30,12 @@ class Host:
     async def runtime_error(self, *args, **kwargs) -> None:
         pass
 
+    async def publish_runtime_notifications(self, runtime, notifications, **kwargs):
+        pass
+
+    async def sync_state_write(self, key, value):
+        pass
+
 
 async def main(home: Path) -> None:
     values = {"dshHome": str(home)}
@@ -50,7 +56,6 @@ async def main(home: Path) -> None:
         assert {m.external_session_id for m in inventory} == {
             "native-main",
             "persisted-only",
-            "empty-native",
         }
         assert all(session_requires_timeline_sync(m) for m in inventory)
         main_meta = next(m for m in inventory if m.external_session_id == "native-main")
@@ -71,7 +76,7 @@ async def main(home: Path) -> None:
             assert snapshot.complete
             if meta.external_session_id == "persisted-only":
                 assert (
-                    len(snapshot.items) == 1005
+                    len(snapshot.items) == 1007
                 )  # Requires multiple frames; no lost page.
             for item in snapshot.items:
                 assert item.content_hash == timeline_content_hash(
@@ -109,7 +114,7 @@ async def main(home: Path) -> None:
             pass
         # A real discovery probe can run alongside an established runtime connection.
         assert (await discover(values)).available
-        assert len(await runtime.list_sessions()) == 3
+        assert len(await runtime.list_sessions()) == 2
     finally:
         await runtime.stop()
     print("DSH native integration passed")

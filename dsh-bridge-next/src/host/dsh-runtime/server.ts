@@ -157,12 +157,15 @@ export class RuntimeServer {
           }
           const namespace = params.sessionNamespace ?? params.connectorId
           if (typeof namespace !== 'string' || !namespace || namespace.length > 512) throw new BridgeError('INVALID_PARAMS', 'A runtime namespace is required.')
-          router = new RuntimeRouter(this.reader, namespace)
+          router = new RuntimeRouter(this.reader, namespace,
+            batch => send({ jsonrpc: '2.0', method: 'runtime.sync.batch', params: batch }),
+            error => { send({ jsonrpc: '2.0', method: 'runtime.error', params: publicError(error).toJSON() }); socket.end() })
           clearTimeout(authTimer)
           send({ jsonrpc: '2.0', id, result: {
             identity: { runtime: 'dsh', runtimeVersion: '0.1.2-rc.1', bridgeVersion: '0.1.0-dev.0', protocolVersion: '1.0', displayName: 'DeepSeek Harness' },
             storage: { mode: 'dsh-native', sameSessionWriterLimit: 1, crossProcessWriterExclusion: false },
-            features: { attachments: false, sessionDiscovery: true, timelineSuffixRead: false, approval: false, userQuestions: false, readOnly: true, snapshotPagination: true },
+            features: { attachments: false, sessionDiscovery: true, timelineSuffixRead: false, approval: false, userQuestions: false,
+              readOnly: !this.reader.native?.ctx.get('agents'), snapshotPagination: true, syncMode: this.reader.native ? 'events' : 'polling', projectionVersion: 2 },
           } })
           return
         }
@@ -191,6 +194,7 @@ export class RuntimeServer {
       if (buffer.length > MAX_FRAME_BYTES) socket.destroy()
     })
     socket.on('close', () => {
+      router?.close()
       clearTimeout(authTimer)
       for (const abort of inFlight.values()) abort.abort()
       this.sockets.delete(socket)

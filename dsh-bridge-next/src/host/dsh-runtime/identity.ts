@@ -6,11 +6,29 @@ export function digest(value: string): string {
 }
 
 export function sessionId(namespace: string, externalId: string): string {
+  const prefix = `aa_${digest(namespace).slice(0, 16)}_`
+  if (externalId.startsWith(prefix) && /^[\w-]{1,128}$/.test(externalId.slice(prefix.length))) return externalId.slice(prefix.length)
   return `sess_dsh_${digest(`${namespace}:dsh:${externalId}`).slice(0, 24)}`
+}
+
+export function nativeSessionId(namespace: string, platformId: string): string {
+  if (!/^[\w-]{1,128}$/.test(platformId)) throw new Error('Invalid platform session identity')
+  return `aa_${digest(namespace).slice(0, 16)}_${platformId}`
 }
 
 export function itemId(externalId: string, kind: string, businessId: string): string {
   return `dsh_${digest(`${externalId}\0${kind}\0${businessId}`)}`
+}
+
+export function userMessageId(externalId: string, clientId: string): string {
+  return `aa.${digest(externalId).slice(0, 16)}.${Buffer.from(clientId).toString('base64url')}`
+}
+
+export function clientMessageId(externalId: string, nativeId: string): string | undefined {
+  const prefix = `aa.${digest(externalId).slice(0, 16)}.`
+  if (!nativeId.startsWith(prefix)) return
+  const value = Buffer.from(nativeId.slice(prefix.length), 'base64url').toString('utf8')
+  if (value && userMessageId(externalId, value) === nativeId) return value
 }
 
 // Match Python json.dumps(sort_keys=True, ensure_ascii=False, separators=(',', ':'))

@@ -255,13 +255,13 @@ def test_snapshot_requires_all_pages_from_same_capture() -> None:
     asyncio.run(run())
 
 
-def test_read_only_runtime_does_not_expose_write_or_catalog_operations() -> None:
+def test_text_runtime_requires_message_identity_and_does_not_expose_catalogs() -> None:
     async def run() -> None:
         runtime = _Pages([])
         for call in [runtime.list_model_catalog, runtime.list_permission_catalog]:
             with pytest.raises(RuntimeUnsupportedError):
                 await call()
-        with pytest.raises(RuntimeUnsupportedError):
+        with pytest.raises(RuntimeInvalidRequestError):
             await runtime.start_turn("a", "native-a", "hello")
         assert runtime.calls == []
         assert await runtime.get_session_notices("a") == ()

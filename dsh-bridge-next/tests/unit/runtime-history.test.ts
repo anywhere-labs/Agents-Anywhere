@@ -34,7 +34,7 @@ test('folds tool blocks, calls and user-role results into one canonical tool ite
   assert.equal(tools[0]?.content.command, 'pwd')
   assert.equal(tools[0]?.content.output, '/workspace')
   assert.equal(items.filter(item => item.role === 'user').length, 1)
-  assert.equal(items.find(item => item.content.text === 'context')?.type, 'system')
+  assert.ok(!items.some(item => item.content.text === 'context'))
   assert.ok(!JSON.stringify(items).includes('never expose'))
   for (const item of items) assert.equal(item.contentHash, contentHash(item))
 })
@@ -91,7 +91,7 @@ test('cancelled streams drop undispatched tools and retain image references with
   assert.ok(!JSON.stringify(items).includes('private model config'))
 })
 
-test('compaction keeps original messages and unknown informational events remain observable', () => {
+test('compaction keeps original messages and ignores internal informational events', () => {
   const snapshot = log([...start, assistant([{ type: 'text', text: 'original' }]),
     { type: 'compaction/summary', data: { summary: 'compressed' } },
     { type: 'extension/notice', data: { note: 'future' } },
@@ -99,7 +99,7 @@ test('compaction keeps original messages and unknown informational events remain
   const items = projectHistory(snapshot, 'platform')
   assert.ok(items.some(item => item.content.text === 'original'))
   assert.ok(items.some(item => item.type === 'marker' && item.content.kind === 'compact'))
-  assert.ok(items.some(item => item.content.eventType === 'extension/notice'))
+  assert.ok(!items.some(item => item.content.eventType === 'extension/notice'))
 })
 
 test('canonical identities and hashes match the shared cross-language fixtures', async () => {
@@ -121,6 +121,6 @@ test('read cursors capture one complete inventory and truncated snapshots are ne
   const limited = await router.request('session.getSnapshot', { ...params, limit: 1 }, new AbortController().signal) as { complete: boolean, items: unknown[] }
   assert.equal(limited.complete, false)
   assert.equal(limited.items.length, 1)
-  await assert.rejects(router.request('session.startTurn', params, new AbortController().signal), /read-only/)
+  await assert.rejects(router.request('session.startTurn', params, new AbortController().signal), { code: 'UNSUPPORTED_OPERATION' })
   await assert.rejects(router.request('session.getSnapshot', { ...params, sessionId: 'foreign' }, new AbortController().signal), /namespace/)
 })

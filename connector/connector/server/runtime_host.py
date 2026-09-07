@@ -39,12 +39,30 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         notifier: BackendNotifier,
         attachment_downloader: AttachmentDownloader,
         sync_state_store: SyncStateStore | None = None,
+        ingest_notifications: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
     ) -> None:
         self._connector_id = connector_id
         self._notifier = notifier
         self._attachment_downloader = attachment_downloader
         self._sync_state_store = sync_state_store
         self._memory_sync_state: dict[str, Mapping[str, Any]] = {}
+        self._ingest_notifications = ingest_notifications
+
+    async def publish_runtime_notifications(
+        self, runtime: str, notifications: list[dict[str, Any]], *, runtime_id: str | None = None
+    ) -> None:
+        if self._ingest_notifications is None:
+            raise RuntimeError("Synchronous notification ingestion is unavailable")
+        allowed = {"session.meta.upsert", "session.source.updated", "session.state.updated",
+                   "session.turnEnded", "session.inventory.begin", "session.inventory.complete",
+                   "timeline.sync", "timeline.itemUpsert"}
+        bound = []
+        for notice in notifications:
+            if notice.get("method") not in allowed or not isinstance(notice.get("params"), dict):
+                raise ValueError("Invalid runtime notification")
+            params = {**notice["params"], "runtime": runtime, "runtimeId": runtime_id or runtime}
+            bound.append({"method": notice["method"], "params": server_payload_without_turn_data(params)})
+        await self._ingest_notifications(bound)
 
     @property
     def connector_id(self) -> str:

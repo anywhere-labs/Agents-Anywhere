@@ -3,6 +3,7 @@ import type { ComponentType } from 'react'
 import { createHostApi, type HostRpc } from './api/host.js'
 import { ConnectionEntry, type ConnectionEntryProps } from './features/onboarding/entry.js'
 import type { OnboardingHostApi } from '../contracts/index.js'
+import { reportSelection } from './selection.js'
 
 export const inject = ['slots', 'connection']
 
@@ -22,6 +23,7 @@ interface SidebarServices {
 export function apply(ctx: Context): void {
   const services = ctx as Context & SidebarServices
   const host = createHostApi(services.connection.rpc)
+  reportSelection(ctx, services.connection.rpc)
   ctx.effect(() => services.slots.inject('sidebar.footer.action', () => services.slots.register({
     name: 'sidebar.footer.action', id: 'agents-anywhere-next', order: 26,
     label: () => '手机连接', inject: () => ({ host }),

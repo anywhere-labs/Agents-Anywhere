@@ -10,6 +10,8 @@ from connector.runtime_protocol import (
     RuntimeCapabilitySet,
     RuntimeConfig,
     RuntimeIdentity,
+    RuntimeAttachment,
+    RuntimeOperationResult,
     RuntimeInvalidRequestError,
     RuntimeTimelineSnapshot,
     RuntimeUnavailableError,
@@ -22,6 +24,7 @@ from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.dsh import discovery, provider_config
 from connector.runtimes.dsh.bridge import models
 from connector.runtimes.dsh.bridge.client import BridgeClient, BridgeRpcError
+from connector.runtimes.dsh.bridge.sync import SyncRelay
 
 
 class DshRuntime(AgentRuntime):
@@ -43,6 +46,24 @@ class DshRuntime(AgentRuntime):
         self._read_lock = asyncio.Lock()
         self._stopping = False
         self._restart_task: asyncio.Task[None] | None = None
+        self._sync: SyncRelay | None = None
+        self._sync_mode = "events"
+
+    @property
+    def sync_mode(self) -> str:
+        return self._sync_mode
+
+    async def resynchronize(self, session_id: str | None = None, external_session_id: str | None = None) -> None:
+        if session_id:
+            await self._request("runtime.sync.refresh", _session_params(session_id, external_session_id))
+            return
+        await self._ensure_client()
+        async with self._connect_lock:
+            if self._sync is not None:
+                await self._sync.close()
+            if not self._stopping and self._client is not None and self.sync_mode == "events":
+                self._sync = SyncRelay(self._client, self.host)
+                self._sync.start()
 
     @property
     def identity(self) -> RuntimeIdentity:
@@ -54,6 +75,9 @@ class DshRuntime(AgentRuntime):
 
     async def stop(self) -> None:
         self._stopping = True
+        if self._sync is not None:
+            await self._sync.close()
+            self._sync = None
         if self._restart_task is not None:
             self._restart_task.cancel()
             await asyncio.gather(self._restart_task, return_exceptions=True)
@@ -197,8 +221,35 @@ class DshRuntime(AgentRuntime):
             connector_id=self.host.connector_id,
         )
 
-    # Mutation and catalog methods deliberately inherit RuntimeUnsupportedError.
-    # Historical approval/tool records are timeline entries, not actionable notices.
+    async def create_and_start_session(
+        self, session_id: str, content: str, title: str | None = None,
+        cwd: str | None = None, selections: Mapping[str, str | None] | None = None,
+        attachments: tuple[RuntimeAttachment, ...] = (), client_message_id: str | None = None,
+    ) -> RuntimeOperationResult:
+        return await self._send_text("session.createAndStart", session_id, None, content, cwd, attachments, client_message_id)
+
+    async def start_turn(
+        self, session_id: str, external_session_id: str | None, content: str,
+        selections: Mapping[str, str | None] | None = None,
+        attachments: tuple[RuntimeAttachment, ...] = (), client_message_id: str | None = None,
+        cwd: str | None = None,
+    ) -> RuntimeOperationResult:
+        return await self._send_text("session.startTurn", session_id, external_session_id, content, cwd, attachments, client_message_id)
+
+    async def _send_text(
+        self, method: str, session_id: str, external_id: str | None, content: str,
+        cwd: str | None, attachments: tuple[RuntimeAttachment, ...], client_message_id: str | None,
+    ) -> RuntimeOperationResult:
+        if attachments:
+            raise RuntimeUnsupportedError("DSH attachments are not supported yet")
+        if not content.strip() or not client_message_id:
+            raise RuntimeInvalidRequestError("Text and a stable clientMessageId are required")
+        params = {**_session_params(session_id, external_id), "content": content,
+                  "clientMessageId": client_message_id, "cwd": cwd}
+        return RuntimeOperationResult(result=_object(await self._request(method, params)))
+
+    async def interrupt_session(self, session_id: str, reason: str | None = None) -> RuntimeOperationResult:
+        return RuntimeOperationResult(result=_object(await self._request("session.interrupt", {"sessionId": session_id})))
 
     async def _start_client(self) -> None:
         values = provider_config.normalized_config_values(dict(self.config.values))
@@ -238,6 +289,10 @@ class DshRuntime(AgentRuntime):
             if self._stopping or not client.connected:
                 raise RuntimeUnavailableError("DSH bridge is stopping")
             self._client = client
+            self._sync_mode = "events" if result.get("features", {}).get("syncMode") == "events" else "polling"
+            if self._sync_mode == "events":
+                self._sync = SyncRelay(client, self.host)
+                self._sync.start()
         except BaseException:
             await client.close()
             raise
@@ -289,13 +344,22 @@ class DshRuntime(AgentRuntime):
             await self.host.runtime_capabilities_update(
                 models.capability_set(params, connector_id=self.host.connector_id)
             )
-        elif method == "timeline.item.upsert":
+        elif method == "timeline.item.upsert" and self.sync_mode != "events":
             await self.host.timeline_item_upsert(
                 models.timeline_item(params.get("item", params))
             )
+        elif method == "runtime.sync.batch" and self._sync is not None:
+            try:
+                self._sync.accept(params)
+            except asyncio.QueueFull:
+                if self._client and self._client.writer:
+                    self._client.writer.close()
 
     async def _handle_exit(self, return_code: int | None) -> None:
         self._client = None
+        if self._sync is not None:
+            await self._sync.close()
+            self._sync = None
         if self._stopping:
             return
         with suppress(Exception):

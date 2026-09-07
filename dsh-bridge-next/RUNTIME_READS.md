@@ -1,8 +1,8 @@
-# Runtime 第一阶段：发现与读取
+# Runtime：发现、读取与实时同步
 
 ## 当前实现
 
-插件 Host 独立挂载 `agentsAnywhereRuntime`，要求官方 `sessions`、`sessionQuery` 服务就绪。可选挂载 `agents` 只读取当前运行状态。是否登录、是否打开手机连接弹窗、是否发现 AA Desktop，都不会决定 runtime 端口是否启动。
+插件 Host 独立挂载 `agentsAnywhereRuntime`，要求官方 `sessions`、`sessionQuery`、`workspaceRegistry` 服务就绪。官方 `agents` 服务存在时提供文本发送和中断。是否登录、是否打开手机连接弹窗、是否发现 AA Desktop，都不会决定 runtime 端口是否启动。
 
 ```text
 平台 → Connector RuntimeProtocol → Python DSH 适配器
@@ -11,7 +11,8 @@
 ```
 
 - `server.ts`：仅监听 `127.0.0.1`，随机端口和随机 token；负责鉴权、8 MiB 帧限制、取消、连接与卸载清理。
-- `router.ts`：会话查询、当前状态、分页捕获与只读能力；使用官方服务，读取不调用 Agent create/resume。
+- `router.ts`：会话查询、当前状态、分页捕获、订阅与文本请求；纯读取不调用 Agent create/resume。
+- `native.ts`、`visibility.ts`、`sync.ts`：官方事件与读写、侧栏过滤、初始校准及实时推送。
 - `history.ts`、`tools.ts`：原始事件转换为统一 Timeline。Python 不解释 DSH 原始消息。
 - `identity.ts`：沿用共享协议的会话 ID、Timeline ID 和内容哈希算法；握手传入 runtime instance 的 `sessionNamespace`，区分平台归属。
 
@@ -27,14 +28,14 @@ Connector 先验证发现文件、进程与回环地址，再执行限时鉴权�
 
 ## 会话列表与详情
 
-列表通过 `sessionQuery.listSessions()` 合并 live 和 persisted 会话，并使用官方提供的稳定顺序。按页批量调用 `readTitleSnapshots`，标题读取失败时保留会话和错误标记。保留父会话、subagent 来源及存储状态，不把 live 标记当作正在运行。
+列表通过 `sessionQuery.listSessions()` 合并 live 和 persisted 会话，使用官方顺序，并按官方侧栏规则排除子代理、归档和非当前空会话。按页批量调用 `readTitleSnapshots`，标题读取失败时保留错误标记。详情与分页也校验可见性，不把 live 标记当作正在运行。
 
 详情先取得官方校验过的完整 raw log，再执行纯转换。消息类型与处理如下：
 
 | DSH 原始记录 | 统一 Timeline | 处理方式 |
 |---|---|---|
 | 真正用户的 `user/message` 文本 | `message`，role=user | 保留消息来源 |
-| 插件注入的 user-role 消息 | `system / notice` | 不冒充用户输入 |
+| 插件注入的 user-role 消息 | 不输出 | 环境、技能等内部注入不进入 Timeline |
 | assistant 文本 | `message / markdown` | 流式片段和最终消息使用相同 ID、顺序 |
 | reasoning | `system / reasoning` | 与普通文本分开 |
 | image | 文本占位 + 原生附件引用 | 暂不声明附件传输能力，不伪造平台文件 ID |
@@ -47,13 +48,13 @@ Connector 先验证发现文件、进程与回环地址，再执行限时鉴权�
 | ask_user_question / exit_plan_mode | `tool / input_request` | 历史只读，不发起新交互 |
 | run_code 子调用 | 独立 `tool` | 保留 rootCallId、parentItemId |
 | approval/asked、approval/decided | 同一条 `tool / permission` | 合并审批历史，不重新弹审批框 |
-| turn/start、turn/end | `turn.start`、`turn.end` | 保留结束原因和中断状态 |
+| turn/start、turn/end | 状态/结束通知 | 投影内用于归并，后端不保存轮次标记 |
 | compaction | `marker / compact` | 原始历史保留，不以压缩后上下文覆盖聊天记录 |
-| 其他信息事件 | `system / notice` | 保留类型与内容供查看 |
+| 其他内部信息事件 | 不输出 | 不生成兜底 notice |
 
 请求配置、系统提示词和模型 replayState 不输出到时间线。损坏或不兼容的原生日志由官方读取层拒绝，再转成稳定错误；不会伪装成空历史。
 
-大历史按同一份内存捕获分页，每帧最多 1,000 条且内容小于 7 MiB；单条超过传输上限明确失败。游标绑定连接、会话和捕获，120 秒后过期。Python 校验并拼齐所有页才返回完整快照；指定 `limit` 截断时 `complete=false`。第一阶段后台扫描使用完整读取，尚未做增量同步优化或实时推送。
+主动读取的历史按同一捕获分页，每帧最多 1,000 条且内容小于 7 MiB；单条超限明确失败。游标绑定连接、会话和捕获，120 秒后过期。Python 收齐所有页才返回完整快照；指定 limit 截断时 complete=false。事件订阅的初始历史每页最多 250 条，收齐后通过现有 timeline.sync 完整替换；随后只推增量，断线重连重新校准，不再定时扫描 DSH。详见 [事件同步方案](./RUNTIME_SYNC_PLAN.md)。
 
 ## 验证与本地试用
 
@@ -68,4 +69,4 @@ uv run pytest tests/test_dsh_contracts.py tests/test_dsh_provider.py tests/test_
 
 链接安装的插件完成构建后，手动重启 DSH Host 以加载新后端；正在运行的旧 Connector 也需要重新启动以加载新的 Python 适配器。在 Web 设备页面或 onboarding 点击 DeepSeek Harness 的“一键配置”，然后查看该设备已有的 DSH 会话与历史。
 
-下一阶段：模型/权限目录 → 新建和发送 → 实时消息与工具状态 → 中断 → 审批和提问。Windows 实机、长时间运行和现有真实用户日志的界面验收仍需手动进行。
+纯文本新建/续聊、实时消息、工具状态与中断已接入官方 Agent 服务。下一阶段处理附件、模型/权限目录、审批与提问应答。Windows 实机、长时间运行及真实模型界面验收仍需手动进行。

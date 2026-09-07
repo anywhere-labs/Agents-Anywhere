@@ -3,6 +3,7 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { HOST_NAMESPACE, type LoginRequest, type OnboardingHostApi, type OnboardingSnapshot } from '../../contracts/index.js'
 import { Config, resolveConfig } from '../config.js'
 import { OnboardingManager } from '../onboarding/manager.js'
+import type {} from '../dsh-runtime/index.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context { agentsAnywhereOnboarding: OnboardingService }
@@ -34,4 +35,10 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   async cancel(): Promise<null> { await this.manager.cancel(); return null }
   @Remote('logout')
   async logout(): Promise<null> { await this.manager.logout(); return null }
+
+  @Remote('selection')
+  async selection(input: { clientId: string, revision: number, current: string | null }): Promise<null> {
+    this.ctx.get('agentsAnywhereRuntime')?.native.presence.report(input.clientId, input.revision, input.current)
+    return null
+  }
 }

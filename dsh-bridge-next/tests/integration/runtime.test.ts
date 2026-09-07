@@ -59,14 +59,14 @@ test('published Host + official SessionQuery/JSONL + actual Python adapter compl
       const cold = (await context.ctx.sessionQuery.listSessions()).find(item => item.header.id === 'persisted-only')!
       const location = context.ctx.sessionPersistence.locate(cold.header)!
       const original = await readFile(location.path)
-      const future = { seq: 1005, time: Date.now(), type: 'future/required', data: { message: 'future content' } }
+      const future = { seq: 1007, time: Date.now(), type: 'future/required', data: { message: 'future content' } }
       await appendFile(location.path, `${JSON.stringify(future)}\n`)
       const corrupt = await connection.rpc('session.getSnapshot', { sessionId: sessionId('instance', 'persisted-only'), externalSessionId: 'persisted-only' })
       assert.equal(corrupt.error.data.code, 'PERSISTENCE_ERROR')
       assert.equal(corrupt.result, undefined)
       await writeFile(location.path, Buffer.concat([original, Buffer.from(`${JSON.stringify({ ...future, ignorable: true })}\n`)]))
       const compatible = await connection.rpc('session.getSnapshot', { sessionId: sessionId('instance', 'persisted-only'), externalSessionId: 'persisted-only', limit: 1 })
-      assert.equal(compatible.result.items[0].content.eventType, 'future/required')
+      assert.equal(compatible.result.items[0].type, 'turn.end')
     } finally { connection.socket.destroy() }
     await context.query.dispose()
     await assert.rejects(access(path))

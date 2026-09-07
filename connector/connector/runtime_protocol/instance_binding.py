@@ -190,6 +190,12 @@ class RuntimeInstanceHost(RuntimeHostClient):
             namespace = f"{namespace}:{_source_key_digest(self.source_key)}"
         return f"{self.connector_id}:{self.instance.runtime_type}:{namespace}"
 
+    async def publish_runtime_notifications(
+        self, runtime: str, notifications: list[dict[str, Any]], *, runtime_id: str | None = None
+    ) -> None:
+        self._validate_native_runtime(runtime)
+        await self.base.publish_runtime_notifications(runtime, notifications, runtime_id=self.instance.runtime_id)
+
     async def session_meta_upsert(
         self,
         session_id: str,
@@ -405,6 +411,13 @@ class RuntimeInstance(AgentRuntime):
 
     instance: RuntimeInstanceSpec
     native_runtime: AgentRuntime
+
+    @property
+    def sync_mode(self) -> str:
+        return self.native_runtime.sync_mode
+
+    async def resynchronize(self, session_id: str | None = None, external_session_id: str | None = None) -> None:
+        await self.native_runtime.resynchronize(session_id, external_session_id)
 
     def __post_init__(self) -> None:
         if self.native_runtime.identity.runtime != self.instance.runtime_type:

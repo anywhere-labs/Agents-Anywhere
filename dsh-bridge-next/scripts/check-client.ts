@@ -6,6 +6,7 @@ import { runInNewContext } from 'node:vm'
 import { JSDOM } from 'jsdom'
 import { transform } from 'lightningcss'
 import { act, createElement, type ComponentType } from 'react'
+import { Context } from '@deepseek-ai/cordis'
 import type { OnboardingHostApi, OnboardingSnapshot } from '../src/contracts/index.ts'
 
 /** Exercise the published factory and real primitives without a browser or DSH process. */
@@ -27,7 +28,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       return { format: 'module', source: `export default ${JSON.stringify(classes)};`, shortCircuit: true }
     },
   })
-  const disposers: (() => void)[] = []
+  const ctx = new Context()
   let unmount: (() => void) | undefined
   try {
     const { createRoot } = await import('react-dom/client')
@@ -44,7 +45,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
           return null
         },
       },
-      document, setTimeout, clearTimeout, Error, URL,
+      document, setTimeout, clearTimeout, setInterval, clearInterval, crypto, Error, URL,
     }, { timeout: 1_000 })
     assert.equal(registrations.length, 1)
     const registration = registrations[0]!
@@ -81,8 +82,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     type EntryProps = { host: OnboardingHostApi; wide: boolean }
     let entry: { Component: ComponentType<EntryProps>; props: { host: OnboardingHostApi } } | undefined
     let entryCount = 0
-    client.apply({
-      connection: { rpc: { call: async (channel: string, endpoint: string, payload: unknown) => {
+    ctx.provide('connection', { rpc: { call: async (channel: string, endpoint: string, payload: unknown) => {
         assert.equal(channel, '/api')
         calls.push({ endpoint, payload })
         if (endpoint.endsWith('/inspect')) {
@@ -101,9 +101,8 @@ export async function checkClient(source: string, packageId: string): Promise<vo
           snapshot = { ...snapshot, account: null, stage: 'idle', connectorRunning: false, connectorId: null, flowId: null }
         }
         return { ok: true, value: snapshot }
-      } } },
-      effect(effect: () => () => void) { disposers.push(effect()) },
-      slots: {
+      } } })
+    ctx.provide('slots', {
         inject(name: string, register: () => () => void) { assert.equal(name, 'sidebar.footer.action'); return register() },
         register(options: { name: string; id: string; label: () => string; inject: () => { host: OnboardingHostApi } }, Component: ComponentType<EntryProps>) {
           assert.equal(options.name, 'sidebar.footer.action', 'The entry belongs above Settings, not inside it')
@@ -113,8 +112,8 @@ export async function checkClient(source: string, packageId: string): Promise<vo
           entryCount++
           return () => { entryCount-- }
         },
-      },
     })
+    await ctx.plugin(client).await()
     assert.equal(entryCount, 1)
     assert.ok(entry)
     const { Component, props } = entry
@@ -133,6 +132,23 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.ok(trigger.querySelector('svg.lucide-smartphone'))
     assert.equal(dialog(), null)
     assert.equal(calls.length, 0, 'A closed connection panel must not poll the Host')
+    const listeners = new Set<() => void>()
+    let current: string | null = 'native-selected'
+    const selectionCalls = () => calls.filter(call => call.endpoint.endsWith('/selection')).map(call =>
+      (call.payload as { args: { input: { clientId: string; revision: number; current: string | null } } }).args.input)
+    ctx.provide('sessions', { list: {
+      getSnapshot: () => ({ current }),
+      subscribe(callback: () => void) { listeners.add(callback); return () => { listeners.delete(callback) } },
+    } })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.equal(listeners.size, 1, 'The optional official sessions service must activate its scoped subscription')
+    assert.equal(selectionCalls()[0]?.current, current)
+    assert.equal(calls.filter(call => !call.endpoint.endsWith('/selection')).length, 0, 'Selection reporting must not require opening the connection panel')
+    current = 'another-session'
+    for (const listener of listeners) listener()
+    assert.equal(selectionCalls().at(-1)?.current, current)
+    assert.equal(selectionCalls().at(-1)?.revision, 2)
+    assert.equal(selectionCalls()[0]?.clientId, selectionCalls().at(-1)?.clientId)
     await act(async () => { trigger.click() })
     assert.ok(dialog())
     assert.equal(dialog()!.getAttribute('aria-label'), '登录到 Agents Anywhere')
@@ -330,13 +346,15 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang|benson@example.test|退出登录/)
 
     await act(async () => { unmount!(); unmount = undefined })
-    for (const dispose of disposers.splice(0).reverse()) dispose()
+    await ctx.fiber.dispose()
+    assert.equal(listeners.size, 0, 'Client unload must unsubscribe from selection changes')
+    assert.equal(selectionCalls().at(-1)?.current, null, 'Client unload must release its selected-session presence')
     assert.equal(entryCount, 0, 'Client unload must remove its sidebar entry')
     assert.equal(dialog(), null, 'Client unload must remove an open dialog')
     assert.equal(container.hasAttribute('inert'), false, 'Client unload must restore the application root')
   } finally {
     if (unmount) await act(async () => unmount!())
-    for (const dispose of disposers.reverse()) dispose()
+    await ctx.fiber.dispose()
     hooks.deregister()
     dom.window.close()
     for (const key of Object.keys(globals)) {

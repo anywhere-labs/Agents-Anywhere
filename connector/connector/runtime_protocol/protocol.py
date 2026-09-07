@@ -27,6 +27,15 @@ class AgentRuntime(ABC):
     """Connector -> Runtime."""
 
     @property
+    def sync_mode(self) -> str:
+        """Event runtimes own their acknowledged synchronization lifecycle."""
+        return "polling"
+
+    async def resynchronize(self, session_id: str | None = None, external_session_id: str | None = None) -> None:
+        """Request event-stream calibration on reconnect or an explicit refresh."""
+        raise RuntimeUnsupportedError("resynchronize")
+
+    @property
     @abstractmethod
     def identity(self) -> RuntimeIdentity:
         raise NotImplementedError
