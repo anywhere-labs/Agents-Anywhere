@@ -89,9 +89,8 @@ struct ChatShellView: View {
             configuration: .chat
         ) { _ in
             ChatSidebarHeaderView()
-        } sidebar: { safeAreaInsets in
+        } sidebar: { _ in
             ChatSidebarView(
-                safeAreaInsets: safeAreaInsets,
                 devices: sidebarDevices,
                 pinnedSessions: sidebarSessions.filter(\.pinned),
                 recentSessions: sidebarSessions.filter { !$0.pinned },

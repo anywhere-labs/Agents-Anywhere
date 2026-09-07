@@ -2,7 +2,6 @@ import SwiftUI
 
 struct ChatSidebarView: View {
     @EnvironmentObject private var appState: AppState
-    let safeAreaInsets: EdgeInsets
     let devices: [ChatSidebarDevice]
     let pinnedSessions: [ChatSidebarSession]
     let recentSessions: [ChatSidebarSession]
@@ -24,6 +23,7 @@ struct ChatSidebarView: View {
     let onCopySessionId: (V2SessionID) -> Void
 
     @State private var isShowingPairing = false
+    @State private var isShowingSettings = false
     @State private var showsArchives = false
     @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
 
@@ -108,25 +108,24 @@ struct ChatSidebarView: View {
                 }
 
             }
-            .padding(.leading, safeAreaInsets.leading + 14)
-            .padding(.trailing, safeAreaInsets.trailing + 14)
+            .padding(.horizontal, 14)
             .padding(.top, 10)
-            .padding(.bottom, safeAreaInsets.bottom + 82)
+            .padding(.bottom, 12)
         }
         .refreshable { await repository?.refresh() }
         .scrollIndicators(.hidden)
-        .scrollEdgeEffectStyle(.soft, for: .bottom)
-        .overlay(alignment: .bottom) {
-            if let account {
-                ChatSidebarBottomControls(
-                    appState: appState,
-                    account: account,
-                    onNewSession: onNewSession
-                )
-                    .padding(.leading, safeAreaInsets.leading + 18)
-                    .padding(.trailing, safeAreaInsets.trailing + 18)
-                    .padding(.bottom, max(safeAreaInsets.bottom, 12))
-            }
+        .modifier(SidebarDrawerViewportMeasurement())
+        .scrollEdgeEffectHidden(true, for: .bottom)
+        .toolbar {
+            ChatSidebarBottomToolbar(
+                account: account,
+                onNewSession: onNewSession,
+                onOpenAccount: { isShowingSettings = true }
+            )
+        }
+        .toolbarBackgroundVisibility(.hidden, for: .bottomBar)
+        .sheet(isPresented: $isShowingSettings) {
+            AccountSettingsSheet(appState: appState)
         }
         .sheet(isPresented: $showsArchives) {
             if let repository { ArchivedSessionsSheet(repository: repository, onOpen: onOpenSession, onRestore: onRestoreSession) }
@@ -442,15 +441,13 @@ private struct ChatSidebarEmptyRow: View {
     }
 }
 
-private struct ChatSidebarBottomControls: View {
-    let appState: AppState
-    let account: ChatSidebarAccount
+private struct ChatSidebarBottomToolbar: ToolbarContent {
+    let account: ChatSidebarAccount?
     let onNewSession: () -> Void
+    let onOpenAccount: () -> Void
 
-    @State private var isShowingSettings = false
-
-    var body: some View {
-        HStack(spacing: 10) {
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .bottomBar) {
             AppGlassButton(
                 String(localized: "New session"),
                 systemImage: "square.and.pencil",
@@ -458,21 +455,21 @@ private struct ChatSidebarBottomControls: View {
                 maxWidth: nil,
                 action: onNewSession
             )
-
-            Spacer(minLength: 12)
-
-            Button {
-                isShowingSettings = true
-            } label: {
-                ChatSidebarAvatar(account: account)
-            }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
-            .accessibilityLabel(String(localized: "Account"))
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .sheet(isPresented: $isShowingSettings) {
-            AccountSettingsSheet(appState: appState)
+        .sharedBackgroundVisibility(.hidden)
+
+        ToolbarSpacer(.flexible, placement: .bottomBar)
+
+        if let account {
+            ToolbarItem(placement: .bottomBar) {
+                Button(action: onOpenAccount) {
+                    ChatSidebarAvatar(account: account)
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .accessibilityLabel(String(localized: "Account"))
+            }
+            .sharedBackgroundVisibility(.hidden)
         }
     }
 }
