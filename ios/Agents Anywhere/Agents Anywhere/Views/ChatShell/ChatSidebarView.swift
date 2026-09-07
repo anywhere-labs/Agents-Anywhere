@@ -182,6 +182,7 @@ struct ChatSidebarHeaderView: View {
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .padding(.horizontal, 18)
             .padding(.vertical, 10)
+            .containerCornerOffset(.horizontal, sizeToFit: true)
     }
 }
 
