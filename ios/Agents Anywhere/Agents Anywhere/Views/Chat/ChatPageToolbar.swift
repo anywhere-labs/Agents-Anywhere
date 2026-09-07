@@ -41,17 +41,16 @@ struct ChatPageToolbar: ViewModifier {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(.visible, for: .navigationBar)
             .toolbar(removing: .sidebarToggle)
-            .toolbar(removing: alignsTitleLeading ? .title : nil)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: onMenu) { SidebarMenuIcon() }
                         .accessibilityLabel(String(localized: "打开侧栏"))
                 }
                 if alignsTitleLeading {
-                    // The native inline title is centered in compact widths.
-                    // Keep both lines in one leading toolbar item so their
-                    // alignment does not depend on device or window width.
-                    ToolbarItem(placement: .topBarLeading) {
+                    // Use the title region's available width. A leading bar
+                    // item is sized as a control and can collapse to its minimum
+                    // width even when there is space between the buttons.
+                    ToolbarItem(placement: .principal) {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(title).font(.headline).lineLimit(1)
                                 .accessibilityAddTraits(.isHeader)

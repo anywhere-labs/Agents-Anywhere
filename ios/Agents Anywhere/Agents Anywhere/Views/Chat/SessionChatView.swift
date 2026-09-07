@@ -96,7 +96,9 @@ struct SessionChatView: View, Equatable {
                     VStack(alignment: .leading, spacing: 4) {
                         // Metadata can arrive after history. Transient controls
                         // float below the header instead of resizing its inset.
-                        if requiresTakeover { takeoverPill }
+                        if requiresTakeover {
+                            takeoverPill.frame(maxWidth: .infinity, alignment: .center)
+                        }
                         ChatErrorToasts(store: toasts, isRetrying: session.isLoading, onRetry: { _ in await session.refresh() })
                     }.padding(.top, 8)
                 }

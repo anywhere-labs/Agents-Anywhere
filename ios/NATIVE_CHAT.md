@@ -165,10 +165,12 @@ Semantic error and availability colors remain separate from the primary color.
   Appending text preserves completed block identities and equality boundaries.
 - Session, New Session and Device use native SwiftUI navigation bars through
   `ChatPageToolbar`. Session titles, Agent/device names and live status share a
-  leading toolbar item on every window width; the default centered title is
-  removed while `navigationTitle` retains its semantic value. Other pages keep
-  the system title/subtitle placements. Takeover and error indicators below the
-  session toolbar also align to the leading edge. The subtitle stays one line
+  leading-aligned stack in the principal title region, using the space allocated
+  between the native buttons instead of a control-sized leading toolbar item.
+  `navigationTitle` retains its semantic value. Other pages keep the system
+  title/subtitle placements. The floating takeover prompt stays horizontally
+  centered; error indicators below the session toolbar align to the leading
+  edge. The subtitle stays one line
   tall, including while syncing or idle, so status changes cannot resize the
   timeline. The device ID is used when its name is not yet available. The sidebar
   action uses the same Lucide PanelLeft icon as Web. Toolbar items get their
