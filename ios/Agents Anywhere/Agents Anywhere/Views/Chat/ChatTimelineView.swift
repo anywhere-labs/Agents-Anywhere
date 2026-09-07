@@ -47,6 +47,7 @@ struct ChatTimelineView: View {
                     onOlderPromptVisibility: { olderPromptVisible = $0 },
                     onTailVisibility: { region, visible in scrolling.tailVisibilityChanged(region, visible: visible) })
                     .equatable()
+                    .background { ChatPageScrollEdge() }
             }
             .scrollPosition($position)
             .scrollDismissesKeyboard(.interactively)

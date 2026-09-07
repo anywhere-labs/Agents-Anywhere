@@ -146,7 +146,12 @@ Semantic error and availability colors remain separate from the primary color.
   timeline. The device ID is used when its name is not yet available. The sidebar
   action uses the same Lucide PanelLeft icon as Web. Toolbar items get their
   spacing, hit regions, glass grouping and scroll-edge treatment from the system;
-  there is no custom top `safeAreaBar`, measured header height or compensating
+  on Catalyst, `ChatPageScrollEdge` registers each page's primary scroll view
+  with its navigation controller using `setContentScrollView(_:for: .top)` and
+  the native soft style. Its marker lives inside the main scroll content so
+  nested code panels, the composer and the sidebar cannot be selected instead.
+  Outgoing markers yield to newer registrations and clear only their own link.
+  There is no custom top `safeAreaBar`, measured header height or compensating
   toast offset. Network failures
   take precedence over cached runtime status; malformed data remains an error
   toast rather than being mislabeled as offline. Sending/waiting/running feedback

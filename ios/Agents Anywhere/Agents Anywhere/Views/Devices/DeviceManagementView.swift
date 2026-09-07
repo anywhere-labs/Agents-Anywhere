@@ -98,6 +98,7 @@ struct DeviceManagementView: View {
             }
             .padding(.bottom, 24)
             .modifier(ChatPageContentColumn())
+            .background { ChatPageScrollEdge() }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .scrollIndicators(.hidden).scrollEdgeEffectStyle(.soft, for: .all)

@@ -36,6 +36,7 @@ struct NewSessionView: View, Equatable {
                         .padding(24)
                         .frame(maxWidth: 760)
                         .frame(maxWidth: .infinity)
+                        .background { ChatPageScrollEdge() }
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .scrollEdgeEffectStyle(.soft, for: .top)
