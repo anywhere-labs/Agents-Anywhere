@@ -472,6 +472,19 @@ class ConnectorRepositoryMixin:
             result = await conn.execute(query)
             if result.rowcount == 0:
                 raise KeyError(connector_id)
+            project_ids = select(projects_t.c.id).where(
+                projects_t.c.connector_id == connector_id
+            )
+            # Keep the existing retention of deleted-device session history,
+            # but remove its project references before deleting workspace rows.
+            await conn.execute(
+                update(sessions_t)
+                .where(sessions_t.c.project_id.in_(project_ids))
+                .values(project_id=None)
+            )
+            await conn.execute(
+                delete(projects_t).where(projects_t.c.connector_id == connector_id)
+            )
 
 
     async def rotate_connector_token(
