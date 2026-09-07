@@ -9,7 +9,7 @@ import { promisify } from 'node:util'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { createAssistantMessage, createToolResultMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { nativeRuntime } from '../fixtures/native-runtime.js'
-import { mountAgents, TextAdapter } from '../fixtures/agent-runtime.js'
+import { mountAgents, TextAdapter, initialSelections } from '../fixtures/agent-runtime.js'
 import { SyncFeed, SYNC_FLUSH_MS, type SyncBatch, type SyncOperation } from '../../src/host/dsh-runtime/sync.js'
 import { projectHistory } from '../../src/host/dsh-runtime/history.js'
 import { nativeSessionId, sessionId } from '../../src/host/dsh-runtime/identity.js'
@@ -334,8 +334,8 @@ test('real AgentLoop sends text once, streams before idle, queues followups and 
   const id = SessionId(nativeSessionId('test', 'sess-new'))
   try {
     await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'baseline')
-    await native.send(id, '第一条', 'client-1', home, true)
-    await native.send(id, '第一条', 'client-1', home, true)
+    await native.send(id, '第一条', 'client-1', home, true, initialSelections, 'standard')
+    await native.send(id, '第一条', 'client-1', home, true, initialSelections, 'standard')
     await until(() => !!adapter.release, 'model started')
     await until(() => {
       const operations = stream.ops()
@@ -371,7 +371,6 @@ test('official native loop crosses Python adapter and authenticated backend, inc
   const home = await realpath(await mkdtemp(join(tmpdir(), 'dsh-pipeline-')))
   const adapter = new TextAdapter()
   const fixture = await nativeRuntime(home, ctx => mountAgents(ctx, adapter))
-  const timer = setInterval(() => adapter.release?.(), 300)
   let closed = false
   const mutations = (async () => {
     while (!closed) {
@@ -379,7 +378,10 @@ test('official native loop crosses Python adapter and authenticated backend, inc
       const action = await readFile(marker, 'utf8').then(text => JSON.parse(text) as { action: string, sessionId: string }).catch(() => undefined)
       if (action) {
         const workspace = fixture.ctx.workspaceRegistry.list().find(workspace => workspace.path === home)!
-        if (action.action === 'draft') {
+        if (action.action === 'release') {
+          assert.ok(adapter.release, 'the model must still be streaming when the backend observes partial text')
+          adapter.release()
+        } else if (action.action === 'draft') {
           fixture.ctx.sessions.create(SessionId(action.sessionId), { meta: { cwd: home } })
           fixture.ctx.agentsAnywhereRuntime.native.presence.report('pipeline-client', 1, action.sessionId)
         } else if (action.action === 'first-message') {
@@ -402,5 +404,5 @@ test('official native loop crosses Python adapter and authenticated backend, inc
       cwd: new URL('../../../server/', import.meta.url), timeout: 60_000,
     })
     assert.match(result.stdout, /DSH event pipeline passed/)
-  } finally { closed = true; clearInterval(timer); await mutations; await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+  } finally { closed = true; adapter.release?.(); await mutations; await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -193,6 +194,7 @@ class SessionRunService:
                 runtime_id,
                 RUNTIME_ATTACHMENT,
                 user_id=user_id,
+                attachment_media_types=[attachment.mediaType for attachment in payload.attachments],
             )
 
         selections = _selections_from_mapping(payload.selections)
@@ -220,6 +222,8 @@ class SessionRunService:
             params["cwd"] = payload.cwd
         if selections:
             params["selections"] = selections
+        if payload.runtimeOptions:
+            params["runtimeOptions"] = dict(payload.runtimeOptions)
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
         persisted_attachment_refs: list[dict[str, Any]] = []
@@ -420,15 +424,16 @@ class SessionRunService:
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
         if payload.attachments:
-            await self._require_session_capability(
-                session,
-                RUNTIME_ATTACHMENT,
-                user_id=user_id,
-            )
             attachment_payloads = await self._attachment_payloads(
                 session_id=session_id,
                 user_id=user_id,
                 file_ids=[a.fileId for a in payload.attachments],
+            )
+            await self._require_session_capability(
+                session,
+                RUNTIME_ATTACHMENT,
+                user_id=user_id,
+                attachment_media_types=[item["mediaType"] for item in attachment_payloads],
             )
             params["attachments"] = attachment_payloads
             params["timelineAttachments"] = [_timeline_attachment_payload(item) for item in attachment_payloads]
@@ -646,15 +651,16 @@ class SessionRunService:
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
         if payload.attachments:
-            await self._require_session_capability(
-                session,
-                RUNTIME_ATTACHMENT,
-                user_id=user_id,
-            )
             attachment_payloads = await self._attachment_payloads(
                 session_id=session_id,
                 user_id=user_id,
                 file_ids=[attachment.fileId for attachment in payload.attachments],
+            )
+            await self._require_session_capability(
+                session,
+                RUNTIME_ATTACHMENT,
+                user_id=user_id,
+                attachment_media_types=[item["mediaType"] for item in attachment_payloads],
             )
             params["attachments"] = attachment_payloads
             params["timelineAttachments"] = [
@@ -681,6 +687,7 @@ class SessionRunService:
         capability_id: str,
         *,
         user_id: str,
+        attachment_media_types: list[str] | None = None,
     ) -> None:
         capability_set = ProtocolCapabilitySet.model_validate(
             await self._store.get_protocol_capabilities(
@@ -718,12 +725,16 @@ class SessionRunService:
                 f"runtime capability is unavailable: {capability_id}"
             )
 
+        if attachment_media_types:
+            _validate_attachment_mime_types(capability.metadata, attachment_media_types)
+
     async def _require_session_capability(
         self,
         session: SessionView,
         capability_id: str,
         *,
         user_id: str,
+        attachment_media_types: list[str] | None = None,
     ) -> None:
         capability_set = ProtocolCapabilitySet.model_validate(
             await self._store.get_protocol_capabilities(
@@ -750,6 +761,9 @@ class SessionRunService:
             raise SessionRunConflictError(
                 f"session capability is unavailable: {capability_id}"
             )
+
+        if attachment_media_types:
+            _validate_attachment_mime_types(capability.metadata, attachment_media_types)
 
     async def _require_runtime_instance(
         self,
@@ -1048,3 +1062,18 @@ def _decode_inline_attachment(attachment: InlineAttachmentRef) -> bytes:
                 f"attachment {attachment.fileId} sha256 does not match content"
             )
     return data
+
+
+def _validate_attachment_mime_types(metadata: dict[str, Any], media_types: list[str]) -> None:
+    """Enforce optional runtime MIME restrictions on stored upload metadata."""
+    if "allowedMimeTypes" not in metadata:
+        return
+    raw = metadata["allowedMimeTypes"]
+    allowed = {
+        value.strip().lower() for value in raw if isinstance(value, str)
+        and re.fullmatch(r"[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+", value.strip().lower())
+    } if isinstance(raw, list) else set()
+    for media_type in media_types:
+        normalized = media_type.split(";", 1)[0].strip().lower()
+        if normalized not in allowed:
+            raise SessionRunConflictError(f"attachment type is not supported by this runtime: {normalized}")

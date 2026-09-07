@@ -2,7 +2,7 @@
 
 ## 当前实现
 
-插件 Host 独立挂载 `agentsAnywhereRuntime`，要求官方 `sessions`、`sessionQuery`、`workspaceRegistry` 服务就绪。官方 `agents` 服务存在时提供文本发送和中断。是否登录、是否打开手机连接弹窗、是否发现 AA Desktop，都不会决定 runtime 端口是否启动。
+插件 Host 独立挂载 `agentsAnywhereRuntime`，要求官方 `sessions`、`sessionQuery`、`workspaceRegistry` 服务就绪。官方 Session Controller 提供消息发送，配合 `attachments` 服务支持 AA 图片发送；官方 Agent 提供中断。是否登录、是否打开手机连接弹窗、是否发现 AA Desktop，都不会决定 runtime 端口是否启动。
 
 ```text
 平台 → Connector RuntimeProtocol → Python DSH 适配器
@@ -11,7 +11,8 @@
 ```
 
 - `server.ts`：仅监听 `127.0.0.1`，随机端口和随机 token；负责鉴权、8 MiB 帧限制、取消、连接与卸载清理。
-- `router.ts`：会话查询、当前状态、分页捕获、订阅与文本请求；纯读取不调用 Agent create/resume。
+- `router.ts`：会话查询、当前状态、分页捕获、订阅与消息请求；纯读取不调用 Agent create/resume。
+- `attachments.ts`：图片白名单、本机暂存校验及 AA 附件引用记录；图片内容由官方 Session Controller 的 `saveImages()` 准入流程校验和保存。
 - `native.ts`、`visibility.ts`、`sync.ts`：官方事件与读写、侧栏过滤、初始校准及实时推送。
 - `sessions/source.ts`：官方会话清单、明确的归档/不可见/缺失状态及即时可用性检查。
 - `history.ts`、`tools.ts`：原始事件转换为统一 Timeline。Python 不解释 DSH 原始消息。
@@ -43,7 +44,8 @@ Connector 先验证发现文件、进程与回环地址，再执行限时鉴权�
 | 插件注入的 user-role 消息 | 不输出 | 环境、技能等内部注入不进入 Timeline |
 | assistant 文本 | `message / markdown` | 流式片段和最终消息使用相同 ID、顺序 |
 | reasoning | `system / reasoning` | 与普通文本分开 |
-| image | 文本占位 + 原生附件引用 | 暂不声明附件传输能力，不伪造平台文件 ID |
+| AA 发送的 image | 用户消息的 `content.attachments` | 持久化原始 AA 文件引用，实时和历史一致 |
+| 其他原生 image | 文本占位 + 原生附件引用 | 未上传到 AA 的图片不伪造平台文件 ID |
 | `tool-call`、`tool/call`、`tool/result` | 同一条 `tool` | 以 callId 合并输入、结果、错误与最终状态 |
 | bash / pwsh | `tool / command` | 保留 command；没有事实依据时不猜退出码 |
 | write / edit / str_replace_editor | `tool / file_change` 或通用工具 | 有合法原生 diff meta 时使用上下文片段，绝不读取当前磁盘拼历史 |
@@ -63,15 +65,19 @@ Connector 先验证发现文件、进程与回环地址，再执行限时鉴权�
 
 ## 验证与本地试用
 
+AA 发图只支持 PNG、JPEG、WebP、GIF，由 `runtime.attachment.metadata.allowedMimeTypes` 声明。Desktop 和 Web 的文件选择、粘贴、拖拽及提交使用同一白名单，Server 与 Connector 也校验 MIME；最终由 DSH 官方接口检查真实图片内容及模型是否支持图片。支持纯图片新建任务和续聊，普通文件不支持。
+
+图片通过现有 AA 附件接口上传、下载，由 Connector 在端点目录下暂存。Bridge RPC 只传随机上传 ID 和元数据，不传图片 Base64。DSH 保存正规化后的图片；`agents-anywhere/bridge/attachments/receipts` 记录 AA 引用，刷新、重连和重启后仍可显示，重试不会重复发送。详见 [Bridge 图片契约](../contracts/dsh-bridge/1.0/README.md#aa-image-sends-additive-1x)。
+
 ```bash
 cd dsh-bridge-next
 corepack yarn check
 cd ../connector
-uv run pytest tests/test_dsh_contracts.py tests/test_dsh_provider.py tests/test_dsh_bridge_client.py -q
+uv run pytest tests/test_dsh_contracts.py tests/test_dsh_provider.py tests/test_dsh_bridge_client.py tests/test_dsh_attachments.py -q
 ```
 
 测试在临时目录组装官方 Session、JSONL、SessionQuery 与编译后的插件，再运行真实 Python Provider/Runtime；覆盖空闲会话、持久化会话、1,005 条跨页历史、内容哈希、鉴权、探测共存、依赖服务卸载/恢复和端点清理。无需 GUI 或模型密钥。
 
 链接安装的插件完成构建后，手动重启 DSH Host 以加载新后端；正在运行的旧 Connector 也需要重新启动以加载新的 Python 适配器。在 Web 设备页面或 onboarding 点击 DeepSeek Harness 的“一键配置”，然后查看该设备已有的 DSH 会话与历史。
 
-纯文本新建/续聊、实时消息、工具状态与中断已接入官方 Agent 服务。`ask_user_question` 已接入平台现有问答表单，包含回答、取消、多端收起和断线恢复，见 [用户问答](./USER_QUESTIONS.md)。下一阶段处理附件、模型/权限目录和权限审批。Windows 实机、长时间运行及真实模型界面验收仍需手动进行。
+文本和图片新建/续聊、实时消息、工具状态与中断已接入官方服务。`ask_user_question` 已接入平台现有问答表单，包含回答、取消、多端收起和断线恢复，见 [用户问答](./USER_QUESTIONS.md)。普通文件、原生图片反向上传到 AA 和工具权限审批尚未开放。Windows 实机、长时间运行及真实模型界面验收仍需手动进行。

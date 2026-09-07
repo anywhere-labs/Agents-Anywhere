@@ -373,6 +373,7 @@ export function SessionDetail({
   const processedEventIdsRef = React.useRef<Set<string>>(new Set())
   const catalogFetchKeyRef = React.useRef<string | null>(null)
   const selectionUpdateSeqRef = React.useRef(0)
+  const selectionWritesRef = React.useRef(new Map<string, Promise<unknown>>())
 
   const session = state?.session ?? fallbackSession
   const runtimeState = state?.state ?? null
@@ -493,7 +494,12 @@ export function SessionDetail({
         : current,
     )
     try {
-      const result = await dashboardApi.updateSessionSelections(token, session.id, selectionPatch)
+      const previousWrite = selectionWritesRef.current.get(session.id) ?? Promise.resolve()
+      const write = previousWrite.catch(() => undefined).then(() => dashboardApi.updateSessionSelections(token, session.id, selectionPatch))
+      selectionWritesRef.current.set(session.id, write)
+      const result = await write.finally(() => {
+        if (selectionWritesRef.current.get(session.id) === write) selectionWritesRef.current.delete(session.id)
+      })
       if (selectionUpdateSeqRef.current !== selectionUpdateSeq) return true
       setState((current) =>
         current
@@ -510,12 +516,16 @@ export function SessionDetail({
       )
       return true
     } catch (err) {
+      // An official operation can partially succeed. Read the actual selection before rolling back.
+      const actual = sessionRuntimeType(session) === "dsh"
+        ? await dashboardApi.getSessionRuntimeState(token, session.id).catch(() => null)
+        : null
       if (selectionUpdateSeqRef.current === selectionUpdateSeq) {
         setState((current) =>
           current
             ? {
                 ...current,
-                state: runtimeStateWithSelectionRollback(
+                state: actual?.state ?? runtimeStateWithSelectionRollback(
                   current.state,
                   current.session,
                   previousRuntimeState?.selections ?? {},
@@ -525,8 +535,10 @@ export function SessionDetail({
             : current,
         )
       }
-      toast.error(err instanceof Error ? err.message : tSession("updateSelectionsFailed"))
-      return false
+      if (selectionUpdateSeqRef.current === selectionUpdateSeq) {
+        toast.error(err instanceof Error ? err.message : tSession("updateSelectionsFailed"))
+      }
+      return selectionUpdateSeqRef.current !== selectionUpdateSeq
     }
   }
 

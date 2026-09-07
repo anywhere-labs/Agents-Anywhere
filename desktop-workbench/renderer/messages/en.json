@@ -341,6 +341,7 @@
       "attach": "Attach files",
       "attachmentLimit": "Up to {count} files",
       "attachmentsUnsupported": "This runtime does not support attachments. Remove them or choose another runtime.",
+      "attachmentTypesUnsupported": "Only these attachment types are supported: {types}.",
       "createSession": "Create session",
       "creating": "Creating session...",
       "creatingBase": "Creating session",
@@ -354,6 +355,11 @@
       "modelAndReasoning": "Model and reasoning",
       "permissionMode": "Permission mode",
       "permissionModes": {
+        "dsh": {
+          "readOnly": { "label": "read-only" },
+          "workspaceWrite": { "label": "workspace-write" },
+          "fullAccess": { "label": "danger-full-access" }
+        },
         "requestApproval": {
           "label": "Request approval",
           "description": "Always ask before editing files outside the workspace or using the internet."

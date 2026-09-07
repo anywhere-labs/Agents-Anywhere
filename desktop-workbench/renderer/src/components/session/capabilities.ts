@@ -46,3 +46,22 @@ export function capabilityIsUsable(
   const capability = findCapability(capabilitySet, capabilityId, runtime)
   return Boolean(capability?.supported && capability.available && capability.allowed)
 }
+
+/** Omitted MIME restrictions preserve existing runtimes; an empty list allows no files. */
+export function attachmentMimeTypes(
+  capabilitySet: ProtocolCapabilitySet | null | undefined,
+  runtime?: RuntimeCapabilityScope,
+): string[] | undefined {
+  if (!capabilityIsUsable(capabilitySet, CAPABILITY.attachment, runtime)) return []
+  const metadata = findCapability(capabilitySet, CAPABILITY.attachment, runtime)?.metadata
+  const value = metadata && typeof metadata === "object" && "allowedMimeTypes" in metadata ? metadata.allowedMimeTypes : undefined
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) return []
+  return [...new Set(value.filter((type): type is string => typeof type === "string")
+    .map((type) => type.trim().toLowerCase())
+    .filter((type) => /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(type)))]
+}
+
+export function attachmentMimeAllowed(mediaType: string, allowedMimeTypes: readonly string[] | undefined): boolean {
+  return allowedMimeTypes === undefined || allowedMimeTypes.includes(mediaType.split(";", 1)[0]!.trim().toLowerCase())
+}

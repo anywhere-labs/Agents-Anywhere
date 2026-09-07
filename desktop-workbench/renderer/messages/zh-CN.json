@@ -341,6 +341,7 @@
       "attach": "添加附件",
       "attachmentLimit": "最多 {count} 个文件",
       "attachmentsUnsupported": "当前 Runtime 不支持附件。请移除附件或切换其他 Runtime。",
+      "attachmentTypesUnsupported": "仅支持以下附件类型：{types}。",
       "createSession": "创建会话",
       "creating": "正在创建会话...",
       "creatingBase": "正在创建会话",
@@ -354,6 +355,11 @@
       "modelAndReasoning": "模型和推理强度",
       "permissionMode": "权限模式",
       "permissionModes": {
+        "dsh": {
+          "readOnly": { "label": "仅可查看" },
+          "workspaceWrite": { "label": "工作区内修改" },
+          "fullAccess": { "label": "完全权限" }
+        },
         "requestApproval": {
           "label": "请求批准",
           "description": "编辑外部文件和使用互联网时始终询问"

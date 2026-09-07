@@ -2,6 +2,8 @@
 # ruff: noqa: E402
 from __future__ import annotations
 
+from connector.runtimes.dsh.identity import model_selection_id, permission_selection_id
+
 import asyncio
 import sys
 from pathlib import Path
@@ -74,7 +76,7 @@ async def main(home: Path) -> None:
                     return any(n["method"] == "session.inventory.complete" for n in transport.notifications)
 
                 await until(inventory_ready, "initial sync")
-                await runtime.create_and_start_session("ask-session", "先问我问题", cwd=str(home), client_message_id="ask-1")
+                await runtime.create_and_start_session("ask-session", "先问我问题", cwd=str(home), selections={"model": model_selection_id("test", "text", None), "permission": permission_selection_id("workspace-write")}, runtime_options={"agentPreset": "standard"}, client_message_id="ask-1")
 
                 async def question_ready():
                     return any(n["method"] == "notice.upsert" and n["params"].get("sessionId") == "ask-session"

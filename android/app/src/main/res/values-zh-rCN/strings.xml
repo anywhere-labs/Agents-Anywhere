@@ -544,6 +544,9 @@
     <string name="session_runtime_effort_for">%1$s 的推理强度</string>
     <string name="runtime_permission_accept_edits">允许编辑</string>
     <string name="runtime_permission_read_only">只读</string>
+    <string name="runtime_permission_dsh_read_only">仅可查看</string>
+    <string name="runtime_permission_dsh_workspace_write">工作区内修改</string>
+    <string name="runtime_permission_dsh_full_access">完全权限</string>
     <string name="runtime_permission_request_approval">请求批准</string>
     <string name="runtime_permission_auto_review">替我审批</string>
     <string name="runtime_permission_full_access">完全访问权限</string>

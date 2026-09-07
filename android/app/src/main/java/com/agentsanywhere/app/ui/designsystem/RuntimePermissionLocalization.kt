@@ -21,8 +21,9 @@ internal class RuntimePermissionLocalizer(
         description: String?,
         metadata: Map<String, Any?> = emptyMap(),
     ): LocalizedRuntimePermission {
-        return translations[runtimePermissionTranslation(runtime, permissionId, metadata)]
-            ?: LocalizedRuntimePermission(label, description)
+        val translated = translations[runtimePermissionTranslation(runtime, permissionId, metadata)]
+            ?: return LocalizedRuntimePermission(label, description)
+        return translated.copy(description = translated.description ?: description)
     }
 }
 
@@ -30,6 +31,18 @@ internal class RuntimePermissionLocalizer(
 internal fun runtimePermissionLocalizer(): RuntimePermissionLocalizer {
     return RuntimePermissionLocalizer(
         mapOf(
+            RuntimePermissionTranslation.DshReadOnly to LocalizedRuntimePermission(
+                stringResource(R.string.runtime_permission_dsh_read_only),
+                null,
+            ),
+            RuntimePermissionTranslation.DshWorkspaceWrite to LocalizedRuntimePermission(
+                stringResource(R.string.runtime_permission_dsh_workspace_write),
+                null,
+            ),
+            RuntimePermissionTranslation.DshFullAccess to LocalizedRuntimePermission(
+                stringResource(R.string.runtime_permission_dsh_full_access),
+                null,
+            ),
             RuntimePermissionTranslation.RequestApproval to LocalizedRuntimePermission(
                 stringResource(R.string.runtime_permission_request_approval),
                 stringResource(R.string.runtime_permission_desc_request_approval),

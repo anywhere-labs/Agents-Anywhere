@@ -25,6 +25,7 @@ from agent_server.app import create_app
 from agent_server.core.auth import create_connector_access_token
 from connector.runtimes.dsh.provider import DshProvider
 from connector.runtimes.dsh.runtime import DshRuntime
+from connector.runtimes.dsh.identity import model_selection_id, permission_selection_id
 from connector.server.ingest import ConnectorIngestClient
 from connector.server.runtime_host import ConnectorRuntimeHost
 
@@ -118,6 +119,18 @@ async def main(home: Path) -> None:
                     return not marker.exists()
                 await until(acknowledged, f"native {action} was not handled")
 
+            async def partial_text_since(offset, *, allow_snapshot=False):
+                for notice in transport.notifications[offset:]:
+                    params = notice["params"]
+                    if params.get("sessionId") != "sess-new":
+                        continue
+                    items = [params["item"]] if notice["method"] == "timeline.itemUpsert" else (
+                        params.get("items", []) if allow_snapshot and notice["method"] == "timeline.sync" else []
+                    )
+                    if any(item["status"] == "running" and item["content"].get("text") == "你" for item in items):
+                        return True
+                return False
+
             try:
                 await runtime.start()
                 await until(ready, "initial inventory failed")
@@ -147,11 +160,16 @@ async def main(home: Path) -> None:
 
                 await until(first_native_message, "first native user message did not create the AA session and timeline")
 
-                result = await runtime.create_and_start_session("sess-new", "第一条", cwd=str(home), client_message_id="msg-1")
+                result = await runtime.create_and_start_session("sess-new", "第一条", cwd=str(home), selections={"model": model_selection_id("test", "text", None), "permission": permission_selection_id("workspace-write")}, runtime_options={"agentPreset": "standard"}, client_message_id="msg-1")
                 external_id = result.result["externalSessionId"]
-                await runtime.create_and_start_session("sess-new", "第一条", cwd=str(home), client_message_id="msg-1")
+                await runtime.create_and_start_session("sess-new", "第一条", cwd=str(home), selections={"model": model_selection_id("test", "text", None), "permission": permission_selection_id("workspace-write")}, runtime_options={"agentPreset": "standard"}, client_message_id="msg-1")
+                await until(lambda: partial_text_since(0, allow_snapshot=True), "first partial text was not delivered while the model was running")
+                await native_action("release")
                 await until(lambda: finished("sess-new", 1), "first text did not finish")
+                offset = len(transport.notifications)
                 await runtime.start_turn("sess-new", external_id, "第二条", client_message_id="msg-2")
+                await until(lambda: partial_text_since(offset), "second partial text was not delivered incrementally")
+                await native_action("release")
                 await until(lambda: finished("sess-new", 2), "second text did not finish")
                 before = await stored("sess-new")
                 assert len([i for i in before if i.role == "user"]) == 2, "retry duplicated user input"

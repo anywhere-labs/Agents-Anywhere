@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { receiptKey } from './attachments.js'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { createProjection, type SessionProjection } from './history.js'
@@ -120,7 +121,7 @@ export class SyncFeed {
     const log = await this.native.read(id as SessionId)
     const platformId = sessionId(this.namespace, id)
     const projection = createProjection(id, platformId)
-    for (const event of log.events) projection.apply(event)
+    for (const event of log.events) projection.apply(event, log.attachmentReceipts?.[receiptKey(event) ?? ''])
     const title = log.events.findLast(event => event.type === 'session/title')
     const snapshotId = randomUUID()
     if (!await this.native.visible(id)) return
@@ -217,7 +218,9 @@ export class SyncFeed {
         if (!projection) { await this.baseline(id); continue }
         this.projections.delete(id); this.projections.set(id, projection)
         if (Number(change.event.seq) <= projection.throughSeq) continue
-        try { projection.apply(change.event) } catch { await this.baseline(id); continue }
+        const key = receiptKey(change.event)
+        const receipt = key ? (await this.native.images.readReceipts(id))[key] : undefined
+        try { projection.apply(change.event, receipt) } catch { await this.baseline(id); continue }
         touched.add(id)
         if (change.event.type === 'session/title') await this.notification('session.meta.upsert', {
           sessionId: this.published.get(id), externalSessionId: id, title: change.event.data.title })

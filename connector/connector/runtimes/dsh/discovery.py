@@ -68,6 +68,13 @@ async def discover(values: dict[str, Any]) -> DshDiscovery:
     try:
         result = await client.start()
         await client.request("ping")
+        extra: dict[str, Any] = {}
+        for method, key in (("runtime.getCapabilities", "runtimeCapabilities"), ("catalog.listAgentPresets", "agentPresetCatalog")):
+            try:
+                extra[key] = await client.request(method)
+            except (RuntimeError, ValueError):
+                # Older or read-only plugins remain discoverable; they cannot advertise these controls.
+                pass
     except (OSError, RuntimeError, ValueError):
         return DshDiscovery(
             False, False, None, reason="无法连接 DSH 插件，请确认插件已启动。"
@@ -80,6 +87,7 @@ async def discover(values: dict[str, Any]) -> DshDiscovery:
         endpoint,
         bridge_version=result["identity"].get("bridgeVersion"),
         metadata={
+            **extra,
             "endpoint": str(endpoint.path),
             "storageMode": "dsh-native",
             "sameSessionWriterLimit": 1,

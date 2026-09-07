@@ -1,6 +1,6 @@
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import { receiptKey, type AttachmentSnapshot, type ImageReceipt } from './attachments.js'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import type { SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
 import { clientMessageId, contentHash, itemId } from './identity.js'
 import { enrichToolResult, parentToolItem, resultContent, toolContent } from './tools.js'
 import { json, record, type Data, type ItemStatus, type ItemType, type TimelineItem } from './types.js'
@@ -76,7 +76,7 @@ export function createProjection(externalId: string, platformId: string) {
     if (items.delete(id)) { changed.delete(id); removed.add(id) }
   }
 
-  function apply(event: SessionEvent): void {
+  function apply(event: SessionEvent, receipt?: ImageReceipt): void {
     if (Number(event.seq) <= throughSeq) return
     if (throughSeq >= 0 && Number(event.seq) !== throughSeq + 1) throw new Error('DSH event sequence gap')
     throughSeq = Number(event.seq)
@@ -106,11 +106,22 @@ export function createProjection(externalId: string, platformId: string) {
     } else if (event.type === 'user/message') {
       const message = event.data
       if (message.source.kind !== 'user') return
+      const rpcId = record(message.source).rpcId
+      const clientId = (typeof rpcId === 'string' ? clientMessageId(externalId, rpcId) : undefined) ?? clientMessageId(externalId, message.id)
       const role = 'user'
+      if (receipt?.platformId === platformId && receipt.attachments.length) {
+        const item = put('message', `${message.id}:0`, event, 'message', 'done', role, {
+          kind: 'markdown', format: 'markdown',
+          text: message.content.filter(value => value.type === 'text').map(value => value.text).join('\n'),
+          attachments: receipt.attachments.map(attachment => ({ ...attachment })),
+        })
+        item.source = { ...item.source, messageSource: json(message.source), ...(clientId ? { clientMessageId: clientId } : {}) }
+        return
+      }
       message.content.forEach((value, i) => {
         const item = block(value, message.id, i, event, role, 'done')
         if (item) item.source = { ...item.source, messageSource: json(message.source),
-          ...(clientMessageId(externalId, message.id) ? { clientMessageId: clientMessageId(externalId, message.id)! } : {}) }
+          ...(clientId ? { clientMessageId: clientId } : {}) }
       })
     } else if (event.type === 'assistant/chunk') {
       const key = `${turnStart}:${steps.get(stepKey) ?? stepKey}`
@@ -193,8 +204,8 @@ export function createProjection(externalId: string, platformId: string) {
 
 export type SessionProjection = ReturnType<typeof createProjection>
 
-export function projectHistory(snapshot: SessionLogSnapshot, platformId: string): TimelineItem[] {
+export function projectHistory(snapshot: AttachmentSnapshot, platformId: string): TimelineItem[] {
   const projection = createProjection(snapshot.session.id, platformId)
-  for (const event of snapshot.events) projection.apply(event)
+  for (const event of snapshot.events) projection.apply(event, snapshot.attachmentReceipts?.[receiptKey(event) ?? ''])
   return projection.snapshot()
 }

@@ -25,6 +25,12 @@ export function catalogItemDisabledReason(item: CatalogItem): string | null {
     : null
 }
 
+const dshPermissionLabelKeys: Record<string, string> = {
+  "read-only": "permissionModes.dsh.readOnly.label",
+  "workspace-write": "permissionModes.dsh.workspaceWrite.label",
+  "danger-full-access": "permissionModes.dsh.fullAccess.label",
+}
+
 export function catalogI18nText(
   translate: (key: string) => string,
   metadata: Record<string, unknown> | null | undefined,
@@ -32,8 +38,9 @@ export function catalogI18nText(
   fallback: string | null | undefined,
 ): string {
   const i18n = metadata?.i18n
-  if (!isRecord(i18n)) return fallback ?? ""
-  const rawKey = i18n[field]
+  const preset = metadata?.preset
+  const rawKey = (isRecord(i18n) ? i18n[field] : undefined)
+    ?? (field === "labelKey" && typeof preset === "string" ? dshPermissionLabelKeys[preset] : undefined)
   if (typeof rawKey !== "string" || !rawKey) return fallback ?? ""
   const key = rawKey.startsWith("dashboard.new.")
     ? rawKey.slice("dashboard.new.".length)
@@ -86,13 +93,14 @@ export function selectionIdForModelCatalog(
 export function modelIdsForSelectionId(
   catalog: ProtocolModelCatalog | null,
   selectionId: string | null | undefined,
+  includeDisabled = false,
 ): { modelId: string; reasoningId: string } | null {
   if (!catalog || !selectionId) return null
   for (const model of catalog.models) {
-    if (!catalogItemEnabled(model)) continue
+    if (!includeDisabled && !catalogItemEnabled(model)) continue
     if (model.selectionId === selectionId) return { modelId: model.id, reasoningId: "" }
     const reasoning = model.reasoningItems.find(
-      (item) => item.selectionId === selectionId && catalogItemEnabled(item),
+      (item) => item.selectionId === selectionId && (includeDisabled || catalogItemEnabled(item)),
     )
     if (reasoning) return { modelId: model.id, reasoningId: reasoning.id }
   }
@@ -112,10 +120,11 @@ export function selectionIdForPermissionCatalog(
 export function permissionIdForSelectionId(
   catalog: ProtocolPermissionCatalog | null,
   selectionId: string | null | undefined,
+  includeDisabled = false,
 ): string {
   if (!catalog || !selectionId) return ""
   return catalog.permissions.find(
-    (item) => item.selectionId === selectionId && catalogItemEnabled(item),
+    (item) => item.selectionId === selectionId && (includeDisabled || catalogItemEnabled(item)),
   )?.id ?? ""
 }
 

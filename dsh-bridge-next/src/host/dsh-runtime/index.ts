@@ -22,7 +22,7 @@ export class DshRuntimeService extends Service {
     super(ctx, 'agentsAnywhereRuntime')
     const home = config.dshHome ?? process.env['DSH_HOME'] ?? join(homedir(), '.dsh')
     if (!isAbsolute(home)) throw new Error('DSH_HOME must be an absolute path')
-    this.native = new NativeRuntime(ctx)
+    this.native = new NativeRuntime(ctx, join(home, 'agents-anywhere', 'bridge', 'create-intents'))
     this.server = new RuntimeServer(join(home, 'agents-anywhere', 'bridge', 'endpoint.json'), {
       native: this.native,
       query: { listSessions: signal => this.native.inventory(signal), readSession: id => this.native.read(id),
@@ -32,5 +32,8 @@ export class DshRuntimeService extends Service {
     ctx.effect(() => async () => { await this.server.close(); await this.native.close() }, 'agentsAnywhereRuntime.close')
   }
 
-  async [Service.init](): Promise<void> { await this.server.start() }
+  async [Service.init](): Promise<void> {
+    await this.native.images.initialize()
+    await this.server.start()
+  }
 }

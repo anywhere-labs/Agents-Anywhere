@@ -516,7 +516,6 @@ fun NewSessionScreen(
                     NewSessionConfigurationOption(
                         id = runtime.id,
                         label = runtime.labels.primary,
-                        description = runtime.labels.secondary,
                     )
                 },
                 enabled = !creatingProject && selectedDevice != null && runtimeSelection.runtimes.isNotEmpty(),
