@@ -192,24 +192,30 @@ async def _publish_session_protocol_update(
     runtime_state_cache: SessionRuntimeStateCache,
     session_id: str,
 ) -> None:
+    # DSH state reads synchronously ingest source observations back into AA.
+    # Keep runtime RPC outside the revision fence so that callback can acquire it.
+    session = await db.get_session(session_id)
+    runtime_state = await read_runtime_state_live(
+        db,
+        manager,
+        runtime_state_cache,
+        session,
+        None,
+    )
+    runtime_capabilities = await read_session_capabilities_with_fallback(
+        db,
+        manager,
+        session,
+        None,
+    )
     async with db.session_revision_fence(session_id):
         next_seq = await db.get_session_seq(session_id)
         session = await db.get_session(session_id)
-        runtime_state = await read_runtime_state_live(
-            db,
-            manager,
-            runtime_state_cache,
-            session,
-            None,
-        )
+        # An event may have arrived while the RPC was in flight. Publish the
+        # latest cached state together with the current session revision.
+        runtime_state = await runtime_state_cache.get(session_id) or runtime_state
         session = session_with_runtime_state(session, runtime_state)
         session = await with_effective_session_connector_status(manager, session)
-        runtime_capabilities = await read_session_capabilities_with_fallback(
-            db,
-            manager,
-            session,
-            None,
-        )
         effective_capabilities = derive_session_effective_capabilities(
             session=session,
             runtime_capabilities=runtime_capabilities,
@@ -1038,13 +1044,13 @@ async def enable_takeover(
         await db.get_session(session_id, user_id=user_id)
         async with timeline_write_buffer.session_fence(session_id):
             session = await db.set_takeover(session_id, True)
-            await _publish_session_protocol_update(
-                db,
-                broker,
-                manager,
-                runtime_state_cache,
-                session_id,
-            )
+        await _publish_session_protocol_update(
+            db,
+            broker,
+            manager,
+            runtime_state_cache,
+            session_id,
+        )
         return TakeoverResponse(
             session=await with_effective_session_connector_status(manager, session)
         )
@@ -1070,13 +1076,13 @@ async def disable_takeover(
         await db.get_session(session_id, user_id=user_id)
         async with timeline_write_buffer.session_fence(session_id):
             session = await db.set_takeover(session_id, False)
-            await _publish_session_protocol_update(
-                db,
-                broker,
-                manager,
-                runtime_state_cache,
-                session_id,
-            )
+        await _publish_session_protocol_update(
+            db,
+            broker,
+            manager,
+            runtime_state_cache,
+            session_id,
+        )
         return TakeoverResponse(
             session=await with_effective_session_connector_status(manager, session)
         )
