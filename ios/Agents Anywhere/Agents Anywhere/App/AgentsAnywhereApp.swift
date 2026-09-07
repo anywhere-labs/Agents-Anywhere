@@ -2,9 +2,6 @@ import SwiftUI
 
 @main
 struct AgentsAnywhereApp: App {
-    #if targetEnvironment(macCatalyst)
-    @UIApplicationDelegateAdaptor(MacCatalystAppDelegate.self) private var macDelegate
-    #endif
     @StateObject private var appState = AppState()
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(AppAppearance.storageKey) private var appearanceValue = AppAppearance.system.rawValue
@@ -17,6 +14,11 @@ struct AgentsAnywhereApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(appState)
+                .background {
+                    #if targetEnvironment(macCatalyst)
+                    MacCatalystWindowTitle(appState: appState)
+                    #endif
+                }
                 .preferredColorScheme(appearance.colorScheme)
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .background { appState.setAppInBackground(true) }
