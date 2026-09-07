@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 struct ManualLoginView: View {
-    @EnvironmentObject private var appState: AppState
+    @ObservedObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @StateObject private var oauthLogin = OAuthLoginCoordinator()
     @State private var path: [ServerLoginRoute] = []
@@ -215,8 +215,7 @@ private struct ServerAddressView<Status: View>: View {
 }
 
 #Preview {
-    ManualLoginView()
-        .environmentObject(AppState())
+    ManualLoginView(appState: AppState())
 }
 
 private struct UnderlinedTextField: View {

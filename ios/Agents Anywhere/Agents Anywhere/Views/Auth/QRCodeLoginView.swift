@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct QRCodeLoginView: View {
-    @EnvironmentObject private var appState: AppState
+    @ObservedObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var path: [QRLoginRoute] = []
     @State private var isClosing = false
@@ -11,6 +11,7 @@ struct QRCodeLoginView: View {
     var body: some View {
         NavigationStack(path: $path) {
             QRScanStepView(
+                appState: appState,
                 onCancel: { dismiss() },
                 onPayload: { payload in
                     path.append(.confirm(payload))
@@ -20,6 +21,7 @@ struct QRCodeLoginView: View {
                 switch route {
                 case let .confirm(payload):
                     QRConfirmStepView(
+                        appState: appState,
                         payload: payload,
                         onCancel: { dismiss() },
                         onWaiting: {
@@ -28,6 +30,7 @@ struct QRCodeLoginView: View {
                     )
                 case let .waiting(payload):
                     QRWaitingStepView(
+                        appState: appState,
                         payload: payload,
                         onCancel: { dismiss() },
                         onSignedIn: {
@@ -63,7 +66,7 @@ private enum QRLoginRoute: Hashable {
 }
 
 private struct QRScanStepView: View {
-    @EnvironmentObject private var appState: AppState
+    @ObservedObject var appState: AppState
     @Environment(\.colorScheme) private var colorScheme
 
     let onCancel: () -> Void
@@ -137,7 +140,7 @@ private struct QRScanStepView: View {
 }
 
 private struct QRConfirmStepView: View {
-    @EnvironmentObject private var appState: AppState
+    @ObservedObject var appState: AppState
     @Environment(\.colorScheme) private var colorScheme
 
     let payload: MobileLoginPayload
@@ -206,7 +209,7 @@ private struct QRConfirmStepView: View {
 }
 
 private struct QRWaitingStepView: View {
-    @EnvironmentObject private var appState: AppState
+    @ObservedObject var appState: AppState
     @Environment(\.colorScheme) private var colorScheme
 
     let payload: MobileLoginPayload
@@ -321,6 +324,5 @@ private struct QRWaitingStepView: View {
 }
 
 #Preview {
-    QRCodeLoginView()
-        .environmentObject(AppState())
+    QRCodeLoginView(appState: AppState())
 }

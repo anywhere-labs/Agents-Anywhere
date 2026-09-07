@@ -21,13 +21,13 @@ struct RootView: View {
             }
         }
         .sheet(isPresented: $showingManualLogin) {
-            ManualLoginView {
+            ManualLoginView(appState: appState) {
                 appState.activateSignedInRoute()
                 showingManualLogin = false
             }
         }
         .sheet(isPresented: $showingQRCodeLogin) {
-            QRCodeLoginView {
+            QRCodeLoginView(appState: appState) {
                 appState.activateSignedInRoute()
                 showingQRCodeLogin = false
             }
