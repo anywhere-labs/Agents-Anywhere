@@ -100,14 +100,42 @@ struct SidebarDrawer<SidebarHeader: View, SidebarContent: View, MainContent: Vie
                 mainContent: mainContent
             )
         } else {
-            SidebarDrawerInteractive(
-                isOpen: $isOpen,
-                configuration: configuration,
-                sidebarHeader: sidebarHeader,
-                sidebarContent: sidebarContent,
-                mainContent: mainContent
-            )
+            // Resolve page builders above the state that changes on every pan
+            // sample. Equality on the resulting page cannot prevent expensive
+            // work that has already happened in its initializer.
+            GeometryReader { geometry in
+                SidebarDrawerPages(
+                    isOpen: $isOpen,
+                    configuration: configuration,
+                    safeAreaInsets: geometry.safeAreaInsets,
+                    sidebarHeader: sidebarHeader,
+                    sidebarContent: sidebarContent,
+                    mainContent: mainContent
+                )
+            }
         }
+    }
+}
+
+/// GeometryReader can revisit its closure even when the insets are unchanged.
+/// A view boundary keeps that layout pass from invoking the page factories.
+private struct SidebarDrawerPages<SidebarHeader: View, SidebarContent: View, MainContent: View>: View {
+    @Binding var isOpen: Bool
+    let configuration: SidebarDrawerConfiguration
+    let safeAreaInsets: EdgeInsets
+    let sidebarHeader: (EdgeInsets) -> SidebarHeader
+    let sidebarContent: (EdgeInsets) -> SidebarContent
+    let mainContent: (EdgeInsets) -> MainContent
+
+    var body: some View {
+        SidebarDrawerInteractive(
+            isOpen: $isOpen,
+            configuration: configuration,
+            safeAreaInsets: safeAreaInsets,
+            sidebarHeader: sidebarHeader(safeAreaInsets),
+            sidebarContent: sidebarContent(safeAreaInsets),
+            mainContent: mainContent(safeAreaInsets)
+        )
     }
 }
 
@@ -119,9 +147,10 @@ private struct SidebarDrawerInteractive<
     @Binding private var isOpen: Bool
 
     private let configuration: SidebarDrawerConfiguration
-    private let sidebarHeader: (EdgeInsets) -> SidebarHeader
-    private let sidebarContent: (EdgeInsets) -> SidebarContent
-    private let mainContent: (EdgeInsets) -> MainContent
+    private let safeAreaInsets: EdgeInsets
+    private let sidebarHeader: SidebarHeader
+    private let sidebarContent: SidebarContent
+    private let mainContent: MainContent
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -135,116 +164,114 @@ private struct SidebarDrawerInteractive<
     init(
         isOpen: Binding<Bool>,
         configuration: SidebarDrawerConfiguration,
-        sidebarHeader: @escaping (EdgeInsets) -> SidebarHeader,
-        sidebarContent: @escaping (EdgeInsets) -> SidebarContent,
-        mainContent: @escaping (EdgeInsets) -> MainContent
+        safeAreaInsets: EdgeInsets,
+        sidebarHeader: SidebarHeader,
+        sidebarContent: SidebarContent,
+        mainContent: MainContent
     ) {
         _isOpen = isOpen
         _progress = State(initialValue: isOpen.wrappedValue ? 1 : 0)
         self.configuration = configuration
+        self.safeAreaInsets = safeAreaInsets
         self.sidebarHeader = sidebarHeader
         self.sidebarContent = sidebarContent
         self.mainContent = mainContent
     }
 
     var body: some View {
-        GeometryReader { safeAreaGeometry in
-            let safeAreaInsets = safeAreaGeometry.safeAreaInsets
+        GeometryReader { fullScreenGeometry in
+            let screenSize = fullScreenGeometry.size
+            let revealWidth = max(
+                screenSize.width * configuration.revealFraction.clamped(to: 0.01 ... 1),
+                1
+            )
+            let interaction = DrawerInteractionState(isOpen: isOpen, progress: progress,
+                isAnimating: isAnimating, isDragging: dragStartProgress != nil)
+            let closeRegion = SidebarDrawerCloseRegion(leadingEdge: revealWidth * progress)
 
-            GeometryReader { fullScreenGeometry in
-                let screenSize = fullScreenGeometry.size
-                let revealWidth = max(
-                    screenSize.width * configuration.revealFraction.clamped(to: 0.01 ... 1),
-                    1
+            ZStack(alignment: .leading) {
+                drawerSystemBackground
+
+                SidebarDrawerSidebar(
+                    width: revealWidth,
+                    safeAreaInsets: safeAreaInsets,
+                    scale: sidebarScale,
+                    overlayOpacity: sidebarOverlayOpacity,
+                    edgeEffectStyle: configuration.sidebarHeaderEdgeEffectStyle,
+                    header: sidebarHeader,
+                    content: sidebarContent
                 )
-                let interaction = DrawerInteractionState(isOpen: isOpen, progress: progress,
-                    isAnimating: isAnimating, isDragging: dragStartProgress != nil)
-                let closeRegion = SidebarDrawerCloseRegion(leadingEdge: revealWidth * progress)
+                .allowsHitTesting(interaction.acceptsSidebarTouches)
+                .accessibilityHidden(!interaction.acceptsSidebarTouches)
 
-                ZStack(alignment: .leading) {
-                    drawerSystemBackground
+                SidebarDrawerMainCard(
+                    size: screenSize,
+                    isFullyClosed: interaction.acceptsContentTouches,
+                    progress: progress,
+                    offset: revealWidth * progress,
+                    overlayOpacity: contentOverlayOpacity,
+                    content: mainContent
+                )
+                .allowsHitTesting(interaction.acceptsContentTouches)
+                .accessibilityHidden(!interaction.acceptsContentTouches)
 
-                    SidebarDrawerSidebar(
-                        width: revealWidth,
-                        safeAreaInsets: safeAreaInsets,
-                        scale: sidebarScale,
-                        overlayOpacity: sidebarOverlayOpacity,
-                        edgeEffectStyle: configuration.sidebarHeaderEdgeEffectStyle,
-                        header: sidebarHeader(safeAreaInsets),
-                        content: sidebarContent(safeAreaInsets)
-                    )
+                // Only the screen-space strip occupied by the visible card
+                // closes the drawer. Its untranslated hit targets are disabled.
+                closeRegion.fill(.clear)
+                    .contentShape(.interaction, closeRegion)
+                    .onTapGesture(perform: closeFromOverlay)
                     .allowsHitTesting(interaction.acceptsSidebarTouches)
                     .accessibilityHidden(!interaction.acceptsSidebarTouches)
-
-                    SidebarDrawerMainCard(
-                        size: screenSize,
-                        isFullyClosed: interaction.acceptsContentTouches,
-                        progress: progress,
-                        offset: revealWidth * progress,
-                        overlayOpacity: contentOverlayOpacity,
-                        content: mainContent(safeAreaInsets)
-                    )
-                    .allowsHitTesting(interaction.acceptsContentTouches)
-                    .accessibilityHidden(!interaction.acceptsContentTouches)
-
-                    // Only the screen-space strip occupied by the visible card
-                    // closes the drawer. Its untranslated hit targets are disabled.
-                    closeRegion.fill(.clear)
-                        .contentShape(.interaction, closeRegion)
-                        .onTapGesture(perform: closeFromOverlay)
-                        .allowsHitTesting(interaction.acceptsSidebarTouches)
-                        .accessibilityHidden(!interaction.acceptsSidebarTouches)
-                        .accessibilityLabel(String(localized: "关闭侧栏"))
-                        .accessibilityAddTraits(.isButton)
+                    .accessibilityLabel(String(localized: "关闭侧栏"))
+                    .accessibilityAddTraits(.isButton)
 
 #if !canImport(UIKit)
-                    if usesOpeningEdgeGestureRegion {
-                        Color.clear
-                            .frame(
-                                width: max(configuration.edgeActivationWidth, 0),
-                                height: screenSize.height
-                            )
-                            .contentShape(Rectangle())
-                            .highPriorityGesture(drawerGesture(revealWidth: revealWidth))
-                    }
-#endif
+                if usesOpeningEdgeGestureRegion {
+                    Color.clear
+                        .frame(
+                            width: max(configuration.edgeActivationWidth, 0),
+                            height: screenSize.height
+                        )
+                        .contentShape(Rectangle())
+                        .highPriorityGesture(drawerGesture(revealWidth: revealWidth))
                 }
-                .frame(width: screenSize.width, height: screenSize.height)
-                .contentShape(Rectangle())
-#if canImport(UIKit)
-                .gesture(
-                    SidebarDrawerPanGesture(
-                        progress: progress,
-                        edgeActivationWidth: configuration.edgeActivationWidth,
-                        onBegan: beginDirectionalPan,
-                        onChanged: { translationX in
-                            updateDirectionalPan(
-                                translationX: translationX,
-                                revealWidth: revealWidth
-                            )
-                        },
-                        onEnded: { translationX, velocityX, cancelled in
-                            endDirectionalPan(
-                                translationX: translationX,
-                                velocityX: velocityX,
-                                revealWidth: revealWidth,
-                                cancelled: cancelled
-                            )
-                        }
-                    )
-                )
-#else
-                .simultaneousGesture(
-                    drawerGesture(revealWidth: revealWidth),
-                    isEnabled: !usesOpeningEdgeGestureRegion
-                )
 #endif
-                .onChange(of: isOpen) { _, newValue in
-                    synchronizeProgress(with: newValue)
-                }
             }
-            .ignoresSafeArea()
+            .frame(width: screenSize.width, height: screenSize.height)
+            .contentShape(Rectangle())
+#if canImport(UIKit)
+            .gesture(
+                SidebarDrawerPanGesture(
+                    progress: progress,
+                    edgeActivationWidth: configuration.edgeActivationWidth,
+                    onBegan: beginDirectionalPan,
+                    onChanged: { translationX in
+                        updateDirectionalPan(
+                            translationX: translationX,
+                            revealWidth: revealWidth
+                        )
+                    },
+                    onEnded: { translationX, velocityX, cancelled in
+                        endDirectionalPan(
+                            translationX: translationX,
+                            velocityX: velocityX,
+                            revealWidth: revealWidth,
+                            cancelled: cancelled
+                        )
+                    }
+                )
+            )
+#else
+            .simultaneousGesture(
+                drawerGesture(revealWidth: revealWidth),
+                isEnabled: !usesOpeningEdgeGestureRegion
+            )
+#endif
+            .onChange(of: isOpen) { _, newValue in
+                synchronizeProgress(with: newValue)
+            }
         }
+        .ignoresSafeArea()
         .environment(\.sidebarDrawerPresentation, .drawer)
         .environment(\.sidebarDrawerObscuresDetail, isOpen || progress > 0.001)
         .environment(\.sidebarDrawerIsTransitioning, isAnimating || dragStartProgress != nil

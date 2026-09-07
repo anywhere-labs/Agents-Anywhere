@@ -2,7 +2,8 @@ import SwiftUI
 import QuickLook
 
 struct SessionChatView: View, Equatable {
-    @State private var model: SessionChatModel
+    @StateObject private var storage: StableViewModel<SessionChatModel>
+    private var model: SessionChatModel { storage.value }
     private let sessionIdentity: V2SessionModel
     let deviceName: String?
     let onMenu: () -> Void
@@ -22,19 +23,21 @@ struct SessionChatView: View, Equatable {
     @State private var hasStartedLoading = false
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.sidebarDrawerIsTransitioning) private var sidebarIsTransitioning
+    @Environment(\.sidebarDrawerObscuresDetail) private var sidebarObscuresDetail
     @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
     @ScaledMetric(relativeTo: .footnote) private var takeoverPillHeight: CGFloat = 32
 
     init(session: V2SessionModel, services: V2ClientServices, deviceName: String?,
          onMenu: @escaping () -> Void) {
-        let chat = SessionChatModel(session: session, repository: services.sessionRepository, attachments: services.attachments,
-            files: services.workspaceFiles)
-        chat.onEditCreation = { [weak services, weak session] pending in
-            if let session { services?.editCreation(session, pending: pending) }
-        }
-        chat.onDiscardCreation = { [weak services] in services?.discardCreation(session.id) }
-        _model = State(initialValue: chat)
-        _hasStartedLoading = State(initialValue: services.sessionRepository.cached(sessionId: session.id) != nil)
+        _storage = StateObject(wrappedValue: StableViewModel {
+            let chat = SessionChatModel(session: session, repository: services.sessionRepository, attachments: services.attachments,
+                files: services.workspaceFiles)
+            chat.onEditCreation = { [weak services, weak session] pending in
+                if let session { services?.editCreation(session, pending: pending) }
+            }
+            chat.onDiscardCreation = { [weak services] in services?.discardCreation(session.id) }
+            return chat
+        })
         sessionIdentity = session
         self.deviceName = deviceName
         fileService = services.workspaceFiles; detailService = services.sessionDetail
@@ -42,6 +45,7 @@ struct SessionChatView: View, Equatable {
     }
     private var controls: ChatControlMetrics { .init(bodyLineHeight: bodyLineHeight) }
     private var session: V2SessionModel { model.session }
+    private var defersOpening: Bool { sidebarIsTransitioning || sidebarObscuresDetail }
     private var requiresTakeover: Bool { session.metadata?.takeover == false }
     // Sidebar motion changes the containing card, not the session. Observable
     // model changes and real size/environment changes still update this subtree.
@@ -121,12 +125,12 @@ struct SessionChatView: View, Equatable {
             wasRunning && !isRunning && model.isOpeningReady && session.runtime.isFresh
                 && session.runtime.state?.status == .idle
         }
-        .task(id: sidebarIsTransitioning) {
-            guard !hasStartedLoading, !sidebarIsTransitioning else { return }
+        .task(id: defersOpening) {
+            guard !hasStartedLoading, !defersOpening else { return }
             // Show feedback immediately, but let the drawer's completed
             // animation and the selection's final layout leave the main thread.
             do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
-            guard !Task.isCancelled, !sidebarIsTransitioning else { return }
+            guard !Task.isCancelled, !defersOpening else { return }
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) { hasStartedLoading = true }

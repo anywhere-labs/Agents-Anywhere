@@ -48,6 +48,34 @@ import Testing
         #expect(model.isOpeningPrepared && model.openingError != nil && !model.isOpeningReady)
     }
 
+    @Test func cachedLargeSessionWaitsForOpeningWithoutReloadingHistory() async throws {
+        let http = TestHTTPTransport()
+        http.respond = { call in
+            guard call.path.hasSuffix("snapshot") else { return try http.defaultResponse(call) }
+            var snapshot = try fixtureObject("snapshot")
+            var timeline = snapshot["timeline"] as! [String: Any]
+            timeline["items"] = try (1...600).map { index in
+                try itemObject(id: "reply-\(index)", order: index,
+                    text: String(repeating: "Cached paragraph with `src/main.swift:42`.\n\n", count: 50))
+            }
+            snapshot["timeline"] = timeline
+            return try JSONSerialization.data(withJSONObject: snapshot)
+        }
+        let repo = repository(transport: http)
+        defer { repo.reset() }
+        _ = try await repo.load(sessionId: "session")
+        let requests = http.calls.count
+        let model = SessionChatModel(session: repo.session(id: "session"), repository: repo,
+            attachments: .init(attachmentAPI: V2AttachmentAPI(transport: http)))
+        // Selecting the page must not construct cached rows before the drawer
+        // can begin closing. Preparation is explicitly started after navigation.
+        #expect(!model.isOpeningPrepared && model.timeline.rows.isEmpty)
+        #expect(http.calls.count == requests)
+        await model.prepareOpening()
+        #expect(model.isOpeningReady && model.timeline.rows.count == 600)
+        #expect(http.calls.count == requests)
+    }
+
     @Test func openingPublishesStreamingAndOptimisticHandoffWithoutAScrollAcknowledgement() throws {
         let first: V2TimelineItem = try decode(itemObject(id: "reply", text: "Initial reply"))
         let updated: V2TimelineItem = try decode(itemObject(id: "reply", revision: 2, text: "Initial reply with more content"))

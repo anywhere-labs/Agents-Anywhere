@@ -41,7 +41,10 @@ import Testing
         #expect(http.calls.isEmpty && value.items.first?.displayText == "Hello")
         #expect(model.draft == "离线草稿" && !model.runtime.isFresh && !model.canSend)
         let chat = SessionChatModel(session: model, repository: restored, attachments: .init(attachmentAPI: V2AttachmentAPI(transport: http)))
+        #expect(!chat.isOpeningPrepared && chat.timeline.rows.isEmpty)
+        await chat.prepareOpening()
         #expect(chat.isOpeningReady && chat.timeline.rows.count == 1)
+        #expect(http.calls.isEmpty)
         #expect(chat.headerStatus == .networkOffline)
         restored.reset(); await store.close(removing: true)
     }

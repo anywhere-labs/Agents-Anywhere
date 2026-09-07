@@ -29,10 +29,8 @@ final class SessionChatModel {
     init(session: V2SessionModel, repository: V2SessionRepository, attachments: V2AttachmentService, files: V2WorkspaceFilesService? = nil) {
         self.session = session; self.repository = repository; self.attachments = attachments
         self.files = files
-        if let cached = repository.cached(sessionId: session.id) {
-            timeline.presentOpening(cached.items, pendingMessages: session.pendingMessages)
-            isOpeningPrepared = true
-        }
+        // Cached history can still be expensive to project. prepareOpening()
+        // performs that work after the page's navigation transition settles.
     }
 
     var isRunning: Bool {

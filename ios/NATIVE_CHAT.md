@@ -46,7 +46,11 @@ Semantic error and availability colors remain separate from the primary color.
 - Opening a session immediately displays one persistent loading indicator in
   the detail column. History loading and timeline mounting wait for the sidebar
   animation's completion and another 120 ms; a new selection cancels the pending
-  start. A sidebar gesture after loading starts does not restart the connection.
+  start. This includes previously cached sessions: the model initializer does
+  not project cached rows, and a lazy `StateObject` lifetime holder prevents
+  parent updates from constructing and discarding another chat model. Cached
+  preparation still reads the repository without requesting history again.
+  A sidebar gesture after loading starts does not restart the connection.
   Opening loads the latest window, reveals it when the initial projection is
   ready, and animates to the native bottom edge. It never pages backward to
   find a user message. Spinner dismissal and the 30 Hz presentation clock do not wait
@@ -95,6 +99,10 @@ Semantic error and availability colors remain separate from the primary color.
   and page controls reactivate only after closing settles, not when the spring's
   target first becomes zero. There is no bitmap snapshot, width freeze or gesture
   quantization. iPad keeps its default native split layout and animation.
+- Drawer page factories sit above interactive progress, behind a separate view
+  boundary for stable safe-area inputs. A pan changes the motion/decoration
+  subtree without repeatedly mapping and sorting sidebar data or constructing
+  the current page. Real selection, environment and size changes still propagate.
 - Both history prompts support a fresh 24-point outward pull and release when
   already visible: pulling past the top loads older messages, and pulling past
   the bottom loads newer records. The prompt changes to “松开加载”; tapping remains
@@ -497,6 +505,17 @@ Verified on 2026-09-06, without starting a server or simulator:
   at fractional reveal widths. These are layout and hit-region checks, not an
   end-to-end touch dispatch test; on-device interaction still needs the manual
   drawer checks below.
+- `Tests/ViewModelLifetimeProbe.swift` uses an offscreen SwiftUI host to compare
+  eager State initialization with the lazy model holder. Across 120 parent
+  updates the control creates 121 models, the holder creates one, and its page
+  task does not restart. Observable updates still reach the page and a changed
+  page identity creates a fresh model. The 600-record cache test confirms that
+  history projection waits for preparation and does not request history again.
+- `scripts/probe-drawer-updates.py` compiles the actual drawer with only its
+  progress driver replaced in a temporary copy. Across 240 synthetic pan samples
+  the header/sidebar/detail factories do no additional work; a destination
+  change still rebuilds the page. This validates the update boundary, not device
+  frame rate or real gesture dispatch.
 - The complete unsigned iOS Debug target builds for `generic/platform=iOS`, using
   the checked-in package resolutions and the Xcode beta toolchain. The app's
   existing iOS 26.5 deployment target remains unchanged.
@@ -527,6 +546,14 @@ DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcrun swiftc -pars
   'ios/Agents Anywhere/Agents Anywhere/Views/Components/SidebarDrawerCloseRegion.swift' \
   ios/Tests/DrawerLayoutProbe.swift -o /tmp/aa-drawer-layout-probe
 /tmp/aa-drawer-layout-probe
+
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcrun swiftc -parse-as-library \
+  'ios/Agents Anywhere/Agents Anywhere/Views/Components/StableViewModel.swift' \
+  ios/Tests/ViewModelLifetimeProbe.swift -o /tmp/aa-view-model-lifetime-probe
+/tmp/aa-view-model-lifetime-probe
+
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer uv run --no-project python \
+  ios/scripts/probe-drawer-updates.py
 ```
 
 From `server/`:
