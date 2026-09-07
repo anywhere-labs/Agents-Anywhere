@@ -143,6 +143,9 @@ Semantic error and availability colors remain separate from the primary color.
   updates are isolated from the content subtree, and a separate observable
   structural projection keeps token/tool-output appends from regrouping every
   historical row. Only status, membership and grouping changes invalidate it.
+  Viewport and history-anchor measurements coalesce outside the layout callback;
+  identical history positions do not publish another state change. Native scroll
+  phase samples supersede queued geometry, and removal cancels pending deliveries.
   Looking up an existing repository model only touches its cache entry; it does
   not re-project historical payloads or subscribe the shell to every row's
   observable fields. Session/New Session pages have equality boundaries that

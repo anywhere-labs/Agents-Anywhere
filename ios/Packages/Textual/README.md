@@ -19,6 +19,12 @@ range traversal and layout reconciliation. Invalid positions yield an empty
 result instead of indexing a replaced layout. Traversal skips empty paragraphs,
 lines and runs; valid selections keep their original UTF-16 offsets.
 
+Selection layout snapshots capture their resolved size for comparison. They do
+not feed size back through View state or reset overlay identity as text grows.
+Reconciliation only publishes a changed range, following the approach in
+[upstream PR 67](https://github.com/gonzalezreal/textual/pull/67), and coordination
+does not repeatedly clear already-empty selections.
+
 The iOS app supplies native code, table and image components. Local style APIs
 expose literal code and attributed table cells (including empty columns), and
 allow selection to be scoped to text instead of covering embedded controls.

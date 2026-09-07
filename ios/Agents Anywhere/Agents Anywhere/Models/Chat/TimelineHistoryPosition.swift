@@ -13,7 +13,7 @@ nonisolated struct TimelineHistoryLayout: Equatable {
 /// A history request stays busy until its page has passed through the 30 Hz
 /// presentation buffer and layout. Restoring a point retains the reader's
 /// offset inside a long message, unlike aligning a group ID to the viewport top.
-nonisolated struct TimelineHistoryPosition {
+nonisolated struct TimelineHistoryPosition: Equatable {
     let id: Int
     let origin: TimelineHistoryLayout?
     private let originOffset: CGFloat

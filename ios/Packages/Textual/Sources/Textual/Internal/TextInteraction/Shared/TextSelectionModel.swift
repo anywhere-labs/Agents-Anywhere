@@ -60,7 +60,10 @@
       }
 
       if layoutCollection.needsPositionReconciliation(with: oldLayoutCollection) {
-        self.selectedRange = layoutCollection.reconcileRange(selectedRange, from: oldLayoutCollection)
+        let reconciled = layoutCollection.reconcileRange(selectedRange, from: oldLayoutCollection)
+        if reconciled != selectedRange {
+          self.selectedRange = reconciled
+        }
       } else if !layoutCollection.contains(selectedRange) {
         self.selectedRange = nil
       }

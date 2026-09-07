@@ -12,6 +12,8 @@ struct ChatTimelineView: View {
     @State private var hasRequestedOlder = false
     @State private var position = ScrollPosition()
     @State private var scrolling = TimelineScrollState()
+    @State private var viewportUpdates = ChatLayoutUpdate<TimelineViewport>()
+    @State private var historyUpdates = ChatLayoutUpdate<TimelineHistoryLayout>()
     @State private var latestPull = TimelineHistoryPull()
     @State private var olderPull = TimelineHistoryPull(edge: .older)
     @State private var olderPromptVisible = false
@@ -60,6 +62,8 @@ struct ChatTimelineView: View {
             .allowsHitTesting(model.isOpeningReady)
             .accessibilityHidden(!model.isOpeningReady)
             .onScrollPhaseChange { _, phase, context in
+                // A phase callback carries a newer authoritative sample.
+                viewportUpdates.cancel()
                 let mapped: TimelineScrollState.Phase
                 switch phase {
                 case .idle: mapped = .idle
@@ -109,10 +113,15 @@ struct ChatTimelineView: View {
                     Self.drawerLayoutLog.debug("Drawer geometry: content \(previous.contentHeight, privacy: .public) -> \(value.contentHeight, privacy: .public), viewport \(previous.visibleHeight, privacy: .public) -> \(value.visibleHeight, privacy: .public), offset \(previous.offsetY, privacy: .public) -> \(value.offsetY, privacy: .public)")
                 }
 #endif
-                scrolling.geometryChanged(value)
-                if !navigationIsSuspended && scrolling.phase == .interacting { latestPull.update(value); olderPull.update(value) }
+                viewportUpdates.submit(value) { value in
+                    if viewport != value { scrolling.geometryChanged(value) }
+                    if !navigationIsSuspended && scrolling.phase == .interacting {
+                        latestPull.update(value); olderPull.update(value)
+                    }
+                }
             }
             .onChange(of: navigationIsSuspended, initial: true) { _, suspended in
+                viewportUpdates.cancel()
                 scrolling.setNavigationSuspended(suspended)
                 if suspended {
                     releaseScrollPosition()
@@ -198,6 +207,7 @@ struct ChatTimelineView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .traceChatLayout("timeline-viewport")
+        .onDisappear { viewportUpdates.cancel(); historyUpdates.cancel() }
     }
     private func loadOlder() {
         guard model.session.isValid, model.session.hasOlderItems,
@@ -237,12 +247,16 @@ struct ChatTimelineView: View {
         withTransaction(transaction) { position.isPositionedByUser = true }
     }
     private func historyDidLayOut(_ layout: TimelineHistoryLayout) {
-        historyLayout = layout
-        guard !navigationIsSuspended else { return }
-        guard let offset = historyPosition?.laidOut(layout, generation: scrolling.navigationGeneration) else { return }
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
-        withTransaction(transaction) { position.scrollTo(y: offset) }
+        historyUpdates.submit(layout) { layout in
+            if historyLayout != layout { historyLayout = layout }
+            guard !navigationIsSuspended, var restoration = historyPosition else { return }
+            let offset = restoration.laidOut(layout, generation: scrolling.navigationGeneration)
+            if historyPosition != restoration { historyPosition = restoration }
+            guard let offset else { return }
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { position.scrollTo(y: offset) }
+        }
     }
     private struct HistorySettlement: Equatable {
         let id: Int?
@@ -253,6 +267,34 @@ struct ChatTimelineView: View {
         let needed: Bool
         let tail: TimelineTailVisibility
         let generation: Int
+    }
+}
+
+/// Keep the latest measurement without publishing View state inside a layout
+/// callback. One main-queue delivery handles a burst; removal invalidates it.
+@MainActor private final class ChatLayoutUpdate<Value> {
+    private var pending: (() -> Void)?
+    private var scheduled = false
+    private var generation = 0
+
+    func submit(_ value: Value, apply: @escaping (Value) -> Void) {
+        pending = { apply(value) }
+        guard !scheduled else { return }
+        scheduled = true
+        let token = generation
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.generation == token else { return }
+            let update = self.pending
+            self.pending = nil
+            self.scheduled = false
+            update?()
+        }
+    }
+
+    func cancel() {
+        generation &+= 1
+        pending = nil
+        scheduled = false
     }
 }
 

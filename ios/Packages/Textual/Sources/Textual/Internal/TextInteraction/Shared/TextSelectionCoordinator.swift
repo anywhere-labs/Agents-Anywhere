@@ -25,7 +25,9 @@ import SwiftUI
     func modelDidSelectText(_ model: TextSelectionModel) {
       // Clear selection in the other models
       for weakModel in models where weakModel.wrapped !== model {
-        weakModel.wrapped?.selectedRange = nil
+        if let other = weakModel.wrapped, other.selectedRange != nil {
+          other.selectedRange = nil
+        }
       }
       compact()
     }

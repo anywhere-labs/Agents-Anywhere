@@ -6,21 +6,23 @@
 
     private let base: Text.LayoutKey.Value
     private let geometry: GeometryProxy
+    private let size: CGSize
 
     init(base: Text.LayoutKey.Value, geometry: GeometryProxy) {
       self.base = base
       self.geometry = geometry
+      self.size = geometry.size
     }
 
     func isEqual(to other: any TextLayoutCollection) -> Bool {
       guard let other = other as? LiveTextLayoutCollection else { return false }
-      return base == other.base && geometry.size == other.geometry.size
+      return base == other.base && size == other.size
     }
 
     func needsPositionReconciliation(with other: any TextLayoutCollection) -> Bool {
       // Same layouts with different origins do not need position reconciliation
       guard let other = other as? LiveTextLayoutCollection else { return true }
-      return base.map(\.layout) != other.base.map(\.layout) || geometry.size != other.geometry.size
+      return base.map(\.layout) != other.base.map(\.layout) || size != other.size
     }
 
     func index(of layout: Text.Layout) -> Int? {
