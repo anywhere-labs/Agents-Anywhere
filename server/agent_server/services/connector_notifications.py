@@ -28,6 +28,7 @@ from agent_server.services.ingest_effects import IngestEffect
 from agent_server.infra.repositories.projects import MissingWorkspaceError
 from agent_server.services.repository_ports import ConnectorNotificationRepository
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
+from agent_server.services.workspace_inventory import WorkspaceInventory
 
 TIMELINE_SYNC_PUSH_LIMIT = 100
 SESSION_INVENTORY_LIMIT = 10_000
@@ -70,6 +71,7 @@ class ConnectorNotificationService:
         realtime: ConnectorRealtimeService,
         timeline_write_buffer: TimelineWriteBuffer | None = None,
     ) -> None:
+        self._store = store
         self._realtime = realtime
         self._handlers = (
             ConnectorProtocolNotificationHandler(store),
@@ -90,6 +92,19 @@ class ConnectorNotificationService:
         method: str,
         params: dict[str, Any],
     ) -> IngestEffect:
+        if method == "workspace.inventory":
+            runtime, runtime_id = runtime_identity_from_params(params)
+            if runtime != "dsh":
+                raise NotificationValidationError("invalid_workspace_runtime", "Native workspace sync is only supported for DSH")
+            try:
+                inventory = WorkspaceInventory.model_validate({key: params.get(key) for key in ("complete", "workspaces")})
+                changed, session_ids = await self._store.sync_runtime_workspaces(
+                    connector_id=connector_id, runtime_id=runtime_id,
+                    workspaces=[workspace.model_dump() for workspace in inventory.workspaces],
+                )
+            except ValueError as exc:
+                raise NotificationValidationError("invalid_workspace_inventory", str(exc)) from exc
+            return IngestEffect(dashboard_changed=changed, session_ids=session_ids, session_changed=bool(session_ids))
         if method != "session.turnEnded":
             params = _without_runtime_turn_ids(params)
         if method == "approval.requested":

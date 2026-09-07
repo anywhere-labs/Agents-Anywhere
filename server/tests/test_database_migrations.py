@@ -382,6 +382,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_29", "v2_30"),
         ("v2_30", "v2_31"),
         ("v2_31", "v2_32"),
+        ("v2_32", "v2_33"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -1029,6 +1030,8 @@ def test_v2_14_downgrade_rejects_instance_specific_data(
         "v2_29",
         "v2_30",
         "v2_31",
+        "v2_32",
+        "v2_33",
     ],
 )
 def test_unversioned_runtime_schema_is_classified_by_actual_columns(
@@ -1066,9 +1069,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_32() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_32"
-    assert CURRENT_SCHEMA_VERSION == "2.32"
+def test_current_schema_version_is_v2_33() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_33"
+    assert CURRENT_SCHEMA_VERSION == "2.33"
 
 
 def test_retiring_releases_preserves_history(tmp_path) -> None:

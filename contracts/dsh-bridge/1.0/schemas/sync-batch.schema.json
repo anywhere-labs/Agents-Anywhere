@@ -22,6 +22,7 @@
           "totalItems": { "type": "integer", "minimum": 0 },
           "meta": { "type": "object", "required": ["externalSessionId"] },
           "items": { "type": "array", "items": { "type": "object" } },
+          "complete": { "const": true },
           "workspaces": { "type": "array", "items": { "type": "object", "required": ["id", "title", "path", "sessionIds"] } },
           "notifications": {
             "type": "array", "minItems": 1,
@@ -40,7 +41,7 @@
           { "if": { "properties": { "kind": { "const": "snapshot.items" } } }, "then": { "required": ["items"] } },
           { "if": { "properties": { "kind": { "const": "snapshot.commit" } } }, "then": { "required": ["totalItems", "throughSeq"] } },
           { "if": { "properties": { "kind": { "const": "notifications" } } }, "then": { "required": ["notifications"] } },
-          { "if": { "properties": { "kind": { "const": "workspace.inventory" } } }, "then": { "required": ["workspaces"] } }
+          { "if": { "properties": { "kind": { "const": "workspace.inventory" } } }, "then": { "required": ["complete", "workspaces"] } }
         ]
       }
     }

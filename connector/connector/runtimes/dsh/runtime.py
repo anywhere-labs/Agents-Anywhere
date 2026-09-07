@@ -203,11 +203,25 @@ class DshRuntime(AgentRuntime):
         session_id: str,
         external_session_id: str | None = None,
     ) -> SessionState:
-        return models.session_state(
-            await self._request(
-                "session.getState", _session_params(session_id, external_session_id)
-            )
-        )
+        payload = _object(await self._request(
+            "session.getState", _session_params(session_id, external_session_id)
+        ))
+        state = models.session_state(payload)
+        source = payload.get("sourceState")
+        if isinstance(source, dict):
+            if payload.get("sessionId") != session_id or (
+                external_session_id and payload.get("externalSessionId") != external_session_id
+            ):
+                raise RuntimeUpstreamError("DSH source observation returned a different session")
+            # Wait for ingestion before returning session.state. The server's
+            # detail snapshot then reads the fresh source fact from its database.
+            await self.host.publish_runtime_notifications("dsh", [{
+                "method": "session.source.updated", "params": {
+                    "sessionId": session_id, "externalSessionId": payload.get("externalSessionId"),
+                    **source, "observationOrigin": "operation",
+                },
+            }])
+        return state
 
     async def get_session_capabilities(
         self,
@@ -269,7 +283,11 @@ class DshRuntime(AgentRuntime):
             raise RuntimeInvalidRequestError("Text and a stable clientMessageId are required")
         params = {**_session_params(session_id, external_id), "content": content,
                   "clientMessageId": client_message_id, "cwd": cwd}
-        return RuntimeOperationResult(result=_object(await self._request(method, params)))
+        payload = _object(await self._request(method, params))
+        if payload.get("ok") is False:
+            return RuntimeOperationResult(ok=False, code=payload.get("code"), message=payload.get("message"),
+                                          result=_object(payload.get("result") or {}))
+        return RuntimeOperationResult(result=payload)
 
     async def interrupt_session(self, session_id: str, reason: str | None = None) -> RuntimeOperationResult:
         return RuntimeOperationResult(result=_object(await self._request("session.interrupt", {"sessionId": session_id})))

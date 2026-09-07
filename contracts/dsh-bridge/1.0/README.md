@@ -83,10 +83,17 @@ platform protocol. Question ACK means handoff to those publishers; reconnect and
 scanning. History and live events share stable item identities and ordering.
 
 `workspace.list` returns native `{id,title,path,sessionIds}` facts. Workspace events
-also send `workspace.inventory` for Connector-local state. The existing backend
-continues grouping sessions by cwd; this does not add native project name writes.
+also send complete `workspace.inventory` operations (including empty workspaces
+and archived members). The relay awaits `workspace.inventory` ingestion before
+ACK. The server persists `(connectorId, runtimeId, nativeWorkspaceId)` mappings,
+imports titles with stable `（n）` collision suffixes, and uses explicit membership
+before cwd fallback. Only complete, validated inventories can remove mappings.
 
 The official sidebar filter is applied before import and on every read/send path.
-Never-imported hidden sessions produce no rows. Previously imported sessions that
-become hidden use the existing source visibility notification; their database rows
-are retained according to current backend behavior.
+Never-imported hidden sessions produce no history rows. An explicit native archive
+is `archived`; blank/filtered sessions are `unavailable`, not implicitly archived.
+The full inventory includes archived source observations for offline reconciliation.
+`session.getState` freshly queries the official catalog and returns `sourceState`;
+the relay persists it before returning the state RPC. Sends recheck availability
+and return `{ok:false,code:"session_archived",result:{sourceState,...}}` on archive.
+AA metadata mutations never invoke native project or archive mutations.

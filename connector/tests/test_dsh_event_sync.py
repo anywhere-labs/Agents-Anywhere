@@ -8,6 +8,7 @@ import pytest
 
 from connector.runtime_protocol import RuntimeInstanceHost, RuntimeInstanceSpec, timeline_content_hash
 from connector.runtimes.dsh.bridge.sync import SyncRelay
+from connector.runtimes.dsh.runtime import DshRuntime
 from connector.server.runtime_host import ConnectorRuntimeHost
 from connector.server.runtime_sync import RuntimeSyncRunner
 
@@ -141,6 +142,47 @@ def test_instance_binds_existing_notifications_and_propagates_ingest_failure():
             await scoped.publish_runtime_notifications("dsh", notices)
         with pytest.raises(ValueError):
             await base.publish_runtime_notifications("dsh", [{"method": "unknown", "params": {}}])
+    asyncio.run(exercise())
+
+
+def test_workspace_inventory_reaches_server_with_instance_binding_and_requires_completeness():
+    async def exercise():
+        ingest = AsyncMock()
+        base = ConnectorRuntimeHost("device", AsyncMock(), AsyncMock(), ingest_notifications=ingest)
+        host = RuntimeInstanceHost(base, RuntimeInstanceSpec(runtime_id="rti_dsh", runtime_type="dsh", name="DSH"))
+        relay = SyncRelay(Mock(), host)
+        projects = [{"id": "native", "title": "真实项目名", "path": "/repo", "sessionIds": ["archived-session"]}]
+        with pytest.raises(ValueError, match="Incomplete"):
+            await relay.operation({"kind": "workspace.inventory", "workspaces": []})
+        ingest.assert_not_awaited()
+        await relay.operation({"kind": "workspace.inventory", "complete": True, "workspaces": projects})
+        notice = ingest.call_args.args[0][0]
+        assert notice == {"method": "workspace.inventory", "params": {
+            "runtime": "dsh", "runtimeId": "rti_dsh", "complete": True, "workspaces": projects,
+        }}
+    asyncio.run(exercise())
+
+
+def test_fresh_source_state_waits_for_ingestion_and_archive_send_returns_standard_error():
+    async def exercise():
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def publish(*args):
+            entered.set()
+            await release.wait()
+        runtime = DshRuntime(Mock(), SimpleNamespace(publish_runtime_notifications=publish))
+        source = {"availability": "archived", "reason": "archived_in_dsh", "observedAt": "2026-09-07T00:00:00Z"}
+        runtime._request = AsyncMock(return_value={"runtime": "dsh", "sessionId": "session", "externalSessionId": "native",
+            "status": "blocked", "selections": {}, "sourceState": source})
+        task = asyncio.create_task(runtime.get_session_state("session", "native"))
+        await asyncio.wait_for(entered.wait(), 1)
+        assert not task.done()
+        release.set()
+        assert (await task).status == "blocked"
+        runtime._request.return_value = {"ok": False, "code": "session_archived", "message": "Archived in DSH",
+            "result": {"sessionId": "session", "externalSessionId": "native", "sourceState": source}}
+        result = await runtime.start_turn("session", "native", "hi", client_message_id="request")
+        assert result.ok is False and result.code == "session_archived"
+        assert result.result["sourceState"] == source
     asyncio.run(exercise())
 
 

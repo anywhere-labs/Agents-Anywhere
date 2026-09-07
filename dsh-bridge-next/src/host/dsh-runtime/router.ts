@@ -70,8 +70,15 @@ export class RuntimeRouter {
         if (params.attachments != null && (!Array.isArray(params.attachments) || params.attachments.length)) throw new BridgeError('UNSUPPORTED_OPERATION', 'Attachments are not supported yet.')
         if (typeof params.sessionId !== 'string' || !params.sessionId || typeof params.content !== 'string' || typeof params.clientMessageId !== 'string') throw new BridgeError('INVALID_PARAMS', 'Session ID, text and clientMessageId are required.')
         const create = method === 'session.createAndStart'
-        const id = create ? nativeSessionId(this.namespace, params.sessionId) as SessionId : await this.resolve(params, signal)
-        await native.send(id, params.content, params.clientMessageId, typeof params.cwd === 'string' ? params.cwd : undefined, create)
+        const id = create ? nativeSessionId(this.namespace, params.sessionId) as SessionId : await this.resolve(params, signal, true)
+        try {
+          await native.send(id, params.content, params.clientMessageId, typeof params.cwd === 'string' ? params.cwd : undefined, create)
+        } catch (error) {
+          if (!(error instanceof BridgeError) || !['SESSION_ARCHIVED', 'SESSION_NOT_FOUND'].includes(error.code)) throw error
+          const sourceState = await native.source.state(id)
+          return { ok: false, code: sourceState.availability === 'archived' ? 'session_archived' : 'session_unavailable',
+            message: error.message, result: { sessionId: params.sessionId, externalSessionId: id, sourceState } }
+        }
         return { accepted: true, sessionId: sessionId(this.namespace, id), externalSessionId: id }
       }
       case 'session.interrupt': {
@@ -87,12 +94,18 @@ export class RuntimeRouter {
       case 'session.list': return this.list(params, signal)
       case 'session.getSnapshot': return this.snapshot(params, signal)
       case 'session.getState': {
-        const id = await this.resolve(params, signal)
+        await this.reader.native?.source.refresh(signal)
+        const id = await this.resolve(params, signal, true)
+        const sourceState = await this.reader.native?.source.state(id)
+        if (sourceState && sourceState.availability !== 'available') return {
+          runtime: 'dsh', sessionId: sessionId(this.namespace, id), externalSessionId: id,
+          status: 'blocked', selections: {}, sourceState, metadata: { readOnly: true, attached: false },
+        }
         const native = await this.reader.query.readSession(id)
         signal.throwIfAborted()
         const lastEnd = native.events.findLast(event => event.type === 'turn/end')
         const liveStatus = this.reader.status(id)
-        return { runtime: 'dsh', sessionId: sessionId(this.namespace, id), externalSessionId: id,
+        return { runtime: 'dsh', sessionId: sessionId(this.namespace, id), externalSessionId: id, sourceState,
           status: this.reader.native?.questions.waiting(id) ? 'waiting_approval' : liveStatus ?? (lastEnd?.data.reason.kind === 'error' ? 'error' : 'idle'), selections: {},
           metadata: { readOnly: !this.reader.native?.ctx.get('agents'), attached: liveStatus !== undefined } }
       }
@@ -112,20 +125,23 @@ export class RuntimeRouter {
     }
   }
 
-  private async resolve(params: Record<string, unknown>, signal: AbortSignal): Promise<SessionId> {
+  private async resolve(params: Record<string, unknown>, signal: AbortSignal, includeUnavailable = false): Promise<SessionId> {
     const externalId = params.externalSessionId
     if (typeof externalId === 'string' && externalId) {
       if (params.sessionId !== undefined && params.sessionId !== sessionId(this.namespace, externalId)) {
         throw new BridgeError('INVALID_PARAMS', 'The session does not belong to this runtime namespace.')
       }
-      if (this.reader.native && !await this.reader.native.visible(externalId)) throw new BridgeError('SESSION_NOT_FOUND', 'The session is not visible in DSH.')
+      if (this.reader.native && !includeUnavailable) await this.reader.native.source.requireAvailable(externalId)
       return externalId as SessionId
     }
     if (typeof params.sessionId !== 'string' || !params.sessionId) throw new BridgeError('INVALID_PARAMS', 'A session identity is required.')
-    const records = await this.reader.query.listSessions(signal)
-    const match = records.find(item => sessionId(this.namespace, item.header.id) === params.sessionId)
-    if (!match || (this.reader.native && !await this.reader.native.visible(match.header.id))) throw new BridgeError('SESSION_NOT_FOUND', 'The DSH session is not visible.')
-    return match.header.id
+    if (includeUnavailable && this.reader.native) await this.reader.native.source.refresh(signal)
+    const ids = includeUnavailable && this.reader.native ? this.reader.native.candidates()
+      : (await this.reader.query.listSessions(signal)).map(item => item.header.id)
+    const id = ids.find(id => sessionId(this.namespace, id) === params.sessionId)
+    if (!id) throw new BridgeError('SESSION_NOT_FOUND', 'The DSH session is not visible.')
+    if (this.reader.native && !includeUnavailable) await this.reader.native.source.requireAvailable(id)
+    return id as SessionId
   }
 
   private offset(cursor: unknown, page: Page<unknown> | undefined): number {

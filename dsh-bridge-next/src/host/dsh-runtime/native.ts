@@ -11,7 +11,8 @@ import { realpath, stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import { userMessageId } from './identity.js'
 import { BridgeError } from './errors.js'
-import { ClientPresence, sessionVisible } from './visibility.js'
+import { ClientPresence } from './visibility.js'
+import { NativeSessionSource } from './sessions/source.js'
 import { record } from './types.js'
 import { UserQuestions } from './questions.js'
 
@@ -27,27 +28,25 @@ export class NativeRuntime {
   readonly presence: ClientPresence
   readonly questions: UserQuestions
   private listeners = new Set<(change: NativeChange) => void>()
-  private archived: Set<string>
-  private turns = new Map<string, boolean>()
-  private records = new Map<string, SessionRecord>()
+  readonly source: NativeSessionSource
   private owned = new Set<AgentHandle>()
   private writes = new Map<string, Promise<unknown>>()
   private workspaceTimer: ReturnType<typeof setTimeout> | undefined
   private closed = false
 
   constructor(readonly ctx: Context) {
-    this.archived = new Set(ctx.workspaceRegistry.archivedSessionIds)
     this.presence = new ClientPresence(() => this.emit({ type: 'visibility' }))
+    this.source = new NativeSessionSource(ctx, this.presence)
     this.questions = new UserQuestions(ctx, id => this.visible(id), id => this.emit(id ? { type: 'question', id } : { type: 'capabilities' }))
     ctx.on('session/created', session => {
       // The session may leave memory while an earlier transport batch waits for
       // ACK. Keep its header so the queued event can still read persisted history.
-      this.records.set(session.id, { header: session.header, live: true, persisted: false })
-      this.turns.set(session.id, session.snapshotEvents().some(e => e.type === 'turn/start'))
+      this.source.records.set(session.id, { header: session.header, live: true, persisted: false })
+      this.source.turns.set(session.id, session.snapshotEvents().some(e => e.type === 'turn/start'))
       this.emit({ type: 'session', id: session.id })
     }, { global: true })
     ctx.on('session/event', (session, event) => {
-      if (event.type === 'turn/start') this.turns.set(session.id, true)
+      if (event.type === 'turn/start') this.source.turns.set(session.id, true)
       this.questions.observe(session.id, event)
       this.emit({ type: 'event', id: session.id, event })
     }, { global: true })
@@ -59,8 +58,8 @@ export class NativeRuntime {
         const ids = record(change.value).archivedSessionIds
         if (Array.isArray(ids)) {
           const next = new Set(ids.filter((id): id is string => typeof id === 'string'))
-          if (next.size !== this.archived.size || [...next].some(id => !this.archived.has(id))) {
-            this.archived = next
+          if (next.size !== this.source.archived.size || [...next].some(id => !this.source.archived.has(id))) {
+            this.source.archived = next
             this.emit({ type: 'visibility' })
           }
         }
@@ -87,33 +86,21 @@ export class NativeRuntime {
     return this.ctx.workspaceRegistry.list().map(w => ({ id: w.id, title: w.title, path: w.path, sessionIds: [...w.sessionIds] }))
   }
   status(id: SessionId): 'idle' | 'running' | undefined { return this.ctx.get('agents')?.get(id)?.status }
-  candidates(): string[] { return [...new Set([...this.records.keys(), ...this.turns.keys()])] }
+  candidates(): string[] { return this.source.candidates() }
   async inventory(signal?: AbortSignal): Promise<SessionRecord[]> {
-    const records = await this.ctx.sessionQuery.listSessions(signal)
-    this.records = new Map(records.map(r => [r.header.id, r]))
+    await this.source.refresh(signal)
     const result: SessionRecord[] = []
-    for (const entry of records) {
+    for (const entry of this.source.records.values()) {
       signal?.throwIfAborted()
       if (await this.visible(entry.header.id)) result.push(entry)
     }
     return result
   }
-  async visible(id: string): Promise<boolean> {
-    const live = this.ctx.sessions.get(id as SessionId)
-    const header = live?.header ?? this.records.get(id)?.header
-    if (!header || header.origin === 'subagent' || this.archived.has(id)) return false
-    let hasTurn = this.turns.get(id)
-    if (hasTurn === undefined) {
-      const events = live?.snapshotEvents() ?? (await this.ctx.sessionQuery.readSession(id as SessionId)).events
-      hasTurn = events.some(e => e.type === 'turn/start')
-      this.turns.set(id, hasTurn)
-    }
-    return sessionVisible({ id, ...(header.origin ? { origin: header.origin } : {}), blank: !hasTurn }, this.archived, this.presence.selected())
-  }
+  visible(id: string): Promise<boolean> { return this.source.visible(id) }
   async read(id: SessionId): Promise<SessionLogSnapshot> {
-    if (!await this.visible(id)) throw new BridgeError('SESSION_NOT_FOUND', 'The session is not visible in DSH.')
+    await this.source.requireAvailable(id)
     const snapshot = await this.ctx.sessionQuery.readSession(id)
-    if (!await this.visible(id)) throw new BridgeError('SESSION_NOT_FOUND', 'The session is no longer visible in DSH.')
+    await this.source.requireAvailable(id)
     return snapshot
   }
 
@@ -124,6 +111,9 @@ export class NativeRuntime {
     const previous = this.writes.get(id) ?? Promise.resolve()
     const task = previous.catch(() => undefined).then(async () => {
       if (this.closed) throw new Error('DSH runtime is disposed')
+      // Re-read the official catalog on every send, including after a stale AA detail view.
+      await this.source.refresh()
+      if (!create || this.source.archived.has(id)) await this.source.requireAvailable(id)
       const agents = this.ctx.get('agents')
       if (!agents) throw new BridgeError('UNSUPPORTED_OPERATION', 'DSH Agent service is not available.')
       let agent = agents.get(id)
@@ -131,8 +121,8 @@ export class NativeRuntime {
       const exists = agent || !create || (await this.ctx.sessionQuery.listSessions()).some(r => r.header.id === id)
       const log = agent ? { session: agent.session.header, events: agent.session.snapshotEvents() }
         : exists ? await this.ctx.sessionQuery.readSession(id) : undefined
-      if (log) this.turns.set(id, log.events.some(e => e.type === 'turn/start'))
-      if (create && log && (log.session.origin === 'subagent' || this.archived.has(id))) throw new BridgeError('SESSION_NOT_FOUND', 'The session is not visible in DSH.')
+      if (log) this.source.turns.set(id, log.events.some(e => e.type === 'turn/start'))
+      if (create && log && (log.session.origin === 'subagent' || this.source.archived.has(id))) throw new BridgeError('SESSION_NOT_FOUND', 'The session is not visible in DSH.')
       if (!create && !await this.visible(id)) throw new BridgeError('SESSION_NOT_FOUND', 'The session is not visible in DSH.')
       const messageId = userMessageId(id, requestId) as UserMessage['id']
       // Inbox acceptance is durable too, before user/message is appended by the driver.
@@ -174,7 +164,8 @@ export class NativeRuntime {
           await workspace.attachSession(id)
         }
       }
-      if (this.closed || this.archived.has(id) || (!create && !await this.visible(id))) {
+      if (this.source.archived.has(id)) await this.source.requireAvailable(id)
+      if (this.closed || (!create && !await this.visible(id))) {
         throw new BridgeError('SESSION_NOT_FOUND', 'The session is no longer visible in DSH.')
       }
       const message = freezeMessage<UserMessage>({ id: messageId, role: 'user',
@@ -186,7 +177,7 @@ export class NativeRuntime {
     try { await task } finally { if (this.writes.get(id) === task) this.writes.delete(id) }
   }
   async interrupt(id: SessionId): Promise<void> {
-    if (!await this.visible(id)) throw new BridgeError('SESSION_NOT_FOUND', 'The session is not visible in DSH.')
+    await this.source.requireAvailable(id)
     this.ctx.get('agents')?.get(id)?.cancel({ kind: 'user' })
   }
   async close(): Promise<void> {

@@ -6,6 +6,7 @@ import { sessionId } from './identity.js'
 import type { NativeChange, NativeRuntime } from './native.js'
 import { record, type TimelineItem } from './types.js'
 import { capabilities } from './capabilities.js'
+import { workspaceInventory } from './workspaces.js'
 
 export type SyncOperation = { kind: string, [key: string]: unknown }
 export interface SyncBatch { streamId: string, batchSeq: number, projectionVersion: number, operations: SyncOperation[] }
@@ -21,6 +22,8 @@ export class SyncFeed {
   private queuedBytes = 0
   private projections = new Map<string, SessionProjection>()
   private published = new Map<string, string>()
+  private sourceAvailability = new Map<string, string>()
+  private lastWorkspaces: string | undefined
   private waitAck: { seq: number, resolve: () => void, reject: (error: Error) => void } | undefined
   private wake: (() => void) | undefined
   private closed = false
@@ -126,6 +129,7 @@ export class SyncFeed {
     if (!await this.native.visible(id)) return
     await this.send([{ kind: 'snapshot.begin', sessionId: platformId, snapshotId,
       meta: { externalSessionId: id, title: title?.type === 'session/title' ? title.data.title : null,
+        sourceState: await this.native.source.state(id),
         cwd: log.session.cwd ?? null,
         lastActivityAt: new Date(log.events.at(-1)?.time ?? log.session.createdAt).toISOString() },
       throughSeq: projection.throughSeq }])
@@ -141,6 +145,7 @@ export class SyncFeed {
     // that evicted session; no background history scans are introduced.
     this.trimProjections()
     this.published.set(id, platformId)
+    this.sourceAvailability.set(id, 'available')
     await this.notices(id)
     await this.state(id)
   }
@@ -161,9 +166,13 @@ export class SyncFeed {
     await this.notification('session.state.updated', { sessionId: this.published.get(id), externalSessionId: id, status })
   }
   private async reconcile(): Promise<void> {
-    for (const [id, platformId] of this.published) if (!await this.native.visible(id)) {
-      await this.notification('session.source.updated', { sessionId: platformId, externalSessionId: id,
-        availability: 'hidden', observationOrigin: 'event', observedAt: new Date().toISOString() })
+    for (const id of this.native.candidates()) if (!await this.native.visible(id)) {
+      const source = await this.native.source.state(id)
+      if (this.sourceAvailability.get(id) !== source.availability) {
+        await this.notification('session.source.updated', { sessionId: sessionId(this.namespace, id), externalSessionId: id,
+          ...source, observationOrigin: 'event' })
+        this.sourceAvailability.set(id, source.availability)
+      }
       this.published.delete(id); this.projections.delete(id)
     }
     // Selection can make a previously blank session visible without a new native event.
@@ -171,9 +180,11 @@ export class SyncFeed {
     await this.projects()
   }
   private async projects(): Promise<void> {
-    const workspaces = this.native.workspaces().map(workspace => ({ ...workspace,
-      sessionIds: workspace.sessionIds.flatMap(id => this.published.has(id) ? [this.published.get(id)!] : []) }))
-    await this.send([{ kind: 'workspace.inventory', workspaces }])
+    const inventory = workspaceInventory(this.native, this.namespace)
+    const serialized = JSON.stringify(inventory)
+    if (serialized === this.lastWorkspaces) return
+    await this.send([inventory])
+    this.lastWorkspaces = serialized
   }
   private async changes(changes: NativeChange[]): Promise<void> {
     const touched = new Set<string>(), statuses = new Set<string>()
@@ -229,11 +240,17 @@ export class SyncFeed {
   }
   private async run(): Promise<void> {
     await this.notification('session.inventory.begin', { scanToken: this.id })
-    for (const entry of await this.native.inventory(this.abort.signal)) await this.baseline(entry.header.id)
+    const inventory = await this.native.inventory(this.abort.signal)
+    // Bind project identities before session snapshots can fall back to cwd names.
+    await this.projects()
+    for (const entry of inventory) await this.baseline(entry.header.id)
     await this.changes(this.takeChanges())
     await this.projects()
+    const sessions = []
+    for (const id of this.native.candidates()) sessions.push({ sessionId: sessionId(this.namespace, id),
+      externalSessionId: id, sourceState: await this.native.source.state(id) })
     await this.notification('session.inventory.complete', { scanToken: this.id, complete: true,
-      sessions: [...this.published].map(([externalSessionId, sessionId]) => ({ sessionId, externalSessionId, sourceState: 'visible' })) })
+      sessions })
     while (!this.closed) {
       if (!this.queue.length) await new Promise<void>(resolve => { this.wake = resolve })
       if (this.closed) break

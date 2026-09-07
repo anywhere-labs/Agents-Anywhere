@@ -1,6 +1,6 @@
 """Headless integration probe called by the plugin's real SDK fixture.
 
-Uses the unchanged backend app through ASGI and a temporary SQLite database.
+Uses the backend app through ASGI and a temporary SQLite database.
 No dev server, user credentials, or actual model provider is used.
 """
 # Import the app only after isolating its database URL and local module paths.
@@ -109,6 +109,15 @@ async def main(home: Path) -> None:
                     i for i in items if i.type == "message" and i.role == "assistant" and i.status == "done"
                 ]) == expected)
 
+            async def native_action(action):
+                # The fixture performs official native UI-side mutations; this
+                # is test-only IPC, never an AA -> DSH management capability.
+                marker = home / "native-action.json"
+                marker.write_text(json.dumps({"action": action}))
+                async def acknowledged():
+                    return not marker.exists()
+                await until(acknowledged, f"native {action} was not handled")
+
             try:
                 await runtime.start()
                 await until(ready, "initial inventory failed")
@@ -155,6 +164,39 @@ async def main(home: Path) -> None:
                 ], "reconnection changed IDs, duplicated messages or retained stale rows"
                 workspaces = await runtime._request("workspace.list")
                 assert any(Path(w["path"]).resolve() == home.resolve() and external_id in w["sessionIds"] for w in workspaces["workspaces"])
+                main = next(s for s in sessions if s.externalSessionId == "native-main")
+                project_id = (await store.get_session(main.id)).projectId
+                await store.update_project(project_id, user_id="dsh-test", pinned=True, name="AA only")
+                assert all(w["title"] != "AA only" for w in (await runtime._request("workspace.list"))["workspaces"])
+                await native_action("rename")
+                async def renamed():
+                    return (await store.get_project(project_id, user_id="dsh-test")).name == "DSH 项目改名"
+                await until(renamed, "native project rename was not ingested")
+                assert (await store.get_project(project_id, user_id="dsh-test")).pinned
+
+                # Skip the event feed: entering details must still see an archive.
+                await runtime._sync.close()
+                runtime._sync = None
+                await native_action("archive")
+                state = await runtime.get_session_state(main.id, main.externalSessionId)
+                assert state.status == "blocked"
+                archived = await store.get_session(main.id)
+                assert archived.sourceAvailability == "archived" and archived.archived
+                denied = await runtime.start_turn(main.id, main.externalSessionId, "must not send", client_message_id="archived")
+                assert not denied.ok and denied.code == "session_archived"
+                history = [(item.id, item.contentHash) for item in await stored(main.id)]
+                count = completed_inventories()
+                await runtime.resynchronize()
+                async def calibrated():
+                    return completed_inventories() > count
+                await until(calibrated, "offline archive calibration did not complete")
+                assert (await store.get_session(main.id)).sourceAvailability == "archived"
+                await native_action("delete")
+                async def detached():
+                    return not (await store.get_project(project_id, user_id="dsh-test")).hasNativeWorkspace
+                await until(detached, "native project deletion was not ingested")
+                assert (await store.get_session(main.id)).projectId == project_id
+                assert [(item.id, item.contentHash) for item in await stored(main.id)] == history
                 assert runtime.sync_mode == "events"
                 print("DSH event pipeline passed")
             finally:

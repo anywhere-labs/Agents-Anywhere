@@ -29,8 +29,8 @@ export function sortProjectsBySessionActivity(
     timestamp(project.lastActivityAt),
     loadedActivity.get(project.id) ?? 0,
   )
-  // Only manually created projects have the Web sidebar's empty-project exception.
-  const empty = (project: ProjectView) => Boolean(project.manuallyCreated)
+  // Explicit AA and native projects remain visible even before their first session.
+  const empty = (project: ProjectView) => Boolean(project.manuallyCreated || project.hasNativeWorkspace)
     && !project.lastActivityAt
     && !loadedActivity.has(project.id)
     && project.activeSessionCount === 0

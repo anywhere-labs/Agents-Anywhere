@@ -106,9 +106,12 @@ class SyncRelay:
             # Returning here means accepted by that existing path, not a new DB ACK contract.
             await publish_pending()
         elif kind == "workspace.inventory":
-            # Preserve native workspace facts locally. Existing backend project grouping
-            # comes from session cwd; it has no Connector workspace-write notification.
-            await self.host.sync_state_write("native-workspaces", {"workspaces": op["workspaces"]})
+            if op.get("complete") is not True or not isinstance(op.get("workspaces"), list):
+                raise ValueError("Incomplete native workspace inventory")
+            await self.host.publish_runtime_notifications("dsh", [{
+                "method": "workspace.inventory",
+                "params": {"complete": True, "workspaces": op["workspaces"]},
+            }])
         else:
             raise ValueError(f"Unsupported bridge operation: {kind}")
 

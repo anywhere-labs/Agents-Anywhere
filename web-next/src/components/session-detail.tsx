@@ -1204,7 +1204,7 @@ export function SessionDetail({
     } catch (err) {
       const nextSourceErrorCode = sessionSourceErrorCode(err)
       const message = nextSourceErrorCode
-        ? sourceErrorMessage(nextSourceErrorCode, tSession)
+        ? sourceErrorMessage(nextSourceErrorCode, tSession, runtimeLabel(sessionRuntimeType(session)))
         : err instanceof Error
           ? err.message
           : tSession("sendFailed")
@@ -1581,7 +1581,7 @@ export function SessionDetail({
 
   const takeoverTarget = pendingTakeover ?? false
   const sourceErrorDialog = sourceErrorCode
-    ? sourceErrorDialogContent(sourceErrorCode, tSession)
+    ? sourceErrorDialogContent(sourceErrorCode, tSession, runtimeLabel(sessionRuntimeType(session)))
     : null
   const dismissSourceErrorDialog = () => {
     const shouldLeaveSession = sourceErrorCode === "session_archived"
@@ -1824,36 +1824,38 @@ function sourceAvailabilityFromError(
 function sourceErrorDialogContent(
   code: SessionSourceErrorCode,
   tSession: ReturnType<typeof useTranslations>,
+  client: string,
 ): { title: string; description: string } {
   if (code === "session_archived") {
     return {
-      title: tSession("sourceArchivedTitle"),
-      description: tSession("sourceArchivedDescription"),
+      title: tSession("sourceArchivedTitle", { client }),
+      description: tSession("sourceArchivedDescription", { client }),
     }
   }
   if (code === "session_deleted") {
     return {
-      title: tSession("sourceDeletedTitle"),
-      description: tSession("sourceDeletedDescription"),
+      title: tSession("sourceDeletedTitle", { client }),
+      description: tSession("sourceDeletedDescription", { client }),
     }
   }
   if (code === "session_missing") {
     return {
-      title: tSession("sourceMissingTitle"),
-      description: tSession("sourceMissingDescription"),
+      title: tSession("sourceMissingTitle", { client }),
+      description: tSession("sourceMissingDescription", { client }),
     }
   }
   return {
-    title: tSession("sourceUnavailableTitle"),
-    description: tSession("sourceUnavailableDescription"),
+    title: tSession("sourceUnavailableTitle", { client }),
+    description: tSession("sourceUnavailableDescription", { client }),
   }
 }
 
 function sourceErrorMessage(
   code: SessionSourceErrorCode,
   tSession: ReturnType<typeof useTranslations>,
+  client: string,
 ): string {
-  return sourceErrorDialogContent(code, tSession).description
+  return sourceErrorDialogContent(code, tSession, client).description
 }
 
 function BlockingInteractionStack({

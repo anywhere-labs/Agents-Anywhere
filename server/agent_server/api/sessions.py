@@ -1554,12 +1554,14 @@ async def read_runtime_state_from_connector(
             params,
             timeout=10,
         )
-    except (ConnectorOfflineError, ConnectorRpcError, TimeoutError):
+    except (ConnectorOfflineError, ConnectorRpcError, TimeoutError) as exc:
+        if session.runtime == "dsh":
+            raise HTTPException(status_code=503, detail="无法确认 DeepSeek Harness 会话状态，请稍后重试。") from exc
         return None
-    if not isinstance(result, dict):
-        return None
-    raw_state = result.get("state")
+    raw_state = result.get("state") if isinstance(result, dict) else None
     if not isinstance(raw_state, dict):
+        if session.runtime == "dsh":
+            raise HTTPException(status_code=502, detail="DeepSeek Harness returned an invalid session state")
         return None
     try:
         return runtime_state_from_rpc_payload(raw_state, session)
