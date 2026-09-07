@@ -30,6 +30,45 @@ import Testing
         return [response.connector]
     }
 
+    @Test func cachedDashboardRestoresTheTargetBeforeLoadingThePage() throws {
+        let suite = "aa-tests-\(UUID().uuidString)"; let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let key = "aa.native.new-session.v1." + Data("https://example.test\none".utf8).base64EncodedString()
+        let preference = NewSessionPreference(draftText: "keep this draft", connectorID: "device", runtimeID: "rti_work",
+            workspaces: ["device": "/workspace"], projectIDs: ["device": "project"])
+        defaults.set(try JSONEncoder().encode(preference), forKey: key)
+        let http = transport(); let model = make(http, defaults: defaults)
+
+        model.updateConnectors(try devices())
+
+        #expect(model.connector?.id == "device" && model.runtimeID == "rti_work")
+        #expect(model.project?.id == "project" && model.workspace == "/workspace")
+        #expect(model.draft.text == "keep this draft")
+        #expect(http.calls.isEmpty, "Cache restoration does not wait for remote target preparation")
+        #expect(!model.canCreate, "Cached display data cannot authorize a send before validation")
+    }
+
+    @Test func targetRefreshIgnoresDashboardMetadataButTracksConnectivity() throws {
+        let model = make(transport())
+        model.updateConnectors(try devices())
+        let initial = model.refreshKey
+        var object = try fixtureObject("connector")
+        var device = object["connector"] as! [String: Any]
+        device["name"] = "Renamed device"
+        device["lastSeenAt"] = "2026-09-07T12:00:00Z"
+        object["connector"] = device
+        let updated: V2ConnectorResponse = try decode(object)
+        model.updateConnectors([updated.connector])
+        #expect(model.connector?.name == "Renamed device")
+        #expect(model.refreshKey == initial)
+
+        model.updateConnectors(try devices(online: false))
+        #expect(model.refreshKey != initial)
+        model.updateConnectors(try devices())
+        model.updateNetwork(.init(availability: .offline))
+        #expect(model.refreshKey != initial)
+    }
+
     @Test func creationStagesBeforeNetworkAndKeepsOneClientIDThroughBinding() async throws {
         let http = transport(); let model = make(http); let gate = TestGate()
         model.draft.text = "Start now"

@@ -22,6 +22,13 @@ struct ChatShellView: View {
         )
         sidebarLayout(layout)
         .onChange(of: layout, initial: true) { _, next in sidebar.setLayout(next) }
+        .task(id: NewSessionLoadKey(target: appState.nativeChatServices?.newSession.refreshKey,
+            presentationID: newSessionPresentationID)) {
+            // Warm the next draft even when launch restores a session/device.
+            // Remounting the welcome view no longer starts its first data load.
+            guard let model = appState.nativeChatServices?.newSession else { return }
+            await model.refresh(connectors: appState.connectors)
+        }
         .alert(String(localized: "Could not update session"), isPresented: sessionActionErrorBinding) {
             Button(String(localized: "OK"), role: .cancel) {
                 appState.dismissSessionActionError()
@@ -281,6 +288,11 @@ struct ChatShellView: View {
     private func openSidebar() {
         sidebar.isOpen = true
     }
+}
+
+private struct NewSessionLoadKey: Equatable {
+    let target: NewSessionRefreshKey?
+    let presentationID: UUID
 }
 
 private struct ChatShellPlaceholderPage: View {

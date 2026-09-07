@@ -12,6 +12,7 @@ struct NewSessionWelcomeView<Workspace: View>: View {
     @State private var titlePhraseCount = 0
     @State private var detailPhraseCount = 0
     @State private var hasStarted = false
+    @State private var initialFrame = CGRect.zero
     @State private var isRevealing = false
     @State private var workspaceRevealed = false
     @State private var revealCompletion = 0
@@ -33,7 +34,12 @@ struct NewSessionWelcomeView<Workspace: View>: View {
                 .allowsHitTesting(workspaceRevealed)
                 .accessibilityHidden(!workspaceRevealed)
         }
-        .task(id: [canReveal, reduceMotion]) { await reveal() }
+        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { frame in
+            // Observe real layout without locking its width or height. Once
+            // drawing begins, geometry updates must not cancel the reveal task.
+            if !hasStarted { initialFrame = frame }
+        }
+        .task(id: WelcomeRevealKey(canReveal: canReveal, reduceMotion: reduceMotion, frame: initialFrame)) { await reveal() }
         .completionFeedback(trigger: revealCompletion)
     }
 
@@ -64,9 +70,12 @@ struct NewSessionWelcomeView<Workspace: View>: View {
     }
 
     private func reveal() async {
-        guard canReveal, !hasStarted else { return }
+        guard canReveal, !hasStarted, initialFrame.width > 0, initialFrame.height > 0 else { return }
         if !reduceMotion {
-            do { try await Task.sleep(for: .milliseconds(60)) }
+            // Navigation chrome, composer sizing and the cached workspace get
+            // their first layout before glyphs appear. A changing frame restarts
+            // this quiet interval; no network request gates the welcome.
+            do { try await Task.sleep(for: .milliseconds(120)) }
             catch { return }
         }
         guard !Task.isCancelled else { return }
@@ -111,6 +120,12 @@ struct NewSessionWelcomeView<Workspace: View>: View {
             // The defer completes the presentation if its lifecycle interrupts it.
         }
     }
+}
+
+private struct WelcomeRevealKey: Equatable {
+    let canReveal: Bool
+    let reduceMotion: Bool
+    let frame: CGRect
 }
 
 private struct WelcomeWorkspaceReveal: ViewModifier, Animatable {

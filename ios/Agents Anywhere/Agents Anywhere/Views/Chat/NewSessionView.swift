@@ -29,11 +29,13 @@ struct NewSessionView: View, Equatable {
         GeometryReader { geometry in
             GeometryReader { viewport in
                 ScrollView {
-                    welcomeContent
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    NewSessionContentLayout(viewportHeight: max(0, viewport.size.height - 48)) {
+                        NewSessionWelcomeView { workspaceButton }
+                        statusContent
+                    }
                         .padding(24)
                         .frame(maxWidth: 760)
-                        .frame(maxWidth: .infinity, minHeight: viewport.size.height)
+                        .frame(maxWidth: .infinity)
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .scrollEdgeEffectStyle(.soft, for: .top)
@@ -55,7 +57,6 @@ struct NewSessionView: View, Equatable {
             ToolbarItem(placement: .topBarTrailing) { targetButton }
         }
         .onChange(of: model.draft.text) { _, _ in model.saveDraft() }
-        .task(id: TargetRefreshKey(connectors: connectors, network: model.network, connectorID: model.connectorID)) { await model.refresh(connectors: connectors) }
         .sheet(isPresented: $showsTarget) {
             SessionTargetSheet(model: model)
         }
@@ -68,9 +69,8 @@ struct NewSessionView: View, Equatable {
         }
     }
 
-    private var welcomeContent: some View {
+    private var statusContent: some View {
         VStack(alignment: .leading, spacing: 28) {
-            NewSessionWelcomeView { workspaceButton }
             connectionStatus
             if model.isCreating {
                 Label(String(localized: "正在创建会话…"), appSymbol: "arrow.up.circle")
@@ -157,8 +157,11 @@ struct NewSessionView: View, Equatable {
         } else if model.workspace.isEmpty, let error = model.homeErrors[model.connectorID] {
             status(String(localized: "无法解析设备家目录"), detail: error, icon: "folder")
             Button(String(localized: "选择工作目录")) { showsWorkspace = true }
-        } else if !model.isPreparing && model.runtime?.isReadyForSession != true {
-            status(String(localized: "选择一个已就绪的 Agent"), detail: String(localized: "可在设备管理中配置或启动实例。"), icon: "sparkle")
+        } else if !model.isPreparing && !model.loadingDevices.contains(model.connectorID)
+                    && (model.inventories[model.connectorID] != nil || model.inventoryErrors[model.connectorID] != nil)
+                    && model.runtime?.isReadyForSession != true {
+            status(String(localized: "选择一个已就绪的 Agent"),
+                detail: model.inventoryErrors[model.connectorID] ?? String(localized: "可在设备管理中配置或启动实例。"), icon: "sparkle")
             Button(String(localized: "选择 Agent")) { showsTarget = true }
         }
     }
@@ -181,8 +184,28 @@ struct NewSessionView: View, Equatable {
     }
 }
 
-private struct TargetRefreshKey: Equatable {
-    let connectors: [V2Connector]
-    let network: V2NetworkStatus
-    let connectorID: String
+/// Center the welcome and workspace alone. Notices flow below that anchor and
+/// extend the scrollable page when needed, rather than recentering the welcome.
+private struct NewSessionContentLayout: Layout {
+    let viewportHeight: CGFloat
+    private let spacing: CGFloat = 28
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.replacingUnspecifiedDimensions().width
+        let childProposal = ProposedViewSize(width: width, height: nil)
+        let welcome = subviews[0].sizeThatFits(childProposal)
+        let status = subviews[1].sizeThatFits(childProposal)
+        let top = max(0, (viewportHeight - welcome.height) / 2)
+        let statusHeight = status.height > 0 ? spacing + status.height : 0
+        return CGSize(width: width, height: max(viewportHeight, top + welcome.height + statusHeight))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let childProposal = ProposedViewSize(width: bounds.width, height: nil)
+        let welcome = subviews[0].sizeThatFits(childProposal)
+        let top = max(0, (viewportHeight - welcome.height) / 2)
+        subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.minY + top), anchor: .topLeading, proposal: childProposal)
+        subviews[1].place(at: CGPoint(x: bounds.minX, y: bounds.minY + top + welcome.height + spacing),
+            anchor: .topLeading, proposal: childProposal)
+    }
 }

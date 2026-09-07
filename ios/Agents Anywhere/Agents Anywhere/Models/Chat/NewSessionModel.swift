@@ -78,6 +78,22 @@ final class NewSessionModel {
         return ProjectWorkspacePath.key(workspace, deviceOS: connector?.deviceOs) == ProjectWorkspacePath.key(homePath, deviceOS: connector?.deviceOs)
     }
     var availableProjects: [V2Project] { projects.filter { $0.connectorId == connectorID }.sorted { $0.name < $1.name } }
+    var refreshKey: NewSessionRefreshKey {
+        .init(connectorID: connectorID, isOnline: connector?.status == .online, network: network)
+    }
+
+    /// Restore the display target with the dashboard cache, before the page is
+    /// mounted. Remote inventory and catalog validation happen independently.
+    func updateConnectors(_ values: [V2Connector]) {
+        guard isValid else { return }
+        connectors = values
+        if !values.isEmpty, !values.contains(where: { $0.id == connectorID }) {
+            connectorID = values.first { $0.id == preference.connectorID }?.id
+                ?? values.first { $0.status == .online }?.id ?? values.first?.id ?? ""
+            runtimeID = ""
+            restoreProjectForDevice()
+        }
+    }
 
     func updateProjects(_ values: [V2Project]) {
         guard isValid else { return }
@@ -175,21 +191,15 @@ final class NewSessionModel {
     }
 
     func refresh(connectors: [V2Connector]) async {
-        guard isValid else { return }
-        self.connectors = connectors
-        if !connectors.isEmpty, !connectors.contains(where: { $0.id == connectorID }) {
-            connectorID = connectors.first { $0.id == preference.connectorID }?.id
-                ?? connectors.first { $0.status == .online }?.id ?? connectors.first?.id ?? ""
-            runtimeID = ""
-            restoreProjectForDevice()
-        }
+        guard isValid, !Task.isCancelled else { return }
+        updateConnectors(connectors)
         guard connector?.status == .online, network.availability != .offline else {
             prepared = nil; preparationVersion += 1; isPreparing = false; return
         }
         let device = connectorID
         async let home: Void = resolveHome()
         await loadInventory(device)
-        guard isValid, connectorID == device else { return }
+        guard isValid, !Task.isCancelled, connectorID == device else { return }
         let available = inventories[device] ?? []
         if !available.contains(where: { $0.id == runtimeID }) {
             let saved = preference.connectorID == device ? preference.runtimeID : ""
@@ -376,6 +386,14 @@ final class NewSessionModel {
     private func persist() {
         if let data = try? JSONEncoder().encode(preference) { defaults.set(data, forKey: preferenceKey) }
     }
+}
+
+/// Session activity, device names and last-seen timestamps do not invalidate
+/// the target catalogs on every dashboard update.
+struct NewSessionRefreshKey: Equatable {
+    let connectorID: String
+    let isOnline: Bool
+    let network: V2NetworkStatus
 }
 
 extension V2DeviceRuntime {

@@ -331,7 +331,10 @@ final class AppState: ObservableObject {
         services.sessionReads.updateConnectivity(repository.isFresh ? services.connectivity.status : .init(availability: .offline))
         services.sessionRepository.applyMetadata(sessions)
         services.updateAgentConnections()
-        if repository.hasLoaded { services.newSession.updateProjects(projects) }
+        if repository.hasLoaded {
+            services.newSession.updateProjects(projects)
+            services.newSession.updateConnectors(connectors)
+        }
     }
 
     /// Opens the dashboard WebSocket and continuously replaces the global Connector and Session projections.
