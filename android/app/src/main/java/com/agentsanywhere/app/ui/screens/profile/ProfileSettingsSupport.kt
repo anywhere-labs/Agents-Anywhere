@@ -7,6 +7,7 @@ import android.net.Uri
 import android.util.Base64
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
+import com.agentsanywhere.app.BuildConfig
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.ui.designsystem.AAAppearanceMode
 import com.agentsanywhere.app.ui.designsystem.AALanguageMode
@@ -66,5 +67,5 @@ internal suspend fun Context.avatarDataUrl(uri: Uri): String? = withContext(Disp
 internal fun Context.appVersionName(): String {
     return runCatching {
         packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
-    }.getOrDefault("0.1.7.2")
+    }.getOrDefault(BuildConfig.VERSION_NAME)
 }
