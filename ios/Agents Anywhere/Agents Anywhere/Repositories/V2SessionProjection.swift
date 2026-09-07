@@ -109,6 +109,16 @@ struct V2SessionProjection {
         // nextSeq is the server high watermark, not proof that intervening events were read.
     }
 
+    /// Opening starts from one page even if a previous visit loaded more. Keep
+    /// the event cursor and newer-window flag; this only narrows durable history.
+    @discardableResult mutating func limitToLatest(_ count: Int) -> Bool {
+        let count = max(1, min(count, maximumItems))
+        guard data.items.count > count else { return false }
+        data.items = Array(data.items.suffix(count))
+        data.hasOlderItems = true
+        return true
+    }
+
     mutating func applyLatest(_ page: V2SessionTimelinePage) {
         guard page.sessionId == data.session.id else { return }
         // A GET can finish after newer socket frames. Its high watermark bounds
@@ -127,10 +137,13 @@ struct V2SessionProjection {
 
     private mutating func merge(_ incoming: [V2TimelineItem], history: Bool) {
         var byID = Dictionary(uniqueKeysWithValues: data.items.map { ($0.id, $0) })
+        let start = data.items.first?.orderSeq ?? 0
         let end = data.items.last?.orderSeq ?? 0
         for item in incoming where item.sessionId == data.session.id {
             if let old = byID[item.id] {
                 guard item.revision > old.revision || (item.revision == old.revision && item.updatedSeq >= old.updatedSeq) else { continue }
+            } else if !history, data.hasOlderItems, item.orderSeq < start {
+                continue // Recovery must not reinsert older rows outside the selected window.
             } else if !history, data.hasNewerItems, item.orderSeq > end {
                 continue // Preserve the history window until the caller explicitly loads latest.
             }

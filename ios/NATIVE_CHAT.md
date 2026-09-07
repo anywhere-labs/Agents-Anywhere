@@ -51,7 +51,11 @@ Semantic error and availability colors remain separate from the primary color.
   parent updates from constructing and discarding another chat model. Cached
   preparation still reads the repository without requesting history again.
   A sidebar gesture after loading starts does not restart the connection.
-  Opening loads the latest window, reveals it when the initial projection is
+  Opening retains only the latest 100 timeline records, including cached visits.
+  Older records are loaded explicitly in 100-record pages and accumulate during
+  that visit. Reopening trims the window again and preserves the older-history
+  flag; recovery updates cannot reinsert rows before its pagination boundary.
+  Opening reveals the window when the initial projection is
   ready, and animates to the native bottom edge. It never pages backward to
   find a user message. Spinner dismissal and the 30 Hz presentation clock do not wait
   for scroll/layout acknowledgements; there is no frozen opening snapshot or

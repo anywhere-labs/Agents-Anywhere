@@ -70,10 +70,9 @@ final class SessionChatModel {
         if !timeline.hasPresentedSnapshot { isOpeningPrepared = false }
         openingError = nil
         do {
-            let data = try await repository.load(sessionId: session.id)
-            // Reopening an older cached window returns to the latest records.
-            // Opening never pages backward just to find a user-message anchor.
-            if data.hasNewerItems { _ = try await repository.loadLatest(sessionId: session.id) }
+            // Both cold and cached visits begin with one latest page. Older
+            // records are added only by the user's explicit history requests.
+            _ = try await repository.open(sessionId: session.id)
         } catch {
             guard !Task.isCancelled else { return }
             openingError = error.localizedDescription

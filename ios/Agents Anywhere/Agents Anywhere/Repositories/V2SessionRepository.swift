@@ -65,6 +65,25 @@ final class V2SessionRepository {
         return try await hydrate(entry)
     }
 
+    /// A page visit starts with the latest 100 records, including cached visits.
+    /// Explicit history loads may then accumulate additional 100-record pages.
+    func open(sessionId: V2SessionID) async throws -> V2SessionData {
+        let entry = entry(for: sessionId)
+        _ = try await load(sessionId: sessionId)
+        try Task.checkCancellation()
+        try requireCurrent(entry)
+        entry.readVersion += 1
+        entry.historyTask?.cancel()
+        entry.historyTask = nil
+        // Trim before a possible latest-page request so an offline fallback
+        // also stays bounded and cannot remount the entire cached history.
+        if entry.projection?.limitToLatest(100) == true { emit(entry) }
+        if entry.projection?.data.hasNewerItems == true {
+            return try await loadLatest(sessionId: sessionId, limit: 100)
+        }
+        return entry.projection!.data
+    }
+
     func stageCreation(_ submission: NewSessionSubmission) {
         let entry = entry(for: submission.session.id)
         entry.projection = V2SessionProjection.placeholder(submission.session, maximumItems: policy.maximumTimelineItems)

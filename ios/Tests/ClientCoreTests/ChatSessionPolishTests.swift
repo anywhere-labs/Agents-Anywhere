@@ -72,7 +72,9 @@ import Testing
         #expect(!model.isOpeningPrepared && model.timeline.rows.isEmpty)
         #expect(http.calls.count == requests)
         await model.prepareOpening()
-        #expect(model.isOpeningReady && model.timeline.rows.count == 600)
+        #expect(model.isOpeningReady && model.timeline.rows.count == 100)
+        #expect(model.timeline.rows.first?.id == "reply-501" && model.timeline.rows.last?.id == "reply-600")
+        #expect(model.session.hasOlderItems)
         #expect(http.calls.count == requests)
     }
 

@@ -5,6 +5,47 @@ import Testing
 @testable import ClientCore
 
 @Suite @MainActor struct SessionRepositoryTests {
+    @Test func openingStartsWithOnePageAndExplicitHistoryAccumulatesAgain() async throws {
+        let http = TestHTTPTransport()
+        http.respond = { call in
+            if call.path.hasSuffix("snapshot") {
+                #expect(call.query.contains { $0.name == "limit" && $0.value == "100" })
+                var response = try fixtureObject("snapshot")
+                var timeline = response["timeline"] as! [String: Any]
+                timeline["items"] = try (201...300).map {
+                    try itemObject(id: "item-\($0)", order: $0)
+                }
+                timeline["hasMore"] = true
+                response["timeline"] = timeline
+                return try JSONSerialization.data(withJSONObject: response)
+            }
+            if call.path.hasSuffix("timeline") {
+                #expect(call.query.contains { $0.name == "limit" && $0.value == "100" })
+                let before = try #require(call.query.first { $0.name == "beforeOrderSeq" }?.value.flatMap(Int.init))
+                let start = max(1, before - 100)
+                let items = try (start..<before).map { try itemObject(id: "item-\($0)", order: $0) }
+                return try JSONSerialization.data(withJSONObject: ["sessionId": "session", "items": items,
+                    "nextSeq": 1000, "hasMore": start > 1])
+            }
+            return try http.defaultResponse(call)
+        }
+        let repo = repository(transport: http)
+        defer { repo.reset() }
+        let initial = try await repo.open(sessionId: "session")
+        #expect(initial.items.count == 100 && initial.items.first?.orderSeq == 201)
+        _ = try await repo.loadOlder(sessionId: "session")
+        let all = try await repo.loadOlder(sessionId: "session")
+        #expect(all.items.count == 300 && !all.hasOlderItems)
+        let requests = http.calls.count
+        let reopened = try await repo.open(sessionId: "session")
+        #expect(reopened.items.map(\.orderSeq) == Array(201...300))
+        #expect(reopened.hasOlderItems && !reopened.hasNewerItems && reopened.cursor == initial.cursor)
+        #expect(http.calls.count == requests)
+        let older = try await repo.loadOlder(sessionId: "session")
+        #expect(older.items.map(\.orderSeq) == Array(101...300))
+        #expect(http.calls.last?.query.contains { $0.name == "beforeOrderSeq" && $0.value == "201" } == true)
+    }
+
     @Test func cachedModelLookupDoesNotSubscribeItsCallerToHistoricalRows() async throws {
         let http = TestHTTPTransport(), realtime = TestRealtimeAPI()
         let repo = repository(transport: http, realtime: realtime)

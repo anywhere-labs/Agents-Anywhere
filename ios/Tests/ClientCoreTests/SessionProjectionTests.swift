@@ -3,6 +3,25 @@ import Testing
 @testable import ClientCore
 
 @Suite @MainActor struct SessionProjectionTests {
+    @Test func reopeningKeepsItsBoundaryThroughRecoveryAndLiveUpdates() throws {
+        let items = try (1...250).map { try itemObject(id: "item-\($0)", order: $0) }
+        var projection = V2SessionProjection(snapshot: try snapshot(items: items), maximumItems: 1000)
+        let trimmed = projection.limitToLatest(100)
+        #expect(trimmed)
+        #expect(projection.data.items.map(\.orderSeq) == Array(151...250))
+        #expect(projection.data.hasOlderItems && projection.data.cursor == "seq:10")
+        try projection.apply(event("timeline.item_updated", seq: 11, payload: [
+            "item": itemObject(id: "item-50", order: 50, revision: 2, seq: 11)]))
+        #expect(projection.data.items.count == 100 && projection.data.items.first?.orderSeq == 151)
+        try projection.apply(event("timeline.item_updated", seq: 12, payload: [
+            "item": itemObject(id: "item-200", order: 200, revision: 2, seq: 12, text: "Updated")]))
+        #expect(projection.data.items.first { $0.id == "item-200" }?.displayText == "Updated")
+        try projection.apply(event("timeline.item_created", seq: 13, payload: [
+            "item": itemObject(id: "item-251", order: 251, seq: 13)]))
+        #expect(projection.data.items.count == 101 && projection.data.items.last?.orderSeq == 251)
+        #expect(projection.data.cursor == "seq:13")
+    }
+
     @Test func allBackendSessionStatusesAndFutureStatesDecodeInMetadata() throws {
         for status in ["idle", "waiting", "pending", "running", "stopping", "waiting_approval", "error", "blocked"] {
             var raw = try fixtureObject("session")["session"] as! [String: Any]
