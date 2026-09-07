@@ -598,12 +598,14 @@ private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
         // UIKit surface as the list for the entire drawer to scale together.
         SidebarDrawerHostingView(scale: scale, overlayOpacity: overlayOpacity) {
             navigation
-                .padding(safeAreaInsets)
+                // Restore safe areas without shortening the scroll viewport:
+                // content can continue underneath the floating bottom toolbar.
+                .safeAreaPadding(safeAreaInsets)
         }
         .frame(width: size.width, height: size.height)
 #else
         navigation
-            .padding(safeAreaInsets)
+            .safeAreaPadding(safeAreaInsets)
             .frame(width: size.width, height: size.height)
             .background(drawerSystemBackground)
             .overlay {

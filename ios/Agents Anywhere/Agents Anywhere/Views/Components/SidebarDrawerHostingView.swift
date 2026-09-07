@@ -37,7 +37,7 @@ final class SidebarDrawerHostingController<Content: View>: UIViewController {
         hostingController = UIHostingController(rootView: SidebarDrawerHostedContent(
             content: content, environment: environment
         ))
-        // The untransformed drawer supplies its original insets as padding.
+        // The untransformed drawer supplies its original safe-area insets.
         // Re-reading window intersections while scaling would move the bars
         // when the animation reaches its final, unscaled frame.
         hostingController.safeAreaRegions = []

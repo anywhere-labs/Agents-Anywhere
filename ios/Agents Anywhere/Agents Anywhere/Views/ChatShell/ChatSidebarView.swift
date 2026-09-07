@@ -114,7 +114,7 @@ struct ChatSidebarView: View {
         }
         .refreshable { await repository?.refresh() }
         .scrollIndicators(.hidden)
-        .scrollEdgeEffectStyle(.soft, for: .bottom)
+        .scrollEdgeEffectHidden(true, for: .bottom)
         .toolbar {
             ChatSidebarBottomToolbar(
                 account: account,
@@ -122,6 +122,7 @@ struct ChatSidebarView: View {
                 onOpenAccount: { isShowingSettings = true }
             )
         }
+        .toolbarBackgroundVisibility(.hidden, for: .bottomBar)
         .sheet(isPresented: $isShowingSettings) {
             AccountSettingsSheet(appState: appState)
         }
@@ -440,21 +441,21 @@ private struct ChatSidebarEmptyRow: View {
 }
 
 private struct ChatSidebarBottomToolbar: ToolbarContent {
-    @Environment(\.colorScheme) private var colorScheme
     let account: ChatSidebarAccount?
     let onNewSession: () -> Void
     let onOpenAccount: () -> Void
 
     var body: some ToolbarContent {
         ToolbarItem(placement: .bottomBar) {
-            Button(action: onNewSession) {
-                Label(String(localized: "New session"), appSymbol: "square.and.pencil")
-            }
-            .labelStyle(.titleAndIcon)
-            .buttonStyle(.borderedProminent)
-            .tint(AppTheme.primaryControlBackground(colorScheme))
-            .foregroundStyle(AppTheme.primaryControlForeground(colorScheme))
+            AppGlassButton(
+                String(localized: "New session"),
+                systemImage: "square.and.pencil",
+                style: .prominent,
+                maxWidth: nil,
+                action: onNewSession
+            )
         }
+        .sharedBackgroundVisibility(.hidden)
 
         ToolbarSpacer(.flexible, placement: .bottomBar)
 
@@ -463,9 +464,11 @@ private struct ChatSidebarBottomToolbar: ToolbarContent {
                 Button(action: onOpenAccount) {
                     ChatSidebarAvatar(account: account)
                 }
+                .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
                 .accessibilityLabel(String(localized: "Account"))
             }
+            .sharedBackgroundVisibility(.hidden)
         }
     }
 }
