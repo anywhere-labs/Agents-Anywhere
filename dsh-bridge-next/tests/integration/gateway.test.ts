@@ -16,7 +16,7 @@ test('published Host is callable through the actual rc.1 Gateway and disposes it
     await ctx.plugin(TypertRegistry).await()
     await ctx.plugin(Gateway).await()
     const host = await import('../../lib/index.js')
-    const plugin = ctx.plugin(host, { stateRoot: root, connectorSourceDir: root, autoStart: false })
+    const plugin = ctx.plugin(host, { stateRoot: root, connectorSourceDir: root })
     await plugin.await()
     for (let n = 0; n < 100 && !ctx.get('agentsAnywhereOnboarding'); n++) await delay(5)
     const result = await ctx.typertGateway.invoke({ namespace: 'agentsAnywhereOnboarding', method: 'inspect', args: {} }) as { stage: string }

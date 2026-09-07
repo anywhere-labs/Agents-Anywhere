@@ -29,9 +29,9 @@ export function canOpenFolders(): boolean {
 
 /** Called only for a Host-owned directory selected by the user, never a client-supplied path. */
 export async function openFolder(path: string): Promise<void> {
-  if (!canOpenFolders()) throw new Error('当前为无图形界面环境，请使用页面显示的目录路径。')
+  if (!canOpenFolders()) throw new Error('当前环境不支持打开本机目录。')
   await mkdir(path, { recursive: true, mode: 0o700 })
   const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer.exe' : 'xdg-open'
   try { await promisify(execFile)(command, [path], { timeout: 5_000, windowsHide: true }) }
-  catch { throw new Error('无法打开目录，请使用页面显示的路径手动打开。') }
+  catch { throw new Error('无法打开目录，请检查本机文件管理器是否可用。') }
 }

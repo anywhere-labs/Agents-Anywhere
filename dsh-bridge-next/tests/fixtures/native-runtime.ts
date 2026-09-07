@@ -54,7 +54,7 @@ export async function nativeRuntime(home: string, beforeHost?: (ctx: Context) =>
     await ctx.plugin(Gateway).await()
     await beforeHost?.(ctx)
     const host = await import('../../lib/index.js')
-    const plugin = ctx.plugin(host, { dshHome: home, stateRoot: join(home, 'account'), connectorSourceDir: home, autoStart: false })
+    const plugin = ctx.plugin(host, { dshHome: home, stateRoot: join(home, 'account'), connectorSourceDir: home })
     await plugin.await()
     return { ctx, plugin, session, query }
   } catch (error) { await ctx.fiber.dispose(); throw error }

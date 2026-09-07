@@ -55,7 +55,7 @@ class FakeConnector implements ConnectorProcess {
   async assertHealthy() { if (!this.running) throw new Error('not running') }
 }
 
-async function fixture(autoStart = false) {
+async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'aa-flow-'))
   const api = new FakeApi('https://api.example.test')
   const connector = new FakeConnector()
@@ -65,7 +65,7 @@ async function fixture(autoStart = false) {
   let localIds: string[] = []
   let detections = 0
   const create = () => new OnboardingManager({
-    stateRoot: root, connectorSourceDir: root, uvPath: 'uv', autoStart,
+    stateRoot: root, connectorSourceDir: root, uvPath: 'uv',
     apiBaseUrl: api.baseUrl,
   }, {
     api: base => base === api.baseUrl ? api : new FakeApi(base), connector, detect: async () => { detections++; return detection },
@@ -102,16 +102,16 @@ async function until(check: () => Promise<boolean>) {
   assert.fail('expected state did not arrive')
 }
 
-test('Connector controls and settings persist without repeating OAuth, rotating tokens or starting stopped devices', async () => {
-  const h = await fixture(true)
+test('Connector controls preserve identity and startup restores the connection despite retired settings', async () => {
+  const h = await fixture()
   h.api.online = true
   try {
     await callback((await h.manager.begin()).url)
     await until(async () => (await h.manager.inspect()).stage === 'ready')
     const credential = await readJson(join(h.root, 'account.json'))
-    const settings = { ...DEFAULT_CONNECTOR_SETTINGS, autoStart: false }
+    const settings = { ...DEFAULT_CONNECTOR_SETTINGS }
     await h.manager.saveConnectorSettings(settings)
-    assert.equal(h.connector.starts, 1, 'Changing only auto-start must not interrupt a running task')
+    assert.equal(h.connector.starts, 1, 'Saving unchanged settings must not interrupt a running task')
     h.setLocalIds(['conn_other', 'conn_test'])
     h.api.knownDevices = [{ id: 'conn_other', userId: 'user-test', name: 'Another local binding', status: 'online' }]
     settings.syncIntervalSeconds = 60
@@ -123,17 +123,24 @@ test('Connector controls and settings persist without repeating OAuth, rotating 
     assert.equal((await h.manager.inspect()).connectorRunning, false)
     await h.manager.saveConnectorSettings({ ...settings, syncIntervalSeconds: 300 })
     assert.equal(h.connector.starts, 2, 'Saving while stopped must not start a process')
+    await writeJson(join(h.root, 'connector-settings.json'), {
+      ...settings, syncIntervalSeconds: 300,
+      autoStart: false, heartbeatSeconds: 45, reconnectSeconds: 7, syncExistingOnConnect: false,
+    })
     await h.reopen()
-    await h.manager.resume()
     const snapshot = await h.manager.inspect()
-    assert.equal(snapshot.connectorId, 'conn_test', 'Identity is restored for management even with auto-start disabled')
-    assert.equal(snapshot.connector.settings.syncIntervalSeconds, 300)
-    assert.equal(snapshot.connector.settings.autoStart, false)
+    assert.equal(snapshot.connectorId, 'conn_test', 'Management restores identity before starting a process')
+    assert.deepEqual(snapshot.connector.settings, { ...settings, syncIntervalSeconds: 300 })
+    assert.deepEqual(await readJson(join(h.root, 'connector-settings.json')), snapshot.connector.settings, 'Migration removes retired options from disk')
     assert.equal(h.connector.starts, 2)
-    await h.manager.controlConnector('start')
+    await h.manager.resume()
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
     assert.equal(h.connector.starts, 3)
-    await h.manager.controlConnector('restart')
+    await h.manager.controlConnector('stop')
+    await h.manager.controlConnector('start')
     assert.equal(h.connector.starts, 4)
+    await h.manager.controlConnector('restart')
+    assert.equal(h.connector.starts, 5)
     assert.equal((await h.manager.inspect()).connectorId, 'conn_test', 'Maintenance must not switch to another shared local ID')
     assert.equal(h.api.registrations, 1)
     assert.equal(h.api.renewals, 0)
@@ -150,7 +157,8 @@ test('invalid configuration and unavailable executables leave a working Connecto
     await callback((await h.manager.begin()).url)
     await until(async () => (await h.manager.inspect()).stage === 'ready')
     const settings = (await h.manager.inspect()).connector.settings
-    for (const patch of [{ heartbeatSeconds: 0 }, { reconnectSeconds: 0.5 }, { uvPath: 'relative/uv' },
+    for (const patch of [{ syncIntervalSeconds: 0 }, { syncIntervalSeconds: 0.5 }, { autoStart: false },
+      { syncExistingOnConnect: false }, { heartbeatSeconds: 15 }, { reconnectSeconds: 5 }, { uvPath: 'relative/uv' },
       { uvPypiIndexUrl: 'https://untrusted.example/simple' }, { connectorToken: 'override' }]) {
       await assert.rejects(h.manager.saveConnectorSettings({ ...settings, ...patch }))
     }
@@ -341,7 +349,7 @@ test('a live auth-failure notification prompts reconnection of the same ID witho
 
 for (const restarting of [false, true]) {
   test(`deleted device waits for the recreate button (restart: ${restarting})`, async () => {
-    const h = await fixture(true)
+    const h = await fixture()
     h.api.online = true
     try {
       await callback((await h.manager.begin()).url)
@@ -435,7 +443,7 @@ test('Desktop presence or an invalid registry prevents the plugin from becoming 
 
 for (const signedIn of [false, true]) {
   test(`startup and each inspect check Desktop before account management (signed in: ${signedIn})`, async () => {
-    const h = await fixture(true)
+    const h = await fixture()
     h.setDesktop({ status: 'installed', executablePath: '/example/Electron', message: 'installed' })
     try {
       if (signedIn) await writeJson(join(h.root, 'account.json'), {
@@ -537,7 +545,7 @@ test('an existing local account without settings survives the new cloud default'
   const account = await api.exchange()
   await writeJson(join(root, 'account.json'), account)
   const manager = new OnboardingManager({
-    stateRoot: root, connectorSourceDir: root, uvPath: 'uv', autoStart: false, apiBaseUrl: CLOUD_API_BASE_URL,
+    stateRoot: root, connectorSourceDir: root, uvPath: 'uv', apiBaseUrl: CLOUD_API_BASE_URL,
   }, { api: () => api, connector: new FakeConnector(), detect: async () => ({ status: 'absent', message: 'not registered' }) })
   try {
     const snapshot = await manager.inspect()

@@ -106,7 +106,7 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
       onClose={close}
       title={standalone ? 'Agents Anywhere' : '手机连接'}
       closeLabel="关闭手机连接"
-      className={clsx(css.dialog, !standalone && css.accountDialog)}
+      className={clsx(css.dialog, standalone ? css.wordmarkDialog : css.accountDialog)}
       contentClassName={clsx(css.dialogContent)}
     >
       <div ref={content}>

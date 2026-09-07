@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from 'react'
-import { Button, DisclosureRow, Input, Menu, RiskConfirmation, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
-import { ChevronDown, FolderOpen, Power, RotateCw, Settings2 } from 'lucide-react'
+import { Button, Input, Menu, RiskConfirmation, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { ChevronDown, FolderOpen, Power, RotateCw } from 'lucide-react'
 import { PYPI_MIRRORS, SYNC_INTERVALS } from '../../../contracts/connector.js'
 import type { OnboardingHostApi, OnboardingSnapshot } from '../../../contracts/index.js'
 import { connectorStatus } from './account-panel.js'
@@ -24,7 +24,6 @@ export function SettingsPanel({ host, state, snapshot, onConnection }: {
 }) {
   const management = snapshot.connector
   const [draft, setDraft] = useState(management?.settings)
-  const [advanced, setAdvanced] = useState(false)
   const [saved, setSaved] = useState(false)
   const [reset, setReset] = useState<'normal' | 'force' | null>(null)
   const [acknowledged, setAcknowledged] = useState(false)
@@ -87,11 +86,6 @@ export function SettingsPanel({ host, state, snapshot, onConnection }: {
           <Choice label="PyPI 镜像" value={mirror} disabled={busy} options={PYPI_MIRRORS.map(({ id, label }) => ({ id, label }))}
             onChange={id => update('uvPypiIndexUrl', PYPI_MIRRORS.find(mirror => mirror.id === id)!.url)} />
         </div>
-        <div className={css.row}>
-          <div><span>随插件启动 Connector</span><p className={css.hint}>已登录时自动恢复本机连接</p></div>
-          <Button variant="outline" disabled={busy} aria-pressed={draft.autoStart} aria-label="随插件启动 Connector"
-            onClick={() => update('autoStart', !draft.autoStart)}>{draft.autoStart ? '开启' : '关闭'}</Button>
-        </div>
       </div>
 
       <div className={css.section}>
@@ -102,21 +96,6 @@ export function SettingsPanel({ host, state, snapshot, onConnection }: {
             options={[...new Set([...SYNC_INTERVALS, draft.syncIntervalSeconds])].sort((a, b) => a - b).map(value => ({ id: String(value), label: `${value} 秒` }))}
             onChange={value => update('syncIntervalSeconds', Number(value))} />
         </div>
-        <DisclosureRow title="高级参数" icon={<Settings2 size={14} />} open={advanced} expandable expandOnRowClick onToggle={() => setAdvanced(!advanced)}>
-          <div className={css.advanced}>
-            <label className={css.field} htmlFor={`${id}-heartbeat`}>心跳间隔（秒）</label>
-            <Input id={`${id}-heartbeat`} type="number" min={1} max={300} step={1} required disabled={busy}
-              value={draft.heartbeatSeconds} onChange={event => update('heartbeatSeconds', Number(event.target.value))} />
-            <label className={css.field} htmlFor={`${id}-reconnect`}>重连间隔（秒）</label>
-            <Input id={`${id}-reconnect`} type="number" min={1} max={300} step={1} required disabled={busy}
-              value={draft.reconnectSeconds} onChange={event => update('reconnectSeconds', Number(event.target.value))} />
-            <div className={css.row}>
-              <span>连接时同步已有会话</span>
-              <Button variant="outline" disabled={busy} aria-pressed={draft.syncExistingOnConnect} aria-label="连接时同步已有会话"
-                onClick={() => update('syncExistingOnConnect', !draft.syncExistingOnConnect)}>{draft.syncExistingOnConnect ? '开启' : '关闭'}</Button>
-            </div>
-          </div>
-        </DisclosureRow>
         <div className={css.save}>
           {saved && !dirty ? <span className={css.hint} role="status">设置已保存</span> : null}
           <Button type="submit" variant="primary" disabled={busy || !dirty}>
@@ -133,19 +112,15 @@ export function SettingsPanel({ host, state, snapshot, onConnection }: {
           onClick={() => void state.run(() => host.openConnectorFolder('data'))}>打开数据目录</Button>
         <Button variant="outline" icon={<FolderOpen size={14} />} disabled={state.busy || !management.canOpenFolders}
           onClick={() => void state.run(() => host.openConnectorFolder('logs'))}>打开日志目录</Button>
+        <Button variant="outline" className={css.danger} disabled={busy}
+          onClick={() => { setReset('normal'); setAcknowledged(false); state.clearError() }}>恢复出厂设置</Button>
       </div>
-      <p className={css.hint}>数据：<span className={css.path}>{management.dataPath}</span></p>
-      <p className={css.hint}>日志：<span className={css.path}>{management.logsPath}</span></p>
-      {!management.canOpenFolders ? <p className={css.hint}>当前为无图形界面环境，可使用上面的路径访问目录。</p> : null}
-      <div className={css.row}>
-        <div><span>重置本机连接</span><p className={css.hint}>清除插件账号、设备凭据、同步缓存和设置</p></div>
-        <Button variant="outline" className={css.danger} disabled={busy} onClick={() => { setReset('normal'); setAcknowledged(false); state.clearError() }}>重置</Button>
-      </div>
-      <RiskConfirmation open={reset !== null} title={reset === 'force' ? '无法撤销连接' : '重置本机连接'}
+      {!management.canOpenFolders ? <p className={css.hint}>当前环境不支持打开本机目录。</p> : null}
+      <RiskConfirmation open={reset !== null} title={reset === 'force' ? '无法撤销连接' : '恢复出厂设置'}
         description={reset === 'force' ? '服务端撤销失败，本地数据尚未清理。可以取消后重试，或仅清理本地数据；原设备凭据在服务端可能仍有效。'
           : '将撤销当前设备凭据、停止 Connector，并清除本插件的本地连接数据。DSH 会话和共享的设备记录会保留。'}
-        acknowledgeLabel="我了解重置的影响" acknowledged={acknowledged} onAcknowledgedChange={setAcknowledged}
-        cancelLabel="取消" closeLabel="关闭重置确认" confirmLabel={reset === 'force' ? '仅清理本地数据' : '确认重置'}
+        acknowledgeLabel="我了解恢复出厂设置的影响" acknowledged={acknowledged} onAcknowledgedChange={setAcknowledged}
+        cancelLabel="取消" closeLabel="关闭恢复出厂设置确认" confirmLabel={reset === 'force' ? '仅清理本地数据' : '确认恢复出厂设置'}
         disabled={state.busy} onCancel={() => { if (!state.busy) { setReset(null); state.clearError() } }} onConfirm={() => void confirmReset()} />
     </div>
     {state.error ? <p className={css.error} role="alert">{state.error}</p> : null}

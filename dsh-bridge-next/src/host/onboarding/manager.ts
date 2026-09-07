@@ -107,7 +107,7 @@ export class OnboardingManager {
 
   async resume(): Promise<void> {
     await this.initialize()
-    if (this.connectorSettings.get().autoStart && this.account && this.desktop.status === 'absent') {
+    if (this.account && this.desktop.status === 'absent') {
       // This starts only a previously authorized device. Fresh installs are idle.
       try { await this.begin() } catch (error) { this.setProgress('error', safeMessage(error)) }
     }
@@ -395,8 +395,7 @@ export class OnboardingManager {
       const next = validateConnectorSettings(input)
       const previous = this.connectorSettings.get()
       if (JSON.stringify(next) === JSON.stringify(previous)) return null
-      const restart = this.connector.running && Object.keys(next).some(key => key !== 'autoStart'
-        && next[key as keyof ConnectorSettings] !== previous[key as keyof ConnectorSettings])
+      const restart = this.connector.running
       if (restart) this.requireAccount()
       if (restart || next.uvPath !== previous.uvPath) await this.connector.prepare(next)
       if (this.disposed) throw new Error('插件已关闭。')
@@ -442,9 +441,9 @@ export class OnboardingManager {
         await rm(join(this.config.stateRoot, path), { force: true, recursive: true })
       }
       this.settings = { apiBaseUrl: this.config.apiBaseUrl }
-      await this.connectorSettings.save({ ...DEFAULT_CONNECTOR_SETTINGS, autoStart: this.config.autoStart })
+      await this.connectorSettings.save(DEFAULT_CONNECTOR_SETTINGS)
       this.resolvedUvPath = await resolveUv(this.config, this.connectorSettings.get())
-      this.setProgress('idle', '本机连接已重置，请重新登录。')
+      this.setProgress('idle', '已恢复出厂设置，请重新登录。')
       return null
     })
   }

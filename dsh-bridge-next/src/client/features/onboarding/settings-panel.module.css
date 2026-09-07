@@ -14,7 +14,6 @@
 .input { width: 100%; box-sizing: border-box; }
 .field { font: var(--dsw-font-xs-13); color: var(--dsw-alias-label-secondary); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.advanced { display: flex; flex-direction: column; gap: 10px; padding: 14px 0; }
 .save { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; }
 .path { overflow-wrap: anywhere; user-select: text; }
 .panel .danger, .error { color: var(--dsw-alias-state-error-primary); }

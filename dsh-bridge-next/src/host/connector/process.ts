@@ -100,10 +100,10 @@ export class SourceConnector implements ConnectorProcess {
       connectorId: binding.connectorId,
       connectorToken: binding.connectorToken,
       statePath: join(dataDir, `${binding.connectorId}.sqlite3`),
-      heartbeatSeconds: settings.heartbeatSeconds,
-      reconnectSeconds: settings.reconnectSeconds,
+      heartbeatSeconds: 20,
+      reconnectSeconds: 3,
       syncIntervalSeconds: settings.syncIntervalSeconds,
-      syncExistingOnConnect: settings.syncExistingOnConnect,
+      syncExistingOnConnect: true,
     })
     signal.throwIfAborted()
     this.failure = null

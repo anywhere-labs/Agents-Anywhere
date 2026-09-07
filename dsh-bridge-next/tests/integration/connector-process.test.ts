@@ -42,7 +42,7 @@ async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CO
   let child: ChildProcessWithoutNullStreams | undefined
   const connector = new SourceConnector({
     stateRoot: join(root, 'data'), connectorSourceDir: source, uvPath: mode === 'missing' ? join(root, 'missing-uv') : process.execPath,
-    autoStart: false, apiBaseUrl: 'https://api.example.test', dshHome: join(root, 'dsh-home'),
+    apiBaseUrl: 'https://api.example.test', dshHome: join(root, 'dsh-home'),
   }, (command, args, options) => {
     assert.equal(args[0], 'run')
     assert.deepEqual(args.slice(1, 5), ['--directory', source, 'anywhere-cli', 'rpc'])
@@ -79,7 +79,8 @@ test('source Connector uses stdio RPC and a private config, then exits on plugin
   } finally { await h.close() }
 })
 
-test('saved runtime settings reach the actual child config and mirror environment on every restart', async () => {
+test('saved scan interval and mirror reach the child while connection defaults stay fixed on every restart', async () => {
+  // Even an old settings provider cannot override the fixed connection behavior.
   const settings = { ...DEFAULT_CONNECTOR_SETTINGS, syncIntervalSeconds: 60, heartbeatSeconds: 15,
     reconnectSeconds: 5, syncExistingOnConnect: false, uvPypiIndexUrl: 'https://pypi.tuna.tsinghua.edu.cn/simple' }
   const h = await fixture('normal', settings)
@@ -90,9 +91,9 @@ test('saved runtime settings reach the actual child config and mirror environmen
       await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
       const config = await readJson<Record<string, unknown>>(join(h.root, 'data', 'connector', 'connector.json'))
       assert.equal(config?.syncIntervalSeconds, interval)
-      assert.equal(config?.heartbeatSeconds, 15)
-      assert.equal(config?.reconnectSeconds, 5)
-      assert.equal(config?.syncExistingOnConnect, false)
+      assert.equal(config?.heartbeatSeconds, 20)
+      assert.equal(config?.reconnectSeconds, 3)
+      assert.equal(config?.syncExistingOnConnect, true)
       assert.equal(config?.connectorId, binding.connectorId)
       assert.equal(config?.connectorToken, binding.connectorToken)
       await h.connector.stop()

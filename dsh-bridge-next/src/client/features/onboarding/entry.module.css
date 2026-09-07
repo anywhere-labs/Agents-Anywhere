@@ -1,3 +1,11 @@
+@font-face {
+  font-family: "AA Caveat";
+  src: url("../../assets/caveat-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+}
+
 .trigger {
   display: flex;
   width: calc(100% + 4px);
@@ -67,6 +75,16 @@
   overflow-wrap: anywhere;
 }
 
+/* Match Desktop/Web's sidebar wordmark, including its text-xl size. */
+.wordmarkDialog h2 {
+  font-family: "AA Caveat", "Snell Roundhand", cursive;
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .dialogContent > p {
   color: var(--dsw-alias-label-secondary);
   font: var(--dsw-font-s-14);
@@ -81,5 +99,5 @@
 
 @media (max-width: 480px) {
   .dialogContent { padding: 8px 0; }
-  .dialog h2 { font: var(--dsw-font-l-20); font-weight: 600; }
+  .dialog:not(.wordmarkDialog) h2 { font: var(--dsw-font-l-20); font-weight: 600; }
 }

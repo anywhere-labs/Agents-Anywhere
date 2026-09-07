@@ -1,16 +1,11 @@
 export interface ConnectorSettings {
   uvPath: string
   uvPypiIndexUrl: string
-  autoStart: boolean
-  heartbeatSeconds: number
-  reconnectSeconds: number
   syncIntervalSeconds: number
-  syncExistingOnConnect: boolean
 }
 
 export const DEFAULT_CONNECTOR_SETTINGS: ConnectorSettings = {
-  uvPath: '', uvPypiIndexUrl: '', autoStart: true,
-  heartbeatSeconds: 20, reconnectSeconds: 3, syncIntervalSeconds: 30, syncExistingOnConnect: true,
+  uvPath: '', uvPypiIndexUrl: '', syncIntervalSeconds: 30,
 }
 
 export const SYNC_INTERVALS = [15, 30, 60, 300] as const

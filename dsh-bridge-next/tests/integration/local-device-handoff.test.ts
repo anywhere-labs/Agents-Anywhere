@@ -81,7 +81,7 @@ for (const entry of ['first-login', 'deleted-local-device'] as const) {
       assertHealthy: async () => { assert.equal(pluginRunning, true) },
     }
     const manager = new OnboardingManager({
-      stateRoot: join(home, 'plugin'), apiBaseUrl: server.origin, connectorSourceDir: home, uvPath: 'uv', autoStart: false,
+      stateRoot: join(home, 'plugin'), apiBaseUrl: server.origin, connectorSourceDir: home, uvPath: 'uv',
     }, {
       api: () => new AccountApi(server.origin, server.fetch), connector: pluginConnector,
       detect: async () => ({ status: 'absent', message: 'Desktop not installed yet' }),

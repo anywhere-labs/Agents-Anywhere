@@ -71,7 +71,9 @@ export async function ensureBinding(root: string, account: Account, api: Account
     verified = Boolean(binding.connectorToken && await api.verifyConnector(binding.connectorId, binding.connectorToken, signal))
     if (!verified) throw new DeviceRecoveryRequired(binding.connectorId, 'disconnected')
   }
-  const matchedId = candidates.find(id => owned.has(id))
+  // Automatic startup resumes the saved identity. A new OAuth authorization
+  // still follows the shared Desktop discovery order when choosing a device.
+  const matchedId = !options.renew && binding?.connectorId ? binding.connectorId : candidates.find(id => owned.has(id))
   if (matchedId) {
     const device = owned.get(matchedId)!
     const cached = binding?.connectorId === matchedId ? binding : null

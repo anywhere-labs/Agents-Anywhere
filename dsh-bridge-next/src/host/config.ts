@@ -11,7 +11,6 @@ export interface Config {
   stateRoot?: string
   connectorSourceDir?: string
   uvPath?: string
-  autoStart?: boolean
 }
 
 export const Config: z<Config> = z.object({
@@ -20,7 +19,6 @@ export const Config: z<Config> = z.object({
   stateRoot: z.string(),
   connectorSourceDir: z.string(),
   uvPath: z.string(),
-  autoStart: z.boolean().default(true),
 })
 
 export interface ResolvedConfig extends ConnectionSettings {
@@ -28,7 +26,6 @@ export interface ResolvedConfig extends ConnectionSettings {
   stateRoot: string
   connectorSourceDir: string
   uvPath: string
-  autoStart: boolean
 }
 
 export function resolveConfig(config: Config): ResolvedConfig {
@@ -42,6 +39,5 @@ export function resolveConfig(config: Config): ResolvedConfig {
     connectorSourceDir,
     apiBaseUrl: normalizeServerOrigin(config.apiBaseUrl ?? CLOUD_API_BASE_URL),
     uvPath: config.uvPath ?? process.env['UV_PATH'] ?? 'uv',
-    autoStart: config.autoStart ?? true,
   }
 }
