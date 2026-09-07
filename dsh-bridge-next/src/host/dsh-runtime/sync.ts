@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { setTimeout as delay } from 'node:timers/promises'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { createProjection, type SessionProjection } from './history.js'
 import { sessionId } from './identity.js'
@@ -9,6 +10,7 @@ export type SyncOperation = { kind: string, [key: string]: unknown }
 export interface SyncBatch { streamId: string, batchSeq: number, projectionVersion: number, operations: SyncOperation[] }
 const MAX_BUFFER = 10_000
 const MAX_BYTES = 6 * 1024 * 1024
+export const SYNC_FLUSH_MS = Math.ceil(1000 / 30)
 
 /** One ordered stream. ACK means Connector accepted a page or existing ingest accepted its notifications. */
 export class SyncFeed {
@@ -23,6 +25,9 @@ export class SyncFeed {
   private closed = false
   private unwatch: () => void
   private abort = new AbortController()
+  private lastSentAt = -Infinity
+  private bufferedOperations: SyncOperation[] | undefined
+  private bufferedBytes = 0
 
   constructor(private native: NativeRuntime, private namespace: string,
     private notify: (batch: SyncBatch) => void, private failed: (error: unknown) => void) {
@@ -47,14 +52,42 @@ export class SyncFeed {
     this.waitAck?.reject(new Error('DSH sync closed'))
     this.waitAck = undefined
     this.wake?.(); this.wake = undefined
-    this.queue = []; this.projections.clear()
+    this.queue = []; this.queuedBytes = 0; this.projections.clear()
+    this.bufferedOperations = undefined; this.bufferedBytes = 0
   }
   private async send(operations: SyncOperation[]): Promise<void> {
+    this.abort.signal.throwIfAborted()
+    if (this.bufferedOperations) {
+      const bytes = Buffer.byteLength(JSON.stringify(operations))
+      if (this.bufferedOperations.length && this.bufferedBytes + bytes > MAX_BYTES) await this.flushOperations()
+      this.abort.signal.throwIfAborted()
+      for (const operation of operations) {
+        const previous = this.bufferedOperations!.at(-1)
+        if (previous?.kind === 'notifications' && operation.kind === 'notifications') {
+          (previous.notifications as unknown[]).push(...operation.notifications as unknown[])
+        } else this.bufferedOperations!.push(operation)
+      }
+      this.bufferedBytes += bytes
+      return
+    }
+    await this.transmit(operations)
+  }
+  private async flushOperations(): Promise<void> {
+    const operations = this.bufferedOperations?.splice(0) ?? []
+    this.bufferedBytes = 0
+    if (operations.length) await this.transmit(operations)
+  }
+  private async transmit(operations: SyncOperation[]): Promise<void> {
+    // Limit actual frames too: pages and status/tool notifications must not bypass the cadence.
+    while (performance.now() - this.lastSentAt < SYNC_FLUSH_MS) {
+      await delay(Math.ceil(SYNC_FLUSH_MS - (performance.now() - this.lastSentAt)), undefined, { signal: this.abort.signal })
+    }
     this.abort.signal.throwIfAborted()
     const batch: SyncBatch = { streamId: this.id, batchSeq: ++this.batchSeq, projectionVersion: 2, operations }
     if (Buffer.byteLength(JSON.stringify(batch)) > 7 * 1024 * 1024) throw new Error('DSH sync batch exceeds frame size')
     await new Promise<void>((resolve, reject) => {
       this.waitAck = { seq: batch.batchSeq, resolve, reject }
+      this.lastSentAt = performance.now()
       try { this.notify(batch) } catch (error) { this.waitAck = undefined; reject(error) }
     })
   }
@@ -139,7 +172,7 @@ export class SyncFeed {
   }
   private async changes(changes: NativeChange[]): Promise<void> {
     const touched = new Set<string>(), statuses = new Set<string>()
-    const ended = new Map<string, Record<string, unknown>>()
+    const ended: [string, Record<string, unknown>][] = []
     let reconcile = false, projects = false
     for (const change of changes) {
       if (change.type === 'visibility') { reconcile = true; continue }
@@ -153,12 +186,12 @@ export class SyncFeed {
       if (!this.published.has(id)) { await this.baseline(id); projects = true }
       if (!this.published.has(id)) continue
       if (change.type === 'event') {
-        if (change.event.type === 'turn/end') ended.set(id, {
+        if (change.event.type === 'turn/end') ended.push([id, {
           sessionId: this.published.get(id), externalSessionId: id,
           sourceObservedAt: new Date(change.event.time).toISOString(),
           outcome: change.event.data.reason.kind === 'error' ? 'failed'
             : ['aborted', 'interrupted'].includes(change.event.data.reason.kind) ? 'interrupted' : 'completed',
-        })
+        }])
         if (['turn/start', 'turn/end', 'approval/asked', 'approval/decided'].includes(change.event.type)) statuses.add(id)
         const projection = this.projections.get(id)
         if (!projection) { await this.baseline(id); continue }
@@ -194,10 +227,13 @@ export class SyncFeed {
     while (!this.closed) {
       if (!this.queue.length) await new Promise<void>(resolve => { this.wake = resolve })
       if (this.closed) break
-      if (this.queue.every(c => c.type === 'event' && c.event.type === 'assistant/chunk')) {
-        await new Promise<void>(resolve => setTimeout(resolve, 50))
-      }
+      // Collect all native changes in one bounded window; projection.drain()
+      // keeps the latest revision of each item without dropping native deltas.
+      await delay(SYNC_FLUSH_MS, undefined, { signal: this.abort.signal })
+      this.bufferedOperations = []
       await this.changes(this.takeChanges())
+      await this.flushOperations()
+      this.bufferedOperations = undefined
     }
   }
   private takeChanges(): NativeChange[] { this.queuedBytes = 0; return this.queue.splice(0) }

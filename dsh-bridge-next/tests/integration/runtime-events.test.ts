@@ -7,10 +7,10 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createToolResultMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { nativeRuntime } from '../fixtures/native-runtime.js'
 import { mountAgents, TextAdapter } from '../fixtures/agent-runtime.js'
-import { SyncFeed, type SyncBatch, type SyncOperation } from '../../src/host/dsh-runtime/sync.js'
+import { SyncFeed, SYNC_FLUSH_MS, type SyncBatch, type SyncOperation } from '../../src/host/dsh-runtime/sync.js'
 import { projectHistory } from '../../src/host/dsh-runtime/history.js'
 import { nativeSessionId, sessionId } from '../../src/host/dsh-runtime/identity.js'
 
@@ -30,6 +30,69 @@ function follow(native: ReturnType<typeof nativeRuntime> extends Promise<infer T
   feed.start()
   return { feed, batches, errors, ops: () => batches.flatMap(b => b.operations) }
 }
+
+test('fast mixed native events flush at 30 Hz with complete final text, tool results and ordered completion', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-flush-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  const batches: SyncBatch[] = [], times: number[] = [], errors: unknown[] = []
+  const feed = new SyncFeed(native, 'test', batch => {
+    times.push(performance.now()); batches.push(batch)
+    queueMicrotask(() => feed.ack(batch.batchSeq))
+  }, error => errors.push(error))
+  const notes = () => notifications(batches.flatMap(batch => batch.operations))
+  try {
+    feed.start()
+    await until(() => notes().some(note => note.method === 'session.inventory.complete'), 'baseline')
+    const firstLive = batches.length
+    const start = fixture.session.append('turn/start', { turn: 2 })
+    fixture.session.append('step/start', { turn: 2, step: 1 })
+    let text = ''
+    for (let window = 0; window < 8; window++) {
+      for (let index = 0; index < 40; index++) {
+        text += '字'
+        fixture.session.append('assistant/chunk', { turn: 2, step: 1, chunk: { type: 'text-delta', index: 0, text: '字' } })
+      }
+      await delay(12)
+    }
+    fixture.session.append('assistant/message', { turn: 2, step: 1, message: createAssistantMessage({
+      source: { provider: 'test', model: 'text' }, content: [{ type: 'text', text }],
+    }) }, { surfaceOp: 'append' })
+    const callId = ToolCallId('flush-write')
+    fixture.session.append('tool/call', { turn: 2, step: 1, callId, name: 'write', arguments: '{"file_path":"/workspace/new.txt","content":"complete"}' })
+    fixture.session.append('tool/result', { turn: 2, step: 1, meta: { diffs: [] }, message: createToolResultMessage({
+      callId, content: [{ type: 'text', text: '<path>/workspace/new.txt</path>\n<type>file</type>\n<content>\nCreated file\n</content>' }], isError: false,
+    }) }, { surfaceOp: 'append' })
+    fixture.session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
+    fixture.session.append('turn/start', { turn: 3 })
+    fixture.session.append('turn/end', { turn: 3, reason: { kind: 'interrupted' } })
+    await until(() => notes().filter(note => note.method === 'session.turnEnded').length === 2, 'final tail flushes without another event')
+    const live = notifications(batches.slice(firstLive).flatMap(batch => batch.operations))
+    const upserts = live.filter(note => note.method === 'timeline.itemUpsert')
+    const latest = new Map(upserts.map(note => { const item = note.params.item as { id: string }; return [item.id, item] }))
+    const expected = projectHistory(await native.read(fixture.session.id), sessionId('test', fixture.session.id))
+      .filter(item => item.type !== 'turn.start' && item.type !== 'turn.end' && Number(item.source.lastSeq) >= start.seq)
+    for (const item of expected) assert.deepEqual(latest.get(item.id), item)
+    assert.ok(expected.some(item => item.content.text === text && item.status === 'done'))
+    assert.ok(expected.some(item => item.content.kind === 'file_change'))
+    assert.ok(upserts.length < 40, '320 native chunks are coalesced before transport')
+    const endIndex = live.findIndex(note => note.method === 'session.turnEnded')
+    assert.ok(endIndex > live.findLastIndex(note => note.method === 'timeline.itemUpsert'))
+    for (let index = 1; index < times.length; index++) assert.ok(times[index]! - times[index - 1]! >= SYNC_FLUSH_MS - 1)
+    assert.deepEqual(live.filter(note => note.method === 'session.turnEnded').map(note => note.params.outcome), ['completed', 'interrupted'])
+    assert.ok(batches.slice(firstLive).some(batch => batch.operations.some(operation => {
+      const entries = notifications([operation])
+      return entries.some(note => note.method === 'session.turnEnded') &&
+        entries.some(note => note.method === 'timeline.itemUpsert' && JSON.stringify(note.params.item).includes('file_change'))
+    })), 'Tool and lifecycle notifications are merged into one forwarded list')
+    assert.deepEqual(errors, [])
+    const count = batches.length
+    feed.close()
+    fixture.session.append('session/title', { title: 'after close', source: { kind: 'user' }, messageSeqs: [] })
+    await delay(SYNC_FLUSH_MS * 2)
+    assert.equal(batches.length, count)
+  } finally { feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
 
 test('baseline buffers native changes, official filtering and workspace/archive events stay live', { timeout: 30_000 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'dsh-sync-'))
@@ -94,7 +157,15 @@ test('real AgentLoop sends text once, streams before idle, queues followups and 
     await native.send(id, '第一条', 'client-1', home, true)
     await native.send(id, '第一条', 'client-1', home, true)
     await until(() => !!adapter.release, 'model started')
-    await until(() => notifications(stream.ops()).some(n => n.method === 'timeline.itemUpsert' && JSON.stringify(n.params.item).includes('你')), 'text pushed while running')
+    await until(() => {
+      const operations = stream.ops()
+      const platformId = sessionId('test', id)
+      const committed = new Set(operations.filter(op => op.kind === 'snapshot.commit' && op.sessionId === platformId).map(op => op.snapshotId))
+      // A newly visible session may capture its first streaming text in its baseline.
+      return operations.some(op => op.kind === 'snapshot.items' && op.sessionId === platformId &&
+        committed.has(op.snapshotId) && JSON.stringify(op.items).includes('你')) ||
+        notifications(operations).some(n => n.method === 'timeline.itemUpsert' && n.params.sessionId === platformId && JSON.stringify(n.params.item).includes('你'))
+    }, 'text pushed while running')
     assert.equal(fixture.ctx.agents.get(id)?.status, 'running')
     await native.send(id, '第二条', 'client-2')
     adapter.release!()

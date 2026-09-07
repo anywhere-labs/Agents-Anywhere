@@ -47,6 +47,7 @@ import {
 } from "@/components/session/session-tool-cards"
 import { timelineRunCounts } from "@/components/session/timeline-summary"
 import { createTimelineScrollFollow } from "@/components/session/timeline-scroll-follow"
+import { createSessionEventBuffer } from "@/components/session/session-event-buffer"
 import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
 import {
@@ -826,6 +827,17 @@ export function SessionDetail({
     let recoveryPromise: Promise<void> | null = null
     let snapshotReady = false
     let bufferedEvents: ProtocolEventEnvelope[] = []
+    const renderBuffer = createSessionEventBuffer((events) => {
+      if (cancelled) return
+      setState((current) => events.reduce((next, event) =>
+        next && event.sequence < next.nextSeq ? next : mergeSessionEvent(next, event), current))
+      const items = events.flatMap((event) => {
+        const item = readPayloadValue<TimelineItem>(event.payload.item)
+        if (item) return [item]
+        return Array.isArray(event.payload.items) ? event.payload.items.filter(isTimelineItem) : []
+      })
+      if (items.length > 0) clearResolvedOptimisticMessagesRef.current(sessionId, items)
+    })
     const refetch = (reason: string) => {
       if (refetchPromise) return refetchPromise
       refetchPromise = loadInitialSessionState(token, sessionId, { reason })
@@ -861,16 +873,7 @@ export function SessionDetail({
         nextSeqRef.current = Math.max(nextSeqRef.current, event.sequence)
         return
       }
-      setState((current) => {
-        if (current && event.sequence < current.nextSeq) return current
-        return mergeSessionEvent(current, event)
-      })
-      const item = readPayloadValue<TimelineItem>(event.payload.item)
-      if (item) clearResolvedOptimisticMessagesRef.current(sessionId, [item])
-      const items = Array.isArray(event.payload.items)
-        ? event.payload.items.filter(isTimelineItem)
-        : []
-      if (items.length > 0) clearResolvedOptimisticMessagesRef.current(sessionId, items)
+      renderBuffer.push(event)
       nextSeqRef.current = Math.max(nextSeqRef.current, event.sequence)
     }
 
@@ -979,6 +982,8 @@ export function SessionDetail({
 
     return () => {
       cancelled = true
+      renderBuffer.dispose()
+      bufferedEvents = []
       streamConnectedRef.current = false
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
       socket?.close()

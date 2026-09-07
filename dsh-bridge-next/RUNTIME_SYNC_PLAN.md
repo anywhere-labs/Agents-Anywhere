@@ -23,7 +23,8 @@
 ## 正常运行
 
 - session/created、turn/start：先判断是否可见，新可见会话建立基线。
-- session/event：真实用户消息、assistant 文本/reasoning、工具调用及结果，归并为稳定 ID 的 timeline.itemUpsert。文本片段约 50ms 合并，最终消息及时冲刷。
+- session/event：真实用户消息、assistant 文本/reasoning、工具调用及结果，归并为稳定 ID 的 timeline.itemUpsert。原生事件按约 34ms（最多每秒 30 次）集中投影，同一条目只推送窗口内最新版本；工具结果、状态和轮次结束通知按顺序合入批次。最终消息在下一次 flush 送出，不依赖后续事件触发。
+- 插件实际传输批次也遵守 34ms 最小间隔，包括快照分页；保留大小限制和逐批 ACK，慢连接不会积累无界待发送帧。Desktop 前端另按 34ms 窗口集中提交状态，同一条目的连续更新合并，快照和控制事件保持顺序边界。
 - session/title：使用 session.meta.upsert 同步标题，不生成消息。
 - agent/status、轮次和审批变化：使用 session.state.updated；新的 turn/end 使用 session.turnEnded。
 - workspace 的 domain/changed、客户端 current：核对归档与可见性变化。
