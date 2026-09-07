@@ -2306,6 +2306,23 @@
         }
       }
     },
+    "Device settings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Device settings"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备设置"
+          }
+        }
+      }
+    },
     "Devices": {
       "comment": "Shared with Web: common.sections.devices. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",

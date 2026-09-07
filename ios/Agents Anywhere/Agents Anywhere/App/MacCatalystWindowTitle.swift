@@ -21,24 +21,18 @@ struct MacCatalystWindowTitle: View {
         switch appState.chatSelection {
         case .newSession:
             let draft = appState.nativeChatServices?.newSession
-            parts = [String(localized: "New session", locale: locale),
-                     draft?.project?.name ?? draft?.workspace, draft?.connector?.name]
-        case let .device(id):
-            parts = [appState.connectors.first { $0.id == id }?.name
-                     ?? String(localized: "设备", locale: locale)]
+            parts = [String(localized: "New session", locale: locale), draft?.connector?.name]
+        case .device:
+            parts = [String(localized: "Device settings", locale: locale)]
         case let .session(id):
             let session = appState.nativeChatServices?.sessionRepository.session(id: id).metadata
                 ?? appState.sessions.first { $0.id == id }
-            let sessionTitle = session?.title?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let project = appState.projects.first { $0.id == session?.projectId }
             let device = appState.connectors.first { $0.id == session?.connectorId }
-            parts = [sessionTitle?.isEmpty == false ? sessionTitle
-                     : String(localized: "Untitled session", locale: locale),
-                     project?.name ?? session?.cwd, device?.name]
+            parts = [device?.name]
         }
 
-        return (parts.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty } + ["Agents Anywhere"]).joined(separator: " · ")
+        return parts.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }
 
