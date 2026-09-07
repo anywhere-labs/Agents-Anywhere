@@ -592,22 +592,10 @@ private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
     let header: Header
     let content: Content
 
-    @Namespace private var sidebarSpace
-    @State private var scaleAnchor = UnitPoint.center
-
     var body: some View {
-        let coordinateSpace = sidebarSpace
-        let sidebarSize = size
         NavigationStack {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Measure the stationary list viewport in the sidebar's layout
-                // coordinates; scrolling and render-only scaling cannot move it.
-                .onGeometryChange(for: UnitPoint.self) { geometry in
-                    let frame = geometry.frame(in: .named(coordinateSpace))
-                    guard sidebarSize.width > 0, sidebarSize.height > 0 else { return .center }
-                    return UnitPoint(x: frame.midX / sidebarSize.width, y: frame.midY / sidebarSize.height)
-                } action: { scaleAnchor = $0 }
                 .scrollEdgeEffectStyle(edgeEffectStyle, for: .top)
                 .modifier(SidebarDrawerToolbar(header: header))
         }
@@ -616,7 +604,6 @@ private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
             // owns its horizontal margins and bottom controls/home-indicator gap.
             .padding(.top, safeAreaInsets.top)
             .frame(width: size.width, height: size.height)
-            .coordinateSpace(name: coordinateSpace)
             .background(drawerSystemBackground)
             .overlay {
                 drawerSystemBackground
@@ -626,7 +613,7 @@ private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
             // Transform one composited sidebar, including the native glass
             // controls, rather than letting their effects resolve separately.
             .compositingGroup()
-            .modifier(SidebarDrawerScale(scale: scale, anchor: scaleAnchor).ignoredByLayout())
+            .modifier(SidebarDrawerScale(scale: scale).ignoredByLayout())
     }
 }
 
