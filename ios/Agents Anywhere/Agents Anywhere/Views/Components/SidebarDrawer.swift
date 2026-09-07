@@ -178,6 +178,7 @@ private struct SidebarDrawerInteractive<
 
                     SidebarDrawerMainCard(
                         size: screenSize,
+                        isFullyClosed: interaction.acceptsContentTouches,
                         progress: progress,
                         offset: revealWidth * progress,
                         overlayOpacity: contentOverlayOpacity,
@@ -619,16 +620,17 @@ private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
 
 private struct SidebarDrawerMainCard<Content: View>: View {
     let size: CGSize
+    let isFullyClosed: Bool
     let progress: CGFloat
     let offset: CGFloat
     let overlayOpacity: CGFloat
     let content: Content
 
     var body: some View {
-        // Resolve the actual container shape. containerCornerInsets also includes
-        // iPad window controls, so converting those insets into minimum radii
-        // incorrectly enlarges the top corners in a windowed drawer.
-        let screenShape = ConcentricRectangle()
+        // Once settled, cover the entire window and let the system clip its
+        // outer corners. A second rounded edge can expose the sidebar beneath.
+        // Keep the concentric card throughout every drag and spring frame.
+        let screenShape = ConcentricRectangle(corners: isFullyClosed ? .fixed(0) : .concentric)
 
         content
             // The untransformed host supplies all original insets, including
