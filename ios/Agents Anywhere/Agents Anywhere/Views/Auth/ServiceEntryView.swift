@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ServiceEntryView: View {
     @EnvironmentObject private var appState: AppState
+    @State private var showsPrivacyPolicy = false
     var onEnterServer: () -> Void = {}
     var onQRCodeLogin: () -> Void = {}
 
@@ -30,6 +31,17 @@ struct ServiceEntryView: View {
                 }
             }
             .navigationTitle("")
+            .safeAreaInset(edge: .bottom) {
+                Button(String(localized: "privacyPolicy.title")) { showsPrivacyPolicy = true }
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 24)
+                    .buttonStyle(.plain)
+            }
+        }
+        .sheet(isPresented: $showsPrivacyPolicy) {
+            PrivacyPolicySheet()
         }
     }
 }

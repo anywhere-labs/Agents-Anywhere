@@ -66,6 +66,11 @@ struct AccountSettingsSheet: View {
                     }
                 }
                 Section {
+                    NavigationLink {
+                        PrivacyPolicyContent().settingsPage(String(localized: "privacyPolicy.title"))
+                    } label: {
+                        SettingsRow(title: String(localized: "privacyPolicy.title"), symbol: "hand.raised")
+                    }
                     NavigationLink { SettingsAboutView() } label: {
                         SettingsRow(title: String(localized: "About"), symbol: "info.circle")
                     }

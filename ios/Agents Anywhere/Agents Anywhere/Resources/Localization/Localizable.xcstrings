@@ -7740,6 +7740,312 @@
         }
       }
     },
+    "privacyPolicy.agents.body": {
+      "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The server forwards your tasks to the device and agent you select. Depending on their configuration, agents may send messages, attachments and workspace content to model providers or a custom gateway. Those services process information under their own policies."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "服务器会将任务转交给你选中的设备和 Agent。Agent 可能根据配置，将消息、附件及工作目录中的相关内容发送给模型供应商或自定义 Gateway。这些服务按各自的政策处理信息。"
+          }
+        }
+      }
+    },
+    "privacyPolicy.agents.title": {
+      "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agents and external services"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent 与外部服务"
+          }
+        }
+      }
+    },
+    "privacyPolicy.contact.body": {
+      "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "For questions about the client's handling of information, use the project's support channels. For access to, correction or deletion of information held by a server or model service, contact its operator. Policy updates will be reflected in the date above."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "如对客户端的信息处理有疑问，可以通过项目支持渠道联系我们。如需访问、更正或删除服务器、模型服务保存的信息，请联系其运营者。政策更新时会同步修改上方日期。"
+          }
+        }
+      }
+    },
+    "privacyPolicy.contact.title": {
+      "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Contact and updates"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "联系与更新"
+          }
+        }
+      }
+    },
+    "privacyPolicy.externalContent.body": {
+      "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Displaying remote images or web previews and opening external links may connect to the corresponding website, which can receive connection information such as your IP address."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示远程图片、网页预览或打开外部链接时，客户端可能连接相应网站，该网站可以接收到 IP 地址等连接信息。"
+          }
+        }
+      }
+    },
+    "privacyPolicy.introduction": {
+      "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This policy explains how the Agents Anywhere app for iPhone, iPad and Mac handles information. The server you connect to, connected devices and model services may be operated by different parties and have their own privacy policies."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本政策说明 Agents Anywhere 的 iPhone、iPad 和 Mac 客户端如何处理信息。你连接的服务器、设备和模型服务可能由不同主体运营，并有各自的隐私政策。"
+          }
+        }
+      }
+    },
+    "privacyPolicy.localStorage.body": {
+      "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign-in tokens are stored in the system Keychain. The app also saves preferences, account details and cached project and session data on this device to restore your workspace and display previously loaded content offline. Previewing files may create temporary downloads."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "登录令牌保存在系统钥匙串中。客户端也会在本设备保存偏好设置、账户资料及已加载的项目和会话数据，用于恢复工作区和离线显示内容。预览文件时可能生成临时下载。"
+          }
+        }
+      }
+    },
+    "privacyPolicy.localStorage.title": {
+      "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Information on this device"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本设备保存的信息"
+          }
+        }
+      }
+    },
+    "privacyPolicy.permissions.body": {
+      "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local network access is used to connect to servers on your local network. Camera access is used to scan login QR codes. You choose photos and files through system pickers. You can manage granted permissions in system settings."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本地网络权限用于连接局域网中的服务器，相机权限用于扫描登录二维码。照片和文件由你通过系统选择器选取。你可以在系统设置中管理已授予的权限。"
+          }
+        }
+      }
+    },
+    "privacyPolicy.permissions.title": {
+      "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "System permissions"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统权限"
+          }
+        }
+      }
+    },
+    "privacyPolicy.projectSupport": {
+      "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Project support"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "项目支持"
+          }
+        }
+      }
+    },
+    "privacyPolicy.retention.body": {
+      "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Signing out removes the app's saved sign-in credentials from this device and clears the current account's local session cache. It does not delete your account or content already stored on servers, connected devices or model services. Retention and deletion of that content depend on the relevant operator or provider; contact them to request deletion."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "退出登录会移除 App 在本设备保存的登录凭据，并清理当前账号的本地会话缓存。这不会删除你的账号，也不会删除已保存在服务器、连接设备或模型服务中的内容。这些内容的保存期限与删除方式由相应运营者或服务商决定；如需删除，请联系他们。"
+          }
+        }
+      }
+    },
+    "privacyPolicy.retention.title": {
+      "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retention and deletion"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存与删除"
+          }
+        }
+      }
+    },
+    "privacyPolicy.server.body": {
+      "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To sign in and use the service, the app exchanges account details, authorization credentials, device and project information, messages and attachments with the server you choose. Agent settings, including API keys you enter, are also sent to that server to configure your agents. The server receives connection information such as your IP address."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "登录与使用服务时，客户端会与你选择的服务器交换账户资料、登录授权信息、设备和项目数据、消息及附件。你保存的 Agent 配置（可能包含 API Key）也会发送到该服务器，用于配置相应 Agent。服务器还会接收到 IP 地址等连接信息。"
+          }
+        }
+      }
+    },
+    "privacyPolicy.server.title": {
+      "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Information sent to your server"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发送到服务器的信息"
+          }
+        }
+      }
+    },
+    "privacyPolicy.title": {
+      "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Privacy policy"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "隐私政策"
+          }
+        }
+      }
+    },
+    "privacyPolicy.updated": {
+      "comment": "Privacy policy for the native iOS and Mac Catalyst client.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last updated: September 7, 2026"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新日期：2026 年 9 月 7 日"
+          }
+        }
+      }
+    },
     "上一级目录": {
       "comment": "Shared with Web: common.parent. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
