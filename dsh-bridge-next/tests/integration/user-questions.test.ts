@@ -11,7 +11,7 @@ import { HostConnectionService } from '@deepseek-ai/dsh-client-connection'
 import * as Remotes from '@deepseek-ai/dsh-api-remotes'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import * as AskUserTool from '@deepseek-ai/dsh-tool-ask-user'
-import { LlmAdapter, type GenerateOptions, type StreamChunk, ToolCallId } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, LlmAdapter, type GenerateOptions, type StreamChunk, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { nativeRuntime } from '../fixtures/native-runtime.js'
 import { mountAgents } from '../fixtures/agent-runtime.js'
@@ -141,6 +141,7 @@ test('native answers, whole-request cancellation, pending replay and Connector f
   try {
     const handle = await f.ctx.agents.create({ sessionId: id, agentOptions: { provider: 'test', model: 'text' }, meta: { cwd: f.home } })
     handle.agent.session.append('turn/start', { turn: 1 })
+    handle.agent.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: '请先问我问题' }] }), { surfaceOp: 'append' })
     const ask = (signal?: AbortSignal) => f.ctx.userQuestions.ask({ agent: handle.agent,
       questions: [{ id: 'q', question: '继续吗？', options: [{ label: '好' }] }], ...(signal ? { signal } : {}) })
     const first = ask()
@@ -197,6 +198,7 @@ test('a question survives plugin consumer disposal and is replayed with the same
   try {
     const handle = await f.ctx.agents.create({ sessionId: id, agentOptions: { provider: 'test', model: 'text' }, meta: { cwd: f.home } })
     handle.agent.session.append('turn/start', { turn: 1 })
+    handle.agent.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: '请先问我问题' }] }), { surfaceOp: 'append' })
     const promise = f.ctx.userQuestions.ask({ agent: handle.agent, questions: [{ id: 'q', question: '名称？' }] })
     await until(() => f.runtime.questions.waiting(id), 'question before disposal')
     const originalId = f.runtime.questions.notices('test', id)[0]!.noticeId

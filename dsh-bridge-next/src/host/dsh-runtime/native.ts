@@ -35,17 +35,14 @@ export class NativeRuntime {
 
   constructor(readonly ctx: Context) {
     this.presence = new ClientPresence(() => this.emit({ type: 'visibility' }))
-    this.source = new NativeSessionSource(ctx, this.presence)
+    this.source = new NativeSessionSource(ctx)
     this.questions = new UserQuestions(ctx, id => this.visible(id), id => this.emit(id ? { type: 'question', id } : { type: 'capabilities' }))
     ctx.on('session/created', session => {
-      // The session may leave memory while an earlier transport batch waits for
-      // ACK. Keep its header so the queued event can still read persisted history.
-      this.source.records.set(session.id, { header: session.header, live: true, persisted: false })
-      this.source.turns.set(session.id, session.snapshotEvents().some(e => e.type === 'turn/start'))
+      this.source.observe(session)
       this.emit({ type: 'session', id: session.id })
     }, { global: true })
     ctx.on('session/event', (session, event) => {
-      if (event.type === 'turn/start') this.source.turns.set(session.id, true)
+      this.source.observe(session, event)
       this.questions.observe(session.id, event)
       this.emit({ type: 'event', id: session.id, event })
     }, { global: true })
@@ -117,7 +114,6 @@ export class NativeRuntime {
       const exists = agent || !create || (await this.ctx.sessionQuery.listSessions()).some(r => r.header.id === id)
       const log = agent ? { session: agent.session.header, events: agent.session.snapshotEvents() }
         : exists ? await this.ctx.sessionQuery.readSession(id) : undefined
-      if (log) this.source.turns.set(id, log.events.some(e => e.type === 'turn/start'))
       if (create && log && (log.session.origin === 'subagent' || this.source.archived.has(id))) throw new BridgeError('SESSION_NOT_FOUND', 'The session is not visible in DSH.')
       if (!create && !await this.visible(id)) throw new BridgeError('SESSION_NOT_FOUND', 'The session is not visible in DSH.')
       const messageId = userMessageId(id, requestId) as UserMessage['id']

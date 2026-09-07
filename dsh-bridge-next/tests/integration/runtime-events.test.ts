@@ -138,16 +138,141 @@ test('baseline buffers native changes and archive events without syncing native 
     await workspace.setTitle('DSH 项目名称')
     await fixture.ctx.workspaceRegistry.delete(workspace.id)
     native.presence.report('test-client', 1, 'empty-native')
-    await until(() => ops().some(op => op.kind === 'snapshot.begin' && op.sessionId === sessionId('test', 'empty-native')), 'selected blank visible')
+    await delay(SYNC_FLUSH_MS * 3)
+    assert.ok(!ops().some(op => op.kind === 'snapshot.begin' && op.sessionId === sessionId('test', 'empty-native')), 'Selecting a draft must not import it')
     native.presence.report('test-client', 2, null)
-    await until(() => notifications(ops()).some(n => n.method === 'session.source.updated' && n.params.sessionId === sessionId('test', 'empty-native')), 'deselected blank removed')
     await fixture.ctx.workspaceRegistry.archiveSession(fixture.session.id)
     await until(() => notifications(ops()).some(n => n.method === 'session.source.updated' && n.params.sessionId === sessionId('test', fixture.session.id) && n.params.availability === 'archived'), 'explicit archive event')
     assert.ok(!ops().some(op => op.kind === 'workspace.inventory'), 'native projects are not synchronized')
     assert.ok(!JSON.stringify(ops()).includes('DSH 项目名称'))
+    assert.ok(!notifications(ops()).some(n => n.method === 'session.source.updated' && n.params.sessionId === sessionId('test', 'empty-native')), 'Draft source notifications must not create empty AA sessions either')
     assert.deepEqual(errors, [])
     assert.deepEqual(batches.map(b => b.batchSeq), batches.map((_, n) => n + 1))
   } finally { feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+test('new native drafts sync once after their first real user message, including attachment-only messages', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-first-message-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  const stream = follow(native)
+  const id = SessionId('new-native-draft')
+  const platformId = sessionId('test', id)
+  const snapshots = () => stream.ops().filter(op => op.kind === 'snapshot.begin' && op.sessionId === platformId)
+  try {
+    await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'baseline')
+    const draft = fixture.ctx.sessions.create(id, { meta: { cwd: home } })
+    native.presence.report('test-client', 1, id)
+    await delay(SYNC_FLUSH_MS * 3)
+    assert.equal(snapshots().length, 0, 'A selected empty session stays local')
+    assert.ok(!notifications(stream.ops()).some(n => n.method === 'session.source.updated' && n.params.sessionId === platformId))
+    draft.append('turn/start', { turn: 1 })
+    draft.append('user/message', createUserMessage({ source: { kind: 'plugin', plugin: 'context' }, content: [{ type: 'text', text: 'injected context' }] }), { surfaceOp: 'append' })
+    await delay(SYNC_FLUSH_MS * 3)
+    assert.equal(snapshots().length, 0, 'Starting a turn or injecting context is not a user message')
+    assert.equal(await native.visible(id), false)
+
+    const message = draft.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'image', attachment: { id: 'native-image' } }] }), { surfaceOp: 'append' })
+    await until(() => stream.ops().some(op => op.kind === 'snapshot.commit' && op.sessionId === platformId), 'first user message imports the session without waiting for an assistant')
+    assert.equal(snapshots().length, 1)
+    const items = stream.ops().filter(op => op.kind === 'snapshot.items' && op.sessionId === platformId).flatMap(op => op.items as { role: string, source: { nativeMessageId?: string } }[])
+    assert.equal(items.filter(item => item.role === 'user').length, 1)
+    assert.ok(JSON.stringify(items).includes('native-image'))
+    assert.ok(!JSON.stringify(items).includes('injected context'))
+
+    const second = draft.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'second user message' }] }), { surfaceOp: 'append' })
+    native.presence.report('test-client', 2, null)
+    await until(() => notifications(stream.ops()).some(n => n.method === 'timeline.itemUpsert' && JSON.stringify(n.params.item).includes('second user message')), 'later messages update the existing session')
+    assert.equal(snapshots().length, 1)
+    assert.notEqual(message.data.id, second.data.id)
+    assert.deepEqual(stream.errors, [])
+  } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+test('startup and reconnect exclude persisted drafts and import messages sent through the native Agent', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-draft-reconnect-'))
+  const adapter = new TextAdapter()
+  const fixture = await nativeRuntime(home, async ctx => {
+    for (const id of ['persisted-draft', 'turn-only', 'injected-only']) {
+      const session = ctx.sessions.prepare(SessionId(id), { meta: { cwd: home } })
+      const detach = ctx.sessions.enter(session)
+      ctx.sessions.announce(session)
+      if (id !== 'persisted-draft') session.append('turn/start', { turn: 1 })
+      if (id === 'injected-only') session.append('user/message', createUserMessage({ source: { kind: 'plugin', plugin: 'context' }, content: [{ type: 'text', text: 'context without a user' }] }), { surfaceOp: 'append' })
+      if (id !== 'persisted-draft') session.append('turn/end', { turn: 1, reason: { kind: 'interrupted' } })
+      await ctx.sessions.flush(session)
+      detach()
+    }
+    await mountAgents(ctx, adapter)
+  })
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  let stream = follow(native)
+  const imported = () => stream.ops().filter(op => op.kind === 'snapshot.begin').map(op => op.sessionId)
+  const drafts = ['empty-native', 'persisted-draft', 'turn-only', 'injected-only', 'discarded-draft']
+  let handle: Awaited<ReturnType<typeof fixture.ctx.agents.create>> | undefined
+  try {
+    await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'startup inventory')
+    assert.deepEqual(new Set(imported()), new Set(['native-main', 'persisted-only'].map(id => sessionId('test', id))))
+    const discarded = fixture.ctx.sessions.prepare(SessionId('discarded-draft'), { meta: { cwd: home } })
+    const detach = fixture.ctx.sessions.enter(discarded)
+    fixture.ctx.sessions.announce(discarded)
+    detach()
+
+    // This follows DSH's own create/followup path, not the bridge's remote send helper.
+    handle = await fixture.ctx.agents.create({ sessionId: SessionId('native-ui-session'), agentOptions: { provider: 'test', model: 'text' }, meta: { cwd: home } })
+    await delay(SYNC_FLUSH_MS * 3)
+    assert.ok(!imported().includes(sessionId('test', handle.agent.id)))
+    handle.agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'first message from DSH' }] }))
+    await until(() => !!adapter.release, 'native model is running')
+    await until(() => stream.ops().some(op => op.kind === 'snapshot.commit' && op.sessionId === sessionId('test', handle!.agent.id)), 'native first message is synchronized live')
+    assert.deepEqual(stream.errors, [])
+    adapter.release!()
+    await handle.agent.whenIdle()
+    await fixture.ctx.sessions.flush(handle.agent.session)
+    stream.feed.close()
+    stream = follow(native)
+    await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'reconnected inventory')
+    for (const id of drafts) assert.ok(!imported().includes(sessionId('test', id)), `${id} must not be imported on reconnect`)
+    assert.equal(imported().filter(id => id === sessionId('test', handle!.agent.id)).length, 1)
+    assert.deepEqual(stream.errors, [])
+  } finally { stream.feed.close(); await handle?.dispose(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+test('a stale inventory cannot erase a new session that sends its first message and leaves memory during the scan', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-inventory-race-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  const query = fixture.ctx.sessionQuery
+  const list = query.listSessions
+  let captured = false
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  query.listSessions = async function (signal) {
+    const entries = await list.call(this, signal)
+    captured = true
+    await gate
+    return entries
+  }
+  const stream = follow(native)
+  try {
+    await until(() => captured, 'old catalog captured')
+    const session = fixture.ctx.sessions.prepare(SessionId('created-during-scan'), { meta: { cwd: home } })
+    const detach = fixture.ctx.sessions.enter(session)
+    fixture.ctx.sessions.announce(session)
+    session.append('turn/start', { turn: 1 })
+    session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'first message during scan' }] }), { surfaceOp: 'append' })
+    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    await fixture.ctx.sessions.flush(session)
+    detach()
+    release()
+    await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'baseline completes')
+    assert.ok(stream.ops().some(op => op.kind === 'snapshot.commit' && op.sessionId === sessionId('test', session.id)), 'An older catalog must preserve the newly observed session')
+    assert.ok(JSON.stringify(stream.ops()).includes('first message during scan'))
+    assert.deepEqual(stream.errors, [])
+  } finally {
+    release(); query.listSessions = list; stream.feed.close()
+    await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true })
+  }
 })
 
 test('fresh detail and send checks distinguish archives from persisted and blank sessions', { timeout: 30_000 }, async () => {
@@ -254,7 +379,16 @@ test('official native loop crosses Python adapter and authenticated backend, inc
       const action = await readFile(marker, 'utf8').then(text => JSON.parse(text) as { action: string, sessionId: string }).catch(() => undefined)
       if (action) {
         const workspace = fixture.ctx.workspaceRegistry.list().find(workspace => workspace.path === home)!
-        if (action.action === 'rename') await workspace.setTitle('DSH 项目改名')
+        if (action.action === 'draft') {
+          fixture.ctx.sessions.create(SessionId(action.sessionId), { meta: { cwd: home } })
+          fixture.ctx.agentsAnywhereRuntime.native.presence.report('pipeline-client', 1, action.sessionId)
+        } else if (action.action === 'first-message') {
+          const session = fixture.ctx.sessions.get(SessionId(action.sessionId))!
+          session.append('turn/start', { turn: 1 })
+          session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'first native user message' }] }), { surfaceOp: 'append' })
+          session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+          await fixture.ctx.sessions.flush(session)
+        } else if (action.action === 'rename') await workspace.setTitle('DSH 项目改名')
         else if (action.action === 'archive') await fixture.ctx.workspaceRegistry.archiveSession(SessionId(action.sessionId))
         else if (action.action === 'delete') await fixture.ctx.workspaceRegistry.delete(workspace.id)
         else throw new Error(`Unknown test action: ${action.action}`)

@@ -1,8 +1,8 @@
 import type { Context } from '@deepseek-ai/cordis'
-import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionRecord } from '@deepseek-ai/dsh-session-query'
 import { BridgeError } from '../errors.js'
-import { sessionVisible, type ClientPresence } from '../visibility.js'
+import { isUserMessage, sessionVisible } from '../visibility.js'
 
 export interface SourceState {
   availability: 'available' | 'archived' | 'unavailable' | 'missing'
@@ -13,20 +13,35 @@ export interface SourceState {
 /** The official query includes persisted sessions; absence from memory is not archival. */
 export class NativeSessionSource {
   archived: Set<string>
-  readonly turns = new Map<string, boolean>()
+  private readonly withUserMessages = new Set<string>()
   readonly records = new Map<string, SessionRecord>()
 
-  constructor(private ctx: Context, private presence: ClientPresence) {
+  constructor(private ctx: Context) {
     this.archived = new Set(ctx.workspaceRegistry.archivedSessionIds)
   }
 
+  observe(session: Session, event?: SessionEvent): void {
+    // Retain the identity even if the session leaves memory before the feed consumes it.
+    this.records.set(session.id, { header: session.header, live: true, persisted: this.records.get(session.id)?.persisted ?? false })
+    if (event ? isUserMessage(event) : session.snapshotEvents().some(isUserMessage)) this.withUserMessages.add(session.id)
+  }
+
   async refresh(signal?: AbortSignal): Promise<void> {
+    const previous = new Map(this.records)
     const entries = await this.ctx.sessionQuery.listSessions(signal)
     signal?.throwIfAborted()
-    for (const id of this.records.keys()) {
-      if (!this.ctx.sessions.get(id as SessionId)) this.records.delete(id)
+    const listed = new Set<string>(entries.map(entry => entry.header.id))
+    // A catalog captured before a new session's events must not erase those events' identity.
+    for (const [id, entry] of previous) {
+      if (this.records.get(id) === entry && !listed.has(id) && !this.ctx.sessions.get(id as SessionId)) {
+        this.records.delete(id)
+        this.withUserMessages.delete(id)
+      }
     }
-    for (const entry of entries) this.records.set(entry.header.id, entry)
+    for (const entry of entries) {
+      const current = this.records.get(entry.header.id)
+      if (!current || current === previous.get(entry.header.id)) this.records.set(entry.header.id, entry)
+    }
     this.archived = new Set(this.ctx.workspaceRegistry.archivedSessionIds)
   }
 
@@ -36,13 +51,13 @@ export class NativeSessionSource {
     const live = this.ctx.sessions.get(id as SessionId)
     const header = live?.header ?? this.records.get(id)?.header
     if (!header || header.origin === 'subagent' || this.archived.has(id)) return false
-    let hasTurn = this.turns.get(id)
-    if (hasTurn === undefined) {
+    if (!this.withUserMessages.has(id)) {
+      if (!live && this.records.get(id)?.persisted === false) return false
       const events = live?.snapshotEvents() ?? (await this.ctx.sessionQuery.readSession(id as SessionId)).events
-      hasTurn = events.some(e => e.type === 'turn/start')
-      this.turns.set(id, hasTurn)
+      // Cache positive evidence only: an earlier blank read must not hide a later first message.
+      if (events.some(isUserMessage)) this.withUserMessages.add(id)
     }
-    return sessionVisible({ id, ...(header.origin ? { origin: header.origin } : {}), blank: !hasTurn }, this.archived, this.presence.selected())
+    return sessionVisible({ id, ...(header.origin ? { origin: header.origin } : {}), hasUserMessage: this.withUserMessages.has(id) }, this.archived)
   }
 
   async state(id: string): Promise<SourceState> {

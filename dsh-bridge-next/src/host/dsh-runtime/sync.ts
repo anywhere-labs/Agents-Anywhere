@@ -166,14 +166,16 @@ export class SyncFeed {
   private async reconcile(): Promise<void> {
     for (const id of this.native.candidates()) if (!await this.native.visible(id)) {
       const source = await this.native.source.state(id)
-      if (this.sourceAvailability.get(id) !== source.availability) {
+      // Source notifications can create rows in the existing ingest API too.
+      // Only report changes for sessions this feed has already imported.
+      if (this.sourceAvailability.has(id) && this.sourceAvailability.get(id) !== source.availability) {
         await this.notification('session.source.updated', { sessionId: sessionId(this.namespace, id), externalSessionId: id,
           ...source, observationOrigin: 'event' })
         this.sourceAvailability.set(id, source.availability)
       }
       this.published.delete(id); this.projections.delete(id)
     }
-    // Selection can make a previously blank session visible without a new native event.
+    // Recheck source availability; selecting a draft never makes it eligible for import.
     for (const id of this.native.candidates()) if (!this.published.has(id)) await this.baseline(id)
   }
   private async changes(changes: NativeChange[]): Promise<void> {

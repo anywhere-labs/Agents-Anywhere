@@ -128,6 +128,25 @@ async def main(home: Path) -> None:
                 for session in sessions:
                     assert all(i.type not in {"turn.start", "turn.end"} for i in await stored(session.id))
 
+                await native_action("draft", "native-draft")
+                await asyncio.sleep(0.2)
+                assert {s.externalSessionId for s in await store.list_sessions_for_connector(connector.id)} == {
+                    "native-main", "persisted-only",
+                }, "selecting a native draft must not create an AA session via snapshots or source notifications"
+                await native_action("first-message", "native-draft")
+
+                async def first_native_message():
+                    matches = [s for s in await store.list_sessions_for_connector(connector.id)
+                               if s.externalSessionId == "native-draft"]
+                    if not matches:
+                        return False
+                    assert len(matches) == 1
+                    items = await stored(matches[0].id)
+                    return len([i for i in items if i.role == "user"
+                                and i.content.get("text") == "first native user message"]) == 1
+
+                await until(first_native_message, "first native user message did not create the AA session and timeline")
+
                 result = await runtime.create_and_start_session("sess-new", "第一条", cwd=str(home), client_message_id="msg-1")
                 external_id = result.result["externalSessionId"]
                 await runtime.create_and_start_session("sess-new", "第一条", cwd=str(home), client_message_id="msg-1")
@@ -158,6 +177,10 @@ async def main(home: Path) -> None:
                     return transport.lost and completed_inventories() > count
 
                 await until(recovered, "lost reply did not trigger complete recalibration")
+                assert await first_native_message(), "reconnection duplicated or lost the native first message"
+                assert "empty-native" not in {
+                    s.externalSessionId for s in await store.list_sessions_for_connector(connector.id)
+                }, "reconnection must not import an empty native session"
                 after = await stored("sess-new")
                 assert [(i.id, i.orderSeq, i.contentHash, i.content) for i in after] == [
                     (i.id, i.orderSeq, i.contentHash, i.content) for i in before

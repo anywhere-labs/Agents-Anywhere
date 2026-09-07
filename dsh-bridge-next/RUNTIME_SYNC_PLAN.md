@@ -6,7 +6,7 @@
 
 ## 分工
 
-- 插件 `host/dsh-runtime`：官方侧栏过滤、原生事件、历史和实时 Timeline 投影、明确归档状态、官方 Agent 文本发送。
+- 插件 `host/dsh-runtime`：首条真实用户消息过滤、原生事件、历史和实时 Timeline 投影、明确归档状态、官方 Agent 文本发送。
 - Connector `runtimes/dsh`：发现/鉴权、标准 DTO 转发、快照分页拼接、有序交付和重连。
 - 后端：只复用现有 `/api/v2/connector/ingest`，继续使用 `timeline.sync` 完整替换及 `timeline.itemUpsert` 增量更新。
 - 其他 Runtime 保留原有 scanner；登录、onboarding 和 Desktop 页面不属于本轮修改范围。
@@ -14,7 +14,7 @@
 ## 首次同步
 
 1. 先订阅官方事件并建立有界缓冲，再枚举会话。
-2. 使用官方 `sessionVisible` 规则：排除 subagent 和归档；空会话仅当前选中者可见。blank 依据有无 turn/start，current 来自官方客户端；headless 无当前选择。多客户端采用可见集合并集。
+2. 排除 subagent 和归档；只有历史中存在 `user/message` 且 `source.kind === 'user'` 才同步。空会话即使当前被选中也不导入；`turn/start`、系统/插件注入不算用户消息，用户发送的纯附件消息计入。启动、实时事件和重连使用同一条件，headless 不依赖客户端选择。
 3. 只对有效会话读取完整历史，捕获末尾 seq，使用与实时消息相同的投影器。
 4. 插件以同一捕获分页发送。Connector 收齐所有页、验证 ID 和总数后，一次提交 `session.meta.upsert` 和 `timeline.sync {complete: true}`，不逐页替换。
 5. 重放大于基线 seq 的缓冲事件。首次同步允许读取正在运行的会话。
@@ -22,12 +22,13 @@
 
 ## 正常运行
 
-- session/created、turn/start：先判断是否可见，新可见会话建立基线。
+- session/created：只记录候选及已有消息，不导入空草稿。session/event 中首次出现真实用户消息后建立基线，将会话和首条消息一并同步，无需等待模型回复；恢复的已有会话按其完整历史判断。
+- 只缓存“已有真实用户消息”的正向事实，避免旧的空会话判断遮住后来的首条消息。清单扫描保留扫描期间新收到的会话记录，短暂加载后离开内存的会话仍可从官方持久化历史建立基线。
 - session/event：真实用户消息、assistant 文本/reasoning、工具调用及结果，归并为稳定 ID 的 timeline.itemUpsert。原生事件按约 34ms（最多每秒 30 次）集中投影，同一条目只推送窗口内最新版本；工具结果、状态和轮次结束通知按顺序合入批次。最终消息在下一次 flush 送出，不依赖后续事件触发。
 - 插件实际传输批次也遵守 34ms 最小间隔，包括快照分页；保留大小限制和逐批 ACK，慢连接不会积累无界待发送帧。Desktop 前端另按 34ms 窗口集中提交状态，同一条目的连续更新合并，快照和控制事件保持顺序边界。
 - session/title：使用 session.meta.upsert 同步标题，不生成消息。
 - agent/status、轮次和审批变化：使用 session.state.updated；新的 turn/end 使用 session.turnEnded。
-- workspace 的 domain/changed、客户端 current：核对归档与可见性变化。
+- workspace 的 domain/changed：核对明确归档状态；客户端 current 上报不改变会话的同步资格。
 - session/disposed：退出内存不等于删除，仍检查官方持久化状态。
 - 最终消息撤销草稿时，只校准对应会话的完整历史，复用全量替换删除失效项。
 
@@ -51,7 +52,7 @@
 
 ## 现有后端的边界
 
-从未导入的过滤会话不发送占位 metadata 或 Timeline。插件收到明确归档事实后，通过现有 session.source.updated 发送 archived，让后端沿用原有归档处理；完整清单携带同样的明确状态。不增加归档锁存字段，也不新增针对 AA 取消归档的保护逻辑。已有数据库行按原实现保留，**本轮不实现物理删除**。仍可见会话的完整替换会清掉旧 notice。
+从未导入的过滤会话不发送占位 metadata、Timeline 或独立的 session.source.updated（现有接口也可能借此创建会话）。插件收到已导入会话的明确归档事实后，通过现有 session.source.updated 发送 archived，让后端沿用原有归档处理；完整清单携带同样的明确状态，只校准后端已有记录。不增加归档锁存字段，也不新增针对 AA 取消归档的保护逻辑。已有数据库行按原实现保留，**本轮不实现物理删除**。仍可见会话的完整替换会清掉旧 notice。
 
 不实现 DSH 项目名称、归属、重命名或删除同步。插件只送会话及其 cwd，后端和其他 Agent 一样，按 cwd 归入项目、取最后一段作为项目名。既有 workspace.list 只读查询保留；插件不再发送 workspace.inventory，Connector 忽略旧插件发来的该类批次，不保存项目快照，也不转交后端。
 

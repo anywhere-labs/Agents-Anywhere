@@ -1,8 +1,15 @@
-/** The official sidebar predicate, including its selected blank-session exception. */
-export function sessionVisible(session: { id: string, origin?: string, blank: boolean },
-  archived: ReadonlySet<string>, current: ReadonlySet<string>): boolean {
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
+
+/** User-role context injections do not establish a user-created conversation. */
+export function isUserMessage(event: SessionEvent): boolean {
+  return event.type === 'user/message' && event.data.source.kind === 'user'
+}
+
+/** AA imports conversations after the first human message, independent of UI selection. */
+export function sessionVisible(session: { id: string, origin?: string, hasUserMessage: boolean },
+  archived: ReadonlySet<string>): boolean {
   return session.origin !== 'subagent' && !archived.has(session.id)
-    && (!session.blank || current.has(session.id))
+    && session.hasUserMessage
 }
 
 export class ClientPresence {
