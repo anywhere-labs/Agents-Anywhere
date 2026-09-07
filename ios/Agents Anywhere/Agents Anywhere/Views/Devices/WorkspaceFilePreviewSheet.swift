@@ -9,6 +9,7 @@ struct WorkspaceFilePreviewSheet: View {
     let path: String
     let service: V2WorkspaceFilesService
     var session: V2SessionModel?
+    var location: SessionFileReference? = nil
     @State private var url: URL?
     @State private var error: String?
     @State private var loading = true
@@ -69,7 +70,7 @@ struct WorkspaceFilePreviewSheet: View {
             loading = true; error = nil; url = nil; isDownloading = false
             do {
                 let entry = V2WorkspaceEntry(name: name, path: path, type: "file", size: nil, modifiedAt: nil)
-                let prepared = try await service.previewURL(connectorId: connectorId, root: root, entry: entry)
+                let prepared = try await service.previewURL(connectorId: connectorId, root: root, entry: entry, location: location)
                 try Task.checkCancellation()
                 guard canRead else { return }
                 url = prepared

@@ -38,7 +38,7 @@ struct TimelineEntryPresentation: Hashable {
         let wireKind = TimelineText.first(raw["kind"]) ?? (item.type == .fileChange ? "file_change" : item.type.rawValue)
         let toolInput = raw["input"]
         command = TimelineText.command(raw["command"]) ?? TimelineText.command(toolInput?["command"]) ?? TimelineText.command(toolInput?["cmd"])
-        let rawChanges = raw["changes"]?.arrayValue?.filter { if case .object = $0 { return true }; return false } ?? []
+        let rawChanges = TimelineFileChange.rawChanges(raw, allowDirect: wireKind == "file_change")
         self.raw = raw; self.cwd = cwd
         self.rawChanges = rawChanges.isEmpty && wireKind == "file_change" && TimelineText.path(raw) != nil ? [raw] : rawChanges
         input = command == nil && self.rawChanges.isEmpty ? toolInput : nil
@@ -111,22 +111,36 @@ struct TimelineFileChange: Hashable, Identifiable {
         displayPath = path.map { TimelineText.displayPath($0, cwd: cwd) } ?? String(localized: "未知文件")
         id = "\(index):\(path ?? "")"
         action = Self.action(raw)
-        code = TimelineText.first(raw["diff"], raw["patch"])
+        code = TimelineText.first(raw["diff"], raw["patch"], raw["content"])?.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         if let code {
             if TimelineDiff.isUnified(code) { diff = code }
             else if action == .add || action == .delete {
                 let sign = action == .add ? "+" : "-"
-                diff = code.components(separatedBy: "\n").map { sign + $0 }.joined(separator: "\n")
+                var lines = code.components(separatedBy: "\n")
+                if lines.last == "" { lines.removeLast() }
+                diff = lines.map { sign + $0 }.joined(separator: "\n")
             } else { diff = nil }
         } else { diff = nil }
     }
+    static func rawChanges(_ raw: JSONValue, allowDirect: Bool = true) -> [JSONValue] {
+        if let array = raw["changes"]?.arrayValue, !array.isEmpty { return array }
+        if case let .object(values) = raw["changes"], !values.isEmpty {
+            return values.keys.sorted().compactMap { path in
+                guard case var .object(fields) = values[path] else { return nil }
+                if fields["path"] == nil { fields["path"] = .string(path) }
+                return .object(fields)
+            }
+        }
+        return allowDirect && TimelineText.path(raw) != nil ? [raw] : []
+    }
+
     static func action(_ raw: JSONValue) -> Action {
-        let value = TimelineText.first(raw["kind"]?["type"], raw["kind"], raw["action"], raw["type"], raw["status"])?.lowercased() ?? ""
+        let value = TimelineText.first(raw["kind"]?["type"], raw["action"], raw["type"], raw["status"], raw["kind"])?.lowercased() ?? ""
         switch value {
         case "add", "added", "create", "created": return .add
         case "delete", "deleted", "remove", "removed": return .delete
         case "rename", "renamed", "move", "moved": return .rename
-        case "modify", "modified", "change", "changed", "edit", "edited": return .modify
+        case "modify", "modified", "change", "changed", "edit", "edited", "update", "updated": return .modify
         default: return .unknown
         }
     }

@@ -27,12 +27,18 @@ struct ChatMarkdownView: View {
                 // reference. Preserve code styling while adding its scoped link.
                 for run in document.runs {
                     if run.link == nil, run.inlinePresentationIntent?.contains(.code) == true,
-                       let path = SessionFileReference.inlinePath(String(document[run.range].characters)) {
-                        document[run.range].link = SessionFileReference.link(path)
+                       let reference = SessionFileReference.inlineReference(String(document[run.range].characters)) {
+                        document[run.range].link = reference.link
                     }
                 }
             }
-            blocks = MarkdownBlockSnapshot.split(document)
+            document = GitDirectiveParser.enrich(document) { directives, attributes in
+                var badge = AttributedString(directives.map(\.label).joined(separator: " · "), attributes: attributes)
+                badge.textual.attachment = AnyAttachment(ChatGitBadgeAttachment(directives: directives))
+                return badge
+            }
+            let next = MarkdownBlockSnapshot.split(document)
+            if blocks != next { blocks = next }
         }
     }
 }

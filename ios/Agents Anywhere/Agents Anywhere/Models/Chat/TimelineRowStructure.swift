@@ -6,6 +6,8 @@ struct TimelineRowStructure: Equatable {
     let type: V2TimelineItemType
     let role: V2MessageRole?
     let status: V2TimelineItemStatus
+    let startsTurn: Bool
+    let isFileChange: Bool
     let isReasoning: Bool
     let isStreamingText: Bool
     let groupKind: ChatTimelineGroup.Kind
@@ -13,6 +15,7 @@ struct TimelineRowStructure: Equatable {
 
     init(_ item: V2TimelineItem) {
         type = item.type; role = item.role; status = item.status
+        startsTurn = item.startsVisibleTurn; isFileChange = item.isFileChange
         isReasoning = item.isReasoning; isStreamingText = item.isStreamingText
         if item.type == .tool, item.raw["content"]?["kind"] == .string("agent_call"),
            let parent = TimelineText.first(item.raw["content"]?["parentItemId"]) { groupKind = .agents(parent) }

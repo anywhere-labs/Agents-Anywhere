@@ -11,8 +11,8 @@ struct SessionChatView: View, Equatable {
     private let fileService: V2WorkspaceFilesService
     private let detailService: V2SessionDetailService
     private enum SessionSheet: Identifiable {
-        case notices, details, files, preview(String, root: String? = nil)
-        var id: String { switch self { case .notices: "notices"; case .details: "details"; case .files: "files"; case .preview(let path, let root): "file:\(root ?? ""):\(path)" } }
+        case notices, details, files, preview(SessionFileReference, root: String? = nil)
+        var id: String { switch self { case .notices: "notices"; case .details: "details"; case .files: "files"; case .preview(let reference, let root): "file:\(root ?? ""):\(reference.id)" } }
     }
     @State private var previewURL: URL?
     @State private var previewDirectory: URL?
@@ -149,15 +149,18 @@ struct SessionChatView: View, Equatable {
                         workspace: V2DeviceWorkspace(path: cwd, name: String(localized: "会话文件"), sessionCount: 1, lastActiveAt: nil),
                         service: fileService, session: session)
                 }
-            case .preview(let path, let root):
+            case .preview(let reference, let root):
                 if let meta = session.metadata {
-                    WorkspaceFilePreviewSheet(connectorId: meta.connectorId, root: root ?? meta.cwd ?? ".", path: path,
-                        service: fileService, session: session)
+                    WorkspaceFilePreviewSheet(connectorId: meta.connectorId, root: root ?? meta.cwd ?? ".", path: reference.path,
+                        service: fileService, session: session, location: reference)
                 }
             }
         }
         .environment(\.openURL, OpenURLAction { url in
-            if let path = SessionFileReference.path(from: url) { openFile(path); return .handled }
+            if let reference = SessionFileReference.reference(from: url) {
+                if session.isValid { sheet = .preview(reference) }
+                return .handled
+            }
             return ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") ? .systemAction : .discarded
         })
         .quickLookPreview($previewURL)
@@ -208,11 +211,11 @@ struct SessionChatView: View, Equatable {
 
     private func openFile(_ path: String) {
         guard session.isValid, !path.isEmpty else { return }
-        sheet = .preview(SessionFileReference.stripLocation(path))
+        sheet = .preview(SessionFileReference.parse(path))
     }
 
     private func openAttachment(_ file: V2AttachmentContent) {
-        if file.readsFromDevice, let path = file.devicePath { sheet = .preview(path, root: file.root); return }
+        if file.readsFromDevice, let path = file.devicePath { sheet = .preview(SessionFileReference(path: path), root: file.root); return }
         guard !isDownloading, let fileID = file.fileId else { return }
         isDownloading = true
         model.error = nil

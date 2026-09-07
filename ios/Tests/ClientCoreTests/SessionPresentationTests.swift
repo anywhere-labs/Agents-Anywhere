@@ -69,7 +69,7 @@ import Testing
         ]])
         let entry = TimelineEntryPresentation(item: value, cwd: "/work")
         #expect(entry.kind == .tool && entry.title == String(localized: "Created \("src/app.swift")"))
-        #expect(entry.changes.first?.diff == "+let value = 1\n+")
+        #expect(entry.changes.first?.diff == "+let value = 1")
         #expect(TimelineText.displayPath("/workspace/a", cwd: "/work") == "/workspace/a")
         #expect(TimelineText.displayPath("C:\\repo\\src\\a.ts", cwd: "C:\\repo") == "src/a.ts")
         let deleted = TimelineFileChange(raw: .object(["path": .string("gone"), "status": .string("removed"), "patch": .string("old")]), index: 0, cwd: nil)

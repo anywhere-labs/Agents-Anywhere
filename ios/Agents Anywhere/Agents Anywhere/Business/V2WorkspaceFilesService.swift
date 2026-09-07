@@ -42,7 +42,8 @@ struct V2WorkspaceFilesService {
     func previewURL(
         connectorId: V2ConnectorID,
         root: String,
-        entry: V2WorkspaceEntry
+        entry: V2WorkspaceEntry,
+        location: SessionFileReference? = nil
     ) async throws -> URL {
         guard entry.isFile else { throw V2BusinessError.workspaceEntryNotPreviewable }
         let token = try await connectorAPI.createWorkspaceFilePreviewToken(
@@ -50,10 +51,10 @@ struct V2WorkspaceFilesService {
             root: root,
             request: V2WorkspaceFileReadRequest(path: entry.path)
         )
-        return try makePreviewURL(previewToken: token.previewToken, name: entry.name)
+        return try makePreviewURL(previewToken: token.previewToken, name: entry.name, location: location)
     }
 
-    private func makePreviewURL(previewToken: String, name: String) throws -> URL {
+    private func makePreviewURL(previewToken: String, name: String, location: SessionFileReference?) throws -> URL {
         let rootURL = URL(string: "/", relativeTo: serverURL)?.absoluteURL ?? serverURL
         guard var components = URLComponents(url: rootURL, resolvingAgainstBaseURL: false) else {
             throw V2BusinessError.invalidWorkspacePreviewURL
@@ -63,6 +64,8 @@ struct V2WorkspaceFilesService {
             URLQueryItem(name: "previewToken", value: previewToken),
             URLQueryItem(name: "name", value: name),
         ]
+        if let line = location?.line { fragmentComponents.queryItems?.append(URLQueryItem(name: "line", value: String(line))) }
+        if let column = location?.column { fragmentComponents.queryItems?.append(URLQueryItem(name: "column", value: String(column))) }
         guard let query = fragmentComponents.percentEncodedQuery else {
             throw V2BusinessError.invalidWorkspacePreviewURL
         }

@@ -12,7 +12,11 @@ struct SessionTimelineGroupView: View {
             content
                 .traceChatLayout("group-content:\(group.id)")
             if let turnAction {
-                SessionTurnActions(action: turnAction).traceChatLayout("actions:\(group.id)")
+                SessionTurnReviewFooter(action: turnAction, root: chat.session.metadata?.cwd,
+                    hasOlderItems: chat.session.hasOlderItems, onFile: onFile)
+                if !turnAction.replies.isEmpty {
+                    SessionTurnActions(action: turnAction).traceChatLayout("actions:\(group.id)")
+                }
             }
         }
         .traceChatLayout("group:\(group.id)", state: "footer=\(turnAction != nil)")

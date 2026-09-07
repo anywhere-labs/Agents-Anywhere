@@ -139,6 +139,18 @@ Semantic error and availability colors remain separate from the primary color.
   no footer; individual entries remain copyable from their context menus. A local
   pending user message already marks the next turn, so its predecessor's footer
   stays visible through HTTP acceptance and the authoritative echo.
+- Completed turns with file changes show a single-line file/addition/deletion
+  summary above Copy/Share, including turns containing only tools. Its sheet
+  lists files and mounts each diff only when expanded. Counts use the latest
+  revision of each recorded operation; repeated edits retain chronological
+  patches, and an incompletely loaded first turn is identified in the sheet.
+  Only the completed footer observes and aggregates file payloads, so streaming
+  tokens do not resize the composer or repeatedly insert the review row.
+- Git directives become inline badges after Markdown parsing, using Textual
+  attachments within the existing stable blocks. Code examples and existing
+  links retain their text; copy/export retain the original source. Completed
+  directives describe recorded actions, with HTTP(S) PR links opening on tap.
+  Appending text preserves completed block identities and equality boundaries.
 - Session, New Session and Device use native SwiftUI navigation bars through
   `ChatPageToolbar`. The title uses `navigationTitle`; Agent/device names and
   live status share the native subtitle placement. The subtitle stays one line
@@ -223,6 +235,10 @@ Semantic error and availability colors remain separate from the primary color.
   sheet uses an ephemeral WebKit data store and obtains a fresh token on retry.
   Already displayed content remains visible offline, with device/network status.
   Uploaded session attachments retain their separate attachment download flow.
+  References support named files, Windows paths, `:line:column` and `#LlineCcolumn`
+  locations. Line/column travel in the preview route fragment, separately from
+  the path scoped by the token. The matching Web preview reveals the location in
+  Monaco; older Web previews still open the file without positioning the editor.
 - Composer image selections use background-downsampled thumbnails. User-message
   attachments appear above the text bubble, with image previews or filename/type/
   size tiles, matching Web's arrangement. Only visible remote images request

@@ -8,6 +8,7 @@ export type MonacoCodeViewApi = {
   getValue: () => string
   focus: () => void
   openSearch: () => void
+  revealPosition: (position: { lineNumber: number; column: number }) => void
   destroy: () => void
 }
 
@@ -103,6 +104,12 @@ export function MonacoCodeView({
         focus: () => editor?.focus(),
         openSearch: () => {
           editor?.getAction("actions.find")?.run()
+        },
+        revealPosition: (position) => {
+          if (!editor) return
+          const target = model.validatePosition(position)
+          editor.setPosition(target)
+          editor.revealPositionInCenter(target, monaco.editor.ScrollType.Immediate)
         },
         destroy: cleanup,
       })
