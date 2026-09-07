@@ -14,6 +14,11 @@ extension StructuredText {
     /// The table content.
     public let label: Label
 
+    /// Parsed cells for styles that render their own native table. Empty cells
+    /// retain their column positions; inline formatting and links are preserved.
+    public let rows: [[AttributedString]]
+    public let columns: [PresentationIntent.TableColumn]
+
     /// The indentation level of the table within the document structure.
     public let indentationLevel: Int
   }

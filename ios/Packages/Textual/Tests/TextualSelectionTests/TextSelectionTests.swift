@@ -4,6 +4,25 @@ import Testing
 
 @Suite @MainActor
 struct TextSelectionTests {
+    @Test func emptySelectionOverlayDoesNotInterceptControls() {
+        let model = TextSelectionModel()
+        #expect(!model.acceptsInteraction(at: .zero, excluding: []))
+        model.setLayoutCollection(SampleCollection([sampleText]))
+        #expect(model.acceptsInteraction(at: .zero, excluding: []))
+        model.setLayoutCollection(SampleCollection([]))
+        #expect(!model.acceptsInteraction(at: .zero, excluding: []))
+    }
+
+    @Test func embeddedControlsReceiveTouchesWhileSurroundingTextRemainsSelectable() {
+        let model = TextSelectionModel(layoutCollection: SampleCollection([sampleText]))
+        let controls = [CGRect(x: 20, y: 0, width: 40, height: 20),
+                        CGRect(x: 0, y: 40, width: 100, height: 80)]
+        #expect(!model.acceptsInteraction(at: CGPoint(x: 30, y: 10), excluding: controls))
+        #expect(!model.acceptsInteraction(at: CGPoint(x: 50, y: 60), excluding: controls))
+        #expect(model.acceptsInteraction(at: CGPoint(x: 10, y: 10), excluding: controls))
+        #expect(model.acceptsInteraction(at: CGPoint(x: 90, y: 10), excluding: controls))
+    }
+
     @Test func emptyLayoutsDoNotDereferenceThePlaceholderPosition() {
         let emptyStates: [[SampleLayout]] = [
             [], [SampleLayout(lines: [])],

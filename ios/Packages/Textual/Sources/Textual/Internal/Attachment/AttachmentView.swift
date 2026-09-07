@@ -5,8 +5,8 @@ import SwiftUI
 // `AttachmentView` draws attachment bodies at the positions reported by SwiftUI's `Text.Layout`.
 //
 // The `Text` pipeline reserves space for attachments using placeholders; the overlay draws the
-// real SwiftUI views on top of those placeholders. Drawing uses a `Canvas` so attachment views can
-// be resolved once as symbols and efficiently drawn into each run's `typographicBounds`.
+// real SwiftUI views on top of those placeholders. Keep those views live: flattening them
+// into Canvas symbols prevents embedded image buttons from receiving input.
 //
 // Selection integration:
 // On macOS, when text selection is enabled, object-style attachments are dimmed when they fall
@@ -31,32 +31,22 @@ struct AttachmentView: View {
   }
 
   var body: some View {
-    Canvas { context, _ in
-      context.translateBy(x: origin.x, y: origin.y)
-      for (lineIndex, line) in zip(layout.indices, layout) {
-        for (runIndex, run) in zip(line.indices, line) {
-          guard
-            let attachment = run.attachment,
-            let symbol = context.resolveSymbol(id: attachment)
-          else {
-            continue
+    ZStack(alignment: .topLeading) {
+      ForEach(Array(layout.indices), id: \.self) { lineIndex in
+        let line = layout[lineIndex]
+        ForEach(Array(line.indices), id: \.self) { runIndex in
+          let run = line[runIndex]
+          if let attachment = run.attachment, attachments.contains(attachment) {
+            let rect = run.typographicBounds.rect
+            attachment.body
+              .frame(width: rect.width, height: rect.height)
+              .opacity(opacity(for: attachment, lineIndex: lineIndex, runIndex: runIndex))
+              .offset(x: origin.x + rect.minX, y: origin.y + rect.minY)
           }
-
-          context.opacity = opacity(
-            for: attachment,
-            lineIndex: lineIndex,
-            runIndex: runIndex
-          )
-
-          context.draw(symbol, in: run.typographicBounds.rect)
         }
       }
-    } symbols: {
-      ForEach(Array(attachments), id: \.self) { attachment in
-        attachment.body
-          .tag(attachment)
-      }
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
   }
 
   private func opacity(

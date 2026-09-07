@@ -30,6 +30,8 @@ extension StructuredText {
     var body: some View {
       let configuration = TableStyleConfiguration(
         label: .init(label),
+        rows: TableContent(content: content, intent: intent, columnCount: columns.count).rows,
+        columns: columns,
         indentationLevel: indentationLevel
       )
       let resolvedStyle = tableStyle.resolve(configuration: configuration)

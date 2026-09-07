@@ -49,12 +49,8 @@
     }
 
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-      for exclusionRect in exclusionRects {
-        if exclusionRect.contains(point) {
-          return false
-        }
-      }
-      return super.point(inside: point, with: event)
+      model.acceptsInteraction(at: point, excluding: exclusionRects)
+        && super.point(inside: point, with: event)
     }
 
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {

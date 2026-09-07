@@ -18,7 +18,14 @@ Local additions apply the same validation to selected text, caret geometry,
 range traversal and layout reconciliation. Invalid positions yield an empty
 result instead of indexing a replaced layout. Traversal skips empty paragraphs,
 lines and runs; valid selections keep their original UTF-16 offsets.
-The renderer, formatter and clipboard exporter are unchanged.
+
+The iOS app supplies native code, table and image components. Local style APIs
+expose literal code and attributed table cells (including empty columns), and
+allow selection to be scoped to text instead of covering embedded controls.
+Attachments remain live SwiftUI views rather than Canvas symbols, so image
+buttons can receive input. Embedded controls publish exclusion rectangles to
+the selection overlay. The parser, syntax highlighter, formatter and upstream
+clipboard exporter remain unchanged; the app's code button copies literal text.
 
 Run the headless regression tests from the repository root (no app or simulator):
 

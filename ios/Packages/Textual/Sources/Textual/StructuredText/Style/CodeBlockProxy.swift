@@ -10,6 +10,9 @@ extension StructuredText {
       self.content = content
     }
 
+    /// Literal code, with exactly the whitespace displayed by the code block.
+    public var text: String { String(content.characters) }
+
     /// Copies the code block contents to the system pasteboard.
     ///
     /// Textual writes both a plain-text and an HTML representation when possible.

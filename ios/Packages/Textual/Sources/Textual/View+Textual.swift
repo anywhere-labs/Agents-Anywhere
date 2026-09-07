@@ -159,6 +159,26 @@ extension TextualNamespace where Base: View {
     #endif
   }
 
+  /// Installs selection on a custom style's text label, rather than its entire
+  /// block. Keep buttons and other controls outside this scope.
+  @available(tvOS, unavailable)
+  @available(watchOS, unavailable)
+  @MainActor public func textSelectionScope() -> some View {
+    base.modifier(TextSelectionInteraction())
+      .textual.textSelection(.enabled)
+      .coordinateSpace(.textContainer)
+  }
+
+  /// Lets an embedded control receive input through the text selection overlay.
+  @MainActor public func textSelectionExcluded() -> some View {
+    base.background {
+      GeometryReader { geometry in
+        Color.clear.preference(key: OverflowFrameKey.self,
+          value: [geometry.frame(in: .textContainer)])
+      }
+    }
+  }
+
   /// Sets the spacing used between table cells in ``StructuredText``.
   public func tableCellSpacing(
     horizontal: CGFloat? = nil,

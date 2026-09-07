@@ -18,6 +18,7 @@ struct ImageAttachment: Attachment {
   @usableFromInline
   var body: some View {
     ImageView(image)
+      .aspectRatio(image.size.width / image.size.height, contentMode: .fit)
   }
 
   @usableFromInline
