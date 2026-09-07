@@ -65,7 +65,6 @@ struct ChatComposer: View {
         .padding(.top, 8)
         .padding(.bottom, 10)
         .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: draft.isExpanded)
-        .sensoryFeedback(.impact(weight: .light), trigger: isStreaming)
     }
 
     private var attachmentTray: some View {

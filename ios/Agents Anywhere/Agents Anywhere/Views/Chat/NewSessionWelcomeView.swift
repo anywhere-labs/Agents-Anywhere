@@ -1,7 +1,8 @@
 import SwiftUI
 
-struct NewSessionWelcomeView: View {
-    private static let revealDuration = 0.4
+struct NewSessionWelcomeView<Workspace: View>: View {
+    @ViewBuilder let workspace: () -> Workspace
+    private static var revealDuration: Double { 0.4 }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.sidebarDrawerIsTransitioning) private var sidebarIsTransitioning
@@ -12,6 +13,7 @@ struct NewSessionWelcomeView: View {
     @State private var detailPhraseCount = 0
     @State private var hasStarted = false
     @State private var isRevealing = false
+    @State private var workspaceRevealed = false
     @State private var revealCompletion = 0
     @State private var titleLedger = GlyphRevealLedger(duration: NewSessionWelcomeView.revealDuration)
     @State private var detailLedger = GlyphRevealLedger(duration: NewSessionWelcomeView.revealDuration)
@@ -24,6 +26,18 @@ struct NewSessionWelcomeView: View {
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 28) {
+            welcomeText
+            workspace()
+                .modifier(WelcomeWorkspaceReveal(progress: workspaceRevealed ? 1 : 0))
+                .allowsHitTesting(workspaceRevealed)
+                .accessibilityHidden(!workspaceRevealed)
+        }
+        .task(id: [canReveal, reduceMotion]) { await reveal() }
+        .completionFeedback(trigger: revealCompletion)
+    }
+
+    private var welcomeText: some View {
         VStack(alignment: .leading, spacing: 12) {
             AppSymbol("sparkles", size: 28).foregroundStyle(.primary)
             streamingText(title, revealedPhrases: titlePhraseCount, ledger: titleLedger)
@@ -36,8 +50,6 @@ struct NewSessionWelcomeView: View {
                 .lineLimit(2...)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .task(id: [canReveal, reduceMotion]) { await reveal() }
-        .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: revealCompletion)
     }
 
     private func streamingText(_ text: String, revealedPhrases: Int, ledger: GlyphRevealLedger) -> some View {
@@ -63,11 +75,21 @@ struct NewSessionWelcomeView: View {
         // Cancellation, leaving the page, and Reduce Motion always settle the
         // complete copy. They cannot leave a partial heading or an active clock.
         defer {
-            titlePhraseCount = TextPhraseSequence.chunks(in: title).count
-            detailPhraseCount = TextPhraseSequence.chunks(in: detail).count
-            isRevealing = false
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                titlePhraseCount = TextPhraseSequence.chunks(in: title).count
+                detailPhraseCount = TextPhraseSequence.chunks(in: detail).count
+                workspaceRevealed = true
+                isRevealing = false
+            }
         }
         guard !reduceMotion else { revealCompletion += 1; return }
+        // Match the glyph ledger's cubic ease-out. Keep the picker in layout
+        // from frame one; only drawing changes during the welcome animation.
+        withAnimation(.timingCurve(1.0 / 3, 1, 2.0 / 3, 1, duration: Self.revealDuration)) {
+            workspaceRevealed = true
+        }
         var schedule = ReplyFlushSchedule(start: .now)
         do {
             for count in TextPhraseSequence.chunks(in: title).indices {
@@ -88,6 +110,21 @@ struct NewSessionWelcomeView: View {
         } catch {
             // The defer completes the presentation if its lifecycle interrupts it.
         }
+    }
+}
+
+private struct WelcomeWorkspaceReveal: ViewModifier, Animatable {
+    var progress: Double
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        let effect = GlyphRevealEffect(progress: progress)
+        content.opacity(effect.opacity)
+            .blur(radius: effect.blurRadius)
+            .offset(y: effect.offsetY)
     }
 }
 

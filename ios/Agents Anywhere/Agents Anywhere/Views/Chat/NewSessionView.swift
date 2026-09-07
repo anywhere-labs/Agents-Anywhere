@@ -70,8 +70,7 @@ struct NewSessionView: View, Equatable {
 
     private var welcomeContent: some View {
         VStack(alignment: .leading, spacing: 28) {
-            NewSessionWelcomeView()
-            workspaceButton
+            NewSessionWelcomeView { workspaceButton }
             connectionStatus
             if model.isCreating {
                 Label(String(localized: "正在创建会话…"), appSymbol: "arrow.up.circle")

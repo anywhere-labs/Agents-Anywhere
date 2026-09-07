@@ -117,6 +117,10 @@ struct SessionChatView: View, Equatable {
             model.error = nil
             if !(await model.setTakeover(enabled)), let error = model.takeoverError { model.error = error }
         })
+        .completionFeedback(trigger: model.isRunning) { wasRunning, isRunning in
+            wasRunning && !isRunning && model.isOpeningReady && session.runtime.isFresh
+                && session.runtime.state?.status == .idle
+        }
         .task(id: sidebarIsTransitioning) {
             guard !hasStartedLoading, !sidebarIsTransitioning else { return }
             // Show feedback immediately, but let the drawer's completed
