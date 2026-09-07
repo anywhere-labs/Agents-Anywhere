@@ -7,6 +7,7 @@ enum class AppDestination(val title: String) {
     QrWaiting("Waiting"),
     Sessions("Sessions"),
     NewSession("New Session"),
+    NewProject("New Project"),
     Devices("Devices"),
     Terminal("Terminal"),
     Files("Files"),

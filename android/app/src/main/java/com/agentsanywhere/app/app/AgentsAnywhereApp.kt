@@ -42,6 +42,10 @@ import com.agentsanywhere.app.feature.sessions.SessionsController
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.feature.sessions.NewSessionCreateOutcome
 import com.agentsanywhere.app.feature.sessions.NewSessionDraft
+import com.agentsanywhere.app.feature.sessions.NewSessionPreferenceStore
+import com.agentsanywhere.app.feature.sessions.projectHasActiveSessions
+import com.agentsanywhere.app.feature.sessions.ProjectSessionLoadKey
+import com.agentsanywhere.app.feature.sessions.ProjectSessionStatusFilter
 import com.agentsanywhere.app.feature.sessions.beginSessionRequest
 import com.agentsanywhere.app.feature.sessions.mergedWithRefresh
 import com.agentsanywhere.app.feature.sessions.replacedByDashboardSnapshot
@@ -58,6 +62,7 @@ import com.agentsanywhere.app.feature.terminal.RemoteTerminalPool
 import com.agentsanywhere.app.feature.terminal.TerminalController
 import com.agentsanywhere.app.model.MobileLoginQrPayload
 import com.agentsanywhere.app.model.AgentSession
+import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereTheme
 import com.agentsanywhere.app.ui.designsystem.AALanguageMode
@@ -66,6 +71,9 @@ import com.agentsanywhere.app.ui.screens.update.AppUpdatePromptDialog
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import android.os.SystemClock
 import java.util.concurrent.atomic.AtomicBoolean
 import java.io.File
 
@@ -161,6 +169,13 @@ fun AgentsAnywhereApp(
     }
     val currentDestination = AppDestination.valueOf(destinationName)
     val hasAuthSession = sessionStore.hasAuthSession()
+    val updateServerUrl = sessionStore.readServerUrl()
+    val updatesAllowed = hasAuthSession && updateServerUrl.isNotBlank() && currentDestination !in setOf(
+        AppDestination.LoginMethods, AppDestination.ServerSetup, AppDestination.QrLogin, AppDestination.QrWaiting,
+    )
+    LaunchedEffect(updatesAllowed, updateServerUrl) {
+        appUpdateViewModel.syncSession(updatesAllowed)
+    }
     var sessionsState by remember(sessionsController) {
         mutableStateOf(
             if (hasAuthSession) {
@@ -170,9 +185,23 @@ fun AgentsAnywhereApp(
             },
         )
     }
+    val nextOrderExpiry = sessionsState.sessions.map { it.optimisticTopUntil }.filter { it > 0L }.minOrNull()
+    LaunchedEffect(nextOrderExpiry) {
+        if (nextOrderExpiry != null) {
+            kotlinx.coroutines.delay((nextOrderExpiry - System.currentTimeMillis()).coerceAtLeast(1L))
+            val now = System.currentTimeMillis()
+            sessionsState = sessionsState.copy(sessions = sessionsState.sessions.map {
+                if (it.optimisticTopUntil <= now) it.copy(optimisticTopUntil = 0L) else it
+            }.sortedWith(com.agentsanywhere.app.feature.sessions.sessionListComparator(now)))
+        }
+    }
     var isRefreshingSessions by remember { mutableStateOf(false) }
     var projectSessionsById by remember { mutableStateOf<Map<String, List<AgentSession>>>(emptyMap()) }
-    var loadingProjectIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var loadingProjectRequests by remember { mutableStateOf<Set<ProjectSessionLoadKey>>(emptySet()) }
+    var projectSessionErrors by remember { mutableStateOf<Map<ProjectSessionLoadKey, String>>(emptyMap()) }
+    var projectSessionsLoadedAt by remember { mutableStateOf<Map<ProjectSessionLoadKey, Long>>(emptyMap()) }
+    val projectLoadSlots = remember { Semaphore(3) }
+    var projectsRequestVersion by remember { mutableStateOf(0L) }
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     var appVisible by remember(lifecycleOwner) {
@@ -217,11 +246,14 @@ fun AgentsAnywhereApp(
         }
         if (!didClearSession) return
 
+        appUpdateViewModel.syncSession(false)
         remoteTerminalPool.disposeLocal()
         sessionsState = SessionsState()
         isRefreshingSessions = false
         projectSessionsById = emptyMap()
-        loadingProjectIds = emptySet()
+        loadingProjectRequests = emptySet()
+        projectSessionErrors = emptyMap()
+        projectSessionsLoadedAt = emptyMap()
         selectedSessionId = null
         initialNewSessionProjectId = null
         preparedSessionDraft = null
@@ -278,6 +310,7 @@ fun AgentsAnywhereApp(
         try {
             sessionsController.loadSessions()
                 .onSuccess { loadedState ->
+                    projectsRequestVersion++
                     sessionsState = sessionsState.mergedWithRefresh(loadedState, request.generation)
                 }
                 .onFailure { error ->
@@ -318,15 +351,50 @@ fun AgentsAnywhereApp(
         }
     }
 
-    fun loadProjectSessions(projectId: String) {
-        if (projectId.isBlank() || projectId in loadingProjectIds) return
-        loadingProjectIds = loadingProjectIds + projectId
-        scope.launch {
-            sessionsController.loadProjectSessions(projectId, sessionsState.devices)
-                .onSuccess { sessions ->
-                    projectSessionsById = projectSessionsById + (projectId to sessions)
+    suspend fun reloadProjects(): Result<List<AgentProject>> {
+        val token = sessionStore.readAccessToken()
+        val version = ++projectsRequestVersion
+        return sessionsController.loadProjects().onSuccess { projects ->
+            if (sessionStore.readAccessToken() == token && projectsRequestVersion == version) {
+                sessionsState = sessionsState.copy(projects = projects)
+            }
+        }
+    }
+
+    fun loadProjectSessions(projectId: String, status: ProjectSessionStatusFilter = ProjectSessionStatusFilter.Active) {
+        if (projectId.isBlank()) return
+        val token = sessionStore.readAccessToken()
+        status.archiveStates.forEach { archived ->
+            val key = ProjectSessionLoadKey(projectId, archived)
+            if (key in loadingProjectRequests) return@forEach
+            val loadedAt = projectSessionsLoadedAt[key]
+            if (loadedAt != null && SystemClock.elapsedRealtime() - loadedAt < 30_000L) return@forEach
+            loadingProjectRequests = loadingProjectRequests + key
+            projectSessionErrors = projectSessionErrors - key
+            scope.launch {
+                try {
+                    projectLoadSlots.withPermit {
+                        if (sessionStore.readAccessToken() != token || sessionsState.projects.none { it.id == projectId }) return@withPermit
+                        sessionsController.loadProjectSessions(projectId, sessionsState.devices, archived)
+                            .onSuccess { sessions ->
+                                if (sessionStore.readAccessToken() == token && sessionsState.projects.any { it.id == projectId }) {
+                                    val retained = projectSessionsById[projectId].orEmpty().filter { it.archived != archived }
+                                    projectSessionsById = projectSessionsById + (projectId to (retained + sessions).associateBy { it.id }.values.toList())
+                                    projectSessionsLoadedAt = projectSessionsLoadedAt + (key to SystemClock.elapsedRealtime())
+                                }
+                            }.onFailure { error ->
+                                if (error is kotlinx.coroutines.CancellationException) throw error
+                                if (sessionStore.readAccessToken() == token) {
+                                    projectSessionErrors = projectSessionErrors + (key to (error.message ?: "Could not load project sessions."))
+                                }
+                            }
+                    }
+                } finally {
+                    if (sessionStore.readAccessToken() == token) {
+                        loadingProjectRequests = loadingProjectRequests - key
+                    }
                 }
-            loadingProjectIds = loadingProjectIds - projectId
+            }
         }
     }
 
@@ -346,7 +414,7 @@ fun AgentsAnywhereApp(
         if (destination != AppDestination.SessionDetail) {
             preparedSessionDraft = null
         }
-        if (destination == AppDestination.NewSession) {
+        if (destination == AppDestination.NewSession || destination == AppDestination.NewProject) {
             initialNewSessionProjectId = null
         }
         if (
@@ -379,6 +447,7 @@ fun AgentsAnywhereApp(
                     if (sessionStore.readServerUrl() != realtimeServerUrl ||
                         sessionStore.readAccessToken() != realtimeAccessToken
                     ) return@launch
+                    projectsRequestVersion++
                     sessionsState = sessionsState.replacedByDashboardSnapshot(
                         sessionsController.dashboardSnapshotState(snapshot),
                     )
@@ -424,7 +493,8 @@ fun AgentsAnywhereApp(
         languageMode = languageMode,
         sidebarViewMode = sidebarViewMode,
         projectSessionsById = projectSessionsById,
-        loadingProjectIds = loadingProjectIds,
+        loadingProjectRequests = loadingProjectRequests,
+        projectSessionErrors = projectSessionErrors,
         initialNewSessionProjectId = initialNewSessionProjectId,
         sessionDetailController = sessionDetailController,
         sessionRealtimeController = sessionRealtimeController,
@@ -441,6 +511,16 @@ fun AgentsAnywhereApp(
                     showInitialLoading = false,
                     showRefreshIndicator = true,
                 )
+                val previousRequests = projectSessionsLoadedAt.keys + projectSessionErrors.keys + loadingProjectRequests
+                projectSessionsLoadedAt = emptyMap()
+                if (sidebarViewMode == com.agentsanywhere.app.ui.screens.home.HomeSidebarViewMode.Project) {
+                    val loaded = (projectSessionsById.values.flatten() + sessionsState.sessions + sessionsState.archivedSessions)
+                        .associateBy { it.id }.values
+                    sessionsState.projects.filter { projectHasActiveSessions(it, loaded) }.forEach { loadProjectSessions(it.id) }
+                    previousRequests.filter { key -> sessionsState.projects.any { it.id == key.projectId } }.forEach { key ->
+                        loadProjectSessions(key.projectId, if (key.archived) ProjectSessionStatusFilter.Archived else ProjectSessionStatusFilter.Active)
+                    }
+                }
             }
         },
         onLoadMoreSessions = ::loadMoreSessions,
@@ -572,6 +652,7 @@ fun AgentsAnywhereApp(
                         sessionsState = sessionsState
                             .withPatchedSessions(update.sessions, request.generation)
                             .withMissingSessionsRemoved(update.notFound, request.generation)
+                        reloadProjects()
                     }
             }
         },
@@ -593,6 +674,7 @@ fun AgentsAnywhereApp(
                 sessionsController.archiveAllDeviceSessions(connectorId, archived, scope, sessionsState.devices)
                     .onSuccess { sessions ->
                         sessionsState = sessionsState.withPatchedSessions(sessions, request.generation)
+                        reloadProjects()
                     }
             }
         },
@@ -617,6 +699,7 @@ fun AgentsAnywhereApp(
                 sessionsController.setSessionPinned(sessionId, pinned, sessionsState.devices)
                     .onSuccess { session ->
                         sessionsState = sessionsState.withPatchedSession(session, request.generation)
+                        reloadProjects()
                     }
             }
         },
@@ -629,16 +712,54 @@ fun AgentsAnywhereApp(
                 sessionsController.setSessionArchived(sessionId, archived, sessionsState.devices)
                     .onSuccess { session ->
                         sessionsState = sessionsState.withPatchedSession(session, request.generation)
+                        reloadProjects()
                     }
             }
         },
         onLoadProjectSessions = ::loadProjectSessions,
+        onLoadProjects = ::reloadProjects,
+        onLoadArchivedPage = { projectId, cursor ->
+            sessionsController.loadArchivedSessionPage(projectId, cursor, sessionsState.devices)
+        },
+        onRestoreProject = { projectId ->
+            val ids = sessionsState.archivedSessions.filter { it.projectId == projectId }.map { it.id }
+            val request = sessionsState.beginSessionRequest(ids)
+            sessionsState = request.state
+            sessionsController.archiveProjectSessions(projectId, sessionsState.devices, archived = false, scope = "archived")
+                .mapCatching { sessions ->
+                    check(sessions.isNotEmpty() && sessions.none { it.archived }) { "Could not restore all sessions in this project." }
+                    sessions
+                }.onSuccess { sessions ->
+                    sessionsState = sessionsState.withPatchedSessions(sessions, request.generation)
+                    projectSessionsById = projectSessionsById + (projectId to
+                        (sessions + projectSessionsById[projectId].orEmpty()).distinctBy { it.id })
+                    reloadProjects()
+                }
+        },
+        onMarkAllRead = {
+            val ids = (projectSessionsById.values.flatten() + sessionsState.sessions + sessionsState.archivedSessions)
+                .associateBy { it.id }.values.filter { it.unread }.map { it.id }
+            val request = sessionsState.beginSessionRequest(ids)
+            sessionsState = request.state
+            runCatching {
+                // The bulk endpoint accepts at most 200 IDs; preserve each successful batch.
+                ids.chunked(200).forEach { batch ->
+                    val update = sessionsController.markSessionsRead(batch, sessionsState.devices).getOrThrow()
+                    sessionsState = sessionsState.withPatchedSessions(update.sessions, request.generation)
+                        .withMissingSessionsRemoved(update.notFound, request.generation)
+                    projectSessionsById = projectSessionsById.mapValues { (_, sessions) ->
+                        sessions.filterNot { it.id in update.notFound }
+                    }
+                }
+            }
+        },
         onUpdateProject = { projectId, name, pinned ->
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update this project."))
             } else {
                 sessionsController.updateProject(projectId, name, pinned)
                     .onSuccess { project ->
+                        projectsRequestVersion++
                         sessionsState = sessionsState.withPatchedProject(project)
                     }
             }
@@ -653,10 +774,13 @@ fun AgentsAnywhereApp(
                     .distinct()
                 val request = sessionsState.beginSessionRequest(targetIds)
                 sessionsState = request.state
-                sessionsController.archiveProjectSessions(projectId, sessionsState.devices)
+                sessionsController.archiveProjectSessions(projectId, sessionsState.devices, scope = "all")
                     .onSuccess { sessions ->
                         sessionsState = sessionsState.withPatchedSessions(sessions, request.generation)
-                        projectSessionsById = projectSessionsById + (projectId to emptyList())
+                        projectSessionsById = projectSessionsById + (projectId to
+                            (projectSessionsById[projectId].orEmpty() + sessions).associateBy { it.id }.values.toList())
+                        projectSessionsLoadedAt = projectSessionsLoadedAt.filterKeys { it.projectId != projectId }
+                        reloadProjects()
                     }
             }
         },
@@ -666,6 +790,7 @@ fun AgentsAnywhereApp(
             } else {
                 sessionsController.createProject(name, connectorId, workspacePath)
                     .onSuccess { project ->
+                        projectsRequestVersion++
                         sessionsState = sessionsState.withPatchedProject(project)
                     }
             }
@@ -680,9 +805,15 @@ fun AgentsAnywhereApp(
             } else {
                 val refresh = sessionsState.beginSessionRequest()
                 sessionsState = refresh.state
+                NewSessionPreferenceStore(context, sessionStore.readServerUrl(), sessionStore.readUserId()).save(
+                    connectorId = draft.connectorId,
+                    runtimeId = draft.runtimeId,
+                    selections = draft.selections,
+                )
                 val outcome = sessionsController.createAndStartSession(
                     draft = draft,
                     devices = sessionsState.devices,
+                    projects = sessionsState.projects,
                 )
                 val refreshedState = when (outcome) {
                     is NewSessionCreateOutcome.Created -> outcome.refreshedState
@@ -692,7 +823,8 @@ fun AgentsAnywhereApp(
                     sessionsState = sessionsState.mergedWithRefresh(refreshedState, refresh.generation)
                 }
                 if (outcome is NewSessionCreateOutcome.Created) {
-                    sessionsState = sessionsState.withPatchedSession(outcome.session, refresh.generation)
+                    sessionsState = sessionsState.withPatchedSession(outcome.session.copy(optimisticTopUntil = System.currentTimeMillis() + 1_000), refresh.generation)
+                    reloadProjects()
                 }
                 outcome
             }
@@ -738,14 +870,15 @@ fun AgentsAnywhereApp(
             destinationName = AppDestination.QrWaiting.name
         },
     )
-    AppUpdatePromptDialog(
-        state = appUpdateViewModel.state,
-        onUpdate = appUpdateViewModel::downloadUpdate,
-        onLater = appUpdateViewModel::dismissPrompt,
-        onCancelDownload = appUpdateViewModel::cancelDownload,
-    )
-    LaunchedEffect(appUpdateViewModel.state.installFile) {
-        appUpdateViewModel.state.installFile?.let(onInstallUpdate)
+    if (updatesAllowed) {
+        AppUpdatePromptDialog(
+            state = appUpdateViewModel.state,
+            onUpdate = appUpdateViewModel::downloadUpdate,
+            onIgnore = appUpdateViewModel::ignoreVersion,
+        )
+    }
+    LaunchedEffect(updatesAllowed, appUpdateViewModel.state.installFile) {
+        if (updatesAllowed) appUpdateViewModel.state.installFile?.let(onInstallUpdate)
     }
 }
 

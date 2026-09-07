@@ -1,7 +1,16 @@
 package com.agentsanywhere.app.config
 
+import com.agentsanywhere.app.BuildConfig
+import com.agentsanywhere.app.api.normalizeServerOrigin
+
 object AppConfig {
-    // Replace this development origin with the hosted service URL before release.
-    const val OFFICIAL_WEB_LOGIN_URL = "http://192.168.8.207:5175"
-    const val UPDATE_SERVICE_URL = OFFICIAL_WEB_LOGIN_URL
+    // Debug builds can override the backend in android/local.properties.
+    val OFFICIAL_SERVER_URL: String = BuildConfig.OFFICIAL_SERVER_URL
+    // Replace this placeholder with the fixed APK address before distribution.
+    const val UPDATE_DOWNLOAD_URL = "https://downloads.example.invalid/agents-anywhere.apk"
+
+    fun isOfficialServer(serverUrl: String): Boolean {
+        val officialOrigin = normalizeServerOrigin(OFFICIAL_SERVER_URL) ?: return false
+        return normalizeServerOrigin(serverUrl) == officialOrigin
+    }
 }

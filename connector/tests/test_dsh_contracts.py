@@ -93,50 +93,31 @@ def test_invalid_model_selection_ids_are_rejected(selection_id: str) -> None:
         decode_model_selection_id(selection_id)
 
 
-def test_native_dsh_payload_timeline_item_is_adapted() -> None:
-    item = timeline_item(
-        {
-            "id": "dsh-message",
-            "type": "message",
-            "orderSeq": 7,
-            "revision": 1,
-            "contentHash": "a" * 64,
-            "payload": {
-                "role": "assistant",
-                "text": "hello",
-                "reasoning": "brief thought",
-                "messageId": "message-1",
-            },
-        },
-        default_session_id="session-1",
-    )
+def test_native_dsh_payload_is_rejected_instead_of_projected_in_python() -> None:
+    with pytest.raises(ValueError, match="native payload"):
+        timeline_item(
+            {"type": "message", "payload": {"role": "assistant", "text": "hello"}}
+        )
 
-    assert item.type == "message"
-    assert item.status == "done"
-    assert item.role == "assistant"
-    assert item.content == {
-        "kind": "markdown",
-        "format": "markdown",
-        "text": "hello",
-        "reasoning": "brief thought",
+
+def test_canonical_item_preserves_turn_and_validates_content_hash() -> None:
+    content = {"kind": "markdown", "text": "你好"}
+    value = {
+        "id": "dsh-item",
+        "sessionId": "a",
+        "turnId": "turn-1",
+        "type": "message",
+        "status": "done",
+        "role": "assistant",
+        "content": content,
+        "source": {"runtime": "dsh"},
+        "orderSeq": 4,
+        "revision": 7,
+        "contentHash": timeline_content_hash("message", "done", "assistant", content),
     }
-    assert item.source["itemType"] == "message"
-    assert item.source["itemId"] == "message-1"
-    assert item.source["nativeContentHash"] == "a" * 64
-
-
-def test_native_dsh_turn_status_is_filtered_as_turn_boundary() -> None:
-    item = timeline_item(
-        {
-            "id": "dsh-turn",
-            "type": "turn_status",
-            "orderSeq": 4,
-            "revision": 2,
-            "contentHash": "b" * 64,
-            "payload": {"turn": 1, "status": "done", "reason": {"kind": "completed"}},
-        },
-        default_session_id="session-1",
-    )
-
-    assert item.type == "turn.end"
-    assert item.status == "done"
+    item = timeline_item(value)
+    assert item.turn_id == "turn-1"
+    assert item.revision == 7
+    value["contentHash"] = "sha256:incorrect"
+    with pytest.raises(ValueError, match="contentHash"):
+        timeline_item(value)

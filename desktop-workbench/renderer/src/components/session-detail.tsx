@@ -46,6 +46,8 @@ import {
   ToolMarkerRowContent,
 } from "@/components/session/session-tool-cards"
 import { timelineRunCounts } from "@/components/session/timeline-summary"
+import { createTimelineScrollFollow } from "@/components/session/timeline-scroll-follow"
+import { createSessionEventBuffer } from "@/components/session/session-event-buffer"
 import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
 import {
@@ -121,10 +123,9 @@ function remoteStateFromOptimisticState(optimisticState: SessionLocalTimelineSta
 const INITIAL_TIMELINE_LIMIT = 100
 const TIMELINE_PAGE_LIMIT = 100
 const LOAD_OLDER_SCROLL_THRESHOLD = 96
-const AUTO_SCROLL_BOTTOM_DISTANCE = 180
+const SCROLL_TO_BOTTOM_PRUNE_DISTANCE = 180
 const INITIAL_SCROLL_LAYOUT_QUIET_MS = 120
 const INITIAL_SCROLL_LAYOUT_FALLBACK_MS = 900
-const SCROLL_TO_BOTTOM_INTERVAL_MS = 1000
 const SCROLL_TO_BOTTOM_PRUNE_CHECK_MS = 120
 const COMMAND_QUERY_DEBOUNCE_MS = 120
 const COMPOSER_DRAFT_STORAGE_PREFIX = "agents-anywhere.sessionComposerDraft.v1."
@@ -356,17 +357,14 @@ export function SessionDetail({
   const timelineContentRef = React.useRef<HTMLDivElement | null>(null)
   const composerContainerRef = React.useRef<HTMLDivElement | null>(null)
   const nextSeqRef = React.useRef(0)
-  const autoScrollOnNextUpdateRef = React.useRef(false)
-  const forceScrollOnNextUpdateRef = React.useRef(false)
+  const timelineFollowRef = React.useRef<ReturnType<typeof createTimelineScrollFollow> | null>(null)
   const initialScrollDoneRef = React.useRef(false)
   const loadingOlderRef = React.useRef(false)
   const pendingPrependScrollRestoreRef = React.useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
-  const lastScrollToBottomAtRef = React.useRef(0)
-  const scrollToBottomTimerRef = React.useRef<number | null>(null)
-  const initialScrollFrameRef = React.useRef<number | null>(null)
   const initialScrollQuietTimerRef = React.useRef<number | null>(null)
   const initialScrollFallbackTimerRef = React.useRef<number | null>(null)
   const pruneAfterScrollTimerRef = React.useRef<number | null>(null)
+  const pruneAfterScrollCleanupRef = React.useRef<(() => void) | null>(null)
   const streamConnectedRef = React.useRef(false)
   const processedEventIdsRef = React.useRef<Set<string>>(new Set())
   const catalogFetchKeyRef = React.useRef<string | null>(null)
@@ -527,7 +525,6 @@ export function SessionDetail({
   const applyOptimisticItemsRef = React.useRef(applyOptimisticItems)
   const clearResolvedOptimisticMessagesRef = React.useRef(clearResolvedOptimisticMessages)
   const getOptimisticSessionStateRef = React.useRef(getOptimisticSessionState)
-  const markAutoScrollIfNearBottomRef = React.useRef<() => void>(() => undefined)
   const onSessionUpdatedRef = React.useRef(onSessionUpdated)
   const tSessionRef = React.useRef(tSession)
 
@@ -713,54 +710,23 @@ export function SessionDetail({
     setShowScrollBottom(distanceFromBottom() > 96)
   }, [distanceFromBottom])
 
-  const markAutoScrollIfNearBottom = React.useCallback(() => {
-    if (distanceFromBottom() <= AUTO_SCROLL_BOTTOM_DISTANCE) {
-      autoScrollOnNextUpdateRef.current = true
+  React.useLayoutEffect(() => {
+    const viewport = timelineRef.current
+    const content = timelineContentRef.current
+    if (!viewport || !content) return
+    const follow = createTimelineScrollFollow(viewport, content, updateScrollBottomState, () => {
+      pruneAfterScrollCleanupRef.current?.()
+    })
+    timelineFollowRef.current = follow
+    return () => {
+      follow.dispose()
+      timelineFollowRef.current = null
+      pruneAfterScrollCleanupRef.current?.()
     }
-  }, [distanceFromBottom])
-
-  React.useEffect(() => {
-    markAutoScrollIfNearBottomRef.current = markAutoScrollIfNearBottom
-  }, [markAutoScrollIfNearBottom])
-
-  const scrollToBottomThrottled = React.useCallback((behavior: ScrollBehavior = "smooth") => {
-    const run = () => {
-      window.requestAnimationFrame(() => {
-        const viewport = timelineRef.current
-        if (!viewport) return
-        viewport.scrollTo({ top: viewport.scrollHeight, behavior })
-        setShowScrollBottom(false)
-      })
-    }
-
-    const now = Date.now()
-    const remaining = SCROLL_TO_BOTTOM_INTERVAL_MS - (now - lastScrollToBottomAtRef.current)
-    if (remaining <= 0) {
-      if (scrollToBottomTimerRef.current !== null) {
-        window.clearTimeout(scrollToBottomTimerRef.current)
-        scrollToBottomTimerRef.current = null
-      }
-      lastScrollToBottomAtRef.current = now
-      run()
-      return
-    }
-
-    if (scrollToBottomTimerRef.current !== null) return
-    scrollToBottomTimerRef.current = window.setTimeout(() => {
-      scrollToBottomTimerRef.current = null
-      lastScrollToBottomAtRef.current = Date.now()
-      run()
-    }, remaining)
-  }, [])
+  }, [session?.id, sessionId, updateScrollBottomState])
 
   React.useEffect(() => {
     return () => {
-      if (scrollToBottomTimerRef.current !== null) {
-        window.clearTimeout(scrollToBottomTimerRef.current)
-      }
-      if (initialScrollFrameRef.current !== null) {
-        window.cancelAnimationFrame(initialScrollFrameRef.current)
-      }
       if (initialScrollQuietTimerRef.current !== null) {
         window.clearTimeout(initialScrollQuietTimerRef.current)
       }
@@ -824,10 +790,6 @@ export function SessionDetail({
 
   React.useEffect(() => {
     initialScrollDoneRef.current = false
-    if (initialScrollFrameRef.current !== null) {
-      window.cancelAnimationFrame(initialScrollFrameRef.current)
-      initialScrollFrameRef.current = null
-    }
     if (initialScrollQuietTimerRef.current !== null) {
       window.clearTimeout(initialScrollQuietTimerRef.current)
       initialScrollQuietTimerRef.current = null
@@ -865,9 +827,19 @@ export function SessionDetail({
     let recoveryPromise: Promise<void> | null = null
     let snapshotReady = false
     let bufferedEvents: ProtocolEventEnvelope[] = []
+    const renderBuffer = createSessionEventBuffer((events) => {
+      if (cancelled) return
+      setState((current) => events.reduce((next, event) =>
+        next && event.sequence < next.nextSeq ? next : mergeSessionEvent(next, event), current))
+      const items = events.flatMap((event) => {
+        const item = readPayloadValue<TimelineItem>(event.payload.item)
+        if (item) return [item]
+        return Array.isArray(event.payload.items) ? event.payload.items.filter(isTimelineItem) : []
+      })
+      if (items.length > 0) clearResolvedOptimisticMessagesRef.current(sessionId, items)
+    })
     const refetch = (reason: string) => {
       if (refetchPromise) return refetchPromise
-      markAutoScrollIfNearBottomRef.current()
       refetchPromise = loadInitialSessionState(token, sessionId, { reason })
         .then((next) => {
           if (cancelled) return
@@ -901,17 +873,7 @@ export function SessionDetail({
         nextSeqRef.current = Math.max(nextSeqRef.current, event.sequence)
         return
       }
-      markAutoScrollIfNearBottomRef.current()
-      setState((current) => {
-        if (current && event.sequence < current.nextSeq) return current
-        return mergeSessionEvent(current, event)
-      })
-      const item = readPayloadValue<TimelineItem>(event.payload.item)
-      if (item) clearResolvedOptimisticMessagesRef.current(sessionId, [item])
-      const items = Array.isArray(event.payload.items)
-        ? event.payload.items.filter(isTimelineItem)
-        : []
-      if (items.length > 0) clearResolvedOptimisticMessagesRef.current(sessionId, items)
+      renderBuffer.push(event)
       nextSeqRef.current = Math.max(nextSeqRef.current, event.sequence)
     }
 
@@ -1020,6 +982,8 @@ export function SessionDetail({
 
     return () => {
       cancelled = true
+      renderBuffer.dispose()
+      bufferedEvents = []
       streamConnectedRef.current = false
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
       socket?.close()
@@ -1042,7 +1006,7 @@ export function SessionDetail({
     if (uploadedAttachments.length !== attachments.length) return false
     const clientMessageId = createClientId("msg")
     const messageText = content.trim() || tNew("attachmentOnlyPrompt")
-    forceScrollOnNextUpdateRef.current = true
+    timelineFollowRef.current?.resume()
     const optimisticMessage = buildOptimisticUserMessage({
       sessionId: session.id,
       clientMessageId,
@@ -1088,7 +1052,6 @@ export function SessionDetail({
         attachments: uploadedAttachments.map((attachment) => ({ fileId: attachment.fileId })),
         clientMessageId,
       })
-      scrollToBottomThrottled()
       return true
     } catch (err) {
       const nextSourceErrorCode = sessionSourceErrorCode(err)
@@ -1239,14 +1202,9 @@ export function SessionDetail({
       updateScrollBottomState()
       return
     }
-    if (forceScrollOnNextUpdateRef.current || autoScrollOnNextUpdateRef.current) {
-      forceScrollOnNextUpdateRef.current = false
-      autoScrollOnNextUpdateRef.current = false
-      scrollToBottomThrottled()
-      return
-    }
+    timelineFollowRef.current?.schedule()
     updateScrollBottomState()
-  }, [runtimeStatus, scrollToBottomThrottled, state?.items.length, state?.notices.length, updateScrollBottomState])
+  }, [runtimeStatus, state?.items.length, state?.notices.length, updateScrollBottomState])
 
   React.useLayoutEffect(() => {
     if (initialScrollDoneRef.current || !hasInitialSessionState) return
@@ -1255,10 +1213,6 @@ export function SessionDetail({
     let resizeObserver: ResizeObserver | null = null
 
     const clearInitialScrollTimers = () => {
-      if (initialScrollFrameRef.current !== null) {
-        window.cancelAnimationFrame(initialScrollFrameRef.current)
-        initialScrollFrameRef.current = null
-      }
       if (initialScrollQuietTimerRef.current !== null) {
         window.clearTimeout(initialScrollQuietTimerRef.current)
         initialScrollQuietTimerRef.current = null
@@ -1269,12 +1223,7 @@ export function SessionDetail({
       }
     }
 
-    const scrollToInitialBottom = (viewport: HTMLDivElement) => {
-      viewport.scrollTop = viewport.scrollHeight
-    }
-
-    // Side effects: observes timeline layout, closes the first-screen loading phase,
-    // and performs the initial animated scroll once the layout has settled.
+    // Finish the first-screen loading phase without overriding a user's scroll.
     const completeInitialLayout = () => {
       if (cancelled || initialScrollDoneRef.current) return
       const viewport = timelineRef.current
@@ -1285,8 +1234,8 @@ export function SessionDetail({
       resizeObserver?.disconnect()
       resizeObserver = null
       setLoading(false)
-      viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" })
-      setShowScrollBottom(false)
+      timelineFollowRef.current?.scrollNow()
+      updateScrollBottomState()
     }
 
     const scheduleCompleteAfterQuietLayout = () => {
@@ -1303,13 +1252,12 @@ export function SessionDetail({
     const viewport = timelineRef.current
     const content = timelineContentRef.current
     if (viewport) {
-      scrollToInitialBottom(viewport)
-      setShowScrollBottom(false)
+      timelineFollowRef.current?.scrollNow()
+      updateScrollBottomState()
     }
     if (content) {
       resizeObserver = new ResizeObserver(() => {
-        const latestViewport = timelineRef.current
-        if (latestViewport) scrollToInitialBottom(latestViewport)
+        timelineFollowRef.current?.schedule()
         scheduleCompleteAfterQuietLayout()
       })
       resizeObserver.observe(content)
@@ -1325,9 +1273,10 @@ export function SessionDetail({
       resizeObserver?.disconnect()
       clearInitialScrollTimers()
     }
-  }, [hasInitialSessionState, sessionId])
+  }, [hasInitialSessionState, sessionId, updateScrollBottomState])
 
   const scrollToBottom = React.useCallback(() => {
+    pruneAfterScrollCleanupRef.current?.()
     const viewport = timelineRef.current
     const shouldPrune = (state?.items.length ?? 0) > INITIAL_TIMELINE_LIMIT
     if (!viewport) {
@@ -1348,8 +1297,7 @@ export function SessionDetail({
 
     let settled = false
     const pruneIfAtBottom = () => {
-      if (distanceFromBottom() > AUTO_SCROLL_BOTTOM_DISTANCE) return false
-      forceScrollOnNextUpdateRef.current = true
+      if (!timelineFollowRef.current?.isFollowing() || distanceFromBottom() > SCROLL_TO_BOTTOM_PRUNE_DISTANCE) return false
       setState((current) =>
         current && current.items.length > INITIAL_TIMELINE_LIMIT
           ? { ...current, items: current.items.slice(-INITIAL_TIMELINE_LIMIT) }
@@ -1363,6 +1311,7 @@ export function SessionDetail({
         window.clearTimeout(pruneAfterScrollTimerRef.current)
         pruneAfterScrollTimerRef.current = null
       }
+      pruneAfterScrollCleanupRef.current = null
     }
     const finish = () => {
       if (settled) return
@@ -1389,11 +1338,14 @@ export function SessionDetail({
     }
 
     if (shouldPrune) {
+      pruneAfterScrollCleanupRef.current = () => {
+        settled = true
+        cleanup()
+      }
       viewport.addEventListener("scrollend", handleScrollEnd, { once: true })
       scheduleCheck()
     }
-    viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" })
-    setShowScrollBottom(false)
+    timelineFollowRef.current?.resume("smooth")
   }, [distanceFromBottom, state?.items.length, updateScrollBottomState])
 
   const interactions = React.useMemo(

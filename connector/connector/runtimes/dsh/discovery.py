@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,24 +32,53 @@ class DshDiscovery:
 async def discover(values: dict[str, Any]) -> DshDiscovery:
     try:
         endpoint = load_endpoint(values)
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, json.JSONDecodeError):
         return DshDiscovery(
             False,
             False,
             None,
-            reason=f"Start dsh web with the Agents Anywhere plugin ({exc})",
+            reason="请启动 DSH，并启用手机连接插件。",
         )
     if not _process_exists(endpoint.pid):
         return DshDiscovery(
             False,
             False,
             None,
-            reason="The DSH Web bridge endpoint is stale; restart dsh web",
+            reason="DSH 插件发现记录已失效，请重新启动 DSH。",
         )
+    # A live PID is insufficient: authenticate a short-lived connection to the actual port.
+    # Import here because BridgeClient's endpoint DTO belongs to this module.
+    from connector.runtimes.dsh.bridge.client import BridgeClient
+
+    async def ignore_notification(method: str, params: Mapping[str, Any]) -> None:
+        pass
+
+    async def ignore_exit(code: int | None) -> None:
+        pass
+
+    client = BridgeClient(
+        endpoint=endpoint,
+        connector_id="discovery",
+        client_version="1.0",
+        startup_timeout=2,
+        request_timeout=2,
+        notification_handler=ignore_notification,
+        exit_handler=ignore_exit,
+    )
+    try:
+        result = await client.start()
+        await client.request("ping")
+    except (OSError, RuntimeError, ValueError):
+        return DshDiscovery(
+            False, False, None, reason="无法连接 DSH 插件，请确认插件已启动。"
+        )
+    finally:
+        await client.close()
     return DshDiscovery(
         True,
         True,
         endpoint,
+        bridge_version=result["identity"].get("bridgeVersion"),
         metadata={
             "endpoint": str(endpoint.path),
             "storageMode": "dsh-native",

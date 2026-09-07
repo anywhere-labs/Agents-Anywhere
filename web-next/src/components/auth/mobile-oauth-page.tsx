@@ -7,6 +7,7 @@ import { useRouteSearchParams } from "@/components/hash-route-params"
 import { LoadingState } from "@/components/loading-state"
 import { Button } from "@/components/ui/button"
 import { authApi } from "@/features/auth/api"
+import { readNativeOAuthParams, type NativeOAuthKind, type NativeOAuthParams } from "@/features/auth/native-oauth"
 import { AuthProvider, useAuth } from "./auth-context"
 import { BootstrapScreen } from "./bootstrap-screen"
 import { LoginScreen } from "./login-screen"
@@ -14,27 +15,13 @@ import { OAuthLinkExistingScreen } from "./oauth-link-existing-screen"
 import { OAuthNewUserScreen } from "./oauth-new-user-screen"
 import { RegisterScreen } from "./register-screen"
 
-type MobileOAuthParams = {
-  response_type: string
-  client_id: string
-  redirect_uri: string
-  code_challenge: string
-  code_challenge_method: string
-  scope: string
-  state?: string
-}
-
-type NativeOAuthKind = "mobile" | "desktop"
-
-const NATIVE_OAUTH_CLIENTS: Record<NativeOAuthKind, { clientId: string; redirectUri: string }> = {
-  mobile: {
-    clientId: "agents-anywhere-mobile",
-    redirectUri: "agents-anywhere://oauth/callback",
-  },
-  desktop: {
-    clientId: "agents-anywhere-desktop",
-    redirectUri: "agents-anywhere-desktop://oauth/callback",
-  },
+const pluginMessages: Record<string, string> = {
+  invalid: '授权链接无效，请回到 DSH 插件重新开始。',
+  opening: '正在继续本机设置…',
+  title: '连接这台电脑',
+  description: '授权 DSH 插件连接你的账号。',
+  currentAccount: '当前账号', unknownAccount: '已登录账号',
+  continue: '授权并继续', switchAccount: '使用其他账号', cancel: '取消',
 }
 
 export function MobileOAuthPage() {
@@ -53,10 +40,14 @@ export function DesktopOAuthFlow() {
   return <NativeOAuthFlow kind="desktop" />
 }
 
+export function PluginOAuthFlow() {
+  return <NativeOAuthFlow kind="plugin" />
+}
+
 function NativeOAuthFlow({ kind }: { kind: NativeOAuthKind }) {
   const mobileT = useTranslations("auth.mobileOAuth")
   const desktopT = useTranslations("auth.desktopOAuth")
-  const t = kind === "desktop" ? desktopT : mobileT
+  const t = kind === 'plugin' ? (key: string) => pluginMessages[key] ?? key : kind === "desktop" ? desktopT : mobileT
   const params = useRouteSearchParams()
   const { me, screen, loading, isAuthenticated, session, signOut } = useAuth()
   const [error, setError] = React.useState<string | null>(null)
@@ -95,7 +86,10 @@ function NativeOAuthFlow({ kind }: { kind: NativeOAuthKind }) {
     return <MobileOAuthStatus message={t("invalid")} error />
   }
   if (error) {
-    return <MobileOAuthStatus message={error} error />
+    return <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background px-6">
+      <p role="alert" className="max-w-sm text-sm text-destructive">{error}</p>
+      <Button variant="outline" onClick={() => setError(null)}>重试</Button>
+    </main>
   }
   if (loading || authorizing) {
     return <LoadingState className="min-h-screen bg-background" label={t("opening")} />
@@ -118,33 +112,7 @@ function NativeOAuthFlow({ kind }: { kind: NativeOAuthKind }) {
   return <LoginScreen />
 }
 
-function readNativeOAuthParams(
-  params: { get(name: string): string | null },
-  kind: NativeOAuthKind,
-): MobileOAuthParams | null {
-  const responseType = params.get("response_type")
-  const clientId = params.get("client_id")
-  const redirectUri = params.get("redirect_uri")
-  const codeChallenge = params.get("code_challenge")
-  const client = NATIVE_OAUTH_CLIENTS[kind]
-  if (
-    !responseType ||
-    clientId !== client.clientId ||
-    redirectUri !== client.redirectUri ||
-    !codeChallenge
-  ) return null
-  return {
-    response_type: responseType,
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    code_challenge: codeChallenge,
-    code_challenge_method: params.get("code_challenge_method") || "S256",
-    scope: params.get("scope") || "",
-    state: params.get("state") || undefined,
-  }
-}
-
-function mobileOAuthErrorRedirect(params: MobileOAuthParams, error: string, description: string): string {
+function mobileOAuthErrorRedirect(params: NativeOAuthParams, error: string, description: string): string {
   const url = new URL(params.redirect_uri)
   url.searchParams.set("error", error)
   url.searchParams.set("error_description", description)
@@ -167,12 +135,12 @@ function MobileOAuthConsent({
 }) {
   const mobileT = useTranslations("auth.mobileOAuth")
   const desktopT = useTranslations("auth.desktopOAuth")
-  const t = kind === "desktop" ? desktopT : mobileT
+  const t = kind === 'plugin' ? (key: string) => pluginMessages[key] ?? key : kind === "desktop" ? desktopT : mobileT
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-6">
       <section className="w-full max-w-sm space-y-6 text-center">
         <div className="space-y-2">
-          <p className="text-sm font-medium text-muted-foreground">{t("eyebrow")}</p>
+          {kind !== "plugin" ? <p className="text-sm font-medium text-muted-foreground">{t("eyebrow")}</p> : null}
           <h1 className="text-2xl font-semibold tracking-normal text-foreground">{t("title")}</h1>
           <p className="text-sm leading-6 text-muted-foreground">{t("description")}</p>
         </div>

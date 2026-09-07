@@ -4,6 +4,7 @@ data class RemoteDirectory(
     val path: String,
     val entries: List<RemoteDirectoryEntry>,
     val truncated: Boolean,
+    val targetType: String = "directory",
 )
 
 data class RemoteDirectoryEntry(

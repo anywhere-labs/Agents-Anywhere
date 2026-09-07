@@ -92,6 +92,8 @@ fun mergeObservedSession(current: AgentSession?, incoming: AgentSession): AgentS
         title = current.title,
         pinned = current.pinned,
         archived = current.archived,
+        archivedAt = current.archivedAt,
+        optimisticTopUntil = maxOf(current.optimisticTopUntil, incoming.optimisticTopUntil),
         unread = lastReadSeq < base.updatedSeq,
         lastReadSeq = lastReadSeq,
     )
@@ -105,6 +107,8 @@ fun mergeAuthoritativeSessionMetadata(current: AgentSession?, incoming: AgentSes
         title = incoming.title,
         pinned = incoming.pinned,
         archived = incoming.archived,
+        archivedAt = incoming.archivedAt,
+        optimisticTopUntil = maxOf(current.optimisticTopUntil, incoming.optimisticTopUntil),
         unread = lastReadSeq < base.updatedSeq,
         lastReadSeq = lastReadSeq,
     )
@@ -133,10 +137,7 @@ fun SessionsState.withPatchedSession(
         } else {
             sessions + accepted
         }
-        merged.sortedWith(
-            compareByDescending<AgentSession> { it.pinned }
-                .thenByDescending { it.sortKey },
-        )
+        merged.sortedWith(sessionListComparator())
     }
     val nextArchivedSessions = if (accepted.archived) {
         val hadSession = archivedSessions.any { it.id == accepted.id }
@@ -145,7 +146,7 @@ fun SessionsState.withPatchedSession(
         } else {
             archivedSessions + accepted
         }
-        merged.sortedByDescending { it.sortKey }
+        merged.sortedWith(archivedSessionComparator())
     } else {
         archivedSessions.filterNot { it.id == accepted.id }
     }
@@ -195,7 +196,9 @@ fun SessionsState.mergedWithRefresh(
     val mergedLoaded = loadedById.values.map { incoming ->
         val current = currentById[incoming.id]
         val currentGeneration = sessionRequestGenerations[incoming.id] ?: 0L
-        if (current != null && currentGeneration > generation) current else incoming
+        if (current != null && currentGeneration > generation) current else incoming.copy(
+            optimisticTopUntil = maxOf(current?.optimisticTopUntil ?: 0L, incoming.optimisticTopUntil),
+        )
     }
     val createdAfterRefresh = currentById.values.filter { current ->
         current.id !in loadedById && (sessionRequestGenerations[current.id] ?: 0L) > generation
@@ -218,13 +221,16 @@ fun SessionsState.replacedByDashboardSnapshot(loaded: SessionsState): SessionsSt
     val replacedFirstPageIds = activeFirstPageIds + archivedFirstPageIds
     val preserved = currentById.values.filterNot { it.id in replacedFirstPageIds }
     val accepted = (preserved + loaded.sessions + loaded.archivedSessions).map { incoming ->
-        currentById[incoming.id]?.takeIf { current -> current.updatedSeq > incoming.updatedSeq } ?: incoming
+        val current = currentById[incoming.id]
+        current?.takeIf { it.updatedSeq > incoming.updatedSeq } ?: incoming.copy(
+            optimisticTopUntil = maxOf(current?.optimisticTopUntil ?: 0L, incoming.optimisticTopUntil),
+        )
     }.associateBy { it.id }.values
     return loaded.copy(
         sessions = accepted
             .filterNot { it.archived }
-            .sortedWith(compareByDescending<AgentSession> { it.pinned }.thenByDescending { it.sortKey }),
-        archivedSessions = accepted.filter { it.archived }.sortedByDescending { it.sortKey },
+            .sortedWith(sessionListComparator()),
+        archivedSessions = accepted.filter { it.archived }.sortedWith(archivedSessionComparator()),
         sessionRequestGenerations = sessionRequestGenerations,
         nextRequestGeneration = nextRequestGeneration,
     )
@@ -246,8 +252,8 @@ fun SessionsState.withAppendedSessionPage(page: SessionPageAppend): SessionsStat
     val all = currentById.values
     return copy(
         sessions = all.filterNot { it.archived }
-            .sortedWith(compareByDescending<AgentSession> { it.pinned }.thenByDescending { it.sortKey }),
-        archivedSessions = all.filter { it.archived }.sortedByDescending { it.sortKey },
+            .sortedWith(sessionListComparator()),
+        archivedSessions = all.filter { it.archived }.sortedWith(archivedSessionComparator()),
         activeHasMore = if (page.archived) activeHasMore else page.hasMore,
         activeNextCursor = if (page.archived) activeNextCursor else page.nextCursor,
         archivedHasMore = if (page.archived) page.hasMore else archivedHasMore,

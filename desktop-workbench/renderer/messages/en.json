@@ -1702,8 +1702,7 @@
         "usage": "Usage",
         "users": "Users",
         "devices": "Devices",
-        "agents": "Agents",
-        "releases": "Releases"
+        "agents": "Agents"
       },
       "metrics": {
         "dau": "DAU",
@@ -1722,32 +1721,6 @@
         "medium": "Medium users",
         "heavy": "Heavy users",
         "userShare": "{percent} of users"
-      },
-      "releases": {
-        "title": "Client releases",
-        "description": "Manage Android and desktop update records.",
-        "create": "New release",
-        "platform": "Platform",
-        "version": "Version",
-        "versionCode": "Version code",
-        "downloadUrl": "Download URL",
-        "status": "Status",
-        "createdAt": "Created",
-        "published": "Published",
-        "draft": "Unpublished",
-        "empty": "No releases yet",
-        "loadFailed": "Failed to load releases.",
-        "created": "Release created.",
-        "createFailed": "Failed to create release.",
-        "dialogTitle": "New release",
-        "dialogDescription": "Create a client version record. The latest published version is used for update checks.",
-        "publishNow": "Publish now",
-        "cancel": "Cancel",
-        "confirmCreate": "Create release",
-        "platforms": {
-          "android": "Android",
-          "desktop": "Desktop"
-        }
       }
     },
     "service": {
@@ -1854,5 +1827,26 @@
     "discardDescription": "Your edits to this file have not been saved. Discard them to continue.",
     "keepEditing": "Keep editing",
     "discardChanges": "Discard changes"
+  },
+  "desktopUpdates": {
+    "title": "Update available",
+    "description": "The service has been upgraded. Update Desktop to stay compatible. Some features may stop working on older versions.",
+    "currentVersion": "Current version {version}",
+    "latestVersion": "New version {version}",
+    "ignore": "Ignore this version",
+    "updateNow": "Update now",
+    "entry": "Update available",
+    "downloading": "Downloading update",
+    "opening": "Download complete. Opening the installer…",
+    "downloadedBytes": "Downloaded {size}",
+    "progress": "{percent}% · {received} / {total}",
+    "errors": {
+      "checkFailed": "Unable to check for updates. Please try again later.",
+      "downloadNotConfigured": "The update download is not available yet. Please try again later.",
+      "downloadFailed": "The download did not complete. Check your connection and select Update now to retry.",
+      "openFailed": "Unable to open the installer. Select Update now to retry.",
+      "ignoreFailed": "Unable to save your preference. Please try again.",
+      "actionFailed": "The action failed. Please try again."
+    }
   }
 }

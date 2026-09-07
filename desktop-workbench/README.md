@@ -146,10 +146,58 @@ The build expects signing/notarization credentials to be supplied by release
 CI. `bundle:uv` verifies the upstream archive checksum before copying it into
 `build/uv`.
 
+## Desktop updates
+
+After authentication finishes and the workbench opens, Main checks the saved
+server's `/api/v2/health`. The authenticated session must match the saved server;
+login screens, missing server records, and default configuration never trigger
+an update check. Signing out cancels pending work and clears the update dialog.
+The server's `version` is compared numerically with `app.getVersion()`, including
+four-part Server versions such as `0.1.7.2`. No dedicated release API is used.
+
+An older Desktop opens an update dialog with **Ignore this version** and
+**Update now**. Outside clicks and Escape do not dismiss it; there is no close
+icon. Ignoring persists the exact server version in
+`<Electron userData>/updates/state.json`, scoped to the server. A newer server
+version prompts again. The download icon beside the account avatar remains
+visible whenever Desktop is behind, including after ignoring a version.
+
+Set `updates.downloadUrl` in `config.json` to the fixed HTTPS installer address
+before distribution. The `.invalid` URL is an explicit placeholder and does not
+download an installer. Downloads stream into `<Electron userData>/updates/downloads`
+with progress, remove incomplete files on failure/quit, and open the completed
+installer with the OS. Installing the new app remains an installer operation.
+
+## Shared local machine record
+
+On every launch, including `yarn dev`, Main checks its current installation and
+publishes `<OS user home>/.agentsanywhere/machine.json`. Correct, unchanged
+records are not rewritten. Development records contain the Electron executable,
+project path and launch arguments; packaged records contain the installed app
+and executable paths.
+
+Desktop and the DSH plugin append newly created local Connectors to the ordered
+`connectorIds` history. The plugin also publishes missing IDs when recovering a
+verified legacy private binding. Already recorded IDs are not rewritten. Both
+writers acquire the same process-safe lease before reading, merging and atomically
+publishing the file; installation paths remain owned by Desktop. Desktop and the
+DSH plugin verify ownership against the signed-in user's server device list
+before pairing. First-login provisioning and pairing again after a deleted
+device both reuse the first matching ID in local record order and rotate its
+token. Only an empty intersection creates a device; list or token-rotation
+failures stop provisioning for retry. A local persistence failure never deletes
+a reused server device. Tokens remain private. See the
+[shared record contract](../contracts/local-machine/1.0/README.md).
+
+Sidebar devices use fixed Chinese pinyin/name ordering and an ID tie-breaker,
+so polling, presence changes and same-name devices do not reorder the list.
+
 ## Connector lifecycle
 
-- Successful Desktop login provisions a `connectorKind: "desktop"` device with
-  the existing user-authenticated Connector API.
+- Successful Desktop login reuses a matching local device or provisions a
+  `connectorKind: "desktop"` device with the user-authenticated Connector API.
+- Successful local connection, reconnection, CLI pairing and pair-code completion
+  refresh the device list without opening an Agent quick-setup dialog.
 - Electron Main persists the returned `connectorId` and `connectorToken`, then
   sends them to `anywhere-cli rpc` through `connector.saveConfig`.
 - Closing the window on macOS keeps the app and Connector running in the

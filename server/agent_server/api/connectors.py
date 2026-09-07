@@ -58,11 +58,15 @@ async def create_connector(
     store: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> ConnectorCreateResponse:
-    connector, token, prefix = await store.create_connector(
-        name=payload.name,
-        user_id=user_id,
-        connector_kind=payload.connectorKind,
-    )
+    try:
+        connector, token, prefix = await store.create_connector(
+            name=payload.name,
+            user_id=user_id,
+            connector_kind=payload.connectorKind,
+            installation_id=str(payload.installationId) if payload.installationId else None,
+        )
+    except KeyError:
+        raise HTTPException(status_code=409, detail="installation was deleted; use a new installationId") from None
     await publish_dashboard_changed(
         store,
         broker,

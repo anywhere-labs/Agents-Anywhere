@@ -78,7 +78,7 @@ class SessionsController(
                     archivedPage = archivedPage.pageInfo(),
                 )
             }.recoverCatching { error ->
-                if (error is ApiException) throw error
+                if (error is CancellationException || error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not load sessions.", error)
             }
         }
@@ -110,7 +110,7 @@ class SessionsController(
                     nextCursor = page.nextCursor,
                 )
             }.recoverCatching { error ->
-                if (error is ApiException) throw error
+                if (error is CancellationException || error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not load more sessions.", error)
             }
         }
@@ -133,6 +133,7 @@ class SessionsController(
     suspend fun createAndStartSession(
         draft: NewSessionCreateDraft,
         devices: List<AgentDevice>,
+        projects: List<AgentProject> = emptyList(),
     ): NewSessionCreateOutcome {
         validateNewSessionDraft(draft)?.let { error ->
             return NewSessionCreateOutcome.Failed(IllegalArgumentException(error))
@@ -144,16 +145,33 @@ class SessionsController(
         }
 
         return withContext(Dispatchers.IO) {
+            val resolved = try {
+                val path = resolveDirectory(serverUrl, accessToken, draft.connectorId, draft.cwd.orEmpty())
+                val project = resolveWorkspaceProject(
+                    connectorId = draft.connectorId, path = path,
+                    deviceOs = devices.firstOrNull { it.id == draft.connectorId }?.deviceOs,
+                    knownProjects = projects,
+                    list = { sessionsApi.listProjects(serverUrl, accessToken).projects.map(RemoteProject::toAgentProject) },
+                    create = { name, workspace -> sessionsApi.createProject(
+                        serverUrl, accessToken, name, draft.connectorId, workspace, manuallyCreated = false,
+                    ).project.toAgentProject() },
+                )
+                draft.copy(projectId = project.id, cwd = project.workspacePath)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                return@withContext NewSessionCreateOutcome.Failed(error)
+            }
             try {
                 val response = sessionsApi.createAndStartSession(
                     serverUrl = serverUrl,
                     authorizationToken = accessToken,
                     request = RemoteSessionCreateAndStartRequest(
                         connectorId = draft.connectorId,
-                        projectId = draft.projectId,
+                        projectId = resolved.projectId,
                         runtime = draft.runtimeType,
                         title = draft.title?.trim()?.takeIf(String::isNotBlank),
-                        cwd = draft.cwd?.trim()?.takeIf(String::isNotBlank),
+                        cwd = resolved.cwd,
                         content = draft.content.trim(),
                         selections = draft.selections.toMap(),
                         attachments = draft.attachments.map(NewSessionAttachmentPart::toInlineAttachmentRef),
@@ -170,7 +188,7 @@ class SessionsController(
             } catch (error: Exception) {
                 if (error.mayHaveUnknownCreateOutcome()) {
                     reconcileCreateAfterNetworkFailure(
-                        draft = draft,
+                        draft = resolved,
                         serverUrl = serverUrl,
                         accessToken = accessToken,
                         originalError = error,
@@ -242,6 +260,7 @@ class SessionsController(
                     root = root,
                     path = path,
                 )
+                require(directory.targetType != "file") { "Choose a directory, not a file." }
                 NewSessionDirectory(
                     path = directory.path,
                     entries = directory.entries
@@ -257,7 +276,7 @@ class SessionsController(
                         .sortedBy { it.name.lowercase() },
                 )
             }.recoverCatching { error ->
-                if (error is ApiException) throw error
+                if (error is CancellationException || error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not load this directory.", error)
             }
         }
@@ -351,6 +370,27 @@ class SessionsController(
         )
     }
 
+    private fun resolveDirectory(serverUrl: String, token: String, connectorId: String, path: String): String {
+        val clean = path.trim()
+        if (!clean.startsWith("~")) return clean
+        val result = filesApi.listFiles(serverUrl, token, connectorId, clean, ".")
+        require(result.path.isNotBlank() && !result.path.startsWith("~") && result.targetType != "file") {
+            "Could not resolve the workspace directory."
+        }
+        return result.path
+    }
+
+    suspend fun loadArchivedSessionPage(projectId: String?, cursor: String?, devices: List<AgentDevice>): Result<SessionPageAppend> {
+        val auth = newSessionAuth() ?: return Result.failure(IllegalStateException("Sign in again to load archived sessions."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val page = if (projectId == null) sessionsApi.listSessions(auth.serverUrl, auth.accessToken, archived = true, limit = 100, cursor = cursor)
+                    else sessionsApi.listProjectSessions(auth.serverUrl, auth.accessToken, projectId, archived = true, limit = 100, cursor = cursor)
+                SessionPageAppend(page.sessions.map { it.toAgentSession(devices.associateBy(AgentDevice::id)) }, true, page.hasMore, page.nextCursor)
+            }.wrapNewSessionFailure("Could not load archived sessions.")
+        }
+    }
+
     suspend fun loadProjects(): Result<List<AgentProject>> {
         val auth = newSessionAuth()
             ?: return Result.failure(IllegalStateException("Sign in again to load projects."))
@@ -367,6 +407,7 @@ class SessionsController(
     suspend fun loadProjectSessions(
         projectId: String,
         devices: List<AgentDevice>,
+        archived: Boolean = false,
     ): Result<List<AgentSession>> {
         if (projectId.isBlank()) return Result.failure(IllegalArgumentException("Project ID is required."))
         val auth = newSessionAuth()
@@ -381,7 +422,7 @@ class SessionsController(
                         serverUrl = auth.serverUrl,
                         authorizationToken = auth.accessToken,
                         projectId = projectId,
-                        archived = false,
+                        archived = archived,
                         cursor = cursor,
                     )
                     sessions += page.sessions
@@ -414,7 +455,7 @@ class SessionsController(
                     authorizationToken = auth.accessToken,
                     name = normalizedName,
                     connectorId = connectorId,
-                    workspacePath = normalizedPath,
+                    workspacePath = resolveDirectory(auth.serverUrl, auth.accessToken, connectorId, normalizedPath),
                 ).project.toAgentProject()
             }.wrapNewSessionFailure("Could not create this project.")
         }
@@ -569,7 +610,7 @@ class SessionsController(
                     scope = scope,
                 ).map { it.toAgentSession(devices.associateBy { device -> device.id }) }
             }.recoverCatching { error ->
-                if (error is ApiException) throw error
+                if (error is CancellationException || error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not update sessions.", error)
             }
         }
@@ -599,7 +640,7 @@ class SessionsController(
                     archived = archived,
                 ).session.toAgentSession(devices.associateBy { it.id })
             }.recoverCatching { error ->
-                if (error is ApiException) throw error
+                if (error is CancellationException || error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not update this session.", error)
             }
         }
@@ -621,8 +662,8 @@ class SessionsController(
                 session.toAgentSession(devicesById)
             }
         val sessions = allSessions
-            .filterNot { it.archived }
-        val archivedSessions = allSessions.filter { it.archived }
+            .filterNot { it.archived }.sortedWith(sessionListComparator())
+        val archivedSessions = allSessions.filter { it.archived }.sortedWith(archivedSessionComparator())
         val devices = devicesById.values.sortedBy { it.name.lowercase() }
 
         return SessionsState(
@@ -693,7 +734,7 @@ class SessionsController(
 
     private fun <T> Result<T>.wrapNewSessionFailure(fallbackMessage: String): Result<T> {
         return recoverCatching { error ->
-            if (error is ApiException) throw error
+            if (error is CancellationException || error is ApiException) throw error
             throw IllegalStateException(error.message ?: fallbackMessage, error)
         }
     }
@@ -706,7 +747,7 @@ class SessionsController(
 
 internal fun validateNewSessionDraft(draft: NewSessionCreateDraft): String? {
     if (draft.connectorId.isBlank()) return "Choose a connector before starting."
-    if (draft.projectId.isBlank()) return "Choose a project before starting."
+    if (draft.cwd.isNullOrBlank()) return "Choose a workspace before starting."
     if (!draft.runtimeType.isValidRuntimeType() || draft.runtime != draft.runtimeType) {
         return "Choose a valid runtime type before starting."
     }

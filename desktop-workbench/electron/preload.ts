@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { DesktopUpdateState } from "../shared/desktop-updates";
 import type {
   ConnectorConfigPatch,
   ConnectorLogEntry,
@@ -37,6 +38,14 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
     node: process.versions.node,
   },
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("workbench:openExternal", url),
+  updates: {
+    syncSession: (serverUrl: string | null): Promise<DesktopUpdateState | null> => ipcRenderer.invoke("workbench:updates:syncSession", serverUrl),
+    getState: (): Promise<DesktopUpdateState | null> => ipcRenderer.invoke("workbench:updates:getState"),
+    open: (): Promise<DesktopUpdateState | null> => ipcRenderer.invoke("workbench:updates:open"),
+    ignore: (): Promise<DesktopUpdateState | null> => ipcRenderer.invoke("workbench:updates:ignore"),
+    download: (): Promise<DesktopUpdateState | null> => ipcRenderer.invoke("workbench:updates:download"),
+    onState: (callback: (state: DesktopUpdateState) => void): (() => void) => subscribe("workbench:updates:state", callback),
+  },
   auth: {
     getServer: (): Promise<DesktopServerConnection> => ipcRenderer.invoke("workbench:auth:getServer"),
     startOAuth: (input?: { serverUrl?: string }): Promise<DesktopOAuthStartResult> =>

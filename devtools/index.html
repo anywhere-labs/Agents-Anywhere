@@ -119,6 +119,7 @@
           <button type="button" data-target="server">↻ 重启后端</button>
           <button type="button" data-target="desktop">↻ 启动 / 重启 Desktop</button>
           <button type="button" class="primary" data-target="connector">↻ 启动 / 重启 Connector</button>
+          <button type="button" id="clear-desktop-installation">清除 Desktop 安装记录</button>
         </div>
         <div class="message" id="message" aria-live="polite">就绪</div>
       </div>
@@ -134,6 +135,7 @@
       const androidOauthUrl = document.querySelector("#android-oauth-url");
       const copyAndroidOauth = document.querySelector("#copy-android-oauth");
       const ownerNotice = document.querySelector("#owner-notice");
+      const clearDesktopInstallation = document.querySelector("#clear-desktop-installation");
       let localUpOwned = false;
 
       function renderStatus(status) {
@@ -219,6 +221,27 @@
 
       buttons.forEach((button) => {
         button.addEventListener("click", () => restart(button.dataset.target));
+      });
+      clearDesktopInstallation.addEventListener("click", async () => {
+        clearDesktopInstallation.disabled = true;
+        message.className = "message";
+        message.textContent = "正在清除 Desktop 安装记录…";
+        try {
+          const response = await fetch("/api/desktop/clear-installation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          });
+          const result = await response.json();
+          if (!response.ok || !result.ok) throw new Error(result.error || "清除失败");
+          message.className = "message success";
+          message.textContent = "已清除安装记录，设备 ID 已保留。重新打开插件即可测试；Desktop 下次启动会重新登记。";
+        } catch (error) {
+          message.className = "message error";
+          message.textContent = error instanceof Error ? error.message : "清除失败";
+        } finally {
+          clearDesktopInstallation.disabled = false;
+        }
       });
       copyAndroidOauth.addEventListener("click", async () => {
         const url = copyAndroidOauth.dataset.url;

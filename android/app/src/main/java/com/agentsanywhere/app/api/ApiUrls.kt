@@ -114,8 +114,8 @@ private fun legacyApiPath(path: String): String {
     }
 }
 
-private fun usesLocalNetworkHost(host: String): Boolean {
-    if (host == "localhost" || host.endsWith(".local")) return true
+internal fun usesLocalNetworkHost(host: String): Boolean {
+    if (host == "localhost" || host == "::1" || host == "[::1]" || host.endsWith(".local")) return true
     val parts = host.split('.')
     if (parts.size != 4) return false
     val octets = parts.map { it.toIntOrNull() ?: return false }

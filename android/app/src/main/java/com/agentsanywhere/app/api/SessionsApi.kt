@@ -29,11 +29,13 @@ class SessionsApi(
         name: String,
         connectorId: String,
         workspacePath: String,
+        manuallyCreated: Boolean = true,
     ): RemoteProjectCreateResponse {
         val body = JSONObject()
             .put("name", name)
             .put("connectorId", connectorId)
             .put("workspacePath", workspacePath)
+            .put("manuallyCreated", manuallyCreated)
         val response = client.postJson(
             serverUrl = serverUrl,
             path = "/projects",
@@ -724,6 +726,10 @@ class SessionsApi(
             workspacePath = getString("workspacePath"),
             pinned = optBoolean("pinned", false),
             pinnedAt = optNullableString("pinnedAt"),
+            manuallyCreated = optBoolean("manuallyCreated", false),
+            sidebarSessionCounts = optJSONObject("sidebarSessionCounts")?.let {
+                com.agentsanywhere.app.model.ProjectSessionCounts(it.optInt("active", 0), it.optInt("archived", 0))
+            },
             activeSessionCount = optInt("activeSessionCount", 0),
             lastActivityAt = optNullableString("lastActivityAt"),
             createdAt = optString("createdAt", ""),

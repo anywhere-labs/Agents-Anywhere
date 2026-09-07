@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,7 @@ def dsh_config_schema() -> dict[str, Any]:
                 "type": "string",
                 "minLength": 1,
                 "title": "DSH home",
-                "description": "Optional absolute DSH_HOME used by the running DSH Web process.",
+                "description": "Optional absolute DSH_HOME used by the running DSH plugin host.",
             },
             "startupTimeoutMs": {
                 **positive_timeout,
@@ -90,7 +91,11 @@ def normalized_config_values(raw: dict[str, Any]) -> dict[str, Any]:
 
 def dsh_home(values: dict[str, Any]) -> Path:
     configured = values.get("dshHome")
-    path = Path(configured) if isinstance(configured, str) else Path.home() / ".dsh"
+    path = (
+        Path(configured)
+        if isinstance(configured, str)
+        else Path(os.environ.get("DSH_HOME") or Path.home() / ".dsh")
+    )
     return Path(canonical_path(path))
 
 
@@ -100,20 +105,22 @@ def endpoint_path(values: dict[str, Any]) -> Path:
             dsh_home(values) / "agents-anywhere" / "bridge" / "endpoint.json"
         )
     )
+
+
 def dsh_capabilities() -> dict[str, bool]:
     return {
-        "modelCatalog": True,
-        "permissionCatalog": True,
+        "modelCatalog": False,
+        "permissionCatalog": False,
         "sessionDiscovery": True,
         "sessionSnapshot": True,
         "sessionState": True,
-        "sessionNotices": True,
-        "createAndStartSession": True,
-        "startTurn": True,
-        "steerTurn": True,
-        "interruptTurn": True,
-        "commands": True,
-        "interactions": True,
+        "sessionNotices": False,
+        "createAndStartSession": False,
+        "startTurn": False,
+        "steerTurn": False,
+        "interruptTurn": False,
+        "commands": False,
+        "interactions": False,
         "attachments": False,
         "ipc": True,
     }

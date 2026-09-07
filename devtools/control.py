@@ -128,6 +128,29 @@ def save_connector_credential(raw: str, path: Path = CONNECTOR_CONFIG) -> None:
             os.unlink(temporary_name)
 
 
+def clear_desktop_installation(path: Path | None = None) -> None:
+    path = path or Path.home() / ".agentsanywhere" / "machine.json"
+    exists = path.exists()
+    state = json.loads(path.read_text(encoding="utf-8")) if exists else {"version": 1}
+    if not isinstance(state, dict) or state.get("version") != 1:
+        raise DevControlError("本机共享记录格式无效，未作修改。")
+    if exists and "desktop" not in state:
+        return
+    state.pop("desktop", None)
+    # Keep connectorIds and other shared data. A record without desktop also
+    # prevents discovery from falling back to the legacy installation file.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(state, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+        os.replace(temporary_name, path)
+    finally:
+        if os.path.exists(temporary_name):
+            os.unlink(temporary_name)
+
+
 def _run(
     command: list[str],
     *,
@@ -916,7 +939,7 @@ class DevControlHandler(BaseHTTPRequestHandler):
         if not self._request_allowed(check_origin=True):
             self.send_error(HTTPStatus.FORBIDDEN)
             return
-        if self.path != "/api/restart":
+        if self.path not in {"/api/restart", "/api/desktop/clear-installation"}:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         try:
@@ -926,6 +949,11 @@ class DevControlHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length))
             if not isinstance(payload, dict):
                 raise DevControlError("Invalid request payload")
+            if self.path == "/api/desktop/clear-installation":
+                with _RESTART_LOCK:
+                    clear_desktop_installation()
+                self._send_json({"ok": True})
+                return
             target = payload.get("target")
             credential = payload.get("credential")
             if not isinstance(target, str):

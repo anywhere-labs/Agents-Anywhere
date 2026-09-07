@@ -26,6 +26,8 @@ import {
 } from "./desktop-oauth";
 import { DesktopBindingStore } from "./desktop-binding";
 import { DesktopDeviceService } from "./desktop-device-service";
+import { DesktopUpdateService } from "./desktop-updates";
+import { desktopInstallation, MachineStateStore } from "./machine-state";
 import { DesktopSettingsStore } from "./desktop-settings";
 import { ConnectorLogStore } from "./log-store";
 import { readShellEnvironment } from "./shell-environment";
@@ -36,6 +38,7 @@ import {
   checkDesktopServer,
   DesktopServerError,
   DesktopServerStore,
+  normalizeServerOrigin,
   resolveDesktopServer,
   type DesktopOAuthStartResult,
   type DesktopServerConnection,
@@ -80,6 +83,7 @@ let bindingStore: DesktopBindingStore | null = null;
 let logStore: ConnectorLogStore | null = null;
 let connector: ConnectorSupervisor | null = null;
 let devices: DesktopDeviceService | null = null;
+let updates: DesktopUpdateService | null = null;
 let isQuitting = false;
 let shutdownComplete = false;
 let shutdownPromise: Promise<void> | null = null;
@@ -456,12 +460,40 @@ function appendMainLog(entry: string | Partial<ConnectorLogEntry>): void {
   sendToRenderer("workbench:connector:log", normalized);
 }
 
+function syncDesktopUpdateSession(serverUrl: unknown) {
+  const saved = serverStore?.getSaved();
+  let connection: DesktopServerConnection | null = null;
+  if (saved && typeof serverUrl === "string" && serverUrl.trim()) {
+    try {
+      if (normalizeServerOrigin(serverUrl) === saved.serverUrl) connection = saved;
+    } catch {
+      // An incomplete or invalid session must never select a fallback server.
+    }
+  }
+  return updates?.check(connection) ?? null;
+}
+
 function registerIpcHandlers(): void {
   ipcMain.handle("workbench:window:setTitleBarColors", (event, input: unknown) => {
     assertTrustedRenderer(event);
     if (process.platform !== "win32" || event.sender !== mainWindow?.webContents) return;
     mainWindow.setTitleBarOverlay(validateTitleBarColors(input));
   });
+  ipcMain.handle("workbench:updates:syncSession", (event, serverUrl: unknown) => {
+    assertTrustedRenderer(event);
+    return syncDesktopUpdateSession(serverUrl);
+  });
+  for (const [method, action] of Object.entries({
+    getState: () => updates?.getState() ?? null,
+    open: () => updates?.showPrompt() ?? null,
+    ignore: () => updates?.ignoreVersion() ?? null,
+    download: () => updates?.download() ?? null,
+  })) {
+    ipcMain.handle(`workbench:updates:${method}`, (event) => {
+      assertTrustedRenderer(event);
+      return action();
+    });
+  }
   ipcMain.handle("workbench:openExternal", async (event, url: string) => {
     assertTrustedRenderer(event);
     if (!/^https?:\/\//i.test(url)) throw new Error("Only http(s) URLs can be opened externally.");
@@ -701,11 +733,20 @@ function requireLogs(): ConnectorLogStore {
 }
 
 async function initializeDesktopServices(): Promise<void> {
+  const machineState = new MachineStateStore();
   serverStore = new DesktopServerStore(path.join(app.getPath("userData"), "desktop-server.json"), activeDesktopServer());
   const dataPath = connectorDataPath();
   fs.mkdirSync(dataPath, { recursive: true, mode: 0o700 });
   settingsStore = new DesktopSettingsStore(desktopSettingsPath());
   logStore = new ConnectorLogStore(connectorLogsPath(), () => requireSettings().get());
+  try {
+    await machineState.recordInstallation(desktopInstallation({
+      executablePath: process.platform === "linux" && app.isPackaged && process.env.APPIMAGE ? process.env.APPIMAGE : process.execPath,
+      appPath: app.getAppPath(), packaged: app.isPackaged, platform: process.platform,
+    }));
+  } catch (error) {
+    appendMainLog({ level: "ERROR", message: `Could not record Desktop installation: ${errorMessage(error)}` });
+  }
   bindingStore = new DesktopBindingStore(path.join(dataPath, "desktop-binding.json"));
   const shellEnvironment = await readShellEnvironment();
   connector = new ConnectorSupervisor({
@@ -733,6 +774,8 @@ async function initializeDesktopServices(): Promise<void> {
     fetcher: (input, init) => net.fetch(String(input), init),
     defaultServerUrl: apiOrigin,
     apiNamespace,
+    readLocalConnectorIds: () => machineState.readConnectorIds(),
+    recordLocalConnector: (connectorId) => machineState.recordConnectorId(connectorId),
   });
   applyLoginItemSettings();
 }
@@ -771,6 +814,7 @@ async function requestQuit({ confirm = false }: { confirm?: boolean } = {}): Pro
   isQuitting = true;
   shutdownPromise = (async () => {
     try {
+      updates?.dispose();
       quiesceRendererForShutdown();
       await connector?.shutdown();
     } finally {
@@ -805,6 +849,20 @@ if (hasSingleInstanceLock) {
     Menu.setApplicationMenu(null);
     registerStaticWebProtocol();
     await initializeDesktopServices();
+    updates = new DesktopUpdateService({
+      directory: path.join(app.getPath("userData"), "updates"),
+      currentVersion: app.getVersion(),
+      downloadUrl: config.updates.downloadUrl,
+      platform: process.platform,
+      healthTimeoutMs: config.healthTimeoutMs,
+      fetcher: (input, init) => net.fetch(String(input), init),
+      openInstaller: async (filePath) => {
+        if (process.platform === "linux") await fs.promises.chmod(filePath, 0o700);
+        const error = await shell.openPath(filePath);
+        if (error) throw new Error(error);
+      },
+      onState: (state) => sendToRenderer("workbench:updates:state", state),
+    });
     const settings = requireSettings().get();
     const showOnLaunch = !settings.silentLaunch || !launchedAsLoginItem() || Boolean(process.env.WORKBENCH_WEB_URL);
     createMainWindow(showOnLaunch);

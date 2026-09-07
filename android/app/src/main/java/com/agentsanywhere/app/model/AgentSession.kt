@@ -27,6 +27,8 @@ data class AgentSession(
     val runtimeId: String = runtime,
     val runtimeType: String = runtime,
     val runtimeName: String = runtimeLabel,
+    val archivedAt: String? = null,
+    val optimisticTopUntil: Long = 0L,
 ) {
     val runtimeLabels: RuntimeInstanceLabels
         get() = runtimeInstanceLabels(runtimeName, runtimeType)

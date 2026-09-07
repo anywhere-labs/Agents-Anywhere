@@ -122,7 +122,7 @@ internal fun HomeList(
             onButtonClick = onPairDevice,
             contentOffsetY = (-32).dp,
         )
-        sessions.isEmpty() && !hasAnySessions -> AppEmptyState(
+        sessions.isEmpty() && (tab == HomeTab.Active || !hasAnySessions) -> AppEmptyState(
             message = stringResource(if (tab == HomeTab.Active) R.string.home_no_active_sessions_create else R.string.home_no_archived_sessions_yet),
             buttonLabel = stringResource(R.string.home_create_new_session),
             buttonIcon = Lucide.Plus,
@@ -242,8 +242,8 @@ private fun SessionList(
     onSessionLongPress: (AgentSession, Rect) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
 ) {
-    var pinnedExpanded by remember(sessions) { mutableStateOf(true) }
-    var recentExpanded by remember(sessions) { mutableStateOf(true) }
+    var pinnedExpanded by remember { mutableStateOf(true) }
+    var recentExpanded by remember { mutableStateOf(true) }
     val pinned = remember(sessions) { SessionsState(sessions = sessions).pinnedSessions }
     val recent = remember(sessions) { SessionsState(sessions = sessions).recentSessions }
     val listState = rememberLazyListState()

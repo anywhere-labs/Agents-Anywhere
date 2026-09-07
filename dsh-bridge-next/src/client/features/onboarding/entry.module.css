@@ -1,0 +1,81 @@
+.trigger {
+  display: flex;
+  width: calc(100% + 4px);
+  margin: 4px -2px;
+  min-width: 0;
+}
+
+.trigger .button {
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  height: 42px;
+  padding: 0 10px 0 8px;
+  border-radius: 12px;
+  font: var(--dsw-font-s-14);
+}
+
+.rail {
+  width: 36px;
+  margin: 8px 0 10px;
+}
+
+.rail .button {
+  justify-content: center;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dialog {
+  width: min(640px, 100%);
+  max-height: calc(100dvh - 48px);
+}
+
+.accountDialog { width: min(480px, 100%); }
+
+.placeholder {
+  margin: 0;
+  padding: 20px 0;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-s-14);
+}
+
+.dialogContent {
+  box-sizing: border-box;
+  min-height: 0;
+  padding: 16px 16px 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.dialog h2 {
+  min-width: 0;
+  font: var(--dsw-font-xl-24);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
+}
+
+.dialogContent > p {
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-s-14);
+}
+
+.trigger :focus-visible,
+.dialog button:focus-visible,
+.dialog a:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 3px;
+}
+
+@media (max-width: 480px) {
+  .dialogContent { padding: 8px 0; }
+  .dialog h2 { font: var(--dsw-font-l-20); font-weight: 600; }
+}

@@ -31,7 +31,7 @@ class BridgeRpcError(RuntimeError):
 
 
 class BridgeClient:
-    """Connect to one authenticated DSH Web bridge endpoint."""
+    """Connect to one authenticated DSH plugin endpoint."""
 
     def __init__(
         self,
@@ -43,9 +43,11 @@ class BridgeClient:
         request_timeout: float,
         notification_handler: NotificationHandler,
         exit_handler: ExitHandler,
+        session_namespace: str | None = None,
     ) -> None:
         self.endpoint = endpoint
         self.connector_id = connector_id
+        self.session_namespace = session_namespace or connector_id
         self.client_version = client_version
         self.startup_timeout = startup_timeout
         self.request_timeout = request_timeout
@@ -61,6 +63,16 @@ class BridgeClient:
         self._notification_tasks: set[asyncio.Task[None]] = set()
         self._early_notifications: list[tuple[str, dict[str, Any]]] = []
         self._closing = False
+
+    @property
+    def connected(self) -> bool:
+        return (
+            not self._closing
+            and self.writer is not None
+            and not self.writer.is_closing()
+            and self._reader_task is not None
+            and not self._reader_task.done()
+        )
 
     async def start(self) -> dict[str, Any]:
         if self.writer is not None:
@@ -88,6 +100,7 @@ class BridgeClient:
                     "protocolVersion": "1.0",
                     "runtime": "dsh",
                     "connectorId": self.connector_id,
+                    "sessionNamespace": self.session_namespace,
                     "clientInfo": {
                         "name": "agents-anywhere-connector",
                         "version": self.client_version,
@@ -219,6 +232,8 @@ class BridgeClient:
             if writer is not None:
                 writer.close()
         finally:
+            if self.writer is not None:
+                self.writer.close()
             for future in tuple(self._pending.values()):
                 if not future.done():
                     future.set_exception(RuntimeError("DSH bridge connection closed"))

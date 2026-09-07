@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -152,11 +153,16 @@ class SessionRealtimeController(
                     refreshRuntime()
                 }
                 for (firstMessage in incoming) {
+                    // One fixed window from the first event; new messages never
+                    // postpone the flush. The reducer merges complete item revisions.
+                    val flushDeadline = System.nanoTime() + EVENT_BATCH_WINDOW_MILLIS * 1_000_000L
                     val batch = mutableListOf<RemoteSessionEventEnvelope>()
                     transport.parseSessionMessage(firstMessage)?.let(batch::add)
                     var timelineEvents = batch.count(RemoteSessionEventEnvelope::isTimelineUpsert)
                     while (timelineEvents < MAX_TIMELINE_EVENT_BATCH_SIZE && batch.size < MAX_WIRE_EVENT_BATCH_SIZE) {
-                        val message = withTimeoutOrNull(EVENT_BATCH_WINDOW_MILLIS) {
+                        val remaining = remainingBatchMillis(flushDeadline)
+                        if (remaining == 0L) break
+                        val message = withTimeoutOrNull(remaining) {
                             incoming.receiveCatching().getOrNull()
                         } ?: break
                         transport.parseSessionMessage(message)?.let { event ->
@@ -164,6 +170,8 @@ class SessionRealtimeController(
                             if (event.isTimelineUpsert()) timelineEvents += 1
                         }
                     }
+                    // A size-limited batch must not bypass the 30 Hz cadence.
+                    delay(remainingBatchMillis(flushDeadline))
                     if (batch.isEmpty()) continue
                     if (!isCurrentConnection(connectionGeneration)) break
                     batch.forEach { event ->
@@ -252,9 +260,12 @@ class SessionRealtimeController(
         const val MAX_RECOVERY_PAGES = 8
         const val MAX_TIMELINE_EVENT_BATCH_SIZE = 100
         const val MAX_WIRE_EVENT_BATCH_SIZE = 128
-        const val EVENT_BATCH_WINDOW_MILLIS = 8L
+        const val EVENT_BATCH_WINDOW_MILLIS = 34L
     }
 }
 
 private fun RemoteSessionEventEnvelope.isTimelineUpsert(): Boolean =
     type == "timeline.item_created" || type == "timeline.item_updated"
+
+private fun remainingBatchMillis(deadline: Long): Long =
+    ((deadline - System.nanoTime() + 999_999L) / 1_000_000L).coerceAtLeast(0L)

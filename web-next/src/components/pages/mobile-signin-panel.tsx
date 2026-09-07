@@ -23,7 +23,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -35,6 +34,7 @@ import type {
   MobileLoginStatusResponse,
 } from "@/features/auth/types"
 import { cn } from "@/lib/utils"
+import { PRODUCT_LINKS } from "@/lib/product-links"
 
 type Props = {
   token: string
@@ -45,9 +45,6 @@ type Props = {
 type Stage = "install" | "generating" | "scan" | "confirming"
 
 const POLL_INTERVAL_MS = 1600
-const ANDROID_APP_DOWNLOAD_URL = "https://github.com/anywhere-labs/Agents-Anywhere/releases/latest"
-// TODO: Replace this placeholder when the iOS App Store listing is available.
-const IOS_APP_DOWNLOAD_URL = "https://apps.apple.com/app/agents-anywhere/id0000000000"
 
 function formatExpiry(value: string): string {
   const date = new Date(value)
@@ -80,14 +77,37 @@ function mobileLoginQrPayload(qr: MobileLoginQrCreateResponse) {
 }
 
 export function MobileConnectionDialog({ token, userId, children }: Props) {
+  const [open, setOpen] = React.useState(false)
+  const [busy, setBusy] = React.useState(false)
+  return <Dialog open={open} onOpenChange={(next) => { if (!busy) setOpen(next) }}>
+    <DialogTrigger asChild>{children}</DialogTrigger>
+    <DialogContent className="sm:max-w-lg" showCloseButton={!busy}
+      onEscapeKeyDown={(event) => { if (busy) event.preventDefault() }}
+      onPointerDownOutside={(event) => { if (busy) event.preventDefault() }}>
+      <DialogHeader className="sr-only"><DialogTitle>连接手机</DialogTitle><DialogDescription>下载手机客户端并扫码登录。</DialogDescription></DialogHeader>
+      {open ? <MobileConnectionContent token={token} userId={userId}
+        onComplete={() => setOpen(false)} onCancel={() => setOpen(false)} onBusyChange={setBusy} /> : null}
+    </DialogContent>
+  </Dialog>
+}
+
+export function MobileConnectionContent({ token, userId, onComplete, onCancel, onBusyChange, onStepChange }: {
+  token: string
+  userId: string
+  onComplete: () => void
+  onCancel: () => void
+  onBusyChange?: (busy: boolean) => void
+  onStepChange?: (step: 'install' | 'scan') => void
+}) {
   const t = useTranslations("dashboard.mobileConnections")
   const tCommon = useTranslations("common")
-  const [open, setOpen] = React.useState(false)
   const [stage, setStage] = React.useState<Stage>("install")
   const [error, setError] = React.useState<string | null>(null)
   const [qrLogin, setQrLogin] = React.useState<MobileLoginQrCreateResponse | null>(null)
   const [qrStatus, setQrStatus] = React.useState<MobileLoginStatusResponse | null>(null)
   const [qrImage, setQrImage] = React.useState<string | null>(null)
+  const generation = React.useRef(0)
+  const operationPending = React.useRef(false)
 
   const clearQr = React.useCallback(() => {
     setError(null)
@@ -102,57 +122,71 @@ export function MobileConnectionDialog({ token, userId, children }: Props) {
   }, [clearQr])
 
   React.useEffect(() => {
-    setOpen(false)
+    generation.current++
     reset()
-  }, [reset, userId])
+    return () => { generation.current++ }
+  }, [reset, token, userId])
 
   const generateQr = React.useCallback(async () => {
+    if (operationPending.current) return
     if (!token) {
       setError(t("accountUnavailable"))
       setStage("scan")
       return
     }
 
+    operationPending.current = true
+    const current = generation.current
     setStage("generating")
     clearQr()
 
     try {
       const qr = await authApi.createMobileLoginQr(token)
+      if (current !== generation.current) return
       const image = await QRCode.toDataURL(JSON.stringify(mobileLoginQrPayload(qr)), {
         errorCorrectionLevel: "M",
         margin: 1,
         width: 260,
         color: { dark: "#111111", light: "#ffffff" },
       })
+      if (current !== generation.current) return
       setQrLogin(qr)
       setQrImage(image)
       setStage("scan")
     } catch (err) {
+      if (current !== generation.current) return
       setError(err instanceof Error ? err.message : t("generateFailed"))
       setStage("scan")
+    } finally {
+      operationPending.current = false
     }
   }, [clearQr, t, token])
 
   const confirmQrLogin = React.useCallback(async (approved: boolean) => {
-    if (!qrLogin) return
+    if (!qrLogin || operationPending.current) return
+    operationPending.current = true
+    const current = generation.current
 
     setStage("confirming")
     setError(null)
 
     try {
       const status = await authApi.confirmMobileLogin(token, qrLogin.loginToken, approved)
+      if (current !== generation.current) return
       setQrStatus(status)
       setStage("scan")
     } catch (err) {
+      if (current !== generation.current) return
       setError(err instanceof Error ? err.message : t("confirmFailed"))
       setStage("scan")
+    } finally {
+      operationPending.current = false
     }
   }, [qrLogin, t, token])
 
   const status = qrStatus?.status
   const shouldPoll = Boolean(
-    open
-      && qrLogin
+    qrLogin
       && stage === "scan"
       && (!status || status === "pending_scan" || status === "pending_web_confirm" || status === "approved"),
   )
@@ -161,6 +195,7 @@ export function MobileConnectionDialog({ token, userId, children }: Props) {
     if (!shouldPoll || !qrLogin) return
 
     let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
     const poll = async () => {
       try {
         const nextStatus = await authApi.mobileLoginStatus(token, qrLogin.loginToken)
@@ -168,29 +203,23 @@ export function MobileConnectionDialog({ token, userId, children }: Props) {
       } catch {
         // A transient polling failure should not interrupt the connection flow.
       }
+      if (!cancelled) timer = setTimeout(() => void poll(), POLL_INTERVAL_MS)
     }
 
     void poll()
-    const timer = window.setInterval(poll, POLL_INTERVAL_MS)
     return () => {
       cancelled = true
-      window.clearInterval(timer)
+      clearTimeout(timer)
     }
   }, [qrLogin, shouldPoll, token])
 
   const busy = stage === "generating" || stage === "confirming"
   const currentStep = stage === "install" ? 1 : 2
 
-  const handleOpenChange = (nextOpen: boolean) => {
-    if (!nextOpen && busy) return
-    reset()
-    setOpen(nextOpen)
-  }
+  React.useEffect(() => { onBusyChange?.(busy) }, [busy, onBusyChange])
+  React.useEffect(() => { onStepChange?.(stage === 'install' ? 'install' : 'scan') }, [stage, onStepChange])
 
-  const handleExit = () => {
-    reset()
-    setOpen(false)
-  }
+  const handleExit = () => { reset(); onCancel() }
 
   const returnToInstall = () => {
     clearQr()
@@ -198,46 +227,30 @@ export function MobileConnectionDialog({ token, userId, children }: Props) {
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger asChild>{children}</DialogTrigger>
-      <DialogContent
-        className="sm:max-w-lg"
-        showCloseButton={!busy}
-        onEscapeKeyDown={(event) => {
-          if (busy) event.preventDefault()
-        }}
-        onPointerDownOutside={(event) => {
-          if (busy) event.preventDefault()
-        }}
-      >
-        <DialogHeader>
-          <div className="flex items-center justify-between gap-4 pr-8">
-            <DialogTitle>{stage === "install" ? t("installTitle") : t("scanTitle")}</DialogTitle>
-            <span className="shrink-0 text-xs font-medium text-muted-foreground">
-              {t("stepProgress", { current: currentStep, total: 2 })}
-            </span>
-          </div>
-          <Progress className="mt-2" value={currentStep * 50} />
-        </DialogHeader>
-
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-xl font-semibold">{stage === "install" ? t("installTitle") : t("scanTitle")}</h2>
+          <span className="text-xs text-muted-foreground">{t("stepProgress", { current: currentStep, total: 2 })}</span>
+        </div>
+        <Progress value={currentStep * 50} />
+      </div>
         {stage === "install" ? (
           <div className="flex min-h-64 flex-col items-center justify-center gap-6 py-4 text-center">
             <p className="text-base font-medium">{t("downloadPrompt")}</p>
             <div className="flex flex-wrap items-center justify-center gap-3">
               <Button type="button" variant="outline" size="lg" className="min-w-36" asChild>
-                <a href={ANDROID_APP_DOWNLOAD_URL} target="_blank" rel="noreferrer">
+                <a href={PRODUCT_LINKS.androidDownloadUrl} target="_blank" rel="noreferrer">
                   <Smartphone data-icon="inline-start" />
                   {t("androidDownloadOption")}
                   <ExternalLink data-icon="inline-end" />
                 </a>
               </Button>
-              <Button type="button" variant="outline" size="lg" className="min-w-36" asChild>
-                <a href={IOS_APP_DOWNLOAD_URL} target="_blank" rel="noreferrer">
-                  <Apple data-icon="inline-start" />
-                  {t("iosDownloadOption")}
-                  <ExternalLink data-icon="inline-end" />
+              {PRODUCT_LINKS.iosDownloadUrl ? <Button type="button" variant="outline" size="lg" className="min-w-36" asChild>
+                <a href={PRODUCT_LINKS.iosDownloadUrl} target="_blank" rel="noreferrer">
+                  <Apple data-icon="inline-start" />{t("iosDownloadOption")}<ExternalLink data-icon="inline-end" />
                 </a>
-              </Button>
+              </Button> : <Button type="button" variant="outline" size="lg" disabled><Apple data-icon="inline-start" />iOS 即将上线</Button>}
             </div>
           </div>
         ) : null}
@@ -309,10 +322,10 @@ export function MobileConnectionDialog({ token, userId, children }: Props) {
               />
             ) : qrImage ? (
               <div className="flex flex-col items-center gap-4">
-                <DialogDescription className="flex max-w-md items-start gap-2 text-left">
+                <p className="flex max-w-md items-start gap-2 text-left text-sm text-muted-foreground">
                   <Info className="mt-0.5 size-4 shrink-0" />
                   <span>{t("scanInstruction")}</span>
-                </DialogDescription>
+                </p>
                 <div className="rounded-2xl border border-border bg-white p-3 shadow-sm">
                   <img
                     src={qrImage}
@@ -336,7 +349,7 @@ export function MobileConnectionDialog({ token, userId, children }: Props) {
           </div>
         ) : null}
 
-        <DialogFooter>
+        <div className="flex flex-wrap justify-end gap-3">
           {stage === "install" ? (
             <>
               <Button type="button" variant="ghost" onClick={handleExit}>
@@ -367,7 +380,7 @@ export function MobileConnectionDialog({ token, userId, children }: Props) {
           ) : null}
 
           {stage === "scan" && status === "consumed" ? (
-            <Button type="button" onClick={handleExit}>
+            <Button type="button" onClick={onComplete}>
               <CheckCircle2 data-icon="inline-start" />
               {tCommon("done")}
             </Button>
@@ -390,9 +403,8 @@ export function MobileConnectionDialog({ token, userId, children }: Props) {
               {status === "approved" ? tCommon("close") : tCommon("back")}
             </Button>
           ) : null}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </div>
+    </div>
   )
 }
 

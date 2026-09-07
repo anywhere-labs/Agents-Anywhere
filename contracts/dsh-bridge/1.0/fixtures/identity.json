@@ -59,22 +59,53 @@
       "type": "message",
       "status": "done",
       "role": "user",
-      "content": { "kind": "text", "text": "你好" },
+      "content": {
+        "kind": "text",
+        "text": "你好"
+      },
       "contentHash": "sha256:9112741bd982a4d18053b204c84004945f09bbb20f73e3d62177f88bb75e9ac4"
     },
     {
       "type": "tool",
       "status": "done",
       "role": "tool",
-      "content": { "kind": "tool_call", "title": "检查", "input": { "b": 2, "a": 1 } },
+      "content": {
+        "kind": "tool_call",
+        "title": "检查",
+        "input": {
+          "b": 2,
+          "a": 1
+        }
+      },
       "contentHash": "sha256:1f4185aee56555e268528c9bddc079b76a41cf0561b8f95782280c7a96f2105e"
     },
     {
       "type": "system",
       "status": "interrupted",
       "role": "system",
-      "content": { "kind": "turn_end", "message": "stopped" },
+      "content": {
+        "kind": "turn_end",
+        "message": "stopped"
+      },
       "contentHash": "sha256:6ad17d3dcf93f19535929fb19586b82d941fa79cfed0d4e32952341da1b4aed5"
+    },
+    {
+      "type": "tool",
+      "status": "done",
+      "role": "assistant",
+      "content": {
+        "kind": "tool_call",
+        "input": {
+          "中文": "😀",
+          "😀": 1,
+          "": 2,
+          "ratio": 3.3e-05,
+          "small": 1e-07,
+          "large": 1e+21,
+          "zero": 0
+        }
+      },
+      "contentHash": "sha256:88292dbadb4aa71d6ee560e84d63795216024853fa321d0294ae7f521e0c9c64"
     }
   ]
 }

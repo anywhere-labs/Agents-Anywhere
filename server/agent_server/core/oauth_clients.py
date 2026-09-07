@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 
 @dataclass(frozen=True)
@@ -8,6 +9,14 @@ class FirstPartyOAuthClient:
     client_id: str
     name: str
     redirect_uri: str
+
+    def allows_redirect(self, uri: str) -> bool:
+        if self.client_id != "agents-anywhere-dsh-plugin":
+            return uri == self.redirect_uri
+        # Native loopback ports are allocated by the OS. Keep the host, path
+        # and scheme exact; no credentials, queries, fragments or DNS names.
+        match = re.fullmatch(r"http://127\.0\.0\.1:([1-9][0-9]{0,4})/oauth/callback", uri)
+        return match is not None and 1024 <= int(match[1]) <= 65535
 
 
 MOBILE_OAUTH_CLIENT = FirstPartyOAuthClient(
@@ -22,9 +31,15 @@ DESKTOP_OAUTH_CLIENT = FirstPartyOAuthClient(
     redirect_uri="agents-anywhere-desktop://oauth/callback",
 )
 
+DSH_PLUGIN_OAUTH_CLIENT = FirstPartyOAuthClient(
+    client_id="agents-anywhere-dsh-plugin",
+    name="Agents Anywhere DSH Plugin",
+    redirect_uri="http://127.0.0.1:{port}/oauth/callback",
+)
+
 FIRST_PARTY_OAUTH_CLIENTS = {
     client.client_id: client
-    for client in (MOBILE_OAUTH_CLIENT, DESKTOP_OAUTH_CLIENT)
+    for client in (MOBILE_OAUTH_CLIENT, DESKTOP_OAUTH_CLIENT, DSH_PLUGIN_OAUTH_CLIENT)
 }
 
 

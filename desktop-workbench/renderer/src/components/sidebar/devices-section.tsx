@@ -3,6 +3,7 @@
 import * as React from "react"
 import { Plus } from "lucide-react"
 import { DeviceSidebarItem } from "@/components/sidebar/device-sidebar-item"
+import { sortDevicesByName } from "@/components/sidebar/device-list-order"
 import { SidebarLoadingItem } from "@/components/sidebar/sidebar-loading-item"
 import { SidebarSectionTrigger } from "@/components/sidebar/sidebar-section-trigger"
 import {
@@ -40,6 +41,7 @@ export function DevicesSection({
 }: DevicesSectionProps) {
   const t = useTranslations("dashboard")
   const [expanded, setExpanded] = React.useState(true)
+  const orderedConnectors = React.useMemo(() => sortDevicesByName(connectors), [connectors])
 
   return (
     <SidebarGroup>
@@ -63,7 +65,7 @@ export function DevicesSection({
               ) : connectors.length === 0 ? (
                 <p className="px-3 py-2 text-xs text-muted-foreground">{t("empty.noDevicesShort")}</p>
               ) : (
-                connectors.map((connector) => (
+                orderedConnectors.map((connector) => (
                   <DeviceSidebarItem
                     key={connector.id}
                     connector={connector}

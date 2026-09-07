@@ -16,5 +16,7 @@ internal fun RemoteProject.toAgentProject(): AgentProject {
         lastActivityAt = lastActivityAt,
         createdAt = createdAt,
         updatedAt = updatedAt,
+        manuallyCreated = manuallyCreated,
+        sidebarSessionCounts = sidebarSessionCounts,
     )
 }

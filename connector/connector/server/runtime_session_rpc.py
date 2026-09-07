@@ -30,7 +30,8 @@ async def discover_sessions(
         cursor=parsed.cursor,
         force=parsed.force,
     )
-    for session in sessions:
+    # Event runtimes own metadata ordering in their baseline/live stream.
+    for session in sessions if runtime.sync_mode != "events" else ():
         await host.session_meta_upsert(
             session_id=session.session_id,
             runtime=session.runtime,
@@ -60,6 +61,10 @@ async def sync_session_snapshot(
     params: dict[str, Any],
 ) -> dict[str, Any]:
     parsed = SessionReadParams.parse(params)
+    if runtime.sync_mode == "events":
+        await runtime.resynchronize(parsed.session_id, parsed.external_session_id)
+        return {"sessionId": parsed.session_id, "externalSessionId": parsed.external_session_id,
+                "items": 0, "complete": False, "pending": True}
     started_at = time.monotonic()
     snapshot = await runtime.get_session_snapshot(
         parsed.session_id,

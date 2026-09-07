@@ -1,3 +1,6 @@
+import type { DesktopUpdateState } from "../../../../shared/desktop-updates"
+export type { DesktopUpdateState } from "../../../../shared/desktop-updates"
+
 export type DesktopConnectorStatus =
   | "unconfigured"
   | "stopped"
@@ -114,6 +117,14 @@ export type DesktopWorkbenchBridge = {
     node: string
   }
   openExternal: (url: string) => Promise<void>
+  updates?: {
+    syncSession: (serverUrl: string | null) => Promise<DesktopUpdateState | null>
+    getState: () => Promise<DesktopUpdateState | null>
+    open: () => Promise<DesktopUpdateState | null>
+    ignore: () => Promise<DesktopUpdateState | null>
+    download: () => Promise<DesktopUpdateState | null>
+    onState: (listener: (state: DesktopUpdateState) => void) => () => void
+  }
   auth?: {
     getServer: () => Promise<DesktopServerConnection>
     startOAuth: (input?: { serverUrl?: string }) => Promise<

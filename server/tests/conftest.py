@@ -20,7 +20,6 @@ _API_ROOTS = (
     "/admin",
     "/agents",
     "/auth",
-    "/client-releases",
     "/connector",
     "/connectors",
     "/dashboard",
@@ -32,7 +31,7 @@ _API_ROOTS = (
     "/ws-ticket",
 )
 _TRUNCATE_SQL = (
-    "TRUNCATE TABLE email_verification_codes, email_verification_limits, app_releases, dashboard_daily_metrics, dashboard_user_daily_facts, dashboard_settings, "
+    "TRUNCATE TABLE email_verification_codes, email_verification_limits, dashboard_daily_metrics, dashboard_user_daily_facts, dashboard_settings, "
     "session_shares, timeline_items, session_active_runs, "
     "sessions, projects, "
     "connector_runtime_catalogs, connector_protocol_capabilities, device_runtimes, "

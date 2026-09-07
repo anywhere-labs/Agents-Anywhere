@@ -5,6 +5,9 @@
   },
   "apiNamespace": "/api/v2",
   "healthTimeoutMs": 10000,
+  "updates": {
+    "downloadUrl": "https://downloads.example.invalid/agents-anywhere-desktop"
+  },
   "oauth": {
     "protocol": "agents-anywhere-desktop",
     "clientId": "agents-anywhere-desktop",

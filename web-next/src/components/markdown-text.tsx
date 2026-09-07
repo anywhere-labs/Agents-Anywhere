@@ -58,42 +58,48 @@ function MarkdownBody({
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkGitDirectiveBadges]}
         components={{
-          code({ className, children, ...props }) {
-            const match = /language-(\w+)/.exec(className ?? "")
-            const code = String(children).replace(/\n$/, "")
-            if (!match) {
-              const previewPath = typeof children === "string" ? parseInlineFileRef(children) : null
-              if (previewPath && token && session) {
-                return (
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    className="inline-flex max-w-full items-baseline gap-0.5 rounded-none bg-transparent p-0 align-baseline text-[1em] text-inherit underline underline-offset-2 hover:text-foreground"
-                    onClick={() => openSessionFilePreview(token, session, previewPath, openFilePreview)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        openSessionFilePreview(token, session, previewPath, openFilePreview)
-                      }
-                    }}
-                  >
-                    <span className="min-w-0 truncate">{children}</span>
-                    <ExternalLink className="relative -top-0.5 size-3 shrink-0" />
-                  </span>
-                )
-              }
+          pre({ node, children, ...props }) {
+            const block = node?.children[0]
+            if (block?.type !== "element" || block.tagName !== "code") {
+              return <pre {...props}>{children}</pre>
+            }
+            const classes = block.properties.className
+            const language = (Array.isArray(classes) ? classes.map(String) : String(classes ?? "").split(/\s+/))
+              .find((name) => name.startsWith("language-"))?.slice(9) || "text"
+            const code = block.children.map((child) => child.type === "text" ? child.value : "").join("").replace(/\n$/, "")
+            return <MarkdownCodeBlock code={code} language={language} />
+          },
+          code({ className, children, node: _node, ...props }) {
+            const previewPath = typeof children === "string" ? parseInlineFileRef(children) : null
+            if (previewPath && token && session) {
               return (
-                <code
-                  className={cn(
-                    className,
-                    "rounded-md bg-secondary px-1.5 py-0.5 text-secondary-foreground",
-                  )}
-                  {...props}
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="inline-flex max-w-full items-baseline gap-0.5 rounded-none bg-transparent p-0 align-baseline text-[1em] text-inherit underline underline-offset-2 hover:text-foreground"
+                  onClick={() => openSessionFilePreview(token, session, previewPath, openFilePreview)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      openSessionFilePreview(token, session, previewPath, openFilePreview)
+                    }
+                  }}
                 >
-                  {children}
-                </code>
+                  <span className="min-w-0 truncate">{children}</span>
+                  <ExternalLink className="relative -top-0.5 size-3 shrink-0" />
+                </span>
               )
             }
-            return <MarkdownCodeBlock code={code} language={match[1] ?? "text"} />
+            return (
+              <code
+                className={cn(
+                  className,
+                  "rounded-md bg-secondary px-1.5 py-0.5 text-secondary-foreground",
+                )}
+                {...props}
+              >
+                {children}
+              </code>
+            )
           },
           a({ href, children, node: _node, ...props }) {
             const childText = textFromReactChildren(children)

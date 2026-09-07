@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { normalizeServerOrigin, resolveDesktopServer, type DesktopServerConnection } from "./desktop-server";
 
 // Execute the actual Main entrypoint functions without loading Electron or
 // starting a Connector. Any new shutdown side effects must be accounted for.
@@ -34,6 +35,7 @@ function quitFixture(options: { confirm?: boolean; shutdown?: () => Promise<void
       destroy: () => calls.push("destroy-renderer"),
     },
     connector: { shutdown: async () => { calls.push("stop-local-connector"); await options.shutdown?.(); } },
+    updates: { dispose: () => calls.push("stop-updates") },
     app: { quit: () => calls.push("quit") },
     net: { fetch: () => assert.fail("Desktop quit must not close or renew terminals through the API") },
   };
@@ -46,7 +48,7 @@ function quitFixture(options: { confirm?: boolean; shutdown?: () => Promise<void
 test("quit stops the owned local Connector without closing or renewing remote terminals", async () => {
   const fixture = quitFixture();
   await fixture.requestQuit();
-  assert.deepEqual(fixture.calls, ["destroy-renderer", "stop-local-connector", "quit"]);
+  assert.deepEqual(fixture.calls, ["stop-updates", "destroy-renderer", "stop-local-connector", "quit"]);
   assert.equal(fixture.globals.shutdownComplete, true);
 });
 
@@ -56,10 +58,10 @@ test("repeated quit requests wait for the same local Connector shutdown", async 
   const fixture = quitFixture({ shutdown: () => pending });
   const first = fixture.requestQuit();
   const second = fixture.requestQuit();
-  assert.deepEqual(fixture.calls, ["destroy-renderer", "stop-local-connector"]);
+  assert.deepEqual(fixture.calls, ["stop-updates", "destroy-renderer", "stop-local-connector"]);
   finish();
   await Promise.all([first, second]);
-  assert.deepEqual(fixture.calls, ["destroy-renderer", "stop-local-connector", "quit"]);
+  assert.deepEqual(fixture.calls, ["stop-updates", "destroy-renderer", "stop-local-connector", "quit"]);
 });
 
 test("cancelling native quit leaves the renderer and Connector running", async () => {
@@ -72,7 +74,7 @@ test("cancelling native quit leaves the renderer and Connector running", async (
 test("quit still completes if the window is already gone or local shutdown fails", async () => {
   const fixture = quitFixture({ window: false, shutdown: async () => { throw new Error("already stopped"); } });
   await assert.rejects(fixture.requestQuit(), /already stopped/);
-  assert.deepEqual(fixture.calls, ["stop-local-connector", "quit"]);
+  assert.deepEqual(fixture.calls, ["stop-updates", "stop-local-connector", "quit"]);
   assert.equal(fixture.globals.shutdownComplete, true);
 });
 
@@ -89,4 +91,24 @@ test("project API requests reach the Desktop proxy even with an empty API namesp
     assert.equal(shouldProxyApiPath("/projects-help.html"), false);
     assert.equal(shouldProxyApiPath("/_next/static/app.js"), false);
   }
+});
+
+test("updates require an authenticated server matching a saved server and never use defaults", () => {
+  const server = resolveDesktopServer("https://saved.example");
+  let saved: DesktopServerConnection | null = null;
+  const calls: Array<DesktopServerConnection | null> = [];
+  const { syncDesktopUpdateSession } = loadFunctions(["syncDesktopUpdateSession"], {
+    serverStore: { getSaved: () => saved, get: () => assert.fail("Update checks must not use fallback settings") },
+    normalizeServerOrigin,
+    updates: { check: (connection: DesktopServerConnection | null) => { calls.push(connection); } },
+  });
+  syncDesktopUpdateSession(server.serverUrl);
+  assert.equal(calls.pop(), null, "a missing server record cannot trigger a check");
+  saved = server;
+  for (const input of [null, undefined, "", "  ", {}, "file:///tmp/server", "https://other.example"]) {
+    syncDesktopUpdateSession(input);
+    assert.equal(calls.pop(), null, "signed-out and mismatched sessions clear updates");
+  }
+  syncDesktopUpdateSession(server.serverUrl);
+  assert.deepEqual(calls.pop(), server);
 });

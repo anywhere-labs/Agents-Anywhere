@@ -99,7 +99,7 @@ async def _create_authorization_redirect(
     client = first_party_oauth_client(client_id)
     if client is None:
         raise HTTPException(status_code=404, detail="oauth client not found")
-    if redirect_uri != client.redirect_uri:
+    if not client.allows_redirect(redirect_uri):
         raise HTTPException(status_code=422, detail="redirect uri is not allowed")
     try:
         code = await db.create_oauth_authorization_code(
@@ -134,7 +134,7 @@ async def oauth_token(
     client = first_party_oauth_client(client_id)
     if client is None:
         raise HTTPException(status_code=404, detail="oauth client not found")
-    if redirect_uri != client.redirect_uri:
+    if not client.allows_redirect(redirect_uri):
         raise HTTPException(status_code=422, detail="redirect uri is not allowed")
     try:
         user, scope = await db.consume_oauth_authorization_code(
