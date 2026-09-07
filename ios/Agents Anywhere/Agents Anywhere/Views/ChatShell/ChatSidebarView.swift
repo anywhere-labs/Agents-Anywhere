@@ -156,8 +156,23 @@ struct ChatSidebarListMenu<Filters: View>: View {
             Button(String(localized: "归档会话"), systemImage: "archivebox", action: onShowArchives)
         } label: {
             Label(String(localized: "列表选项"), appSymbol: "ellipsis")
-                .labelStyle(.iconOnly).frame(width: 44, height: 44)
         }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .modifier(ChatSidebarIconControlStyle())
+    }
+}
+
+/// Give menu triggers and buttons the same native sizing, including when
+/// Show Borders is enabled. A frame inside the label adds to system padding.
+struct ChatSidebarIconControlStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .buttonBorderShape(.circle)
+            .controlSize(.large)
+            .frame(width: 44, height: 44)
     }
 }
 

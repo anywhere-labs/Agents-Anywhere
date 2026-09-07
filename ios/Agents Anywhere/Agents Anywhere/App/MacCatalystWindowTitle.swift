@@ -2,7 +2,8 @@
 import SwiftUI
 import UIKit
 
-/// Keep the native window title in sync without adding another page toolbar.
+/// Retain a useful title for the Window menu while hiding Catalyst's separate
+/// title bar. Page controls continue to use their native navigation bars.
 struct MacCatalystWindowTitle: View {
     @ObservedObject var appState: AppState
     @Environment(\.locale) private var locale
@@ -36,33 +37,70 @@ struct MacCatalystWindowTitle: View {
     }
 }
 
-private struct WindowTitleWriter: UIViewRepresentable {
+private struct WindowTitleWriter: UIViewControllerRepresentable {
     let title: String
 
-    func makeUIView(context: Context) -> WindowTitleView {
-        WindowTitleView()
+    func makeUIViewController(context: Context) -> WindowTitleController {
+        WindowTitleController()
     }
 
-    func updateUIView(_ view: WindowTitleView, context: Context) {
-        view.title = title
+    func updateUIViewController(_ controller: WindowTitleController, context: Context) {
+        controller.windowTitle = title
+        controller.scheduleTitlebarUpdate()
     }
 }
 
-private final class WindowTitleView: UIView {
-    var title = "Agents Anywhere" {
-        didSet { updateWindowTitle() }
+private final class WindowTitleController: UIViewController {
+    var windowTitle = "Agents Anywhere"
+    private var updateScheduled = false
+
+    override func loadView() {
+        view = UIView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
     }
 
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        updateWindowTitle()
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+        updateTitlebar()
+        scheduleTitlebarUpdate()
     }
 
-    private func updateWindowTitle() {
-        // Target the scene containing this view, including after reattachment.
-        guard let scene = window?.windowScene else { return }
-        if scene.title != title { scene.title = title }
-        scene.titlebar?.titleVisibility = .visible
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        scheduleTitlebarUpdate()
+    }
+
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        scheduleTitlebarUpdate()
+    }
+
+    func scheduleTitlebarUpdate() {
+        guard !updateScheduled else { return }
+        updateScheduled = true
+        // SwiftUI can configure the window toolbar after attaching its view.
+        // Apply our policy after that transaction, including navigation changes
+        // and resizing. Coalesce layout callbacks and only write changed values.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.updateScheduled = false
+            self.updateTitlebar()
+        }
+    }
+
+    private func updateTitlebar() {
+        // Target only the containing window, never a sheet or another scene.
+        guard let scene = viewIfLoaded?.window?.windowScene,
+              let titlebar = scene.titlebar else { return }
+        if scene.title != windowTitle { scene.title = windowTitle }
+        if titlebar.toolbarStyle != .unifiedCompact { titlebar.toolbarStyle = .unifiedCompact }
+        if titlebar.titleVisibility != .hidden { titlebar.titleVisibility = .hidden }
+        if let toolbar = titlebar.toolbar {
+            toolbar.isVisible = false
+            titlebar.toolbar = nil
+        }
+        if titlebar.separatorStyle != .none { titlebar.separatorStyle = .none }
     }
 }
 #endif

@@ -47,7 +47,8 @@ struct ChatSidebarProjects: View {
                     }
                 }
                 Button(String(localized: "创建项目"), appSymbol: "plus") { createsProject = true }
-                    .labelStyle(.iconOnly).frame(width: 44, height: 44).disabled(!repository.canWrite)
+                    .modifier(ChatSidebarIconControlStyle())
+                    .disabled(!repository.canWrite)
             }.padding(.horizontal, 10).padding(.top, 16)
             if repository.sidebarPreferences.projectsExpanded {
                 projectList(projects.filter { !$0.pinned })
