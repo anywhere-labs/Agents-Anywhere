@@ -593,16 +593,17 @@ private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
     let content: Content
 
     var body: some View {
-        NavigationStack {
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .scrollEdgeEffectStyle(edgeEffectStyle, for: .top)
-                .modifier(SidebarDrawerToolbar(header: header))
+#if canImport(UIKit)
+        // Native navigation bars and glass controls must belong to the same
+        // UIKit surface as the list for the entire drawer to scale together.
+        SidebarDrawerHostingView(scale: scale, overlayOpacity: overlayOpacity) {
+            navigation
+                .padding(safeAreaInsets)
         }
-            .ignoresSafeArea(.keyboard)
-            // Restore only the stable top inset here. Sidebar content already
-            // owns its horizontal margins and bottom controls/home-indicator gap.
-            .padding(.top, safeAreaInsets.top)
+        .frame(width: size.width, height: size.height)
+#else
+        navigation
+            .padding(safeAreaInsets)
             .frame(width: size.width, height: size.height)
             .background(drawerSystemBackground)
             .overlay {
@@ -610,10 +611,17 @@ private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
                     .opacity(overlayOpacity)
                     .allowsHitTesting(false)
             }
-            // Transform one composited sidebar, including the native glass
-            // controls, rather than letting their effects resolve separately.
-            .compositingGroup()
             .modifier(SidebarDrawerScale(scale: scale).ignoredByLayout())
+#endif
+    }
+
+    private var navigation: some View {
+        NavigationStack {
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .scrollEdgeEffectStyle(edgeEffectStyle, for: .top)
+                .modifier(SidebarDrawerToolbar(header: header))
+        }
     }
 }
 

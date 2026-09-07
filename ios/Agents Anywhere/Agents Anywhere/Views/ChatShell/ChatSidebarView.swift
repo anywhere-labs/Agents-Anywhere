@@ -2,7 +2,6 @@ import SwiftUI
 
 struct ChatSidebarView: View {
     @EnvironmentObject private var appState: AppState
-    let safeAreaInsets: EdgeInsets
     let devices: [ChatSidebarDevice]
     let pinnedSessions: [ChatSidebarSession]
     let recentSessions: [ChatSidebarSession]
@@ -24,6 +23,7 @@ struct ChatSidebarView: View {
     let onCopySessionId: (V2SessionID) -> Void
 
     @State private var isShowingPairing = false
+    @State private var isShowingSettings = false
     @State private var showsArchives = false
     @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
 
@@ -108,25 +108,22 @@ struct ChatSidebarView: View {
                 }
 
             }
-            .padding(.leading, safeAreaInsets.leading + 14)
-            .padding(.trailing, safeAreaInsets.trailing + 14)
+            .padding(.horizontal, 14)
             .padding(.top, 10)
-            .padding(.bottom, safeAreaInsets.bottom + 82)
+            .padding(.bottom, 12)
         }
         .refreshable { await repository?.refresh() }
         .scrollIndicators(.hidden)
         .scrollEdgeEffectStyle(.soft, for: .bottom)
-        .overlay(alignment: .bottom) {
-            if let account {
-                ChatSidebarBottomControls(
-                    appState: appState,
-                    account: account,
-                    onNewSession: onNewSession
-                )
-                    .padding(.leading, safeAreaInsets.leading + 18)
-                    .padding(.trailing, safeAreaInsets.trailing + 18)
-                    .padding(.bottom, max(safeAreaInsets.bottom, 12))
-            }
+        .toolbar {
+            ChatSidebarBottomToolbar(
+                account: account,
+                onNewSession: onNewSession,
+                onOpenAccount: { isShowingSettings = true }
+            )
+        }
+        .sheet(isPresented: $isShowingSettings) {
+            AccountSettingsSheet(appState: appState)
         }
         .sheet(isPresented: $showsArchives) {
             if let repository { ArchivedSessionsSheet(repository: repository, onOpen: onOpenSession, onRestore: onRestoreSession) }
@@ -442,37 +439,33 @@ private struct ChatSidebarEmptyRow: View {
     }
 }
 
-private struct ChatSidebarBottomControls: View {
-    let appState: AppState
-    let account: ChatSidebarAccount
+private struct ChatSidebarBottomToolbar: ToolbarContent {
+    @Environment(\.colorScheme) private var colorScheme
+    let account: ChatSidebarAccount?
     let onNewSession: () -> Void
+    let onOpenAccount: () -> Void
 
-    @State private var isShowingSettings = false
-
-    var body: some View {
-        HStack(spacing: 10) {
-            AppGlassButton(
-                String(localized: "New session"),
-                systemImage: "square.and.pencil",
-                style: .prominent,
-                maxWidth: nil,
-                action: onNewSession
-            )
-
-            Spacer(minLength: 12)
-
-            Button {
-                isShowingSettings = true
-            } label: {
-                ChatSidebarAvatar(account: account)
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .bottomBar) {
+            Button(action: onNewSession) {
+                Label(String(localized: "New session"), appSymbol: "square.and.pencil")
             }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
-            .accessibilityLabel(String(localized: "Account"))
+            .labelStyle(.titleAndIcon)
+            .buttonStyle(.borderedProminent)
+            .tint(AppTheme.primaryControlBackground(colorScheme))
+            .foregroundStyle(AppTheme.primaryControlForeground(colorScheme))
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .sheet(isPresented: $isShowingSettings) {
-            AccountSettingsSheet(appState: appState)
+
+        ToolbarSpacer(.flexible, placement: .bottomBar)
+
+        if let account {
+            ToolbarItem(placement: .bottomBar) {
+                Button(action: onOpenAccount) {
+                    ChatSidebarAvatar(account: account)
+                }
+                .buttonBorderShape(.circle)
+                .accessibilityLabel(String(localized: "Account"))
+            }
         }
     }
 }
