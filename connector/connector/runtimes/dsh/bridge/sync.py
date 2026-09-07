@@ -8,15 +8,17 @@ from typing import Any
 
 from connector.logging import logger
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtime_protocol.models import SessionSourceObservation, SessionSourceState
 from connector.runtimes.dsh.bridge.client import BridgeClient
-from connector.runtimes.dsh.bridge.models import capability_set, model_catalog, permission_catalog, notice as session_notice, timeline_item
+from connector.runtimes.dsh.bridge.models import capability_set, model_catalog, permission_catalog, notice as session_notice, session_meta, session_state, timeline_item
 
 
 class SyncRelay:
     """Reassemble transport pages, then forward existing platform notifications.
 
     No native event parsing or backend-specific persistence protocol lives here.
-    A failed/ambiguous HTTP request reconnects and recalibrates complete history.
+    Live updates use the same Host publishers as the other runtimes, including
+    their coalescing and WebSocket/HTTP fallback. Snapshots await HTTP ingestion.
     """
 
     def __init__(self, client: BridgeClient, host: RuntimeHostClient) -> None:
@@ -77,54 +79,64 @@ class SyncRelay:
             else:
                 self.clear_snapshot()
         elif kind == "notifications":
-            pending = []
-
-            async def publish_pending():
-                if pending:
-                    await self.host.publish_runtime_notifications("dsh", list(pending))
-                    pending.clear()
-
             for notice in op["notifications"]:
-                # Use the platform's existing interaction/capability publishers.
-                # Its synchronous history publisher intentionally accepts only history.
-                if notice.get("method") == "notice.upsert":
-                    await publish_pending()
-                    await self.host.notice_upsert(session_notice(notice["params"]))
-                    continue
-                if notice.get("method") == "runtime.capability.updated":
-                    await publish_pending()
-                    await self.host.runtime_capabilities_update(capability_set(
-                        notice["params"], connector_id=self.host.connector_id,
-                    ))
-                    continue
-                if notice.get("method") == "session.capability.updated":
-                    await publish_pending()
-                    await self.host.session_capabilities_update(capability_set(
-                        notice["params"], connector_id=self.host.connector_id,
-                    ))
-                    continue
-                if notice.get("method") == "catalog.model.update":
-                    await publish_pending()
-                    await self.host.model_catalog_update(model_catalog(notice["params"]))
-                    continue
-                if notice.get("method") == "catalog.permission.update":
-                    await publish_pending()
-                    await self.host.permission_catalog_update(permission_catalog(notice["params"]))
-                    continue
-                if notice.get("method") == "timeline.itemUpsert":
-                    item = timeline_item(notice["params"]["item"])
-                    if item.session_id != notice["params"].get("sessionId"):
-                        raise ValueError("Incremental item belongs to a different session")
-                pending.append(notice)
-            # The Host binds connector/runtime identity and uses /connector/ingest.
-            # Returning here means accepted by that existing path, not a new DB ACK contract.
-            await publish_pending()
+                await self.publish_notification(notice)
         elif kind == "workspace.inventory":
             # Older plugin builds sent native project facts. Ignore those batches;
             # all project grouping and naming use the existing session cwd path.
             return
         else:
             raise ValueError(f"Unsupported bridge operation: {kind}")
+
+    async def publish_notification(self, notice: dict[str, Any]) -> None:
+        method, params = notice.get("method"), notice.get("params")
+        if not isinstance(params, dict):
+            raise ValueError("Invalid runtime notification")
+        # Use the existing typed Host API, just like Codex and Claude. The Host
+        # owns instance binding, coalescing, WebSocket delivery and HTTP fallback.
+        if method == "timeline.itemUpsert":
+            item = timeline_item(params["item"])
+            if item.session_id != params.get("sessionId"):
+                raise ValueError("Incremental item belongs to a different session")
+            await self.host.timeline_item_upsert(item)
+        elif method == "session.meta.upsert":
+            meta = session_meta(params)
+            await self.host.session_meta_upsert(
+                session_id=meta.session_id, runtime="dsh", external_session_id=meta.external_session_id,
+                title=meta.title, cwd=meta.cwd, ordering_time=meta.ordering_time, metadata=meta.metadata,
+            )
+        elif method == "session.state.updated":
+            state = session_state(params)
+            await self.host.session_state_update(
+                session_id=state.session_id, runtime="dsh", external_session_id=state.external_session_id,
+                status=state.status, selections=state.selections, status_reason=state.status_reason,
+                error=state.error, metadata=state.metadata,
+            )
+        elif method == "session.source.updated":
+            await self.host.session_source_update(SessionSourceObservation(
+                session_id=params["sessionId"], external_session_id=params.get("externalSessionId"), runtime="dsh",
+                state=SessionSourceState(availability=params["availability"], reason=params.get("reason"),
+                    observed_at=params.get("observedAt"), observation_origin=params.get("observationOrigin", "event")),
+            ))
+        elif method == "session.turnEnded":
+            await self.host.session_turn_ended(
+                session_id=params["sessionId"], runtime="dsh", external_session_id=params.get("externalSessionId"),
+                turn_id=params.get("turnId"), outcome=params.get("outcome", "completed"), metadata=params.get("metadata"),
+            )
+        elif method == "notice.upsert":
+            await self.host.notice_upsert(session_notice(params))
+        elif method == "runtime.capability.updated":
+            await self.host.runtime_capabilities_update(capability_set(params, connector_id=self.host.connector_id))
+        elif method == "session.capability.updated":
+            await self.host.session_capabilities_update(capability_set(params, connector_id=self.host.connector_id))
+        elif method == "catalog.model.update":
+            await self.host.model_catalog_update(model_catalog(params))
+        elif method == "catalog.permission.update":
+            await self.host.permission_catalog_update(permission_catalog(params))
+        elif method in {"session.inventory.begin", "session.inventory.complete"}:
+            await self.host.publish_runtime_notifications("dsh", [notice])
+        else:
+            raise ValueError(f"Unsupported runtime notification: {method}")
 
     async def run(self) -> None:
         try:

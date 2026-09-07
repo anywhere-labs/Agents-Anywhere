@@ -75,16 +75,17 @@ def test_snapshot_abort_foreign_items_and_duplicate_pages_do_not_publish_partial
 
 
 @pytest.mark.parametrize("reject", [False, True])
-def test_relay_ack_waits_for_ingest_and_does_not_ack_rejected_or_out_of_order_batches(reject):
+def test_relay_ack_waits_for_live_delivery_and_rejects_failed_or_out_of_order_batches(reject):
     async def exercise():
         entered, release, acknowledged = asyncio.Event(), asyncio.Event(), asyncio.Event()
         acks = []
 
-        async def publish(*args):
+        async def publish(*args, **kwargs):
+            assert kwargs["session_id"] == "session" and kwargs["runtime"] == "dsh"
             entered.set()
             await release.wait()
             if reject:
-                raise RuntimeError("ingest rejected")
+                raise RuntimeError("delivery failed")
 
         async def request(method, params=None):
             if method == "runtime.sync.subscribe":
@@ -93,7 +94,7 @@ def test_relay_ack_waits_for_ingest_and_does_not_ack_rejected_or_out_of_order_ba
             acknowledged.set()
 
         client = SimpleNamespace(request=request, writer=Mock())
-        relay = SyncRelay(client, SimpleNamespace(publish_runtime_notifications=publish))
+        relay = SyncRelay(client, SimpleNamespace(session_state_update=publish))
         relay.start()
         try:
             op = {"kind": "notifications", "notifications": [{"method": "session.state.updated", "params": {"sessionId": "session", "status": "idle"}}]}

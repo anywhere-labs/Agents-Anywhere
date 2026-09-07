@@ -67,10 +67,15 @@ incomplete transport never submits a partial replacement. Turn lifecycle markers
 are excluded from backend Timeline contents.
 
 `notifications` carries already normalized platform notifications. The Connector
-binds its immutable runtime instance and awaits the existing `/connector/ingest`
-path. It does not parse native events or add a backend persistence API. An ACK means
-page receipt or acceptance by existing ingest, not a new durable DB transaction.
-Failed/ambiguous ingest closes the stream and triggers full recalibration.
+forwards live Timeline, state, source and metadata updates through the same typed
+Host publishers used by Codex and Claude. These bind the immutable runtime
+instance and use the existing coalescing, WebSocket sender and HTTP fallback
+queue. Complete snapshots and inventory boundaries continue to await
+`/connector/ingest`. No public transport implementation or backend API changes.
+An ACK means page receipt, acceptance by the existing live notification pipeline
+(including its queues), or completed snapshot ingestion; it is not a durable
+server persistence ACK. Relay failures close the stream, and reconnect triggers
+full native history recalibration.
 
 The private batch also carries the existing `notice.upsert` and
 `runtime.capability.updated` notifications. The DSH adapter forwards these through

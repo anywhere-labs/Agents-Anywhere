@@ -12,7 +12,7 @@ const MAX_BUFFER = 10_000
 const MAX_BYTES = 6 * 1024 * 1024
 export const SYNC_FLUSH_MS = Math.ceil(1000 / 30)
 
-/** One ordered stream. ACK means Connector accepted a page or existing ingest accepted its notifications. */
+/** One ordered stream. ACK means page receipt, live pipeline acceptance, or completed snapshot ingestion. */
 export class SyncFeed {
   readonly id = randomUUID()
   private batchSeq = 0
