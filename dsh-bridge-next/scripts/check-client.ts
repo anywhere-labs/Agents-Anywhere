@@ -73,6 +73,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       webAppUrl: 'http://127.0.0.1:5174/#/',
       stage: 'idle', message: '登录后连接这台电脑。', account: null,
       connectorId: null, connectorRunning: false, flowId: null,
+      deviceRecovery: null,
     }
     const calls: { endpoint: string; payload: unknown }[] = []
     let failNextBegin = false
@@ -96,6 +97,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
           return { ok: true, value: { url: 'https://example.com/onboarding' } }
         }
         if (endpoint.endsWith('/cancel')) snapshot = { ...snapshot, stage: 'idle' }
+        if (endpoint.endsWith('/recoverDevice')) snapshot = { ...snapshot, deviceRecovery: null, stage: 'ready', connectorRunning: true }
         if (endpoint.endsWith('/logout')) {
           if (failLogout) return { ok: false, error: { message: '退出失败，请重试。' } }
           snapshot = { ...snapshot, account: null, stage: 'idle', connectorRunning: false, connectorId: null, flowId: null }
@@ -266,6 +268,21 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     const reopen = async () => {
       await act(async () => { button('关闭手机连接').click() })
       await act(async () => { trigger.click() })
+    }
+    for (const [status, label, action, message] of [
+      ['deleted', '重新创建', 'recreate', '本机设备已被删除，是否重新创建？'],
+      ['disconnected', '重新连接', 'reconnect', '本机设备已断开连接，是否重新连接？'],
+      ['unavailable', '重新检查', 'check', '暂时无法确认设备状态，请检查网络后重试。'],
+    ] as const) {
+      snapshot = { ...snapshot, stage: 'error', connectorRunning: false, deviceRecovery: { connectorId: 'conn_test', status, message } }
+      await reopen()
+      assert.ok(button(label).closest('[role="status"]'), 'Recovery action belongs inside the Connector status area')
+      assert.ok(dialog()!.textContent!.includes(message))
+      assert.equal(document.querySelectorAll('[role="dialog"]').length, 1)
+      await act(async () => { button(label).click() })
+      assert.deepEqual(JSON.parse(JSON.stringify(calls.filter(call => call.endpoint.endsWith('/recoverDevice')).at(-1)?.payload)), { args: { action } })
+      assert.match(dialog()!.textContent!, /Connector运行中/)
+      assert.equal(button('退出登录').disabled, false)
     }
     snapshot = { ...snapshot, connectorRunning: false }
     await reopen()

@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AccountApi, ApiError, type Device } from '../../src/host/account/api.js'
-import { ensureBinding } from '../../src/host/account/binding.js'
+import { DeviceRecoveryRequired, ensureBinding, recoverBinding } from '../../src/host/account/binding.js'
 import { localMachineRegistry, machineStatePath } from '../../src/host/desktop/machine-state.js'
 import { writeJson } from '../../src/host/storage/files.js'
 
@@ -56,8 +56,8 @@ test('shared IDs are matched against this user, with local order winning over se
     assert.deepEqual(renewed, ['first-locally'])
     assert.equal(registrations, 0)
     devices = [{ id: 'foreign', userId: 'another-user', name: 'Private', status: 'offline' }]
-    assert.equal((await run(['foreign', 'deleted'])).connectorId, 'fresh')
-    assert.equal(registrations, 1)
+    await assert.rejects(run(['foreign', 'deleted']), (error: unknown) => error instanceof DeviceRecoveryRequired && error.reason === 'deleted')
+    assert.equal(registrations, 0)
     assert.deepEqual(renewed, ['first-locally'])
   } finally { await rm(root, { recursive: true, force: true }) }
 })
@@ -131,3 +131,34 @@ for (const failFirstPublish of [false, true]) {
     assert.doesNotMatch(await readFile(machineStatePath(root), 'utf8'), /SECRET|connectorToken|accessToken/)
   })
 }
+
+test('confirmed recreation retries the same registration key after a lost response, including a plugin restart', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'aa-binding-recovery-'))
+  const keys: string[] = []
+  const api = new class extends AccountApi {
+    override async devices() { return [{ id: 'replacement', userId: 'user', name: 'Mac', status: 'offline' }] }
+    override async device(): Promise<Device> { throw new ApiError(404) }
+    override async register(_token: string, name: string, key: string) {
+      keys.push(key)
+      if (keys.length === 1) throw new TypeError('response lost after creation')
+      return { connector: { id: 'replacement', userId: 'user', name, status: 'offline' }, connectorToken: 'NEW-SECRET' }
+    }
+  }('https://server.test')
+  const account = { apiBaseUrl: api.baseUrl, userId: 'user', displayName: 'User', accessToken: 'USER-SECRET', expiresAt: Date.now() + 60000 }
+  const key = createHash('sha256').update(`${account.apiBaseUrl}\n${account.userId}`).digest('hex')
+  const path = join(root, 'bindings', `${key}.json`)
+  const machine = localMachineRegistry(root)
+  try {
+    await writeJson(path, { connectorId: 'deleted', connectorToken: 'OLD-SECRET', installationId: 'old-key', name: 'Old' })
+    const recover = () => recoverBinding(root, account, api, new AbortController().signal, 'deleted', 'recreate', machine)
+    await assert.rejects(recover(), /response lost/)
+    await assert.rejects(ensureBinding(root, account, api, new AbortController().signal, { machineState: machine }), DeviceRecoveryRequired)
+    assert.equal(keys.length, 1, 'Startup cannot automatically retry creation')
+    assert.equal((await recover()).connectorId, 'replacement')
+    assert.equal(keys.length, 2)
+    assert.equal(keys[0], keys[1])
+    assert.notEqual(keys[0], 'old-key')
+    assert.deepEqual(await machine.readConnectorIds(), ['replacement'])
+    assert.doesNotMatch(await readFile(path, 'utf8'), /replacesConnectorId|OLD-SECRET/)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})

@@ -1,6 +1,6 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import { HOST_NAMESPACE, type LoginRequest, type OnboardingHostApi, type OnboardingSnapshot } from '../../contracts/index.js'
+import { HOST_NAMESPACE, type DeviceRecoveryAction, type LoginRequest, type OnboardingHostApi, type OnboardingSnapshot } from '../../contracts/index.js'
 import { Config, resolveConfig } from '../config.js'
 import { OnboardingManager } from '../onboarding/manager.js'
 import type {} from '../dsh-runtime/index.js'
@@ -35,6 +35,8 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   async cancel(): Promise<null> { await this.manager.cancel(); return null }
   @Remote('logout')
   async logout(): Promise<null> { await this.manager.logout(); return null }
+  @Remote('recoverDevice')
+  recoverDevice(action: DeviceRecoveryAction): Promise<null> { return this.manager.recoverDevice(action) }
 
   @Remote('selection')
   async selection(input: { clientId: string, revision: number, current: string | null }): Promise<null> {

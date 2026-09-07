@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { OnboardingManager } from '../../src/host/onboarding/manager.js'
-import { AccountApi, type Account, type Device } from '../../src/host/account/api.js'
-import type { ConnectorProcess } from '../../src/host/connector/process.js'
+import { AccountApi, ApiError, type Account, type Device } from '../../src/host/account/api.js'
+import type { ConnectorProcess, ConnectorState } from '../../src/host/connector/process.js'
 import { CLOUD_API_BASE_URL, type DesktopDetection } from '../../src/contracts/index.js'
 import { readJson, writeJson } from '../../src/host/storage/files.js'
 
@@ -19,14 +19,24 @@ class FakeApi extends AccountApi {
   renewals = 0
   renewedIds: string[] = []
   knownDevices: Device[] = []
+  deleted = false
+  deviceError: number | null = null
+  deviceId = 'conn_test'
   override async exchange(): Promise<Account> {
     this.exchanges++
     return { apiBaseUrl: this.baseUrl, userId: 'user-test', displayName: '测试用户', accessToken: 'USER-SECRET', expiresAt: Date.now() + 3600_000 }
   }
   override async me() { this.profileReads++; return { userId: 'user-test', displayName: '测试用户' } }
-  override async device(): Promise<Device> { return { id: 'conn_test', name: 'Test', userId: 'user-test', status: this.online ? 'online' : 'offline' } }
-  override async devices() { return this.registrations ? [...this.knownDevices, await this.device()] : this.knownDevices }
-  override async register() { this.registrations++; return { connector: await this.device(), connectorToken: 'CONNECTOR-SECRET' } }
+  override async device(): Promise<Device> {
+    if (this.deviceError || this.deleted) throw new ApiError(this.deviceError ?? 404)
+    return { id: this.deviceId, name: 'Test', userId: 'user-test', status: this.online ? 'online' : 'offline' }
+  }
+  override async devices() { return this.registrations && !this.deleted ? [...this.knownDevices, await this.device()] : this.knownDevices }
+  override async register() {
+    this.registrations++
+    if (this.deleted) { this.deleted = false; this.deviceId = 'conn_recreated' }
+    return { connector: await this.device(), connectorToken: 'CONNECTOR-SECRET' }
+  }
   override async verifyConnector() { return this.validCredential }
   override async renewConnector(_token: string, id: string) { this.renewals++; this.renewedIds.push(id); this.validCredential = true; return 'RENEWED-SECRET' }
 }
@@ -35,6 +45,9 @@ class FakeConnector implements ConnectorProcess {
   running = false
   starts = 0
   stops = 0
+  listeners = new Set<(state: ConnectorState) => void>()
+  onState(listener: (state: ConnectorState) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
+  expire() { this.running = false; for (const listener of this.listeners) listener({ running: false, authFailed: true }) }
   async prepare() {}
   async start() { this.running = true; this.starts++ }
   async stop() { this.running = false; this.stops++ }
@@ -163,7 +176,7 @@ test('OAuth resumes the first matching shared Desktop ID with a new token and co
   } finally { await h.close() }
 })
 
-test('saved binding survives restart and logout; invalid device credentials are renewed for the same device', async () => {
+test('saved invalid credentials require explicit recovery after restart and retain the device across logout', async () => {
   const h = await fixture()
   h.api.online = true
   try {
@@ -172,6 +185,10 @@ test('saved binding survives restart and logout; invalid device credentials are 
     await h.reopen()
     h.api.validCredential = false
     await h.manager.begin()
+    await until(async () => (await h.manager.inspect()).deviceRecovery?.status === 'disconnected')
+    assert.equal(h.api.renewals, 0)
+    assert.equal(h.connector.running, false)
+    await h.manager.recoverDevice('reconnect')
     await until(async () => (await h.manager.inspect()).stage === 'ready')
     assert.equal(h.api.registrations, 1)
     assert.equal(h.api.renewals, 1)
@@ -182,6 +199,108 @@ test('saved binding survives restart and logout; invalid device credentials are 
     await callback((await h.manager.begin()).url)
     await until(async () => (await h.manager.inspect()).stage === 'ready')
     assert.equal(h.api.registrations, 1)
+  } finally { await h.close() }
+})
+
+test('a live auth-failure notification prompts reconnection of the same ID without logging out or silently rotating', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    h.setLocalIds(['another-device', 'conn_test'])
+    h.api.knownDevices = [{ id: 'another-device', userId: 'user-test', name: 'Other', status: 'online' }]
+    h.api.validCredential = false
+    h.connector.expire()
+    await until(async () => (await h.manager.inspect()).deviceRecovery?.status === 'disconnected')
+    assert.equal((await h.manager.inspect()).account?.userId, 'user-test')
+    assert.equal((await h.manager.inspect()).connectorRunning, false)
+    assert.equal(h.api.renewals, 0)
+    await h.manager.recoverDevice('reconnect')
+    assert.deepEqual(h.api.renewedIds, ['conn_test'])
+    assert.equal(h.api.registrations, 1)
+    assert.equal((await h.manager.inspect()).deviceRecovery, null)
+    assert.equal((await h.manager.inspect()).stage, 'ready')
+    await assert.rejects(h.manager.recoverDevice('reconnect'), /设备状态已变化/)
+    assert.equal(h.api.renewals, 1)
+  } finally { await h.close() }
+})
+
+for (const restarting of [false, true]) {
+  test(`deleted device waits for the recreate button (restart: ${restarting})`, async () => {
+    const h = await fixture(true)
+    h.api.online = true
+    try {
+      await callback((await h.manager.begin()).url)
+      await until(async () => (await h.manager.inspect()).stage === 'ready')
+      h.api.deleted = true
+      if (restarting) { await h.reopen(); await h.manager.resume() }
+      else h.connector.expire()
+      await until(async () => (await h.manager.inspect()).deviceRecovery?.status === 'deleted')
+      assert.equal(h.api.registrations, 1)
+      assert.equal(h.api.renewals, 0)
+      await assert.rejects(h.manager.recoverDevice('reconnect'))
+      await h.manager.recoverDevice('recreate')
+      assert.equal((await h.manager.inspect()).connectorId, 'conn_recreated')
+      assert.equal((await h.manager.inspect()).deviceRecovery, null)
+      assert.equal(h.api.registrations, 2)
+      assert.equal(h.api.renewals, 0)
+    } finally { await h.close() }
+  })
+}
+
+for (const status of [401, 503]) {
+  test(`a failed device lookup (${status}) never means the device was deleted`, async () => {
+    const h = await fixture()
+    h.api.online = true
+    try {
+      await callback((await h.manager.begin()).url)
+      await until(async () => (await h.manager.inspect()).stage === 'ready')
+      h.api.deviceError = status
+      h.connector.expire()
+      await until(async () => (await h.manager.inspect()).deviceRecovery?.status === (status === 401 ? 'login_required' : 'unavailable'))
+      await assert.rejects(h.manager.recoverDevice('recreate'))
+      assert.equal(h.api.registrations, 1)
+      assert.equal(h.api.renewals, 0)
+      h.api.deviceError = null
+      await h.manager.recoverDevice('check')
+      assert.equal((await h.manager.inspect()).deviceRecovery?.status, 'disconnected')
+    } finally { await h.close() }
+  })
+}
+
+test('a device deleted between the prompt and reconnect is reclassified without creating anything', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    h.connector.expire()
+    await until(async () => (await h.manager.inspect()).deviceRecovery?.status === 'disconnected')
+    h.api.deleted = true
+    await h.manager.recoverDevice('reconnect')
+    assert.equal((await h.manager.inspect()).deviceRecovery?.status, 'deleted')
+    assert.equal(h.api.registrations, 1)
+    assert.equal(h.api.renewals, 0)
+  } finally { await h.close() }
+})
+
+test('a late device check cannot restore recovery UI after logout', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    let finish!: (device: Device) => void
+    h.api.device = () => new Promise(resolve => { finish = resolve })
+    h.connector.expire()
+    assert.equal((await h.manager.inspect()).deviceRecovery?.status, 'checking')
+    await h.manager.logout()
+    finish({ id: 'conn_test', name: 'Test', userId: 'user-test', status: 'offline' })
+    await delay(10)
+    assert.equal((await h.manager.inspect()).deviceRecovery, null)
+    assert.equal((await h.manager.inspect()).account, null)
+    assert.equal(h.api.renewals, 0)
   } finally { await h.close() }
 })
 

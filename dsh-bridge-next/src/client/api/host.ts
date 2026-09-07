@@ -13,5 +13,6 @@ export function createHostApi(rpc: HostRpc): OnboardingHostApi {
   return {
     inspect: () => call('inspect'), begin: input => call('begin', input ? { input } : {}),
     cancel: () => call('cancel'), logout: () => call('logout'),
+    recoverDevice: action => call('recoverDevice', { action }),
   }
 }

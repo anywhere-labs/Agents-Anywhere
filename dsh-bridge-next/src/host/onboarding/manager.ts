@@ -1,13 +1,13 @@
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { CLOUD_API_BASE_URL, type ConnectionSettings, type DesktopDetection, type FlowStage, type LoginRequest, type OnboardingSnapshot } from '../../contracts/index.js'
+import { CLOUD_API_BASE_URL, type ConnectionSettings, type DesktopDetection, type DeviceRecovery, type DeviceRecoveryAction, type FlowStage, type LoginRequest, type OnboardingSnapshot } from '../../contracts/index.js'
 import { resolveWebAppUrl } from '../../contracts/web-address.js'
 import { AccountApi, ApiError, publicProfile, type Account } from '../account/api.js'
-import { ensureBinding, type Binding } from '../account/binding.js'
+import { DeviceRecoveryRequired, ensureBinding, recoverBinding, type BoundDevice } from '../account/binding.js'
 import { checkServer, normalizeServerOrigin, resolveOAuthWebOrigin } from '../account/server.js'
 import type { ResolvedConfig } from '../config.js'
-import { SourceConnector, type ConnectorProcess } from '../connector/process.js'
+import { ConnectorCredentialError, SourceConnector, type ConnectorProcess } from '../connector/process.js'
 import { detectDesktop } from '../desktop/detect.js'
 import type { LocalMachineRegistry } from '../desktop/machine-state.js'
 import { acquireManagerLock, readJson, writeJson } from '../storage/files.js'
@@ -26,7 +26,11 @@ interface Dependencies {
 export class OnboardingManager {
   private settings: ConnectionSettings
   private account: Account | null = null
-  private binding: Required<Binding> | null = null
+  private binding: BoundDevice | null = null
+  private recovery: DeviceRecovery | null = null
+  private recoveryCheck: Promise<void> | null = null
+  private recoveryController: AbortController | null = null
+  private readonly unsubscribeConnector: () => void
   private desktop: DesktopDetection = { status: 'absent', message: '正在检查本机…' }
   private stage: FlowStage = 'idle'
   private message = '登录后，将为这台电脑建立连接。'
@@ -50,6 +54,11 @@ export class OnboardingManager {
     this.connector = dependencies.connector ?? new SourceConnector(config)
     this.detect = dependencies.detect ?? detectDesktop
     this.apiFactory = dependencies.api ?? (base => new AccountApi(base))
+    this.unsubscribeConnector = this.connector.onState(state => {
+      if (state.authFailed && this.binding && this.account && !this.disposed) {
+        void this.checkDeviceRecovery(this.binding.connectorId)
+      }
+    })
   }
 
   initialize(): Promise<void> {
@@ -169,7 +178,7 @@ export class OnboardingManager {
 
   private launch(flow: LoopbackFlow, controller: AbortController, code?: string): void {
     this.work = this.connect(flow, controller.signal, code).catch(async (error: unknown) => {
-      if (this.flow === flow) this.setProgress('error', controller.signal.aborted ? '本次连接已取消，请重新开始。' : safeMessage(error))
+      if (this.flow === flow && !controller.signal.aborted) await this.connectionFailed(error)
       await this.connector.stop()
     })
   }
@@ -192,23 +201,11 @@ export class OnboardingManager {
       ...(this.dependencies.machineState ? { machineState: this.dependencies.machineState } : {}),
       renew: Boolean(code),
     })
+    this.recovery = null
     signal.throwIfAborted()
     this.setProgress('starting', '正在启动本机连接，首次准备运行环境可能需要几分钟…')
     await this.connector.start(this.binding, this.settings.apiBaseUrl, signal)
-    const deadline = Date.now() + (this.dependencies.onlineTimeoutMs ?? 120_000)
-    for (;;) {
-      signal.throwIfAborted()
-      await this.connector.assertHealthy()
-      try {
-        const device = await api.device(account.accessToken, this.binding.connectorId, signal)
-        if (device.userId !== account.userId) throw new Error('设备归属与当前账号不一致。')
-        if (device.status === 'online') break
-      } catch (error) {
-        if (!(error instanceof ApiError) || error.status < 500) throw error
-      }
-      if (Date.now() >= deadline) throw new Error('设备暂未上线，请检查网络后在插件中重试。')
-      await delay(this.dependencies.pollIntervalMs ?? 1_000, undefined, { signal })
-    }
+    await this.waitOnline(api, account, this.binding.connectorId, signal)
     signal.throwIfAborted()
     const url = new URL(`${resolveOAuthWebOrigin(this.settings.apiBaseUrl)}/`)
     url.hash = `/onboarding?${new URLSearchParams({ source: 'dsh-plugin', connectorId: this.binding.connectorId, flowId: flow.id })}`
@@ -217,16 +214,116 @@ export class OnboardingManager {
     flow.update({ stage: 'ready', message: this.message, redirectUrl: url.href })
   }
 
+  private async waitOnline(api: AccountApi, account: Account, id: string, signal: AbortSignal): Promise<void> {
+    const deadline = Date.now() + (this.dependencies.onlineTimeoutMs ?? 120_000)
+    for (;;) {
+      signal.throwIfAborted()
+      await this.connector.assertHealthy()
+      try {
+        const device = await api.device(account.accessToken, id, signal)
+        if (device.userId !== account.userId) throw new Error('设备归属与当前账号不一致。')
+        if (device.status === 'online') break
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status < 500) throw error
+      }
+      if (Date.now() >= deadline) throw new Error('设备暂未上线，请检查网络后在插件中重试。')
+      await delay(this.dependencies.pollIntervalMs ?? 1_000, undefined, { signal })
+    }
+  }
+
+  private setRecovery(connectorId: string, status: DeviceRecovery['status'], message: string): void {
+    this.recovery = { connectorId, status, message }
+    this.setProgress('error', message)
+  }
+
+  private checkDeviceRecovery(id: string): Promise<void> {
+    if (this.recoveryCheck) return this.recoveryCheck
+    const account = this.account
+    if (!account || this.disposed) return Promise.resolve()
+    const controller = new AbortController()
+    this.recoveryController = controller
+    this.setRecovery(id, 'checking', '本机连接已中断，正在检查设备状态…')
+    const task = (async () => {
+      try {
+        const device = await this.apiFactory(account.apiBaseUrl).device(account.accessToken, id, controller.signal)
+        controller.signal.throwIfAborted()
+        if (device.userId !== account.userId) throw new Error('设备归属与当前账号不一致。')
+        this.setRecovery(id, 'disconnected', new DeviceRecoveryRequired(id, 'disconnected').message)
+      } catch (error) {
+        if (controller.signal.aborted || this.disposed) return
+        if (error instanceof ApiError && error.status === 404) this.setRecovery(id, 'deleted', new DeviceRecoveryRequired(id, 'deleted').message)
+        else if (error instanceof ApiError && error.status === 401) this.setRecovery(id, 'login_required', '账号登录已失效，请重新登录后恢复设备连接。')
+        else this.setRecovery(id, 'unavailable', '暂时无法确认设备状态，请检查网络后重试。')
+      }
+    })().finally(() => {
+      if (this.recoveryCheck === task) { this.recoveryCheck = null; this.recoveryController = null }
+    })
+    this.recoveryCheck = task
+    return task
+  }
+
+  private async connectionFailed(error: unknown): Promise<void> {
+    if (error instanceof DeviceRecoveryRequired) this.setRecovery(error.connectorId, error.reason, error.message)
+    else if (error instanceof ConnectorCredentialError && this.binding) await this.checkDeviceRecovery(this.binding.connectorId)
+    else if (!this.recovery) this.setProgress('error', safeMessage(error))
+  }
+
+  recoverDevice(action: DeviceRecoveryAction): Promise<null> {
+    return this.serial(async () => {
+      await this.initialize()
+      if (this.disposed) throw new Error('插件已关闭。')
+      this.desktop = await this.detect()
+      if (this.desktop.status !== 'absent') throw new Error(this.desktop.message)
+      const recovery = this.recovery, account = this.account
+      if (!recovery || !account) throw new Error('设备状态已变化，请重新打开插件。')
+      if (action === 'check') { await this.checkDeviceRecovery(recovery.connectorId); return null }
+      if ((action !== 'reconnect' || recovery.status !== 'disconnected') && (action !== 'recreate' || recovery.status !== 'deleted')) {
+        throw new Error('设备状态已变化，请先重新检查。')
+      }
+      await this.cancelFlow()
+      const controller = new AbortController()
+      this.controller = controller
+      try {
+        await this.connector.prepare()
+        await this.connector.stop()
+        controller.signal.throwIfAborted()
+        this.setProgress('pairing', action === 'recreate' ? '正在重新创建设备…' : '正在恢复设备连接…')
+        this.binding = await recoverBinding(this.config.stateRoot, account, this.apiFactory(account.apiBaseUrl), controller.signal,
+          recovery.connectorId, action, this.dependencies.machineState)
+        this.recovery = null
+        this.setProgress('starting', '正在启动本机连接…')
+        await this.connector.start(this.binding, account.apiBaseUrl, controller.signal)
+        await this.waitOnline(this.apiFactory(account.apiBaseUrl), account, this.binding.connectorId, controller.signal)
+        controller.signal.throwIfAborted()
+        this.setProgress('ready', '本机设备已连接。')
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          if (error instanceof DeviceRecoveryRequired || error instanceof ConnectorCredentialError) await this.connectionFailed(error)
+          else {
+            this.setRecovery(this.binding?.connectorId ?? recovery.connectorId,
+              error instanceof ApiError && error.status === 401 ? 'login_required' : 'unavailable',
+              error instanceof ApiError && error.status === 401 ? '账号登录已失效，请重新登录后恢复设备连接。' : '恢复连接失败，请检查设备状态后重试。')
+          }
+        }
+        await this.connector.stop()
+      } finally { if (this.controller === controller) this.controller = null }
+      return null
+    })
+  }
+
   cancel(): Promise<void> { return this.serial(() => this.cancelFlow()) }
 
   private async cancelFlow(): Promise<void> {
+    this.recoveryController?.abort()
+    this.recoveryCheck = null
+    this.recoveryController = null
     this.controller?.abort()
     if (this.work) await this.work
     this.work = null
     this.controller = null
     if (this.flow) await this.flow.close()
     this.flow = null
-    if (this.stage !== 'ready') this.setProgress('idle', '可以重新开始连接。')
+    if (this.stage !== 'ready' && !this.recovery) this.setProgress('idle', '可以重新开始连接。')
   }
 
   logout(): Promise<void> {
@@ -243,12 +340,14 @@ export class OnboardingManager {
     this.account = null
     this.profileCheckedAt = 0
     this.binding = null
+    this.recovery = null
     await rm(join(this.config.stateRoot, 'account.json'), { force: true })
     this.setProgress('idle', '已退出登录，本机连接已停止。')
   }
 
   async dispose(): Promise<void> {
     this.disposed = true
+    this.unsubscribeConnector()
     this.controller?.abort()
     this.profileController.abort()
     await this.profileRefresh
@@ -291,6 +390,7 @@ export class OnboardingManager {
       account: this.account ? publicProfile(this.account) : null,
       webAppUrl: resolveWebAppUrl(this.settings.apiBaseUrl),
       connectorId: this.binding?.connectorId ?? null, connectorRunning: this.connector.running, flowId: this.flow?.id ?? null,
+      deviceRecovery: this.recovery ? { ...this.recovery } : null,
     }
   }
 }

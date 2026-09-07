@@ -18,6 +18,8 @@
 
 未安装 Desktop 时，登录后切换为「已登录」面板，显示头像与账号基本信息、Connector 运行状态，以及「打开 Web」「退出登录」两个操作；面板不放手机连接入口。Web 按钮直接进入应用，退出登录负责停止本机连接并清理用户凭据。
 
+Connector 凭据失效时，插件接收既有 `connector/state` 通知并检查当前设备。确认删除后在 Connector 状态区提供「重新创建」；仍存在则提供「重新连接」，只续签当前 ID 的凭据。两种操作都等待点击，重启也不自动恢复。网络错误和账号登录过期单独提示，复用现有后端接口。
+
 最新业务流程见 [Onboarding 业务方案](./ONBOARDING_PLAN.md)。**第一期先实现未安装 Agents Anywhere Desktop 的流程。** 本文的 Desktop 均指 AA Desktop；DSH Desktop 是承载插件的另一应用。
 
 插件进入引导前由 Host 检查本机 Desktop 安装状态。已安装时将 onboarding、用户、设备及 Connector 管理交给 Desktop；未安装时插件承担本机管理职责，OAuth 后把已上线设备交给 Web 独立 onboarding 页面。两种模式共用插件内的 `dsh-runtime`，不改变 Connector 薄转发的边界。

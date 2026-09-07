@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
 import type { ResolvedConfig } from '../config.js'
-import type { Binding } from '../account/binding.js'
+import type { BoundDevice } from '../account/binding.js'
 import { writeJson } from '../storage/files.js'
 
 const runFile = promisify(execFile)
@@ -18,10 +18,16 @@ interface Pending {
 
 export interface ConnectorProcess {
   readonly running: boolean
+  onState(listener: (state: ConnectorState) => void): () => void
   prepare(): Promise<void>
-  start(binding: Required<Binding>, apiBaseUrl: string, signal: AbortSignal): Promise<void>
+  start(binding: BoundDevice, apiBaseUrl: string, signal: AbortSignal): Promise<void>
   stop(): Promise<void>
   assertHealthy(): Promise<void>
+}
+
+export interface ConnectorState { running: boolean; authFailed: boolean }
+export class ConnectorCredentialError extends Error {
+  constructor() { super('本机设备连接已失效，请在插件中恢复连接。') }
 }
 
 /** Owns only the child it spawns; DSH Agent operations are served by the plugin runtime. */
@@ -32,10 +38,27 @@ export class SourceConnector implements ConnectorProcess {
   private buffer = ''
   private failure: Error | null = null
   private stopping: Promise<void> | null = null
+  private state: ConnectorState = { running: false, authFailed: false }
+  private listeners = new Set<(state: ConnectorState) => void>()
   private readonly closed = new WeakSet<ChildProcessWithoutNullStreams>()
   constructor(private readonly config: ResolvedConfig, private readonly launch: ConnectorLauncher = spawn) {}
 
-  get running(): boolean { return this.child !== null && this.child.exitCode === null && this.child.signalCode === null }
+  private get alive(): boolean { return this.child !== null && this.child.exitCode === null && this.child.signalCode === null }
+  get running(): boolean { return this.alive && this.state.running && !this.state.authFailed }
+  onState(listener: (state: ConnectorState) => void): () => void {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
+  }
+
+  private updateState(value: unknown): void {
+    if (!value || typeof value !== 'object') return
+    const state = value as Partial<ConnectorState>
+    if (typeof state.running !== 'boolean' || typeof state.authFailed !== 'boolean') return
+    if (state.running === this.state.running && state.authFailed === this.state.authFailed) return
+    // Do not forward config paths, credentials or raw error text from Python.
+    this.state = { running: state.running, authFailed: state.authFailed }
+    for (const listener of this.listeners) listener({ ...this.state })
+  }
 
   async prepare(): Promise<void> {
     try {
@@ -51,9 +74,10 @@ export class SourceConnector implements ConnectorProcess {
     }
   }
 
-  async start(binding: Required<Binding>, apiBaseUrl: string, signal: AbortSignal): Promise<void> {
+  async start(binding: BoundDevice, apiBaseUrl: string, signal: AbortSignal): Promise<void> {
     if (this.stopping) await this.stopping
     if (this.running) return
+    if (this.alive) await this.stop()
     signal.throwIfAborted()
     const dataDir = join(this.config.stateRoot, 'connector')
     const configPath = join(dataDir, 'connector.json')
@@ -67,6 +91,7 @@ export class SourceConnector implements ConnectorProcess {
     signal.throwIfAborted()
     this.failure = null
     this.buffer = ''
+    this.updateState({ running: false, authFailed: false })
     const child = this.launch(this.config.uvPath, [
       'run', '--directory', this.config.connectorSourceDir,
       'anywhere-cli', 'rpc', '--config', configPath,
@@ -85,24 +110,26 @@ export class SourceConnector implements ConnectorProcess {
     })
     this.child = child
     child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => this.receive(chunk))
+    child.stdout.on('data', (chunk: string) => { if (this.child === child) this.receive(chunk) })
     // Always drain stderr (uv may install dependencies); raw subprocess output
     // can contain credentials, so it is never forwarded to the browser/logs.
     child.stderr.resume()
-    child.stdin.on('error', () => this.fail(new Error('Connector 输入连接已关闭。')))
-    child.on('error', () => this.fail(new Error('Connector 进程启动失败，请检查 uv 和源码运行环境。')))
+    child.stdin.on('error', () => { if (this.child === child) this.fail(new Error('Connector 输入连接已关闭。')) })
+    child.on('error', () => { if (this.child === child) this.fail(new Error('Connector 进程启动失败，请检查 uv 和源码运行环境。')) })
     child.on('close', (code) => {
       this.closed.add(child)
-      if (this.child === child) this.child = null
-      this.fail(new Error(`Connector 已退出（${code ?? '终止'}）。请检查运行环境后重试。`))
+      if (this.child === child) {
+        this.child = null
+        this.fail(new Error(`Connector 已退出（${code ?? '终止'}）。请检查运行环境后重试。`))
+      }
     })
     const abort = () => { void this.stop() }
     signal.addEventListener('abort', abort, { once: true })
     try {
       // Includes the first uv dependency installation, not just Python startup.
-      await this.call('connector.getState', 180_000)
+      this.updateState(await this.call('connector.getState', 180_000))
       signal.throwIfAborted()
-      await this.call('connector.start')
+      this.updateState(await this.call('connector.start'))
       signal.throwIfAborted()
     } catch (error) {
       await this.stop()
@@ -113,9 +140,11 @@ export class SourceConnector implements ConnectorProcess {
   }
 
   async assertHealthy(): Promise<void> {
+    if (this.state.authFailed) throw new ConnectorCredentialError()
     if (this.failure) throw this.failure
-    const state = await this.call('connector.getState') as { running?: boolean; authFailed?: boolean }
-    if (state.authFailed) throw new Error('设备凭据已失效，请退出登录后重新连接。')
+    const state = await this.call('connector.getState') as ConnectorState
+    this.updateState(state)
+    if (state.authFailed) throw new ConnectorCredentialError()
     if (!state.running) throw new Error('Connector 尚未运行，请返回插件重试。')
   }
 
@@ -174,7 +203,8 @@ export class SourceConnector implements ConnectorProcess {
       const line = this.buffer.slice(0, newline)
       this.buffer = this.buffer.slice(newline + 1)
       try {
-        const frame = JSON.parse(line) as { id?: number; result?: unknown; error?: unknown }
+        const frame = JSON.parse(line) as { id?: number; method?: string; params?: unknown; result?: unknown; error?: unknown }
+        if (frame.method === 'connector/state' && frame.id === undefined) { this.updateState(frame.params); continue }
         if (typeof frame.id !== 'number') continue
         const pending = this.pending.get(frame.id)
         if (!pending) continue
@@ -188,6 +218,7 @@ export class SourceConnector implements ConnectorProcess {
 
   private fail(error: Error): void {
     this.failure = error
+    this.updateState({ ...this.state, running: false })
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error) }
     this.pending.clear()
   }

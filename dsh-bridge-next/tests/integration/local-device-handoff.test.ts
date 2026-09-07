@@ -74,6 +74,7 @@ for (const entry of ['first-login', 'deleted-local-device'] as const) {
     const server = new DeviceServer()
     let pluginRunning = false
     const pluginConnector: ConnectorProcess = {
+      onState: () => () => {},
       prepare: async () => {},
       start: async binding => { server.devices.get(binding.connectorId)!.status = 'online'; pluginRunning = true },
       stop: async () => { pluginRunning = false },

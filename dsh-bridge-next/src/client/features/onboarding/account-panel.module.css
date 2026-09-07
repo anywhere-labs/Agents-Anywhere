@@ -78,6 +78,7 @@
 }
 
 .actions { display: flex; flex-direction: column; gap: 8px; }
+.recover { margin-left: auto; }
 
 .panel .button {
   width: 100%;

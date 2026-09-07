@@ -19,6 +19,12 @@ lines.on('line', line => {
   if (request.method === 'connector.stop') running = false;
   const result = { running, authFailed: false };
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
+  if (request.method === 'connector.start' && process.argv[2] === 'auth-failed') setTimeout(() => {
+    running = false;
+    const frame = JSON.stringify({ jsonrpc: '2.0', method: 'connector/state', params: { running, authFailed: true, lastError: 'PRIVATE', configPath: '/PRIVATE' } }) + '\\n';
+    process.stdout.write(frame.slice(0, 30));
+    setTimeout(() => process.stdout.write(frame.slice(30)), 5);
+  }, 20);
 });
 lines.on('close', () => process.exit(0));
 `
@@ -74,6 +80,19 @@ test('a spawn error releases the child without waiting indefinitely', { timeout:
     await assert.rejects(h.connector.start(binding, 'https://api.example.test', new AbortController().signal), /启动失败|已关闭|已退出/)
     assert.equal(h.connector.running, false)
   } finally { await h.close() }
+})
+
+test('auth failure is delivered over unsolicited stdio state even while the controller process stays alive', { timeout: 8000 }, async () => {
+  const h = await fixture('auth-failed')
+  let detach = () => {}
+  try {
+    const failed = new Promise<unknown>(resolve => { detach = h.connector.onState(state => { if (state.authFailed) resolve(state) }) })
+    await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
+    assert.deepEqual(await failed, { running: false, authFailed: true })
+    assert.equal(h.child?.exitCode, null)
+    assert.equal(h.connector.running, false)
+    await assert.rejects(h.connector.assertHealthy(), /本机设备连接已失效/)
+  } finally { detach(); await h.close() }
 })
 
 test('cancelling a Connector that has not finished startup closes its owned process', { timeout: 8000 }, async () => {
