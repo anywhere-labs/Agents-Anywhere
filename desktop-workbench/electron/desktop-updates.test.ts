@@ -191,3 +191,36 @@ test("failed preference writes leave the update dialog open for retry", async (t
   assert.equal(h.service.getState().dialogOpen, true);
   assert.equal(h.service.getState().ignored, false);
 });
+
+test("missing server addresses perform no update request and clear the visible state", async (t) => {
+  const h = harness(t);
+  for (const connection of [null, { ...server, serverUrl: "  " }]) {
+    const state = await h.service.check(connection);
+    assert.equal(state.available, false);
+    assert.equal(state.dialogOpen, false);
+    assert.equal(state.error, null);
+  }
+  assert.equal(h.requests.length, 0);
+  await h.service.check(server);
+  h.service.ignoreVersion();
+  assert.equal((await h.service.check(null)).latestVersion, null);
+  assert.equal((await h.service.check(server)).ignored, true, "signing out preserves the ignored version");
+});
+
+test("signing out cancels an in-flight check and late responses cannot reopen the prompt", async (t) => {
+  let finish!: (response: Response) => void;
+  let signal: AbortSignal | null | undefined;
+  const h = harness(t, { fetcher: (_input, init) => {
+    signal = init?.signal;
+    return new Promise((resolve) => { finish = resolve; });
+  } });
+  const pending = h.service.check(server);
+  await h.service.check(null);
+  assert.equal(signal?.aborted, true);
+  finish(healthy());
+  await pending;
+  assert.equal(h.service.getState().dialogOpen, false);
+  assert.equal(h.service.getState().available, false);
+  assert.equal(h.service.getState().checking, false);
+  assert.equal(h.service.getState().error, null);
+});

@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
   },
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("workbench:openExternal", url),
   updates: {
+    syncSession: (serverUrl: string | null): Promise<DesktopUpdateState | null> => ipcRenderer.invoke("workbench:updates:syncSession", serverUrl),
     getState: (): Promise<DesktopUpdateState | null> => ipcRenderer.invoke("workbench:updates:getState"),
     open: (): Promise<DesktopUpdateState | null> => ipcRenderer.invoke("workbench:updates:open"),
     ignore: (): Promise<DesktopUpdateState | null> => ipcRenderer.invoke("workbench:updates:ignore"),

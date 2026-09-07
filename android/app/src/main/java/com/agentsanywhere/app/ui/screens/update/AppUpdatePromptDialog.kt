@@ -15,7 +15,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -192,14 +191,13 @@ private fun UpdateDialogButton(
         modifier = modifier
             .height(46.dp)
             .clip(shape)
-            .background(if (primary) colors.primaryAction.copy(alpha = if (enabled) 1f else 0.42f) else Color.Transparent)
-            .then(if (primary) Modifier else Modifier.border(1.dp, colors.border, shape))
+            .background(if (primary) colors.primaryAction.copy(alpha = if (enabled) 1f else 0.42f) else colors.secondaryActionSurface)
             .noRippleClickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
-            color = if (primary) colors.onPrimaryAction else colors.ink,
+            color = (if (primary) colors.onPrimaryAction else colors.ink).copy(alpha = if (enabled) 1f else 0.55f),
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
         )

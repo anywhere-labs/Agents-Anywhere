@@ -115,6 +115,7 @@ export type DesktopWorkbenchBridge = {
   }
   openExternal: (url: string) => Promise<void>
   updates?: {
+    syncSession: (serverUrl: string | null) => Promise<DesktopUpdateState | null>
     getState: () => Promise<DesktopUpdateState | null>
     open: () => Promise<DesktopUpdateState | null>
     ignore: () => Promise<DesktopUpdateState | null>

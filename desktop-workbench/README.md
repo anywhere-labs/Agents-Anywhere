@@ -148,8 +148,11 @@ CI. `bundle:uv` verifies the upstream archive checksum before copying it into
 
 ## Desktop updates
 
-Main checks the selected server's `/api/v2/health` on launch and after a server
-login. Its `version` is compared numerically with `app.getVersion()`, including
+After authentication finishes and the workbench opens, Main checks the saved
+server's `/api/v2/health`. The authenticated session must match the saved server;
+login screens, missing server records, and default configuration never trigger
+an update check. Signing out cancels pending work and clears the update dialog.
+The server's `version` is compared numerically with `app.getVersion()`, including
 four-part Server versions such as `0.1.7.2`. No dedicated release API is used.
 
 An older Desktop opens an update dialog with **Ignore this version** and

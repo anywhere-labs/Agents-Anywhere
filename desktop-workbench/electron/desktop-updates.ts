@@ -34,7 +34,18 @@ export class DesktopUpdateService {
 
   getState(): DesktopUpdateState { return { ...this.state }; }
 
-  check(server: DesktopServerConnection): Promise<DesktopUpdateState> {
+  check(server: DesktopServerConnection | null): Promise<DesktopUpdateState> {
+    if (!server?.serverUrl.trim()) {
+      this.dispose();
+      this.serverKey = "";
+      this.checkPromise = null;
+      this.downloadPromise = null;
+      this.healthAbort = null;
+      this.downloadAbort = null;
+      this.installerPath = null;
+      this.publish(this.initialState());
+      return Promise.resolve(this.getState());
+    }
     const key = `${server.serverUrl}${server.apiNamespace}`;
     if (key === this.serverKey) {
       if (this.checkPromise) return this.checkPromise;

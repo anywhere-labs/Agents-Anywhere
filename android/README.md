@@ -32,9 +32,12 @@ terminal push, and code preview surfaces.
 
 ## Application updates
 
-On launch and when the selected server changes, Android reads `/api/v2/health`
-and compares its `version` with `BuildConfig.VERSION_NAME` numerically. The saved
-server is used when available; `AppConfig.UPDATE_SERVICE_URL` is the fallback.
+After entering the signed-in app, Android reads the saved server's
+`/api/v2/health` and compares its `version` with `BuildConfig.VERSION_NAME`
+numerically. This also runs on launch with an existing login and when the saved
+server changes. Login screens and sessions without a saved server never check
+for updates; no default server is substituted. Signing out cancels pending
+checks and downloads and clears the visible update state.
 `AppConfig.UPDATE_DOWNLOAD_URL` is the fixed APK address and currently contains
 an explicit `.invalid` placeholder that must be replaced before distribution.
 

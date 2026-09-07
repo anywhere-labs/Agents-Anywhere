@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { normalizeServerOrigin, resolveDesktopServer, type DesktopServerConnection } from "./desktop-server";
 
 // Execute the actual Main entrypoint functions without loading Electron or
 // starting a Connector. Any new shutdown side effects must be accounted for.
@@ -90,4 +91,24 @@ test("project API requests reach the Desktop proxy even with an empty API namesp
     assert.equal(shouldProxyApiPath("/projects-help.html"), false);
     assert.equal(shouldProxyApiPath("/_next/static/app.js"), false);
   }
+});
+
+test("updates require an authenticated server matching a saved server and never use defaults", () => {
+  const server = resolveDesktopServer("https://saved.example");
+  let saved: DesktopServerConnection | null = null;
+  const calls: Array<DesktopServerConnection | null> = [];
+  const { syncDesktopUpdateSession } = loadFunctions(["syncDesktopUpdateSession"], {
+    serverStore: { getSaved: () => saved, get: () => assert.fail("Update checks must not use fallback settings") },
+    normalizeServerOrigin,
+    updates: { check: (connection: DesktopServerConnection | null) => { calls.push(connection); } },
+  });
+  syncDesktopUpdateSession(server.serverUrl);
+  assert.equal(calls.pop(), null, "a missing server record cannot trigger a check");
+  saved = server;
+  for (const input of [null, undefined, "", "  ", {}, "file:///tmp/server", "https://other.example"]) {
+    syncDesktopUpdateSession(input);
+    assert.equal(calls.pop(), null, "signed-out and mismatched sessions clear updates");
+  }
+  syncDesktopUpdateSession(server.serverUrl);
+  assert.deepEqual(calls.pop(), server);
 });

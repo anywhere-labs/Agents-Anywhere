@@ -72,7 +72,6 @@ class MainActivity : ComponentActivity() {
             preferences.getString(KEY_SIDEBAR_VIEW_MODE, HomeSidebarViewMode.Project),
         )
         oauthCallbackUri.value = intent?.data
-        appUpdateViewModel.checkForUpdate(showPrompt = true)
         setContent {
             AgentsAnywhereTheme(appearanceMode = appearanceMode) {
                 AgentsAnywhereApp(

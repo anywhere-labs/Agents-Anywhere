@@ -4,6 +4,7 @@ import * as React from "react"
 import { Download } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
+import { useAuth } from "@/components/auth/auth-context"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -16,30 +17,49 @@ const Context = React.createContext<UpdateContext>({ state: null, open: () => un
 
 export function DesktopUpdateProvider({ children }: { children: React.ReactNode }) {
   const t = useTranslations("desktopUpdates")
-  const [state, setState] = React.useState<DesktopUpdateState | null>(null)
+  const { session, isAuthenticated, loading, screen } = useAuth()
+  const serverUrl = !loading && isAuthenticated && screen === "app" ? session?.serverUrl?.trim() || null : null
+  const sessionKey = serverUrl ? `${session?.userId}:${serverUrl}` : null
+  const [snapshot, setSnapshot] = React.useState<{ sessionKey: string | null; state: DesktopUpdateState } | null>(null)
+  const state = sessionKey && snapshot?.sessionKey === sessionKey ? snapshot.state : null
   const [pending, setPending] = React.useState(false)
+  const generation = React.useRef(0)
   const accept = React.useCallback((next: DesktopUpdateState | null) => {
-    if (next) setState((current) => !current || next.revision >= current.revision ? next : current)
-  }, [])
+    if (next) setSnapshot((current) => !current || current.sessionKey !== sessionKey || next.revision >= current.state.revision
+      ? { sessionKey, state: next } : current)
+  }, [sessionKey])
 
   React.useEffect(() => {
     const updates = getDesktopWorkbenchBridge()?.updates
-    if (!updates) return
+    if (!updates?.syncSession) return
+    ++generation.current
+    setPending(false)
     let disposed = false
     const receive = (next: DesktopUpdateState | null) => { if (!disposed) accept(next) }
     const unsubscribe = updates.onState(receive)
-    void updates.getState().then(receive).catch(() => undefined)
-    return () => { disposed = true; unsubscribe() }
-  }, [accept])
+    void updates.syncSession(serverUrl).then(receive).catch(() => undefined)
+    return () => {
+      ++generation.current
+      disposed = true
+      unsubscribe()
+      void updates.syncSession(null).catch(() => undefined)
+    }
+  }, [accept, serverUrl])
 
   const perform = React.useCallback(async (action: "open" | "ignore" | "download") => {
     const updates = getDesktopWorkbenchBridge()?.updates
-    if (!updates) return
+    if (!updates || !serverUrl) return
+    const currentGeneration = generation.current
     setPending(true)
-    try { accept(await updates[action]()) }
-    catch { toast.error(t("errors.actionFailed")) }
-    finally { setPending(false) }
-  }, [accept, t])
+    try {
+      const next = await updates[action]()
+      if (currentGeneration === generation.current) accept(next)
+    } catch {
+      if (currentGeneration === generation.current) toast.error(t("errors.actionFailed"))
+    } finally {
+      if (currentGeneration === generation.current) setPending(false)
+    }
+  }, [accept, serverUrl, t])
   const open = React.useCallback(() => { void perform("open") }, [perform])
   const busy = pending || state?.phase === "downloading" || state?.phase === "opening"
   const progress = state?.totalBytes ? Math.min(100, Math.floor(state.downloadedBytes / state.totalBytes * 100)) : null

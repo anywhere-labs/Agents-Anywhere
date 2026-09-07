@@ -91,17 +91,21 @@ export async function checkDesktopServer(
 
 export class DesktopServerStore {
   private connection: DesktopServerConnection;
+  private saved = false;
 
   constructor(private readonly filePath: string, fallback: DesktopServerConnection) {
     const stored = readJsonFile<DesktopServerConnection | null>(filePath, null);
     try {
-      this.connection = stored && typeof stored.apiNamespace === "string"
-        ? {
-            serverUrl: normalizeServerOrigin(stored.serverUrl),
-            apiNamespace: stored.apiNamespace.replace(/^\/+|\/+$/g, "").replace(/^(.+)$/, "/$1"),
-            oauthWebOrigin: normalizeServerOrigin(stored.oauthWebOrigin),
-          }
-        : fallback;
+      if (stored && typeof stored.apiNamespace === "string") {
+        this.connection = {
+          serverUrl: normalizeServerOrigin(stored.serverUrl),
+          apiNamespace: stored.apiNamespace.replace(/^\/+|\/+$/g, "").replace(/^(.+)$/, "/$1"),
+          oauthWebOrigin: normalizeServerOrigin(stored.oauthWebOrigin),
+        };
+        this.saved = true;
+      } else {
+        this.connection = fallback;
+      }
     } catch {
       this.connection = fallback;
     }
@@ -111,8 +115,13 @@ export class DesktopServerStore {
     return { ...this.connection };
   }
 
+  getSaved(): DesktopServerConnection | null {
+    return this.saved ? this.get() : null;
+  }
+
   save(connection: DesktopServerConnection): void {
     writeJsonFile(this.filePath, connection);
     this.connection = { ...connection };
+    this.saved = true;
   }
 }

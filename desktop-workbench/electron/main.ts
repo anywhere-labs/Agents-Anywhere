@@ -37,6 +37,7 @@ import {
   checkDesktopServer,
   DesktopServerError,
   DesktopServerStore,
+  normalizeServerOrigin,
   resolveDesktopServer,
   type DesktopOAuthStartResult,
   type DesktopServerConnection,
@@ -177,7 +178,6 @@ async function handleDesktopOAuthCallback(rawUrl: string): Promise<void> {
     if (pending.attempt !== desktopOAuthAttempt) return;
     if (!serverStore) throw new Error("Desktop server settings are not ready.");
     serverStore.save(pending.server);
-    void updates?.check(pending.server);
     publishDesktopOAuthResult({ status: "success", accessToken, server: pending.server });
   } catch (error) {
     if (pending.attempt !== desktopOAuthAttempt) return;
@@ -456,7 +456,24 @@ function appendMainLog(entry: string | Partial<ConnectorLogEntry>): void {
   sendToRenderer("workbench:connector:log", normalized);
 }
 
+function syncDesktopUpdateSession(serverUrl: unknown) {
+  const saved = serverStore?.getSaved();
+  let connection: DesktopServerConnection | null = null;
+  if (saved && typeof serverUrl === "string" && serverUrl.trim()) {
+    try {
+      if (normalizeServerOrigin(serverUrl) === saved.serverUrl) connection = saved;
+    } catch {
+      // An incomplete or invalid session must never select a fallback server.
+    }
+  }
+  return updates?.check(connection) ?? null;
+}
+
 function registerIpcHandlers(): void {
+  ipcMain.handle("workbench:updates:syncSession", (event, serverUrl: unknown) => {
+    assertTrustedRenderer(event);
+    return syncDesktopUpdateSession(serverUrl);
+  });
   for (const [method, action] of Object.entries({
     getState: () => updates?.getState() ?? null,
     open: () => updates?.showPrompt() ?? null,
@@ -837,7 +854,6 @@ if (hasSingleInstanceLock) {
       },
       onState: (state) => sendToRenderer("workbench:updates:state", state),
     });
-    void updates.check(activeDesktopServer());
     const settings = requireSettings().get();
     const showOnLaunch = !settings.silentLaunch || !launchedAsLoginItem() || Boolean(process.env.WORKBENCH_WEB_URL);
     createMainWindow(showOnLaunch);

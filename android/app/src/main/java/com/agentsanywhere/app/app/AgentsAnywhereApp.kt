@@ -93,9 +93,6 @@ fun AgentsAnywhereApp(
 ) {
     val context = LocalContext.current
     val sessionStore = remember(context) { AuthSessionStore(context) }
-    LaunchedEffect(sessionStore.readServerUrl()) {
-        appUpdateViewModel.refreshForServer()
-    }
     var destinationName by rememberSaveable {
         mutableStateOf(
             if (sessionStore.hasAuthSession()) {
@@ -172,6 +169,13 @@ fun AgentsAnywhereApp(
     }
     val currentDestination = AppDestination.valueOf(destinationName)
     val hasAuthSession = sessionStore.hasAuthSession()
+    val updateServerUrl = sessionStore.readServerUrl()
+    val updatesAllowed = hasAuthSession && updateServerUrl.isNotBlank() && currentDestination !in setOf(
+        AppDestination.LoginMethods, AppDestination.ServerSetup, AppDestination.QrLogin, AppDestination.QrWaiting,
+    )
+    LaunchedEffect(updatesAllowed, updateServerUrl) {
+        appUpdateViewModel.syncSession(updatesAllowed)
+    }
     var sessionsState by remember(sessionsController) {
         mutableStateOf(
             if (hasAuthSession) {
@@ -242,6 +246,7 @@ fun AgentsAnywhereApp(
         }
         if (!didClearSession) return
 
+        appUpdateViewModel.syncSession(false)
         remoteTerminalPool.disposeLocal()
         sessionsState = SessionsState()
         isRefreshingSessions = false
@@ -865,13 +870,15 @@ fun AgentsAnywhereApp(
             destinationName = AppDestination.QrWaiting.name
         },
     )
-    AppUpdatePromptDialog(
-        state = appUpdateViewModel.state,
-        onUpdate = appUpdateViewModel::downloadUpdate,
-        onIgnore = appUpdateViewModel::ignoreVersion,
-    )
-    LaunchedEffect(appUpdateViewModel.state.installFile) {
-        appUpdateViewModel.state.installFile?.let(onInstallUpdate)
+    if (updatesAllowed) {
+        AppUpdatePromptDialog(
+            state = appUpdateViewModel.state,
+            onUpdate = appUpdateViewModel::downloadUpdate,
+            onIgnore = appUpdateViewModel::ignoreVersion,
+        )
+    }
+    LaunchedEffect(updatesAllowed, appUpdateViewModel.state.installFile) {
+        if (updatesAllowed) appUpdateViewModel.state.installFile?.let(onInstallUpdate)
     }
 }
 
