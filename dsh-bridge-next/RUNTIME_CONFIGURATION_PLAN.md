@@ -1,8 +1,8 @@
 # DSH Runtime 配置与新建会话方案
 
-更新日期：2026-09-08。状态：配置、目录、创建初始化和实时切换已实现并通过 headless 检查；真实模型与多端交互仍待手动验收。
+更新日期：2026-09-08。状态：方案保留，当前分支已按要求撤回图片、模型/effort/权限和模式配置实现。以下是后续重做时的业务约束，不代表当前功能已开放。
 
-核对基线：`dsh-bridge-next` 使用的官方 DSH `0.1.2-rc.1` 类型、发布包实现和预设文件，并参考官方插件文档。本文保留已确认的业务规则和验收条件；当前实现见第 10 节，已执行检查及手动验收边界见 [验证记录](./VERIFICATION.md)。
+核对基线：`dsh-bridge-next` 使用的官方 DSH `0.1.2-rc.1` 类型、发布包实现和预设文件，并参考官方插件文档。本文中的“当前实现”指本仓库现状；“需要实现”不表示功能已经接通。
 
 ## 1. 已确认的业务规则
 
@@ -59,9 +59,9 @@ DSH 自己保存的“以后会话默认使用什么”不参与 AA 新会话选
 AA 客户端 → AA Server → Python Connector → dsh-bridge-next Host → DSH 官方服务
 ```
 
-当前插件已通过官方 Session Controller 创建和发送文本/图片消息，由同一控制路径处理 AA 创建和 DSH 本地创建的会话。模型选择通过 `selectModel` 写入并读取官方会话投影，避免两份控制状态互不同步。
+现有插件已经使用公开的 `ctx.agents.create(...)` / `agent.followup(...)` 处理纯文本会话。这组接口也能组合创建流程。补齐配置时必须统一 Agent 的控制权与模型选择写入路径，不能让两个控制器各持一份互不同步的模型选择。
 
-Session Controller 是 Host 服务，业务代码不依赖浏览器、Electron 或 DSH 前端组件实例。具体部署未组合相应服务时，能力如实关闭；未来若使用公开底层 API 替代，也必须通过同样的验收。
+优先接入官方 Session Controller，以覆盖 AA 创建和 DSH 本地创建的会话。该服务是 Host 服务，业务代码不能依赖浏览器、Electron 或 DSH 前端组件实例。具体部署未组合相应服务时，能力应如实关闭并说明原因；公开底层 API 的替代实现必须通过同样的验收。
 
 ### 3.1 截图中的模式可以枚举
 
@@ -155,7 +155,7 @@ effort 处理规则：
 
 位置：设备详情 → DSH Runtime → 配置。
 
-已实现字段：`defaultAgentPreset`，显示名称“新会话默认模式”，说明“仅用于此 Runtime 以后创建的会话，已有会话保持原模式”。保存值为 preset ID，界面显示名称和必要描述。
+建议字段：`defaultAgentPreset`，显示名称“新会话默认模式”，说明“仅用于此 Runtime 以后创建的会话，已有会话保持原模式”。保存值为 preset ID，界面显示名称和必要描述。
 
 具体规则：
 
@@ -167,7 +167,7 @@ effort 处理规则：
 6. Runtime 离线时可展示已保存值，不能把未知状态解释为模式已经删除；恢复连接后再校验目录。
 7. 只修改这个默认模式不能中断正在执行的 DSH turn。现有 Runtime 配置保存可能重建适配器连接，实施时要验证并保证不因此重启 DSH Host、销毁 Agent 或丢失切换请求。
 
-Web 和 Desktop 的 `RuntimeConfigDialog` 已通过 schema 枚举与 `runtimeConfigOptions` 显示名称、说明、不可用状态和禁用原因；配置目录由插件解释，Connector 负责查询转发和配置装配。表单复用 AA 的现有组件。
+现有 `RuntimeConfigDialog` 已支持 schema 枚举选择，但当前直接显示枚举原值。需要补齐“ID 与名称分离”、说明、禁用原因和动态目录刷新，并复用 AA 的现有表单组件。模式目录应由插件解释，Connector 只负责转发和配置装配，不复制 DSH 发现逻辑。
 
 本阶段无需在新建会话页新增另一套模式偏好选择器；可展示最终模式作为提示。创建请求必须携带模式字段，以后是否开放单次创建覆盖可以独立扩展。
 
@@ -297,21 +297,21 @@ S1 执行中切到 Model B / high / 权限 Q
 
 会话配置变化只更新该会话；目录刷新只更新目录。这两条路径都不能调用 AA 新会话偏好保存函数。配置日志也不能被投影成重复的用户消息或普通聊天气泡。
 
-## 10. 当前实现与验证边界
+## 10. 当前缺口与实施范围
 
-| 层 | 当前实现 | 验证边界 |
+| 层 | 当前已看到的缺口 | 需要补齐 |
 | --- | --- | --- |
-| 插件 capabilities / router | 按官方服务可用性开放模型、effort、权限目录及 `session.updateSelections`，状态返回实际 selections | 官方 Host 组合与目录/配置集成测试已通过 |
-| 插件 native | Session Controller 统一创建和发送；先设置模型、effort、权限和模式，创建意图保存重试快照；支持文本与图片 | 显式配置、创建重试、冷会话与图片准入有 headless 覆盖；真实模型待验收 |
-| 插件 sync | 同步会话配置投影和目录变化，重连后完整校准 | 事件与问答链路贯穿 Python Connector 和原有 Server；未验证长期运行 |
-| Connector DSH runtime | 转发目录、selections、模式、图片及会话配置更新 | DSH、归属与控制流程定向测试已通过 |
-| Runtime 配置 | `defaultAgentPreset` 来自官方模式目录，保存在 AA Runtime 实例配置，创建时固定模式 | 模式配置和校验有测试；真实运行中修改默认模式仍需验收 |
-| AA 客户端 | Web/Desktop 已有跨 provider 模型标签、配置选项名称/禁用原因、图片白名单和状态回显 | 两端测试、类型与协议检查已通过；不据此宣称手机界面已验证 |
-| 公共契约与 Server | 复用 selections 通道，扩展模式及图片契约，保留 AA 新会话偏好机制 | 协议生成与相关 Server 测试已通过；工具权限审批应答仍未开放 |
+| 插件 capabilities / router | 三个 catalog 能力关闭；未实现目录查询和 `session.updateSelections`；状态 selections 为空 | 真实能力、目录、切换路由和状态读取 |
+| 插件 native | 新建、恢复路径仍可能取 DSH 默认模型或模式；纯文本发送未接收这些配置 | 区分新建与恢复，显式初始化，统一官方写入控制权 |
+| 插件 sync | 当前以会话、消息和运行状态同步为主 | 配置投影、目录变化及重连校准 |
+| Connector DSH runtime | `create_and_start_session` / `start_turn` 收到了 selections，但 `_send_text` 未透传 | 补齐字段、目录与切换方法的薄转发 |
+| Runtime 配置 | 无 `defaultAgentPreset` 和模式目录 | 模式目录查询、AA 配置字段、校验及创建时快照 |
+| AA 客户端 | 已有模型/effort/权限选择与偏好；模型标签未完整处理跨 provider 同名 | 补齐目录适配、标签、状态回显和 Runtime 模式配置 |
+| 公共契约与 Server | 已有 selections；模式还未形成完整创建参数通道 | 最小范围扩展创建字段、桥接模式目录及必要事件；保留现有平台偏好逻辑 |
 
 主要代码入口：
 
-- 插件：[capabilities](./src/host/dsh-runtime/capabilities.ts)、[router](./src/host/dsh-runtime/router.ts)、[catalogs](./src/host/dsh-runtime/catalogs.ts)、[configuration](./src/host/dsh-runtime/configuration.ts)、[native](./src/host/dsh-runtime/native.ts)、[sync](./src/host/dsh-runtime/sync.ts)。
+- 插件：[capabilities](./src/host/dsh-runtime/capabilities.ts)、[router](./src/host/dsh-runtime/router.ts)、[native](./src/host/dsh-runtime/native.ts)、[sync](./src/host/dsh-runtime/sync.ts)。
 - Connector：[DSH runtime](../connector/connector/runtimes/dsh/runtime.py)、[provider](../connector/connector/runtimes/dsh/provider.py)、[provider config](../connector/connector/runtimes/dsh/provider_config.py)。
 - 契约：[桥接协议](../contracts/dsh-bridge/1.0/)、[Runtime 接口](../connector/connector/runtime_protocol/protocol.py)。
 - AA Desktop：[目录选择](../desktop-workbench/renderer/src/components/session/catalog-selection.ts)、[新建会话](../desktop-workbench/renderer/src/components/task-composer.tsx)、[会话详情](../desktop-workbench/renderer/src/components/session-detail.tsx)、[Runtime 配置表单](../desktop-workbench/renderer/src/components/runtime-config-dialog.tsx)。
@@ -319,7 +319,7 @@ S1 执行中切到 Model B / high / 权限 Q
 
 DSH 插件 UI 若需要变更，使用官方扩展点和官方组件。AA 端复用 AA 现有组件。Host 逻辑需在 headless 环境可执行。
 
-下一步按第 11 节和验证记录进行真实模型、多端切换、手机及 Windows 验收。自动化已覆盖的部分不再列为待实现；没有实机证据的场景仍保留为待验收。
+实施顺序：先补协议和只读目录，再接 Runtime 默认模式配置与创建初始化，随后接实时切换及状态同步，最后做端到端验收。以上是同一批完整目标，不能只打开 capability 开关就认为功能完成。
 
 ## 11. 验收条件与容易遗漏的逻辑
 
@@ -345,7 +345,7 @@ DSH 插件 UI 若需要变更，使用官方扩展点和官方组件。AA 端复
 | 仅部分 provider 目录失败 | 其他模型仍可用，错误有归属，不清空或重写 AA 偏好 |
 | headless Host | 目录、创建、切换和同步不依赖桌面 UI |
 
-自动化已验证官方 Session Controller 的 Host 组合和配置调用；真实模型执行中的生效时机、两类活跃会话的界面回显与并发多端操作仍按上表验收。第 3.2 节记录的官方 API 全局默认副作用保持不变，AA 自己的新会话偏好不能因此被覆盖。
+实施时优先完成两项技术验证：官方 Session Controller 在目标 Host 的组合与两类活跃会话控制权；官方实时权限命令在执行中保留原生行为。若还要求 DSH 全局默认完全不被写入，则第 3.2 节的官方 API 限制必须单独解决，不能在验收中忽略。
 
 ## 12. 官方依据
 

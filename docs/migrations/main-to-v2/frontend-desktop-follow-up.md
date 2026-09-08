@@ -710,3 +710,17 @@ Desktop 校验和发布，插件只读。共享状态升级为 `.agents-anywhere
 旧 SQLite 迁移语法问题已修复，Server 相关及完整迁移测试共 175 项通过。
 当前分支 CI 另行重跑 Web 和 Desktop renderer；具体远程结果与仍需手动
 验收的真实模型、手机及 Windows 行为见 [验证记录](../../../dsh-bridge-next/VERIFICATION.md)。
+
+### DSH 回退至图片功能之前（2026-09-08）
+
+用户实测反馈：AA → DSH 的 RPC 生效，但 DSH 会话自动同步和数据回传异常。
+按要求在 `codex/dsh-before-images` 撤回 `742d09be` 中的 DSH 图片与配置扩展，
+恢复 `65ad5d9f` 的文本运行时，同时撤回 `8535885b` 提前加入同步模块的新
+配置读取依赖。Python Host 实时发布通道、启动互斥、ID 历史和 Desktop
+安装信息职责保留；Web/Desktop 的通用功能与 AA 新会话偏好没有回退。
+
+插件 92 项、Connector 81 项、Server 相关 76 项本地通过；端到端探针确认
+原生 session 自动导入、AA 发起任务后的流式文本和最终结果、重连校准实际
+到达 AA 后端。此为临时环境的 headless 结果；用户仍需重启 DSH 与 CLI
+加载回退代码，并确认原环境恢复。图片与 AA 侧 DSH 模型/effort/权限切换
+暂停提供，完整结果见 [验证记录](../../../dsh-bridge-next/VERIFICATION.md)。

@@ -1,6 +1,6 @@
 # DSH 过滤、事件同步与文本发送
 
-2026-09-07。用户已确认实施，目标 DSH 0.1.2-rc.1。
+2026-09-08：DSH 已回退到图片功能之前，继续验证自动会话同步和数据回传。目标 DSH 0.1.2-rc.1。
 
 **最新约束：后端不新增接口、逻辑、表或迁移。** 本文替代先前涉及后端扩展的方案。已撤回原先的同步代次、事务 checkpoint、项目写入与投影物理删除扩展。
 
@@ -58,11 +58,11 @@
 
 进入详情和发送前，插件即时读取官方会话清单和明确归档集合；归档会话返回 blocked / session_archived。Connector 把来源事实写入现有通知接口后返回状态，Web 和 Desktop 复用原有来源不可用弹窗，显示 DeepSeek Harness 文案。
 
-## 文本、图片与会话配置
+## 文本发送
 
-通过既有 session.createAndStart、session.startTurn、session.interrupt：官方 Session Controller 负责创建和文本/图片发送，官方 Agent 提供中断。新建时先固定 AA 的模型、effort、权限、cwd 和 Runtime 默认模式，再投递首条消息；恢复已有会话读取原生会话的实际选择。配置目录、实时切换与 AA 偏好的边界见 [配置方案](./RUNTIME_CONFIGURATION_PLAN.md)。
+通过既有 session.createAndStart、session.startTurn、session.interrupt：复用活跃 Agent，冷会话用官方 agents.resume 恢复，新会话使用 agents.create 并关联工作区。保持原模型/preset，新会话使用官方默认模型；没有默认模型则明确报错。
 
-稳定 clientMessageId 映射为原生 user message ID，结合创建意图、inbox 和历史去重；重试保留原创建配置。PNG、JPEG、WebP、GIF 经官方图片准入接口处理。普通文件和工具权限审批应答尚未开放；权限预设切换不会代替当前审批的回答。
+稳定 clientMessageId 映射为原生 user message ID，检查 inbox 和历史后去重。运行中发送交给官方 followup。插件仅释放自己创建/恢复的 handle。附件、模型/权限目录、审批应答后续单独实现；工具审批继续在 DSH 官方界面处理。
 
 ## 验证与运行
 

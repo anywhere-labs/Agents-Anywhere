@@ -8,9 +8,9 @@
 
 预期收益：只要插件与 Connector 之间的协议保持兼容，DSH 官方升级后，通常只需更新插件，无须同步修改 Connector。
 
-当前已实现无 AA Desktop 的插件登录、设备绑定、内部源码 Connector 管理与 Web onboarding，覆盖到“设置完成”。Desktop 启动安装登记、新建本机设备 ID 记录，以及插件 OAuth 后按共享 ID 恢复设备也已接入。Runtime 第一阶段已实现：端点发现与鉴权、单实例添加、原生会话列表和历史详情读取；Python DSH 适配器已收薄。实现边界与后续步骤见 [会话读取](./RUNTIME_READS.md)，运行方法见 [README](./README.md)。
+当前已实现无 AA Desktop 的插件登录、设备绑定、内部源码 Connector 管理与 Web onboarding，覆盖到“设置完成”。Desktop 安装信息登记、Python Connector 启动时的本机 ID 历史记录，以及插件 OAuth 后按共享 ID 恢复设备也已接入。Runtime 第一阶段已实现：端点发现与鉴权、单实例添加、原生会话列表和历史详情读取；Python DSH 适配器已收薄。实现边界与后续步骤见 [会话读取](./RUNTIME_READS.md)，运行方法见 [README](./README.md)。
 
-本轮已按确认方案接入官方侧栏过滤、内部 notice 丢弃、首次历史校准、实时事件与重连补偿，以及文本和图片新建/续聊和中断。**复用现有后端接口、Timeline 完整替换和增量通知；附件发送增加 capability MIME 校验。** 详细边界见 [Runtime 过滤与事件同步计划](./RUNTIME_SYNC_PLAN.md)。图片已通过官方 Session Controller 接入，仅允许 PNG、JPEG、WebP、GIF；普通文件和权限审批应答后续单独实现。
+当前回退到图片功能之前的 DSH 实现，保留官方侧栏过滤、内部 notice 丢弃、首次历史校准、实时事件、重连补偿、文本新建/续聊、中断与用户问答。同步使用现有后端接口、Timeline 完整替换和增量通知。图片、模型/effort/权限与模式配置实现暂时撤回；相关方案保留为后续约束。回退与回传验证见 [验证记录](./VERIFICATION.md)。
 
 插件入口为 DSH 主侧边栏设置上方的「手机连接」，使用官方扩展点与官方 Modal、Button、Input 等组件。登录文案及云端/自建实例交互与 Desktop 保持一致：自建实例仅输入后端地址，检查后端健康状态后发起 OAuth；本地只保存后端地址，按同源部署及本地开发端口约定推导 Web/OAuth 地址，不再单独配置或保存 OAuth 地址。
 

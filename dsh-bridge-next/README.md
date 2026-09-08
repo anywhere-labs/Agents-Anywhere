@@ -32,7 +32,9 @@ DSH 左侧边栏「设置」上方 → 手机连接 → 云端登录或连接自
 
 已安装 AA Desktop 时仍显示原占位页，管理权限不自动切换。手机连接复用已有 `/auth/mobile-login/qr`、`status`、`confirm` 接口；二维码包含手机扫描协议要求的临时登录凭据，使用当前账号的后端地址，不使用 DSH 地址或 OAuth Web 开发端口。无需新增 AA Server 接口。
 
-Runtime 已实现 DSH 一键配置、官方侧栏过滤、原生会话和历史读取、首次完整校准、明确归档事件同步及详情/发送前检查、实时事件同步、文本和图片新建/续聊及中断，以及 `ask_user_question` 问答。项目沿用后端统一的 CWD 分类和末段命名，不同步 DSH 项目名称或分组。内部 notice 不进入 Timeline，DSH 不再定时扫描历史；连接恢复后用现有后端完整替换接口校准。图片仅接受 PNG、JPEG、WebP、GIF，由 `runtime.attachment.metadata.allowedMimeTypes` 声明，使用官方 Session Controller 的 `saveImages()` 准入流程。普通文件和工具权限审批应答暂未开放。实现与消息映射见 [会话读取](./RUNTIME_READS.md)、[事件同步方案](./RUNTIME_SYNC_PLAN.md)和[用户问答](./USER_QUESTIONS.md)。
+当前分支按要求回退 DSH 图片功能及同期模型/effort/权限和模式配置改动，恢复此前的文本发送实现。Runtime 保留 DSH 一键配置、官方侧栏过滤、原生会话和历史读取、首次完整校准、归档同步、实时事件、文本新建/续聊、中断及 `ask_user_question`。新建使用 DSH 官方默认模型；已有会话沿用原生配置。AA 暂不向 DSH 发送图片或普通文件，原生图片只保留历史占位引用。
+
+本次回退重点验证“DSH 会话自动出现于 AA”和“AA 发出请求后，DSH 的增量及最终结果回到 AA”。控制请求在 DSH 生效不代表这条回传链已正常。Python 启动互斥、ID 历史、Desktop 安装信息职责调整保留；回退范围与实机状态见 [验证记录](./VERIFICATION.md)。
 
 ## 本地构建与安装
 

@@ -1,5 +1,21 @@
 # DSH Bridge Next 验证记录
 
+## 当前分支：回退 DSH 图片与配置扩展
+
+2026-09-08，分支 `codex/dsh-before-images`。用户报告：CLI 已连接 AA，AA 发往 DSH 的 RPC 能产生效果，但 DSH session 没有自动同步、数据没有正确回传。因此按要求撤回 `742d09be` 的 DSH 图片与同期模型/effort/权限、模式配置实现，回到 `65ad5d9f` 的文本运行时。
+
+`8535885b` 已提前将新配置模块调用加入 `sync.ts`，而旧 NativeRuntime 并没有这些模块；回退时也撤回这组依赖。保留 `1e923c9a` 的 Host 实时发布通道、测试传输取消修复、Python 启动互斥与 ID 历史，以及 Desktop 安装信息职责。通用客户端功能和 AA 新会话偏好没有回退。
+
+实际回传验证包含：原生已保存 session 自动进入 AA；原生新会话首条用户消息触发导入；AA 发起创建和续聊后，模型保持运行时 AA 已收到部分文本；最终结果持久化；响应丢失与重连后恢复完整历史。使用官方 DSH AgentLoop、真实 Python 适配器和原有 AA ASGI app 的临时测试环境。保留流式结果验证，没有退回只检查 RPC 成功的测试。
+
+本地检查：插件 92 项、Connector 81 项、Server 相关 76 项通过；插件类型检查、构建和产物检查通过。远程结果见 [回退分支的 CI](https://github.com/anywhere-labs/Agents-Anywhere/actions/workflows/dsh-bridge-next.yml?query=branch%3Acodex%2Fdsh-before-images)。本地未自动重启用户的 DSH、CLI 或开发服务，真实环境是否恢复仍需加载回退构建后确认。
+
+当前手动验收顺序：重新加载 DSH Host 和 CLI（已有配对用 `uv run anywhere-cli start`），确认原生 session 自动出现在 AA，再从 AA 新建/续聊，检查运行中增量及结束状态，最后检查断线重连。图片、AA 侧 DSH 模型/effort/权限切换暂不在当前功能范围内。
+
+以下保留前两轮的历史检查记录，不代表回退后仍提供图片与配置扩展。
+
+## 历史基线：图片与配置扩展
+
 日期：2026-09-08。基线：`feat/benson-0905` 的 `5c99b42d`，官方 DSH `0.1.2-rc.1`，macOS、Node 22.23.2、uv 0.12.3、Python 3.12。
 
 ## 已执行的自动化检查
@@ -75,7 +91,7 @@ corepack yarn test:main
 
 [DSH Bridge Next CI](../.github/workflows/dsh-bridge-next.yml) 在 Linux 上运行这些检查，不启动真实 DSH、开发服务器、Docker 或 Electron。GitHub 中的对应 run 才是远程检查结果，不能用本地通过代替。
 
-## 手动验收
+## 图片与配置扩展的历史验收清单
 
 启动方法见 [README](./README.md#本地构建与安装)。由开发者手动启动当前源码版本的 Server/Web 和链接安装的 DSH 插件；扫码前确认手机能访问连接中使用的服务器地址。只监听回环地址或二维码仍含 `127.0.0.1` 时，先跳过手机步骤。
 
