@@ -119,8 +119,9 @@ queue. Complete snapshots and inventory boundaries continue to await
 `/connector/ingest`. No public transport implementation or backend API changes.
 An ACK means page receipt, acceptance by the existing live notification pipeline
 (including its queues), or completed snapshot ingestion; it is not a durable
-server persistence ACK. Relay failures close the stream, and reconnect triggers
-full native history recalibration.
+server persistence ACK. Relay failures replace only the sync subscription on the
+existing RPC connection; incomplete captures are discarded before full native
+history recalibration. Socket failure still uses endpoint rediscovery and reconnect.
 
 The private batch also carries the existing `notice.upsert` and
 `runtime.capability.updated` notifications. The DSH adapter forwards these through
@@ -131,6 +132,28 @@ platform protocol. Question ACK means handoff to those publishers; reconnect and
 `runtime.sync.refresh` takes a session identity and requests its complete baseline;
 `runtime.sync.unsubscribe` stops delivery. Event runtimes bypass periodic history
 scanning. History and live events share stable item identities and ordering.
+
+## Error isolation and recovery
+
+Each request has its own cancellation and a 60-second Host deadline. Parse,
+validation, native service and response-size errors return a structured error;
+they do not abort concurrent requests or close an authenticated connection.
+Late results from cancelled requests do not send another response. Unknown
+exceptions use `INTERNAL_ERROR`, without exposing native exception text.
+Authentication failure, socket failure and transport backpressure remain scoped
+to that connection; other connections and the listener continue serving.
+
+A session read, projection, attachment receipt or configuration failure affects
+only that session's sync. Open snapshots are aborted, previously accepted AA
+history is retained, and an explicit refresh or later native activity can retry.
+Failed model catalog reads do not disable messaging. Provider/catalog changes
+and explicit reads can retry the failed directory.
+
+Whole-inventory or stream failures send `runtime.error` with additive
+`data.scope = "sync"` and `data.streamId`. The Connector resubscribes after a
+bounded delay without cancelling other RPC requests; a late error from an old
+stream is ignored. Missing ACKs fail the stream after 60 seconds. Both sides must
+load this implementation for recovery without closing the RPC connection.
 
 `workspace.list` remains a read-only native query. The plugin does not publish
 workspace inventories or native project names. The relay ignores legacy

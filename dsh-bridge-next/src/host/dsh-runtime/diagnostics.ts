@@ -41,7 +41,8 @@ export class RuntimeDiagnostics {
 
   log(level: Level, event: string, fields: Fields = {}, error?: unknown): void {
     const details = { ...fields, ...(error === undefined ? {} : errorDetails(error)) }
-    this.sink[level]('event=%s %s', event, JSON.stringify(details))
+    try { this.sink[level]('event=%s %s', event, JSON.stringify(details)) }
+    catch { /* A failed log sink must not fail RPC or native event delivery. */ }
     if (!this.directory) return
     if (this.queued >= 256) { this.dropped++; return }
     const entry = { time: new Date().toISOString(), pid: process.pid, level, event, ...details }
@@ -57,7 +58,8 @@ export class RuntimeDiagnostics {
     }).catch(error => {
       if (this.fileErrorReported) return
       this.fileErrorReported = true
-      this.sink.error('event=diagnostics.write_failed %s', JSON.stringify(errorDetails(error)))
+      try { this.sink.error('event=diagnostics.write_failed %s', JSON.stringify(errorDetails(error))) }
+      catch { /* Logging remains best effort when both sinks fail. */ }
     }).finally(() => { this.queued-- })
   }
 

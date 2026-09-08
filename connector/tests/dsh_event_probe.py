@@ -180,6 +180,7 @@ async def main(home: Path) -> None:
                     return transport.lost and completed_inventories() > count
 
                 await until(recovered, "lost reply did not trigger complete recalibration")
+                assert runtime._client is initial_client and initial_client.connected, "a failed ingest must only replace the sync subscription"
                 assert await first_native_message(), "reconnection duplicated or lost the native first message"
                 assert "empty-native" not in {
                     s.externalSessionId for s in await store.list_sessions_for_connector(connector.id)

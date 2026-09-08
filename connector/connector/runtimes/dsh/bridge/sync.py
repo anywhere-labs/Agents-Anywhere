@@ -21,9 +21,11 @@ class SyncRelay:
     their coalescing and WebSocket/HTTP fallback. Snapshots await HTTP ingestion.
     """
 
-    def __init__(self, client: BridgeClient, host: RuntimeHostClient) -> None:
+    def __init__(self, client: BridgeClient, host: RuntimeHostClient, *, retry_delay: float = 1.0) -> None:
         self.client, self.host = client, host
-        self.queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=2)
+        self.queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=2)
+        self.stream_id: str | None = None
+        self.retry_delay = retry_delay
         self.task: asyncio.Task[None] | None = None
         self.snapshot: dict[str, Any] | None = None
         self.file = None
@@ -33,7 +35,17 @@ class SyncRelay:
         self.task = asyncio.create_task(self.run(), name="dsh-event-sync")
 
     def accept(self, payload: Mapping[str, Any]) -> None:
-        self.queue.put_nowait(dict(payload))
+        try:
+            self.queue.put_nowait(dict(payload))
+        except asyncio.QueueFull:
+            self.restart()
+
+    def restart(self, stream_id: str | None = None) -> None:
+        if stream_id and self.stream_id and stream_id != self.stream_id:
+            return
+        while not self.queue.empty():
+            self.queue.get_nowait()
+        self.queue.put_nowait(None)
 
     async def close(self) -> None:
         if self.task and self.task is not asyncio.current_task():
@@ -140,12 +152,35 @@ class SyncRelay:
 
     async def run(self) -> None:
         try:
+            while True:
+                try:
+                    await self.consume()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    logger.warning("DSH event sync interrupted; resubscribing for complete history calibration ({})", type(error).__name__)
+                    if not self.client.connected:
+                        return
+                    self.clear_snapshot()
+                    await asyncio.sleep(self.retry_delay)
+                    while not self.queue.empty():
+                        self.queue.get_nowait()
+        finally:
+            self.clear_snapshot()
+
+    async def consume(self) -> None:
+        # Subscription replaces only this feed. Concurrent RPC requests keep
+        # their connection and are never cancelled by an ingest/sync failure.
+        try:
             subscription = await self.client.request("runtime.sync.subscribe")
             if subscription.get("projectionVersion") != 2:
                 raise ValueError("Unsupported DSH projection version")
             stream_id, expected = subscription["streamId"], 1
+            self.stream_id = stream_id
             while True:
                 batch = await self.queue.get()
+                if batch is None:
+                    raise RuntimeError("The DSH sync stream needs a new subscription")
                 if batch.get("streamId") != stream_id:
                     continue
                 if batch.get("batchSeq") != expected:
@@ -156,12 +191,5 @@ class SyncRelay:
                     await self.operation(operation)
                 await self.client.request("runtime.sync.ack", {"streamId": stream_id, "batchSeq": expected})
                 expected += 1
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:
-            # Do not log native content, request bodies or local credentials.
-            logger.warning("DSH event sync interrupted; reconnecting for complete history calibration ({})", type(error).__name__)
-            if self.client.writer is not None:
-                self.client.writer.close()
         finally:
             self.clear_snapshot()

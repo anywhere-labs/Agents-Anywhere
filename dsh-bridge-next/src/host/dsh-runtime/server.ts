@@ -32,10 +32,15 @@ export class RuntimeServer {
   private releaseLease: (() => Promise<void>) | undefined
 
   constructor(readonly endpointPath: string, private readonly reader: SessionReader,
-    private readonly diagnostics: RuntimeDiagnostics = reader.native?.diagnostics ?? quietDiagnostics) {}
+    private readonly diagnostics: RuntimeDiagnostics = reader.native?.diagnostics ?? quietDiagnostics,
+    private readonly requestTimeoutMs = 60_000) {}
 
   start(): Promise<Endpoint> {
-    this.startTask ??= this.openWithLease()
+    if (!this.startTask) {
+      const task = this.openWithLease()
+      this.startTask = task
+      void task.catch(() => { if (!this.closed && this.startTask === task) this.startTask = undefined })
+    }
     return this.startTask
   }
 
@@ -128,7 +133,8 @@ export class RuntimeServer {
     const send = (value: unknown) => {
       if (socket.destroyed) return
       const line = Buffer.from(`${JSON.stringify(value)}\n`)
-      if (line.length > MAX_FRAME_BYTES || socket.writableLength > 2 * MAX_FRAME_BYTES) { socket.destroy(); return }
+      if (line.length > MAX_FRAME_BYTES) throw new BridgeError('FRAME_TOO_LARGE', 'The response exceeds the bridge frame limit.')
+      if (socket.writableLength > 2 * MAX_FRAME_BYTES) { socket.destroy(); return }
       socket.write(line)
     }
     const fail = (id: unknown, error: unknown) => send({ jsonrpc: '2.0', id: id ?? null, error: publicError(error).toJSON() })
@@ -171,28 +177,45 @@ export class RuntimeServer {
           if (typeof namespace !== 'string' || !namespace || namespace.length > 512) throw new BridgeError('INVALID_PARAMS', 'A runtime namespace is required.')
           router = new RuntimeRouter(this.reader, namespace,
             batch => send({ jsonrpc: '2.0', method: 'runtime.sync.batch', params: batch }),
-            error => {
+            (error, streamId) => {
               this.diagnostics.log('error', 'bridge.sync_failed', { connectionId }, error)
-              send({ jsonrpc: '2.0', method: 'runtime.error', params: publicError(error).toJSON() }); socket.end()
+              const failure = publicError(error).toJSON()
+              send({ jsonrpc: '2.0', method: 'runtime.error', params: {
+                ...failure, data: { ...failure.data, scope: 'sync', streamId },
+              } })
             })
           clearTimeout(authTimer)
           this.diagnostics.log('info', 'bridge.initialized', { connectionId, syncMode: this.reader.native ? 'events' : 'polling' })
           send({ jsonrpc: '2.0', id, result: {
             identity: { runtime: 'dsh', runtimeVersion: '0.1.2-rc.1', bridgeVersion: '0.1.0-dev.0', protocolVersion: '1.0', displayName: 'DeepSeek Harness' },
             storage: { mode: 'dsh-native', sameSessionWriterLimit: 1, crossProcessWriterExclusion: false },
-            features: { attachments: false, sessionDiscovery: true, timelineSuffixRead: false, approval: false, userQuestions: this.reader.native?.questions.available ?? false,
-              readOnly: !this.reader.native?.ctx.get('agents'), snapshotPagination: true, syncMode: this.reader.native ? 'events' : 'polling', projectionVersion: 2 },
+            features: { attachments: Boolean(this.reader.native?.ctx.get('sessionController') && this.reader.native.ctx.get('attachments')),
+              sessionDiscovery: true, timelineSuffixRead: false, approval: false, userQuestions: this.reader.native?.questions.available ?? false,
+              readOnly: !this.reader.native?.ctx.get('sessionController'), snapshotPagination: true, syncMode: this.reader.native ? 'events' : 'polling', projectionVersion: 2 },
           } })
           return
         }
         const abort = new AbortController()
         inFlight.set(id, abort)
+        let cancel: () => void = () => undefined
+        const cancelled = new Promise<never>((_resolve, reject) => {
+          cancel = () => reject(abort.signal.reason)
+          abort.signal.addEventListener('abort', cancel, { once: true })
+        })
+        const timeout = setTimeout(() => abort.abort(), this.requestTimeoutMs)
+        timeout.unref()
         try {
-          const result = await router.request(request.method, params, abort.signal)
+          // Release the request slot even when a native read ignores cancellation.
+          // Its late result is observed but cannot send a second RPC response.
+          const result = await Promise.race([router.request(request.method, params, abort.signal), cancelled])
           abort.signal.throwIfAborted()
           send({ jsonrpc: '2.0', id, result })
           if (method !== 'runtime.sync.ack') this.diagnostics.log('debug', 'rpc.completed', { connectionId, method, elapsedMs: Math.round(performance.now() - start) })
-        } finally { inFlight.delete(id) }
+        } finally {
+          clearTimeout(timeout)
+          abort.signal.removeEventListener('abort', cancel)
+          inFlight.delete(id)
+        }
       } catch (error) {
         this.diagnostics.log('error', 'rpc.failed', { connectionId, method, elapsedMs: Math.round(performance.now() - start) }, error)
         fail(id, error)
@@ -200,16 +223,30 @@ export class RuntimeServer {
       }
     }
 
+    let discardingFrame = false
     socket.on('data', (data: Buffer) => {
+      if (discardingFrame) {
+        const end = data.indexOf(10)
+        if (end < 0) return
+        data = data.subarray(end + 1)
+        discardingFrame = false
+      }
       buffer = Buffer.concat([buffer, data])
       let newline: number
       while ((newline = buffer.indexOf(10)) >= 0) {
-        if (newline > MAX_FRAME_BYTES) { socket.destroy(); return }
         const frame = buffer.subarray(0, newline)
         buffer = buffer.subarray(newline + 1)
+        if (frame.length + 1 > MAX_FRAME_BYTES) {
+          fail(null, new BridgeError('FRAME_TOO_LARGE', 'The request exceeds the bridge frame limit.'))
+          continue
+        }
         void dispatch(frame)
       }
-      if (buffer.length > MAX_FRAME_BYTES) socket.destroy()
+      if (buffer.length >= MAX_FRAME_BYTES) {
+        buffer = Buffer.alloc(0)
+        discardingFrame = true
+        fail(null, new BridgeError('FRAME_TOO_LARGE', 'The request exceeds the bridge frame limit.'))
+      }
     })
     socket.on('close', () => {
       this.diagnostics.log('info', 'bridge.disconnected', { connectionId, initialized: Boolean(router), pendingRequests: inFlight.size })

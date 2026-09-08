@@ -75,39 +75,51 @@ def test_snapshot_abort_foreign_items_and_duplicate_pages_do_not_publish_partial
 
 
 @pytest.mark.parametrize("reject", [False, True])
-def test_relay_ack_waits_for_live_delivery_and_rejects_failed_or_out_of_order_batches(reject):
+def test_relay_failure_resubscribes_without_closing_concurrent_rpc(reject):
     async def exercise():
         entered, release, acknowledged = asyncio.Event(), asyncio.Event(), asyncio.Event()
         acks = []
+        subscriptions = 0
+        resubscribed = asyncio.Event()
 
         async def publish(*args, **kwargs):
             assert kwargs["session_id"] == "session" and kwargs["runtime"] == "dsh"
             entered.set()
             await release.wait()
-            if reject:
+            if reject and subscriptions == 1:
                 raise RuntimeError("delivery failed")
 
         async def request(method, params=None):
+            nonlocal subscriptions
             if method == "runtime.sync.subscribe":
-                return {"streamId": "stream", "projectionVersion": 2}
+                subscriptions += 1
+                if subscriptions > 1:
+                    resubscribed.set()
+                return {"streamId": f"stream-{subscriptions}", "projectionVersion": 2}
             acks.append(params["batchSeq"])
             acknowledged.set()
 
-        client = SimpleNamespace(request=request, writer=Mock())
-        relay = SyncRelay(client, SimpleNamespace(session_state_update=publish))
+        client = SimpleNamespace(request=request, writer=Mock(), connected=True)
+        relay = SyncRelay(client, SimpleNamespace(session_state_update=publish), retry_delay=0.01)
         relay.start()
         try:
             op = {"kind": "notifications", "notifications": [{"method": "session.state.updated", "params": {"sessionId": "session", "status": "idle"}}]}
-            relay.accept({"streamId": "stream", "batchSeq": 1, "projectionVersion": 2, "operations": [op]})
+            await asyncio.sleep(0)
+            relay.accept({"streamId": "stream-1", "batchSeq": 1, "projectionVersion": 2, "operations": [op]})
             await asyncio.wait_for(entered.wait(), 1)
             assert not acks
             release.set()
             if not reject:
                 await asyncio.wait_for(acknowledged.wait(), 1)
-                relay.accept({"streamId": "stream", "batchSeq": 3, "projectionVersion": 2, "operations": [op]})
-            await asyncio.wait_for(relay.task, 1)
+                relay.accept({"streamId": "stream-1", "batchSeq": 3, "projectionVersion": 2, "operations": [op]})
+            await asyncio.wait_for(resubscribed.wait(), 1)
             assert acks == ([] if reject else [1])
-            client.writer.close.assert_called_once()
+            acknowledged.clear()
+            relay.restart("stream-1")  # A delayed old error cannot stop the new feed.
+            relay.accept({"streamId": "stream-2", "batchSeq": 1, "projectionVersion": 2, "operations": [op]})
+            await asyncio.wait_for(acknowledged.wait(), 1)
+            assert acks == ([1] if reject else [1, 1])
+            client.writer.close.assert_not_called()
         finally:
             await relay.close()
     asyncio.run(exercise())

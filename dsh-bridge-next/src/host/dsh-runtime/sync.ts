@@ -7,12 +7,16 @@ import { createProjection, type SessionProjection } from './history.js'
 import { sessionId } from './identity.js'
 import type { NativeChange, NativeRuntime } from './native.js'
 import { record, type TimelineItem } from './types.js'
+import { BridgeError } from './errors.js'
+import type { SourceState } from './sessions/source.js'
 
 export type SyncOperation = { kind: string, [key: string]: unknown }
 export interface SyncBatch { streamId: string, batchSeq: number, projectionVersion: number, operations: SyncOperation[] }
 const MAX_BUFFER = 10_000
 const MAX_BYTES = 6 * 1024 * 1024
 export const SYNC_FLUSH_MS = Math.ceil(1000 / 30)
+
+class SyncTransportError extends Error {}
 
 /** One ordered stream. ACK means page receipt, live pipeline acceptance, or completed snapshot ingestion. */
 export class SyncFeed {
@@ -23,6 +27,8 @@ export class SyncFeed {
   private projections = new Map<string, SessionProjection>()
   private published = new Map<string, string>()
   private sourceAvailability = new Map<string, string>()
+  private failedSessions = new Map<string, SourceState>()
+  private capture: { id: string, snapshotId: string } | undefined
   private waitAck: { seq: number, resolve: () => void, reject: (error: Error) => void } | undefined
   private wake: (() => void) | undefined
   private closed = false
@@ -33,10 +39,16 @@ export class SyncFeed {
   private bufferedBytes = 0
 
   constructor(private native: NativeRuntime, private namespace: string,
-    private notify: (batch: SyncBatch) => void, private failed: (error: unknown) => void) {
+    private notify: (batch: SyncBatch) => void, private failed: (error: unknown) => void,
+    private ackTimeoutMs = 60_000) {
     this.unwatch = native.watch(change => {
       if (this.closed) return
-      this.queuedBytes += Buffer.byteLength(JSON.stringify(change))
+      try { this.queuedBytes += Buffer.byteLength(JSON.stringify(change)) }
+      catch (error) {
+        this.native.diagnostics.log('error', 'sync.event_failed', { streamId: this.id, sessionId: 'id' in change ? change.id : undefined }, error)
+        if (!('id' in change)) return
+        change = { type: 'refresh', id: change.id }
+      }
       if (this.queue.length >= MAX_BUFFER || this.queuedBytes > 16 * 1024 * 1024) { this.fail(new Error('DSH event buffer full; resubscribe for a fresh baseline')); return }
       this.queue.push(change)
       this.wake?.(); this.wake = undefined
@@ -51,7 +63,7 @@ export class SyncFeed {
     this.close(); this.failed(error)
   }
   ack(seq: number): void {
-    if (seq > this.batchSeq || !Number.isSafeInteger(seq)) throw new Error('Invalid event acknowledgement')
+    if (seq < 1 || seq > this.batchSeq || !Number.isSafeInteger(seq)) throw new BridgeError('INVALID_PARAMS', 'Invalid event acknowledgement.')
     if (this.waitAck?.seq === seq) {
       this.native.diagnostics.log('debug', 'sync.ack', { streamId: this.id, batchSeq: seq, elapsedMs: Math.round(performance.now() - this.lastSentAt) })
       const pending = this.waitAck; this.waitAck = undefined; pending.resolve()
@@ -67,6 +79,7 @@ export class SyncFeed {
     this.waitAck = undefined
     this.wake?.(); this.wake = undefined
     this.queue = []; this.queuedBytes = 0; this.projections.clear()
+    this.failedSessions.clear()
     this.bufferedOperations = undefined; this.bufferedBytes = 0
   }
   private async send(operations: SyncOperation[]): Promise<void> {
@@ -100,12 +113,22 @@ export class SyncFeed {
     const batch: SyncBatch = { streamId: this.id, batchSeq: ++this.batchSeq, projectionVersion: 2, operations }
     if (Buffer.byteLength(JSON.stringify(batch)) > 7 * 1024 * 1024) throw new Error('DSH sync batch exceeds frame size')
     await new Promise<void>((resolve, reject) => {
-      this.waitAck = { seq: batch.batchSeq, resolve, reject }
+      const timer = setTimeout(() => {
+        this.waitAck = undefined
+        reject(new SyncTransportError('DSH event acknowledgement timed out'))
+      }, this.ackTimeoutMs)
+      timer.unref()
+      this.waitAck = { seq: batch.batchSeq,
+        resolve: () => { clearTimeout(timer); resolve() },
+        reject: error => { clearTimeout(timer); reject(error) } }
       this.lastSentAt = performance.now()
       try {
         this.native.diagnostics.log('debug', 'sync.batch', { streamId: this.id, batchSeq: batch.batchSeq, operations: operations.length, kinds: operations.map(op => op.kind).join(',') })
         this.notify(batch)
-      } catch (error) { this.waitAck = undefined; reject(error) }
+      } catch (error) {
+        clearTimeout(timer); this.waitAck = undefined
+        reject(new SyncTransportError('DSH event delivery failed', { cause: error }))
+      }
     })
   }
   private async notification(method: string, params: Record<string, unknown>): Promise<void> {
@@ -132,6 +155,9 @@ export class SyncFeed {
     if (page.length && await this.native.visible(id)) await sendPage()
   }
   private async baseline(id: string): Promise<void> {
+    await this.sessionOperation(id, 'snapshot', () => this.publishBaseline(id))
+  }
+  private async publishBaseline(id: string): Promise<void> {
     if (!await this.native.visible(id)) { await this.unavailable(id); return }
     const start = performance.now()
     this.native.diagnostics.log('debug', 'snapshot.started', { streamId: this.id, sessionId: id })
@@ -150,6 +176,7 @@ export class SyncFeed {
     const title = log.events.findLast(event => event.type === 'session/title')
     const snapshotId = randomUUID()
     if (!await this.native.visible(id)) return
+    this.capture = { id, snapshotId }
     await this.send([{ kind: 'snapshot.begin', sessionId: platformId, snapshotId,
       meta: { externalSessionId: id, title: title?.type === 'session/title' ? title.data.title : null,
         sourceState: await this.native.source.state(id),
@@ -158,10 +185,12 @@ export class SyncFeed {
       throughSeq: projection.throughSeq }])
     await this.items('snapshot.items', id, projection.snapshot(), snapshotId)
     if (!await this.native.visible(id)) {
-      await this.send([{ kind: 'snapshot.abort', sessionId: platformId, snapshotId }]); return
+      await this.send([{ kind: 'snapshot.abort', sessionId: platformId, snapshotId }]); this.capture = undefined; return
     }
     await this.send([{ kind: 'snapshot.commit', sessionId: platformId, snapshotId,
       totalItems: contentItems(projection.snapshot()).length, throughSeq: projection.throughSeq }])
+    this.capture = undefined
+    this.failedSessions.delete(id)
     projection.drain()
     this.projections.set(id, projection)
     // Bound retained history across idle sessions. A later event rehydrates only
@@ -199,14 +228,14 @@ export class SyncFeed {
     await this.notification('session.state.updated', { sessionId: this.published.get(id), externalSessionId: id, status, ...configuration })
   }
   private async reconcile(): Promise<void> {
-    for (const id of this.native.candidates()) if (!await this.native.visible(id)) {
-      await this.unavailable(id)
-    }
+    for (const id of this.native.candidates()) await this.sessionOperation(id, 'visibility', async () => {
+      if (!await this.native.visible(id)) await this.unavailable(id)
+    })
     // Recheck source availability; selecting a draft never makes it eligible for import.
     for (const id of this.native.candidates()) if (!this.published.has(id)) await this.baseline(id)
   }
   private async unavailable(id: string): Promise<void> {
-    const source = await this.native.source.state(id)
+    const source = await this.sourceState(id)
     // Preserve AA history; a failed read never publishes an empty snapshot.
     // Only feeds that imported this session may create live source updates.
     if (this.sourceAvailability.has(id) && this.sourceAvailability.get(id) !== source.availability) {
@@ -216,64 +245,94 @@ export class SyncFeed {
     }
     this.published.delete(id); this.projections.delete(id)
   }
+  private async sourceState(id: string): Promise<SourceState> {
+    const source = await this.native.source.state(id)
+    return source.availability === 'available' ? this.failedSessions.get(id) ?? source : source
+  }
+  private async sessionOperation(id: string, phase: string, operation: () => Promise<void>): Promise<void> {
+    try { await operation() }
+    catch (error) {
+      if (this.closed || error instanceof SyncTransportError || error instanceof Error && error.name === 'AbortError') throw error
+      this.native.diagnostics.log('error', 'sync.session_failed', { streamId: this.id, sessionId: id, phase }, error)
+      this.failedSessions.set(id, { availability: 'unavailable', reason: 'sync_failed', observedAt: new Date().toISOString() })
+      if (this.capture?.id === id) {
+        await this.send([{ kind: 'snapshot.abort', sessionId: sessionId(this.namespace, id), snapshotId: this.capture.snapshotId }])
+        this.capture = undefined
+      }
+      await this.unavailable(id)
+    }
+  }
+  private async runtimeOperation(phase: string, operation: () => Promise<void>): Promise<void> {
+    try { await operation() }
+    catch (error) {
+      if (this.closed || error instanceof SyncTransportError || error instanceof Error && error.name === 'AbortError') throw error
+      this.native.diagnostics.log('error', 'sync.runtime_update_failed', { streamId: this.id, phase }, error)
+    }
+  }
   private async changes(changes: NativeChange[]): Promise<void> {
     const touched = new Set<string>(), statuses = new Set<string>(), capabilities = new Set<string>()
     const ended: [string, Record<string, unknown>][] = []
     let reconcile = false
     for (const change of changes) {
       if (change.type === 'capabilities') {
-        await this.notification('runtime.capability.updated', await this.native.capabilities())
+        await this.runtimeOperation('capabilities', async () => this.notification('runtime.capability.updated', await this.native.capabilities()))
         continue
       }
       if (change.type === 'catalogs') {
-        if (this.native.ctx.get('llm')) await this.notification('catalog.model.update', { ...await this.native.catalogs.models() })
-        if (this.native.ctx.get('permissionPresets')) await this.notification('catalog.permission.update', this.native.catalogs.permissions())
-        await this.notification('runtime.capability.updated', await this.native.capabilities())
+        if (this.native.ctx.get('llm')) await this.runtimeOperation('models', async () => this.notification('catalog.model.update', { ...await this.native.catalogs.models() }))
+        if (this.native.ctx.get('permissionPresets')) await this.runtimeOperation('permissions', async () => this.notification('catalog.permission.update', this.native.catalogs.permissions()))
+        await this.runtimeOperation('capabilities', async () => this.notification('runtime.capability.updated', await this.native.capabilities()))
         continue
       }
       if (change.type === 'visibility') { reconcile = true; continue }
       const { id } = change
-      if (!await this.native.visible(id)) {
-        if (this.published.has(id)) reconcile = true
-        continue
-      }
-      if (change.type === 'refresh') { await this.baseline(id); continue }
-      if (!this.published.has(id)) await this.baseline(id)
-      if (!this.published.has(id)) continue
-      if (change.type === 'question') await this.notices(id)
-      if (change.type === 'event') {
-        if (['model/selection', 'agent-preset/selected'].includes(change.event.type)) capabilities.add(id)
-        if (change.event.type === 'turn/end') ended.push([id, {
-          sessionId: this.published.get(id), externalSessionId: id,
-          sourceObservedAt: new Date(change.event.time).toISOString(),
-          outcome: change.event.data.reason.kind === 'error' ? 'failed'
-            : ['aborted', 'interrupted'].includes(change.event.data.reason.kind) ? 'interrupted' : 'completed',
-        }])
-        if (['turn/start', 'turn/end', 'approval/asked', 'approval/decided', 'model/selection', 'request/header',
-          'permission/preset', 'sandbox/mode', 'approval/policy', 'agent-preset/selected'].includes(change.event.type)) statuses.add(id)
-        const projection = this.projections.get(id)
-        if (!projection) { await this.baseline(id); continue }
-        this.projections.delete(id); this.projections.set(id, projection)
-        if (Number(change.event.seq) <= projection.throughSeq) continue
-        const key = receiptKey(change.event)
-        const receipt = key ? (await this.native.images.readReceipts(id))[key] : undefined
-        try { projection.apply(change.event, receipt) } catch { await this.baseline(id); continue }
-        touched.add(id)
-        if (change.event.type === 'session/title') await this.notification('session.meta.upsert', {
-          sessionId: this.published.get(id), externalSessionId: id, title: change.event.data.title })
-      } else statuses.add(id)
+      await this.sessionOperation(id, change.type, async () => {
+        if (!await this.native.visible(id)) {
+          if (this.published.has(id)) reconcile = true
+          return
+        }
+        if (change.type === 'refresh') { await this.baseline(id); return }
+        if (!this.published.has(id)) await this.baseline(id)
+        if (!this.published.has(id)) return
+        if (change.type === 'question') await this.notices(id)
+        if (change.type === 'event') {
+          if (['model/selection', 'agent-preset/selected'].includes(change.event.type)) capabilities.add(id)
+          if (change.event.type === 'turn/end') ended.push([id, {
+            sessionId: this.published.get(id), externalSessionId: id,
+            sourceObservedAt: new Date(change.event.time).toISOString(),
+            outcome: change.event.data.reason.kind === 'error' ? 'failed'
+              : ['aborted', 'interrupted'].includes(change.event.data.reason.kind) ? 'interrupted' : 'completed',
+          }])
+          if (['turn/start', 'turn/end', 'approval/asked', 'approval/decided', 'model/selection', 'request/header',
+            'permission/preset', 'sandbox/mode', 'approval/policy', 'agent-preset/selected'].includes(change.event.type)) statuses.add(id)
+          const projection = this.projections.get(id)
+          if (!projection) { await this.baseline(id); return }
+          this.projections.delete(id); this.projections.set(id, projection)
+          if (Number(change.event.seq) <= projection.throughSeq) return
+          const key = receiptKey(change.event)
+          const receipt = key ? (await this.native.images.readReceipts(id))[key] : undefined
+          try { projection.apply(change.event, receipt) } catch { await this.baseline(id); return }
+          touched.add(id)
+          if (change.event.type === 'session/title') await this.notification('session.meta.upsert', {
+            sessionId: this.published.get(id), externalSessionId: id, title: change.event.data.title })
+        } else statuses.add(id)
+      })
     }
-    for (const id of touched) {
+    for (const id of touched) await this.sessionOperation(id, 'timeline', async () => {
       const delta = this.projections.get(id)?.drain()
-      if (!delta || !await this.native.visible(id)) continue
+      if (!delta || !await this.native.visible(id)) return
       // Existing ingest has no item-delete notification. Reconcile that session
       // with its complete snapshot when native finalization discards a draft.
       if (delta.removed.length) await this.baseline(id)
       else await this.items('timeline.upsert', id, delta.items)
-    }
-    for (const [id, params] of ended) if (await this.native.visible(id)) await this.notification('session.turnEnded', params)
-    for (const id of statuses) await this.state(id)
-    for (const id of capabilities) await this.notification('session.capability.updated', await this.native.capabilities(this.published.get(id), id as SessionId))
+    })
+    for (const [id, params] of ended) await this.sessionOperation(id, 'turnEnded', async () => {
+      if (this.published.has(id) && await this.native.visible(id)) await this.notification('session.turnEnded', params)
+    })
+    for (const id of statuses) await this.sessionOperation(id, 'state', () => this.state(id))
+    for (const id of capabilities) await this.sessionOperation(id, 'capabilities', async () => {
+      if (this.published.has(id)) await this.notification('session.capability.updated', await this.native.capabilities(this.published.get(id), id as SessionId))
+    })
     if (reconcile) await this.reconcile()
     this.trimProjections()
   }
@@ -284,7 +343,7 @@ export class SyncFeed {
     await this.changes(this.takeChanges())
     const sessions = []
     for (const id of this.native.candidates()) sessions.push({ sessionId: sessionId(this.namespace, id),
-      externalSessionId: id, sourceState: await this.native.source.state(id) })
+      externalSessionId: id, sourceState: await this.sourceState(id) })
     await this.notification('session.inventory.complete', { scanToken: this.id, complete: true,
       sessions })
     this.native.diagnostics.log('info', 'sync.inventory_completed', { streamId: this.id, sessions: this.published.size })

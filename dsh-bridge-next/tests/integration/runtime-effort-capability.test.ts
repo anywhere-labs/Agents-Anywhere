@@ -14,6 +14,22 @@ async function until(check: () => boolean) {
   assert.ok(check(), 'expected native progress within 5 seconds')
 }
 
+test('a model catalog failure cannot disable text messaging and recovers on retry', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'aa-catalog-recovery-'))
+  const f = await nativeRuntime(home, ctx => mountAgents(ctx, new TextAdapter()))
+  const runtime = f.ctx.agentsAnywhereRuntime.native
+  const models = runtime.catalogs.models.bind(runtime.catalogs)
+  try {
+    runtime.catalogs.models = async () => { throw new Error('temporary model catalog failure') }
+    const degraded = await runtime.capabilities()
+    assert.equal(degraded.capabilities.find(item => item.capabilityId === 'session.send_message')?.available, true)
+    assert.equal(degraded.capabilities.find(item => item.capabilityId === 'catalog.model')?.available, false)
+    runtime.catalogs.models = models
+    const recovered = await runtime.capabilities()
+    assert.equal(recovered.capabilities.find(item => item.capabilityId === 'catalog.model')?.available, true)
+  } finally { await f.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
 test('interrupting a model without effort preserves the ability to select another model with effort', { timeout: 15_000 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'aa-effort-interrupt-'))
   const adapter = new TextAdapter()

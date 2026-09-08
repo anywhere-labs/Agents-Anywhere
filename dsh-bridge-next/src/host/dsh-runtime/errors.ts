@@ -36,8 +36,11 @@ export function publicError(error: unknown): BridgeError {
     return new BridgeError('SESSION_NOT_FOUND', 'The DSH session no longer exists.')
   }
   if (error instanceof Error && error.name === 'AbortError') {
-    return new BridgeError('REQUEST_TIMEOUT', 'The read was cancelled.', true)
+    return new BridgeError('REQUEST_TIMEOUT', 'The request was cancelled or timed out.', true)
   }
   // Never serialize native exception messages: a parser error can contain prompts or credentials.
-  return new BridgeError('PERSISTENCE_ERROR', 'DSH could not safely read this session. Check the DSH host log.')
+  if (nativeCode === 'SESSION_QUERY_PERSISTENCE_FAILED') {
+    return new BridgeError('PERSISTENCE_ERROR', 'DSH could not safely read this session. Check the Bridge logs page.', true)
+  }
+  return new BridgeError('INTERNAL_ERROR', 'DSH could not complete this request. Check the Bridge logs page and retry.', true)
 }

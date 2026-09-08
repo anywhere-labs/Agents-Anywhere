@@ -111,5 +111,9 @@ test('concurrent starts cannot overwrite ownership and closing twice releases th
     connection.socket.destroy()
     await Promise.all([servers[winner]!.close(), servers[winner]!.close()])
     await assert.rejects(access(path))
+    const retry = await servers[1 - winner]!.start()
+    const recovered = await client(retry)
+    assert.equal((await recovered.rpc('ping')).result.ok, true)
+    recovered.socket.destroy()
   } finally { await Promise.allSettled(servers.map(server => server.close())); await rm(home, { recursive: true, force: true }) }
 })

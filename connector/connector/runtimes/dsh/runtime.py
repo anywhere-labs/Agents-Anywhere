@@ -366,10 +366,16 @@ class DshRuntime(AgentRuntime):
             )
             await self.host.runtime_capabilities_update(capabilities)
             supported = {item.capability_id for item in capabilities.capabilities if item.available and item.supported}
-            if "catalog.model" in supported:
-                await self.host.model_catalog_update(models.model_catalog(await client.request("catalog.listModels", {"limit": 10000})))
-            if "catalog.permission" in supported:
-                await self.host.permission_catalog_update(models.permission_catalog(await client.request("catalog.listPermissions")))
+            for capability, method, decode, publish in (
+                ("catalog.model", "catalog.listModels", models.model_catalog, "model_catalog_update"),
+                ("catalog.permission", "catalog.listPermissions", models.permission_catalog, "permission_catalog_update"),
+            ):
+                if capability not in supported:
+                    continue
+                try:
+                    await getattr(self.host, publish)(decode(await client.request(method, {"limit": 10000})))
+                except Exception as error:
+                    logger.warning("DSH initial catalog unavailable method={} error_type={}; other runtime operations remain available", method, type(error).__name__)
             if self._stopping or not client.connected:
                 raise RuntimeUnavailableError("DSH bridge is stopping")
             self._client = client
@@ -434,11 +440,11 @@ class DshRuntime(AgentRuntime):
                 models.timeline_item(params.get("item", params))
             )
         elif method == "runtime.sync.batch" and self._sync is not None:
-            try:
-                self._sync.accept(params)
-            except asyncio.QueueFull:
-                if self._client and self._client.writer:
-                    self._client.writer.close()
+            self._sync.accept(params)
+        elif method == "runtime.error" and self._sync is not None:
+            data = params.get("data")
+            stream_id = data.get("streamId") if isinstance(data, dict) else None
+            self._sync.restart(stream_id if isinstance(stream_id, str) else None)
 
     async def _handle_exit(self, return_code: int | None) -> None:
         self._client = None

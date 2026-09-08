@@ -100,8 +100,12 @@ export class NativeRuntime {
   }
   status(id: SessionId): 'idle' | 'running' | undefined { return this.ctx.get('agents')?.get(id)?.status }
   async capabilities(platformId?: string, id?: SessionId) {
-    const model = this.configuration.canSelectModel && Boolean(this.ctx.get('llm')?.listProviders().length)
-    const catalog = model ? await this.catalogs.models() : undefined
+    let model = false
+    let catalog: Awaited<ReturnType<RuntimeCatalogs['models']>> | undefined
+    if (this.configuration.canSelectModel) {
+      try { catalog = await this.catalogs.models(); model = catalog.metadata.routableProviders.length > 0 }
+      catch (error) { this.diagnostics.log('error', 'capabilities.model_catalog_failed', {}, error) }
+    }
     // This capability covers the model selector, including switching to another
     // model. Each model's reasoningItems describes its own effort support.
     const effort = Boolean(catalog?.models.some(item => item.enabled && item.reasoningItems.some(option => option.enabled)))

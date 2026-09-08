@@ -24,7 +24,15 @@
 
 本地完整插件检查 **105 项通过**，包括类型、构建、产物和真实 Client factory 的 DOM 检查；Connector DSH/生命周期 **85 项通过**；Server 相关及全部迁移 **175 项通过**，有一条 TestClient 弃用提示。图片端到端测试加入坏历史会话，继续覆盖真实 Python Connector、已认证 AA Server、图片发送与纯文本续聊、持久化回执和冷重启。测试使用受控模型适配器，不能替代真实模型及手机验收。
 
-恢复功能的构建需要同时重新加载 DSH 和 Python Connector；只重启一端不会恢复完整能力。远程 CI 和实际客户端结果另行记录。后续继续检查通用 RPC 错误隔离，确保失败请求不会影响同连接的后续请求。
+图片与配置恢复提交 `0d54cb3e` 的 [Linux CI](https://github.com/anywhere-labs/Agents-Anywhere/actions/runs/34201788031) 三个任务全部通过。后续 RPC 恢复和服务端能力修复的远程结果另行记录，不能用此 run 代替。
+
+后续补齐通用 RPC 错误边界：取消及超时释放请求槽位，未知异常返回 `INTERNAL_ERROR`，过大请求/响应不关闭已鉴权连接。同步的读取、投影、回执和配置错误按会话隔离；超大条目撤销该快照，其他历史及实时事件继续。全局同步/交付失败只替换订阅，保留同一 RPC 连接；ACK 等待有上限，模型目录失败不关闭消息发送，启动占用失败解除后可在原 Server 对象重试。
+
+用户随后提供会话能力三项均为 true，但第二条消息仍被拒绝的证据。服务端页面读取实时能力，操作入口读取持久化缓存，存在不同判断来源。现已共用实时读取逻辑；回归覆盖旧缓存拒绝/实时允许、旧缓存允许/实时拒绝、连续两条消息，以及能力读取超时后恢复。同样保留附件 MIME 元数据，避免从 Runtime 投影为 Session 能力时丢失限制。
+
+本轮完整插件检查 **110 项通过**；Connector DSH/生命周期 **86 项通过**；Server 相关与迁移 **186 项通过**，会话能力及操作回归 **42 项通过、4 项跳过**。跳过项是已有的废弃通知持久化测试；Server 仍有一条 TestClient 弃用提示。完整 Python/AA Server 探针验证后端交付失败后的重新校准保留同一个桥接客户端。
+
+用户在 16:19 重启 DSH 和 CLI 后确认 DSH 已可用；CLI 后续记录两次 PNG 下载。随后出现的后端 WebSocket `1012` 与 Server 的 `StatReload` 日志一致：修改 Server 测试文件触发开发服务器重启，Connector 随后自动重连。该现象来自开发启动器的热重载，不应作为 DSH 桥接故障处理。手机、Windows 和长期运行仍保留独立验收范围。
 
 ## 历史排查：回退 DSH 图片与配置扩展
 
@@ -95,7 +103,10 @@ uv run --frozen pytest \
   tests/test_connector_deletion.py tests/test_runtime_deletion.py \
   tests/test_runtime_config.py tests/test_plugin_onboarding.py \
   tests/test_device_data_storage.py tests/test_device_runtime_repository.py \
+  tests/test_effective_capabilities.py \
   tests/test_database_migrations.py -q
+uv run --frozen pytest tests/test_backend_mvp.py \
+  -k 'capabilit or send_message or running_tool_item or patch_session_selections or steer or interrupt or runtime_command or interaction_respond' -q
 ```
 
 在 `web-next/`：

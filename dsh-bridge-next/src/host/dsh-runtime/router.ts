@@ -40,7 +40,7 @@ export class RuntimeRouter {
   private history: HistoryPage | undefined
 
   constructor(private readonly reader: SessionReader, readonly namespace: string,
-    private notify?: (batch: SyncBatch) => void, private failed?: (error: unknown) => void) {}
+    private notify?: (batch: SyncBatch) => void, private failed?: (error: unknown, streamId: string) => void) {}
 
   close(): void { this.feed?.close(); this.feed = undefined }
 
@@ -50,8 +50,12 @@ export class RuntimeRouter {
       case 'runtime.sync.subscribe': {
         if (!this.reader.native || !this.notify) throw new BridgeError('UNSUPPORTED_OPERATION', 'Event sync is unavailable.')
         this.close()
-        this.feed = new SyncFeed(this.reader.native, this.namespace, this.notify, this.failed ?? (() => undefined))
-        const feed = this.feed
+        const feed = new SyncFeed(this.reader.native, this.namespace, this.notify, error => {
+          if (this.feed !== feed) return
+          this.feed = undefined
+          this.failed?.(error, feed.id)
+        })
+        this.feed = feed
         setTimeout(() => { if (this.feed === feed) feed.start() }, 0)
         return { streamId: feed.id, projectionVersion: 2 }
       }
@@ -159,7 +163,7 @@ export class RuntimeRouter {
         return this.reader.native?.capabilities(sessionId(this.namespace, id), id) ?? capabilities(sessionId(this.namespace, id))
       }
       default:
-        throw new BridgeError('UNSUPPORTED_OPERATION', `The DSH runtime does not support ${method}.`)
+        throw new BridgeError('METHOD_NOT_FOUND', 'The DSH runtime does not support this method.')
     }
   }
 
