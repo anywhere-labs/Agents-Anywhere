@@ -1,4 +1,4 @@
-"""Per-user Connector ownership, compatible with electron/local-runtime.ts."""
+"""Connector-owned, per-user startup exclusion and local identity history."""
 from __future__ import annotations
 
 import errno
@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from connector.core.json_rpc import JsonRpcError
 
 if TYPE_CHECKING:
     from connector.core.config import ConnectorConfig
@@ -109,6 +111,8 @@ def read_state(path: str | Path) -> dict[str, Any]:
 
 def _write(path: Path, state: dict[str, Any]) -> None:
     contents = json.dumps(state, indent=2, ensure_ascii=False) + "\n"
+    if path.exists() and path.read_text(encoding="utf-8") == contents:
+        return
     temporary = path.with_name(f"{path.name}.{uuid.uuid4()}.tmp")
     try:
         fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -193,70 +197,81 @@ class RuntimeOwner:
         return cls(value["pid"], value["kind"], value.get("connectorId", ""), value.get("serverUrl", ""), value.get("startedAt"))
 
 
-class ConnectorAlreadyRunningError(RuntimeError):
+class ConnectorAlreadyRunningError(JsonRpcError):
     def __init__(self, owner: RuntimeOwner) -> None:
-        super().__init__(f"Another Connector is running ({owner.kind}, PID {owner.pid}). Exit that app or stop its process, then retry.")
+        super().__init__(
+            -32009,
+            f"Another Connector is running ({owner.kind}, PID {owner.pid}). Stop that Connector, then retry.",
+            {"reason": "connector_already_running", "owner": {"kind": owner.kind, "pid": owner.pid}},
+        )
         self.owner = owner
 
 
 class RuntimeLease:
-    def __init__(self, path: str | Path | None = None, *, kind: str = "cli", delegated: bool = False,
+    def __init__(self, path: str | Path | None = None, *, kind: str = "cli",
                  legacy_paths: list[Path] | None = None) -> None:
         self.path = Path(path) if path is not None else runtime_path()
         self.kind = kind
-        self.parent_instance = os.environ.get("AA_CONNECTOR_OWNER_INSTANCE") if delegated else None
-        self.parent_pid = int(os.environ.get("AA_CONNECTOR_OWNER_PID", "0")) if self.parent_instance else 0
-        self.instance_id = self.parent_instance or str(uuid.uuid4())
+        self.instance_id = str(uuid.uuid4())
+        self.acquired = False
         self.identity = process_identity(os.getpid())
         self.legacy_paths = legacy_paths or []
 
     def claim(self, config: ConnectorConfig | None = None) -> None:
         with state_transaction(self.path) as state:
             owner = state.get("runtime")
-            if self.parent_instance:
-                if (not owner or owner["instanceId"] != self.parent_instance or owner["pid"] != self.parent_pid
-                        or not _pid_alive(owner["pid"], owner.get("processStartedAt"))):
-                    raise RuntimeError("The Connector host no longer owns this machine. Restart the host application.")
-                if owner.get("childPid") != os.getpid() and _pid_alive(owner.get("childPid"), owner.get("childStartedAt")):
-                    raise ConnectorAlreadyRunningError(RuntimeOwner.from_record(owner))
-                owner["childPid"] = os.getpid()
+            if owner and owner["instanceId"] != self.instance_id and owner_alive(owner):
+                raise ConnectorAlreadyRunningError(RuntimeOwner.from_record(owner))
+            for legacy in self.legacy_paths:
+                if legacy.resolve() == self.path.resolve():
+                    continue
+                previous = read_state(legacy).get("runtime")
+                if previous and owner_alive(previous):
+                    raise ConnectorAlreadyRunningError(RuntimeOwner.from_record(previous))
+            if not owner or owner["instanceId"] != self.instance_id:
+                owner = {"instanceId": self.instance_id, "pid": os.getpid(), "kind": self.kind, "startedAt": datetime.now(UTC).isoformat()}
                 if self.identity:
-                    owner["childStartedAt"] = self.identity
-            else:
-                if owner and owner["instanceId"] != self.instance_id and owner_alive(owner):
-                    raise ConnectorAlreadyRunningError(RuntimeOwner.from_record(owner))
-                for legacy in self.legacy_paths:
-                    if legacy.resolve() == self.path.resolve():
-                        continue
-                    previous = read_state(legacy).get("runtime")
-                    if previous and owner_alive(previous):
-                        raise ConnectorAlreadyRunningError(RuntimeOwner.from_record(previous))
-                if not owner or owner["instanceId"] != self.instance_id:
-                    owner = {"instanceId": self.instance_id, "pid": os.getpid(), "kind": self.kind, "startedAt": datetime.now(UTC).isoformat()}
-                    if self.identity:
-                        owner["processStartedAt"] = self.identity
-                state["runtime"] = owner
+                    owner["processStartedAt"] = self.identity
+            state["runtime"] = owner
             if config:
                 owner.update(connectorId=config.connector_id, serverUrl=config.server_url)
                 state["connectorIds"] = _ids([*state["connectorIds"], config.connector_id])
+        self.acquired = True
 
     def release(self) -> None:
+        if not self.acquired:
+            return
         with state_transaction(self.path) as state:
             owner = state.get("runtime")
             if not owner or owner["instanceId"] != self.instance_id:
                 return
-            if self.parent_instance:
-                if owner.get("childPid") != os.getpid():
-                    return
-                owner.pop("childPid", None)
-                owner.pop("childStartedAt", None)
-                if _pid_alive(owner["pid"], owner.get("processStartedAt")):
-                    return
-            elif _pid_alive(owner.get("childPid"), owner.get("childStartedAt")):
-                return
             state.pop("runtime", None)
+        self.acquired = False
 
 
 def read_runtime(path: str | Path) -> RuntimeOwner | None:
     owner = read_state(path).get("runtime")
     return RuntimeOwner.from_record(owner) if owner else None
+
+
+def record_desktop_installation(path: str | Path, value: Any) -> None:
+    """Publish host-supplied installation metadata without claiming a runtime."""
+    if not isinstance(value, dict):
+        raise ValueError("Desktop installation must be an object")
+    app_path, executable_path = value.get("appPath"), value.get("executablePath")
+    if any(not isinstance(item, str) or not Path(item).is_absolute() for item in (app_path, executable_path)):
+        raise ValueError("Desktop installation paths must be absolute")
+    launch_args = value.get("launchArgs")
+    if (not isinstance(launch_args, list) or any(not isinstance(item, str) for item in launch_args)
+            or type(value.get("packaged")) is not bool or value.get("platform") != sys.platform):
+        raise ValueError("Invalid Desktop installation metadata")
+    app = Path(app_path).resolve(strict=True)
+    executable = Path(executable_path).resolve(strict=True)
+    if not executable.is_file() or not os.access(executable, os.F_OK if sys.platform == "win32" else os.X_OK):
+        raise ValueError("Desktop executable is not available")
+    with state_transaction(path) as state:
+        state["desktop"] = {
+            **(state.get("desktop") if isinstance(state.get("desktop"), dict) else {}),
+            "platform": sys.platform, "appPath": str(app), "executablePath": str(executable),
+            "launchArgs": launch_args, "packaged": value["packaged"],
+        }

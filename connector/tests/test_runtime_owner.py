@@ -63,22 +63,19 @@ def test_live_child_blocks_takeover_when_parent_died():
         RuntimeLease().claim()
 
 
-def test_child_attaches_only_to_matching_host_and_detaches_without_releasing_it(monkeypatch):
-    host = RuntimeLease(kind="desktop-workbench")
-    host.claim()
-    monkeypatch.setenv("AA_CONNECTOR_OWNER_INSTANCE", host.instance_id)
+def test_host_delegation_environment_cannot_bypass_python_ownership(monkeypatch):
+    first = RuntimeLease(kind="cli")
+    first.claim(config())
+    monkeypatch.setenv("AA_CONNECTOR_OWNER_INSTANCE", first.instance_id)
     monkeypatch.setenv("AA_CONNECTOR_OWNER_PID", str(os.getpid()))
-    child = RuntimeLease(delegated=True)
-    child.claim(config())
-    assert read_state(host.path)["runtime"]["childPid"] == os.getpid()
-    host.release()
-    assert read_runtime(host.path) is not None
-    child.release()
-    assert "childPid" not in read_state(host.path)["runtime"]
-    assert read_runtime(host.path).kind == "desktop-workbench"
-    host.release()
-    with pytest.raises(RuntimeError, match="host no longer owns"):
-        child.claim()
+    second = RuntimeLease(kind="desktop-workbench")
+    with pytest.raises(ConnectorAlreadyRunningError):
+        second.claim(config("conn_2"))
+    assert "childPid" not in read_state(first.path)["runtime"]
+    assert read_state(first.path)["connectorIds"] == ["conn_1"]
+    first.release()
+    second.claim(config("conn_2"))
+    second.release()
 
 
 def test_migrates_identity_and_installation_then_preserves_them_on_release():

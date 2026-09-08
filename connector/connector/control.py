@@ -19,6 +19,7 @@ from connector.core.control_config import (
 from connector.core.runtime_owner import (
     ConnectorAlreadyRunningError,
     RuntimeLease,
+    record_desktop_installation,
     runtime_path,
 )
 from connector.logging import logger
@@ -51,7 +52,7 @@ class ConnectorController:
         self.notifier = notifier
         self.client_factory = client_factory
         self.runtime_path = runtime_path(self.config_path)
-        self.lease = RuntimeLease(self.runtime_path, kind=os.environ.get("AA_CONNECTOR_OWNER_KIND", "cli"), delegated=True,
+        self.lease = RuntimeLease(self.runtime_path, kind=os.environ.get("AA_CONNECTOR_OWNER_KIND", "cli"),
                                   legacy_paths=[self.config_path.with_name("connector-runtime.json")])
         self._runtime_task: asyncio.Task[None] | None = None
         self._pairing_task: asyncio.Task[None] | None = None
@@ -76,6 +77,14 @@ class ConnectorController:
             "configDir": str(self.config_path.parent),
             "runtimePath": str(self.runtime_path),
         }
+
+    def acquire_ownership(self, _params: Any = None) -> dict[str, Any]:
+        """Reserve this Connector before provisioning; conflicts remain RPC errors."""
+        self.lease.claim()
+        return self.get_state()
+
+    def record_installation(self, params: Any) -> None:
+        record_desktop_installation(self.runtime_path, params)
 
     def get_config(self, _params: Any = None) -> dict[str, Any]:
         if not self.config_path.exists():

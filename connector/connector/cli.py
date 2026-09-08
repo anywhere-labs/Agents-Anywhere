@@ -162,8 +162,9 @@ async def _rpc(args: argparse.Namespace) -> None:
             await server.notify(method, params)
 
     controller = ConnectorController(config_path=args.config, notifier=notify)
-    controller.lease.claim()
     handlers = {
+        "connector.acquireOwnership": controller.acquire_ownership,
+        "connector.recordInstallation": controller.record_installation,
         "connector.getState": controller.get_state,
         "connector.getPaths": controller.get_paths,
         "connector.getConfig": controller.get_config,
