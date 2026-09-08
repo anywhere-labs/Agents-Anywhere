@@ -694,5 +694,19 @@ Web 与 Desktop renderer 均已同步模型标签、配置选项名称/禁用原
 另见 [验证记录](../../../dsh-bridge-next/VERIFICATION.md)。这些是 headless
 结果，真实模型、手机、Windows 和长期运行仍待手动验收。
 
-启动互斥与 Connector ID 历史登记目前分散在入口和 Connector 中，下一步
-按用户确认的职责边界收回 Connector 层；该调整尚未包含在上述测试基线中。
+### Connector 启动职责调整
+
+后续在 `codex/connector-owned-lifecycle` 完成独立调整，不能沿用上述旧基线
+宣称新代码已经验证。Python Connector 统一执行启动互斥、记录实际 PID 和
+启动来源、追加本机 ID 历史，覆盖 CLI、Desktop 和插件。检查以 PID 是否仍为
+对应 Connector 进程为准；RPC 进程仍存活时停止后端连接不会释放占用。
+
+Desktop 和插件通过 `-32009 / connector_already_running` 处理冲突、提供
+重试并保留私有绑定；两端不再自行检查 PID 或追加 ID。安装信息继续由
+Desktop 校验和发布，插件只读。共享状态升级为 `.agents-anywhere/connector-runtime.json`
+的 v2 格式，旧文件由 Python 迁移，详见 [v2 契约](../../../contracts/local-machine/2.0/README.md)。
+
+本地插件 102 项、Connector 84 项、Desktop 主进程 85 项通过。Linux 暴露的
+旧 SQLite 迁移语法问题已修复，Server 相关及完整迁移测试共 175 项通过。
+当前分支 CI 另行重跑 Web 和 Desktop renderer；具体远程结果与仍需手动
+验收的真实模型、手机及 Windows 行为见 [验证记录](../../../dsh-bridge-next/VERIFICATION.md)。

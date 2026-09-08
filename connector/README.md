@@ -62,6 +62,31 @@ use, the v2 connector performs a one-time local data migration from the old
 `~/.agent-server` directory into `~/.agents-anywhere` and discards obsolete
 SQLite sync state.
 
+## Local startup ownership
+
+All CLI, Desktop and DSH plugin launches use Python's per-user startup check at
+`<OS user home>/.agents-anywhere/connector-runtime.json`, independent of private
+configuration or data paths. Python records the actual Connector PID, its startup
+source and process start time. A record blocks startup only while its PID still
+identifies that Connector process. A live unrelated process or a reused PID does
+not block startup; an inspection permission failure is reported instead of bypassed.
+
+Each accepted configured start appends its Connector ID once to the ordered history,
+including CLI launches and existing bindings. Python removes only its own runtime
+record at normal shutdown. A crash leaves a record that the next start checks against
+the actual process. Stopping the backend connection through `connector.stop` retains
+ownership while the RPC process is alive.
+
+RPC callers receive `-32009` with `data.reason = connector_already_running` on a
+conflict. `connector.acquireOwnership` supports preflight before credentials exist;
+a rejected request keeps the RPC channel alive for `connector.getState` and retry.
+Direct CLI startup reports the conflict and exits with code `2`.
+
+Desktop remains the only installation-metadata writer; the plugin only reads it.
+Neither host appends shared IDs or checks startup PIDs. See the
+[local machine v2 contract](../contracts/local-machine/2.0/README.md) for fields,
+atomic file transactions and legacy migration.
+
 ## Runtime Discovery
 
 The connector discovers Codex and Claude locally and reports attached runtime

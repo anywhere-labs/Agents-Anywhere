@@ -4,7 +4,7 @@ import { createServer } from "node:net";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-/** Shared protocol: contracts/local-machine/1.0. Keep both writers compatible. */
+/** Short file transaction shared with Python: contracts/local-machine/2.0. */
 export async function withMachineStateLock<T>(
   filePath: string,
   update: () => T | Promise<T>,

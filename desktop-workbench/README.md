@@ -170,29 +170,41 @@ installer with the OS. Installing the new app remains an installer operation.
 
 ## Shared local machine record
 
-On every launch, including `yarn dev`, Main checks its current installation and
-publishes `<OS user home>/.agentsanywhere/machine.json`. Correct, unchanged
-records are not rewritten. Development records contain the Electron executable,
+On every launch, including `yarn dev`, Main validates its actual installation
+and publishes only the `desktop` field in
+`<OS user home>/.agents-anywhere/connector-runtime.json`. Unchanged installation
+metadata is not rewritten. Development records contain the Electron executable,
 project path and launch arguments; packaged records contain the installed app
-and executable paths.
+and executable paths. The DSH plugin reads this metadata without modifying it.
 
-Desktop and the DSH plugin append newly created local Connectors to the ordered
-`connectorIds` history. The plugin also publishes missing IDs when recovering a
-verified legacy private binding. Already recorded IDs are not rewritten. Both
-writers acquire the same process-safe lease before reading, merging and atomically
-publishing the file; installation paths remain owned by Desktop. Desktop and the
-DSH plugin verify ownership against the signed-in user's server device list
-before pairing. First-login provisioning and pairing again after a deleted
-device both reuse the first matching ID in local record order and rotate its
-token. Only an empty intersection creates a device; list or token-rotation
-failures stop provisioning for retry. A local persistence failure never deletes
-a reused server device. Tokens remain private. See the
-[shared record contract](../contracts/local-machine/1.0/README.md).
+Python Connector alone maintains the ordered `connectorIds` history and runtime
+ownership. Every accepted start, including CLI and reconnection, appends a missing
+ID once. Desktop writes installation metadata under the same short file transaction
+as Python, preserving IDs, runtime ownership and unknown fields. Hosts read legacy
+records without migrating them; Python performs the migration on a successful write.
+
+Desktop and the DSH plugin match local IDs against the signed-in user's server
+device list. First-login provisioning and pairing after a deleted device reuse the
+first matching ID in local order and rotate its token. An empty intersection creates
+a device; list or token-rotation failures stop provisioning for retry. Private
+bindings and credentials are retained when Python rejects startup, so a retry does
+not create a duplicate device. Tokens remain private. See the
+[shared record contract](../contracts/local-machine/2.0/README.md).
 
 Sidebar devices use fixed Chinese pinyin/name ordering and an ID tie-breaker,
 so polling, presence changes and same-name devices do not reorder the list.
 
 ## Connector lifecycle
+
+Startup exclusion is implemented entirely in Python and includes CLI, Desktop and
+DSH plugin Connectors. Main calls `connector.acquireOwnership` before provisioning;
+Python records its actual PID and startup source, and verifies that any recorded
+PID still identifies that Connector process. It never treats the Electron or uv
+parent as the owner. RPC conflicts use `-32009 / connector_already_running`.
+Desktop displays a retryable conflict and stops automatic restart attempts. The RPC
+channel remains usable, and retry asks Python again. `connector.stop` stops the
+backend connection; ownership remains while that Python process is alive. Explicit
+Quit terminates it. The next start can replace records left by a crashed process.
 
 - Successful Desktop login reuses a matching local device or provisions a
   `connectorKind: "desktop"` device with the user-authenticated Connector API.

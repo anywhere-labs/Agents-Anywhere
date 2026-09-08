@@ -144,7 +144,7 @@ dsh-bridge-next/
 - DSH 会话数据仍由 DSH 原生持久化管理；插件只保存自己拥有的关联、幂等及必要同步元数据。
 - 每类状态只有一个维护者：DSH 会话以 DSH 为准；Connector 运行状态根据进程和真实反馈更新；设置页缓存用于展示。
 - 已安装 Desktop 时，账号、设备和 Connector 状态以 Desktop 为准；未安装时由插件拥有。检测到安装状态变化不等于可以自动接管另一个进程。
-- 共享本机记录固定为 `<操作系统用户主目录>/.agentsanywhere/machine.json`，包含安装信息与有序的本机 Connector ID 历史。Desktop 每次启动检查路径，正确则不重写；只在创建新本机设备时追加 ID。插件 OAuth 后将共享 ID 与当前用户设备列表匹配，取本地顺序中的第一个，换取新 token 后继续引导。完整字段与兼容规则见[共享记录契约](../contracts/local-machine/1.0/README.md)。
+- 共享本机记录固定为 `<操作系统用户主目录>/.agents-anywhere/connector-runtime.json`。Python Connector 负责实际 PID/启动来源、启动互斥与有序 ID 历史，覆盖 CLI、Desktop 和插件；Desktop 只写自身安装信息，插件只读。入口通过 RPC 获取冲突并提供重试，不各自实现启动锁。配对继续按本机 ID 顺序匹配当前账号的服务端设备。完整字段、迁移和错误处理见[共享记录 v2 契约](../contracts/local-machine/2.0/README.md)。
 
 “后续只更新插件”以协议兼容为前提。新功能超出现有 Connector 协议表达范围时，仍可能需要两端配合更新。
 

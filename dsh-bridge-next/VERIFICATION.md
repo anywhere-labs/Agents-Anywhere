@@ -17,6 +17,18 @@
 
 插件事件与问答探针通过 ASGI 调用原有 Server，在各自的临时目录创建 SQLite 数据库；正常启动 Server 仍要求 PostgreSQL。测试请求一旦进入后端，不随客户端取消而被直接取消，测试关闭时等待后端请求完成。生产数据库和连接池没有因本轮测试修复而修改。
 
+## Python Connector 职责调整
+
+分支：`codex/connector-owned-lifecycle`。`cf058b32` 建立 Python RPC 占用检查；`70a60905` 完成入口适配与职责收敛：Python 检查实际 Connector PID、写启动来源和 ID 历史，Desktop 只写安装信息，插件只读共享文件。安装信息的校验和发布没有移入 Python。
+
+后续本地检查：插件 102 项、Connector 84 项、Desktop 主进程 85 项通过，包含插件类型/构建/打包与主进程 TypeScript。原先测试 Host 自持启动锁、写 ID 的用例已替换为真实 Python CLI/RPC 进程竞争和入口错误处理，所以测试数量不直接对应旧基线。
+
+覆盖 CLI、Desktop、插件互相拒绝；冲突返回 `-32009` 后 RPC 查询和重试仍可用；进程异常退出后允许新启动；无关 PID 不形成占用；ID 顺序去重；Desktop 写安装信息不覆盖 Python 的运行记录和历史；插件检测不写文件；失败保留私有绑定且重试不重复注册。`connector.stop` 停止后端连接后，仍存活的 RPC 进程继续占用。
+
+首次 Linux CI [34192099034](https://github.com/anywhere-labs/Agents-Anywhere/actions/runs/34192099034) 针对 `7c841c2e`：Web/Desktop 通过，插件/Python 任务失败，原因是旧共享写锁测试竞争和 SQLite 测试迁移使用 `ALTER COLUMN`。前者已由 Python 进程测试替代；后者改用 Alembic batch 迁移，并检查迁移后 `runtime_id` 非空及原数据保留。Server 的 76 项相关测试加完整迁移测试，共 175 项本地通过，仍有一条 TestClient 弃用提示。生产运行继续要求 PostgreSQL。
+
+当前分支的 Linux CI 将上述新范围纳入检查，同时重新检查 Web 219 项和 Desktop renderer 205 项。远程结论以 [该分支的工作流记录](https://github.com/anywhere-labs/Agents-Anywhere/actions/workflows/dsh-bridge-next.yml?query=branch%3Acodex%2Fconnector-owned-lifecycle)为准；本地通过不代表远程已经通过。
+
 ## 复现命令
 
 先在仓库根目录准备 `uv sync --project connector` 和 `uv sync --project server`，并在三个 JavaScript 项目各执行一次 `corepack yarn install`。仓库忽略依赖锁文件，干净环境安装时生成自己的本地锁；CI 明确关闭 immutable install。
@@ -30,7 +42,7 @@ corepack yarn check
 在 `connector/`：
 
 ```bash
-uv run --frozen pytest tests/test_dsh*.py tests/test_runtime_owner.py tests/test_connector_control.py -q
+uv run --frozen pytest tests/test_dsh*.py tests/test_runtime_owner.py tests/test_connector_control.py tests/test_connector_ownership_rpc.py -q
 ```
 
 在 `server/`：
@@ -40,7 +52,8 @@ uv run --frozen pytest \
   tests/test_attachment_mime_policy.py tests/test_session_refresh_lock.py \
   tests/test_connector_deletion.py tests/test_runtime_deletion.py \
   tests/test_runtime_config.py tests/test_plugin_onboarding.py \
-  tests/test_device_data_storage.py tests/test_device_runtime_repository.py -q
+  tests/test_device_data_storage.py tests/test_device_runtime_repository.py \
+  tests/test_database_migrations.py -q
 ```
 
 在 `web-next/`：
@@ -73,5 +86,7 @@ corepack yarn test:main
 - [ ] 文本和纯图片新建/续聊、运行中中断、`ask_user_question` 回答/取消、多端收起可用。
 - [ ] 断线与重启恢复后，历史、图片引用、当前选择及待回答问题一致，无重复首条消息。
 - [ ] 手机扫码与真实手机会话交互通过；Windows 进程退出/恢复和长期运行另行记录。
+- [ ] 使用当前源码依次从 CLI、Desktop、插件启动，验证其他入口显示冲突；结束占用方 Connector 进程后重试成功，设备 ID 不重复登记。
+- [ ] Desktop 发布实际安装信息后，插件重新检测；仅检测不改写共享文件。Windows 实机另验 PID 身份检查与进程退出。
 
 普通文件、DSH 原生图片反向上传到 AA、工具权限审批应答，以及检测到 AA Desktop 后的专门交接流程仍未开放。权限预设切换不等于回答工具审批。完整配置验收矩阵见 [配置方案第 11 节](./RUNTIME_CONFIGURATION_PLAN.md#11-验收条件与容易遗漏的逻辑)。
