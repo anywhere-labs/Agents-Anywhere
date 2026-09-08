@@ -15,6 +15,7 @@ on:
       - main
       - v2
       - feat/benson-0905
+      - codex/connector-owned-lifecycle
     paths:
       - dsh-bridge-next/**
       - connector/**
@@ -71,7 +72,7 @@ jobs:
         run: corepack yarn check
       - name: Test Connector DSH and ownership flows
         working-directory: connector
-        run: uv run --frozen pytest tests/test_dsh*.py tests/test_runtime_owner.py tests/test_connector_control.py -q
+        run: uv run --frozen pytest tests/test_dsh*.py tests/test_runtime_owner.py tests/test_connector_control.py tests/test_connector_ownership_rpc.py -q
       - name: Test Server runtime, onboarding and attachment flows
         working-directory: server
         run: >-
@@ -83,7 +84,8 @@ jobs:
           tests/test_runtime_config.py
           tests/test_plugin_onboarding.py
           tests/test_device_data_storage.py
-          tests/test_device_runtime_repository.py -q
+          tests/test_device_runtime_repository.py
+          tests/test_database_migrations.py -q
 
   clients:
     name: ${{ matrix.surface }} headless checks

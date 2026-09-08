@@ -739,6 +739,12 @@ def test_v2_14_splits_runtime_storage_without_losing_dsh_state(tmp_path) -> None
         assert {"runtime_id"}.issubset(
             column["name"] for column in inspector.get_columns("session_active_runs")
         )
+        for table_name in ("sessions", "session_active_runs"):
+            runtime_id = next(
+                column for column in inspector.get_columns(table_name)
+                if column["name"] == "runtime_id"
+            )
+            assert runtime_id["nullable"] is False
         assert inspector.get_pk_constraint("connector_runtime_catalogs")[
             "constrained_columns"
         ] == ["connector_id", "runtime_id", "catalog_type"]
