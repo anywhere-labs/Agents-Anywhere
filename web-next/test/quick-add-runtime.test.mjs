@@ -64,6 +64,12 @@ function harness(t, initialRuntimes = []) {
     inventory = inventory.map((item) => item.runtimeId === runtimeId ? saved : item)
     return saved
   })
+  t.mock.method(dashboardApi, "renameConnectorRuntime", async (_token, _connectorId, runtimeId, name) => {
+    calls.push({ action: "rename", runtimeId, name })
+    const renamed = { ...inventory.find((item) => item.runtimeId === runtimeId), name }
+    inventory = inventory.map((item) => item.runtimeId === runtimeId ? renamed : item)
+    return renamed
+  })
   t.mock.method(dashboardApi, "setConnectorRuntimeActive", async (_token, _connectorId, runtimeId, active) => {
     calls.push({ action: "activate", runtimeId, active })
     const started = { ...inventory.find((item) => item.runtimeId === runtimeId), active, status: "running" }
@@ -74,11 +80,12 @@ function harness(t, initialRuntimes = []) {
     calls,
     updates,
     setInventory: (value) => { inventory = value },
-    add: () => quickAddRuntime({
+    add: (options = {}) => quickAddRuntime({
       token: "session",
       connectorId: "device",
       runtimeType,
       onRuntimeUpdated: (value) => updates.push(value),
+      ...options,
     }),
   }
 }
@@ -126,7 +133,8 @@ test("retrying a creation that persisted before startup failed reuses the server
     throw new Error("start failed")
   })
   await assert.rejects(h.add(), /start failed/)
-  assert.deepEqual(h.updates, [])
+  assert.equal(h.updates[0].runtimeId, "rti-created")
+  assert.equal(h.updates[0].status, "error")
   const started = await h.add()
   assert.equal(creates, 1)
   assert.equal(started.runtimeId, "rti-created")
@@ -147,4 +155,39 @@ test("a failed config save does not start the Agent or report success", async (t
   await assert.rejects(h.add(), /config failed/)
   assert.deepEqual(h.calls, [])
   assert.deepEqual(h.updates, [])
+})
+
+test("a named addition creates its own instance with the selected configuration", async (t) => {
+  const h = harness(t, [{ ...runtime, runtimeId: "rti-other", name: "Other", configured: true }])
+  await h.add({ name: "Work Codex", config: { codexHome: "/work" } })
+  assert.deepEqual(h.calls[0].payload, {
+    runtimeType: "codex", name: "Work Codex", config: { codexHome: "/work" }, active: true,
+  })
+  assert.equal(h.calls.length, 1)
+})
+
+test("adding a cleared instance applies the requested name and preserves its identity", async (t) => {
+  const h = harness(t, [runtime])
+  await h.add({ name: "My Codex", runtimeId: "codex" })
+  assert.deepEqual(h.calls, [
+    { action: "rename", runtimeId: "codex", name: "My Codex" },
+    { action: "configure", runtimeId: "codex", config: {} },
+    { action: "activate", runtimeId: "codex", active: true },
+  ])
+})
+
+test("custom configuration can repair a persisted startup failure without another creation", async (t) => {
+  const h = harness(t, [{ ...runtime, runtimeId: "rti-failed", configured: true, status: "error" }])
+  await h.add({ name: "Repaired", runtimeId: "rti-failed", config: { codexHome: "/fixed" } })
+  assert.deepEqual(h.calls, [
+    { action: "rename", runtimeId: "rti-failed", name: "Repaired" },
+    { action: "configure", runtimeId: "rti-failed", config: { codexHome: "/fixed" } },
+    { action: "activate", runtimeId: "rti-failed", active: true },
+  ])
+})
+
+test("DeepSeek Harness defaults to DSH and resolves name collisions", async (t) => {
+  const h = harness(t, [{ ...runtime, runtimeType: "claude", name: "DSH", configured: true }])
+  await h.add({ runtimeType: { ...runtimeType, runtimeType: "dsh", displayName: "DeepSeek Harness" } })
+  assert.equal(h.calls[0].payload.name, "DSH 2")
 })

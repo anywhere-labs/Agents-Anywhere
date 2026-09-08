@@ -129,11 +129,12 @@ export function suggestedRuntimeInstanceName(
   runtimeType: RuntimeTypeView,
   runtimes: readonly DeviceRuntimeView[],
 ): string {
+  const defaultName = runtimeType.runtimeType === "dsh" ? "DSH" : runtimeType.displayName
   const names = new Set(runtimes.map((runtime) => runtimeInstanceName(runtime).toLocaleLowerCase()))
-  if (!names.has(runtimeType.displayName.toLocaleLowerCase())) return runtimeType.displayName
+  if (!names.has(defaultName.toLocaleLowerCase())) return defaultName
   let suffix = 2
-  while (names.has(`${runtimeType.displayName} ${suffix}`.toLocaleLowerCase())) suffix += 1
-  return `${runtimeType.displayName} ${suffix}`
+  while (names.has(`${defaultName} ${suffix}`.toLocaleLowerCase())) suffix += 1
+  return `${defaultName} ${suffix}`
 }
 
 export function runtimeCreationDefaults(

@@ -57,6 +57,7 @@ import type { ConnectorRevokeResponse } from "@/features/dashboard/types"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
+import { RuntimeAddDialog } from "@/components/runtime-add-dialog"
 import { RuntimeConfigDialog } from "@/components/runtime-config-dialog"
 import { RuntimeInstanceNameDialog } from "@/components/runtime-instance-name-dialog"
 import {
@@ -67,12 +68,8 @@ import {
   addableRuntimeTypes,
   configuredRuntimeInstances,
   namedInstanceRequiredConfigFields,
-  reconfigurableRuntimeInstance,
-  runtimeConfigDraft,
-  runtimeCreationDefaults,
   runtimeInstanceName,
   runtimeIsAvailable,
-  suggestedRuntimeInstanceName,
   runtimeTypeName,
 } from "@/features/dashboard/runtime-instances"
 
@@ -93,8 +90,6 @@ const RUNTIME_STATUS_LABEL_KEYS = {
   error: "runtimeStatus.error",
   unknown: "runtimeStatus.unknown",
 } as const satisfies Record<DeviceRuntimeStatus, string>
-
-const NEW_RUNTIME_SAVING_ID = "@new-runtime"
 
 type DeviceSession = {
   id: string
@@ -314,11 +309,6 @@ export function DevicePage() {
   const [runtimeActionId, setRuntimeActionId] = React.useState<string | null>(null)
   const [removeRuntime, setRemoveRuntime] = React.useState<DeviceRuntimeView | null>(null)
   const [createRuntimeType, setCreateRuntimeType] = React.useState<RuntimeTypeView | null>(null)
-  const [pendingRuntimeCreation, setPendingRuntimeCreation] = React.useState<{
-    runtimeType: RuntimeTypeView
-    name: string
-    initialConfig: Record<string, unknown>
-  } | null>(null)
   const [renameRuntime, setRenameRuntime] = React.useState<DeviceRuntimeView | null>(null)
   const [savingRuntimeName, setSavingRuntimeName] = React.useState(false)
   const [revokeOpen, setRevokeOpen] = React.useState(false)
@@ -350,7 +340,6 @@ export function DevicePage() {
       setConfigRuntime(null)
       setRemoveRuntime(null)
       setCreateRuntimeType(null)
-      setPendingRuntimeCreation(null)
       setRenameRuntime(null)
       setSelectMode(false)
       setSelectedSessionIds(new Set())
@@ -498,55 +487,6 @@ export function DevicePage() {
     } finally {
       setDiscoveringRuntimes(false)
     }
-  }
-
-  const stageRuntimeCreation = async (name: string) => {
-    if (!createRuntimeType) return
-    setPendingRuntimeCreation({
-      runtimeType: createRuntimeType,
-      name,
-      initialConfig: runtimeCreationDefaults(createRuntimeType),
-    })
-    setCreateRuntimeType(null)
-  }
-
-  const createAndStartRuntime = async (
-    pending: NonNullable<typeof pendingRuntimeCreation>,
-    config: Record<string, unknown>,
-  ) => {
-    if (!authSession?.accessToken) return
-    setSavingRuntimeId(NEW_RUNTIME_SAVING_ID)
-    try {
-      const created = await dashboardApi.createConnectorRuntime(
-        authSession.accessToken,
-        connector.id,
-        {
-          runtimeType: pending.runtimeType.runtimeType,
-          name: pending.name,
-          config,
-          active: true,
-        },
-      )
-      replaceRuntime(created)
-      toast.success(t("runtimeConfiguredAndStarted", { name: pending.name }))
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("createRuntimeFailed"))
-      throw error
-    } finally {
-      setSavingRuntimeId(null)
-    }
-  }
-
-  const addRuntime = (runtimeType: RuntimeTypeView) => {
-    const existing = reconfigurableRuntimeInstance(runtimeType, runtimes)
-    if (existing) {
-      setConfigRuntime({
-        ...existing,
-        config: runtimeConfigDraft(runtimeType, existing),
-      })
-      return
-    }
-    setCreateRuntimeType(runtimeType)
   }
 
   const submitRuntimeRename = async (name: string) => {
@@ -927,7 +867,7 @@ export function DevicePage() {
                             type="button"
                             variant="outline"
                             size="sm"
-                            onClick={() => addRuntime(runtimeType)}
+                            onClick={() => setCreateRuntimeType(runtimeType)}
                           >
                             <Plus data-icon="inline-start" />
                             {t("addRuntime")}
@@ -1096,36 +1036,15 @@ export function DevicePage() {
         />
       ) : null}
 
-      {createRuntimeType ? (
-        <RuntimeInstanceNameDialog
-          open
-          title={t("createRuntimeTitle", { type: createRuntimeType.displayName })}
-          description={t("createRuntimeDescription", { type: createRuntimeType.displayName })}
-          label={t("runtimeName")}
-          requiredMessage={t("runtimeNameRequired")}
-          placeholder={t("runtimeNamePlaceholder")}
-          submitLabel={t("createRuntime")}
-          cancelLabel={tCommon("cancel")}
-          initialName={suggestedRuntimeInstanceName(createRuntimeType, runtimes)}
-          saving={false}
+      {createRuntimeType && authSession?.accessToken ? (
+        <RuntimeAddDialog
+          key={createRuntimeType.runtimeType}
+          runtimeType={createRuntimeType}
+          runtimes={runtimes}
+          token={authSession.accessToken}
+          connectorId={connector.id}
+          onRuntimeUpdated={replaceRuntime}
           onOpenChange={(open) => { if (!open) setCreateRuntimeType(null) }}
-          onSubmit={stageRuntimeCreation}
-        />
-      ) : null}
-
-      {pendingRuntimeCreation ? (
-        <RuntimeConfigDialog
-          runtimeName={pendingRuntimeCreation.name}
-          schema={pendingRuntimeCreation.runtimeType.schema}
-          uiSchema={pendingRuntimeCreation.runtimeType.uiSchema}
-          config={pendingRuntimeCreation.initialConfig}
-          defaults={pendingRuntimeCreation.runtimeType.defaults}
-          requiredFields={namedInstanceRequiredConfigFields(pendingRuntimeCreation.runtimeType)}
-          saving={savingRuntimeId === NEW_RUNTIME_SAVING_ID}
-          submitLabel={t("configureAndStart")}
-          open
-          onOpenChange={(open) => { if (!open) setPendingRuntimeCreation(null) }}
-          onSave={(config) => createAndStartRuntime(pendingRuntimeCreation, config)}
         />
       ) : null}
 

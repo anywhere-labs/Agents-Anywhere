@@ -8,7 +8,7 @@ const sourceRoot = fileURLToPath(new URL('../../src/', import.meta.url))
 export function registerSource() {
   return registerHooks({
     resolve(specifier, context, nextResolve) {
-      if (['next/navigation', 'next/link', 'next/headers'].includes(specifier)) {
+      if (['next/navigation', 'next/link', 'next/headers', 'ajv/dist/2020'].includes(specifier)) {
         return nextResolve(`${specifier}.js`, context)
       }
       const parent = context.parentURL?.startsWith('file:') ? fileURLToPath(context.parentURL) : ''
