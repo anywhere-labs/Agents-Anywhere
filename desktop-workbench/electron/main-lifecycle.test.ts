@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -29,6 +30,7 @@ function quitFixture(options: { confirm?: boolean; shutdown?: () => Promise<void
     isQuitting: false,
     shutdownComplete: false,
     shutdownPromise: null,
+    tray: null as { destroy: () => void } | null,
     confirmQuit: async () => { calls.push("confirm"); return options.confirm ?? true; },
     mainWindow: options.window === false ? null : {
       isDestroyed: () => false,
@@ -76,6 +78,129 @@ test("quit still completes if the window is already gone or local shutdown fails
   await assert.rejects(fixture.requestQuit(), /already stopped/);
   assert.deepEqual(fixture.calls, ["stop-updates", "stop-local-connector", "quit"]);
   assert.equal(fixture.globals.shutdownComplete, true);
+});
+
+test("Windows close hides the window without confirming quit, and reopening restores it", () => {
+  const calls: string[] = [];
+  class Window extends EventEmitter {
+    webContents = Object.assign(new EventEmitter(), { setWindowOpenHandler: () => {} });
+    loadURL = async () => {};
+    hide = () => calls.push("hide");
+    isDestroyed = () => false;
+    isMinimized = () => true;
+    restore = () => calls.push("restore");
+    show = () => calls.push("show");
+    moveTop = () => {};
+    focus = () => calls.push("focus");
+  }
+  const globals = {
+    process: { platform: "win32", env: {} },
+    app: { isPackaged: true },
+    BrowserWindow: Window,
+    APP_NAME: "Agents Anywhere",
+    path,
+    __dirname,
+    mainWindow: null,
+    devOrigin: null,
+    isQuitting: false,
+    windowMaterialOptions: () => ({}),
+    appWindowIcon: () => "icon.png",
+    staticWorkbenchUrl: () => "aa-workbench://web/",
+    showDockForWindow: () => {},
+    requestQuit: () => assert.fail("Closing the Windows window must not request quit"),
+  };
+  const { createMainWindow, showMainWindow } = loadFunctions(["createMainWindow", "showMainWindow"], globals);
+  const window = createMainWindow(false) as Window;
+  window.emit("ready-to-show");
+  assert.equal(calls.length, 0, "silent launch leaves the window hidden");
+  window.emit("close", { preventDefault: () => calls.push("prevent-close") });
+  assert.deepEqual(calls, ["prevent-close", "hide"]);
+  showMainWindow();
+  assert.deepEqual(calls.slice(2), ["restore", "show", "focus"]);
+  calls.length = 0;
+  globals.isQuitting = true;
+  window.emit("close", { preventDefault: () => assert.fail("Confirmed quit must allow closing") });
+  showMainWindow();
+  assert.deepEqual(calls, [], "shutdown must not reopen the window");
+});
+
+test("Windows tray opens the app, cancels exit, and shuts down only after confirmation", async () => {
+  for (const packaged of [false, true]) {
+    let confirm = false;
+    const fixture = quitFixture();
+    const appPath = path.resolve(__dirname, "../..");
+    const resourcesPath = path.join(appPath, "test-resources");
+    type TrayItem = { label?: string; click?: () => void };
+    class TestTray extends EventEmitter {
+      menu: TrayItem[] = [];
+      constructor(readonly icon: string) { super(); }
+      setToolTip = (name: string) => assert.equal(name, "Agents Anywhere");
+      setContextMenu = (menu: TrayItem[]) => { this.menu = menu; };
+      destroy = () => fixture.calls.push("destroy-tray");
+    }
+    const globals = Object.assign(fixture.globals, {
+      tray: null as TestTray | null,
+      process: { platform: "win32", resourcesPath },
+      app: { ...fixture.globals.app, isPackaged: packaged, getAppPath: () => appPath },
+      path,
+      APP_NAME: "Agents Anywhere",
+      Tray: TestTray,
+      Menu: { buildFromTemplate: (items: TrayItem[]) => items },
+      showMainWindow: () => fixture.calls.push("show"),
+      confirmQuit: async () => { fixture.calls.push("confirm"); return confirm; },
+      requestQuit: fixture.requestQuit,
+    });
+    const { createWindowsTray } = loadFunctions(["createWindowsTray"], globals);
+    createWindowsTray();
+    const tray = globals.tray!;
+    assert.equal(tray.icon, path.join(packaged ? resourcesPath : appPath, "build", "icon.ico"));
+    createWindowsTray();
+    assert.equal(globals.tray, tray, "initialization must retain a single tray instance");
+    tray.emit("click");
+    tray.menu.find((item) => item.label === "打开 Agents Anywhere")!.click!();
+    assert.deepEqual(fixture.calls, ["show", "show"]);
+    fixture.calls.length = 0;
+    const exit = tray.menu.find((item) => item.label === "退出")!.click!;
+    exit();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(fixture.calls, ["confirm"]);
+    assert.equal(globals.tray, tray);
+    assert.equal(globals.isQuitting, false);
+    confirm = true;
+    exit();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(fixture.calls, ["confirm", "confirm", "stop-updates", "destroy-tray", "destroy-renderer", "stop-local-connector", "quit"]);
+    assert.equal(globals.tray, null);
+  }
+});
+
+test("tray quit confirmation stays accessible when the main window is hidden or destroyed", async () => {
+  for (const state of ["visible", "hidden", "destroyed", "absent"]) {
+    const window = state === "absent" ? null : {
+      isDestroyed: () => state === "destroyed",
+      isVisible: () => state === "visible",
+    };
+    const { confirmQuit } = loadFunctions(["confirmQuit"], {
+      quitConfirmationPromise: null,
+      mainWindow: window,
+      dialog: { showMessageBox: async (...args: unknown[]) => {
+        assert.equal(args.length, state === "visible" ? 2 : 1);
+        if (state === "visible") assert.equal(args[0], window);
+        return { response: 0 };
+      } },
+    });
+    assert.equal(await confirmQuit(), false);
+  }
+});
+
+test("the Windows tray ICO is included in packaged resources", () => {
+  const root = path.resolve(__dirname, "../..");
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+  const resource = manifest.build.extraResources.find((item: { to: string }) => item.to === "build/icon.ico");
+  assert.ok(resource, "the tray icon must be available outside app.asar");
+  const icon = fs.readFileSync(path.join(root, resource.from));
+  assert.equal(icon.readUInt16LE(2), 1, "the bundled asset must be an ICO");
+  assert.ok(icon.readUInt16LE(4) > 0, "the ICO must contain images");
 });
 
 test("project API requests reach the Desktop proxy even with an empty API namespace", () => {
