@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import pwd
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -39,6 +38,8 @@ def default_login_shell() -> str | None:
         return shell
 
     if os.name == "posix":
+        import pwd
+
         try:
             return pwd.getpwuid(os.getuid()).pw_shell
         except KeyError:
