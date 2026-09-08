@@ -415,16 +415,15 @@ async def connector_ws(
             await reader_task
             return
         await flush_task
-        if discovery_reason is not None:
-            completion_task = asyncio.create_task(
-                _complete_runtime_discovery(
-                    runtime_service,
-                    connector_id,
-                    connection,
-                    reason=discovery_reason,
-                ),
-                name=f"runtime-control-complete-{connection.connection_id}",
-            )
+        completion_task = asyncio.create_task(
+            _complete_runtime_discovery(
+                runtime_service,
+                connector_id,
+                connection,
+                reason=discovery_reason or "runtime.recovery",
+            ),
+            name=f"runtime-discovery-complete-{connection.connection_id}",
+        )
         done, _pending = await asyncio.wait(
             {reader_task, notification_pump.task},
             return_when=asyncio.FIRST_COMPLETED,

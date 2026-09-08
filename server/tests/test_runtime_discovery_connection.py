@@ -452,3 +452,66 @@ def test_stale_connection_status_cannot_overwrite_current_instance(
         assert await manager.unregister(connector_id, current)
 
     asyncio.run(exercise())
+
+
+def test_failed_startup_discovery_still_restores_enabled_instances(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket_completed = threading.Event()
+    client, connector_id, token = _make_connector(
+        tmp_path,
+        websocket_completed=websocket_completed,
+    )
+    runtime_id = asyncio.run(_seed_named(client, connector_id, active=True))
+    service = client.app.state.device_runtime_service
+    manager = client.app.state.rpc
+    original_request = manager.request_on_connection
+    original_reconcile = service.reconcile_active
+    restored = threading.Event()
+    start_requests = []
+
+    async def request(connection, method, params, **kwargs):
+        if method == "runtime.start":
+            start_requests.append(params)
+            return {
+                "runtime": params["runtime"],
+                "runtimeId": params["runtimeId"],
+                "status": "running",
+            }
+        return await original_request(connection, method, params, **kwargs)
+
+    async def reconcile(*args, **kwargs):
+        try:
+            await original_reconcile(*args, **kwargs)
+        finally:
+            restored.set()
+
+    monkeypatch.setattr(manager, "request_on_connection", request)
+    monkeypatch.setattr(service, "reconcile_active", reconcile)
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as ws:
+        discovery = ws.receive_json()
+        assert discovery["method"] == "runtime.discover"
+        ws.send_json(
+            {
+                "id": discovery["id"],
+                "type": "response",
+                "ok": False,
+                "error": {
+                    "code": "runtime_unavailable",
+                    "message": "Fixture discovery failed",
+                },
+            }
+        )
+        assert restored.wait(timeout=5), "discovery failure blocked instance recovery"
+        assert [params["runtimeId"] for params in start_requests] == [runtime_id]
+        runtime = asyncio.run(
+            client.app.state.store.get_device_runtime(connector_id, runtime_id)
+        )
+        assert runtime["status"] == "running"
+        assert asyncio.run(manager.is_online(connector_id))
+        ws.close()
+        assert websocket_completed.wait(timeout=5)
