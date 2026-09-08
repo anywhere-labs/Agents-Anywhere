@@ -286,6 +286,17 @@ def test_presence_change_publishes_reprojected_session_capabilities() -> None:
     assert capabilities[SESSION_SEND_MESSAGE]["unavailableReason"] == "connector_offline"
 
 
+def test_effective_capabilities_preserve_attachment_mime_policy() -> None:
+    source = ProtocolCapabilitySet(revision=1, capabilities=[ProtocolCapability(
+        capabilityId="runtime.attachment", runtime="codex", scope="runtime",
+        metadata={"allowedMimeTypes": ["image/png"]},
+    )])
+    result = derive_session_effective_capabilities(session=_session(takeover=True), runtime_capabilities=source)
+    attachment = find_capability(result, "runtime.attachment")
+    assert attachment is not None
+    assert attachment.metadata == {"allowedMimeTypes": ["image/png"]}
+
+
 def _session(*, takeover: bool) -> SessionView:
     return SessionView(
         id="session-1",

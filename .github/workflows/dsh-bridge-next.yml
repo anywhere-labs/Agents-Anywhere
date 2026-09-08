@@ -87,7 +87,14 @@ jobs:
           tests/test_plugin_onboarding.py
           tests/test_device_data_storage.py
           tests/test_device_runtime_repository.py
+          tests/test_effective_capabilities.py
           tests/test_database_migrations.py -q
+      - name: Test live session capability admission and recovery
+        working-directory: server
+        run: >-
+          uv run --frozen pytest tests/test_backend_mvp.py
+          -k 'capabilit or send_message or running_tool_item or patch_session_selections or steer or interrupt or runtime_command or interaction_respond'
+          -q
 
   clients:
     name: ${{ matrix.surface }} headless checks

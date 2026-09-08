@@ -108,6 +108,7 @@ from agent_server.services.device_runtimes import (
 )
 from agent_server.services.effective_capabilities import (
     derive_session_effective_capabilities,
+    read_session_capability_facts,
 )
 from agent_server.services.event_recovery import EventRecoveryService
 from agent_server.services.session_meta_projection import (
@@ -1105,9 +1106,7 @@ async def _require_session_action_capability(
     user_id: str,
 ) -> None:
     effective_session = await with_effective_session_connector_status(manager, session)
-    runtime_capabilities = ProtocolCapabilitySet.model_validate(
-        await db.get_protocol_capabilities(session.connectorId, user_id=user_id)
-    )
+    runtime_capabilities = await read_session_capabilities_from_connector(manager, session)
     effective = derive_session_effective_capabilities(
         session=effective_session,
         runtime_capabilities=runtime_capabilities,
@@ -1577,19 +1576,9 @@ async def read_session_capabilities_from_connector(
     manager: ConnectorRpcManager,
     session: SessionView,
 ) -> ProtocolCapabilitySet:
-    params: dict[str, Any] = {
-        "sessionId": session.id,
-        "runtime": session.runtime,
-        "runtimeId": _session_runtime_id(session),
-    }
-    if session.externalSessionId:
-        params["externalSessionId"] = session.externalSessionId
     try:
-        result = await manager.request(
-            session.connectorId,
-            "session.capabilities",
-            params,
-            timeout=10,
+        return await read_session_capability_facts(
+            manager, session, runtime_id=_session_runtime_id(session),
         )
     except ConnectorOfflineError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -1606,24 +1595,14 @@ async def read_session_capabilities_from_connector(
             status_code=502,
             detail={"code": exc.code, "message": exc.message or exc.code},
         ) from exc
-    if not isinstance(result, dict):
+    except ValueError as exc:
         raise HTTPException(
             status_code=502,
             detail={
                 "code": "invalid_capability_set",
-                "message": "connector did not return a capability set",
+                "message": str(exc),
             },
-        )
-    raw_capability_set = result.get("capabilitySet")
-    if not isinstance(raw_capability_set, dict):
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "code": "invalid_capability_set",
-                "message": "connector did not return a capability set",
-            },
-        )
-    return ProtocolCapabilitySet.model_validate(raw_capability_set)
+        ) from exc
 
 
 async def request_session_runtime_catalog(
