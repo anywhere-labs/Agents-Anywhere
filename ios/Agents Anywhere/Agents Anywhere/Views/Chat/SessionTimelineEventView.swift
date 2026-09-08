@@ -33,7 +33,7 @@ struct SessionTimelineGroupView: View {
     }
     private var agentGroup: Bool { if case .agents = group.kind { true } else { false } }
     private var rows: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             ForEach(group.rows) { row in
                 SessionTimelineRow(row: row, chat: chat, onAttachment: onAttachment, cwd: chat.session.metadata?.cwd,
                     disclosures: chat.disclosures, onFile: onFile)
@@ -103,7 +103,7 @@ struct TimelineMarkerRow: View {
     var expanded: Bool?
     var accessory: String?
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             if let expanded { AppSymbol(expanded ? "chevron.down" : "chevron.right", size: 10).frame(width: 10) }
             AppSymbol(symbol, size: 15).frame(width: 18)
             Text(title).font(.system(.subheadline, design: .monospaced)).lineLimit(1).truncationMode(.tail)
@@ -181,7 +181,7 @@ private struct TimelineFold<Content: View>: View {
     @ViewBuilder var content: () -> Content
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Button {
                 withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { disclosures.toggle(id) }
             } label: { TimelineMarkerRow(title: title, symbol: symbol, status: status, expanded: disclosures.isExpanded(id)) }
@@ -196,15 +196,15 @@ private struct TimelineFileChangeView: View {
     let onFile: (String) -> Void
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 AppSymbol("doc.text").foregroundStyle(.secondary)
-                Text(change.action.label).font(.caption2).padding(5).background(.quaternary, in: .rect(cornerRadius: 5))
+                Text(change.action.label).font(.caption2).padding(4).background(.quaternary, in: .rect(cornerRadius: 5))
                 Button { if let path = change.path { onFile(path) } } label: {
                     Text(change.displayPath).font(.system(.caption, design: .monospaced)).lineLimit(1).truncationMode(.middle)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }.buttonStyle(.plain).disabled(change.path == nil).accessibilityHint(String(localized: "在 Web 预览中打开文件"))
                 AppSymbol("arrow.up.right", size: 12).foregroundStyle(.secondary)
-            }.padding(.horizontal, 12).frame(minHeight: 44).background(.quaternary.opacity(0.4))
+            }.padding(.horizontal, 10).frame(minHeight: 44).background(.quaternary.opacity(0.4))
             if let code = change.diff ?? change.code { TimelineCodePanel(label: change.diff == nil ? "code" : "diff", code: code, isDiff: change.diff != nil) }
         }.background(Color(uiColor: .secondarySystemBackground))
     }
@@ -227,7 +227,7 @@ struct TimelineCodePanel: View {
                 } label: { AppSymbol(copied ? "checkmark" : "document.on.document").frame(width: 44, height: 44) }
                 .buttonStyle(.plain).accessibilityLabel(copied ? String(localized: "已复制") : String(localized: "复制 \(label)"))
                 .task(id: copied) { if copied { try? await Task.sleep(for: .seconds(2)); copied = false } }
-            }.padding(.leading, 12).foregroundStyle(.secondary).background(.quaternary.opacity(0.3))
+            }.padding(.leading, 10).foregroundStyle(.secondary).background(.quaternary.opacity(0.3))
             ScrollView([.horizontal, .vertical]) {
                 if isDiff {
                     LazyVStack(alignment: .leading, spacing: 0) {
@@ -240,13 +240,13 @@ struct TimelineCodePanel: View {
                                 Spacer(minLength: 0)
                             }
                             .font(.system(.caption, design: .monospaced)).monospacedDigit()
-                            .padding(.horizontal, 12).frame(minHeight: rowHeight)
+                            .padding(.horizontal, 10).frame(minHeight: rowHeight)
                             .foregroundStyle(diffColor(line.kind)).background(diffColor(line.kind).opacity(line.kind == .add || line.kind == .delete ? 0.09 : 0))
                         }
                     }.padding(.vertical, 8).fixedSize(horizontal: true, vertical: false)
                 } else {
                     ChatSelectableText(text: displayCode).font(.system(.caption, design: .monospaced))
-                        .fixedSize(horizontal: true, vertical: false).padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: true, vertical: false).padding(.horizontal, 10).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .frame(height: min(320, max(76, CGFloat(displayCode.components(separatedBy: "\n").count) * rowHeight + 24)))

@@ -332,7 +332,7 @@ private struct ChatTimelineContent: View, Equatable {
         let anchorEdge = historyAnchor?.edge ?? (anchorGroup?.rows.first?.structure.groupKind == .single ? .top : .bottom)
         // Keep actual row geometry available as Markdown grows and tool groups
         // change height. Hidden tool details own their deferred work separately.
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 12) {
             if model.session.hasOlderItems || keepsOlderPrompt {
                 Group {
                     if isLoadingOlder {
