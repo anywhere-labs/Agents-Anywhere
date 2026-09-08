@@ -12,6 +12,8 @@
 
 - `server.ts`：仅监听 `127.0.0.1`，随机端口和随机 token；负责鉴权、8 MiB 帧限制、取消、连接与卸载清理。
 - `router.ts`：会话查询、当前状态、分页捕获、订阅与消息请求；纯读取不调用 Agent create/resume。
+- `catalogs.ts`、`configuration.ts`、`selections.ts`：官方模型/effort/权限及模式目录、会话选择读取与实时切换。
+- `creation-intents.ts`：保存创建参数与首条消息身份，重试沿用已提交的配置快照。
 - `attachments.ts`：图片白名单、本机暂存校验及 AA 附件引用记录；图片内容由官方 Session Controller 的 `saveImages()` 准入流程校验和保存。
 - `native.ts`、`visibility.ts`、`sync.ts`：官方事件与读写、侧栏过滤、初始校准及实时推送。
 - `sessions/source.ts`：官方会话清单、明确的归档/不可见/缺失状态及即时可用性检查。
@@ -64,6 +66,8 @@ Connector 先验证发现文件、进程与回环地址，再执行限时鉴权�
 主动读取的历史按同一捕获分页，每帧最多 1,000 条且内容小于 7 MiB；单条超限明确失败。游标绑定连接、会话和捕获，120 秒后过期。Python 收齐所有页才返回完整快照；指定 limit 截断时 complete=false。事件订阅的初始历史每页最多 250 条，收齐后通过现有 timeline.sync 完整替换；随后只推增量，断线重连重新校准，不再定时扫描 DSH。详见 [事件同步方案](./RUNTIME_SYNC_PLAN.md)。
 
 ## 验证与本地试用
+
+模型、effort、权限和 Runtime 默认模式已接通，业务规则见 [配置方案](./RUNTIME_CONFIGURATION_PLAN.md)。实际执行过的检查及真实模型、手机和 Windows 待验收项统一记录在 [验证记录](./VERIFICATION.md)。
 
 AA 发图只支持 PNG、JPEG、WebP、GIF，由 `runtime.attachment.metadata.allowedMimeTypes` 声明。Desktop 和 Web 的文件选择、粘贴、拖拽及提交使用同一白名单，Server 与 Connector 也校验 MIME；最终由 DSH 官方接口检查真实图片内容及模型是否支持图片。支持纯图片新建任务和续聊，普通文件不支持。
 

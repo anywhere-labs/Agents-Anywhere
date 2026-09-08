@@ -680,3 +680,19 @@ Web 16 项认证测试、Desktop 7 项密码派生测试及两端 TypeScript 检
 该修复需要更新服务器提供的 Web 页面，仅重新编译 iOS 不会替换浏览器登录页。
 未进行真实 iOS 浏览器登录计时；无 JIT 的压力测量只用于确认主线程阻塞原因，
 不作为真机登录速度的结论。
+
+## DSH 配置与图片检查（2026-09-08）
+
+`feat/benson-0905` 已接通 DSH 官方模型、effort、权限和 Agent 模式目录，
+在新建时显式初始化，支持会话内切换及 PNG/JPEG/WebP/GIF 图片发送。
+Web 与 Desktop renderer 均已同步模型标签、配置选项名称/禁用原因、图片
+白名单和状态回显；继续使用现有 AA 新会话偏好机制，不从 DSH 默认值覆盖。
+这次没有重新替换 Desktop renderer，也没有改动其原生窗口和传输边界。
+
+基于 `5c99b42d`，Web 219 项、Desktop renderer 205 项、主进程 90 项测试
+及两端类型/协议检查通过。插件 105 项、Connector 68 项、Server 76 项检查
+另见 [验证记录](../../../dsh-bridge-next/VERIFICATION.md)。这些是 headless
+结果，真实模型、手机、Windows 和长期运行仍待手动验收。
+
+启动互斥与 Connector ID 历史登记目前分散在入口和 Connector 中，下一步
+按用户确认的职责边界收回 Connector 层；该调整尚未包含在上述测试基线中。

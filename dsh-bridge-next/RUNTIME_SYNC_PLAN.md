@@ -39,8 +39,8 @@
 - 平台会话 ID 按原生会话与 runtime instance namespace 确定；平台新建会话使用可逆原生 ID，保持平台已有会话 ID。
 - 用户消息按原生消息 ID；assistant 按原生 turn/step 起始 seq 和内容块位置；工具按 callId。历史与实时重用同一算法，流片段更新同一条目。
 - 投影器从完整原生日志按首次出现顺序分配 orderSeq，不因片段更新改变位置，保持兼容后端现有 INTEGER 列。
-- streamId/batchSeq 只控制插件与 Connector 的顺序。每次等待一个批次确认；快照页确认表示已暂存，commit/增量确认表示现有 ingest 接受。**不增加数据库事务 ACK 或 exactly-once 承诺。**
-- Connector 使用可等待的 ingest_notifications，不进入出错后丢弃通知的后台 flush 队列。
+- streamId/batchSeq 只控制插件与 Connector 的顺序。每次等待一个批次确认；快照页确认表示已暂存，快照 commit 和完整清单等待现有 HTTP ingest 完成，实时增量确认表示 Host 发布方法已返回。**不增加数据库事务 ACK 或 exactly-once 承诺。**
+- 实时增量与 Codex/Claude 共用 typed Host 发布方法，由 Host 处理 instance 绑定、合并、WebSocket 发送和 HTTP 后台队列回退；完整快照与清单通过可等待的 `publish_runtime_notifications` 进入 HTTP ingest。重连后用完整历史校准。
 
 ## 断线补偿
 
@@ -58,14 +58,16 @@
 
 进入详情和发送前，插件即时读取官方会话清单和明确归档集合；归档会话返回 blocked / session_archived。Connector 把来源事实写入现有通知接口后返回状态，Web 和 Desktop 复用原有来源不可用弹窗，显示 DeepSeek Harness 文案。
 
-## 文本发送
+## 文本、图片与会话配置
 
-通过既有 session.createAndStart、session.startTurn、session.interrupt：复用活跃 Agent，冷会话用官方 agents.resume 恢复，新会话使用 agents.create 并关联工作区。保持原模型/preset，新会话使用官方默认模型；没有默认模型则明确报错。
+通过既有 session.createAndStart、session.startTurn、session.interrupt：官方 Session Controller 负责创建和文本/图片发送，官方 Agent 提供中断。新建时先固定 AA 的模型、effort、权限、cwd 和 Runtime 默认模式，再投递首条消息；恢复已有会话读取原生会话的实际选择。配置目录、实时切换与 AA 偏好的边界见 [配置方案](./RUNTIME_CONFIGURATION_PLAN.md)。
 
-稳定 clientMessageId 映射为原生 user message ID，检查 inbox 和历史后去重。运行中发送交给官方 followup。插件仅释放自己创建/恢复的 handle。附件、模型/权限目录、审批应答后续单独实现；工具审批继续在 DSH 官方界面处理。
+稳定 clientMessageId 映射为原生 user message ID，结合创建意图、inbox 和历史去重；重试保留原创建配置。PNG、JPEG、WebP、GIF 经官方图片准入接口处理。普通文件和工具权限审批应答尚未开放；权限预设切换不会代替当前审批的回答。
 
 ## 验证与运行
 
 官方 SDK headless 组合覆盖：基线期间事件、过滤、明确归档、文本新建续聊、冷历史恢复、中断、幂等重试。Connector 验证分页完整性、有序转发、instance 绑定及 scanner 跳过。跨语言测试使用临时 DSH_HOME、临时 SQLite 和原有后端 ASGI app，验证 CWD 分类、DSH 项目变化不影响 AA、归档事件和详情检查、1000+ 历史、流式消息、回复丢失后校准和旧 notice 清理。
+
+测试传输层把已被后端接受的请求与客户端取消分离，关闭测试 carrier 时等待这些请求结束，再释放数据库。这模拟独立 HTTP 服务的生命周期，避免测试断线直接取消后端事务；不改变生产数据库或 Connector 的重连策略。检查命令与完整验收范围见 [验证记录](./VERIFICATION.md)。
 
 插件目录使用 yarn typecheck / yarn build / yarn check:build / yarn test；Connector 定向测试使用 uv run pytest。linked 插件重新构建后，用户重新加载 DSH Host 和现有 Python Connector 进程。真实模型、Windows 实机及长时间运行另行验收，不自动重启开发服务。

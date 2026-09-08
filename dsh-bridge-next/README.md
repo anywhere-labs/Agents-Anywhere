@@ -2,7 +2,7 @@
 
 Agents Anywhere 的 DSH 插件。支持没有安装 AA Desktop 时的账号登录、手机扫码连接、本机 Connector 管理及 Web onboarding。AA Desktop 与承载插件的 DSH Desktop 是两个应用。
 
-职责与后续开发见 [开发计划](./DEVELOPMENT_PLAN.md)，完整产品设计见 [Onboarding 业务方案](./ONBOARDING_PLAN.md)。
+职责与后续开发见 [开发计划](./DEVELOPMENT_PLAN.md)，完整产品设计见 [Onboarding 业务方案](./ONBOARDING_PLAN.md)，检查命令与手动验收见 [验证记录](./VERIFICATION.md)。
 
 ## 已实现
 
@@ -39,6 +39,10 @@ Runtime 已实现 DSH 一键配置、官方侧栏过滤、原生会话和历史�
 需要 Node.js `^22.19.0 || >=24`、Corepack，以及运行 Connector 所需的 uv / Python 3.12+。项目使用 Yarn；DSH 安装命令内部使用其自己的包管理器。
 
 ```bash
+cd /Users/t4wefan/code/github/Agents-Anywhere
+uv sync --project connector
+uv sync --project server
+
 cd /Users/t4wefan/code/github/Agents-Anywhere/dsh-bridge-next
 corepack yarn install
 corepack yarn check
@@ -48,6 +52,8 @@ DSH_HOME="$HOME/.dsh" npx -y -p @deepseek-ai/dsh@0.1.2-rc.1 \
 ```
 
 链接安装方式已在全新临时 `DSH_HOME` / profile 中验证，并通过 `--dump-config` 确认插件层。安装后重启目标 DSH Desktop，点击左侧边栏「设置」上方的 **手机连接**。
+
+Python 依赖用于跨语言测试，必须在首次执行 `check` 前准备。仓库不提交依赖锁文件；如果父目录存在本地 `yarn.lock`，导致 Yarn 报当前包不属于父项目，在本目录执行 `touch yarn.lock` 后再安装，声明独立项目边界。该文件继续遵循仓库忽略规则。
 
 旧 `dsh-bridge` 如果还在管理同一个账号或设备，应先在 DSH 中停用旧插件，再测试 Next；本项目不会接管旧插件或 Desktop 的进程与凭据。
 
@@ -85,7 +91,7 @@ corepack yarn dev
 | `corepack yarn build` | 构建两端产物并复制 Connector 源码 |
 | `corepack yarn dev` | 持续构建 |
 | `corepack yarn check:build` | 产物导入、官方 UI 交互、CSS 热更新契约、Client 注册与释放、源码副本检查 |
-| `corepack yarn test` | 单元与集成测试；先执行 build |
+| `corepack yarn test` | 单元与集成测试；运行前需已完成 build 和 Python 依赖准备 |
 | `corepack yarn check` | 完整构建和自动化验证，可在 headless 环境运行 |
 
 ## 前端组件与样式
@@ -146,6 +152,8 @@ Desktop 与插件通过固定的 `<操作系统用户主目录>/.agentsanywhere/
 自动化覆盖实际 rc.1 Typert Gateway 对编译后 Host 的调用及卸载、OAuth 本地回调和二次跳转、设备复用、取消、重复操作，以及用独立 stdio 测试进程验证 Connector 启停。跨端测试从插件 OAuth 新建开始，经真实共享文件进入 Desktop 首次配对或已删除设备重连，断言只创建一台设备；另覆盖两个写入进程并发、持锁进程异常退出和登记失败后的恢复。Web 测试实际挂载页面组件，覆盖 Agent 添加、手机跳过/扫码、二维码过期、权限检查和登录后的路由恢复。
 
 本轮没有自动启动真实开发服务、登录真实账号或进行 DSH GUI 联调。首次手动联调时按上面的链路操作，确认 Web 完成页可达；Windows 实机进程行为仍需在对应环境验证。
+
+2026-09-08 在 macOS / Node 22.23.2 / Python 3.12 下通过插件 105 项、Connector 68 项、Server 76 项、Web 219 项、Desktop renderer 205 项和主进程 90 项测试，以及相关类型、构建产物和协议检查。插件事件与问答测试使用原有后端 ASGI app 和临时 SQLite；本地开发及生产 Server 仍使用 PostgreSQL。这些结果不代替真实模型、手机、Windows 或长期运行验收。持续检查由 [DSH Bridge Next 工作流](../.github/workflows/dsh-bridge-next.yml)执行，具体范围与待验收项见 [验证记录](./VERIFICATION.md)。
 
 ## 目录职责
 
