@@ -1,5 +1,6 @@
 package com.agentsanywhere.app.ui.screens.home
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -10,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -47,6 +49,7 @@ internal fun ArchivedProjectSelector(
         },
         shape = RoundedCornerShape(18.dp),
         color = colors.raisedSurface,
+        border = if (colors.isDark) null else BorderStroke(1.dp, Color(0xFFE7E6E2)),
     ) {
         Row(
             modifier = Modifier.heightIn(min = 48.dp).padding(horizontal = 16.dp, vertical = 12.dp),

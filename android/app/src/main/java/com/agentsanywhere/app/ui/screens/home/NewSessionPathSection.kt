@@ -66,6 +66,7 @@ internal fun ChoosePathSection(
     enabled: Boolean = true,
     onRetry: (() -> Unit)? = null,
     collapsible: Boolean = false,
+    directoryBorderColor: Color? = null,
 ) {
     var expanded by rememberSaveable { mutableStateOf(true) }
     val listExpanded = expanded
@@ -107,6 +108,7 @@ internal fun ChoosePathSection(
         CurrentDirectoryBar(
             currentPath = currentPathLabel,
             darkMode = darkMode,
+            borderColor = directoryBorderColor,
             canGoParent = parentPath != null && enabled && !loading,
             canUseCurrent = canUseCurrent && enabled && !loading && error == null,
             onParent = openParent,
@@ -182,6 +184,7 @@ internal fun ChoosePathSection(
 private fun CurrentDirectoryBar(
     currentPath: String,
     darkMode: Boolean,
+    borderColor: Color?,
     canGoParent: Boolean,
     canUseCurrent: Boolean,
     onParent: () -> Unit,
@@ -191,13 +194,14 @@ private fun CurrentDirectoryBar(
     onToggleList: (() -> Unit)?,
     onOpenList: (() -> Unit)?,
 ) {
+    val outlineColor = borderColor ?: if (darkMode) Color(0xFF27272A) else Color(0xFFE8E8E8)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(56.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(if (darkMode) LocalAAColors.current.raisedSurface else Color(0xFFF7F7F7))
-            .border(1.dp, if (darkMode) Color(0xFF27272A) else Color(0xFFE8E8E8), RoundedCornerShape(18.dp))
+            .border(1.dp, outlineColor, RoundedCornerShape(18.dp))
             .then(if (onOpenList != null) Modifier.noRippleClickable(enabled = enabled, onClick = onOpenList) else Modifier)
             .padding(start = 13.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,

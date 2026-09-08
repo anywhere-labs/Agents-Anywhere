@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 · native AA theme */
 package com.agentsanywhere.app.ui.screens.home
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -12,8 +13,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -132,7 +137,10 @@ internal fun ArchivedSessionRow(
         bottomStart = if (last) 18.dp else 0.dp,
         bottomEnd = if (last) 18.dp else 0.dp,
     )
-    Column(Modifier.fillMaxWidth().clip(shape).background(colors.raisedSurface)) {
+    Column(
+        Modifier.fillMaxWidth().clip(shape).background(colors.raisedSurface)
+            .then(if (colors.isDark) Modifier else Modifier.archivedGroupBorder(first, last)),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -160,6 +168,40 @@ internal fun ArchivedSessionRow(
     }
 }
 
+// Each lazy row draws only its part of the shared card outline.
+private fun Modifier.archivedGroupBorder(first: Boolean, last: Boolean): Modifier = drawWithCache {
+    val width = 1.dp.toPx()
+    val inset = width / 2f
+    val radius = 18.dp.toPx()
+    val right = size.width - inset
+    val bottom = size.height - inset
+    val diameter = radius * 2f
+    val outline = Path().apply {
+        if (first) {
+            moveTo(inset, radius)
+            arcTo(Rect(inset, inset, diameter - inset, diameter - inset), 180f, 90f, false)
+            lineTo(size.width - radius, inset)
+            arcTo(Rect(size.width - diameter + inset, inset, right, diameter - inset), 270f, 90f, false)
+        } else {
+            moveTo(right, 0f)
+        }
+        lineTo(right, if (last) size.height - radius else size.height)
+        if (last) {
+            arcTo(Rect(size.width - diameter + inset, size.height - diameter + inset, right, bottom), 0f, 90f, false)
+            lineTo(radius, bottom)
+            arcTo(Rect(inset, size.height - diameter + inset, diameter - inset, bottom), 90f, 90f, false)
+        } else {
+            moveTo(inset, size.height)
+        }
+        lineTo(inset, if (first) radius else 0f)
+        if (first && last) close()
+    }
+    onDrawWithContent {
+        drawContent()
+        drawPath(outline, Color(0xFFE7E6E2), style = Stroke(width))
+    }
+}
+
 @Composable
 internal fun ArchiveActionButton(
     label: String,
@@ -178,6 +220,7 @@ internal fun ArchiveActionButton(
         onClick = onClick,
         enabled = enabled && !busy,
         shape = RoundedCornerShape(12.dp),
+        border = if (filled && !colors.isDark) BorderStroke(1.dp, Color(0xFFE7E6E2)) else null,
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
         modifier = modifier.heightIn(min = 44.dp).semantics {
             if (description != null) contentDescription = description

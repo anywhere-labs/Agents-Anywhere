@@ -825,6 +825,7 @@ fun NewSessionScreen(
                 darkMode = darkMode,
                 canUseCurrent = directoryReady,
                 collapsible = true,
+                directoryBorderColor = Color(0xFFE7E6E2).takeUnless { darkMode },
                 enabled = selectedDevice != null && !projectCreating,
                 modifier = Modifier.weight(1f),
                 onBack = null,
