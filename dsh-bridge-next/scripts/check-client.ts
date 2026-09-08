@@ -8,6 +8,8 @@ import { transform } from 'lightningcss'
 import { act, createElement, type ComponentType } from 'react'
 import { Context } from '@deepseek-ai/cordis'
 import type { OnboardingHostApi, OnboardingSnapshot } from '../src/contracts/index.ts'
+import { DEFAULT_CONNECTOR_SETTINGS } from '../src/contracts/connector.ts'
+import type { MobileLoginSnapshot } from '../src/contracts/mobile.ts'
 
 /** Exercise the published factory and real primitives without a browser or DSH process. */
 export async function checkClient(source: string, packageId: string): Promise<void> {
@@ -46,6 +48,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
         },
       },
       document, setTimeout, clearTimeout, setInterval, clearInterval, crypto, Error, URL,
+      HTMLElement: dom.window.HTMLElement, MutationObserver: dom.window.MutationObserver,
     }, { timeout: 1_000 })
     assert.equal(registrations.length, 1)
     const registration = registrations[0]!
@@ -57,6 +60,9 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     const styleCount = ownedStyles().length
     assert.ok(styleCount > 0, 'Client factory must install its scoped stylesheets')
     assert.ok(ownedStyles().some(style => style.textContent?.includes('--dsw-alias-label-primary')))
+    const font = readFileSync(new URL('../src/client/assets/caveat-latin.woff2', import.meta.url))
+    assert.ok(ownedStyles().some(style => style.textContent?.includes(`data:font/woff2;base64,${font.toString('base64')}`)),
+      'The wordmark font must be embedded in the published factory without a static asset server')
     registration.factory(require)
     assert.equal(ownedStyles().length, styleCount, 'Re-evaluating the factory must not duplicate styles')
     const foreignStyle = document.createElement('style')
@@ -74,18 +80,29 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       stage: 'idle', message: '登录后连接这台电脑。', account: null,
       connectorId: null, connectorRunning: false, flowId: null,
       deviceRecovery: null,
+      connector: { settings: { ...DEFAULT_CONNECTOR_SETTINGS }, resolvedUvPath: '/usr/local/bin/uv',
+        dataPath: '/example/connector', logsPath: '/example/logs', canOpenFolders: true, deviceName: '本机', lastError: null },
     }
+    let mobile: MobileLoginSnapshot = { id: 'qr-test', status: 'pending_scan', qrImage: 'data:image/png;base64,cXI=',
+      expiresAt: new Date(Date.now() + 120_000).toISOString(), deviceName: null }
     const calls: { endpoint: string; payload: unknown }[] = []
     let failNextBegin = false
     let failInspect = false
     let inspectGate: Promise<void> | null = null
     let failLogout = false
+    let failRecovery = false
+    let failLogs = false
+    const reconfigurationUrl = 'http://127.0.0.1:5174/#/onboarding?source=dsh-plugin&connectorId=conn_reconfigured&flowId=4c7b8c71-134e-4495-a3ee-b704962414f9'
     type EntryProps = { host: OnboardingHostApi; wide: boolean }
     let entry: { Component: ComponentType<EntryProps>; props: { host: OnboardingHostApi } } | undefined
     let entryCount = 0
     ctx.provide('connection', { rpc: { call: async (channel: string, endpoint: string, payload: unknown) => {
         assert.equal(channel, '/api')
         calls.push({ endpoint, payload })
+        if (endpoint.endsWith('/readBridgeLogs')) return failLogs ? { ok: false, error: { message: 'read failed' } } : {
+          ok: true, value: { updatedAt: new Date().toISOString(), entries: [{ time: new Date().toISOString(),
+            level: 'error', event: 'session.visibility_read.failed', details: '{"sessionId":"native-test","errorCode":"PERSISTENCE_ERROR"}' }] },
+        }
         if (endpoint.endsWith('/inspect')) {
           const inspected = snapshot
           if (inspectGate) await inspectGate
@@ -97,7 +114,27 @@ export async function checkClient(source: string, packageId: string): Promise<vo
           return { ok: true, value: { url: 'https://example.com/onboarding' } }
         }
         if (endpoint.endsWith('/cancel')) snapshot = { ...snapshot, stage: 'idle' }
-        if (endpoint.endsWith('/recoverDevice')) snapshot = { ...snapshot, deviceRecovery: null, stage: 'ready', connectorRunning: true }
+        if (endpoint.endsWith('/createMobileLogin')) return { ok: true, value: mobile }
+        if (endpoint.endsWith('/inspectMobileLogin')) return { ok: true, value: mobile }
+        if (endpoint.endsWith('/confirmMobileLogin')) {
+          const args = (payload as { args: { approved: boolean } }).args
+          mobile = { ...mobile, status: args.approved ? 'approved' : 'rejected', qrImage: null }
+          return { ok: true, value: mobile }
+        }
+        if (endpoint.endsWith('/saveConnectorSettings')) {
+          snapshot = { ...snapshot, connector: { ...snapshot.connector,
+            settings: (payload as { args: { settings: OnboardingSnapshot['connector']['settings'] } }).args.settings } }
+        }
+        if (endpoint.endsWith('/controlConnector')) {
+          snapshot = { ...snapshot, connectorRunning: (payload as { args: { action: string } }).args.action !== 'stop' }
+        }
+        if (endpoint.endsWith('/recoverDevice')) {
+          if (failRecovery) return { ok: false, error: { message: '设备创建失败，请重试。' } }
+          const action = (payload as { args: { action: string } }).args.action
+          snapshot = { ...snapshot, deviceRecovery: null, stage: 'ready', connectorRunning: true,
+            connectorId: action === 'recreate' ? 'conn_reconfigured' : snapshot.connectorId }
+          return { ok: true, value: action === 'recreate' ? { url: reconfigurationUrl } : null }
+        }
         if (endpoint.endsWith('/logout')) {
           if (failLogout) return { ok: false, error: { message: '退出失败，请重试。' } }
           snapshot = { ...snapshot, account: null, stage: 'idle', connectorRunning: false, connectorId: null, flowId: null }
@@ -124,7 +161,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     unmount = () => root.unmount()
     await act(async () => { root.render(createElement(Component, { ...props, wide: true })) })
     const button = (text: string) => {
-      const element = Array.from(document.querySelectorAll('button')).find(item => item.textContent === text || item.getAttribute('aria-label') === text)
+      const element = Array.from((dialog() ?? document).querySelectorAll('button')).find(item => item.textContent === text || item.getAttribute('aria-label') === text)
       assert.ok(element, `Missing button: ${text}`)
       return element
     }
@@ -153,7 +190,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(selectionCalls()[0]?.clientId, selectionCalls().at(-1)?.clientId)
     await act(async () => { trigger.click() })
     assert.ok(dialog())
-    assert.equal(dialog()!.getAttribute('aria-label'), '登录到 Agents Anywhere')
+    assert.equal(dialog()!.getAttribute('aria-label'), 'Agents Anywhere')
     assert.equal(container.contains(dialog()), false, 'Official Modal must portal outside the sidebar')
     assert.equal(container.hasAttribute('inert'), true)
     assert.equal(trigger.getAttribute('aria-expanded'), 'true')
@@ -236,14 +273,18 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       account: { userId: 'user-test', displayName: 'BensonWang', email: 'benson@example.test', avatar },
     }
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 1_600)) })
-    assert.equal(dialog()!.getAttribute('aria-label'), '已登录', 'Login completion replaces the entire form without reopening the panel')
+    assert.equal(dialog()!.getAttribute('aria-label'), 'Agents Anywhere', 'Login completion replaces the form without reopening the panel')
+    const wordmark = dom.window.getComputedStyle(dialog()!.querySelector('h2')!)
+    assert.match(wordmark.fontFamily, /AA Caveat/)
+    assert.equal(wordmark.fontSize, '20px')
+    assert.equal(wordmark.fontWeight, '500')
     assert.equal(dialog()!.querySelector('input'), null)
     assert.match(dialog()!.textContent!, /BensonWang/)
     assert.match(dialog()!.textContent!, /benson@example.test/)
     assert.match(dialog()!.textContent!, /Connector运行中/)
     assert.equal(dialog()!.querySelector('[data-state]')?.getAttribute('data-state'), 'done')
     assert.doesNotMatch(dialog()!.textContent!, /连接手机|继续设置|连接服务器|浏览器没有打开|登录 Agents Anywhere Cloud|OR/)
-    assert.deepEqual(Array.from(dialog()!.querySelectorAll('button')).map(element => element.textContent).filter(Boolean), ['打开 Web', '退出登录'])
+    assert.deepEqual(Array.from(dialog()!.querySelectorAll('button')).map(element => element.textContent).filter(Boolean), ['登录和连接', '设置', '桥接日志', '打开 Web', '手机连接', '退出登录'])
     const avatarImage = dialog()!.querySelector('img')!
     assert.equal(avatarImage.getAttribute('src'), avatar)
     await act(async () => { avatarImage.dispatchEvent(new dom.window.Event('error')) })
@@ -254,6 +295,62 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     await act(async () => { button('打开 Web').click() })
     assert.equal(openedUrls.at(-1)?.url, snapshot.webAppUrl)
     assert.equal(calls.filter(call => call.endpoint.endsWith('/begin')).length, beginsBeforeOpeningWeb, 'Opening Web must not restart OAuth or pairing')
+
+    await act(async () => { button('手机连接').click() })
+    assert.equal(dialog()!.querySelector('img[alt="手机连接二维码"]')?.getAttribute('src'), mobile.qrImage)
+    assert.ok(calls.some(call => call.endpoint.endsWith('/createMobileLogin')))
+    assert.doesNotMatch(dialog()!.textContent!, /安装地址|下载手机端|App Store|Google Play/)
+    mobile = { ...mobile, status: 'pending_web_confirm', deviceName: 'Test Phone', qrImage: null }
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 1_700)) })
+    assert.match(dialog()!.textContent!, /Test Phone请求连接此账号/)
+    assert.equal(dialog()!.querySelector('img[alt="手机连接二维码"]'), null)
+    await act(async () => { button('确认连接').click() })
+    assert.deepEqual(JSON.parse(JSON.stringify(calls.filter(call => call.endpoint.endsWith('/confirmMobileLogin')).at(-1)?.payload)), {
+      args: { id: 'qr-test', approved: true },
+    })
+    mobile = { ...mobile, status: 'consumed' }
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 1_700)) })
+    assert.match(dialog()!.textContent!, /手机已连接/)
+    await act(async () => { button('收起二维码').click() })
+
+    await act(async () => { button('设置').click() })
+    assert.equal(button('设置').getAttribute('aria-selected'), 'true')
+    assert.equal(dialog()!.querySelector('[role="tabpanel"]')?.getAttribute('aria-labelledby'), button('设置').id)
+    assert.match(dialog()!.textContent!, /Connector IDconn_test/)
+    assert.doesNotMatch(dialog()!.textContent!, /随插件启动|高级参数|心跳间隔|重连间隔|连接时同步已有会话|重置本机连接|数据：|日志：/)
+    assert.ok(!dialog()!.textContent!.includes(snapshot.connector.dataPath))
+    assert.ok(!dialog()!.textContent!.includes(snapshot.connector.logsPath))
+    assert.equal(button('恢复出厂设置').parentElement, button('打开数据目录').parentElement)
+    assert.equal(button('恢复出厂设置').parentElement, button('打开日志目录').parentElement)
+    assert.equal(button('保存并重启').disabled, true)
+    await act(async () => { button('PyPI 镜像').click() })
+    const mirror = Array.from(dialog()!.querySelectorAll('[role="menuitem"]')).find(item => item.textContent?.includes('清华大学')) as HTMLElement | undefined
+    assert.ok(mirror)
+    await act(async () => { mirror.click() })
+    await act(async () => { button('保存并重启').click() })
+    const savedSettings = (calls.find(call => call.endpoint.endsWith('/saveConnectorSettings'))?.payload as { args: { settings: { uvPypiIndexUrl: string } } }).args.settings
+    assert.equal(savedSettings.uvPypiIndexUrl, 'https://pypi.tuna.tsinghua.edu.cn/simple')
+    assert.match(dialog()!.textContent!, /设置已保存/)
+    await act(async () => { button('停止 Connector').click() })
+    assert.deepEqual(JSON.parse(JSON.stringify(calls.filter(call => call.endpoint.endsWith('/controlConnector')).at(-1)?.payload)), { args: { action: 'stop' } })
+    assert.ok(button('启动 Connector'))
+    await act(async () => { button('启动 Connector').click() })
+    assert.ok(button('重启 Connector'))
+    await act(async () => { button('打开日志目录').click() })
+    assert.deepEqual(JSON.parse(JSON.stringify(calls.filter(call => call.endpoint.endsWith('/openConnectorFolder')).at(-1)?.payload)), { args: { folder: 'logs' } })
+    await act(async () => { button('恢复出厂设置').focus(); button('恢复出厂设置').click() })
+    assert.equal(document.querySelectorAll('[role="dialog"]').length, 2)
+    assert.equal(dialog()!.hasAttribute('inert'), true, 'The parent dialog must be inert while confirming a reset')
+    assert.equal(calls.some(call => call.endpoint.endsWith('/resetConnector')), false, 'Opening confirmation must never reset the device')
+    await act(async () => { document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+    assert.equal(document.querySelectorAll('[role="dialog"]').length, 1, 'Escape closes only the reset confirmation')
+    assert.equal(dialog()!.hasAttribute('inert'), false)
+    assert.equal(document.activeElement, button('恢复出厂设置'))
+    await act(async () => {
+      button('设置').dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
+    })
+    assert.equal(button('登录和连接').getAttribute('aria-selected'), 'true')
+    assert.equal(document.activeElement, button('登录和连接'))
 
     // An older Host lacks webAppUrl while the linked Client has already hot-reloaded.
     const { webAppUrl: _webAppUrl, ...legacySnapshot } = snapshot
@@ -270,7 +367,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       await act(async () => { trigger.click() })
     }
     for (const [status, label, action, message] of [
-      ['deleted', '重新创建', 'recreate', '本机设备已被删除，是否重新创建？'],
+      ['deleted', '重新配置', 'recreate', '本机设备已被删除，请重新配置以恢复连接。'],
       ['disconnected', '重新连接', 'reconnect', '本机设备已断开连接，是否重新连接？'],
       ['unavailable', '重新检查', 'check', '暂时无法确认设备状态，请检查网络后重试。'],
     ] as const) {
@@ -279,12 +376,31 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       assert.ok(button(label).closest('[role="status"]'), 'Recovery action belongs inside the Connector status area')
       assert.ok(dialog()!.textContent!.includes(message))
       assert.equal(document.querySelectorAll('[role="dialog"]').length, 1)
-      await act(async () => { button(label).click() })
+      const openedBeforeRecovery = openedUrls.length
+      await act(async () => { button(label).click(); button(label).click() })
+      assert.equal(openedUrls.length, openedBeforeRecovery + (action === 'recreate' ? 1 : 0))
+      if (action === 'recreate') {
+        assert.equal(openedUrls.at(-1)?.url, reconfigurationUrl)
+        assert.equal(dialog()!.querySelector<HTMLAnchorElement>('a[href*="onboarding?"]')?.href, reconfigurationUrl)
+        assert.match(dialog()!.textContent!, /点击继续配置/)
+        assert.doesNotMatch(dialog()!.textContent!, /重新创建/)
+      }
       assert.deepEqual(JSON.parse(JSON.stringify(calls.filter(call => call.endpoint.endsWith('/recoverDevice')).at(-1)?.payload)), { args: { action } })
       assert.match(dialog()!.textContent!, /Connector运行中/)
       assert.equal(button('退出登录').disabled, false)
     }
-    snapshot = { ...snapshot, connectorRunning: false }
+    snapshot = { ...snapshot, stage: 'error', connectorRunning: false, deviceRecovery: {
+      connectorId: 'conn_test', status: 'deleted', message: '本机设备已被删除，请重新配置以恢复连接。',
+    } }
+    failRecovery = true
+    await reopen()
+    const openedBeforeFailure = openedUrls.length
+    await act(async () => { button('重新配置').click() })
+    assert.equal(openedUrls.length, openedBeforeFailure)
+    assert.match(dialog()!.textContent!, /设备创建失败/)
+    assert.equal(button('重新配置').disabled, false)
+    failRecovery = false
+    snapshot = { ...snapshot, stage: 'ready', deviceRecovery: null, connectorRunning: false }
     await reopen()
     assert.match(dialog()!.textContent!, /Connector未运行/)
     assert.equal(dialog()!.querySelector('[data-state]')?.getAttribute('data-state'), 'warning')
@@ -300,6 +416,25 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.match(dialog()!.textContent!, /读取状态失败/)
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang|打开 Web|退出登录|登录 Agents Anywhere Cloud/)
     assert.ok(button('重新检查'))
+    // Diagnostics must stay accessible when installation/ownership inspection fails.
+    await act(async () => { button('桥接日志').click() })
+    assert.match(dialog()!.textContent!, /session.visibility_read.failed/)
+    assert.match(dialog()!.textContent!, /native-test/)
+    assert.equal(dialog()!.querySelector('[role="tabpanel"]')?.getAttribute('aria-labelledby'), button('桥接日志').id)
+    assert.doesNotMatch(dialog()!.textContent!, /BensonWang|benson@example/)
+    await act(async () => { button('暂停刷新').click() })
+    const pausedReads = calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 2100)) })
+    assert.equal(calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length, pausedReads)
+    failLogs = true
+    await act(async () => { button('刷新').click() })
+    assert.match(dialog()!.textContent!, /暂时无法读取桥接日志/)
+    assert.match(dialog()!.textContent!, /native-test/, 'Failed refresh keeps the last successful logs')
+    failLogs = false
+    await act(async () => { button('刷新').click(); button('继续刷新').click() })
+    const resumedReads = calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 2100)) })
+    assert.ok(calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length > resumedReads)
     failInspect = false
     await reopen()
 
@@ -315,7 +450,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       assert.match(dialog()!.textContent!, /已安装桌面端，连接功能即将开放。/)
       assert.equal(dialog()!.querySelector('input, img, form, a'), null)
       assert.doesNotMatch(dialog()!.textContent!, /BensonWang|账号信息|Connector|打开 Web|退出登录|登录 Agents Anywhere Cloud/)
-      assert.equal(dialog()!.querySelectorAll('button').length, 1, 'Desktop placeholder only has the official close control')
+      assert.equal(dialog()!.querySelectorAll('button').length, 4, 'Desktop placeholder retains access to bridge diagnostics')
     }
     assert.equal(calls.filter(call => /\/(begin|logout|cancel)$/.test(call.endpoint)).length, actionsBeforeDesktop)
 
@@ -350,15 +485,15 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang|打开 Web|退出登录/)
     snapshot = signedInSnapshot
     await act(async () => { button('重新检查').click() })
-    assert.equal(dialog()!.getAttribute('aria-label'), '已登录')
+    assert.equal(dialog()!.getAttribute('aria-label'), 'Agents Anywhere')
 
     failLogout = true
     await act(async () => { button('退出登录').click() })
-    assert.equal(dialog()!.getAttribute('aria-label'), '已登录')
+    assert.equal(dialog()!.getAttribute('aria-label'), 'Agents Anywhere')
     assert.match(dialog()!.querySelector('[role="alert"]')!.textContent!, /退出失败/)
     failLogout = false
     await act(async () => { button('退出登录').click() })
-    assert.equal(dialog()!.getAttribute('aria-label'), '登录到 Agents Anywhere')
+    assert.equal(dialog()!.getAttribute('aria-label'), 'Agents Anywhere')
     assert.equal(button('登录 Agents Anywhere Cloud').disabled, false)
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang|benson@example.test|退出登录/)
 

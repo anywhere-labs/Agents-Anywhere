@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import importlib.util
 import ipaddress
 import json
 import os
@@ -14,9 +15,11 @@ import sys
 import tempfile
 import threading
 import time
+from functools import cache
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 from urllib.parse import urlsplit
 from urllib.request import urlopen
@@ -128,27 +131,34 @@ def save_connector_credential(raw: str, path: Path = CONNECTOR_CONFIG) -> None:
             os.unlink(temporary_name)
 
 
-def clear_desktop_installation(path: Path | None = None) -> None:
-    path = path or Path.home() / ".agentsanywhere" / "machine.json"
-    exists = path.exists()
-    state = json.loads(path.read_text(encoding="utf-8")) if exists else {"version": 1}
-    if not isinstance(state, dict) or state.get("version") != 1:
-        raise DevControlError("本机共享记录格式无效，未作修改。")
-    if exists and "desktop" not in state:
-        return
-    state.pop("desktop", None)
-    # Keep connectorIds and other shared data. A record without desktop also
-    # prevents discovery from falling back to the legacy installation file.
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+@cache
+def _connector_runtime() -> ModuleType:
+    # Reuse the canonical path, migration and cross-process transaction without
+    # importing the Connector package or requiring its runtime dependencies.
+    spec = importlib.util.spec_from_file_location(
+        "_aa_dev_control_runtime_owner",
+        ROOT / "connector" / "connector" / "core" / "runtime_owner.py",
+    )
+    if spec is None or spec.loader is None:
+        raise DevControlError("无法加载本机 Connector 记录管理模块。")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(state, stream, ensure_ascii=False, indent=2)
-            stream.write("\n")
-        os.replace(temporary_name, path)
-    finally:
-        if os.path.exists(temporary_name):
-            os.unlink(temporary_name)
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(spec.name, None)
+        raise
+    return module
+
+
+def clear_desktop_installation(path: Path | None = None) -> None:
+    runtime = _connector_runtime()
+    try:
+        with runtime.state_transaction(path or runtime.runtime_path()) as state:
+            # Keep device IDs and the live owner/child PIDs used by all clients.
+            state.pop("desktop", None)
+    except (OSError, RuntimeError) as exc:
+        raise DevControlError(f"清除 Desktop 安装记录失败：{exc}") from exc
 
 
 def _run(

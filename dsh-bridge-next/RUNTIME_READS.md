@@ -2,7 +2,9 @@
 
 ## 当前实现
 
-插件 Host 独立挂载 `agentsAnywhereRuntime`，要求官方 `sessions`、`sessionQuery`、`workspaceRegistry` 服务就绪。官方 `agents` 服务存在时提供文本发送和中断。是否登录、是否打开手机连接弹窗、是否发现 AA Desktop，都不会决定 runtime 端口是否启动。
+2026-09-08：图片与配置功能已恢复；保留桥接日志和单会话历史读取失败隔离。读取继续使用官方 `ctx.sessionQuery`，不会直接解析、修复或改写原生日志。当前验证状态见 [验证记录](./VERIFICATION.md)。
+
+插件 Host 独立挂载 `agentsAnywhereRuntime`，要求官方 `sessions`、`sessionQuery`、`workspaceRegistry` 服务就绪。官方 `sessionController` 服务存在时提供消息发送和配置；目录与附件能力按对应官方服务分别声明。是否登录、是否打开手机连接弹窗、是否发现 AA Desktop，都不会决定 runtime 端口是否启动。
 
 ```text
 平台 → Connector RuntimeProtocol → Python DSH 适配器
@@ -10,9 +12,10 @@
   → DSH 官方 SessionQuery → 原生 Session / SessionPersistence
 ```
 
-- `server.ts`：仅监听 `127.0.0.1`，随机端口和随机 token；负责鉴权、8 MiB 帧限制、取消、连接与卸载清理。
-- `router.ts`：会话查询、当前状态、分页捕获、订阅与文本请求；纯读取不调用 Agent create/resume。
+- `server.ts`：仅监听 `127.0.0.1`，随机端口和随机 token；负责鉴权、8 MiB 帧限制、独立取消及超时、连接与卸载清理。单请求失败返回结构化错误，不关闭已鉴权连接。
+- `router.ts`：会话查询、当前状态、分页捕获、订阅、图片/文本请求与配置目录；纯读取不调用 Agent create/resume。
 - `native.ts`、`visibility.ts`、`sync.ts`：官方事件与读写、侧栏过滤、初始校准及实时推送。
+- `sessions/source.ts`：官方会话清单、明确的归档/不可见/缺失状态及即时可用性检查。
 - `history.ts`、`tools.ts`：原始事件转换为统一 Timeline。Python 不解释 DSH 原始消息。
 - `identity.ts`：沿用共享协议的会话 ID、Timeline ID 和内容哈希算法；握手传入 runtime instance 的 `sessionNamespace`，区分平台归属。
 
@@ -24,11 +27,15 @@
 
 文件包含版本、回环地址、端口、进程 ID 和连接 token；在 POSIX 上以 `0600` 发布。进程级 OS 租约保护端点所有权与崩溃后的旧记录回收；卸载只删除自身的记录。另一实例不能覆盖仍有效的端点。
 
-Connector 先验证发现文件、进程与回环地址，再执行限时鉴权和 `ping`。临时探测连接不会关闭现有连接。添加时沿用平台的单实例一键配置，启动只读取 capability set，不要求模型或权限目录。
+Connector 先验证发现文件、进程与回环地址，再执行限时鉴权和 `ping`。临时探测连接不会关闭现有连接。添加时沿用平台的单实例一键配置，启动读取 capability set，并独立尝试预热可用的模型/权限目录；目录失败不会中断其他运行时操作。
 
 ## 会话列表与详情
 
 列表通过 `sessionQuery.listSessions()` 合并 live 和 persisted 会话，使用官方顺序，并按官方侧栏规则排除子代理、归档和非当前空会话。按页批量调用 `readTitleSnapshots`，标题读取失败时保留错误标记。详情与分页也校验可见性，不把 live 标记当作正在运行。
+
+`session.getState` 每次即时读官方清单并返回 sourceState；归档时返回 blocked，不尝试加载 Agent。发送前再次检查来源。明确归档状态通过现有通知同步到 AA，AA 元数据操作不会修改 DSH。插件不推送 DSH 项目名称或分组，后端沿用 CWD 分类和末段命名。
+
+未实现功能的空占位目录已移除；`sessions/` 承载实际使用的来源状态模块，其余文件按当前职责保留，后续有实现再拆分目录。
 
 详情先取得官方校验过的完整 raw log，再执行纯转换。消息类型与处理如下：
 
@@ -38,7 +45,7 @@ Connector 先验证发现文件、进程与回环地址，再执行限时鉴权�
 | 插件注入的 user-role 消息 | 不输出 | 环境、技能等内部注入不进入 Timeline |
 | assistant 文本 | `message / markdown` | 流式片段和最终消息使用相同 ID、顺序 |
 | reasoning | `system / reasoning` | 与普通文本分开 |
-| image | 文本占位 + 原生附件引用 | 暂不声明附件传输能力，不伪造平台文件 ID |
+| image | 附件引用及必要的占位 | AA 发送的图片通过持久化回执恢复平台附件 ID；原生图片保留原生引用，不伪造平台文件 ID |
 | `tool-call`、`tool/call`、`tool/result` | 同一条 `tool` | 以 callId 合并输入、结果、错误与最终状态 |
 | bash / pwsh | `tool / command` | 保留 command；没有事实依据时不猜退出码 |
 | write / edit / str_replace_editor | `tool / file_change` 或通用工具 | 有合法原生 diff meta 时使用上下文片段，绝不读取当前磁盘拼历史 |
@@ -53,6 +60,8 @@ Connector 先验证发现文件、进程与回环地址，再执行限时鉴权�
 | 其他内部信息事件 | 不输出 | 不生成兜底 notice |
 
 请求配置、系统提示词和模型 replayState 不输出到时间线。损坏或不兼容的原生日志由官方读取层拒绝，再转成稳定错误；不会伪装成空历史。
+
+读取、投影、图片回执和配置状态异常按会话隔离；快照不能完成时撤销该捕获，保留 AA 已接收的历史。全局清单或交付失败只替换同步订阅，Connector 延迟后重新订阅；普通 RPC 继续使用同一连接。会话刷新、后续原生事件和新的清单均可触发重试，不需要重启进程来清除错误。
 
 主动读取的历史按同一捕获分页，每帧最多 1,000 条且内容小于 7 MiB；单条超限明确失败。游标绑定连接、会话和捕获，120 秒后过期。Python 收齐所有页才返回完整快照；指定 limit 截断时 complete=false。事件订阅的初始历史每页最多 250 条，收齐后通过现有 timeline.sync 完整替换；随后只推增量，断线重连重新校准，不再定时扫描 DSH。详见 [事件同步方案](./RUNTIME_SYNC_PLAN.md)。
 

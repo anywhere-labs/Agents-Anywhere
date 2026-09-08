@@ -12,6 +12,8 @@ from connector.runtime_protocol import (
     RuntimeIdentity,
     RuntimeAttachment,
     RuntimeOperationResult,
+    RuntimeModelCatalog,
+    RuntimePermissionCatalog,
     RuntimeInvalidRequestError,
     RuntimeTimelineSnapshot,
     RuntimeUnavailableError,
@@ -22,7 +24,9 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.logging import logger
 from connector.runtimes.dsh import discovery, provider_config
+from connector.runtimes.dsh.attachments import staged_images
 from connector.runtimes.dsh.bridge import models
 from connector.runtimes.dsh.bridge.client import BridgeClient, BridgeRpcError
 from connector.runtimes.dsh.bridge.sync import SyncRelay
@@ -95,6 +99,23 @@ class DshRuntime(AgentRuntime):
         return models.capability_set(
             await self._request("runtime.getCapabilities"),
             connector_id=self.host.connector_id,
+        )
+
+    async def list_model_catalog(self, query: str | None = None, limit: int = 100) -> RuntimeModelCatalog:
+        return models.model_catalog(await self._request("catalog.listModels", {"query": query, "limit": limit}))
+
+    async def list_permission_catalog(self, query: str | None = None, limit: int = 100) -> RuntimePermissionCatalog:
+        return models.permission_catalog(await self._request("catalog.listPermissions", {"query": query, "limit": limit}))
+
+    async def update_session_selections(
+        self, session_id: str, external_session_id: str | None, selections: Mapping[str, str | None],
+    ) -> RuntimeOperationResult:
+        result = _object(await self._request("session.updateSelections", {
+            **_session_params(session_id, external_session_id), "selections": dict(selections),
+        }))
+        return RuntimeOperationResult(
+            ok=result.get("ok") is not False, code=result.get("code"), message=result.get("message"),
+            result=_object(result.get("result") or {}),
         )
 
     async def list_sessions(
@@ -203,11 +224,25 @@ class DshRuntime(AgentRuntime):
         session_id: str,
         external_session_id: str | None = None,
     ) -> SessionState:
-        return models.session_state(
-            await self._request(
-                "session.getState", _session_params(session_id, external_session_id)
-            )
-        )
+        payload = _object(await self._request(
+            "session.getState", _session_params(session_id, external_session_id)
+        ))
+        state = models.session_state(payload)
+        source = payload.get("sourceState")
+        if isinstance(source, dict):
+            if payload.get("sessionId") != session_id or (
+                external_session_id and payload.get("externalSessionId") != external_session_id
+            ):
+                raise RuntimeUpstreamError("DSH source observation returned a different session")
+            # Wait for ingestion before returning session.state. The server's
+            # detail snapshot then reads the fresh source fact from its database.
+            await self.host.publish_runtime_notifications("dsh", [{
+                "method": "session.source.updated", "params": {
+                    "sessionId": session_id, "externalSessionId": payload.get("externalSessionId"),
+                    **source, "observationOrigin": "operation",
+                },
+            }])
+        return state
 
     async def get_session_capabilities(
         self,
@@ -248,8 +283,14 @@ class DshRuntime(AgentRuntime):
         self, session_id: str, content: str, title: str | None = None,
         cwd: str | None = None, selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (), client_message_id: str | None = None,
+        *, runtime_options: Mapping[str, Any] | None = None,
     ) -> RuntimeOperationResult:
-        return await self._send_text("session.createAndStart", session_id, None, content, cwd, attachments, client_message_id)
+        options = dict(runtime_options or {})
+        if set(options) - {"agentPreset"}:
+            raise RuntimeInvalidRequestError("Unsupported DSH creation option")
+        preset = options.get("agentPreset", self.config.values.get("defaultAgentPreset"))
+        return await self._send_text("session.createAndStart", session_id, None, content, cwd, attachments, client_message_id,
+                                     selections=selections, agent_preset=preset)
 
     async def start_turn(
         self, session_id: str, external_session_id: str | None, content: str,
@@ -257,19 +298,34 @@ class DshRuntime(AgentRuntime):
         attachments: tuple[RuntimeAttachment, ...] = (), client_message_id: str | None = None,
         cwd: str | None = None,
     ) -> RuntimeOperationResult:
-        return await self._send_text("session.startTurn", session_id, external_session_id, content, cwd, attachments, client_message_id)
+        return await self._send_text("session.startTurn", session_id, external_session_id, content, cwd, attachments, client_message_id,
+                                     selections=selections)
 
     async def _send_text(
         self, method: str, session_id: str, external_id: str | None, content: str,
         cwd: str | None, attachments: tuple[RuntimeAttachment, ...], client_message_id: str | None,
+        *, selections: Mapping[str, str | None] | None = None, agent_preset: str | None = None,
     ) -> RuntimeOperationResult:
-        if attachments:
-            raise RuntimeUnsupportedError("DSH attachments are not supported yet")
-        if not content.strip() or not client_message_id:
-            raise RuntimeInvalidRequestError("Text and a stable clientMessageId are required")
+        if (not content.strip() and not attachments) or not client_message_id:
+            raise RuntimeInvalidRequestError("A message and a stable clientMessageId are required")
         params = {**_session_params(session_id, external_id), "content": content,
-                  "clientMessageId": client_message_id, "cwd": cwd}
-        return RuntimeOperationResult(result=_object(await self._request(method, params)))
+                  "clientMessageId": client_message_id, "cwd": cwd,
+                  "selections": dict(selections or {})}
+        if method == "session.createAndStart":
+            params["agentPreset"] = agent_preset
+        if attachments:
+            capability_set = _object(await self._request("runtime.getCapabilities"))
+            if not provider_config.dsh_capabilities(capability_set)["attachments"]:
+                raise RuntimeUnsupportedError("This DSH Bridge does not support image attachments")
+        directory = provider_config.endpoint_path(dict(self.config.values)).parent
+        async with staged_images(self.host, session_id, attachments, directory) as images:
+            if images:
+                params["attachments"] = images
+            payload = _object(await self._request(method, params))
+        if payload.get("ok") is False:
+            return RuntimeOperationResult(ok=False, code=payload.get("code"), message=payload.get("message"),
+                                          result=_object(payload.get("result") or {}))
+        return RuntimeOperationResult(result=payload)
 
     async def interrupt_session(self, session_id: str, reason: str | None = None) -> RuntimeOperationResult:
         return RuntimeOperationResult(result=_object(await self._request("session.interrupt", {"sessionId": session_id})))
@@ -309,6 +365,17 @@ class DshRuntime(AgentRuntime):
                 connector_id=self.host.connector_id,
             )
             await self.host.runtime_capabilities_update(capabilities)
+            supported = {item.capability_id for item in capabilities.capabilities if item.available and item.supported}
+            for capability, method, decode, publish in (
+                ("catalog.model", "catalog.listModels", models.model_catalog, "model_catalog_update"),
+                ("catalog.permission", "catalog.listPermissions", models.permission_catalog, "permission_catalog_update"),
+            ):
+                if capability not in supported:
+                    continue
+                try:
+                    await getattr(self.host, publish)(decode(await client.request(method, {"limit": 10000})))
+                except Exception as error:
+                    logger.warning("DSH initial catalog unavailable method={} error_type={}; other runtime operations remain available", method, type(error).__name__)
             if self._stopping or not client.connected:
                 raise RuntimeUnavailableError("DSH bridge is stopping")
             self._client = client
@@ -355,6 +422,7 @@ class DshRuntime(AgentRuntime):
                 raise RuntimeUnavailableError(str(exc)) from exc
             raise RuntimeUpstreamError(str(exc)) from exc
         except (OSError, TimeoutError, ConnectionError, RuntimeError) as exc:
+            logger.warning("DSH bridge request unavailable method={} error_type={}; check the plugin Bridge logs page", method, type(exc).__name__)
             raise RuntimeUnavailableError("DSH bridge is unavailable") from exc
         except ValueError as exc:
             raise RuntimeUpstreamError(str(exc)) from exc
@@ -372,11 +440,11 @@ class DshRuntime(AgentRuntime):
                 models.timeline_item(params.get("item", params))
             )
         elif method == "runtime.sync.batch" and self._sync is not None:
-            try:
-                self._sync.accept(params)
-            except asyncio.QueueFull:
-                if self._client and self._client.writer:
-                    self._client.writer.close()
+            self._sync.accept(params)
+        elif method == "runtime.error" and self._sync is not None:
+            data = params.get("data")
+            stream_id = data.get("streamId") if isinstance(data, dict) else None
+            self._sync.restart(stream_id if isinstance(stream_id, str) else None)
 
     async def _handle_exit(self, return_code: int | None) -> None:
         self._client = None

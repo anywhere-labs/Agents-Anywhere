@@ -6,6 +6,9 @@ import { promisify } from 'node:util'
 import type { ResolvedConfig } from '../config.js'
 import type { BoundDevice } from '../account/binding.js'
 import { writeJson } from '../storage/files.js'
+import { DEFAULT_CONNECTOR_SETTINGS, type ConnectorSettings } from '../../contracts/connector.js'
+import { resolveUv } from './environment.js'
+import { ConnectorLogs } from './logs.js'
 
 const runFile = promisify(execFile)
 const MAX_FRAME = 1024 * 1024
@@ -18,8 +21,9 @@ interface Pending {
 
 export interface ConnectorProcess {
   readonly running: boolean
+  readonly lastError?: string | null
   onState(listener: (state: ConnectorState) => void): () => void
-  prepare(): Promise<void>
+  prepare(settings?: ConnectorSettings): Promise<void>
   start(binding: BoundDevice, apiBaseUrl: string, signal: AbortSignal): Promise<void>
   stop(): Promise<void>
   assertHealthy(): Promise<void>
@@ -28,6 +32,11 @@ export interface ConnectorProcess {
 export interface ConnectorState { running: boolean; authFailed: boolean }
 export class ConnectorCredentialError extends Error {
   constructor() { super('本机设备连接已失效，请在插件中恢复连接。') }
+}
+
+export class ConnectorOwnershipError extends Error {
+  readonly code = -32009
+  constructor() { super('当前已有其他 Connector 在运行，请先结束对应的 Connector 进程，然后重试。') }
 }
 
 /** Owns only the child it spawns; DSH Agent operations are served by the plugin runtime. */
@@ -41,10 +50,15 @@ export class SourceConnector implements ConnectorProcess {
   private state: ConnectorState = { running: false, authFailed: false }
   private listeners = new Set<(state: ConnectorState) => void>()
   private readonly closed = new WeakSet<ChildProcessWithoutNullStreams>()
-  constructor(private readonly config: ResolvedConfig, private readonly launch: ConnectorLauncher = spawn) {}
+  private readonly logs: ConnectorLogs
+  constructor(private readonly config: ResolvedConfig, private readonly launch: ConnectorLauncher = spawn,
+    private readonly settings: () => ConnectorSettings = () => DEFAULT_CONNECTOR_SETTINGS) {
+    this.logs = new ConnectorLogs(join(config.stateRoot, 'logs'))
+  }
 
   private get alive(): boolean { return this.child !== null && this.child.exitCode === null && this.child.signalCode === null }
   get running(): boolean { return this.alive && this.state.running && !this.state.authFailed }
+  get lastError(): string | null { return this.failure?.message ?? null }
   onState(listener: (state: ConnectorState) => void): () => void {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
@@ -57,10 +71,11 @@ export class SourceConnector implements ConnectorProcess {
     if (state.running === this.state.running && state.authFailed === this.state.authFailed) return
     // Do not forward config paths, credentials or raw error text from Python.
     this.state = { running: state.running, authFailed: state.authFailed }
+    this.logs.record(state.authFailed ? 'auth_failed' : state.running ? 'running' : 'stopped')
     for (const listener of this.listeners) listener({ ...this.state })
   }
 
-  async prepare(): Promise<void> {
+  async prepare(settings = this.settings()): Promise<void> {
     try {
       await access(join(this.config.connectorSourceDir, 'pyproject.toml'))
       await access(join(this.config.connectorSourceDir, 'connector', 'cli.py'))
@@ -68,7 +83,9 @@ export class SourceConnector implements ConnectorProcess {
       throw new Error('未找到内部 Connector 源码，请重新构建插件或配置 connectorSourceDir。')
     }
     try {
-      await runFile(this.config.uvPath, ['--version'], { timeout: 10_000, windowsHide: true })
+      const executable = await resolveUv(this.config, settings)
+      if (!executable) throw new Error('uv unavailable')
+      await runFile(executable, ['--version'], { timeout: 10_000, windowsHide: true })
     } catch {
       throw new Error('未找到可用的 uv，请安装 uv，或在插件配置中指定 uvPath。')
     }
@@ -81,18 +98,27 @@ export class SourceConnector implements ConnectorProcess {
     signal.throwIfAborted()
     const dataDir = join(this.config.stateRoot, 'connector')
     const configPath = join(dataDir, 'connector.json')
+    const settings = this.settings()
     await mkdir(dataDir, { recursive: true, mode: 0o700 })
     await writeJson(configPath, {
       serverUrl: apiBaseUrl,
       connectorId: binding.connectorId,
       connectorToken: binding.connectorToken,
       statePath: join(dataDir, `${binding.connectorId}.sqlite3`),
+      heartbeatSeconds: 20,
+      reconnectSeconds: 3,
+      syncIntervalSeconds: settings.syncIntervalSeconds,
+      syncExistingOnConnect: true,
     })
     signal.throwIfAborted()
     this.failure = null
     this.buffer = ''
     this.updateState({ running: false, authFailed: false })
-    const child = this.launch(this.config.uvPath, [
+    this.logs.record('starting')
+    const executable = await resolveUv(this.config, settings)
+    const pypiIndexUrl = settings.uvPypiIndexUrl || 'https://pypi.org/simple'
+    signal.throwIfAborted()
+    const child = this.launch(executable ?? (settings.uvPath || this.config.uvPath), [
       'run', '--directory', this.config.connectorSourceDir,
       'anywhere-cli', 'rpc', '--config', configPath,
     ], {
@@ -101,11 +127,15 @@ export class SourceConnector implements ConnectorProcess {
       detached: process.platform !== 'win32',
       env: {
         ...process.env,
+        AA_CONNECTOR_OWNER_KIND: 'dsh-plugin',
         ...(this.config.dshHome ? { DSH_HOME: this.config.dshHome } : {}),
         AGENT_CONNECTOR_DATA_DIR: dataDir,
         UV_PROJECT_ENVIRONMENT: join(this.config.stateRoot, 'connector-venv'),
         PYTHONDONTWRITEBYTECODE: '1',
         PYTHONUNBUFFERED: '1',
+        UV_DEFAULT_INDEX: pypiIndexUrl,
+        UV_INDEX_URL: pypiIndexUrl,
+        PIP_INDEX_URL: pypiIndexUrl,
       },
     })
     this.child = child
@@ -118,9 +148,10 @@ export class SourceConnector implements ConnectorProcess {
     child.on('error', () => { if (this.child === child) this.fail(new Error('Connector 进程启动失败，请检查 uv 和源码运行环境。')) })
     child.on('close', (code) => {
       this.closed.add(child)
+      this.logs.record('exited')
       if (this.child === child) {
         this.child = null
-        this.fail(new Error(`Connector 已退出（${code ?? '终止'}）。请检查运行环境后重试。`))
+        this.fail(new Error(`Connector 已退出（${code ?? '终止'}）。请检查运行环境后重试。`), !this.stopping)
       }
     })
     const abort = () => { void this.stop() }
@@ -150,7 +181,7 @@ export class SourceConnector implements ConnectorProcess {
 
   stop(): Promise<void> {
     if (this.stopping) return this.stopping
-    this.stopping = this.stopChild().finally(() => { this.stopping = null })
+    this.stopping = this.stopChild().finally(async () => { await this.logs.flush(); this.failure = null; this.stopping = null })
     return this.stopping
   }
 
@@ -210,14 +241,19 @@ export class SourceConnector implements ConnectorProcess {
         if (!pending) continue
         this.pending.delete(frame.id)
         clearTimeout(pending.timer)
-        if (frame.error) pending.reject(new Error('Connector 操作失败，请检查本机运行环境后重试。'))
+        if (frame.error) {
+          const error = frame.error as { code?: number; data?: { reason?: string } }
+          pending.reject(error.code === -32009 && error.data?.reason === 'connector_already_running'
+            ? new ConnectorOwnershipError() : new Error('Connector 操作失败，请检查本机运行环境后重试。'))
+        }
         else pending.resolve(frame.result)
       } catch { this.fail(new Error('Connector 返回了无效的协议消息。')) }
     }
   }
 
-  private fail(error: Error): void {
+  private fail(error: Error, report = true): void {
     this.failure = error
+    if (report) this.logs.record('process_error')
     this.updateState({ ...this.state, running: false })
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error) }
     this.pending.clear()

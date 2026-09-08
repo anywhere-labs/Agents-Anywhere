@@ -437,6 +437,17 @@ class TerminalBroker:
             if term.connector_id == connector_id and term.relay_mode == "attach":
                 await self.remove(term.id)
 
+    async def remove_for_connector(self, connector_id: str) -> None:
+        """Remove all terminals and their scrollback for a deleted device."""
+        terminals = (
+            await self._get_indexed(self._connector_key(connector_id))
+            if self._coordinator.distributed
+            else list(self._terminals.values())
+        )
+        for term in terminals:
+            if term.connector_id == connector_id:
+                await self.remove(term.id)
+
     async def on_output(self, terminal_id: str, *, data: bytes, seq: int) -> None:
         if not self._coordinator.distributed:
             term = self._terminals.get(terminal_id)

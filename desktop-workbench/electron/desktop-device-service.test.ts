@@ -136,7 +136,7 @@ test("reconnect rotates credentials for an existing local Desktop without creati
   assert.equal(harness.mock.credential?.connectorToken, "rotated-secret");
   assert.equal(harness.mock.restartCalls, 1);
   assert.equal(harness.mock.preflightCalls, 0);
-  assert.equal(harness.shared(), null);
+  assert.deepEqual(harness.shared().connectorIds, ["connector-old"]);
 });
 
 for (const hasCredential of [true, false]) {
@@ -436,7 +436,7 @@ test("new local IDs persist once and ordinary reuse or token rotation never rewr
   assert.equal(fs.statSync(harness.machineState.filePath).mtimeMs, before);
 });
 
-test("a failed public ID write rolls back the new device before replacing local credentials", async (t) => {
+test("a Python startup failure retains the new credential and binding for retry", async (t) => {
   const requests: string[] = [];
   const harness = createHarness(async (url, init) => {
     requests.push(`${init?.method} ${new URL(url).pathname}`);
@@ -444,12 +444,17 @@ test("a failed public ID write rolls back the new device before replacing local 
     return Response.json({ connector: { id: "new-device", name: "Local" }, connectorToken: "private" });
   });
   t.after(harness.cleanup);
-  harness.machineState.recordConnectorId = () => { throw new Error("Cannot write machine record"); };
-  await assert.rejects(harness.service.createAndConnect({ userId: "user-1", userToken: "user-token", name: "Local" }), /machine record/);
-  assert.deepEqual(requests, ["GET /api/v2/connectors", "POST /api/v2/connectors", "DELETE /api/v2/connectors/new-device"]);
-  assert.equal(harness.binding.get(), null);
-  assert.equal(harness.mock.saveCalls.length, 0);
-  assert.equal(harness.mock.startCalls, 0);
+  const start = t.mock.method(harness.connector, "start", async () => { throw new Error("Python rejected startup: Connector already running"); });
+  const input = { userId: "user-1", userToken: "user-token", name: "Local" };
+  await assert.rejects(harness.service.createAndConnect(input), /Connector already running/);
+  assert.deepEqual(requests, ["GET /api/v2/connectors", "POST /api/v2/connectors"]);
+  assert.equal(harness.binding.get()?.connectorId, "new-device");
+  assert.equal(harness.mock.credential?.connectorId, "new-device");
+  assert.equal(harness.shared(), null);
+  start.mock.restore();
+  await harness.service.createAndConnect(input);
+  assert.deepEqual(requests, ["GET /api/v2/connectors", "POST /api/v2/connectors"]);
+  assert.deepEqual(harness.shared().connectorIds, ["new-device"]);
 });
 
 for (const entry of ["first-login", "deleted-device"] as const) {
@@ -475,10 +480,9 @@ for (const entry of ["first-login", "deleted-device"] as const) {
       });
       t.after(harness.cleanup);
       if (entry === "deleted-device") seedLocalConnector(harness);
-      for (const id of ["foreign", "connector-old", "shared-first", "shared-second"]) await harness.machineState.recordConnectorId(id);
+      for (const id of ["foreign", "connector-old", "shared-first", "shared-second"]) await harness.seedConnectorId(id);
       const before = fs.readFileSync(harness.machineState.filePath, "utf8");
       const timestamp = fs.statSync(harness.machineState.filePath).mtimeMs;
-      t.mock.method(harness.machineState, "recordConnectorId", () => { throw new Error("Reused IDs must not be recorded again"); });
 
       const input = { userId: "user-1", userToken: "user-token", name: "New Name" };
       const result = entry === "first-login"
@@ -514,8 +518,8 @@ test("provisioning only creates a new ID when current-user devices do not match 
     return Response.json({ connector: { id: "new-local", name: "Local" }, connectorToken: "secret" });
   });
   t.after(harness.cleanup);
-  await harness.machineState.recordConnectorId("foreign");
-  await harness.machineState.recordConnectorId("deleted");
+  await harness.seedConnectorId("foreign");
+  await harness.seedConnectorId("deleted");
 
   const result = await harness.service.createAndConnect({ userId: "user-1", userToken: "user-token", name: "Local" });
 
@@ -539,7 +543,7 @@ for (const failure of ["list", "renewal", "mismatched-credential"] as const) {
         : Response.json({ connector: { id: "other" }, connectorToken: "secret" });
     });
     t.after(harness.cleanup);
-    await harness.machineState.recordConnectorId("shared");
+    await harness.seedConnectorId("shared");
 
     await assert.rejects(harness.service.createAndConnect({ userId: "user-1", userToken: "user-token", name: "Local" }));
 
@@ -559,7 +563,7 @@ for (const payload of [{}, { connectors: null }, { connectors: [null] }, { conne
       return Response.json(payload);
     });
     t.after(harness.cleanup);
-    await harness.machineState.recordConnectorId("shared");
+    await harness.seedConnectorId("shared");
 
     await assert.rejects(harness.service.createAndConnect({ userId: "user-1", userToken: "user-token", name: "Local" }), /invalid Connector list/);
 
@@ -571,10 +575,10 @@ for (const payload of [{}, { connectors: null }, { connectors: [null] }, { conne
 test("an unreadable machine record stops provisioning before server changes", async (t) => {
   const harness = createHarness(async () => { throw new Error("fetch must not be called"); });
   t.after(harness.cleanup);
-  await harness.machineState.recordConnectorId("shared");
+  await harness.seedConnectorId("shared");
   fs.writeFileSync(harness.machineState.filePath, "{broken");
 
-  await assert.rejects(harness.service.createAndConnect({ userId: "user-1", userToken: "user-token", name: "Local" }), /machine record/);
+  await assert.rejects(harness.service.createAndConnect({ userId: "user-1", userToken: "user-token", name: "Local" }), /machine record|记录/);
 
   assert.equal(harness.binding.get(), null);
   assert.equal(harness.mock.saveCalls.length, 0);
@@ -591,7 +595,7 @@ for (const failure of ["binding", "credentials", "credential-acknowledgement"] a
         : { connector: { id: "shared", name: "Existing" }, connectorToken: "new-secret" });
     });
     t.after(harness.cleanup);
-    await harness.machineState.recordConnectorId("shared");
+    await harness.seedConnectorId("shared");
     if (failure === "binding") {
       t.mock.method(harness.binding, "save", () => { throw new Error("binding persistence failed"); });
     } else {
@@ -636,6 +640,17 @@ function createHarness(fetcher: (input: string | URL, init?: RequestInit) => Pro
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-device-test-"));
   const binding = new DesktopBindingStore(path.join(directory, "binding.json"));
   const machineState = new MachineStateStore(machineStatePath(directory));
+  // This unit stub represents the Python side of startup. Cross-process tests
+  // execute the real Connector writer; the Desktop service has no write API.
+  const seedConnectorId = (id: string) => {
+    const state = fs.existsSync(machineState.filePath)
+      ? JSON.parse(fs.readFileSync(machineState.filePath, "utf8"))
+      : { version: 2, connectorIds: [] };
+    if (state.connectorIds.includes(id)) return;
+    state.connectorIds.push(id);
+    fs.mkdirSync(path.dirname(machineState.filePath), { recursive: true });
+    fs.writeFileSync(machineState.filePath, JSON.stringify(state));
+  };
   const mock: ConnectorMock = {
     credential: null,
     running: false,
@@ -661,6 +676,7 @@ function createHarness(fetcher: (input: string | URL, init?: RequestInit) => Pro
       return { ...config, connectorToken: undefined, hasCredential: true };
     },
     start: async () => {
+      if (mock.credential) seedConnectorId(mock.credential.connectorId);
       mock.running = true;
       mock.startCalls += 1;
       return {};
@@ -671,6 +687,7 @@ function createHarness(fetcher: (input: string | URL, init?: RequestInit) => Pro
       return {};
     },
     restart: async () => {
+      if (mock.credential) seedConnectorId(mock.credential.connectorId);
       mock.running = true;
       mock.restartCalls += 1;
       return {};
@@ -690,7 +707,6 @@ function createHarness(fetcher: (input: string | URL, init?: RequestInit) => Pro
     defaultServerUrl: () => "https://server.example",
     apiNamespace: () => "/api/v2",
     readLocalConnectorIds: () => machineState.readConnectorIds(),
-    recordLocalConnector: (id) => machineState.recordConnectorId(id),
   });
   return {
     service,
@@ -698,6 +714,7 @@ function createHarness(fetcher: (input: string | URL, init?: RequestInit) => Pro
     connector,
     mock,
     machineState,
+    seedConnectorId,
     shared: () => fs.existsSync(machineState.filePath) ? JSON.parse(fs.readFileSync(machineState.filePath, "utf8")) : null,
     cleanup: () => fs.rmSync(directory, { recursive: true, force: true }),
   };

@@ -11,13 +11,13 @@ import type {
 type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 type DesktopDeviceServiceOptions = {
+  requireOwnership?: () => Promise<void>;
   binding: DesktopBindingStore;
   connector: ConnectorSupervisor;
   fetcher: Fetcher;
   defaultServerUrl: () => string;
   apiNamespace: () => string;
   readLocalConnectorIds: () => readonly string[];
-  recordLocalConnector: (connectorId: string) => Promise<void>;
 };
 
 type ConnectorCredentialResponse = {
@@ -51,6 +51,7 @@ export class DesktopDeviceService {
   async createAndConnect(
     input: DesktopDeviceProvisionInput,
   ): Promise<PublicLocalDesktopBinding> {
+    await this.options.requireOwnership?.();
     const userId = requireUserId(input?.userId);
     const serverUrl = this.resolveServerUrl(input?.serverUrl);
     const existing = this.options.binding.get();
@@ -125,8 +126,8 @@ export class DesktopDeviceService {
       manualDisconnected: false,
     };
     try {
-      // Only POST /connectors creates a new local identity. Token rotation never appends one.
-      if (!reusedConnectorId) await this.options.recordLocalConnector(credential.connector.id);
+      // Connector records the ID when it accepts startup; preserve credentials
+      // for retry if Python rejects startup or cannot publish the shared history.
       this.options.binding.save(nextBinding);
     } catch (error) {
       const rollbackError = reusedConnectorId ? null : await this.tryRollbackCreatedConnector(
@@ -174,6 +175,7 @@ export class DesktopDeviceService {
   async reconnectAndConnect(
     input: DesktopDeviceReconnectInput,
   ): Promise<PublicLocalDesktopBinding> {
+    await this.options.requireOwnership?.();
     const binding = this.requireBinding();
     this.assertOwner(input, binding.ownerUserId);
     if (input.connectorId && input.connectorId !== binding.connectorId) {
@@ -220,6 +222,7 @@ export class DesktopDeviceService {
   async disconnectLocal(
     input: DesktopDeviceAuthInput,
   ): Promise<PublicLocalDesktopBinding> {
+    await this.options.requireOwnership?.();
     const binding = this.requireBinding();
     this.assertOwner(input, binding.ownerUserId);
     const serverUrl = this.resolveServerUrl(input.serverUrl || binding.serverUrl);

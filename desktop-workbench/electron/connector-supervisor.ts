@@ -1,3 +1,6 @@
+import { localRuntimePath } from "./local-runtime";
+import type { OwnershipState } from "./local-runtime";
+import { ConnectorRpcError, CONNECTOR_CONFLICT_MESSAGE } from "./connector-rpc-error";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -23,6 +26,7 @@ type PendingRequest = {
 };
 
 type ConnectorSupervisorOptions = {
+  onOwnership?: (state: OwnershipState) => void;
   configPath: string;
   dataPath: string;
   connectorDir: string;
@@ -72,7 +76,7 @@ export class ConnectorSupervisor {
       manualDisconnected: false,
       setupIssue: "",
       configPath: options.configPath,
-      runtimePath: path.join(path.dirname(options.configPath), "connector-runtime.json"),
+      runtimePath: localRuntimePath(),
       dataPath: options.dataPath,
       connectorDir: options.connectorDir,
       resolvedUvPath: "",
@@ -130,12 +134,24 @@ export class ConnectorSupervisor {
   async preflightProvisioning(): Promise<ConnectorState> {
     fs.mkdirSync(this.options.dataPath, { recursive: true, mode: 0o700 });
     fs.accessSync(this.options.dataPath, fs.constants.R_OK | fs.constants.W_OK);
-    const runtimeState = await this.request("connector.getState", undefined, {
+    const runtimeState = await this.request("connector.acquireOwnership", undefined, {
       requiresConfig: false,
       timeoutMs: 30_000,
     });
     this.mergeRuntimeState(runtimeState);
     return this.emitState();
+  }
+
+  async acquireOwnership(): Promise<void> {
+    try {
+      await this.request("connector.acquireOwnership", undefined, { requiresConfig: false });
+      this.options.onOwnership?.({ status: "owned" });
+    } catch (error) {
+      if (!(error instanceof ConnectorRpcError && error.ownershipConflict)) {
+        this.options.onOwnership?.({ status: "error", message: errorMessage(error) });
+      }
+      throw error;
+    }
   }
 
   getPublicConfig(): ConnectorPublicConfig {
@@ -164,6 +180,7 @@ export class ConnectorSupervisor {
   }
 
   async saveCredentials(config: ConnectorPrivateConfig): Promise<ConnectorPublicConfig> {
+    await this.acquireOwnership();
     const normalized = parsePrivateConfig(config);
     // Persist first so a sidecar crash after the Server creates a device does
     // not lose the only copy of its one-time Connector token.
@@ -242,7 +259,6 @@ export class ConnectorSupervisor {
       this.log({ level: "WARNING", message: errorMessage(error) });
     }
     removeFile(this.options.configPath);
-    removeFile(this.state.runtimePath);
     this.mergeRuntimeState({
       status: "stopped",
       running: false,
@@ -354,8 +370,15 @@ export class ConnectorSupervisor {
       if (!request) return;
       clearTimeout(request.timer);
       this.pending.delete(payload.id);
-      if (payload.error) request.reject(new Error(payload.error.message || "Connector RPC error"));
-      else request.resolve(payload.result);
+      if (payload.error) {
+        const error = new ConnectorRpcError(payload.error.code ?? -32000, payload.error.message || "Connector RPC error", payload.error.data);
+        if (error.ownershipConflict) {
+          this.keepRuntimeRunning = false;
+          this.clearRestartTimer();
+          this.options.onOwnership?.({ status: "conflict", message: CONNECTOR_CONFLICT_MESSAGE });
+        }
+        request.reject(error);
+      } else request.resolve(payload.result);
       return;
     }
     if (payload.method === "connector/state") {
@@ -568,6 +591,7 @@ export class ConnectorSupervisor {
     const environment: NodeJS.ProcessEnv = {
       ...process.env,
       ...this.shellEnvironment,
+      AA_CONNECTOR_OWNER_KIND: "desktop-workbench",
       PATH: [...new Set(entries)].join(path.delimiter),
       PYTHONUNBUFFERED: "1",
       PYTHONDONTWRITEBYTECODE: "1",
@@ -577,11 +601,12 @@ export class ConnectorSupervisor {
       environment.UV_PROJECT_ENVIRONMENT = path.join(this.options.dataPath, ".venv");
       environment.UV_CACHE_DIR = path.join(this.options.dataPath, "uv-cache");
     }
-    const pypiIndexUrl = this.options.settings.get().uvPypiIndexUrl;
-    if (pypiIndexUrl) {
-      environment.UV_INDEX_URL = pypiIndexUrl;
-      environment.PIP_INDEX_URL = pypiIndexUrl;
-    }
+    // Also make the official-index choice explicit: the bundled project or
+    // inherited shell environment may declare a different default index.
+    const pypiIndexUrl = this.options.settings.get().uvPypiIndexUrl || "https://pypi.org/simple";
+    environment.UV_DEFAULT_INDEX = pypiIndexUrl;
+    environment.UV_INDEX_URL = pypiIndexUrl;
+    environment.PIP_INDEX_URL = pypiIndexUrl;
     if (process.platform === "win32") {
       delete environment.Path;
       delete environment.path;

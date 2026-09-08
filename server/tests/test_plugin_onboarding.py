@@ -91,11 +91,16 @@ def test_registration_without_key_keeps_existing_create_behavior(tmp_path):
     assert ids[0] != ids[1]
 
 
-def test_registration_retry_cannot_revive_a_deleted_installation(tmp_path):
+def test_deleted_installation_can_register_again_with_fresh_credentials(tmp_path):
     client = make_client(tmp_path)
     token = admin_token(client)
     body = {"name": "Deleted device", "installationId": str(uuid4())}
-    connector_id = client.post("/connectors", headers=bearer(token), json=body).json()["connector"]["id"]
+    first = client.post("/connectors", headers=bearer(token), json=body).json()
+    connector_id = first["connector"]["id"]
     assert client.delete(f"/connectors/{connector_id}", headers=bearer(token)).status_code == 204
-    assert client.post("/connectors", headers=bearer(token), json=body).status_code == 409
     assert client.get("/connectors", headers=bearer(token)).json()["connectors"] == []
+    second = client.post("/connectors", headers=bearer(token), json=body)
+    assert second.status_code == 200, second.text
+    assert second.json()["connectorToken"] != first["connectorToken"]
+    assert client.post("/connector/auth", headers={"Authorization": f"Connector {connector_id}:{first['connectorToken']}"}).status_code == 401
+    assert client.post("/connector/auth", headers={"Authorization": f"Connector {connector_id}:{second.json()['connectorToken']}"}).status_code == 200

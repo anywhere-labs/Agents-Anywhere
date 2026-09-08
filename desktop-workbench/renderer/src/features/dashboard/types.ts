@@ -349,6 +349,7 @@ export type SessionCreateAndStartRequest = {
   cwd?: string;
   content: string;
   selections?: Record<string, string | null>;
+  runtimeOptions?: Record<string, unknown>;
   attachments?: InlineAttachmentRef[];
   clientMessageId?: string | null;
 };

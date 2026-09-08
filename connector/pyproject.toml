@@ -13,6 +13,7 @@ dependencies = [
     "openai-codex>=0.144.4",
     "openai-codex-cli-bin>=0.144.4",
     "pexpect>=4.9.0; sys_platform != 'win32'",
+    "psutil>=7.2.2",
     "ptyprocess>=0.7.0; sys_platform != 'win32'",
     "pydantic>=2.0.0",
     "pyte>=0.8.2",

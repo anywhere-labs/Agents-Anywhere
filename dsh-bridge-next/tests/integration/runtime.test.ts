@@ -15,7 +15,8 @@ import { sessionId } from '../../src/host/dsh-runtime/identity.js'
 
 const execute = promisify(execFile)
 async function endpoint(path: string): Promise<Endpoint> {
-  for (let n = 0; n < 100; n++) {
+  // Host children initialize asynchronously; allow a loaded headless CI runner.
+  for (let n = 0; n < 1000; n++) {
     try { return JSON.parse(await readFile(path, 'utf8')) as Endpoint } catch { await delay(10) }
   }
   throw new Error('Runtime did not publish its endpoint')
@@ -110,5 +111,9 @@ test('concurrent starts cannot overwrite ownership and closing twice releases th
     connection.socket.destroy()
     await Promise.all([servers[winner]!.close(), servers[winner]!.close()])
     await assert.rejects(access(path))
+    const retry = await servers[1 - winner]!.start()
+    const recovered = await client(retry)
+    assert.equal((await recovered.rpc('ping')).result.ok, true)
+    recovered.socket.destroy()
   } finally { await Promise.allSettled(servers.map(server => server.close())); await rm(home, { recursive: true, force: true }) }
 })

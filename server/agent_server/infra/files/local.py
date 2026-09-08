@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -29,13 +30,15 @@ class LocalFileStorage(FileStorage):
     ) -> None:
         await asyncio.to_thread(self._write, session_id, file_id, data, metadata)
 
-    async def read(
-        self, session_id: str, file_id: str
-    ) -> tuple[bytes, dict[str, Any]]:
+    async def read(self, session_id: str, file_id: str) -> tuple[bytes, dict[str, Any]]:
         return await asyncio.to_thread(self._read, session_id, file_id)
 
     async def delete(self, session_id: str, file_id: str) -> None:
         await asyncio.to_thread(self._delete, session_id, file_id)
+
+    async def delete_session(self, session_id: str) -> None:
+        self._validate_session_id(session_id)
+        await asyncio.to_thread(self._delete_session, session_id)
 
     async def exists(self, session_id: str, file_id: str) -> bool:
         return await asyncio.to_thread(self._exists, session_id, file_id)
@@ -88,3 +91,13 @@ class LocalFileStorage(FileStorage):
         return (session_dir / f"{file_id}.bin").is_file() and (
             session_dir / f"{file_id}.json"
         ).is_file()
+
+    def _delete_session(self, session_id: str) -> None:
+        session_dir = self._root / session_id
+        try:
+            if session_dir.is_symlink():
+                session_dir.unlink()
+            else:
+                shutil.rmtree(session_dir)
+        except FileNotFoundError:
+            pass

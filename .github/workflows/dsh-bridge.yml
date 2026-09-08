@@ -26,6 +26,9 @@ concurrency:
   group: dsh-bridge-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name != 'release' }}
 
+env:
+  UV_DEFAULT_INDEX: https://pypi.org/simple
+
 jobs:
   verify:
     name: Verify package
@@ -40,19 +43,25 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22.19.0
+          node-version: 22.23.2
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: 0.12.3
+          python-version: "3.12"
+      - name: Resolve bundled Connector dependencies
+        run: uv lock --project ../connector
       - name: Enable Corepack
         run: corepack enable
-      - name: Install immutable dependencies
-        run: yarn install --immutable
+      - name: Install dependencies
+        # Dependency lockfiles are intentionally not committed in this repository.
+        run: corepack pnpm install --no-frozen-lockfile
       - name: Typecheck
-        run: yarn typecheck
-      - name: Lint
-        run: yarn lint
+        run: corepack pnpm typecheck
       - name: Test
-        run: yarn test
-      - name: Pack and install tarball
-        run: yarn pack:check
+        run: corepack pnpm test
+      - name: Build and pack tarball
+        run: corepack pnpm pack --pack-destination "${RUNNER_TEMP}/dsh-bridge-package"
 
   publish:
     name: Publish package
@@ -73,12 +82,19 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22.19.0
+          node-version: 22.23.2
           registry-url: https://registry.npmjs.org
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: 0.12.3
+          python-version: "3.12"
+      - name: Resolve bundled Connector dependencies
+        run: uv lock --project ../connector
       - name: Enable Corepack
         run: corepack enable
-      - name: Install immutable dependencies
-        run: yarn install --immutable
+      - name: Install dependencies
+        run: corepack pnpm install --no-frozen-lockfile
       - name: Match release tag to package version
         run: |
           package_version="$(node -p 'require("./package.json").version')"

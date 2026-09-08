@@ -92,6 +92,15 @@ class S3FileStorage(FileStorage):
                 return False
             raise
 
+    async def delete_session(self, session_id: str) -> None:
+        self._validate_session_id(session_id)
+        prefix = self._key(session_id, "")
+        # The client returns one page. Deleting each page before listing again
+        # also handles sessions with more than S3's 1,000-object page limit.
+        while objects := await self._client.list_objects(self._bucket, prefix=prefix):
+            for item in objects:
+                await self._client.delete_object(self._bucket, item.key)
+
     async def metadata(self, session_id: str, file_id: str) -> dict[str, Any]:
         try:
             raw = await self._client.get_object(

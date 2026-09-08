@@ -235,7 +235,7 @@
           const result = await response.json();
           if (!response.ok || !result.ok) throw new Error(result.error || "清除失败");
           message.className = "message success";
-          message.textContent = "已清除安装记录，设备 ID 已保留。重新打开插件即可测试；Desktop 下次启动会重新登记。";
+          message.textContent = "已清除 Desktop 安装记录，设备 ID 和运行记录已保留。退出 Desktop 后重新打开插件即可测试；Desktop 下次启动会重新登记。";
         } catch (error) {
           message.className = "message error";
           message.textContent = error instanceof Error ? error.message : "清除失败";

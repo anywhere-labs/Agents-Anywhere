@@ -62,7 +62,7 @@ import {
   selectionIdForModelCatalog,
   selectionIdForPermissionCatalog,
 } from "@/components/session/catalog-selection"
-import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
+import { CAPABILITY, capabilityIsUsable, attachmentMimeTypes } from "@/components/session/capabilities"
 import {
   runtimeInstanceName,
   runtimeTypeName,
@@ -286,8 +286,6 @@ export function TaskComposer() {
   const composerRef = React.useRef<HTMLDivElement | null>(null)
   const composerWidth = useElementWidth(composerRef)
 
-  const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop } =
-    useAttachments()
   const typedTitle = useTypewriterTitle(typewriterTitles, creating)
 
   React.useEffect(() => {
@@ -481,6 +479,9 @@ export function TaskComposer() {
     CAPABILITY.attachment,
     selectedRuntimeScope,
   )
+  const allowedMimeTypes = React.useMemo(() => attachmentMimeTypes(runtimeCapabilities, selectedRuntimeScope), [runtimeCapabilities, selectedRuntimeScope])
+  const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop,
+    attachmentsAllowed, attachmentError } = useAttachments({ enabled: canUseAttachments, allowedMimeTypes })
 
   const models = React.useMemo(
     () => modelCatalog?.models.map((item) => ({
@@ -659,7 +660,7 @@ export function TaskComposer() {
     !catalogsLoading &&
     (!requiresModelSelection || Boolean(selectedModelSelection)) &&
     (!requiresPermissionSelection || Boolean(selectedPermissionSelection)) &&
-    (attachments.length === 0 || canUseAttachments) &&
+    (attachments.length === 0 || canUseAttachments) && attachmentsAllowed &&
     (prompt.trim().length > 0 || attachments.length > 0)
   const selectorsLoading =
     runtimeInventoryLoading || (
@@ -675,7 +676,7 @@ export function TaskComposer() {
     if (catalogsLoading) return
     if (requiresModelSelection && !selectedModelSelection) return
     if (requiresPermissionSelection && !selectedPermissionSelection) return
-    if (attachments.length > 0 && !canUseAttachments) return
+    if (attachments.length > 0 && (!canUseAttachments || !attachmentsAllowed)) return
     creatingRef.current = true
     setCreating(true)
     let project
@@ -773,6 +774,11 @@ export function TaskComposer() {
         ),
         title: prompt.trim() || undefined,
         cwd: project.workspacePath,
+        ...(selectedRuntime?.runtimeType === "dsh" ? {
+          runtimeOptions: {
+            agentPreset: selectedRuntime.config?.defaultAgentPreset ?? selectedRuntime.defaults?.defaultAgentPreset,
+          },
+        } : {}),
       }
       const nextPreference = withNewSessionSelectionPreference(
         preferenceRef.current,
@@ -839,6 +845,7 @@ export function TaskComposer() {
         >
           <div className="flex flex-col gap-3 px-5 pt-4">
             <AttachmentPreviewList attachments={attachments} onRemove={remove} />
+            {attachmentError ? <p role="alert" className="text-xs text-destructive">{attachmentError}</p> : null}
             <Textarea
               value={prompt}
               onChange={(event) => setPrompt(event.currentTarget.value)}
@@ -864,13 +871,9 @@ export function TaskComposer() {
               attachments={attachments}
               onAttach={add}
               isDragging={isDragging}
+              allowedMimeTypes={allowedMimeTypes}
               disabled={!canUseAttachments}
             />
-            {attachments.length > 0 && !canUseAttachments ? (
-              <span className="px-2 text-xs text-amber-600 dark:text-amber-400">
-                {t("attachmentsUnsupported")}
-              </span>
-            ) : null}
 
             {selectorsLoading ? (
               <>
@@ -1083,9 +1086,7 @@ function activeRuntimes(runtimes: DeviceRuntimeView[] | undefined) {
 }
 
 function runtimeOptionLabel(runtime: DeviceRuntimeView): string {
-  const instanceName = runtimeInstanceName(runtime)
-  const typeName = runtimeTypeName(runtime)
-  return instanceName === typeName ? instanceName : `${instanceName} · ${typeName}`
+  return runtimeInstanceName(runtime)
 }
 
 function sameRuntimeInventory(

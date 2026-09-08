@@ -156,13 +156,20 @@ class ProjectRepositoryMixin:
         The helper is intentionally transaction-friendly so session upserts can
         assign the project and write the session in one transaction.
         """
+        # Share-lock the active device until the project/session write commits.
+        # Deletion then either cleans up this write or prevents it from starting.
         connector = (
             (
                 await conn.execute(
                     select(
                         connectors_t.c.user_id,
                         connectors_t.c.device_os,
-                    ).where(connectors_t.c.id == connector_id)
+                    )
+                    .where(
+                        connectors_t.c.id == connector_id,
+                        connectors_t.c.revoked == 0,
+                    )
+                    .with_for_update(read=True)
                 )
             )
             .mappings()
@@ -313,7 +320,7 @@ class ProjectRepositoryMixin:
                             connectors_t.c.id == connector_id,
                             connectors_t.c.user_id == user_id,
                             connectors_t.c.revoked == 0,
-                        )
+                        ).with_for_update(read=True)
                     )
                 ).first()
                 if connector is None:

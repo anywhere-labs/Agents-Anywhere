@@ -16,6 +16,7 @@ import {
 import { dashboardApi } from "@/features/dashboard/api"
 import type { UploadedAttachment } from "@/features/dashboard/types"
 import { cn } from "@/lib/utils"
+import { attachmentMimeAllowed } from "@/components/session/capabilities"
 import { useTranslations } from "next-intl"
 
 const MAX_ATTACHMENT_FILES = 5
@@ -48,6 +49,7 @@ type AttachmentButtonProps = {
   isDragging: boolean
   className?: string
   disabled?: boolean
+  allowedMimeTypes?: readonly string[]
 }
 
 type AttachmentPreviewListProps = {
@@ -56,6 +58,8 @@ type AttachmentPreviewListProps = {
 }
 
 type UseAttachmentsOptions = {
+  enabled?: boolean
+  allowedMimeTypes?: readonly string[]
   sessionId?: string
   token?: string
 }
@@ -127,7 +131,9 @@ function formatBytes(size: number): string {
 }
 
 export function useAttachments(options: UseAttachmentsOptions = {}) {
-  const { sessionId, token } = options
+  const { sessionId, token, enabled = true, allowedMimeTypes } = options
+  const t = useTranslations("dashboard.new")
+  const [rejectedTypes, setRejectedTypes] = useState(false)
   const [attachments, setAttachments] = useState<AttachedFile[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const dragCounter = useRef(0)
@@ -140,6 +146,7 @@ export function useAttachments(options: UseAttachmentsOptions = {}) {
 
   const clear = useCallback((options: ClearAttachmentsOptions = {}) => {
     const revoke = options.revokePreviews ?? true
+    setRejectedTypes(false)
     setAttachments((prev) => {
       if (revoke) revokePreviews(prev)
       attachmentsRef.current = []
@@ -184,12 +191,15 @@ export function useAttachments(options: UseAttachmentsOptions = {}) {
   }, [sessionId, token])
 
   const add = useCallback((files: AttachedFile[]) => {
+    const accepted = files.filter((file) => enabled && attachmentMimeAllowed(file.mediaType, allowedMimeTypes))
+    for (const file of files) if (!accepted.includes(file)) revokePreview(file)
+    setRejectedTypes(accepted.length !== files.length)
     const uploadImmediately = Boolean(sessionId && token)
-    const result = mergeFiles(attachmentsRef.current, files, uploadImmediately)
+    const result = mergeFiles(attachmentsRef.current, accepted, uploadImmediately)
     attachmentsRef.current = result.next
     setAttachments(result.next)
     if (uploadImmediately) result.accepted.forEach(upload)
-  }, [sessionId, token, upload])
+  }, [sessionId, token, upload, enabled, allowedMimeTypes])
 
   const remove = useCallback((id: string) => {
     setAttachments((prev) => {
@@ -249,6 +259,12 @@ export function useAttachments(options: UseAttachmentsOptions = {}) {
     [add],
   )
 
+  const attachmentsAllowed = attachments.every((file) => enabled && attachmentMimeAllowed(file.mediaType, allowedMimeTypes))
+  const attachmentError = rejectedTypes || !attachmentsAllowed
+    ? !enabled || allowedMimeTypes?.length === 0
+      ? t("attachmentsUnsupported")
+      : t("attachmentTypesUnsupported", { types: allowedMimeTypes?.join(", ") ?? "" })
+    : undefined
   const uploadsPending = attachments.some((file) => file.uploadStatus === "uploading")
   const uploadFailed = attachments.some((file) => file.uploadStatus === "failed")
   const allUploaded = attachments.every((file) => file.uploadStatus === "uploaded")
@@ -257,6 +273,8 @@ export function useAttachments(options: UseAttachmentsOptions = {}) {
     attachments,
     isDragging,
     uploadsPending,
+    attachmentsAllowed,
+    attachmentError,
     uploadFailed,
     allUploaded,
     add,
@@ -275,6 +293,7 @@ export function AttachmentButton({
   isDragging,
   className,
   disabled = false,
+  allowedMimeTypes,
 }: AttachmentButtonProps) {
   const t = useTranslations("dashboard.new")
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -294,14 +313,15 @@ export function AttachmentButton({
         multiple
         className="hidden"
         onChange={handleFileInput}
-        accept="*/*"
+        accept={allowedMimeTypes?.join(",") || "*/*"}
+        disabled={disabled || allowedMimeTypes?.length === 0}
       />
       <Button
         variant="ghost"
         size="icon"
         aria-label={t("attach")}
         className={cn("text-muted-foreground", isDragging && "text-primary", className)}
-        disabled={disabled || attachments.length >= MAX_ATTACHMENT_FILES}
+        disabled={disabled || allowedMimeTypes?.length === 0 || attachments.length >= MAX_ATTACHMENT_FILES}
         onClick={() => fileInputRef.current?.click()}
       >
         <Paperclip className="size-4" />

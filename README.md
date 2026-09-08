@@ -215,8 +215,10 @@ http://127.0.0.1:5174
 停止源码子进程并关闭本次启动的基础设施；它不会调用或依赖 `dev-control.sh`。
 
 Connector 默认不随主栈启动；需要同时调试本地 Connector 时，显式传入
-`--with-connector`（可用 `--connector-config PATH` 指定配置）。`--skip-install`
-跳过依赖同步，`--no-reload` 关闭 Server 热重载，`--reset-data` 会在启动前删除
+`--with-connector`（可用 `--connector-config PATH` 指定配置）。Server 热重载默认
+关闭，避免编辑源码或测试文件时自动重启并中断 Connector/WebSocket 连接；需要时
+传入 `--reload` 开启，`--no-reload` 仍可显式关闭。`--skip-install` 跳过依赖同步。
+`--reset-data` 会在启动前删除
 本地 PostgreSQL/Redis 数据卷并从空数据库重新执行迁移。确认不再需要数据后再使用
 `--reset-data`。
 

@@ -196,6 +196,16 @@ def _runtime_url(connector_id: str) -> str:
     return f"/connectors/{connector_id}/runtimes/codex"
 
 
+def _create_project(client: TestClient, connector_id: str, headers: dict[str, str]) -> str:
+    response = client.post(
+        "/projects",
+        headers=headers,
+        json={"connectorId": connector_id, "name": "repo", "workspacePath": "/repo"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["project"]["id"]
+
+
 def _assert_runtime_start_config_revision(
     params: dict[str, Any],
     config: dict[str, Any],
@@ -506,6 +516,7 @@ def test_connector_runtime_scoped_reads_start_active_runtime_before_rpc(tmp_path
 
 def test_session_sync_starts_active_runtime_before_sync_rpc(tmp_path):
     client, rpc, connector_id, headers = _make_client(tmp_path)
+    project_id = _create_project(client, connector_id, headers)
     config_url = f"{_runtime_url(connector_id)}/config"
     active_url = f"{_runtime_url(connector_id)}/active"
     assert (
@@ -520,6 +531,7 @@ def test_session_sync_starts_active_runtime_before_sync_rpc(tmp_path):
         headers=headers,
         json={
             "connectorId": connector_id,
+            "projectId": project_id,
             "runtime": "codex",
             "externalSessionId": "thr_existing",
             "title": "Existing",
@@ -549,6 +561,7 @@ def test_session_sync_starts_active_runtime_before_sync_rpc(tmp_path):
 
 def test_session_runtime_catalog_reads_start_active_runtime_before_rpc(tmp_path):
     client, rpc, connector_id, headers = _make_client(tmp_path)
+    project_id = _create_project(client, connector_id, headers)
     config_url = f"{_runtime_url(connector_id)}/config"
     active_url = f"{_runtime_url(connector_id)}/active"
     assert (
@@ -563,6 +576,7 @@ def test_session_runtime_catalog_reads_start_active_runtime_before_rpc(tmp_path)
         headers=headers,
         json={
             "connectorId": connector_id,
+            "projectId": project_id,
             "runtime": "codex",
             "externalSessionId": "thr_existing",
             "title": "Existing",
@@ -743,6 +757,15 @@ def test_delete_running_config_stops_then_returns_to_unconfigured(tmp_path):
         == 200
     )
     rpc.requests.clear()
+    session = asyncio.run(
+        client.app.state.store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id="sess_legacy_deleted",
+            runtime="codex",
+            external_session_id="legacy-deleted",
+            cwd="/repo",
+        )
+    )
 
     response = client.delete(config_url, headers=headers)
 
@@ -751,10 +774,14 @@ def test_delete_running_config_stops_then_returns_to_unconfigured(tmp_path):
     assert response.json()["active"] is False
     assert response.json()["status"] == "stopped"
     assert [request[1] for request in rpc.requests] == ["runtime.stop"]
+    assert (
+        client.get(f"/sessions/{session.id}/meta", headers=headers).status_code == 404
+    )
 
 
 def test_deactivation_settles_sessions_without_persisted_notices(tmp_path):
     client, _, connector_id, headers = _make_client(tmp_path)
+    project_id = _create_project(client, connector_id, headers)
     config_url = f"{_runtime_url(connector_id)}/config"
     active_url = f"{_runtime_url(connector_id)}/active"
     assert (
@@ -769,6 +796,7 @@ def test_deactivation_settles_sessions_without_persisted_notices(tmp_path):
     session = asyncio.run(
         store.create_session(
             connector_id=connector_id,
+            project_id=project_id,
             runtime="codex",
             external_session_id="thread_1",
             title="blocked",

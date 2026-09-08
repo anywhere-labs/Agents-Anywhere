@@ -8,6 +8,7 @@ import pytest
 
 from connector.runtime_protocol import RuntimeInstanceHost, RuntimeInstanceSpec, timeline_content_hash
 from connector.runtimes.dsh.bridge.sync import SyncRelay
+from connector.runtimes.dsh.runtime import DshRuntime
 from connector.server.runtime_host import ConnectorRuntimeHost
 from connector.server.runtime_sync import RuntimeSyncRunner
 
@@ -74,38 +75,51 @@ def test_snapshot_abort_foreign_items_and_duplicate_pages_do_not_publish_partial
 
 
 @pytest.mark.parametrize("reject", [False, True])
-def test_relay_ack_waits_for_ingest_and_does_not_ack_rejected_or_out_of_order_batches(reject):
+def test_relay_failure_resubscribes_without_closing_concurrent_rpc(reject):
     async def exercise():
         entered, release, acknowledged = asyncio.Event(), asyncio.Event(), asyncio.Event()
         acks = []
+        subscriptions = 0
+        resubscribed = asyncio.Event()
 
-        async def publish(*args):
+        async def publish(*args, **kwargs):
+            assert kwargs["session_id"] == "session" and kwargs["runtime"] == "dsh"
             entered.set()
             await release.wait()
-            if reject:
-                raise RuntimeError("ingest rejected")
+            if reject and subscriptions == 1:
+                raise RuntimeError("delivery failed")
 
         async def request(method, params=None):
+            nonlocal subscriptions
             if method == "runtime.sync.subscribe":
-                return {"streamId": "stream", "projectionVersion": 2}
+                subscriptions += 1
+                if subscriptions > 1:
+                    resubscribed.set()
+                return {"streamId": f"stream-{subscriptions}", "projectionVersion": 2}
             acks.append(params["batchSeq"])
             acknowledged.set()
 
-        client = SimpleNamespace(request=request, writer=Mock())
-        relay = SyncRelay(client, SimpleNamespace(publish_runtime_notifications=publish))
+        client = SimpleNamespace(request=request, writer=Mock(), connected=True)
+        relay = SyncRelay(client, SimpleNamespace(session_state_update=publish), retry_delay=0.01)
         relay.start()
         try:
             op = {"kind": "notifications", "notifications": [{"method": "session.state.updated", "params": {"sessionId": "session", "status": "idle"}}]}
-            relay.accept({"streamId": "stream", "batchSeq": 1, "projectionVersion": 2, "operations": [op]})
+            await asyncio.sleep(0)
+            relay.accept({"streamId": "stream-1", "batchSeq": 1, "projectionVersion": 2, "operations": [op]})
             await asyncio.wait_for(entered.wait(), 1)
             assert not acks
             release.set()
             if not reject:
                 await asyncio.wait_for(acknowledged.wait(), 1)
-                relay.accept({"streamId": "stream", "batchSeq": 3, "projectionVersion": 2, "operations": [op]})
-            await asyncio.wait_for(relay.task, 1)
+                relay.accept({"streamId": "stream-1", "batchSeq": 3, "projectionVersion": 2, "operations": [op]})
+            await asyncio.wait_for(resubscribed.wait(), 1)
             assert acks == ([] if reject else [1])
-            client.writer.close.assert_called_once()
+            acknowledged.clear()
+            relay.restart("stream-1")  # A delayed old error cannot stop the new feed.
+            relay.accept({"streamId": "stream-2", "batchSeq": 1, "projectionVersion": 2, "operations": [op]})
+            await asyncio.wait_for(acknowledged.wait(), 1)
+            assert acks == ([1] if reject else [1, 1])
+            client.writer.close.assert_not_called()
         finally:
             await relay.close()
     asyncio.run(exercise())
@@ -141,6 +155,46 @@ def test_instance_binds_existing_notifications_and_propagates_ingest_failure():
             await scoped.publish_runtime_notifications("dsh", notices)
         with pytest.raises(ValueError):
             await base.publish_runtime_notifications("dsh", [{"method": "unknown", "params": {}}])
+    asyncio.run(exercise())
+
+
+def test_legacy_workspace_inventory_does_not_write_projects_or_local_state():
+    async def exercise():
+        ingest = AsyncMock()
+        base = ConnectorRuntimeHost("device", AsyncMock(), AsyncMock(), ingest_notifications=ingest)
+        host = RuntimeInstanceHost(base, RuntimeInstanceSpec(runtime_id="rti_dsh", runtime_type="dsh", name="DSH"))
+        relay = SyncRelay(Mock(), host)
+        base.sync_state_write = AsyncMock()
+        projects = [{"id": "native", "title": "DSH name", "path": "/repo", "sessionIds": ["session"]}]
+        await relay.operation({"kind": "workspace.inventory", "complete": True, "workspaces": projects})
+        ingest.assert_not_awaited()
+        base.sync_state_write.assert_not_awaited()
+    asyncio.run(exercise())
+
+
+def test_fresh_source_state_waits_for_ingestion_and_archive_send_returns_standard_error(tmp_path):
+    async def exercise():
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def publish(*args):
+            entered.set()
+            await release.wait()
+        runtime = DshRuntime(
+            SimpleNamespace(values={"dshHome": str(tmp_path)}),
+            SimpleNamespace(publish_runtime_notifications=publish),
+        )
+        source = {"availability": "archived", "reason": "archived_in_dsh", "observedAt": "2026-09-07T00:00:00Z"}
+        runtime._request = AsyncMock(return_value={"runtime": "dsh", "sessionId": "session", "externalSessionId": "native",
+            "status": "blocked", "selections": {}, "sourceState": source})
+        task = asyncio.create_task(runtime.get_session_state("session", "native"))
+        await asyncio.wait_for(entered.wait(), 1)
+        assert not task.done()
+        release.set()
+        assert (await task).status == "blocked"
+        runtime._request.return_value = {"ok": False, "code": "session_archived", "message": "Archived in DSH",
+            "result": {"sessionId": "session", "externalSessionId": "native", "sourceState": source}}
+        result = await runtime.start_turn("session", "native", "hi", client_message_id="request")
+        assert result.ok is False and result.code == "session_archived"
+        assert result.result["sourceState"] == source
     asyncio.run(exercise())
 
 

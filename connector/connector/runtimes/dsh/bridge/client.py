@@ -62,6 +62,7 @@ class BridgeClient:
         self._reader_task: asyncio.Task[None] | None = None
         self._notification_tasks: set[asyncio.Task[None]] = set()
         self._early_notifications: list[tuple[str, dict[str, Any]]] = []
+        self.failure_code: str | None = None
         self._closing = False
 
     @property
@@ -78,6 +79,7 @@ class BridgeClient:
         if self.writer is not None:
             raise RuntimeError("DSH bridge connection is already started")
         self._closing = False
+        self.failure_code = None
         try:
             self.reader, self.writer = await asyncio.wait_for(
                 asyncio.open_connection(
@@ -278,6 +280,13 @@ class BridgeClient:
         params = value.get("params", {})
         if not isinstance(method, str) or not isinstance(params, dict):
             raise RuntimeError("DSH bridge emitted an invalid request or notification")
+        if method == "runtime.error":
+            data = params.get("data")
+            code = data.get("code") if isinstance(data, dict) else None
+            # Bridge error codes are enough to correlate with the plugin log.
+            # Native exception text and notification bodies never enter logs.
+            self.failure_code = code if isinstance(code, str) and code.isascii() and code.replace("_", "").isalnum() and len(code) <= 80 else "UNKNOWN"
+            logger.error("DSH plugin reported runtime.error code={}; check the plugin Bridge logs page", self.failure_code)
         if "id" in value:
             task = asyncio.create_task(
                 self._send(

@@ -26,7 +26,10 @@ export async function quickAddRuntime({
   if (!existing) {
     const created = await dashboardApi.createConnectorRuntime(token, connectorId, {
       runtimeType: runtimeType.runtimeType,
-      name: suggestedRuntimeInstanceName(runtimeType, runtimes),
+      name: suggestedRuntimeInstanceName({
+        ...runtimeType,
+        displayName: runtimeType.runtimeType === "dsh" ? "DSH" : runtimeType.displayName,
+      }, runtimes),
       config: {},
       active: true,
     })

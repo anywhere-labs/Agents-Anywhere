@@ -1,3 +1,4 @@
+import type { OwnershipState } from "./local-runtime";
 import {
   app,
   BrowserWindow,
@@ -75,6 +76,9 @@ const API_ROUTE_PREFIXES = [
   "/sessions",
   "/.well-known",
 ];
+
+let ownership: OwnershipState = { status: "error", message: "正在检查本机 Connector…" };
+let recheckingOwnership: Promise<OwnershipState> | null = null;
 
 let mainWindow: BrowserWindow | null = null;
 let devOrigin: string | null = null;
@@ -156,6 +160,7 @@ function queueDesktopOAuthCallback(rawUrl: string): void {
 }
 
 function drainDesktopOAuthCallbacks(): Promise<void> {
+  if (ownership.status !== "owned" || isQuitting) return Promise.resolve();
   if (desktopOAuthDrainPromise) return desktopOAuthDrainPromise;
   desktopOAuthDrainPromise = (async () => {
     while (pendingDesktopOAuthCallbacks.length > 0) {
@@ -473,7 +478,40 @@ function syncDesktopUpdateSession(serverUrl: unknown) {
   return updates?.check(connection) ?? null;
 }
 
+async function requireLocalOwnership(): Promise<void> {
+  if (isQuitting || !connector) throw new Error("Desktop is shutting down or not ready.");
+  await connector.acquireOwnership();
+}
+
+async function startOwnedConnector(): Promise<void> {
+  const state = await requireConnector().getState();
+  if (requireSettings().get().startConnectorOnLaunch && state.hasCredential && !state.manualDisconnected) {
+    await requireConnector().start();
+  }
+}
+
 function registerIpcHandlers(): void {
+  ipcMain.handle("workbench:ownership:getState", event => {
+    assertTrustedRenderer(event);
+    return ownership;
+  });
+  ipcMain.handle("workbench:ownership:recheck", event => {
+    assertTrustedRenderer(event);
+    recheckingOwnership ??= (async () => {
+      if (isQuitting || !connector) return ownership;
+      try { await requireLocalOwnership(); } catch { return ownership; }
+      if (ownership.status === "owned") {
+        void startOwnedConnector().catch(error => appendMainLog({ level: "ERROR", message: errorMessage(error) }));
+        if (app.isPackaged) void drainDesktopOAuthCallbacks();
+      }
+      return ownership;
+    })().finally(() => { recheckingOwnership = null; });
+    return recheckingOwnership;
+  });
+  ipcMain.handle("workbench:ownership:quit", event => {
+    assertTrustedRenderer(event);
+    return requestQuit();
+  });
   ipcMain.handle("workbench:window:setTitleBarColors", (event, input: unknown) => {
     assertTrustedRenderer(event);
     if (process.platform !== "win32" || event.sender !== mainWindow?.webContents) return;
@@ -505,6 +543,7 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("workbench:auth:startOAuth", async (event, input?: { serverUrl?: string }): Promise<DesktopOAuthStartResult> => {
     assertTrustedRenderer(event);
+    await requireLocalOwnership();
     if (startingDesktopOAuth) throw new Error("A sign-in request is already starting.");
     startingDesktopOAuth = true;
     desktopOAuthAttempt += 1;
@@ -713,11 +752,13 @@ function normalizeNotificationText(value: unknown, maximumLength: number): strin
 }
 
 function requireConnector(): ConnectorSupervisor {
+  if (ownership.status !== "owned") throw new Error(ownership.message);
   if (!connector) throw new Error("Connector supervisor is not ready.");
   return connector;
 }
 
 function requireDevices(): DesktopDeviceService {
+  if (ownership.status !== "owned") throw new Error(ownership.message);
   if (!devices) throw new Error("Desktop device service is not ready.");
   return devices;
 }
@@ -737,19 +778,15 @@ async function initializeDesktopServices(): Promise<void> {
   serverStore = new DesktopServerStore(path.join(app.getPath("userData"), "desktop-server.json"), activeDesktopServer());
   const dataPath = connectorDataPath();
   fs.mkdirSync(dataPath, { recursive: true, mode: 0o700 });
-  settingsStore = new DesktopSettingsStore(desktopSettingsPath());
+  settingsStore = new DesktopSettingsStore(desktopSettingsPath(), app.getPreferredSystemLanguages());
   logStore = new ConnectorLogStore(connectorLogsPath(), () => requireSettings().get());
-  try {
-    await machineState.recordInstallation(desktopInstallation({
-      executablePath: process.platform === "linux" && app.isPackaged && process.env.APPIMAGE ? process.env.APPIMAGE : process.execPath,
-      appPath: app.getAppPath(), packaged: app.isPackaged, platform: process.platform,
-    }));
-  } catch (error) {
-    appendMainLog({ level: "ERROR", message: `Could not record Desktop installation: ${errorMessage(error)}` });
-  }
   bindingStore = new DesktopBindingStore(path.join(dataPath, "desktop-binding.json"));
   const shellEnvironment = await readShellEnvironment();
   connector = new ConnectorSupervisor({
+    onOwnership: (state) => {
+      ownership = state;
+      sendToRenderer("workbench:ownership:state", state);
+    },
     configPath: path.join(dataPath, "connector.json"),
     dataPath,
     connectorDir: resolveConnectorDir(),
@@ -765,17 +802,26 @@ async function initializeDesktopServices(): Promise<void> {
     },
     onLog: (entry) => sendToRenderer("workbench:connector:log", entry),
   });
+  try { await requireLocalOwnership(); } catch { /* The renderer shows the RPC error and retry action. */ }
+  try {
+    await machineState.recordInstallation(desktopInstallation({
+      executablePath: process.platform === "linux" && app.isPackaged && process.env.APPIMAGE ? process.env.APPIMAGE : process.execPath,
+      appPath: app.getAppPath(), packaged: app.isPackaged, platform: process.platform,
+    }));
+  } catch (error) {
+    appendMainLog({ level: "ERROR", message: `Could not record Desktop installation: ${errorMessage(error)}` });
+  }
   const config = connector.loadPrivateConfig();
   if (config && !bindingStore.get()) bindingStore.adoptConfig(config);
   connector.bindingChanged();
   devices = new DesktopDeviceService({
+    requireOwnership: requireLocalOwnership,
     binding: bindingStore,
     connector,
     fetcher: (input, init) => net.fetch(String(input), init),
     defaultServerUrl: apiOrigin,
     apiNamespace,
     readLocalConnectorIds: () => machineState.readConnectorIds(),
-    recordLocalConnector: (connectorId) => machineState.recordConnectorId(connectorId),
   });
   applyLoginItemSettings();
 }
@@ -864,16 +910,13 @@ if (hasSingleInstanceLock) {
       onState: (state) => sendToRenderer("workbench:updates:state", state),
     });
     const settings = requireSettings().get();
-    const showOnLaunch = !settings.silentLaunch || !launchedAsLoginItem() || Boolean(process.env.WORKBENCH_WEB_URL);
+    const showOnLaunch = ownership.status !== "owned" || !settings.silentLaunch || !launchedAsLoginItem() || Boolean(process.env.WORKBENCH_WEB_URL);
     createMainWindow(showOnLaunch);
-    if (app.isPackaged) await drainDesktopOAuthCallbacks();
+    if (app.isPackaged && ownership.status === "owned") await drainDesktopOAuthCallbacks();
     if (process.platform === "darwin" && app.dock) app.dock.setIcon(appWindowIcon());
     if (!showOnLaunch) hideDockIfIdle();
 
-    const state = await requireConnector().getState();
-    if (settings.startConnectorOnLaunch && state.hasCredential && !state.manualDisconnected) {
-      void requireConnector().start().catch((error) => appendMainLog({ level: "ERROR", message: errorMessage(error) }));
-    }
+    if (ownership.status === "owned") await startOwnedConnector();
   }).catch((error) => {
     console.error("Failed to initialize Desktop Workbench", error);
     void requestQuit();

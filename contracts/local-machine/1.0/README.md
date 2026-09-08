@@ -1,5 +1,7 @@
 # 本机共享记录 v1
 
+> 历史契约，保留供旧版本迁移参考。当前实现使用 [v2 契约](../2.0/README.md)：Python Connector 独占维护运行记录与 ID 历史，Desktop 只写安装信息，插件只读。
+
 Desktop 与 DSH 插件共同读写的本机发现文件。安装位置只由 Desktop 更新，两端均可追加本机设备 ID。用户 token、Connector token 仍保存在各自的私有数据目录。
 
 ## 固定路径

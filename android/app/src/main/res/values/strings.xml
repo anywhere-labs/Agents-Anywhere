@@ -545,6 +545,9 @@
     <string name="session_runtime_effort_for">Effort for %1$s</string>
     <string name="runtime_permission_accept_edits">Accept edits</string>
     <string name="runtime_permission_read_only">Read only</string>
+    <string name="runtime_permission_dsh_read_only">read-only</string>
+    <string name="runtime_permission_dsh_workspace_write">workspace-write</string>
+    <string name="runtime_permission_dsh_full_access">danger-full-access</string>
     <string name="runtime_permission_request_approval">Request approval</string>
     <string name="runtime_permission_auto_review">Auto review</string>
     <string name="runtime_permission_full_access">Full access</string>

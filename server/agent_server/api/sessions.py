@@ -108,6 +108,7 @@ from agent_server.services.device_runtimes import (
 )
 from agent_server.services.effective_capabilities import (
     derive_session_effective_capabilities,
+    read_session_capability_facts,
 )
 from agent_server.services.event_recovery import EventRecoveryService
 from agent_server.services.session_meta_projection import (
@@ -192,24 +193,30 @@ async def _publish_session_protocol_update(
     runtime_state_cache: SessionRuntimeStateCache,
     session_id: str,
 ) -> None:
+    # DSH state reads synchronously ingest source observations back into AA.
+    # Keep runtime RPC outside the revision fence so that callback can acquire it.
+    session = await db.get_session(session_id)
+    runtime_state = await read_runtime_state_live(
+        db,
+        manager,
+        runtime_state_cache,
+        session,
+        None,
+    )
+    runtime_capabilities = await read_session_capabilities_with_fallback(
+        db,
+        manager,
+        session,
+        None,
+    )
     async with db.session_revision_fence(session_id):
         next_seq = await db.get_session_seq(session_id)
         session = await db.get_session(session_id)
-        runtime_state = await read_runtime_state_live(
-            db,
-            manager,
-            runtime_state_cache,
-            session,
-            None,
-        )
+        # An event may have arrived while the RPC was in flight. Publish the
+        # latest cached state together with the current session revision.
+        runtime_state = await runtime_state_cache.get(session_id) or runtime_state
         session = session_with_runtime_state(session, runtime_state)
         session = await with_effective_session_connector_status(manager, session)
-        runtime_capabilities = await read_session_capabilities_with_fallback(
-            db,
-            manager,
-            session,
-            None,
-        )
         effective_capabilities = derive_session_effective_capabilities(
             session=session,
             runtime_capabilities=runtime_capabilities,
@@ -1038,13 +1045,13 @@ async def enable_takeover(
         await db.get_session(session_id, user_id=user_id)
         async with timeline_write_buffer.session_fence(session_id):
             session = await db.set_takeover(session_id, True)
-            await _publish_session_protocol_update(
-                db,
-                broker,
-                manager,
-                runtime_state_cache,
-                session_id,
-            )
+        await _publish_session_protocol_update(
+            db,
+            broker,
+            manager,
+            runtime_state_cache,
+            session_id,
+        )
         return TakeoverResponse(
             session=await with_effective_session_connector_status(manager, session)
         )
@@ -1070,13 +1077,13 @@ async def disable_takeover(
         await db.get_session(session_id, user_id=user_id)
         async with timeline_write_buffer.session_fence(session_id):
             session = await db.set_takeover(session_id, False)
-            await _publish_session_protocol_update(
-                db,
-                broker,
-                manager,
-                runtime_state_cache,
-                session_id,
-            )
+        await _publish_session_protocol_update(
+            db,
+            broker,
+            manager,
+            runtime_state_cache,
+            session_id,
+        )
         return TakeoverResponse(
             session=await with_effective_session_connector_status(manager, session)
         )
@@ -1099,9 +1106,7 @@ async def _require_session_action_capability(
     user_id: str,
 ) -> None:
     effective_session = await with_effective_session_connector_status(manager, session)
-    runtime_capabilities = ProtocolCapabilitySet.model_validate(
-        await db.get_protocol_capabilities(session.connectorId, user_id=user_id)
-    )
+    runtime_capabilities = await read_session_capabilities_from_connector(manager, session)
     effective = derive_session_effective_capabilities(
         session=effective_session,
         runtime_capabilities=runtime_capabilities,
@@ -1571,19 +1576,9 @@ async def read_session_capabilities_from_connector(
     manager: ConnectorRpcManager,
     session: SessionView,
 ) -> ProtocolCapabilitySet:
-    params: dict[str, Any] = {
-        "sessionId": session.id,
-        "runtime": session.runtime,
-        "runtimeId": _session_runtime_id(session),
-    }
-    if session.externalSessionId:
-        params["externalSessionId"] = session.externalSessionId
     try:
-        result = await manager.request(
-            session.connectorId,
-            "session.capabilities",
-            params,
-            timeout=10,
+        return await read_session_capability_facts(
+            manager, session, runtime_id=_session_runtime_id(session),
         )
     except ConnectorOfflineError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -1600,24 +1595,14 @@ async def read_session_capabilities_from_connector(
             status_code=502,
             detail={"code": exc.code, "message": exc.message or exc.code},
         ) from exc
-    if not isinstance(result, dict):
+    except ValueError as exc:
         raise HTTPException(
             status_code=502,
             detail={
                 "code": "invalid_capability_set",
-                "message": "connector did not return a capability set",
+                "message": str(exc),
             },
-        )
-    raw_capability_set = result.get("capabilitySet")
-    if not isinstance(raw_capability_set, dict):
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "code": "invalid_capability_set",
-                "message": "connector did not return a capability set",
-            },
-        )
-    return ProtocolCapabilitySet.model_validate(raw_capability_set)
+        ) from exc
 
 
 async def request_session_runtime_catalog(

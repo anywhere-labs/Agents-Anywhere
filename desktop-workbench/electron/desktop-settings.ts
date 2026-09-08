@@ -16,8 +16,16 @@ const DEFAULT_SETTINGS: DesktopSettings = {
 export class DesktopSettingsStore {
   private settings: DesktopSettings;
 
-  constructor(private readonly filePath: string) {
-    this.settings = normalizeSettings(readJsonFile<Partial<DesktopSettings>>(filePath, {}));
+  constructor(private readonly filePath: string, systemLanguages: readonly string[] = []) {
+    const saved = readJsonFile<Partial<DesktopSettings>>(filePath, {});
+    this.settings = normalizeSettings(saved);
+    if (saved.uvPypiIndexUrl === undefined) {
+      // Decide before the first uv process, including provisioning before login.
+      // A saved empty string is an explicit choice of the official index.
+      this.settings.uvPypiIndexUrl = systemLanguages.some(language => /^zh(?:[-_]|$)/i.test(language.trim()))
+        ? "https://mirrors.aliyun.com/pypi/simple" : "";
+      writeJsonFile(this.filePath, this.settings);
+    }
   }
 
   get(): DesktopSettings {

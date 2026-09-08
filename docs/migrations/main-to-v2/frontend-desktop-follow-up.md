@@ -680,3 +680,76 @@ Web 16 项认证测试、Desktop 7 项密码派生测试及两端 TypeScript 检
 该修复需要更新服务器提供的 Web 页面，仅重新编译 iOS 不会替换浏览器登录页。
 未进行真实 iOS 浏览器登录计时；无 JIT 的压力测量只用于确认主线程阻塞原因，
 不作为真机登录速度的结论。
+
+## DSH 配置与图片检查（2026-09-08）
+
+`feat/benson-0905` 已接通 DSH 官方模型、effort、权限和 Agent 模式目录，
+在新建时显式初始化，支持会话内切换及 PNG/JPEG/WebP/GIF 图片发送。
+Web 与 Desktop renderer 均已同步模型标签、配置选项名称/禁用原因、图片
+白名单和状态回显；继续使用现有 AA 新会话偏好机制，不从 DSH 默认值覆盖。
+这次没有重新替换 Desktop renderer，也没有改动其原生窗口和传输边界。
+
+基于 `5c99b42d`，Web 219 项、Desktop renderer 205 项、主进程 90 项测试
+及两端类型/协议检查通过。插件 105 项、Connector 68 项、Server 76 项检查
+另见 [验证记录](../../../dsh-bridge-next/VERIFICATION.md)。这些是 headless
+结果，真实模型、手机、Windows 和长期运行仍待手动验收。
+
+### Connector 启动职责调整
+
+后续在 `codex/connector-owned-lifecycle` 完成独立调整，不能沿用上述旧基线
+宣称新代码已经验证。Python Connector 统一执行启动互斥、记录实际 PID 和
+启动来源、追加本机 ID 历史，覆盖 CLI、Desktop 和插件。检查以 PID 是否仍为
+对应 Connector 进程为准；RPC 进程仍存活时停止后端连接不会释放占用。
+
+Desktop 和插件通过 `-32009 / connector_already_running` 处理冲突、提供
+重试并保留私有绑定；两端不再自行检查 PID 或追加 ID。安装信息继续由
+Desktop 校验和发布，插件只读。共享状态升级为 `.agents-anywhere/connector-runtime.json`
+的 v2 格式，旧文件由 Python 迁移，详见 [v2 契约](../../../contracts/local-machine/2.0/README.md)。
+
+本地插件 102 项、Connector 84 项、Desktop 主进程 85 项通过。Linux 暴露的
+旧 SQLite 迁移语法问题已修复，Server 相关及完整迁移测试共 175 项通过。
+当前分支 CI 另行重跑 Web 和 Desktop renderer；具体远程结果与仍需手动
+验收的真实模型、手机及 Windows 行为见 [验证记录](../../../dsh-bridge-next/VERIFICATION.md)。
+
+### DSH 回退至图片功能之前（2026-09-08）
+
+用户实测反馈：AA → DSH 的 RPC 生效，但 DSH 会话自动同步和数据回传异常。
+按要求在 `codex/dsh-before-images` 撤回 `742d09be` 中的 DSH 图片与配置扩展，
+恢复 `65ad5d9f` 的文本运行时，同时撤回 `8535885b` 提前加入同步模块的新
+配置读取依赖。Python Host 实时发布通道、启动互斥、ID 历史和 Desktop
+安装信息职责保留；Web/Desktop 的通用功能与 AA 新会话偏好没有回退。
+
+插件 92 项、Connector 81 项、Server 相关 76 项本地通过；端到端探针确认
+原生 session 自动导入、AA 发起任务后的流式文本和最终结果、重连校准实际
+到达 AA 后端。此为临时环境的 headless 结果；用户仍需重启 DSH 与 CLI
+加载回退代码，并确认原环境恢复。图片与 AA 侧 DSH 模型/effort/权限切换
+暂停提供，完整结果见 [验证记录](../../../dsh-bridge-next/VERIFICATION.md)。
+
+后续新增插件独立「桥接日志」页，固定读取本插件运行日志，支持自动刷新和
+暂停，CLI 占用或安装检测失败时也能打开。实机日志已定位到一个历史会话
+读取失败导致整个事件同步断开的路径；日志能力已验证，恢复结果另行验收。
+
+该读取失败现已按会话隔离，继续使用 `ctx.sessionQuery`，保留 AA 既有历史，
+支持后续刷新重试。包含坏历史的完整 Python/AA Server 测试验证新建会话与
+两轮消息的实时增量和最终结果；插件 95 项通过。实机新进程完成 51 个会话
+首次同步，检查时 207 个批次均收到 ACK；具体页面与真实模型回复仍待用户确认。
+
+### 恢复图片与配置并保留隔离修复（2026-09-08）
+
+`codex/dsh-features-with-sync-fix` 已恢复 AA → DSH 图片发送、模型/effort/权限
+和 Agent 模式配置，保留桥接日志与坏历史会话隔离。配置状态读取同样隔离
+单会话失败，首次校准复用已读取的快照。包含坏历史的图片完整链路与冷重启
+检查通过；本地插件 105 项、Connector 85 项、Server 175 项通过。远程 CI、
+恢复构建后的实际菜单、图片和真实回复仍需另行核对。下一步检查通用 RPC
+请求和同步项的失败恢复边界，详见 [验证记录](../../../dsh-bridge-next/VERIFICATION.md)。
+
+后续 RPC 错误隔离已实现：请求失败、过大响应、取消和超时保留连接；同步的
+单会话读取/投影失败撤销该捕获，流级交付失败只重建订阅。AA Server 的发送、
+配置与会话操作统一读取 Connector 实时能力，修复页面显示可发送而旧缓存
+拒绝下一条消息的不一致；能力读取失败明确返回错误，恢复后可以重试。
+需要 DSH、Connector 和 AA Server 同时加载当前源码，实机验收单独记录。
+
+本轮本地插件 110 项、Connector 86 项通过，Server 186 项基础与迁移、42 项
+能力/操作回归通过，4 项既有通知测试跳过。用户重启后确认 DSH 已可用。
+后续后端 WebSocket `1012` 已由 Server 日志确认为测试文件改动触发的
+`StatReload`，不属于 DSH 同步连接异常。

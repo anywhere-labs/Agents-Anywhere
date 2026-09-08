@@ -11,7 +11,6 @@ export interface Config {
   stateRoot?: string
   connectorSourceDir?: string
   uvPath?: string
-  autoStart?: boolean
 }
 
 export const Config: z<Config> = z.object({
@@ -20,7 +19,6 @@ export const Config: z<Config> = z.object({
   stateRoot: z.string(),
   connectorSourceDir: z.string(),
   uvPath: z.string(),
-  autoStart: z.boolean().default(true),
 })
 
 export interface ResolvedConfig extends ConnectionSettings {
@@ -28,20 +26,22 @@ export interface ResolvedConfig extends ConnectionSettings {
   stateRoot: string
   connectorSourceDir: string
   uvPath: string
-  autoStart: boolean
+}
+
+export function stateRoot(config: Config): string {
+  return config.stateRoot ?? join(userInfo().homedir, '.agentsanywhere', 'dsh-bridge-next')
 }
 
 export function resolveConfig(config: Config): ResolvedConfig {
   if (config.dshHome !== undefined && !isAbsolute(config.dshHome)) throw new Error('DSH_HOME 必须是绝对路径。')
-  const stateRoot = config.stateRoot ?? join(userInfo().homedir, '.agentsanywhere', 'dsh-bridge-next')
+  const root = stateRoot(config)
   const connectorSourceDir = config.connectorSourceDir ?? fileURLToPath(new URL('./bundled-connector/', import.meta.url))
-  if (!isAbsolute(stateRoot) || !isAbsolute(connectorSourceDir)) throw new Error('数据目录和 Connector 源码目录必须是绝对路径。')
+  if (!isAbsolute(root) || !isAbsolute(connectorSourceDir)) throw new Error('数据目录和 Connector 源码目录必须是绝对路径。')
   return {
     ...(config.dshHome !== undefined ? { dshHome: config.dshHome } : {}),
-    stateRoot,
+    stateRoot: root,
     connectorSourceDir,
     apiBaseUrl: normalizeServerOrigin(config.apiBaseUrl ?? CLOUD_API_BASE_URL),
     uvPath: config.uvPath ?? process.env['UV_PATH'] ?? 'uv',
-    autoStart: config.autoStart ?? true,
   }
 }

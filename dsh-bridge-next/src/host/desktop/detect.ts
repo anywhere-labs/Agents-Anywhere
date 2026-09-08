@@ -3,7 +3,7 @@ import { access, stat } from 'node:fs/promises'
 import { userInfo } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import type { DesktopDetection } from '../../contracts/index.js'
-import { hasCode, readJson } from '../storage/files.js'
+import { hasCode } from '../storage/files.js'
 import { readMachineState } from './machine-state.js'
 
 export const desktopRecordPath = (home = userInfo().homedir): string => join(home, '.agentsanywhere', 'desktop', 'install.json')
@@ -12,12 +12,11 @@ export const desktopRecordPath = (home = userInfo().homedir): string => join(hom
 export async function detectDesktop(home = userInfo().homedir, platform = process.platform): Promise<DesktopDetection> {
   try {
     const machine = await readMachineState(home)
-    // Read the old installation-only record until Desktop has published the new snapshot.
-    const value = machine ? machine['desktop'] : await readJson<Record<string, unknown>>(desktopRecordPath(home))
+    const value = machine['desktop']
     if (value !== undefined && value !== null && (typeof value !== 'object' || Array.isArray(value))) throw new Error('安装记录无效')
     const record = value as Record<string, unknown> | undefined | null
     if (!record) return { status: 'absent', message: '未找到桌面端安装记录，可以通过 Web 完成设置。' }
-    if ((!machine && record['version'] !== 1) || record['platform'] !== platform || typeof record['executablePath'] !== 'string' || !isAbsolute(record['executablePath'])) {
+    if (record['platform'] !== platform || typeof record['executablePath'] !== 'string' || !isAbsolute(record['executablePath'])) {
       return { status: 'error', message: '桌面端安装记录无效，请打开一次 Agents Anywhere 桌面端后重试。' }
     }
     const executablePath = record['executablePath']

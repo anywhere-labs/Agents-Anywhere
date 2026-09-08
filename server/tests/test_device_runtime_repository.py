@@ -92,8 +92,12 @@ def test_legacy_inventory_preserves_instance_owned_state(tmp_path) -> None:
         assert runtime_type["defaults"] == {"endpoint": "/tmp/default.sock"}
         assert runtime_type["capabilities"] == {"modelCatalog": True}
 
-        cleared = asyncio.run(
+        deleted_session_ids = asyncio.run(
             store.clear_device_runtime_config("conn_runtime_repository", "dsh")
+        )
+        assert deleted_session_ids == []
+        cleared = asyncio.run(
+            store.get_device_runtime("conn_runtime_repository", "dsh")
         )
         assert cleared["displayName"] == "DSH Host"
         assert cleared["configured"] is False

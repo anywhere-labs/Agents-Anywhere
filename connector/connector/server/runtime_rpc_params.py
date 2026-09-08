@@ -395,9 +395,13 @@ class SessionCreateParams:
     selections: dict[str, str | None]
     attachments: tuple[RuntimeAttachment, ...]
     client_message_id: str | None
+    runtime_options: dict[str, Any]
 
     @classmethod
     def parse(cls, params: dict[str, Any]) -> SessionCreateParams:
+        options = params.get("runtimeOptions", {})
+        if not isinstance(options, dict) or len(options) > 16:
+            raise ValueError("runtimeOptions must be an object with at most 16 fields")
         return cls(
             session_id=required_session_id(params),
             content=required_content(params),
@@ -406,6 +410,7 @@ class SessionCreateParams:
             selections=runtime_selections(params),
             attachments=runtime_attachments(params),
             client_message_id=optional_string(params.get("clientMessageId")),
+            runtime_options=dict(options),
         )
 
 

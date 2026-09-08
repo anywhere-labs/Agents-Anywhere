@@ -26,10 +26,12 @@ from agent_server.infra.connector_rpc import (
     ConnectorRpcManager,
 )
 from agent_server.infra.redis_coordinator import RedisCoordinator
+from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.repository_ports import DeviceRuntimeRepository
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
+from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
 
 class DeviceRuntimeError(RuntimeError):
@@ -116,12 +118,16 @@ class DeviceRuntimeService:
         timeline_broker: TimelineBroker | None = None,
         coordinator: RedisCoordinator | None = None,
         runtime_state_cache: SessionRuntimeStateCache | None = None,
+        timeline_write_buffer: TimelineWriteBuffer | None = None,
+        terminal_broker: TerminalBroker | None = None,
     ) -> None:
         self._store = store
         self._manager = manager
         self._timeline_broker = timeline_broker
         self._coordinator = coordinator
         self._runtime_state_cache = runtime_state_cache
+        self._timeline_write_buffer = timeline_write_buffer
+        self._terminal_broker = terminal_broker
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._locks_guard = asyncio.Lock()
 
@@ -637,6 +643,7 @@ class DeviceRuntimeService:
                 "starting",
                 "running",
                 "stopping",
+                "error",
                 "unknown",
             }:
                 if not await self._manager.is_online(connector_id):
@@ -647,9 +654,20 @@ class DeviceRuntimeService:
                     connector_id, runtime_id, False
                 )
                 runtime = await self._stop_locked(runtime, allow_offline=False)
-            runtime = DeviceRuntimeView.model_validate(
-                await self._store.clear_device_runtime_config(connector_id, runtime_id)
+            session_ids = await self._store.clear_device_runtime_config(
+                connector_id, runtime_id
             )
+            for session_id in session_ids:
+                if self._terminal_broker is not None:
+                    for terminal in await self._terminal_broker.get_for_session(
+                        session_id
+                    ):
+                        await self._terminal_broker.remove(terminal.id)
+                if self._timeline_write_buffer is not None:
+                    await self._timeline_write_buffer.discard_session(session_id)
+                if self._runtime_state_cache is not None:
+                    await self._runtime_state_cache.discard(session_id)
+            runtime = await self._get_owned(connector_id, runtime_id, user_id=user_id)
             await self._publish(connector_id, "runtime.config_deleted")
             return runtime
 

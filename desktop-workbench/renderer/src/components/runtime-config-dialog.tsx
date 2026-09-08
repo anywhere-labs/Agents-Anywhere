@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
+import { runtimeConfigOptions } from "@/components/runtime-config-options"
 
 type JsonSchema = {
   type?: string
@@ -358,24 +359,37 @@ function RuntimeConfigField({
     )
   }
 
-  if (Array.isArray(schema.enum)) {
+  if (Array.isArray(schema.enum) || ui.component === "select") {
+    const options = runtimeConfigOptions(schema.enum, ui.options)
+    const currentValue = effectiveValue == null ? undefined : String(effectiveValue)
+    const unavailable = tRoot("common.unavailable")
+    const currentOption = options.find((option) => String(option.value) === currentValue)
     return (
       <Field data-invalid={Boolean(error)}>
         <FieldLabel htmlFor={inputId}>{title}{required ? " *" : ""}</FieldLabel>
         <Select
-          value={effectiveValue == null ? undefined : String(effectiveValue)}
-          onValueChange={(next: string) => onChange(enumValue(schema.enum ?? [], next))}
+          value={currentValue}
+          onValueChange={(next: string) => onChange(enumValue(options.map((option) => option.value), next))}
+          disabled={options.length === 0}
         >
           <SelectTrigger id={inputId} className="w-full" aria-invalid={Boolean(error)}>
-            <SelectValue placeholder={title} />
+            <SelectValue placeholder={options.length ? title : unavailable} />
           </SelectTrigger>
           <SelectContent>
-            {schema.enum.map((option) => (
-              <SelectItem key={String(option)} value={String(option)}>{String(option)}</SelectItem>
+            {currentValue && !currentOption ? (
+              <SelectItem value={currentValue} disabled>{currentValue} · {unavailable}</SelectItem>
+            ) : null}
+            {options.map((option) => (
+              <SelectItem key={String(option.value)} value={String(option.value)} disabled={option.disabled} title={option.disabledReason ?? option.description}>
+                {option.label}{option.disabled ? ` · ${unavailable}` : ""}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
         {description ? <FieldDescription>{description}</FieldDescription> : null}
+        {currentOption?.disabledReason || currentOption?.description ? (
+          <FieldDescription>{currentOption.disabledReason ?? currentOption.description}</FieldDescription>
+        ) : null}
         <FieldError>{error}</FieldError>
       </Field>
     )

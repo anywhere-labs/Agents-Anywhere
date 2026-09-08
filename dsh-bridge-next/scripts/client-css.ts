@@ -18,7 +18,18 @@ export function clientCss(packageId: string, root: string): TsdownPlugin {
       const path = id.slice(prefix.length, -suffix.length)
       this.addWatchFile(path)
       const filename = relative(root, path).replaceAll('\\', '/')
-      const result = transform({ filename, code: await readFile(path), cssModules: { pattern: '[hash]_[local]' }, minify: true })
+      const result = transform({ filename, code: await readFile(path), cssModules: { pattern: '[hash]_[local]' }, minify: true, analyzeDependencies: true })
+      let css = result.code.toString()
+      for (const dependency of result.dependencies ?? []) {
+        if (dependency.type !== 'url' || !/^\.\.?\/.*\.woff2$/.test(dependency.url)) {
+          throw new Error(`Unsupported client CSS dependency in ${filename}; only local WOFF2 fonts can be embedded.`)
+        }
+        const asset = resolve(dirname(path), dependency.url)
+        this.addWatchFile(asset)
+        // Client factories have no static asset base URL. Embed the font so it
+        // loads in both DSH Desktop and Web and follows the CSS HMR lifecycle.
+        css = css.replaceAll(dependency.placeholder, `data:font/woff2;base64,${(await readFile(asset)).toString('base64')}`)
+      }
       const classes = Object.fromEntries(Object.entries(result.exports ?? {}).map(([key, value]) => [key, value.name]))
       const tagId = `${packageId}/${filename}`
       // Harness owns these tags and removes them before rematerializing a
@@ -29,7 +40,7 @@ export function clientCss(packageId: string, root: string): TsdownPlugin {
         `  const style = document.createElement('style');`,
         `  style.dataset.plugin = ${JSON.stringify(packageId)};`,
         `  style.dataset.pluginCss = tagId;`,
-        `  style.textContent = ${JSON.stringify(result.code.toString())};`,
+        `  style.textContent = ${JSON.stringify(css)};`,
         `  document.head.appendChild(style);`,
         `}`,
         `export default ${JSON.stringify(classes)};`,

@@ -1,25 +1,33 @@
 import type { Context } from '@deepseek-ai/cordis'
-import type { AgentHandle } from '@deepseek-ai/dsh-agent'
-import type {} from '@deepseek-ai/dsh-agent-presets'
-import type {} from '@deepseek-ai/dsh-agent-default-model'
-import { freezeMessage, ReasoningEffortId, type UserMessage } from '@deepseek-ai/dsh-llm'
+import type { SessionPromptRequest } from '@deepseek-ai/dsh-api-session-controller'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionLogSnapshot, SessionRecord } from '@deepseek-ai/dsh-session-query'
+import type { SessionRecord } from '@deepseek-ai/dsh-session-query'
 import type {} from '@deepseek-ai/dsh-workspace'
 import type {} from '@deepseek-ai/dsh-storage-domain'
 import { realpath, stat } from 'node:fs/promises'
-import { isAbsolute } from 'node:path'
-import { userMessageId } from './identity.js'
+import { dirname, isAbsolute, join } from 'node:path'
+import { canonicalJson, digest, userMessageId } from './identity.js'
 import { BridgeError } from './errors.js'
-import { ClientPresence, sessionVisible } from './visibility.js'
+import { ClientPresence } from './visibility.js'
+import { NativeSessionSource } from './sessions/source.js'
 import { record } from './types.js'
 import { UserQuestions } from './questions.js'
+import { RuntimeDiagnostics } from './diagnostics.js'
+import { RuntimeCatalogs } from './catalogs.js'
+import { RuntimeConfiguration } from './configuration.js'
+import type { Selections } from './selections.js'
+import { capabilities } from './capabilities.js'
+import { CreationIntents } from './creation-intents.js'
+import { RuntimeImages, imageFingerprint, imageReferences, type AttachmentSnapshot, type StagedImage } from './attachments.js'
+declare module '@deepseek-ai/cordis' {
+  interface Events { 'llm/adapters-updated'(): void }
+}
 
 export type NativeChange = { type: 'event', id: string, event: SessionEvent }
   | { type: 'session', id: string } | { type: 'status', id: string }
   | { type: 'refresh', id: string }
   | { type: 'question', id: string } | { type: 'capabilities' }
-  | { type: 'visibility' } | { type: 'workspace' }
+  | { type: 'visibility' } | { type: 'catalogs' }
 export interface NativeWorkspace { id: string, title: string, path: string, sessionIds: string[] }
 
 /** All native interpretation stays in the Host; observers never await transport work. */
@@ -27,27 +35,36 @@ export class NativeRuntime {
   readonly presence: ClientPresence
   readonly questions: UserQuestions
   private listeners = new Set<(change: NativeChange) => void>()
-  private archived: Set<string>
-  private turns = new Map<string, boolean>()
-  private records = new Map<string, SessionRecord>()
-  private owned = new Set<AgentHandle>()
+  readonly source: NativeSessionSource
+  readonly catalogs: RuntimeCatalogs
+  readonly configuration: RuntimeConfiguration
   private writes = new Map<string, Promise<unknown>>()
-  private workspaceTimer: ReturnType<typeof setTimeout> | undefined
   private closed = false
+  private creations: CreationIntents
+  readonly images: RuntimeImages
 
-  constructor(readonly ctx: Context) {
-    this.archived = new Set(ctx.workspaceRegistry.archivedSessionIds)
+  constructor(readonly ctx: Context, creationDirectory: string,
+    readonly diagnostics = new RuntimeDiagnostics(ctx.logger('agents-anywhere-runtime'))) {
+    this.creations = new CreationIntents(creationDirectory)
+    this.images = new RuntimeImages(join(dirname(creationDirectory), 'attachments'))
+    this.catalogs = new RuntimeCatalogs(ctx, () => this.emit({ type: 'catalogs' }))
+    this.configuration = new RuntimeConfiguration(ctx)
+    ctx.on('llm/adapters-updated', () => this.catalogs.invalidate(), { global: true })
+    for (const key of ['sessionController', 'permissionPresets', 'commands', 'agentPresets', 'attachments'] as const) {
+      ctx.inject([key], child => {
+        this.emit({ type: 'capabilities' })
+        child.effect(() => () => this.emit({ type: 'capabilities' }), 'runtime.configuration-capabilities')
+      })
+    }
     this.presence = new ClientPresence(() => this.emit({ type: 'visibility' }))
+    this.source = new NativeSessionSource(ctx, diagnostics)
     this.questions = new UserQuestions(ctx, id => this.visible(id), id => this.emit(id ? { type: 'question', id } : { type: 'capabilities' }))
     ctx.on('session/created', session => {
-      // The session may leave memory while an earlier transport batch waits for
-      // ACK. Keep its header so the queued event can still read persisted history.
-      this.records.set(session.id, { header: session.header, live: true, persisted: false })
-      this.turns.set(session.id, session.snapshotEvents().some(e => e.type === 'turn/start'))
+      this.source.observe(session)
       this.emit({ type: 'session', id: session.id })
     }, { global: true })
     ctx.on('session/event', (session, event) => {
-      if (event.type === 'turn/start') this.turns.set(session.id, true)
+      this.source.observe(session, event)
       this.questions.observe(session.id, event)
       this.emit({ type: 'event', id: session.id, event })
     }, { global: true })
@@ -59,17 +76,12 @@ export class NativeRuntime {
         const ids = record(change.value).archivedSessionIds
         if (Array.isArray(ids)) {
           const next = new Set(ids.filter((id): id is string => typeof id === 'string'))
-          if (next.size !== this.archived.size || [...next].some(id => !this.archived.has(id))) {
-            this.archived = next
+          if (next.size !== this.source.archived.size || [...next].some(id => !this.source.archived.has(id))) {
+            this.source.archived = next
             this.emit({ type: 'visibility' })
           }
         }
       }
-      // Entity caches settle after the durable write's observer callbacks.
-      this.workspaceTimer ??= setTimeout(() => {
-        this.workspaceTimer = undefined
-        if (!this.closed) this.emit({ type: 'workspace' })
-      }, 0)
     })
   }
 
@@ -77,7 +89,7 @@ export class NativeRuntime {
     this.listeners.add(callback)
     return () => this.listeners.delete(callback)
   }
-  refresh(id: string): void { this.emit({ type: 'refresh', id }) }
+  refresh(id: string): void { this.source.retry(id); this.emit({ type: 'refresh', id }) }
   private emit(change: NativeChange): void {
     for (const listener of this.listeners) {
       try { listener(change) } catch { /* Feed owns its error/recovery channel. */ }
@@ -87,115 +99,153 @@ export class NativeRuntime {
     return this.ctx.workspaceRegistry.list().map(w => ({ id: w.id, title: w.title, path: w.path, sessionIds: [...w.sessionIds] }))
   }
   status(id: SessionId): 'idle' | 'running' | undefined { return this.ctx.get('agents')?.get(id)?.status }
-  candidates(): string[] { return [...new Set([...this.records.keys(), ...this.turns.keys()])] }
+  async capabilities(platformId?: string, id?: SessionId) {
+    let model = false
+    let catalog: Awaited<ReturnType<RuntimeCatalogs['models']>> | undefined
+    if (this.configuration.canSelectModel) {
+      try { catalog = await this.catalogs.models(); model = catalog.metadata.routableProviders.length > 0 }
+      catch (error) { this.diagnostics.log('error', 'capabilities.model_catalog_failed', {}, error) }
+    }
+    // This capability covers the model selector, including switching to another
+    // model. Each model's reasoningItems describes its own effort support.
+    const effort = Boolean(catalog?.models.some(item => item.enabled && item.reasoningItems.some(option => option.enabled)))
+    const result = capabilities(platformId, Boolean(this.ctx.get('sessionController')), this.questions.available,
+      { model, effort, attachments: Boolean(this.ctx.get('attachments')),
+        permission: this.configuration.canSelectPermission && (!id || !this.ctx.get('agents')?.get(id) || Boolean(this.ctx.get('commands')!.find(this.ctx.get('agents')!.get(id)!, 'permission'))) })
+    return { ...result, metadata: { ...result.metadata,
+      ...(catalog ? { modelCatalogFailures: catalog.metadata.failures } : {}) } }
+  }
+  candidates(): string[] { return this.source.candidates() }
   async inventory(signal?: AbortSignal): Promise<SessionRecord[]> {
-    const records = await this.ctx.sessionQuery.listSessions(signal)
-    this.records = new Map(records.map(r => [r.header.id, r]))
+    await this.source.refresh(signal)
     const result: SessionRecord[] = []
-    for (const entry of records) {
+    // Concurrent detail reads may refresh the source map while visibility awaits I/O.
+    // Capture this inventory once so pagination cannot repeat reinserted records.
+    for (const entry of [...this.source.records.values()]) {
       signal?.throwIfAborted()
       if (await this.visible(entry.header.id)) result.push(entry)
     }
+    this.diagnostics.log('info', 'inventory.completed', { candidates: this.source.records.size, visible: result.length, archived: this.source.archived.size })
     return result
   }
-  async visible(id: string): Promise<boolean> {
-    const live = this.ctx.sessions.get(id as SessionId)
-    const header = live?.header ?? this.records.get(id)?.header
-    if (!header || header.origin === 'subagent' || this.archived.has(id)) return false
-    let hasTurn = this.turns.get(id)
-    if (hasTurn === undefined) {
-      const events = live?.snapshotEvents() ?? (await this.ctx.sessionQuery.readSession(id as SessionId)).events
-      hasTurn = events.some(e => e.type === 'turn/start')
-      this.turns.set(id, hasTurn)
+  visible(id: string): Promise<boolean> { return this.source.visible(id) }
+  async read(id: SessionId): Promise<AttachmentSnapshot> {
+    await this.source.requireAvailable(id)
+    let snapshot: AttachmentSnapshot
+    try {
+      snapshot = await this.diagnostics.measure('session.read', { sessionId: id }, async () => ({
+        ...await this.ctx.sessionQuery.readSession(id), attachmentReceipts: await this.images.readReceipts(id),
+      }))
+    } catch (error) {
+      if (!(error instanceof Error && error.name === 'AbortError')) this.source.markReadFailed(id)
+      throw error
     }
-    return sessionVisible({ id, ...(header.origin ? { origin: header.origin } : {}), blank: !hasTurn }, this.archived, this.presence.selected())
-  }
-  async read(id: SessionId): Promise<SessionLogSnapshot> {
-    if (!await this.visible(id)) throw new BridgeError('SESSION_NOT_FOUND', 'The session is not visible in DSH.')
-    const snapshot = await this.ctx.sessionQuery.readSession(id)
-    if (!await this.visible(id)) throw new BridgeError('SESSION_NOT_FOUND', 'The session is no longer visible in DSH.')
+    await this.source.requireAvailable(id)
     return snapshot
   }
 
-  async send(id: SessionId, text: string, requestId: string, cwd?: string, create = false): Promise<void> {
-    if (!text.trim() || text.length > 1_000_000 || !requestId || requestId.length > 512) {
+  async send(id: SessionId, text: string, requestId: string, cwd?: string, create = false,
+    selections: Selections = {}, agentPreset?: string, signal = new AbortController().signal,
+    images: readonly StagedImage[] = [], platformId?: string): Promise<void> {
+    if ((!text.trim() && !images.length) || text.length > 1_000_000 || !requestId || requestId.length > 512) {
       throw new BridgeError('INVALID_PARAMS', 'A text message and stable client message ID are required.')
     }
-    const previous = this.writes.get(id) ?? Promise.resolve()
-    const task = previous.catch(() => undefined).then(async () => {
-      if (this.closed) throw new Error('DSH runtime is disposed')
-      const agents = this.ctx.get('agents')
-      if (!agents) throw new BridgeError('UNSUPPORTED_OPERATION', 'DSH Agent service is not available.')
-      let agent = agents.get(id)
-      // A failed storage read must never be mistaken for a new session.
-      const exists = agent || !create || (await this.ctx.sessionQuery.listSessions()).some(r => r.header.id === id)
-      const log = agent ? { session: agent.session.header, events: agent.session.snapshotEvents() }
+    await this.write(id, signal, async () => {
+      await this.source.refresh()
+      if (!create || this.source.archived.has(id)) await this.source.requireAvailable(id)
+      const live = this.ctx.get('agents')?.get(id)
+      const exists = live || !create || (await this.ctx.sessionQuery.listSessions()).some(r => r.header.id === id)
+      const log = live ? { session: live.session.header, events: live.session.snapshotEvents() }
         : exists ? await this.ctx.sessionQuery.readSession(id) : undefined
-      if (log) this.turns.set(id, log.events.some(e => e.type === 'turn/start'))
-      if (create && log && (log.session.origin === 'subagent' || this.archived.has(id))) throw new BridgeError('SESSION_NOT_FOUND', 'The session is not visible in DSH.')
+      if (create && log && (log.session.origin === 'subagent' || this.source.archived.has(id))) throw new BridgeError('SESSION_NOT_FOUND', 'The session is not visible in DSH.')
       if (!create && !await this.visible(id)) throw new BridgeError('SESSION_NOT_FOUND', 'The session is not visible in DSH.')
-      const messageId = userMessageId(id, requestId) as UserMessage['id']
-      // Inbox acceptance is durable too, before user/message is appended by the driver.
-      const accepted = log?.events.some(event => event.type === 'user/message' ? event.data.id === messageId
-        : event.type === 'agent/inbox/spliced' && event.data.inserted.some(message => message.id === messageId))
-      if (accepted) return
-      if (!agent) {
-        const headerEvent = log?.events.findLast(e => e.type === 'request/header')
-        const loggedConfig = record(record(headerEvent?.data).header).config
-        const route = loggedConfig ? record(loggedConfig) : this.ctx.get('agentDefaultModel')?.currentSelection()
-        if (!route || typeof route.provider !== 'string' || !route.provider || typeof route.model !== 'string' || !route.model) {
-          throw new BridgeError('INVALID_PARAMS', '请先在 DSH 中配置默认模型。')
-        }
-        const agentOptions = { provider: route.provider, model: route.model,
-          ...(typeof route.reasoningEffort === 'string' ? { reasoningEffort: ReasoningEffortId(route.reasoningEffort) } : {}) }
-        const lastPreset = log?.events.findLast(e => e.type === 'agent-preset/selected')
-        const presetId = lastPreset?.type === 'agent-preset/selected' ? lastPreset.data.agentPreset : log?.session.agentPreset
-        const presets = this.ctx.get('agentPresets')
-        const preset = presets ? await presets.resolve(presetId) : undefined
-        const setup = preset && presets ? async (scope: Context) => { await presets.mount(scope, preset.id) } : undefined
-        let path: string | undefined
-        if (!log) {
-          if (!cwd || !isAbsolute(cwd)) throw new BridgeError('INVALID_PARAMS', 'Choose an absolute workspace directory.')
-          path = await realpath(cwd)
-          if (!(await stat(path)).isDirectory()) throw new BridgeError('INVALID_PARAMS', 'The workspace must be a directory.')
-        }
+      const messageId = userMessageId(id, requestId)
+      const receipt = (await this.images.readReceipts(id))[messageId]
+      if (receipt && (receipt.fingerprint !== imageFingerprint(text, images) || receipt.platformId !== platformId)) {
+        throw new BridgeError('INVALID_PARAMS', 'This message ID was already used with different attachments.')
+      }
+      let path: string | undefined
+      let fingerprint: string | undefined
+      const intent = create ? await this.creations.read(id) : null
+      if (create) {
+        if (!cwd || !isAbsolute(cwd)) throw new BridgeError('INVALID_PARAMS', 'Choose an absolute workspace directory.')
         try {
-          const handle = log ? await agents.resume({ resumeSessionId: id, agentOptions, ...(setup ? { setup } : {}) })
-            : await agents.create({ sessionId: id, agentOptions, meta: { cwd: path!, ...(preset ? { agentPreset: preset.id } : {}) }, ...(setup ? { setup } : {}) })
-          this.owned.add(handle)
-          agent = handle.agent
-        } catch (error) {
-          // The Desktop may have resumed the same native session during setup.
-          agent = agents.get(id)
-          if (!agent) throw error
+          path = await realpath(cwd)
+          if (!(await stat(path)).isDirectory()) throw new Error('not a directory')
+        } catch { throw new BridgeError('INVALID_PARAMS', 'The workspace must be an accessible directory on the DSH device.') }
+        fingerprint = digest(canonicalJson({ requestId, content: text, cwd: path, agentPreset: agentPreset ?? null,
+          model: selections.model ?? null, permission: selections.permission ?? null,
+          ...(images.length ? { attachments: imageReferences(images).map(image => ({ ...image })) } : {}) }))
+        if (intent && (intent.requestId !== requestId || intent.fingerprint !== fingerprint)) {
+          throw new BridgeError('INVALID_PARAMS', 'This session was created with different initialization parameters.')
         }
-        if (path) {
-          const workspace = await this.ctx.workspaceRegistry.create(path)
-          await workspace.attachSession(id)
-        }
+        if (log && log.session.cwd !== path) throw new BridgeError('INVALID_PARAMS', 'The session already uses a different workspace.')
       }
-      if (this.closed || this.archived.has(id) || (!create && !await this.visible(id))) {
-        throw new BridgeError('SESSION_NOT_FOUND', 'The session is no longer visible in DSH.')
+      // Admission is durable before the loop records user/message. Retrying never resets configuration.
+      const isAcceptedMessage = (message: { id: string, source: unknown }) => message.id === messageId || record(message.source).rpcId === messageId
+      const accepted = log?.events.some(event => event.type === 'user/message' ? isAcceptedMessage(event.data)
+        : event.type === 'agent/inbox/spliced' && event.data.inserted.some(isAcceptedMessage))
+      if (accepted) {
+        if (images.length && !receipt) throw new BridgeError('INVALID_PARAMS', 'This message ID was already accepted without attachments.')
+        return
       }
-      const message = freezeMessage<UserMessage>({ id: messageId, role: 'user',
-        source: { kind: 'user' }, content: [{ type: 'text', text }] })
-      agent.followup(message)
+      const store = this.ctx.get('attachments')
+      if (images.length && (!store || !platformId)) throw new BridgeError('UNSUPPORTED_OPERATION', 'DSH image attachments are unavailable.')
+      const imageParts = images.length ? await this.images.prepare(images, store!, signal) : []
+      await this.configuration.validate(selections, create)
+      if (create) {
+        if (log?.events.some(event => event.type === 'turn/start')) throw new BridgeError('INVALID_PARAMS', 'This session has already started. Continue it with a new message.')
+        const preset = await this.configuration.validatePreset(agentPreset)
+        if (!intent) await this.creations.write(id, { requestId, fingerprint: fingerprint! })
+        await this.configuration.controller().create({ sessionId: id, cwd: path!, agentPreset: preset })
+        const workspace = await this.ctx.workspaceRegistry.create(path!)
+        await workspace.attachSession(id)
+      }
+      const agent = await this.configuration.agent(id)
+      await this.configuration.apply(agent, selections, create, signal)
+      if (this.source.archived.has(id)) await this.source.requireAvailable(id)
+      if (this.closed || (!create && !await this.visible(id))) throw new BridgeError('SESSION_NOT_FOUND', 'The session is no longer visible in DSH.')
+      if (images.length && !receipt) await this.images.remember(id, messageId, {
+        platformId: platformId!, fingerprint: imageFingerprint(text, images), attachments: imageReferences(images),
+      })
+      await this.configuration.controller().prompt({ sessionId: id, requestId: messageId as SessionPromptRequest['requestId'],
+        mode: 'queue', content: [...(text ? [{ type: 'text' as const, text }] : []), ...imageParts] }, signal)
       await this.ctx.sessions.flush(agent.session)
     })
+  }
+
+  async updateSelections(id: SessionId, selections: Selections, signal: AbortSignal) {
+    return this.write(id, signal, async () => {
+      await this.source.refresh()
+      await this.source.requireAvailable(id)
+      await this.configuration.validate(selections)
+      const agent = await this.configuration.agent(id)
+      try { await this.configuration.apply(agent, selections, false, signal) }
+      finally { this.emit({ type: 'status', id }) }
+      return this.configuration.state(id)
+    })
+  }
+
+  /** Hold admission only; no operation waits for an Agent turn to finish. */
+  private async write<T>(id: string, signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
+    const previous = this.writes.get(id) ?? Promise.resolve()
+    const task = previous.catch(() => undefined).then(() => {
+      signal.throwIfAborted()
+      if (this.closed) throw new BridgeError('DSH_SERVICE_UNAVAILABLE', 'DSH bridge is closing.', true)
+      return operation()
+    })
     this.writes.set(id, task)
-    try { await task } finally { if (this.writes.get(id) === task) this.writes.delete(id) }
+    try { return await task } finally { if (this.writes.get(id) === task) this.writes.delete(id) }
   }
   async interrupt(id: SessionId): Promise<void> {
-    if (!await this.visible(id)) throw new BridgeError('SESSION_NOT_FOUND', 'The session is not visible in DSH.')
+    await this.source.requireAvailable(id)
     this.ctx.get('agents')?.get(id)?.cancel({ kind: 'user' })
   }
   async close(): Promise<void> {
     this.closed = true
-    clearTimeout(this.workspaceTimer)
     this.presence.close()
     await this.questions.close()
     this.listeners.clear()
     await Promise.allSettled([...this.writes.values()])
-    await Promise.allSettled([...this.owned].map(handle => handle.dispose()))
   }
 }

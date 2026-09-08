@@ -17,13 +17,35 @@ export interface Binding {
 export type BoundDevice = Binding & { connectorId: string; connectorToken: string }
 export class DeviceRecoveryRequired extends Error {
   constructor(readonly connectorId: string, readonly reason: 'deleted' | 'disconnected') {
-    super(reason === 'deleted' ? '本机设备已被删除，是否重新创建？' : '本机设备已断开连接，是否重新连接？')
+    super(reason === 'deleted' ? '本机设备已被删除，请重新配置以恢复连接。' : '本机设备已断开连接，是否重新连接？')
   }
 }
 
 function bindingPath(root: string, account: Account): string {
   const key = createHash('sha256').update(`${account.apiBaseUrl}\n${account.userId}`).digest('hex')
   return join(root, 'bindings', `${key}.json`)
+}
+
+/** Loading an identity for display never renews credentials or contacts the server. */
+export async function readBoundDevice(root: string, account: Account): Promise<BoundDevice | null> {
+  const binding = await readJson<Binding>(bindingPath(root, account))
+  return binding?.connectorId && binding.connectorToken ? binding as BoundDevice : null
+}
+
+/** Process maintenance stays on the existing device, independent of the shared discovery order. */
+export async function verifyBoundDevice(binding: BoundDevice, account: Account, api: AccountApi, signal: AbortSignal): Promise<BoundDevice> {
+  let device
+  try { device = await api.device(account.accessToken, binding.connectorId, signal) }
+  catch (error) {
+    if (error instanceof ApiError && error.status === 404) throw new DeviceRecoveryRequired(binding.connectorId, 'deleted')
+    throw error
+  }
+  signal.throwIfAborted()
+  if (device.userId !== account.userId) throw new Error('设备归属与当前账号不一致。')
+  if (!await api.verifyConnector(binding.connectorId, binding.connectorToken, signal)) {
+    throw new DeviceRecoveryRequired(binding.connectorId, 'disconnected')
+  }
+  return { ...binding, name: device.name }
 }
 
 export async function ensureBinding(root: string, account: Account, api: AccountApi, signal: AbortSignal, options: {
@@ -49,7 +71,9 @@ export async function ensureBinding(root: string, account: Account, api: Account
     verified = Boolean(binding.connectorToken && await api.verifyConnector(binding.connectorId, binding.connectorToken, signal))
     if (!verified) throw new DeviceRecoveryRequired(binding.connectorId, 'disconnected')
   }
-  const matchedId = candidates.find(id => owned.has(id))
+  // Automatic startup resumes the saved identity. A new OAuth authorization
+  // still follows the shared Desktop discovery order when choosing a device.
+  const matchedId = !options.renew && binding?.connectorId ? binding.connectorId : candidates.find(id => owned.has(id))
   if (matchedId) {
     const device = owned.get(matchedId)!
     const cached = binding?.connectorId === matchedId ? binding : null
@@ -61,18 +85,15 @@ export async function ensureBinding(root: string, account: Account, api: Account
       connectorId: matchedId, connectorToken,
     }
     await writeJson(path, complete)
-    // Backfill older private bindings only after server ownership and credentials
-    // are verified. A failed publish can retry with this persisted credential.
-    await machine.recordConnectorId(complete.connectorId)
     return complete
   }
   binding ??= { installationId: randomUUID(), name: await systemDeviceName() }
-  return registerBinding(path, binding, account, api, signal, machine)
+  return registerBinding(path, binding, account, api, signal)
 }
 
 /** Explicit recovery always targets this binding, never another shared Desktop ID. */
 export async function recoverBinding(root: string, account: Account, api: AccountApi, signal: AbortSignal,
-  id: string, action: 'reconnect' | 'recreate', machine = localMachineRegistry()): Promise<BoundDevice> {
+  id: string, action: 'reconnect' | 'recreate'): Promise<BoundDevice> {
   const path = bindingPath(root, account)
   const binding = await readJson<Binding>(path)
   if (!binding || (binding.connectorId !== id && binding.replacesConnectorId !== id)) throw new Error('本机设备记录已变化，请重新打开插件。')
@@ -91,18 +112,17 @@ export async function recoverBinding(root: string, account: Account, api: Accoun
     }
     const complete = { installationId: binding.installationId, name: device.name, connectorId: id, connectorToken }
     await writeJson(path, complete)
-    await machine.recordConnectorId(id)
     signal.throwIfAborted()
     return complete
   }
   if (device) throw new DeviceRecoveryRequired(id, 'disconnected')
   const pending = binding.replacesConnectorId === id ? binding
     : { installationId: randomUUID(), name: await systemDeviceName(), replacesConnectorId: id }
-  return registerBinding(path, pending, account, api, signal, machine)
+  return registerBinding(path, pending, account, api, signal)
 }
 
 async function registerBinding(path: string, binding: Binding, account: Account, api: AccountApi,
-  signal: AbortSignal, machine: LocalMachineRegistry): Promise<BoundDevice> {
+  signal: AbortSignal): Promise<BoundDevice> {
   // Persist the registration key before the request: even a lost response can
   // be recovered without creating a second device on the server.
   await writeJson(path, binding)
@@ -122,8 +142,7 @@ async function registerBinding(path: string, binding: Binding, account: Account,
   if (created.connector.userId !== account.userId) throw new Error('注册设备的账号不一致。')
   const complete = { installationId: binding.installationId, name: binding.name, connectorId: created.connector.id, connectorToken: created.connectorToken }
   await writeJson(path, complete)
-  // Do not report pairing success before Desktop can discover the new identity.
-  // Keep the private binding on failure so retry never registers another device.
-  await machine.recordConnectorId(complete.connectorId)
+  // Python records this ID when startup is accepted. Retain the private binding
+  // if startup fails, so retry does not register another device.
   return complete
 }

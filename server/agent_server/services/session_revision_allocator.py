@@ -150,6 +150,21 @@ class SessionRevisionAllocator:
             epoch=await self._coordinator.server_epoch(),
         )
 
+    async def discard_session(self, session_id: str) -> None:
+        """Drop a deleted session's allocation state while holding its fence."""
+        if self.distributed:
+            async with self._coordinator.pipeline_while_lock_owned(
+                self._lock_name(session_id)
+            ) as pipeline:
+                pipeline.delete(
+                    self._head_key(session_id),
+                    self._lease_end_key(session_id),
+                    self._lease_epoch_key(session_id),
+                    self._published_key(session_id),
+                )
+        self._observed_epochs.pop(session_id, None)
+        self._local_published.pop(session_id, None)
+
     async def has_unpublished_live_revision(self, session_id: str) -> bool:
         """Return whether an accepted live revision still needs publication.
 

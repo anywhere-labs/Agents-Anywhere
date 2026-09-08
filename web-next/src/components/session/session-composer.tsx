@@ -44,7 +44,7 @@ import {
   selectionIdForPermissionCatalog,
 } from "@/components/session/catalog-selection"
 import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
-import { CAPABILITY, capabilityIsUsable, findCapability } from "@/components/session/capabilities"
+import { CAPABILITY, capabilityIsUsable, findCapability, attachmentMimeTypes } from "@/components/session/capabilities"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 
@@ -101,26 +101,15 @@ export function SessionComposer({
 }) {
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
-  const {
-    attachments,
-    isDragging,
-    uploadsPending,
-    uploadFailed,
-    allUploaded,
-    add,
-    remove,
-    clear,
-    onDragEnter,
-    onDragLeave,
-    onDragOver,
-    onDrop,
-  } = useAttachments({ sessionId: creatingSession ? undefined : session.id, token })
   const composerRef = React.useRef<HTMLDivElement | null>(null)
   const valueRef = React.useRef(value)
   valueRef.current = value
   const composerWidth = useElementWidth(composerRef)
   const runtimeStatus = effectiveRuntimeStatus(runtimeState, session)
   const runtimeSelections = runtimeState?.selections ?? {}
+  const dsh = sessionRuntimeType(session) === "dsh"
+  const actualModel = runtimeState?.metadata.modelSelection as { provider?: string; model?: string; reasoningEffort?: string } | undefined
+  const actualPermission = runtimeState?.metadata.permissionPreset as { id?: string; name?: string } | undefined
   const runtimeScope = {
     runtimeId: sessionRuntimeId(session),
     runtimeType: sessionRuntimeType(session),
@@ -154,6 +143,23 @@ export function SessionComposer({
   )
   const canUseEffortCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.effortCatalog, runtimeScope)
   const canUseAttachments = capabilityIsUsable(effectiveCapabilities, CAPABILITY.attachment, runtimeScope)
+  const allowedMimeTypes = React.useMemo(() => attachmentMimeTypes(effectiveCapabilities, runtimeScope), [effectiveCapabilities, runtimeScope])
+  const {
+    attachments,
+    attachmentsAllowed,
+    attachmentError,
+    isDragging,
+    uploadsPending,
+    uploadFailed,
+    allUploaded,
+    add,
+    remove,
+    clear,
+    onDragEnter,
+    onDragLeave,
+    onDragOver,
+    onDrop,
+  } = useAttachments({ sessionId: creatingSession ? undefined : session.id, token, enabled: canUseAttachments, allowedMimeTypes })
   const canSend =
     canUseSendMessage &&
     !creatingSession &&
@@ -162,7 +168,7 @@ export function SessionComposer({
     acceptsUserInput
   const canRunCommand = !creatingSession && !sending && !interrupting && acceptsUserInput
   const hasInput = value.trim().length > 0 || attachments.length > 0
-  const attachmentsReady = attachments.length === 0 || (allUploaded && !uploadsPending && !uploadFailed)
+  const attachmentsReady = attachmentsAllowed && (attachments.length === 0 || (allUploaded && !uploadsPending && !uploadFailed))
   const activeSessionCanInterrupt = Boolean(
     connectorOnline &&
     interruptCapability?.supported &&
@@ -205,23 +211,24 @@ export function SessionComposer({
   })) ?? []
   const selectedModelItem = modelItems.find((item) => item.id === selectedModel)
   const effortItems = selectedModelItem?.reasoningItems ?? []
-  const modelSelectionValue = modelIdsForSelectionId(modelCatalog, runtimeSelections.model ?? null)
-  const permissionSelectionValue = permissionIdForSelectionId(permissionCatalog, runtimeSelections.permission ?? null)
+  const modelSelectionValue = modelIdsForSelectionId(modelCatalog, runtimeSelections.model ?? null, dsh)
+  const permissionSelectionValue = permissionIdForSelectionId(permissionCatalog, runtimeSelections.permission ?? null, dsh)
   const permissionValue = permissionSelectionValue
   const modelValue = modelSelectionValue?.modelId ?? ""
   const effortValue = modelSelectionValue?.reasoningId ?? ""
   const permissionLabel =
-    permissionItems.find((item) => item.id === selectedPermissionMode)?.label ?? tNew("permissionMode")
-  const modelLabel = selectedModelItem?.label ?? tNew("model")
-  const effortLabel = effortItems.find((item) => item.id === selectedReasoning)?.label ?? tNew("reasoning")
+    permissionItems.find((item) => item.id === selectedPermissionMode)?.label ?? (dsh ? actualPermission?.name : null) ?? tNew("permissionMode")
+  const modelLabel = selectedModelItem?.label ?? (dsh && actualModel?.model ? `${actualModel.model}（${actualModel.provider}）` : tNew("model"))
+  const effortLabel = effortItems.find((item) => item.id === selectedReasoning)?.label ?? (dsh ? actualModel?.reasoningEffort : null) ?? tNew("reasoning")
   const hasSelectors = Boolean(permissionItems.length > 0 || modelItems.length > 0)
   const compactSelectors = hasSelectors && composerWidth > 0 && composerWidth < 560
-  const permissionSelectorDisabled = creatingSession || sourceUnavailable || !canUsePermissionCatalog
-  const modelSelectorDisabled = creatingSession || sourceUnavailable || !canUseModelCatalog
-  const effortSelectorDisabled = creatingSession || sourceUnavailable || !canUseEffortCatalog
+  const permissionSelectorDisabled = creatingSession || sourceUnavailable || !connectorOnline || !canUsePermissionCatalog
+  const modelSelectorDisabled = creatingSession || sourceUnavailable || !connectorOnline || !canUseModelCatalog
+  const effortSelectorDisabled = creatingSession || sourceUnavailable || !connectorOnline || !canUseEffortCatalog
   const selectorsDisabled = permissionSelectorDisabled && modelSelectorDisabled
 
   React.useEffect(() => {
+    if (dsh) { setSelectedPermissionMode(permissionValue); return }
     const hasRuntimePermission = permissionItems.some((item) => item.id === permissionValue && item.enabled)
     const nextPermission = hasRuntimePermission
       ? permissionValue
@@ -233,9 +240,10 @@ export function SessionComposer({
         ? nextPermission
         : current,
     )
-  }, [permissionItems, permissionValue])
+  }, [dsh, permissionItems, permissionValue])
 
   React.useEffect(() => {
+    if (dsh) { setSelectedModel(modelValue); return }
     const hasRuntimeModel = modelItems.some((item) => item.id === modelValue && item.enabled)
     const nextModel = hasRuntimeModel
       ? modelValue
@@ -245,9 +253,10 @@ export function SessionComposer({
     setSelectedModel((current) =>
       hasRuntimeModel || !current || !modelItems.some((item) => item.id === current && item.enabled) ? nextModel : current,
     )
-  }, [modelItems, modelValue])
+  }, [dsh, modelItems, modelValue])
 
   React.useEffect(() => {
+    if (dsh) { setSelectedReasoning(effortValue); return }
     const hasRuntimeEffort = effortItems.some((item) => item.id === effortValue && item.enabled)
     const nextEffort = hasRuntimeEffort
       ? effortValue
@@ -257,9 +266,9 @@ export function SessionComposer({
     setSelectedReasoning((current) =>
       hasRuntimeEffort || !current || !effortItems.some((item) => item.id === current && item.enabled) ? nextEffort : current,
     )
-  }, [effortItems, effortValue])
-  const selectedModelSelection = selectionIdForModelCatalog(modelCatalog, selectedModel, selectedReasoning)
-  const selectedPermissionSelection = selectionIdForPermissionCatalog(permissionCatalog, selectedPermissionMode)
+  }, [dsh, effortItems, effortValue])
+  const selectedModelSelection = selectionIdForModelCatalog(modelCatalog, selectedModel, selectedReasoning) ?? (dsh ? runtimeSelections.model : null)
+  const selectedPermissionSelection = selectionIdForPermissionCatalog(permissionCatalog, selectedPermissionMode) ?? (dsh && actualPermission?.id !== 'custom' ? runtimeSelections.permission : null)
   const choosePermission = (permissionId: string) => {
     if (permissionId === selectedPermissionMode) return
     const previousPermission = selectedPermissionMode
@@ -267,7 +276,7 @@ export function SessionComposer({
     if (!nextSelection) return
     setSelectedPermissionMode(permissionId)
     void onSelectionChange({ permission: nextSelection }).then((ok) => {
-      if (!ok) setSelectedPermissionMode(previousPermission)
+      if (!ok && !dsh) setSelectedPermissionMode(previousPermission)
     })
   }
   const chooseModel = (modelId: string, reasoningId: string) => {
@@ -279,7 +288,7 @@ export function SessionComposer({
     setSelectedModel(modelId)
     setSelectedReasoning(reasoningId)
     void onSelectionChange({ model: nextSelection }).then((ok) => {
-      if (!ok) {
+      if (!ok && !dsh) {
         setSelectedModel(previousModel)
         setSelectedReasoning(previousReasoning)
       }
@@ -388,6 +397,7 @@ export function SessionComposer({
           ) : null}
           <div className="space-y-3 px-4 pt-4">
             <AttachmentPreviewList attachments={attachments} onRemove={remove} />
+            {attachmentError ? <p role="alert" className="text-xs text-destructive">{attachmentError}</p> : null}
             {showCommandMenu ? (
               <div className="rounded-xl border border-border bg-popover p-1 text-sm shadow-sm">
                 {commandSuggestions.length > 0 ? (
@@ -443,13 +453,9 @@ export function SessionComposer({
               onAttach={add}
               isDragging={isDragging}
               className="size-8"
+              allowedMimeTypes={allowedMimeTypes}
               disabled={!canUseAttachments || sourceUnavailable || creatingSession}
             />
-            {attachments.length > 0 && !canUseAttachments ? (
-              <span className="px-2 text-xs text-amber-600 dark:text-amber-400">
-                {tNew("attachmentsUnsupported")}
-              </span>
-            ) : null}
             {hasSelectors ? (
               compactSelectors ? (
                 <SelectionSettingsDrawer

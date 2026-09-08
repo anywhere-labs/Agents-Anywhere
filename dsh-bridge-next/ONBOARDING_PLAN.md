@@ -1,6 +1,6 @@
 # Onboarding 业务方案
 
-状态：无 AA Desktop 的登录、设备上线、Web Agent 配置、可选手机连接和完成页已实现。按最新开发范围，本轮止于 onboarding 结束，不实现 DSH runtime，也不改造 Connector 的 DSH 适配器。
+状态：无 AA Desktop 的登录、设备上线、Web Agent 配置、可选手机连接和完成页已实现。插件现在另有「登录和连接」「设置」两页，支持在插件内直接扫码连接手机、确认授权和管理本机 Connector；本页后续的下载步骤仅指 Web onboarding。Runtime 的后续实现见 [会话读取](./RUNTIME_READS.md)、[实时同步](./RUNTIME_SYNC_PLAN.md)和[用户问答](./USER_QUESTIONS.md)。
 
 运行与验证说明见 [README](./README.md)。以下同时保留后续 Desktop 和 runtime 的目标设计；尚未接入的部分不代表当前已可用。
 
@@ -33,50 +33,35 @@ Desktop 已安装但暂未运行、没有登录或打开失败，不等于未安
 
 ## 3. 本机共享记录与跨平台路径
 
-### 3.1 固定的是路径规则，不是用户名和磁盘盘符
+### 3.1 固定路径
 
-共享安装信息与本机 Connector ID 历史统一约定为：
-
-```text
-<当前操作系统用户主目录>/.agentsanywhere/machine.json
-```
-
-典型路径：
+共享安装信息、ID 历史和 Connector 运行记录统一使用：
 
 ```text
-macOS:   /Users/<用户名>/.agentsanywhere/machine.json
-Windows: C:\Users\<用户名>\.agentsanywhere\machine.json
+<当前操作系统用户主目录>/.agents-anywhere/connector-runtime.json
 ```
 
-Windows 用户目录可能位于其他盘符，因此不能硬编码 `C:\Users`；macOS 也不能硬编码用户名。两端固定同一组相对路径片段，由操作系统解析用户主目录。
+Node 入口使用 `os.userInfo().homedir`，Python 在 POSIX 读取当前 UID 的系统用户目录，Windows 使用用户主目录。不能硬编码用户名或盘符。路径不随工作目录、仓库、DSH profile、`DSH_HOME` 或 Connector 私有配置目录改变；不同操作系统用户、容器和远程主机不共享此范围。
 
-建议 Desktop 主进程与插件 Host 使用相同的解析规则：以 Node.js `os.userInfo().homedir` 获取操作系统当前用户的主目录，再由 `path.join` 拼接上述片段。这样避免一端的 `HOME` / `USERPROFILE` 环境变量覆盖影响 `os.homedir()`，导致双方读写到不同目录。
-
-`.agentsanywhere` **不会天然存在**。Desktop 写入前必须递归创建目录，读取方要正常处理不存在的目录、文件和权限错误。两个程序必须以同一操作系统用户运行；不同用户、容器或远程主机不共享这一约定。
-
-路径不随工作目录、仓库位置、DSH profile 或 `DSH_HOME` 改变。解析失败时报告检测失败，不悄悄使用另一个路径。
-
-本次选择的 `.agentsanywhere` 专用于新的共享发现约定。仓库已有 Connector 数据目录是 `.agents-anywhere`；不要把二者误认为同一路径，也不要在本次开发中静默迁移既有 Connector 配置和凭据。
-
-参考：[Node.js OS API](https://nodejs.org/api/os.html#osuserinfooptions)、[递归创建目录](https://nodejs.org/api/fs.html#fspromisesmkdirpath-options)。
+旧 `.agentsanywhere/machine.json` 和 `desktop/install.json` 由 Python 首次成功写入时迁移；Host 只提供兼容读取，不在检测时重写文件。Connector 配置和账号凭据保持在各自私有目录。
 
 ### 3.2 记录内容与写入者
 
-记录包含 `version`、`desktop` 安装信息和有序 `connectorIds` 历史列表。macOS 记录 `.app` 与内部可执行文件；Windows 记录实际 `.exe`，不假定安装在默认目录。开发模式也写入，额外标记 `packaged: false`，保存 Electron 路径与 Desktop 项目启动参数。完整约定见[本机共享记录契约](../contracts/local-machine/1.0/README.md)。
+记录为 `version: 2`，包含可选的 `desktop` 安装信息、`runtime` 运行记录和有序 `connectorIds`。完整字段见[本机共享记录 v2 契约](../contracts/local-machine/2.0/README.md)。
 
-- 正式运行的 Desktop 负责记录自身真实安装地址，不能根据工作目录推测。
-- 记录不放 user token、Connector token 等凭据。
-- 使用原子替换方式更新，避免插件读到半份 JSON。
-- 不记录需要每次启动变化的检查时间戳，以免破坏“内容正确就不重写”的约定。
-- Desktop 只在创建新本机设备成功返回 ID 时追加历史，去重且保持首次记录顺序；已有设备 `/revoke` 重连及远程设备不追加。未来共享字段更新时保留其他字段，不另建相互漂移的文件。
-- Desktop 启动检查、写入和新设备记录均已实现。插件优先读取新文件，新文件不存在时兼容旧 `desktop/install.json`；权限及损坏错误正常报告，可执行文件已不存在时保留 ID 并允许 Web 流程。
+- Desktop 每次启动校验真实安装位置和可执行文件，只更新 `desktop`；内容相同不重写。开发模式同样记录 Electron、项目路径和启动参数。
+- Python Connector 负责 `runtime` 与 ID 历史：实际启动时写入启动来源和自身 PID，接受配置后追加缺失 ID，CLI 和已有绑定重连也适用；去重并保持首次顺序。
+- 启动互斥完全由 Python 执行。只检查已有 PID 是否仍对应原来的 Connector 进程；PID 复用和无关进程不阻塞启动，无法核验时报错。后端连接停止但 RPC 进程仍存活时继续互斥。
+- 冲突通过 RPC `-32009 / connector_already_running` 返回。Desktop 与插件展示可重试提示并保留私有绑定，结束占用方 Connector 进程后重新请求，不自动抢占或重复注册。
+- 插件只读安装信息和 ID 历史，不写共享记录、不迁移、不清除 PID。Desktop 和 Python 用共同的短期事务合并各自字段，原子发布并保留未知字段。
+- 共享记录不包含用户或 Connector token。损坏或未知版本报错，不覆盖为默认值。
 
 ### 3.3 Desktop 每次启动都检查
 
 1. 取得当前应用实际安装位置，验证应用身份和启动目标。
 2. 读取固定路径的已有记录，并验证记录指向的位置。
 3. 若记录正确且与当前实际位置一致，保留文件，不重复写入。
-4. 若没有记录、记录损坏、地址失效或安装位置改变，则更新为本次验证过的地址。
+4. 若没有安装记录、安装字段失效或位置改变，则更新为本次验证过的地址；整个文件损坏或版本未知时报错，保留内容。
 5. 写入失败要暴露诊断信息；不能因为有“首次初始化完成”标记而跳过检查。
 
 **检查每次执行；写入只在必要时发生。**
@@ -90,7 +75,7 @@ Windows 用户目录可能位于其他盘符，因此不能硬编码 `C:\Users`�
 
 还要覆盖“安装后从未启动 Desktop”和“卸载后残留记录”：只靠首次启动写文件无法完整判定安装情况。后续 Desktop 接入需通过安装器同步写入记录，或由检测器补查系统注册信息及有限的常见位置；未注册且无法确认的情况应说明检测结果，而不是断言一定未安装。插件进入流程前必须先读约定文件，补查用于处理文件缺失或失效。
 
-在新旧管理模式之间切换时，要先确认原 Connector 的拥有者和退出状态，避免 Desktop 与插件同时管理同一设备。首期不实现自动迁移或双进程接管。
+在新旧管理模式之间切换时，由新启动的 Python Connector 检查原 Connector 进程是否退出。入口处理 RPC 冲突，首期不实现自动接管。
 
 ## 4. 统一的 onboarding 步骤
 
@@ -237,7 +222,7 @@ Web 统一配置中增加/明确 `desktopDownloadUrl`、`landingPageUrl` 与应�
 
 下一阶段先手动验收现有 Web 引导链路，再按 E 阶段接入 DSH 端点、运行时业务和 Connector 薄转发。引导完成不要求本轮尚未实现的 DSH runtime 就绪。
 
-Desktop 的启动记录写入、专门 onboarding 页面、协议唤起和首次完成标记作为后续一条工作线；共享文件格式和流程上下文先在本方案锁定，便于 Desktop 负责方接入。
+Desktop 的安装信息写入及 Python 启动互斥已接入；专门 onboarding 页面、协议唤起和首次完成标记作为后续一条工作线。
 
 首次开发不自动迁移已有 Desktop 或旧插件的凭据和进程。实现使用独立测试数据，启动服务和真实账号联调由用户明确发起。
 

@@ -415,6 +415,9 @@ internal enum class RuntimePermissionTranslation {
     ClaudeAuto,
     ClaudeDontAsk,
     ClaudeBypassPermissions,
+    DshReadOnly,
+    DshWorkspaceWrite,
+    DshFullAccess,
 }
 
 internal fun runtimePermissionTranslation(
@@ -427,6 +430,14 @@ internal fun runtimePermissionTranslation(
     permissionTranslationByLabelKey(labelKey)?.let { return it }
 
     val normalizedId = permissionId.trim().lowercase()
+    if (runtime.orEmpty().trim().equals("dsh", ignoreCase = true)) {
+        return when (metadata["preset"] as? String ?: normalizedId) {
+            "read-only" -> RuntimePermissionTranslation.DshReadOnly
+            "workspace-write" -> RuntimePermissionTranslation.DshWorkspaceWrite
+            "danger-full-access" -> RuntimePermissionTranslation.DshFullAccess
+            else -> null
+        }
+    }
     return when (normalizedId) {
         "request_approval" -> RuntimePermissionTranslation.RequestApproval
         "auto_review" -> RuntimePermissionTranslation.AutoReview
@@ -449,6 +460,9 @@ internal fun runtimePermissionTranslation(
 
 private fun permissionTranslationByLabelKey(labelKey: String?): RuntimePermissionTranslation? =
     when (labelKey) {
+        "dashboard.new.permissionModes.dsh.readOnly.label" -> RuntimePermissionTranslation.DshReadOnly
+        "dashboard.new.permissionModes.dsh.workspaceWrite.label" -> RuntimePermissionTranslation.DshWorkspaceWrite
+        "dashboard.new.permissionModes.dsh.fullAccess.label" -> RuntimePermissionTranslation.DshFullAccess
         "dashboard.new.permissionModes.requestApproval.label" -> RuntimePermissionTranslation.RequestApproval
         "dashboard.new.permissionModes.autoReview.label" -> RuntimePermissionTranslation.AutoReview
         "dashboard.new.permissionModes.fullAccess.label" -> RuntimePermissionTranslation.FullAccess

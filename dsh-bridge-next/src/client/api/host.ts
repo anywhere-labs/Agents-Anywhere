@@ -11,8 +11,16 @@ export function createHostApi(rpc: HostRpc): OnboardingHostApi {
     return result.value as T
   }
   return {
+    readBridgeLogs: () => call('readBridgeLogs'),
     inspect: () => call('inspect'), begin: input => call('begin', input ? { input } : {}),
     cancel: () => call('cancel'), logout: () => call('logout'),
     recoverDevice: action => call('recoverDevice', { action }),
+    controlConnector: action => call('controlConnector', { action }),
+    saveConnectorSettings: settings => call('saveConnectorSettings', { settings }),
+    openConnectorFolder: folder => call('openConnectorFolder', { folder }),
+    resetConnector: forceLocal => call('resetConnector', { forceLocal }),
+    createMobileLogin: () => call('createMobileLogin'),
+    inspectMobileLogin: id => call('inspectMobileLogin', { id }),
+    confirmMobileLogin: (id, approved) => call('confirmMobileLogin', { id, approved }),
   }
 }

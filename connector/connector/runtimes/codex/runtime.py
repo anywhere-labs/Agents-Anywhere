@@ -16,6 +16,7 @@ from connector.runtime_protocol import (
     RuntimeIdentity,
     RuntimeModelCatalog,
     RuntimeOperationResult,
+    RuntimeUnsupportedError,
     RuntimePermissionCatalog,
     RuntimeSessionSourceStateCache,
     RuntimeSessionStateCache,
@@ -275,7 +276,11 @@ class CodexRuntime(AgentRuntime):
         selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
+        *,
+        runtime_options: Mapping[str, Any] | None = None,
     ) -> RuntimeOperationResult:
+        if runtime_options:
+            raise RuntimeUnsupportedError("runtimeOptions")
         return await self._turns.create_and_start_session(
             session_id=session_id,
             content=content,

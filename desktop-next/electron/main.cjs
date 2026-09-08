@@ -148,8 +148,7 @@ function migrateLegacyConnectorDataDir() {
 }
 
 function sharedConnectorRuntimePath() {
-  const configPath = state.configPath || sharedConnectorConfigPath();
-  return path.join(path.dirname(configPath), "connector-runtime.json");
+  return path.join(os.userInfo().homedir, ".agents-anywhere", "connector-runtime.json");
 }
 
 function defaultConnectorStatePath() {
@@ -700,7 +699,7 @@ async function clearConnectorCredentials() {
       time: new Date().toISOString(),
     });
   }
-  for (const file of [state.configPath, state.runtimePath || sharedConnectorRuntimePath()]) {
+  for (const file of [state.configPath]) {
     if (!file) continue;
     try {
       fs.rmSync(file, { force: true });
@@ -748,7 +747,6 @@ async function factoryReset() {
   const userDataDir = app.getPath("userData");
   const paths = [
     state.configPath,
-    state.runtimePath || sharedConnectorRuntimePath(),
     ...connectorStatePaths(),
     state.settingsPath,
     state.logPath,
@@ -877,7 +875,7 @@ function startRpcProcess(options = {}) {
   }
   rpcProcess = spawn(uvPath, args, {
     cwd: state.connectorDir,
-    env: connectorEnv(),
+    env: { ...connectorEnv(), AA_CONNECTOR_OWNER_KIND: "desktop-next" },
     detached: process.platform !== "win32",
     windowsHide: true,
     stdio: ["pipe", "pipe", "pipe"],

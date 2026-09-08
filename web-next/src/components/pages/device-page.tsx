@@ -482,6 +482,25 @@ export function DevicePage() {
     }
   }
 
+  const openRuntimeConfig = async (runtime: DeviceRuntimeView) => {
+    if (runtime.runtimeType !== "dsh" || !authSession?.accessToken || connector.status !== "online") {
+      setConfigRuntime(runtime)
+      return
+    }
+    setDiscoveringRuntimes(true)
+    try {
+      const overview = await discoverConnectorRuntimeOverview(authSession.accessToken, connector.id)
+      setRuntimes(overview.runtimes)
+      setRuntimeTypes(overview.runtimeTypes)
+      setConfigRuntime(overview.runtimes.find((item) => item.runtimeId === runtime.runtimeId) ?? runtime)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("discoverRuntimesFailed"))
+      setConfigRuntime(runtime)
+    } finally {
+      setDiscoveringRuntimes(false)
+    }
+  }
+
   const stageRuntimeCreation = async (name: string) => {
     if (!createRuntimeType) return
     setPendingRuntimeCreation({
@@ -854,7 +873,8 @@ export function DevicePage() {
                               type="button"
                               variant="ghost"
                               size="icon"
-                              onClick={() => setConfigRuntime(runtime)}
+                              onClick={() => void openRuntimeConfig(runtime)}
+                              disabled={discoveringRuntimes}
                               aria-label={t("configureRuntime", { name: runtimeInstanceName(runtime) })}
                             >
                               <Settings />

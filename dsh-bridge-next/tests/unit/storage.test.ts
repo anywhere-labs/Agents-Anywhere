@@ -1,3 +1,4 @@
+import { machineStatePath } from '../../src/host/desktop/machine-state.js'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
@@ -61,12 +62,12 @@ test('Desktop discovery checks on every call and never rewrites the shared recor
   const home = await mkdtemp(join(tmpdir(), 'aa-home-中文 '))
   try {
     assert.equal((await detectDesktop(home)).status, 'absent')
-    const path = desktopRecordPath(home)
-    await writeJson(path, { version: 1, platform: process.platform, executablePath: process.execPath })
+    const path = machineStatePath(home)
+    await writeJson(path, { version: 2, connectorIds: [], legacyMachineMigrated: true, desktop: { platform: process.platform, executablePath: process.execPath } })
     const before = await stat(path)
     assert.equal((await detectDesktop(home)).status, 'installed')
     assert.equal((await stat(path)).mtimeMs, before.mtimeMs)
-    await writeJson(path, { version: 1, platform: process.platform, executablePath: join(home, 'missing') })
+    await writeJson(path, { version: 2, connectorIds: [], legacyMachineMigrated: true, desktop: { platform: process.platform, executablePath: join(home, 'missing') } })
     assert.equal((await detectDesktop(home)).status, 'absent')
     await writeFile(path, '{broken')
     assert.equal((await detectDesktop(home)).status, 'error')

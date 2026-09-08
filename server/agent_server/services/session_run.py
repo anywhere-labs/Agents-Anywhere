@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -45,6 +46,7 @@ from agent_server.services.device_runtimes import (
 )
 from agent_server.services.effective_capabilities import (
     derive_session_effective_capabilities,
+    read_session_capability_facts,
 )
 from agent_server.services.repository_ports import SessionRunRepository
 
@@ -67,6 +69,10 @@ class SessionRunConflictError(SessionRunError):
 
 class SessionRunUpstreamError(SessionRunError):
     status_code = 502
+
+
+class SessionRunTimeoutError(SessionRunError):
+    status_code = 504
 
 
 class SessionRunInvalidConfigError(SessionRunError):
@@ -193,6 +199,7 @@ class SessionRunService:
                 runtime_id,
                 RUNTIME_ATTACHMENT,
                 user_id=user_id,
+                attachment_media_types=[attachment.mediaType for attachment in payload.attachments],
             )
 
         selections = _selections_from_mapping(payload.selections)
@@ -220,6 +227,8 @@ class SessionRunService:
             params["cwd"] = payload.cwd
         if selections:
             params["selections"] = selections
+        if payload.runtimeOptions:
+            params["runtimeOptions"] = dict(payload.runtimeOptions)
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
         persisted_attachment_refs: list[dict[str, Any]] = []
@@ -398,15 +407,15 @@ class SessionRunService:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
         if not await self._manager.is_online(session.connectorId):
             raise SessionRunConflictError("connector is offline")
+        await self._ensure_session_runtime_running(session, user_id=user_id)
+        runtime_status = await self._read_runtime_status(session)
+        if runtime_status not in {"idle", "error"}:
+            raise SessionRunConflictError(f"session is {runtime_status}")
         await self._require_session_capability(
             session,
             SESSION_SEND_MESSAGE,
             user_id=user_id,
         )
-        await self._ensure_session_runtime_running(session, user_id=user_id)
-        runtime_status = await self._read_runtime_status(session)
-        if runtime_status not in {"idle", "error"}:
-            raise SessionRunConflictError(f"session is {runtime_status}")
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,
@@ -420,15 +429,16 @@ class SessionRunService:
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
         if payload.attachments:
-            await self._require_session_capability(
-                session,
-                RUNTIME_ATTACHMENT,
-                user_id=user_id,
-            )
             attachment_payloads = await self._attachment_payloads(
                 session_id=session_id,
                 user_id=user_id,
                 file_ids=[a.fileId for a in payload.attachments],
+            )
+            await self._require_session_capability(
+                session,
+                RUNTIME_ATTACHMENT,
+                user_id=user_id,
+                attachment_media_types=[item["mediaType"] for item in attachment_payloads],
             )
             params["attachments"] = attachment_payloads
             params["timelineAttachments"] = [_timeline_attachment_payload(item) for item in attachment_payloads]
@@ -622,15 +632,15 @@ class SessionRunService:
             )
         if not await self._manager.is_online(session.connectorId):
             raise SessionRunConflictError("connector is offline")
+        await self._ensure_session_runtime_running(session, user_id=user_id)
+        runtime_status = await self._read_runtime_status(session)
+        if runtime_status != "running":
+            raise SessionRunConflictError("session is not running")
         await self._require_session_capability(
             session,
             SESSION_STEER,
             user_id=user_id,
         )
-        await self._ensure_session_runtime_running(session, user_id=user_id)
-        runtime_status = await self._read_runtime_status(session)
-        if runtime_status != "running":
-            raise SessionRunConflictError("session is not running")
 
         params: dict[str, Any] = {
             "sessionId": session_id,
@@ -646,15 +656,16 @@ class SessionRunService:
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
         if payload.attachments:
-            await self._require_session_capability(
-                session,
-                RUNTIME_ATTACHMENT,
-                user_id=user_id,
-            )
             attachment_payloads = await self._attachment_payloads(
                 session_id=session_id,
                 user_id=user_id,
                 file_ids=[attachment.fileId for attachment in payload.attachments],
+            )
+            await self._require_session_capability(
+                session,
+                RUNTIME_ATTACHMENT,
+                user_id=user_id,
+                attachment_media_types=[item["mediaType"] for item in attachment_payloads],
             )
             params["attachments"] = attachment_payloads
             params["timelineAttachments"] = [
@@ -681,6 +692,7 @@ class SessionRunService:
         capability_id: str,
         *,
         user_id: str,
+        attachment_media_types: list[str] | None = None,
     ) -> None:
         capability_set = ProtocolCapabilitySet.model_validate(
             await self._store.get_protocol_capabilities(
@@ -718,19 +730,32 @@ class SessionRunService:
                 f"runtime capability is unavailable: {capability_id}"
             )
 
+        if attachment_media_types:
+            _validate_attachment_mime_types(capability.metadata, attachment_media_types)
+
     async def _require_session_capability(
         self,
         session: SessionView,
         capability_id: str,
         *,
         user_id: str,
+        attachment_media_types: list[str] | None = None,
     ) -> None:
-        capability_set = ProtocolCapabilitySet.model_validate(
-            await self._store.get_protocol_capabilities(
-                session.connectorId,
-                user_id=user_id,
+        try:
+            capability_set = await read_session_capability_facts(
+                self._manager, session, runtime_id=_session_runtime_id(session),
             )
-        )
+        except ConnectorOfflineError as exc:
+            raise SessionRunConflictError(str(exc)) from exc
+        except TimeoutError as exc:
+            raise SessionRunTimeoutError({
+                "code": "runtime_capabilities_timeout",
+                "message": "connector session capabilities request timed out",
+            }) from exc
+        except ConnectorRpcError as exc:
+            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+        except ValueError as exc:
+            raise SessionRunUpstreamError(str(exc)) from exc
         online_session = session.model_copy(update={"connectorStatus": "online"})
         effective = derive_session_effective_capabilities(
             session=online_session,
@@ -750,6 +775,9 @@ class SessionRunService:
             raise SessionRunConflictError(
                 f"session capability is unavailable: {capability_id}"
             )
+
+        if attachment_media_types:
+            _validate_attachment_mime_types(capability.metadata, attachment_media_types)
 
     async def _require_runtime_instance(
         self,
@@ -1048,3 +1076,18 @@ def _decode_inline_attachment(attachment: InlineAttachmentRef) -> bytes:
                 f"attachment {attachment.fileId} sha256 does not match content"
             )
     return data
+
+
+def _validate_attachment_mime_types(metadata: dict[str, Any], media_types: list[str]) -> None:
+    """Enforce optional runtime MIME restrictions on stored upload metadata."""
+    if "allowedMimeTypes" not in metadata:
+        return
+    raw = metadata["allowedMimeTypes"]
+    allowed = {
+        value.strip().lower() for value in raw if isinstance(value, str)
+        and re.fullmatch(r"[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+", value.strip().lower())
+    } if isinstance(raw, list) else set()
+    for media_type in media_types:
+        normalized = media_type.split(";", 1)[0].strip().lower()
+        if normalized not in allowed:
+            raise SessionRunConflictError(f"attachment type is not supported by this runtime: {normalized}")

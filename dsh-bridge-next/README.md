@@ -1,8 +1,8 @@
 # DSH Bridge Next
 
-Agents Anywhere 的 DSH 插件。当前已实现**没有安装 AA Desktop 时，从 Web 登录到完成 onboarding** 的流程。AA Desktop 与承载插件的 DSH Desktop 是两个应用。
+Agents Anywhere 的 DSH 插件。支持没有安装 AA Desktop 时的账号登录、手机扫码连接、本机 Connector 管理及 Web onboarding。AA Desktop 与承载插件的 DSH Desktop 是两个应用。
 
-职责与后续开发见 [开发计划](./DEVELOPMENT_PLAN.md)，完整产品设计见 [Onboarding 业务方案](./ONBOARDING_PLAN.md)。
+职责与后续开发见 [开发计划](./DEVELOPMENT_PLAN.md)，完整产品设计见 [Onboarding 业务方案](./ONBOARDING_PLAN.md)，检查命令与手动验收见 [验证记录](./VERIFICATION.md)。
 
 ## 已实现
 
@@ -19,17 +19,39 @@ DSH 左侧边栏「设置」上方 → 手机连接 → 云端登录或连接自
 - 插件负责账号、设备凭据和自己启动的 Connector；账号与设备 token 不进入页面状态或跳转 URL。
 - OAuth 使用临时回环端口、state、PKCE S256 和一次性授权码。取消、超时、重复回调有明确处理。
 - 同一账号与服务复用已有设备。重试丢失的注册响应不会重复创建设备，失效凭据可恢复。
+- 本机设备被删除时，点击“重新配置”会先创建并连接新设备，再打开 Web 完整引导。链接携带新设备 ID 和新的流程标识，从欢迎页开始，随后进入设备配置、手机连接和完成页；浏览器未自动打开时可点击“继续配置”。
 - Agent 配置展示设备上全部可添加项，可稍后添加。手机连接可跳过；下载和扫码内容直接嵌入页面。
 - Web 完成页的桌面端下载和官网地址目前为空，显示“暂未开放”和“官网即将上线”。地址统一在 `web-next/src/lib/product-links.ts` 配置。Android 沿用现有 Releases 入口，iOS 下载入口暂未开放。
 - 引导页关闭后，已上线的 Connector 继续运行；退出插件账号或卸载 Host 服务会停止插件自己的进程。
 
-Runtime 已实现 DSH 一键配置、官方侧栏过滤、原生会话和历史读取、首次完整校准、实时事件同步、纯文本新建/续聊及中断，以及 `ask_user_question` 问答。内部 notice 不进入 Timeline，DSH 不再定时扫描历史；连接恢复后用现有后端完整替换接口校准。附件、模型/权限目录和工具权限审批应答暂未开放。实现与消息映射见 [会话读取](./RUNTIME_READS.md)、[事件同步方案](./RUNTIME_SYNC_PLAN.md)和[用户问答](./USER_QUESTIONS.md)。
+侧栏「手机连接」提供三个标签页；登录和设置功能仍按 AA Desktop 检测结果开放：
+
+- **登录和连接**：登录前可选云端或自建服务器；登录后显示头像、账号和 Connector 运行状态，提供打开 Web、手机连接和退出登录。手机连接按钮下方直接展开二维码，不显示安装链接；扫码后可确认或拒绝，过期可刷新，完成后显示手机已连接。关闭或切换页签停止前端轮询，退出登录和 Host 卸载清除内存中的二维码流程。
+- **设置**：查看设备 ID 与服务器，启动、停止或重启 Connector；设置 uv 绝对路径（留空自动查找）、PyPI 镜像和同步间隔。插件启动时自动恢复已授权的本机连接，连接时始终同步已有会话，心跳与重连间隔分别固定为 20 秒和 3 秒。设置保存后重启正在运行的 Connector；停止状态下保存不会启动进程。
+- **桥接日志**：只读取 Anywhere Bridge 的运行日志，显示最近 200 条，每 2 秒刷新，可暂停或手动刷新。即使 CLI 正占用 Connector、尚未登录、安装检测失败或 AA Desktop 已安装，也可以查看。记录连接、RPC、会话读取、快照、同步批次和 ACK；错误带会话标识、阶段、错误码和调用栈位置，不记录请求正文、原生事件内容、令牌或原始异常消息。
+- **维护**：并排提供打开数据目录、打开日志目录和恢复出厂设置三个按钮，不展示数据与日志路径；headless 环境禁用打开目录。日志仅记录经过筛选的生命周期事件，滚动保留约两份 512 KiB 文件，不记录原始进程输出和凭据。恢复出厂设置先撤销当前设备凭据，再清理本插件的账号、绑定、同步缓存、日志及设置；服务端撤销失败时先保留本地状态，用户可另行确认仅清理本地。DSH 会话、运行时端点、共享 `connector-runtime.json` 和下载好的 Python 环境保留。
+
+桥接日志另存于插件数据目录的 `logs/dsh-runtime.jsonl`，滚动保留当前和上一份约 2 MiB 文件；同时输出到 DSH 的 `agents-anywhere-runtime` 日志分类。默认位置为 `~/.agentsanywhere/dsh-bridge-next/logs/`，自定义 `stateRoot` 时跟随该目录。已有 Connector 生命周期日志继续单独保留。
+
+已安装 AA Desktop 时连接功能仍显示原占位页，桥接日志始终可用，管理权限不自动切换。手机连接复用已有 `/auth/mobile-login/qr`、`status`、`confirm` 接口；二维码包含手机扫描协议要求的临时登录凭据，使用当前账号的后端地址，不使用 DSH 地址或 OAuth Web 开发端口。无需新增 AA Server 接口。
+
+当前分支 `codex/dsh-features-with-sync-fix` 已恢复图片和模型/effort/权限、Agent 模式配置。Runtime 提供 DSH 一键配置、官方侧栏过滤、原生会话和历史读取、首次完整校准、归档同步、实时事件、文本和图片新建/续聊、中断及 `ask_user_question`。新建使用 AA 显式传入的模型和权限选择；已有会话可切换配置。支持 AA 向 DSH 发送 PNG/JPEG/WebP/GIF；普通文件和 DSH 原生图片反向上传仍未开放。
+
+实机日志定位到官方历史读取器拒绝一个序号不连续的会话，进而拖断整个同步流。当前通过 `ctx.sessionQuery` 读取，按会话隔离读取失败，保留 AA 已接收的历史，并允许后续刷新重试。图片及配置恢复后，包含坏历史的完整回传测试继续通过。桥接日志页、Python 启动互斥、ID 历史和 Desktop 安装信息职责调整保留；检查与实机状态见 [验证记录](./VERIFICATION.md)。
+
+RPC 解析、执行、响应大小、取消和超时错误按请求返回，不会关闭已鉴权连接或取消其他请求。同步读取与投影按会话隔离；全局清单、ACK 超时或后端交付失败时只重建同步订阅，正常 RPC 继续可用。模型目录异常也不会关闭消息发送。AA Server 的会话操作检查与页面统一读取实时能力，避免旧缓存拒绝下一条消息；读取能力失败会明确报错并允许重试，不会默认为允许。
+
+原生历史读取失败只影响对应会话：桥接日志显示会话 ID、`read_failed` 和官方读取错误，其他会话继续同步；AA 已有历史不会被空快照覆盖。修复 DSH 原生历史后可刷新该会话重试，插件不会自行修改原始会话文件。
 
 ## 本地构建与安装
 
 需要 Node.js `^22.19.0 || >=24`、Corepack，以及运行 Connector 所需的 uv / Python 3.12+。项目使用 Yarn；DSH 安装命令内部使用其自己的包管理器。
 
 ```bash
+cd /Users/t4wefan/code/github/Agents-Anywhere
+uv sync --project connector
+uv sync --project server
+
 cd /Users/t4wefan/code/github/Agents-Anywhere/dsh-bridge-next
 corepack yarn install
 corepack yarn check
@@ -39,6 +61,8 @@ DSH_HOME="$HOME/.dsh" npx -y -p @deepseek-ai/dsh@0.1.2-rc.1 \
 ```
 
 链接安装方式已在全新临时 `DSH_HOME` / profile 中验证，并通过 `--dump-config` 确认插件层。安装后重启目标 DSH Desktop，点击左侧边栏「设置」上方的 **手机连接**。
+
+Python 依赖用于跨语言测试，必须在首次执行 `check` 前准备。仓库不提交依赖锁文件；如果父目录存在本地 `yarn.lock`，导致 Yarn 报当前包不属于父项目，在本目录执行 `touch yarn.lock` 后再安装，声明独立项目边界。该文件继续遵循仓库忽略规则。
 
 旧 `dsh-bridge` 如果还在管理同一个账号或设备，应先在 DSH 中停用旧插件，再测试 Next；本项目不会接管旧插件或 Desktop 的进程与凭据。
 
@@ -76,7 +100,7 @@ corepack yarn dev
 | `corepack yarn build` | 构建两端产物并复制 Connector 源码 |
 | `corepack yarn dev` | 持续构建 |
 | `corepack yarn check:build` | 产物导入、官方 UI 交互、CSS 热更新契约、Client 注册与释放、源码副本检查 |
-| `corepack yarn test` | 单元与集成测试；先执行 build |
+| `corepack yarn test` | 单元与集成测试；运行前需已完成 build 和 Python 依赖准备 |
 | `corepack yarn check` | 完整构建和自动化验证，可在 headless 环境运行 |
 
 ## 前端组件与样式
@@ -97,6 +121,8 @@ Connector 状态读取其现有 stdio `connector/state` 通知，反映实际运
 
 入口与弹窗布局位于 `src/client/features/onboarding/entry.module.css`，连接内容布局位于同目录的 `section.module.css`，使用 CSS Modules 和官方 `--dsw-alias-*` / `--dsw-font-*` 主题变量。页面跟随 DSH 的明暗主题，不声明全局主题或固定颜色。
 
+弹窗标题复用 Desktop/Web 左上角的 wordmark 样式：Caveat、20px、字重 500。`src/client/assets/caveat-latin.woff2` 复制自 Desktop 的同名字体，构建时内嵌到 Client CSS，无需网络或额外静态资源路由。
+
 外部插件无法直接使用官方仓库未发布的构建 helper，因此 `scripts/client-css.ts` 按其输出契约处理 CSS：监听源文件、生成局部类名，在 Client factory 执行时注入带 `data-plugin` / `data-plugin-css` 的样式，供 DSH HMR 清理和重新加载。实现参考官方 `docs/web-styling.zh.md` 与 `packages/client/tsdown.client.ts`。
 
 `check:build` 在 headless DOM 中加载真实官方组件，验证侧边栏展开/收起、弹窗打开/关闭/焦点恢复、云端与自建服务登录、单地址输入校验、取消、登录后面板切换、头像回退、Connector 状态、打开 Web 和退出登录，以及卸载时弹窗与入口清理；同时检查样式去重及 HMR 清理后的重新注入。Node 中的 CSS loader 仅用于验证，不进入插件产物。
@@ -111,17 +137,22 @@ Host 配置位于 DSH 的插件配置行。常用项如下：
 | `stateRoot` | 操作系统用户主目录下 `.agentsanywhere/dsh-bridge-next` |
 | `connectorSourceDir` | 包内 `lib/bundled-connector`；覆盖时必须为绝对路径 |
 | `uvPath` | `UV_PATH` 环境变量或 PATH 中的 `uv`；GUI 找不到时填写 uv 可执行文件的绝对路径 |
-| `autoStart` | `true`；Host 重载时尝试恢复已授权设备，首次安装不会自动启动 Connector |
+
+设置页将 uv 路径、PyPI 镜像和同步间隔原子写入 `connector-settings.json`；下次启动时恢复，uv 路径覆盖配置行中的 `uvPath`。首次初始化且没有保存过镜像选择时，Host 根据系统首选语言自动设置镜像：包含中文时直接使用阿里云，否则使用官方 PyPI，不弹出询问。macOS 读取系统语言列表，其他平台使用 Intl / POSIX 语言环境，headless 启动同样生效。选择在创建 venv 前持久化，并通过 `UV_DEFAULT_INDEX`、`UV_INDEX_URL` 和 `PIP_INDEX_URL` 传给实际子进程；已保存的镜像（包括手动选择默认 PyPI）保持不变。恢复出厂设置会重新应用系统默认镜像。
+
+旧配置中的自动启动、心跳、重连及已有会话同步选项在加载时移除，不再影响连接行为。Host 重载自动恢复已授权设备；首次安装等待登录，已安装 Desktop 时仍交由 Desktop 管理。同步间隔及固定的连接参数写入实际 `connector/connector.json`。`logs/connector.jsonl` 记录本机 Connector 生命周期。
 
 数据目录中保存 `settings.json`、`account.json`、按服务和账号隔离的 `bindings/`、`connector/` 与 `connector-venv/`。`settings.json` 只保存 `apiBaseUrl`，不保存 Web 或 OAuth 地址；加载旧配置时自动移除旧的 `webBaseUrl`，保留匹配后端的账号。切换服务器前先检查健康状态，地址无效或无法连接时保留已有账号和连接。凭据文件以原子替换方式写入，POSIX 权限为 `0600`。退出登录删除用户凭据并停止连接，保留设备绑定供下次复用。
 
 同一数据目录只允许一个插件实例管理设备。插件根据规范化后的数据目录选取一个本机回环管理端口，由操作系统保证独占，异常退出后自动释放；该端口不提供 HTTP 或业务接口。端口若被其他程序占用会明确报错，不尝试抢占或启动第二个管理进程。
 
-Desktop 与插件通过固定的 `<操作系统用户主目录>/.agentsanywhere/machine.json` 共享安装位置和本机 Connector ID 历史。安装位置只由 Desktop 每次启动检查和更新，内容正确时不重写；两端新建本机设备后均按顺序追加 ID，普通重连不重复追加。插件恢复旧版私有绑定时，在验证归属及凭据后补登记缺失的 ID。两端用同一跨进程锁保护读取、合并与原子写入，避免覆盖安装位置或丢失另一端的 ID。
+本机共享记录固定为 `<操作系统用户主目录>/.agents-anywhere/connector-runtime.json`。Python Connector 统一负责启动互斥、运行 PID/启动来源和有序 Connector ID 历史，CLI 也在同一范围内。Desktop 只校验和发布安装信息；插件只读取共享记录，不写 ID、运行记录或安装信息。Desktop 与 Python 的短期文件事务保证并发写入不覆盖对方字段。
 
-插件先保存私有绑定，再登记共享 ID，全部成功后才上线。登记失败会报错并保留私有凭据供下次恢复，不再次新建。检测安装时每次重新读取；可执行文件已不存在时保留历史 ID 并允许 Web 流程，记录损坏或无权限时报告错误。旧 `desktop/install.json` 在新文件不存在时仍可读取。
+插件先保存私有绑定，再通过 RPC 启动 Python Connector。Python 核验已有 PID 确实对应原来的 Connector 进程，接受启动时追加缺失 ID；冲突返回 `-32009 / connector_already_running`。插件展示错误并保留绑定供重试，关闭自己被拒绝的子进程；不会因冲突重复注册。正常退出后由 Python 清除自己的运行记录，异常退出后根据 PID 和进程身份判断残留记录；仅停止后端连接不会释放仍存活的 RPC 进程占用。
 
-首次 OAuth 后插件获取当前用户的设备列表，与共享 ID 按本地记录顺序匹配；多个匹配取第一个，用现有 `/revoke` 接口换新 Connector token，随后上线并进入原 Web Agent 配置引导。旧插件私有绑定作为最后一个本机候选保留兼容；首次无匹配时注册新设备。已经保存的设备若被删除或凭据失效，先进入上述人工恢复分支，不自动创建或续签。读取、列设备或重连失败都不会降级为新建。普通恢复已有有效 token 时不重复轮换。共享文件不含凭据，详见[本机共享记录契约](../contracts/local-machine/1.0/README.md)。
+安装检测每次重新读取；可执行文件已不存在时保留历史 ID 并允许 Web 流程，记录损坏或无权限时报告错误。Host 兼容读取旧 `.agentsanywhere/machine.json` 和 `desktop/install.json`，迁移由 Python 在成功写入时完成。
+
+首次 OAuth 后插件获取当前用户的设备列表，与共享 ID 按本地记录顺序匹配；多个匹配取第一个，用现有 `/revoke` 接口换新 Connector token，随后上线并进入原 Web Agent 配置引导。旧插件私有绑定作为最后一个本机候选保留兼容；首次无匹配时注册新设备。已经保存的设备若被删除或凭据失效，先进入上述人工恢复分支，不自动创建或续签。读取、列设备或重连失败都不会降级为新建。普通恢复已有有效 token 时不重复轮换。共享文件不含凭据，详见[本机共享记录契约](../contracts/local-machine/2.0/README.md)。
 
 插件启动时以及每次打开「手机连接」弹窗时均先检测 Desktop，与是否登录无关。弹窗在本次检测完成前显示检查状态；发现有效安装时只显示「已安装桌面端，连接功能即将开放。」，不展示登录表单或已登录面板。未安装时继续原有登录/账号流程，检测失败时提供重试。
 
@@ -129,16 +160,18 @@ Desktop 与插件通过固定的 `<操作系统用户主目录>/.agentsanywhere/
 
 ## 验证范围
 
-自动化覆盖实际 rc.1 Typert Gateway 对编译后 Host 的调用及卸载、OAuth 本地回调和二次跳转、设备复用、取消、重复操作，以及用独立 stdio 测试进程验证 Connector 启停。跨端测试从插件 OAuth 新建开始，经真实共享文件进入 Desktop 首次配对或已删除设备重连，断言只创建一台设备；另覆盖两个写入进程并发、持锁进程异常退出和登记失败后的恢复。Web 测试实际挂载页面组件，覆盖 Agent 添加、手机跳过/扫码、二维码过期、权限检查和登录后的路由恢复。
+自动化覆盖实际 rc.1 Typert Gateway 对编译后 Host 的调用及卸载、OAuth 本地回调和二次跳转、设备复用、取消、重复操作，以及用独立 stdio 测试进程验证 Connector 启停。跨端测试从插件 OAuth 新建开始，经真实共享文件进入 Desktop 首次配对或已删除设备重连，断言只创建一台设备；另覆盖真实 Python CLI/Desktop/插件进程竞争、异常退出后的重试、Desktop 安装信息与 Python ID 写入并发，以及登记失败后保留私有绑定。Web 测试实际挂载页面组件，覆盖 Agent 添加、手机跳过/扫码、二维码过期、权限检查和登录后的路由恢复。
 
 本轮没有自动启动真实开发服务、登录真实账号或进行 DSH GUI 联调。首次手动联调时按上面的链路操作，确认 Web 完成页可达；Windows 实机进程行为仍需在对应环境验证。
+
+2026-09-08 的原分支基线检查与后续 Python 职责调整分别记录，具体测试数量、提交范围和 CI 状态见 [验证记录](./VERIFICATION.md)。插件事件与问答测试使用原有后端 ASGI app 和临时 SQLite；本地开发及生产 Server 仍使用 PostgreSQL。持续检查由 [DSH Bridge Next 工作流](../.github/workflows/dsh-bridge-next.yml)执行；这些结果不代替真实模型、手机、Windows 或长期运行验收。
 
 ## 目录职责
 
 ```text
 src/contracts/          插件前后端共享接口，不包含 DSH Agent 协议
 src/host/config.ts      连接地址、数据目录、运行路径
-src/host/desktop/       安装检测、共享本机 ID 登记与跨进程写入锁
+src/host/desktop/       只读安装检测与本机 ID 历史读取
 src/host/onboarding/    OAuth 回调、流程状态和 Web 交接
 src/host/account/       用户授权、设备绑定及凭据恢复
 src/host/connector/     内部 Python Connector 的进程管理

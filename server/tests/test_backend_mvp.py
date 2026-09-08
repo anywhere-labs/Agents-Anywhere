@@ -1238,6 +1238,12 @@ class FakeApprovalRpc:
         timeout: float = 30,
     ) -> Any:
         self.requests.append((connector_id, method, params, timeout))
+        if method == "session.capabilities":
+            return {"capabilitySet": {"revision": 1, "capabilities": [{
+                "capabilityId": "session.interaction.approval", "scope": "session",
+                "runtime": params["runtime"], "sessionId": params["sessionId"],
+                "supported": True, "available": True, "allowed": True,
+            }]}}
         if self.fail:
             raise ConnectorRpcError("codex_error", "request gone")
         if self.gone:
@@ -1527,6 +1533,20 @@ class FakeLocalRpc:
                 "capabilitySet": {
                     "revision": 11,
                     "capabilities": [
+                        {
+                            "capabilityId": "runtime.attachment",
+                            "scope": "session",
+                            "runtime": params["runtime"],
+                            "sessionId": session_id,
+                            "supported": params["runtime"] in {"codex", "claude"},
+                            "available": params["runtime"] in {"codex", "claude"},
+                            "allowed": True,
+                        },
+                        *[{
+                            "capabilityId": capability_id, "scope": "session",
+                            "runtime": params["runtime"], "sessionId": session_id,
+                            "supported": True, "available": True, "allowed": True,
+                        } for capability_id in ["session.commands", "session.interaction.approval"]],
                         {
                             "capabilityId": "session.send_message",
                             "version": "1",
@@ -5116,6 +5136,64 @@ def test_send_message_forwards_client_message_id_to_connector(tmp_path):
     assert params["clientMessageId"] == "opt_abc"
 
 
+@pytest.mark.parametrize("cached_allowed, live_allowed", [(False, True), (True, False)])
+def test_send_message_and_display_use_live_capabilities_when_cache_disagrees(
+    tmp_path, monkeypatch, cached_allowed, live_allowed,
+):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    class LiveRpc(FakeLocalRpc):
+        async def request(self, connector_id, method, params, timeout=30):
+            result = await super().request(connector_id, method, params, timeout=timeout)
+            if method == "session.capabilities":
+                for item in result["capabilitySet"]["capabilities"]:
+                    if item["capabilityId"] == "session.send_message":
+                        item["allowed"] = live_allowed
+            return result
+
+    rpc = LiveRpc()
+    client.app.state.rpc = rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    async def stale_capabilities(*_args, **_kwargs):
+        return {"revision": 1, "capabilities": [{
+            "capabilityId": "session.send_message", "runtime": "codex",
+            "scope": "session", "sessionId": session_id,
+            "supported": True, "available": True, "allowed": cached_allowed,
+        }]}
+
+    monkeypatch.setattr(client.app.state.store, "get_protocol_capabilities", stale_capabilities)
+    displayed = client.get(f"/sessions/{session_id}/runtime/capabilities", headers=headers)
+    displayed.raise_for_status()
+    send = next(item for item in displayed.json()["capabilitySet"]["capabilities"]
+                if item["capabilityId"] == "session.send_message")
+    assert send["allowed"] is live_allowed
+    for message in ["first", "second"]:
+        response = client.post(f"/sessions/{session_id}/runtime/messages", headers=headers,
+                               json={"content": message, "clientMessageId": message})
+        assert response.status_code == (200 if live_allowed else 409), response.text
+    sends = [params["content"] for _, method, params, _ in rpc.requests if method == "session.send_message"]
+    assert sends == (["first", "second"] if live_allowed else [])
+
+
+def test_failed_live_capability_read_is_retryable_without_dispatching_message(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+    rpc = FakeLocalRpc()
+    client.app.state.rpc = rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    rpc.timeout_session_methods = {"session.capabilities"}
+    response = client.post(f"/sessions/{session_id}/runtime/messages", headers=headers,
+                           json={"content": "retry", "clientMessageId": "retry"})
+    assert response.status_code == 504, response.text
+    assert not any(method == "session.send_message" for _, method, _, _ in rpc.requests)
+    rpc.timeout_session_methods.clear()
+    response = client.post(f"/sessions/{session_id}/runtime/messages", headers=headers,
+                           json={"content": "retry", "clientMessageId": "retry"})
+    assert response.status_code == 200, response.text
+
+
 def test_send_message_starts_new_turn_from_error_state(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
@@ -5551,6 +5629,7 @@ def test_interrupt_and_sync_carry_runtime(tmp_path):
     fake_rpc = FakeLocalRpc()
     _seed_running_runtime(client, connector_id, fake_rpc, "claude")
     session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
+    fake_rpc.runtime_states[session_id] = {"status": "running"}
 
     client.post(f"/sessions/{session_id}/runtime/interrupt", headers=headers).raise_for_status()
     interrupt_params = wait_for_rpc_method(fake_rpc, "session.interrupt")[2]
@@ -5638,9 +5717,8 @@ def test_running_dsh_steer_is_routed_by_capability(tmp_path):
 
 def test_dsh_attachment_without_capability_never_calls_connector(tmp_path):
     client = make_client(tmp_path)
-    headers = auth_headers(client)
-    connector = client.post("/connectors", headers=headers, json={"name": "dsh"})
-    connector_id = connector.json()["connector"]["id"]
+    connector_id, _, session_id, headers = create_connector_and_session(client, runtime="dsh")
+    session = asyncio.run(client.app.state.store.get_session(session_id))
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
 
@@ -5649,6 +5727,8 @@ def test_dsh_attachment_without_capability_never_calls_connector(tmp_path):
         headers=headers,
         json={
             "connectorId": connector_id,
+            "runtimeId": session.runtimeId,
+            "projectId": session.projectId,
             "runtime": "dsh",
             "content": "read this",
             "attachments": [
@@ -5698,6 +5778,8 @@ def test_interrupt_not_found_result_clears_stale_active_run(tmp_path):
     connector_id, _, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     fake_rpc.interrupt_result = {"interrupted": False, "reason": "thread_not_found"}
+    # The thread disappears after a live capability check admitted interruption.
+    fake_rpc.runtime_states[session_id] = {"status": "running"}
     client.app.state.rpc = fake_rpc
 
     async def seed() -> None:
@@ -6691,17 +6773,18 @@ def test_user_terminal_resize_removes_terminal_missing_on_connector(tmp_path):
     assert listing.json()["terminals"] == []
 
 
-def test_interrupt_does_not_persist_runtime_status(tmp_path):
+def test_interrupt_does_not_infer_idle_from_successful_response(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
+    fake_rpc.runtime_states[session_id] = {"status": "running"}
     response = client.post(f"/sessions/{session_id}/runtime/interrupt", headers=headers)
 
     assert response.status_code == 200, response.text
-    state = session_view_for_assertions(client, session_id, headers)
-    assert state["session"]["status"] == "idle"
+    # Accepted interruption does not mean the native runtime has stopped yet.
+    assert asyncio.run(client.app.state.store.get_session(session_id)).status == "running"
 
 
 def test_interaction_respond_carries_runtime(tmp_path):

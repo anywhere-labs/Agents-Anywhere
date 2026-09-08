@@ -454,24 +454,42 @@ class ConnectorRepositoryMixin:
         return await self.get_connector(connector_id)
 
 
-    async def revoke_connector(self, connector_id: str, *, user_id: str | None = None) -> None:
-        now = utc_now()
-        query = update(connectors_t).where(
-            connectors_t.c.id == connector_id, connectors_t.c.revoked == 0
-        )
+    async def delete_connector(
+        self, connector_id: str, *, user_id: str | None = None
+    ) -> list[str]:
+        query = select(connectors_t.c.id).where(connectors_t.c.id == connector_id)
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        query = query.values(
-            revoked=1,
-            status="offline",
-            presence_instance_id=None,
-            presence_connection_id=None,
-            updated_at=now,
-        )
         async with self._engine.begin() as conn:
-            result = await conn.execute(query)
-            if result.rowcount == 0:
+            # Serialize against project creation and connector-owned FK writes.
+            # Include legacy revoked rows so their owners can also purge them.
+            if (await conn.execute(query.with_for_update())).first() is None:
                 raise KeyError(connector_id)
+            session_ids = list(
+                (await conn.execute(
+                    select(sessions_t.c.id).where(sessions_t.c.connector_id == connector_id)
+                )).scalars()
+            )
+            # Session children (timeline, shares, active runs) cascade. Sessions
+            # must go before projects because project references use RESTRICT.
+            await conn.execute(
+                delete(sessions_t).where(sessions_t.c.connector_id == connector_id)
+            )
+            await conn.execute(
+                delete(projects_t).where(projects_t.c.connector_id == connector_id)
+            )
+            # Pairing credentials predate FK enforcement and need explicit cleanup.
+            await conn.execute(
+                delete(pairing_codes_t).where(pairing_codes_t.c.connector_id == connector_id)
+            )
+            # Runtime configuration, catalogs, preview tokens and terminal roots
+            # all reference the connector with ON DELETE CASCADE.
+            await conn.execute(delete(connectors_t).where(connectors_t.c.id == connector_id))
+            # Keep the rows discoverable for a retry if storage cleanup fails.
+            # Files cannot be rolled back, so run this after all SQL deletions.
+            for session_id in session_ids:
+                await self.files.delete_session(session_id)
+        return session_ids
 
 
     async def rotate_connector_token(

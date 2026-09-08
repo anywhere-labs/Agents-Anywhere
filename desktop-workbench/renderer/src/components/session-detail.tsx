@@ -341,6 +341,10 @@ export function SessionDetail({
   const [showScrollBottom, setShowScrollBottom] = React.useState(false)
   const [loadingOlder, setLoadingOlder] = React.useState(false)
   const [pendingTakeover, setPendingTakeover] = React.useState<boolean | null>(null)
+  const interactionTakeoverRef = React.useRef<{
+    sessionId: string
+    resolve: (confirmed: boolean) => void
+  } | null>(null)
   const [sourceErrorCode, setSourceErrorCode] = React.useState<SessionSourceErrorCode | null>(null)
   const [commandQuery, setCommandQuery] = React.useState<string | null>(null)
   const [runtimeCommands, setRuntimeCommands] = React.useState<RuntimeCommand[]>([])
@@ -369,6 +373,7 @@ export function SessionDetail({
   const processedEventIdsRef = React.useRef<Set<string>>(new Set())
   const catalogFetchKeyRef = React.useRef<string | null>(null)
   const selectionUpdateSeqRef = React.useRef(0)
+  const selectionWritesRef = React.useRef(new Map<string, Promise<unknown>>())
 
   const session = state?.session ?? fallbackSession
   const runtimeState = state?.state ?? null
@@ -441,6 +446,14 @@ export function SessionDetail({
   }, [sessionId])
 
   React.useEffect(() => {
+    setPendingTakeover(null)
+    return () => {
+      interactionTakeoverRef.current?.resolve(false)
+      interactionTakeoverRef.current = null
+    }
+  }, [sessionId])
+
+  React.useEffect(() => {
     if (session?.id === sessionId && session.sourceAvailability === "archived") {
       setSourceErrorCode("session_archived")
     }
@@ -481,7 +494,12 @@ export function SessionDetail({
         : current,
     )
     try {
-      const result = await dashboardApi.updateSessionSelections(token, session.id, selectionPatch)
+      const previousWrite = selectionWritesRef.current.get(session.id) ?? Promise.resolve()
+      const write = previousWrite.catch(() => undefined).then(() => dashboardApi.updateSessionSelections(token, session.id, selectionPatch))
+      selectionWritesRef.current.set(session.id, write)
+      const result = await write.finally(() => {
+        if (selectionWritesRef.current.get(session.id) === write) selectionWritesRef.current.delete(session.id)
+      })
       if (selectionUpdateSeqRef.current !== selectionUpdateSeq) return true
       setState((current) =>
         current
@@ -498,12 +516,16 @@ export function SessionDetail({
       )
       return true
     } catch (err) {
+      // An official operation can partially succeed. Read the actual selection before rolling back.
+      const actual = sessionRuntimeType(session) === "dsh"
+        ? await dashboardApi.getSessionRuntimeState(token, session.id).catch(() => null)
+        : null
       if (selectionUpdateSeqRef.current === selectionUpdateSeq) {
         setState((current) =>
           current
             ? {
                 ...current,
-                state: runtimeStateWithSelectionRollback(
+                state: actual?.state ?? runtimeStateWithSelectionRollback(
                   current.state,
                   current.session,
                   previousRuntimeState?.selections ?? {},
@@ -513,8 +535,10 @@ export function SessionDetail({
             : current,
         )
       }
-      toast.error(err instanceof Error ? err.message : tSession("updateSelectionsFailed"))
-      return false
+      if (selectionUpdateSeqRef.current === selectionUpdateSeq) {
+        toast.error(err instanceof Error ? err.message : tSession("updateSelectionsFailed"))
+      }
+      return selectionUpdateSeqRef.current !== selectionUpdateSeq
     }
   }
 
@@ -1056,7 +1080,7 @@ export function SessionDetail({
     } catch (err) {
       const nextSourceErrorCode = sessionSourceErrorCode(err)
       const message = nextSourceErrorCode
-        ? sourceErrorMessage(nextSourceErrorCode, tSession)
+        ? sourceErrorMessage(nextSourceErrorCode, tSession, runtimeLabel(sessionRuntimeType(session)))
         : err instanceof Error
           ? err.message
           : tSession("sendFailed")
@@ -1097,8 +1121,15 @@ export function SessionDetail({
     }
   }
 
+  const handleDismissTakeover = () => {
+    setPendingTakeover(null)
+    interactionTakeoverRef.current?.resolve(false)
+    interactionTakeoverRef.current = null
+  }
+
   const handleConfirmTakeover = async () => {
-    if (!session) return
+    if (!session || takeoverBusy) return
+    const interactionTakeover = interactionTakeoverRef.current
     const nextTakeover = pendingTakeover ?? !session.takeover
     setTakeoverBusy(true)
     try {
@@ -1108,6 +1139,11 @@ export function SessionDetail({
       setState((current) => current ? { ...current, session: result.session } : current)
       onSessionUpdated?.(result.session)
       setPendingTakeover(null)
+      if (interactionTakeover?.sessionId === session.id
+        && interactionTakeoverRef.current === interactionTakeover) {
+        interactionTakeoverRef.current = null
+        interactionTakeover.resolve(result.session.takeover)
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : tSession("updateTakeoverFailed"))
     } finally {
@@ -1168,11 +1204,17 @@ export function SessionDetail({
     actionId: string,
     input?: Record<string, unknown>,
   ) => {
-    if (resolvingNoticeId) return
+    if (!session || resolvingNoticeId || interactionTakeoverRef.current) return
     setResolvingNoticeId(noticeId)
     setResolvingActionId(actionId)
     try {
-      if (!session) return
+      if (!session.takeover) {
+        const confirmed = await new Promise<boolean>((resolve) => {
+          interactionTakeoverRef.current = { sessionId: session.id, resolve }
+          setPendingTakeover(true)
+        })
+        if (!confirmed) return
+      }
       const response = await dashboardApi.respondInteraction(token, session.id, noticeId, actionId, input)
       if (response.ok) {
         removeNoticeFromState(noticeId)
@@ -1433,7 +1475,7 @@ export function SessionDetail({
 
   const takeoverTarget = pendingTakeover ?? false
   const sourceErrorDialog = sourceErrorCode
-    ? sourceErrorDialogContent(sourceErrorCode, tSession)
+    ? sourceErrorDialogContent(sourceErrorCode, tSession, runtimeLabel(sessionRuntimeType(session)))
     : null
   const dismissSourceErrorDialog = () => {
     const shouldLeaveSession = sourceErrorCode === "session_archived"
@@ -1637,7 +1679,7 @@ export function SessionDetail({
       <Dialog
         open={pendingTakeover !== null}
         onOpenChange={(open: boolean) => {
-          if (!open && !takeoverBusy) setPendingTakeover(null)
+          if (!open && !takeoverBusy) handleDismissTakeover()
         }}
       >
         <DialogContent>
@@ -1654,7 +1696,7 @@ export function SessionDetail({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPendingTakeover(null)} disabled={takeoverBusy}>
+            <Button variant="outline" onClick={handleDismissTakeover} disabled={takeoverBusy}>
               {tCommon("cancel")}
             </Button>
             <Button onClick={handleConfirmTakeover} disabled={takeoverBusy}>
@@ -1709,36 +1751,38 @@ function sourceAvailabilityFromError(
 function sourceErrorDialogContent(
   code: SessionSourceErrorCode,
   tSession: ReturnType<typeof useTranslations>,
+  client: string,
 ): { title: string; description: string } {
   if (code === "session_archived") {
     return {
-      title: tSession("sourceArchivedTitle"),
-      description: tSession("sourceArchivedDescription"),
+      title: tSession("sourceArchivedTitle", { client }),
+      description: tSession("sourceArchivedDescription", { client }),
     }
   }
   if (code === "session_deleted") {
     return {
-      title: tSession("sourceDeletedTitle"),
-      description: tSession("sourceDeletedDescription"),
+      title: tSession("sourceDeletedTitle", { client }),
+      description: tSession("sourceDeletedDescription", { client }),
     }
   }
   if (code === "session_missing") {
     return {
-      title: tSession("sourceMissingTitle"),
-      description: tSession("sourceMissingDescription"),
+      title: tSession("sourceMissingTitle", { client }),
+      description: tSession("sourceMissingDescription", { client }),
     }
   }
   return {
-    title: tSession("sourceUnavailableTitle"),
-    description: tSession("sourceUnavailableDescription"),
+    title: tSession("sourceUnavailableTitle", { client }),
+    description: tSession("sourceUnavailableDescription", { client }),
   }
 }
 
 function sourceErrorMessage(
   code: SessionSourceErrorCode,
   tSession: ReturnType<typeof useTranslations>,
+  client: string,
 ): string {
-  return sourceErrorDialogContent(code, tSession).description
+  return sourceErrorDialogContent(code, tSession, client).description
 }
 
 function BlockingInteractionStack({

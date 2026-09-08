@@ -1,3 +1,5 @@
+import { ConnectorOwnershipError } from '../../src/host/connector/process.js'
+import { readOnboardingTarget, restoreOnboardingStep, saveOnboardingStep } from '../../../web-next/src/features/onboarding/flow.ts'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mkdtemp, readdir, rm } from 'node:fs/promises'
@@ -9,6 +11,7 @@ import { AccountApi, ApiError, type Account, type Device } from '../../src/host/
 import type { ConnectorProcess, ConnectorState } from '../../src/host/connector/process.js'
 import { CLOUD_API_BASE_URL, type DesktopDetection } from '../../src/contracts/index.js'
 import { readJson, writeJson } from '../../src/host/storage/files.js'
+import { DEFAULT_CONNECTOR_SETTINGS } from '../../src/contracts/connector.js'
 
 class FakeApi extends AccountApi {
   registrations = 0
@@ -49,12 +52,13 @@ class FakeConnector implements ConnectorProcess {
   onState(listener: (state: ConnectorState) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   expire() { this.running = false; for (const listener of this.listeners) listener({ running: false, authFailed: true }) }
   async prepare() {}
-  async start() { this.running = true; this.starts++ }
+  startError: Error | null = null
+  async start() { if (this.startError) throw this.startError; this.running = true; this.starts++ }
   async stop() { this.running = false; this.stops++ }
   async assertHealthy() { if (!this.running) throw new Error('not running') }
 }
 
-async function fixture(autoStart = false) {
+async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'aa-flow-'))
   const api = new FakeApi('https://api.example.test')
   const connector = new FakeConnector()
@@ -64,15 +68,15 @@ async function fixture(autoStart = false) {
   let localIds: string[] = []
   let detections = 0
   const create = () => new OnboardingManager({
-    stateRoot: root, connectorSourceDir: root, uvPath: 'uv', autoStart,
+    stateRoot: root, connectorSourceDir: root, uvPath: 'uv',
     apiBaseUrl: api.baseUrl,
   }, {
+    systemLanguages: async () => ['en-US'],
     api: base => base === api.baseUrl ? api : new FakeApi(base), connector, detect: async () => { detections++; return detection },
     checkServer: async (base) => { checkedServers.push(base); if (healthError) throw healthError },
     onlineTimeoutMs: 5000, pollIntervalMs: 10,
     machineState: {
       readConnectorIds: async () => localIds,
-      recordConnectorId: async id => { if (!localIds.includes(id)) localIds.push(id) },
     },
   })
   let manager = create()
@@ -100,6 +104,126 @@ async function until(check: () => Promise<boolean>) {
   for (let count = 0; count < 200; count++) { if (await check()) return; await delay(10) }
   assert.fail('expected state did not arrive')
 }
+
+test('Connector controls preserve identity and startup restores the connection despite retired settings', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    const credential = await readJson(join(h.root, 'account.json'))
+    const settings = { ...DEFAULT_CONNECTOR_SETTINGS }
+    await h.manager.saveConnectorSettings(settings)
+    assert.equal(h.connector.starts, 1, 'Saving unchanged settings must not interrupt a running task')
+    h.setLocalIds(['conn_other', 'conn_test'])
+    h.api.knownDevices = [{ id: 'conn_other', userId: 'user-test', name: 'Another local binding', status: 'online' }]
+    settings.syncIntervalSeconds = 60
+    await h.manager.saveConnectorSettings(settings)
+    assert.equal(h.connector.starts, 2, 'Runtime configuration applies by restarting the owned Connector')
+    assert.equal(h.api.renewals, 0)
+    assert.equal(h.api.exchanges, 1)
+    await h.manager.controlConnector('stop')
+    assert.equal((await h.manager.inspect()).connectorRunning, false)
+    await h.manager.saveConnectorSettings({ ...settings, syncIntervalSeconds: 300 })
+    assert.equal(h.connector.starts, 2, 'Saving while stopped must not start a process')
+    await writeJson(join(h.root, 'connector-settings.json'), {
+      ...settings, syncIntervalSeconds: 300,
+      autoStart: false, heartbeatSeconds: 45, reconnectSeconds: 7, syncExistingOnConnect: false,
+    })
+    await h.reopen()
+    const snapshot = await h.manager.inspect()
+    assert.equal(snapshot.connectorId, 'conn_test', 'Management restores identity before starting a process')
+    assert.deepEqual(snapshot.connector.settings, { ...settings, syncIntervalSeconds: 300 })
+    assert.deepEqual(await readJson(join(h.root, 'connector-settings.json')), snapshot.connector.settings, 'Migration removes retired options from disk')
+    assert.equal(h.connector.starts, 2)
+    await h.manager.resume()
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    assert.equal(h.connector.starts, 3)
+    await h.manager.controlConnector('stop')
+    await h.manager.controlConnector('start')
+    assert.equal(h.connector.starts, 4)
+    await h.manager.controlConnector('restart')
+    assert.equal(h.connector.starts, 5)
+    assert.equal((await h.manager.inspect()).connectorId, 'conn_test', 'Maintenance must not switch to another shared local ID')
+    assert.equal(h.api.registrations, 1)
+    assert.equal(h.api.renewals, 0)
+    const persisted = await readJson<Account>(join(h.root, 'account.json'))
+    assert.equal(persisted?.accessToken, (credential as Account).accessToken)
+    assert.equal(persisted?.expiresAt, (credential as Account).expiresAt)
+  } finally { await h.close() }
+})
+
+test('invalid configuration and unavailable executables leave a working Connector intact', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    const settings = (await h.manager.inspect()).connector.settings
+    for (const patch of [{ syncIntervalSeconds: 0 }, { syncIntervalSeconds: 0.5 }, { autoStart: false },
+      { syncExistingOnConnect: false }, { heartbeatSeconds: 15 }, { reconnectSeconds: 5 }, { uvPath: 'relative/uv' },
+      { uvPypiIndexUrl: 'https://untrusted.example/simple' }, { connectorToken: 'override' }]) {
+      await assert.rejects(h.manager.saveConnectorSettings({ ...settings, ...patch }))
+    }
+    h.connector.prepare = async () => { throw new Error('未找到可用的 uv') }
+    await assert.rejects(h.manager.saveConnectorSettings({ ...settings, uvPath: '/missing/uv' }), /未找到/)
+    assert.equal(h.connector.running, true)
+    assert.deepEqual((await h.manager.inspect()).connector.settings, settings)
+  } finally { await h.close() }
+})
+
+test('device recovery remains explicit when starting from settings', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    await h.manager.controlConnector('stop')
+    h.api.validCredential = false
+    await assert.rejects(h.manager.controlConnector('start'), /断开连接/)
+    assert.equal((await h.manager.inspect()).deviceRecovery?.status, 'disconnected')
+    await assert.rejects(h.manager.controlConnector('restart'), /恢复设备连接/)
+    assert.equal(h.api.renewals, 0)
+    assert.equal(h.api.registrations, 1)
+  } finally { await h.close() }
+})
+
+test('reset preserves credentials on failed revoke and explicit local reset removes only plugin-owned data', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    const account = await readJson(join(h.root, 'account.json'))
+    await writeJson(join(h.root, 'connector', 'cache.json'), { cached: true })
+    await writeJson(join(h.root, 'unrelated.json'), { preserve: true })
+    h.api.renewConnector = async () => { throw new ApiError(503) }
+    await assert.rejects(h.manager.resetConnector(false), /无法撤销设备连接/)
+    assert.deepEqual(await readJson(join(h.root, 'account.json')), account)
+    assert.equal(h.connector.running, true)
+    await h.manager.resetConnector(true)
+    assert.equal((await h.manager.inspect()).account, null)
+    assert.equal((await h.manager.inspect()).connectorId, null)
+    assert.equal(h.connector.running, false)
+    assert.equal(await readJson(join(h.root, 'connector', 'cache.json')), null)
+    assert.deepEqual(await readJson(join(h.root, 'unrelated.json')), { preserve: true })
+  } finally { await h.close() }
+})
+
+test('installed Desktop blocks every new standalone management and phone endpoint', async () => {
+  const h = await fixture()
+  try {
+    h.setDesktop({ status: 'installed', message: 'managed by Desktop', executablePath: '/example/Desktop' })
+    for (const action of [
+      () => h.manager.controlConnector('start'), () => h.manager.controlConnector('stop'),
+      () => h.manager.saveConnectorSettings(DEFAULT_CONNECTOR_SETTINGS), () => h.manager.openConnectorFolder('data'),
+      () => h.manager.resetConnector(true), () => h.manager.createMobileLogin(),
+      () => h.manager.inspectMobileLogin('qr'), () => h.manager.confirmMobileLogin('qr', true),
+    ]) await assert.rejects(action, /managed by Desktop/)
+    assert.equal(h.connector.starts, 0)
+    assert.equal(h.connector.stops, 0)
+  } finally { await h.close() }
+})
 
 test('OAuth callback pairs once, waits for actual online state, then redirects to Web without secrets', async () => {
   const h = await fixture()
@@ -216,7 +340,7 @@ test('a live auth-failure notification prompts reconnection of the same ID witho
     assert.equal((await h.manager.inspect()).account?.userId, 'user-test')
     assert.equal((await h.manager.inspect()).connectorRunning, false)
     assert.equal(h.api.renewals, 0)
-    await h.manager.recoverDevice('reconnect')
+    assert.equal(await h.manager.recoverDevice('reconnect'), null)
     assert.deepEqual(h.api.renewedIds, ['conn_test'])
     assert.equal(h.api.registrations, 1)
     assert.equal((await h.manager.inspect()).deviceRecovery, null)
@@ -227,12 +351,13 @@ test('a live auth-failure notification prompts reconnection of the same ID witho
 })
 
 for (const restarting of [false, true]) {
-  test(`deleted device waits for the recreate button (restart: ${restarting})`, async () => {
-    const h = await fixture(true)
+  test(`reconfiguring a deleted device opens a fresh complete Web onboarding (restart: ${restarting})`, async () => {
+    const h = await fixture()
     h.api.online = true
     try {
       await callback((await h.manager.begin()).url)
       await until(async () => (await h.manager.inspect()).stage === 'ready')
+      const previousFlowId = (await h.manager.inspect()).flowId!
       h.api.deleted = true
       if (restarting) { await h.reopen(); await h.manager.resume() }
       else h.connector.expire()
@@ -240,7 +365,24 @@ for (const restarting of [false, true]) {
       assert.equal(h.api.registrations, 1)
       assert.equal(h.api.renewals, 0)
       await assert.rejects(h.manager.recoverDevice('reconnect'))
-      await h.manager.recoverDevice('recreate')
+      const result = await h.manager.recoverDevice('recreate')
+      assert.ok(result?.url)
+      assert.equal(new URL(result.url).origin, h.api.baseUrl)
+      const target = readOnboardingTarget(new URLSearchParams(new URL(result.url).hash.split('?')[1]))
+      assert.ok(target, 'The actual Web entry must accept the recovery link')
+      assert.equal(target.connectorId, 'conn_recreated')
+      assert.notEqual(target.flowId, previousFlowId)
+      assert.equal((await h.manager.inspect()).connectorRunning, true)
+      assert.doesNotMatch(result.url, /SECRET|token|authorization/i)
+      const saved = new Map<string, string>()
+      const storage = { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => { saved.set(key, value) } }
+      saveOnboardingStep({ ...target, flowId: previousFlowId }, 'user-test', 'complete', storage)
+      assert.equal(restoreOnboardingStep(target, 'user-test', storage), 'welcome', 'Reconfiguration starts at the screenshot welcome page')
+      for (const step of ['device', 'phone', 'complete'] as const) {
+        saveOnboardingStep(target, 'user-test', step, storage)
+        assert.equal(restoreOnboardingStep(target, 'user-test', storage), step)
+      }
+      await assert.rejects(h.manager.recoverDevice('recreate'), /设备状态已变化/)
       assert.equal((await h.manager.inspect()).connectorId, 'conn_recreated')
       assert.equal((await h.manager.inspect()).deviceRecovery, null)
       assert.equal(h.api.registrations, 2)
@@ -322,7 +464,7 @@ test('Desktop presence or an invalid registry prevents the plugin from becoming 
 
 for (const signedIn of [false, true]) {
   test(`startup and each inspect check Desktop before account management (signed in: ${signedIn})`, async () => {
-    const h = await fixture(true)
+    const h = await fixture()
     h.setDesktop({ status: 'installed', executablePath: '/example/Electron', message: 'installed' })
     try {
       if (signedIn) await writeJson(join(h.root, 'account.json'), {
@@ -424,7 +566,7 @@ test('an existing local account without settings survives the new cloud default'
   const account = await api.exchange()
   await writeJson(join(root, 'account.json'), account)
   const manager = new OnboardingManager({
-    stateRoot: root, connectorSourceDir: root, uvPath: 'uv', autoStart: false, apiBaseUrl: CLOUD_API_BASE_URL,
+    stateRoot: root, connectorSourceDir: root, uvPath: 'uv', apiBaseUrl: CLOUD_API_BASE_URL,
   }, { api: () => api, connector: new FakeConnector(), detect: async () => ({ status: 'absent', message: 'not registered' }) })
   try {
     const snapshot = await manager.inspect()
@@ -469,5 +611,66 @@ test('saved accounts get profile details in the background, and late results can
     complete({ userId: 'user-test', displayName: 'Stale', email: 'stale@example.test', avatar: null })
     await h.manager.dispose()
     assert.equal(await readJson(join(h.root, 'account.json')), null)
+  } finally { await h.close() }
+})
+
+test('a Connector RPC conflict is shown and retry reuses the saved device', async () => {
+  const h = await fixture()
+  h.api.online = true
+  h.connector.startError = new ConnectorOwnershipError()
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'error')
+    assert.match((await h.manager.inspect()).message, /已有其他 Connector/)
+    assert.equal(h.api.registrations, 1)
+    assert.equal(h.connector.starts, 0)
+    h.connector.startError = null
+    await h.manager.begin()
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    assert.equal(h.api.registrations, 1)
+    assert.equal(h.connector.starts, 1)
+  } finally { await h.close() }
+})
+
+test('installed Desktop skips standalone Connector startup', async () => {
+  const h = await fixture()
+  try {
+    h.setDesktop({ status: 'installed', message: 'Desktop installed', executablePath: process.execPath })
+    const snapshot = await h.manager.inspect()
+    assert.equal(snapshot.desktop.status, 'installed')
+    assert.equal(h.connector.starts, 0)
+    await assert.rejects(h.manager.begin(), /Desktop installed/)
+  } finally { await h.close() }
+})
+
+test('installing Desktop stops the plugin Connector while its panel stays closed', { timeout: 8000 }, async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    h.setDesktop({ status: 'installed', message: 'Desktop installed', executablePath: process.execPath })
+    await until(async () => !h.connector.running)
+  } finally { await h.close() }
+})
+
+test('failed device reconfiguration returns no browser destination and remains recoverable', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    h.api.deleted = true
+    h.connector.expire()
+    await until(async () => (await h.manager.inspect()).deviceRecovery?.status === 'deleted')
+    const register = h.api.register.bind(h.api)
+    h.api.register = async () => { throw new ApiError(503) }
+    assert.equal(await h.manager.recoverDevice('recreate'), null)
+    assert.equal(h.api.registrations, 1)
+    assert.equal((await h.manager.inspect()).deviceRecovery?.status, 'unavailable')
+    h.api.register = register
+    await h.manager.recoverDevice('check')
+    assert.ok((await h.manager.recoverDevice('recreate'))?.url)
+    assert.equal(h.api.registrations, 2)
   } finally { await h.close() }
 })

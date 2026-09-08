@@ -28,7 +28,7 @@
             "items": {
               "type": "object", "required": ["method", "params"],
               "properties": {
-                "method": { "enum": ["session.meta.upsert", "session.source.updated", "session.state.updated", "session.turnEnded", "session.inventory.begin", "session.inventory.complete", "timeline.itemUpsert", "notice.upsert", "runtime.capability.updated"] },
+                "method": { "enum": ["session.meta.upsert", "session.source.updated", "session.state.updated", "session.turnEnded", "session.inventory.begin", "session.inventory.complete", "timeline.itemUpsert", "notice.upsert", "runtime.capability.updated", "session.capability.updated", "catalog.model.update", "catalog.permission.update"] },
                 "params": { "type": "object" }
               }
             }

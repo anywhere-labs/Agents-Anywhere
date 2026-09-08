@@ -36,6 +36,15 @@ class Host:
     async def sync_state_write(self, key, value):
         pass
 
+    async def session_state_update(self, **kwargs):
+        pass
+
+    async def session_source_update(self, observation):
+        pass
+
+    async def session_capabilities_update(self, capabilities):
+        pass
+
 
 async def main(home: Path) -> None:
     values = {"dshHome": str(home)}

@@ -344,7 +344,7 @@ class DeviceRuntimeRepository(
         self,
         connector_id: str,
         runtime_id: str,
-    ) -> dict[str, Any]: ...
+    ) -> list[str]: ...
 
     async def create_device_runtime(
         self,

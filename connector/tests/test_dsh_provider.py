@@ -4,6 +4,8 @@ import asyncio
 import json
 import os
 import sys
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +15,6 @@ from connector.runtime_protocol import (
     RuntimeConfig,
     RuntimeInvalidRequestError,
     RuntimeUnavailableError,
-    RuntimeUnsupportedError,
     RuntimeUpstreamError,
 )
 from connector.runtimes.dsh.discovery import BridgeEndpoint, DshDiscovery, discover
@@ -255,12 +256,13 @@ def test_snapshot_requires_all_pages_from_same_capture() -> None:
     asyncio.run(run())
 
 
-def test_text_runtime_requires_message_identity_and_does_not_expose_catalogs() -> None:
+def test_text_runtime_requires_message_identity_and_forwards_catalogs() -> None:
     async def run() -> None:
-        runtime = _Pages([])
-        for call in [runtime.list_model_catalog, runtime.list_permission_catalog]:
-            with pytest.raises(RuntimeUnsupportedError):
-                await call()
+        runtime = _Pages([{"runtime": "dsh", "revision": 3, "models": []}, {"runtime": "dsh", "revision": 3, "permissions": []}])
+        assert (await runtime.list_model_catalog()).models == ()
+        assert (await runtime.list_permission_catalog()).permissions == ()
+        assert [method for method, _ in runtime.calls] == ["catalog.listModels", "catalog.listPermissions"]
+        runtime.calls.clear()
         with pytest.raises(RuntimeInvalidRequestError):
             await runtime.start_turn("a", "native-a", "hello")
         assert runtime.calls == []
@@ -350,5 +352,46 @@ def test_reads_retry_connection_after_bounded_recovery_is_exhausted() -> None:
             await runtime.list_sessions()
         assert await runtime.list_sessions() == ()
         assert runtime.attempts == 2
+
+    asyncio.run(run())
+
+
+def test_initial_catalog_error_does_not_close_other_runtime_requests(monkeypatch):
+    from connector.runtimes.dsh import runtime as runtime_module
+    from connector.runtimes.dsh.bridge.client import BridgeRpcError
+
+    async def run():
+        broken = True
+
+        async def request(method, params=None):
+            if method == "runtime.getCapabilities":
+                return {"runtime": "dsh", "revision": 1, "capabilities": [
+                    {"capabilityId": name} for name in ["session.send_message", "catalog.model"]
+                ]}
+            if method == "catalog.listModels":
+                if broken:
+                    raise BridgeRpcError(-32603, "catalog failed", {"retryable": True})
+                return {"runtime": "dsh", "revision": 1, "models": []}
+            if method == "ping":
+                return {"ok": True}
+            raise AssertionError(method)
+
+        client = SimpleNamespace(connected=True, request=request, close=AsyncMock(), start=AsyncMock(return_value={
+            "identity": {"runtime": "dsh", "runtimeVersion": "test", "protocolVersion": "1.0"},
+            "features": {"syncMode": "polling"},
+        }))
+        monkeypatch.setattr(runtime_module.discovery, "load_endpoint", lambda _values: None)
+        monkeypatch.setattr(runtime_module, "BridgeClient", lambda **_kwargs: client)
+        host = SimpleNamespace(connector_id="test", runtime_capabilities_update=AsyncMock(), model_catalog_update=AsyncMock())
+        runtime = DshRuntime(RuntimeConfig("dsh", 2), host)
+        try:
+            await runtime.start()
+            assert await runtime._request("ping") == {"ok": True}
+            client.close.assert_not_awaited()
+            broken = False
+            assert (await runtime.list_model_catalog()).models == ()
+            assert runtime._client is client
+        finally:
+            await runtime.stop()
 
     asyncio.run(run())

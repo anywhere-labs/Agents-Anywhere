@@ -505,10 +505,7 @@ class TimelineWriteBuffer:
             try:
                 await self.flush_session(session_id)
             except KeyError:
-                lane = await self._lane(session_id)
-                async with lane.lock, self._sequences.session_fence(session_id):
-                    snapshot = await self._pending_snapshot(session_id)
-                    await self._clear_snapshot(session_id, snapshot)
+                await self.discard_session(session_id)
             except Exception as exc:  # noqa: BLE001 - drain every independent lane
                 logger.exception(
                     "timeline buffer flush failed session_id={}",
@@ -524,6 +521,17 @@ class TimelineWriteBuffer:
 
         lane = await self._lane(session_id)
         async with lane.lock:
+            lane.latest.clear()
+            lane.max_order_seq = None
+            lane.seeded = False
+
+    async def discard_session(self, session_id: str) -> None:
+        """Purge a deleted session's pending items, caches and Redis revisions."""
+        lane = await self._lane(session_id)
+        async with lane.lock, self._sequences.session_fence(session_id):
+            snapshot = await self._pending_snapshot(session_id)
+            await self._clear_snapshot(session_id, snapshot)
+            await self._sequences.discard_session(session_id)
             lane.latest.clear()
             lane.max_order_seq = None
             lane.seeded = False
