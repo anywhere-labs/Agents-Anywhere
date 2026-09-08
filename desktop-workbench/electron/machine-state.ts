@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { localRuntimePath, readLocalState, updateLocalState } from "./local-runtime";
+import { randomUUID } from "node:crypto";
+import { localRuntimePath, readMachineStateFile } from "./local-runtime";
+import { withMachineStateLock } from "./machine-state-lock";
 
 export type DesktopInstallation = {
   platform: NodeJS.Platform;
@@ -12,32 +14,41 @@ export type DesktopInstallation = {
 
 export const machineStatePath = localRuntimePath;
 
-/** Both apps append IDs; only Desktop records installation paths. Never credentials. */
+/** Desktop owns installation metadata; Connector alone appends IDs and owns startup. */
 export class MachineStateStore {
   constructor(readonly filePath = machineStatePath()) {}
 
   readConnectorIds(): string[] {
-    return readLocalState(this.filePath).connectorIds;
+    return readMachineStateFile(this.filePath).connectorIds;
   }
 
   async recordInstallation(input: DesktopInstallation): Promise<void> {
     if (!path.isAbsolute(input.appPath) || !path.isAbsolute(input.executablePath)) {
       throw new Error("Desktop installation paths must be absolute.");
     }
-    // Validate on every launch, even when the recorded strings have not changed.
     const desktop = { ...input, appPath: fs.realpathSync(input.appPath), executablePath: fs.realpathSync(input.executablePath) };
     if (!fs.statSync(desktop.executablePath).isFile()) throw new Error("Desktop executable is not a file.");
     fs.accessSync(desktop.executablePath, input.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
-    await updateLocalState(this.filePath, state => { state.desktop = { ...(state.desktop as object | undefined), ...desktop }; });
-  }
-
-  async recordConnectorId(id: string): Promise<void> {
-    const connectorId = id.trim();
-    if (!connectorId) throw new Error("A local Connector ID is required.");
-    await updateLocalState(this.filePath, state => {
-      if (!state.connectorIds.includes(connectorId)) state.connectorIds.push(connectorId);
+    // This short file transaction protects installation metadata from concurrent
+    // Python writes. It neither inspects nor acquires Connector startup ownership.
+    await withMachineStateLock(this.filePath, () => {
+      const state = fs.existsSync(this.filePath)
+        ? JSON.parse(fs.readFileSync(this.filePath, "utf8").replace(/^\uFEFF/, ""))
+        : { version: 2, connectorIds: [] };
+      if (!state || Array.isArray(state) || state.version !== 2) throw new Error("Unsupported local Connector record version.");
+      const next = { ...(state.desktop && typeof state.desktop === "object" ? state.desktop : {}), ...desktop };
+      if (JSON.stringify(state.desktop) === JSON.stringify(next)) return;
+      state.desktop = next;
+      const temporary = `${this.filePath}.${randomUUID()}.tmp`;
+      try {
+        const fd = fs.openSync(temporary, "wx", 0o600);
+        try { fs.writeFileSync(fd, `${JSON.stringify(state, null, 2)}\n`); fs.fsyncSync(fd); }
+        finally { fs.closeSync(fd); }
+        fs.renameSync(temporary, this.filePath);
+      } finally { fs.rmSync(temporary, { force: true }); }
     });
   }
+
 }
 
 /** Packaged macOS launches the .app executable; dev Electron needs the project argument. */

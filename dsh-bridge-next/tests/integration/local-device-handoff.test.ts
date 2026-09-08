@@ -1,4 +1,4 @@
-import { LocalRuntimeLease, localRuntimePath } from '../../src/host/desktop/local-runtime.js'
+import { recordConnectorId } from '../helpers/python-connector.js'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -65,7 +65,7 @@ for (const entry of ['first-login', 'deleted-local-device'] as const) {
     let credential: ConnectorPrivateConfig | null = null
     if (entry === 'deleted-local-device') {
       // The user deleted all server devices; only the stale local history remains.
-      await machine.recordConnectorId('deleted-device')
+      await recordConnectorId(home, 'deleted-device')
       new DesktopBindingStore(bindingPath).save({
         connectorId: 'deleted-device', serverUrl: 'https://api.example.test', name: 'Previous Mac',
         ownerUserId: 'user', manualDisconnected: true,
@@ -77,14 +77,13 @@ for (const entry of ['first-login', 'deleted-local-device'] as const) {
     const pluginConnector: ConnectorProcess = {
       onState: () => () => {},
       prepare: async () => {},
-      start: async binding => { server.devices.get(binding.connectorId)!.status = 'online'; pluginRunning = true },
+      start: async binding => { await recordConnectorId(home, binding.connectorId); server.devices.get(binding.connectorId)!.status = 'online'; pluginRunning = true },
       stop: async () => { pluginRunning = false },
       assertHealthy: async () => { assert.equal(pluginRunning, true) },
     }
     const manager = new OnboardingManager({
       stateRoot: join(home, 'plugin'), apiBaseUrl: server.origin, connectorSourceDir: home, uvPath: 'uv',
     }, {
-      ownership: new LocalRuntimeLease('dsh-plugin', localRuntimePath(home)),
       api: () => new AccountApi(server.origin, server.fetch), connector: pluginConnector,
       detect: async () => ({ status: 'absent', message: 'Desktop not installed yet' }),
       checkServer: async () => {}, machineState: localMachineRegistry(home), pollIntervalMs: 10, onlineTimeoutMs: 3000,
@@ -105,7 +104,7 @@ for (const entry of ['first-login', 'deleted-local-device'] as const) {
       }
       assert.equal(server.devices.size, 1)
       const pluginId = [...server.devices.keys()][0]!
-      assert.ok(machine.readConnectorIds().includes(pluginId), 'the actual plugin must publish the ID itself')
+      assert.ok(machine.readConnectorIds().includes(pluginId), 'Python startup must publish the plugin Connector ID')
       const publishedIds = machine.readConnectorIds()
 
       // A newly started Desktop reads the plugin's real file before reconnecting.
@@ -121,7 +120,7 @@ for (const entry of ['first-login', 'deleted-local-device'] as const) {
       const service = new DesktopDeviceService({
         binding: new DesktopBindingStore(bindingPath), connector: supervisor,
         fetcher: server.fetch, defaultServerUrl: () => server.origin, apiNamespace: () => '/api/v2',
-        readLocalConnectorIds: () => machine.readConnectorIds(), recordLocalConnector: id => machine.recordConnectorId(id),
+        readLocalConnectorIds: () => machine.readConnectorIds(),
       })
       const input = { userId: 'user', userToken: 'USER-SECRET' }
       const connected = entry === 'first-login' ? await service.createAndConnect(input) : await service.reconnectAndConnect(input)

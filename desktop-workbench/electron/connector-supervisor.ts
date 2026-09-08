@@ -1,4 +1,6 @@
 import { localRuntimePath } from "./local-runtime";
+import type { OwnershipState } from "./local-runtime";
+import { ConnectorRpcError, CONNECTOR_CONFLICT_MESSAGE } from "./connector-rpc-error";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -24,8 +26,7 @@ type PendingRequest = {
 };
 
 type ConnectorSupervisorOptions = {
-  requireOwnership?: () => Promise<void>;
-  ownerEnvironment?: () => Record<string, string>;
+  onOwnership?: (state: OwnershipState) => void;
   configPath: string;
   dataPath: string;
   connectorDir: string;
@@ -133,12 +134,24 @@ export class ConnectorSupervisor {
   async preflightProvisioning(): Promise<ConnectorState> {
     fs.mkdirSync(this.options.dataPath, { recursive: true, mode: 0o700 });
     fs.accessSync(this.options.dataPath, fs.constants.R_OK | fs.constants.W_OK);
-    const runtimeState = await this.request("connector.getState", undefined, {
+    const runtimeState = await this.request("connector.acquireOwnership", undefined, {
       requiresConfig: false,
       timeoutMs: 30_000,
     });
     this.mergeRuntimeState(runtimeState);
     return this.emitState();
+  }
+
+  async acquireOwnership(): Promise<void> {
+    try {
+      await this.request("connector.acquireOwnership", undefined, { requiresConfig: false });
+      this.options.onOwnership?.({ status: "owned" });
+    } catch (error) {
+      if (!(error instanceof ConnectorRpcError && error.ownershipConflict)) {
+        this.options.onOwnership?.({ status: "error", message: errorMessage(error) });
+      }
+      throw error;
+    }
   }
 
   getPublicConfig(): ConnectorPublicConfig {
@@ -167,7 +180,7 @@ export class ConnectorSupervisor {
   }
 
   async saveCredentials(config: ConnectorPrivateConfig): Promise<ConnectorPublicConfig> {
-    await this.options.requireOwnership?.();
+    await this.acquireOwnership();
     const normalized = parsePrivateConfig(config);
     // Persist first so a sidecar crash after the Server creates a device does
     // not lose the only copy of its one-time Connector token.
@@ -280,7 +293,6 @@ export class ConnectorSupervisor {
     params?: unknown,
     options: { requiresConfig?: boolean; timeoutMs?: number } = {},
   ): Promise<unknown> {
-    if (method !== "connector.stop") await this.options.requireOwnership?.();
     this.ensureRpcProcess(options.requiresConfig !== false);
     const child = this.rpcProcess;
     if (!child?.stdin.writable) throw new Error("Connector RPC is not available.");
@@ -358,8 +370,15 @@ export class ConnectorSupervisor {
       if (!request) return;
       clearTimeout(request.timer);
       this.pending.delete(payload.id);
-      if (payload.error) request.reject(new Error(payload.error.message || "Connector RPC error"));
-      else request.resolve(payload.result);
+      if (payload.error) {
+        const error = new ConnectorRpcError(payload.error.code ?? -32000, payload.error.message || "Connector RPC error", payload.error.data);
+        if (error.ownershipConflict) {
+          this.keepRuntimeRunning = false;
+          this.clearRestartTimer();
+          this.options.onOwnership?.({ status: "conflict", message: CONNECTOR_CONFLICT_MESSAGE });
+        }
+        request.reject(error);
+      } else request.resolve(payload.result);
       return;
     }
     if (payload.method === "connector/state") {
@@ -572,7 +591,7 @@ export class ConnectorSupervisor {
     const environment: NodeJS.ProcessEnv = {
       ...process.env,
       ...this.shellEnvironment,
-      ...this.options.ownerEnvironment?.(),
+      AA_CONNECTOR_OWNER_KIND: "desktop-workbench",
       PATH: [...new Set(entries)].join(path.delimiter),
       PYTHONUNBUFFERED: "1",
       PYTHONDONTWRITEBYTECODE: "1",

@@ -18,7 +18,6 @@ type DesktopDeviceServiceOptions = {
   defaultServerUrl: () => string;
   apiNamespace: () => string;
   readLocalConnectorIds: () => readonly string[];
-  recordLocalConnector: (connectorId: string) => Promise<void>;
 };
 
 type ConnectorCredentialResponse = {
@@ -127,8 +126,8 @@ export class DesktopDeviceService {
       manualDisconnected: false,
     };
     try {
-      // Only POST /connectors creates a new local identity. Token rotation never appends one.
-      if (!reusedConnectorId) await this.options.recordLocalConnector(credential.connector.id);
+      // Connector records the ID when it accepts startup; preserve credentials
+      // for retry if Python rejects startup or cannot publish the shared history.
       this.options.binding.save(nextBinding);
     } catch (error) {
       const rollbackError = reusedConnectorId ? null : await this.tryRollbackCreatedConnector(

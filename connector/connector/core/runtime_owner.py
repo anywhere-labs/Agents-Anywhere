@@ -17,6 +17,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import psutil
+
 from connector.core.json_rpc import JsonRpcError
 
 if TYPE_CHECKING:
@@ -156,6 +158,15 @@ def state_transaction(path: str | Path) -> Iterator[dict[str, Any]]:
 
 
 def process_identity(pid: int) -> str | None:
+    try:
+        return f"unix:{psutil.Process(pid).create_time():.6f}"
+    except psutil.NoSuchProcess:
+        return None
+    except psutil.AccessDenied as exc:
+        raise RuntimeError("Cannot verify the Connector process. Check process inspection permissions.") from exc
+
+
+def _legacy_process_identity(pid: int) -> str | None:
     command = (["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", f"(Get-Process -Id {pid}).StartTime.ToUniversalTime().Ticks"]
                if sys.platform == "win32" else ["ps", "-o", "lstart=", "-p", str(pid)])
     try:
@@ -165,19 +176,51 @@ def process_identity(pid: int) -> str | None:
         return None
 
 
+def _connector_command(executable: str, arguments: list[str]) -> bool:
+    """Recognize the running Connector entry point, not an app or uv parent."""
+    name = Path(executable.replace("\\", "/")).name.lower()
+    entry_points = {"anywhere-cli", "agent-connector", "anywhere-cli.exe", "agent-connector.exe"}
+    if name in entry_points:
+        return True
+    if not name.startswith(("python", "pypy")):
+        return False
+    index = 1
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "-m":
+            return index + 1 < len(arguments) and arguments[index + 1] in {"connector", "connector.cli"}
+        if argument == "-c":
+            return False
+        if argument in {"-W", "-X"}:
+            index += 2
+            continue
+        if argument.startswith("-"):
+            index += 1
+            continue
+        script = argument.replace("\\", "/")
+        return Path(script).name.lower() in entry_points or script.endswith("/connector/cli.py")
+    return False
+
+
 def _pid_alive(pid: int | None, identity: str | None = None) -> bool:
     if not pid or pid <= 0:
         return False
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except OSError as exc:
-        if sys.platform == "win32" and getattr(exc, "winerror", None) == 87:
+        process = psutil.Process(pid)
+        if process.status() == psutil.STATUS_ZOMBIE:
             return False
-        return True  # Access denied does not mean the owner exited.
-    current = process_identity(pid) if identity else None
-    return not identity or not current or identity == current
+        if identity:
+            current = (f"unix:{process.create_time():.6f}" if identity.startswith("unix:")
+                       else _legacy_process_identity(pid))
+            if current is None:
+                raise RuntimeError("Cannot verify the Connector process start time.")
+            if identity != current:
+                return False
+        return _connector_command(process.exe(), process.cmdline()) and process.is_running()
+    except psutil.NoSuchProcess:
+        return False
+    except psutil.AccessDenied as exc:
+        raise RuntimeError("Cannot verify the Connector process. Check process inspection permissions.") from exc
 
 
 def owner_alive(value: dict[str, Any]) -> bool:
@@ -194,14 +237,17 @@ class RuntimeOwner:
 
     @classmethod
     def from_record(cls, value: dict[str, Any]) -> RuntimeOwner:
-        return cls(value["pid"], value["kind"], value.get("connectorId", ""), value.get("serverUrl", ""), value.get("startedAt"))
+        pid = value["pid"]
+        if value.get("childPid") and not _pid_alive(pid, value.get("processStartedAt")):
+            pid = value["childPid"]
+        return cls(pid, value["kind"], value.get("connectorId", ""), value.get("serverUrl", ""), value.get("startedAt"))
 
 
 class ConnectorAlreadyRunningError(JsonRpcError):
     def __init__(self, owner: RuntimeOwner) -> None:
         super().__init__(
             -32009,
-            f"Another Connector is running ({owner.kind}, PID {owner.pid}). Stop that Connector, then retry.",
+            f"Another Connector is running ({owner.kind}, PID {owner.pid}). Stop that Connector process, then retry.",
             {"reason": "connector_already_running", "owner": {"kind": owner.kind, "pid": owner.pid}},
         )
         self.owner = owner
@@ -252,26 +298,3 @@ class RuntimeLease:
 def read_runtime(path: str | Path) -> RuntimeOwner | None:
     owner = read_state(path).get("runtime")
     return RuntimeOwner.from_record(owner) if owner else None
-
-
-def record_desktop_installation(path: str | Path, value: Any) -> None:
-    """Publish host-supplied installation metadata without claiming a runtime."""
-    if not isinstance(value, dict):
-        raise ValueError("Desktop installation must be an object")
-    app_path, executable_path = value.get("appPath"), value.get("executablePath")
-    if any(not isinstance(item, str) or not Path(item).is_absolute() for item in (app_path, executable_path)):
-        raise ValueError("Desktop installation paths must be absolute")
-    launch_args = value.get("launchArgs")
-    if (not isinstance(launch_args, list) or any(not isinstance(item, str) for item in launch_args)
-            or type(value.get("packaged")) is not bool or value.get("platform") != sys.platform):
-        raise ValueError("Invalid Desktop installation metadata")
-    app = Path(app_path).resolve(strict=True)
-    executable = Path(executable_path).resolve(strict=True)
-    if not executable.is_file() or not os.access(executable, os.F_OK if sys.platform == "win32" else os.X_OK):
-        raise ValueError("Desktop executable is not available")
-    with state_transaction(path) as state:
-        state["desktop"] = {
-            **(state.get("desktop") if isinstance(state.get("desktop"), dict) else {}),
-            "platform": sys.platform, "appPath": str(app), "executablePath": str(executable),
-            "launchArgs": launch_args, "packaged": value["packaged"],
-        }

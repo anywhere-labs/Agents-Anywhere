@@ -1,4 +1,4 @@
-import { LocalRuntimeLease, type OwnershipState } from "./local-runtime";
+import type { OwnershipState } from "./local-runtime";
 import {
   app,
   BrowserWindow,
@@ -77,7 +77,6 @@ const API_ROUTE_PREFIXES = [
   "/.well-known",
 ];
 
-let localLease: LocalRuntimeLease | null = null;
 let ownership: OwnershipState = { status: "error", message: "正在检查本机 Connector…" };
 let recheckingOwnership: Promise<OwnershipState> | null = null;
 
@@ -480,10 +479,8 @@ function syncDesktopUpdateSession(serverUrl: unknown) {
 }
 
 async function requireLocalOwnership(): Promise<void> {
-  if (isQuitting || !localLease) throw new Error("Desktop is shutting down or not ready.");
-  ownership = await localLease.claim();
-  sendToRenderer("workbench:ownership:state", ownership);
-  if (ownership.status !== "owned") throw new Error(ownership.message);
+  if (isQuitting || !connector) throw new Error("Desktop is shutting down or not ready.");
+  await connector.acquireOwnership();
 }
 
 async function startOwnedConnector(): Promise<void> {
@@ -501,9 +498,8 @@ function registerIpcHandlers(): void {
   ipcMain.handle("workbench:ownership:recheck", event => {
     assertTrustedRenderer(event);
     recheckingOwnership ??= (async () => {
-      if (isQuitting || !localLease) return ownership;
-      ownership = await localLease.claim();
-      sendToRenderer("workbench:ownership:state", ownership);
+      if (isQuitting || !connector) return ownership;
+      try { await requireLocalOwnership(); } catch { return ownership; }
       if (ownership.status === "owned") {
         void startOwnedConnector().catch(error => appendMainLog({ level: "ERROR", message: errorMessage(error) }));
         if (app.isPackaged) void drainDesktopOAuthCallbacks();
@@ -718,7 +714,6 @@ function registerIpcHandlers(): void {
     isQuitting = true;
     quiesceRendererForShutdown();
     await requireConnector().shutdown();
-    await localLease?.release();
     await session.defaultSession.clearStorageData();
     await session.defaultSession.clearCache();
     fs.rmSync(connectorDataPath(), { recursive: true, force: true });
@@ -785,21 +780,13 @@ async function initializeDesktopServices(): Promise<void> {
   fs.mkdirSync(dataPath, { recursive: true, mode: 0o700 });
   settingsStore = new DesktopSettingsStore(desktopSettingsPath(), app.getPreferredSystemLanguages());
   logStore = new ConnectorLogStore(connectorLogsPath(), () => requireSettings().get());
-  try {
-    await machineState.recordInstallation(desktopInstallation({
-      executablePath: process.platform === "linux" && app.isPackaged && process.env.APPIMAGE ? process.env.APPIMAGE : process.execPath,
-      appPath: app.getAppPath(), packaged: app.isPackaged, platform: process.platform,
-    }));
-  } catch (error) {
-    appendMainLog({ level: "ERROR", message: `Could not record Desktop installation: ${errorMessage(error)}` });
-  }
-  localLease = new LocalRuntimeLease("desktop-workbench", machineState.filePath, [path.join(dataPath, "connector-runtime.json")]);
-  ownership = await localLease.claim();
   bindingStore = new DesktopBindingStore(path.join(dataPath, "desktop-binding.json"));
   const shellEnvironment = await readShellEnvironment();
   connector = new ConnectorSupervisor({
-    requireOwnership: requireLocalOwnership,
-    ownerEnvironment: () => localLease!.environment(),
+    onOwnership: (state) => {
+      ownership = state;
+      sendToRenderer("workbench:ownership:state", state);
+    },
     configPath: path.join(dataPath, "connector.json"),
     dataPath,
     connectorDir: resolveConnectorDir(),
@@ -815,6 +802,15 @@ async function initializeDesktopServices(): Promise<void> {
     },
     onLog: (entry) => sendToRenderer("workbench:connector:log", entry),
   });
+  try { await requireLocalOwnership(); } catch { /* The renderer shows the RPC error and retry action. */ }
+  try {
+    await machineState.recordInstallation(desktopInstallation({
+      executablePath: process.platform === "linux" && app.isPackaged && process.env.APPIMAGE ? process.env.APPIMAGE : process.execPath,
+      appPath: app.getAppPath(), packaged: app.isPackaged, platform: process.platform,
+    }));
+  } catch (error) {
+    appendMainLog({ level: "ERROR", message: `Could not record Desktop installation: ${errorMessage(error)}` });
+  }
   const config = connector.loadPrivateConfig();
   if (config && !bindingStore.get()) bindingStore.adoptConfig(config);
   connector.bindingChanged();
@@ -826,7 +822,6 @@ async function initializeDesktopServices(): Promise<void> {
     defaultServerUrl: apiOrigin,
     apiNamespace,
     readLocalConnectorIds: () => machineState.readConnectorIds(),
-    recordLocalConnector: (connectorId) => machineState.recordConnectorId(connectorId),
   });
   applyLoginItemSettings();
 }
@@ -868,7 +863,6 @@ async function requestQuit({ confirm = false }: { confirm?: boolean } = {}): Pro
       updates?.dispose();
       quiesceRendererForShutdown();
       await connector?.shutdown();
-      await localLease?.release();
     } finally {
       shutdownComplete = true;
       app.quit();

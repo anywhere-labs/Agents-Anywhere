@@ -19,7 +19,6 @@ from connector.core.control_config import (
 from connector.core.runtime_owner import (
     ConnectorAlreadyRunningError,
     RuntimeLease,
-    record_desktop_installation,
     runtime_path,
 )
 from connector.logging import logger
@@ -82,9 +81,6 @@ class ConnectorController:
         """Reserve this Connector before provisioning; conflicts remain RPC errors."""
         self.lease.claim()
         return self.get_state()
-
-    def record_installation(self, params: Any) -> None:
-        record_desktop_installation(self.runtime_path, params)
 
     def get_config(self, _params: Any = None) -> dict[str, Any]:
         if not self.config_path.exists():

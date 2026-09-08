@@ -1,4 +1,3 @@
-import type { LocalRuntimeLease } from '../desktop/local-runtime.js'
 import { execFile, spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from 'node:child_process'
 import { access, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -35,6 +34,11 @@ export class ConnectorCredentialError extends Error {
   constructor() { super('本机设备连接已失效，请在插件中恢复连接。') }
 }
 
+export class ConnectorOwnershipError extends Error {
+  readonly code = -32009
+  constructor() { super('当前已有其他 Connector 在运行，请先结束对应的 Connector 进程，然后重试。') }
+}
+
 /** Owns only the child it spawns; DSH Agent operations are served by the plugin runtime. */
 export class SourceConnector implements ConnectorProcess {
   private child: ChildProcessWithoutNullStreams | null = null
@@ -48,8 +52,7 @@ export class SourceConnector implements ConnectorProcess {
   private readonly closed = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly logs: ConnectorLogs
   constructor(private readonly config: ResolvedConfig, private readonly launch: ConnectorLauncher = spawn,
-    private readonly settings: () => ConnectorSettings = () => DEFAULT_CONNECTOR_SETTINGS,
-    private readonly ownership?: LocalRuntimeLease) {
+    private readonly settings: () => ConnectorSettings = () => DEFAULT_CONNECTOR_SETTINGS) {
     this.logs = new ConnectorLogs(join(config.stateRoot, 'logs'))
   }
 
@@ -73,7 +76,6 @@ export class SourceConnector implements ConnectorProcess {
   }
 
   async prepare(settings = this.settings()): Promise<void> {
-    await this.ownership?.require()
     try {
       await access(join(this.config.connectorSourceDir, 'pyproject.toml'))
       await access(join(this.config.connectorSourceDir, 'connector', 'cli.py'))
@@ -90,7 +92,6 @@ export class SourceConnector implements ConnectorProcess {
   }
 
   async start(binding: BoundDevice, apiBaseUrl: string, signal: AbortSignal): Promise<void> {
-    await this.ownership?.require()
     if (this.stopping) await this.stopping
     if (this.running) return
     if (this.alive) await this.stop()
@@ -126,7 +127,7 @@ export class SourceConnector implements ConnectorProcess {
       detached: process.platform !== 'win32',
       env: {
         ...process.env,
-        ...this.ownership?.environment(),
+        AA_CONNECTOR_OWNER_KIND: 'dsh-plugin',
         ...(this.config.dshHome ? { DSH_HOME: this.config.dshHome } : {}),
         AGENT_CONNECTOR_DATA_DIR: dataDir,
         UV_PROJECT_ENVIRONMENT: join(this.config.stateRoot, 'connector-venv'),
@@ -240,7 +241,11 @@ export class SourceConnector implements ConnectorProcess {
         if (!pending) continue
         this.pending.delete(frame.id)
         clearTimeout(pending.timer)
-        if (frame.error) pending.reject(new Error('Connector 操作失败，请检查本机运行环境后重试。'))
+        if (frame.error) {
+          const error = frame.error as { code?: number; data?: { reason?: string } }
+          pending.reject(error.code === -32009 && error.data?.reason === 'connector_already_running'
+            ? new ConnectorOwnershipError() : new Error('Connector 操作失败，请检查本机运行环境后重试。'))
+        }
         else pending.resolve(frame.result)
       } catch { this.fail(new Error('Connector 返回了无效的协议消息。')) }
     }

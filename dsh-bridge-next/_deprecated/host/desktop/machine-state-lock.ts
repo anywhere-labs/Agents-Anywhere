@@ -1,3 +1,5 @@
+// Archived: the plugin only reads shared machine metadata. Desktop and Python
+// retain the short file transaction protocol for their respective writes.
 import { createHash } from "node:crypto";
 import { mkdir, realpath } from "node:fs/promises";
 import { createServer } from "node:net";

@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 
 import pytest
 
 from connector.core import runtime_owner
 from connector.core.config import ConnectorConfig
 from connector.core.runtime_owner import (
-    ConnectorAlreadyRunningError, RuntimeLease, read_runtime, read_state, runtime_path, state_transaction,
+    ConnectorAlreadyRunningError,
+    RuntimeLease,
+    read_runtime,
+    read_state,
+    runtime_path,
+    state_transaction,
 )
 
 
@@ -59,8 +66,9 @@ def test_live_child_blocks_takeover_when_parent_died():
     first.claim()
     with state_transaction(first.path) as state:
         state["runtime"].update(pid=99999999, childPid=os.getpid())
-    with pytest.raises(ConnectorAlreadyRunningError):
+    with pytest.raises(ConnectorAlreadyRunningError) as conflict:
         RuntimeLease().claim()
+    assert conflict.value.owner.pid == os.getpid()
 
 
 def test_host_delegation_environment_cannot_bypass_python_ownership(monkeypatch):
@@ -110,3 +118,34 @@ def test_corrupt_or_newer_records_fail_closed(value):
     with pytest.raises(RuntimeError):
         RuntimeLease().claim()
     assert path.read_text() == value
+
+
+@pytest.mark.parametrize(("executable", "arguments", "expected"), [
+    ("/venv/bin/python3.12", ["python", "/venv/bin/anywhere-cli", "rpc"], True),
+    ("/usr/bin/python3", ["python", "-u", "-m", "connector.cli", "start"], True),
+    ("C:\\Python\\python.exe", ["python", "C:\\venv\\Scripts\\agent-connector.exe", "rpc"], True),
+    ("/bin/electron", ["electron", "anywhere-cli", "rpc"], False),
+    ("/bin/uv", ["uv", "run", "anywhere-cli", "rpc"], False),
+    ("/bin/python", ["python", "other.py", "anywhere-cli"], False),
+    ("/bin/python", ["python", "-c", "print('anywhere-cli')"], False),
+])
+def test_process_check_recognizes_connector_entry_points_only(executable, arguments, expected):
+    assert runtime_owner._connector_command(executable, arguments) is expected
+
+
+def test_live_unrelated_process_does_not_block_connector_start():
+    unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        lease = RuntimeLease()
+        with state_transaction(lease.path) as state:
+            state["runtime"] = {
+                "instanceId": "stale-record", "pid": unrelated.pid, "kind": "dsh-plugin",
+                "startedAt": "old", "processStartedAt": runtime_owner.process_identity(unrelated.pid),
+            }
+        lease.claim(config())
+        assert read_runtime(lease.path).pid == os.getpid()
+        assert unrelated.poll() is None, "Checking ownership must not terminate another process"
+        lease.release()
+    finally:
+        unrelated.terminate()
+        unrelated.wait(timeout=5)

@@ -1,5 +1,5 @@
+import { ConnectorOwnershipError } from '../../src/host/connector/process.js'
 import { readOnboardingTarget, restoreOnboardingStep, saveOnboardingStep } from '../../../web-next/src/features/onboarding/flow.ts'
-import { LocalRuntimeLease, localRuntimePath } from '../../src/host/desktop/local-runtime.js'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mkdtemp, readdir, rm } from 'node:fs/promises'
@@ -52,7 +52,8 @@ class FakeConnector implements ConnectorProcess {
   onState(listener: (state: ConnectorState) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   expire() { this.running = false; for (const listener of this.listeners) listener({ running: false, authFailed: true }) }
   async prepare() {}
-  async start() { this.running = true; this.starts++ }
+  startError: Error | null = null
+  async start() { if (this.startError) throw this.startError; this.running = true; this.starts++ }
   async stop() { this.running = false; this.stops++ }
   async assertHealthy() { if (!this.running) throw new Error('not running') }
 }
@@ -70,14 +71,12 @@ async function fixture() {
     stateRoot: root, connectorSourceDir: root, uvPath: 'uv',
     apiBaseUrl: api.baseUrl,
   }, {
-    ownership: new LocalRuntimeLease('dsh-plugin', localRuntimePath(join(root, 'home'))),
     systemLanguages: async () => ['en-US'],
     api: base => base === api.baseUrl ? api : new FakeApi(base), connector, detect: async () => { detections++; return detection },
     checkServer: async (base) => { checkedServers.push(base); if (healthError) throw healthError },
     onlineTimeoutMs: 5000, pollIntervalMs: 10,
     machineState: {
       readConnectorIds: async () => localIds,
-      recordConnectorId: async id => { if (!localIds.includes(id)) localIds.push(id) },
     },
   })
   let manager = create()
@@ -568,7 +567,7 @@ test('an existing local account without settings survives the new cloud default'
   await writeJson(join(root, 'account.json'), account)
   const manager = new OnboardingManager({
     stateRoot: root, connectorSourceDir: root, uvPath: 'uv', apiBaseUrl: CLOUD_API_BASE_URL,
-  }, { ownership: new LocalRuntimeLease('dsh-plugin', localRuntimePath(join(root, 'home'))), api: () => api, connector: new FakeConnector(), detect: async () => ({ status: 'absent', message: 'not registered' }) })
+  }, { api: () => api, connector: new FakeConnector(), detect: async () => ({ status: 'absent', message: 'not registered' }) })
   try {
     const snapshot = await manager.inspect()
     assert.equal(snapshot.account?.userId, account.userId)
@@ -615,47 +614,43 @@ test('saved accounts get profile details in the background, and late results can
   } finally { await h.close() }
 })
 
-test('another Connector blocks standalone onboarding before network, pairing, or subprocess work', async () => {
+test('a Connector RPC conflict is shown and retry reuses the saved device', async () => {
   const h = await fixture()
-  const other = new LocalRuntimeLease('cli', localRuntimePath(join(h.root, 'home')))
+  h.api.online = true
+  h.connector.startError = new ConnectorOwnershipError()
   try {
-    await other.require()
-    assert.equal((await h.manager.inspect()).ownership?.status, 'conflict')
-    await assert.rejects(h.manager.begin(), /当前已有其他 Connector/)
-    assert.equal(h.checkedServers.length, 0)
-    assert.equal(h.api.exchanges, 0)
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'error')
+    assert.match((await h.manager.inspect()).message, /已有其他 Connector/)
+    assert.equal(h.api.registrations, 1)
     assert.equal(h.connector.starts, 0)
-    await other.release()
-    assert.equal((await h.manager.inspect()).ownership?.status, 'owned')
-  } finally { await other.release(); await h.close() }
+    h.connector.startError = null
+    await h.manager.begin()
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    assert.equal(h.api.registrations, 1)
+    assert.equal(h.connector.starts, 1)
+  } finally { await h.close() }
 })
 
-test('installed Desktop skips standalone ownership even when a CLI already owns the machine', async () => {
+test('installed Desktop skips standalone Connector startup', async () => {
   const h = await fixture()
-  const other = new LocalRuntimeLease('cli', localRuntimePath(join(h.root, 'home')))
   try {
-    await other.require()
     h.setDesktop({ status: 'installed', message: 'Desktop installed', executablePath: process.execPath })
     const snapshot = await h.manager.inspect()
     assert.equal(snapshot.desktop.status, 'installed')
-    assert.equal(snapshot.ownership, null)
-    await h.manager.dispose()
-    assert.equal((await other.claim()).status, 'owned')
-  } finally { await other.release(); await h.close() }
+    assert.equal(h.connector.starts, 0)
+    await assert.rejects(h.manager.begin(), /Desktop installed/)
+  } finally { await h.close() }
 })
 
-test('installing Desktop stops the plugin and releases ownership while its panel stays closed', { timeout: 8000 }, async () => {
+test('installing Desktop stops the plugin Connector while its panel stays closed', { timeout: 8000 }, async () => {
   const h = await fixture()
   h.api.online = true
   try {
     await callback((await h.manager.begin()).url)
     await until(async () => (await h.manager.inspect()).stage === 'ready')
     h.setDesktop({ status: 'installed', message: 'Desktop installed', executablePath: process.execPath })
-    // No inspect calls: the host must notice the installation on its own.
     await until(async () => !h.connector.running)
-    const desktop = new LocalRuntimeLease('desktop-workbench', localRuntimePath(join(h.root, 'home')))
-    await until(async () => (await desktop.claim()).status === 'owned')
-    await desktop.release()
   } finally { await h.close() }
 })
 

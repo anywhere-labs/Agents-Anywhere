@@ -4,7 +4,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SourceConnector } from '../../src/host/connector/process.js'
+import { SourceConnector, ConnectorOwnershipError } from '../../src/host/connector/process.js'
 import { readJson } from '../../src/host/storage/files.js'
 import { DEFAULT_CONNECTOR_SETTINGS, type ConnectorSettings } from '../../src/contracts/connector.js'
 import { ConnectorSettingsStore } from '../../src/host/connector/settings.js'
@@ -17,6 +17,10 @@ const lines = readline.createInterface({ input: process.stdin });
 lines.on('line', line => {
   if (process.argv[2] === 'stall') return;
   const request = JSON.parse(line);
+  if (request.method === 'connector.start' && process.argv[2] === 'conflict') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, error: { code: -32009, message: 'Connector conflict', data: { reason: 'connector_already_running' } } }) + '\\n');
+    return;
+  }
   if (request.method === 'connector.start') running = true;
   if (request.method === 'connector.stop') running = false;
   const result = { running, authFailed: false };
@@ -149,4 +153,15 @@ test('cancelling a Connector that has not finished startup closes its owned proc
     await assert.rejects(h.connector.start(binding, 'https://api.example.test', controller.signal))
     assert.equal(h.connector.running, false)
   } finally { clearTimeout(timer); await h.close() }
+})
+
+
+test('source Connector preserves RPC conflict identity and stops only its rejected child', async () => {
+  const h = await fixture('conflict')
+  try {
+    await assert.rejects(h.connector.start(binding, 'https://api.example.test', new AbortController().signal), ConnectorOwnershipError)
+    assert.equal(h.connector.running, false)
+    assert.equal(h.child?.exitCode, 0)
+    assert.equal((await readJson<{ connectorId: string }>(join(h.root, 'data', 'connector', 'connector.json')))?.connectorId, binding.connectorId)
+  } finally { await h.close() }
 })
