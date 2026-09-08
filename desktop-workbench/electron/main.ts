@@ -11,6 +11,7 @@ import {
   protocol,
   session,
   shell,
+  Tray,
   type IpcMainInvokeEvent,
 } from "electron";
 import fs from "node:fs";
@@ -83,6 +84,7 @@ let ownership: OwnershipState = { status: "error", message: "正在检查本机 
 let recheckingOwnership: Promise<OwnershipState> | null = null;
 
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
 let devOrigin: string | null = null;
 let settingsStore: DesktopSettingsStore | null = null;
 let bindingStore: DesktopBindingStore | null = null;
@@ -351,7 +353,7 @@ function createMainWindow(showOnReady = true): BrowserWindow {
   window.on("close", (event) => {
     if (isQuitting) return;
     event.preventDefault();
-    if (process.platform === "darwin") {
+    if (process.platform === "darwin" || process.platform === "win32") {
       window.hide();
       return;
     }
@@ -365,6 +367,7 @@ function createMainWindow(showOnReady = true): BrowserWindow {
 }
 
 function showMainWindow(): void {
+  if (isQuitting) return;
   const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createMainWindow(false);
   showDockForWindow();
   if (window.isMinimized()) window.restore();
@@ -372,6 +375,19 @@ function showMainWindow(): void {
   window.moveTop();
   if (process.platform === "darwin") app.focus({ steal: true });
   window.focus();
+}
+
+function createWindowsTray(): void {
+  if (process.platform !== "win32" || tray) return;
+  const iconPath = path.join(app.isPackaged ? process.resourcesPath : app.getAppPath(), "build", "icon.ico");
+  tray = new Tray(iconPath);
+  tray.setToolTip(APP_NAME);
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "打开 Agents Anywhere", click: () => showMainWindow() },
+    { type: "separator" },
+    { label: "退出", click: () => { void requestQuit({ confirm: true }); } },
+  ]));
+  tray.on("click", () => showMainWindow());
 }
 
 function hideDockIfIdle(): void {
@@ -843,7 +859,8 @@ async function confirmQuit(): Promise<boolean> {
       cancelId: 0,
       noLink: true,
     };
-    const result = mainWindow
+    // A hidden window must not own the tray's confirmation dialog.
+    const result = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()
       ? await dialog.showMessageBox(mainWindow, options)
       : await dialog.showMessageBox(options);
     return result.response === 1;
@@ -865,6 +882,8 @@ async function requestQuit({ confirm = false }: { confirm?: boolean } = {}): Pro
   shutdownPromise = (async () => {
     try {
       updates?.dispose();
+      tray?.destroy();
+      tray = null;
       quiesceRendererForShutdown();
       await connector?.shutdown();
     } finally {
@@ -915,6 +934,7 @@ if (hasSingleInstanceLock) {
     });
     const settings = requireSettings().get();
     const showOnLaunch = ownership.status !== "owned" || !settings.silentLaunch || !launchedAsLoginItem() || Boolean(process.env.WORKBENCH_WEB_URL);
+    createWindowsTray();
     createMainWindow(showOnLaunch);
     if (app.isPackaged && ownership.status === "owned") await drainDesktopOAuthCallbacks();
     if (process.platform === "darwin" && app.dock) app.dock.setIcon(appWindowIcon());

@@ -5,6 +5,11 @@ Connector in one Electron application. The renderer remains the control
 console; Electron Main owns the Connector CLI process and communicates with it
 over stdio JSON-RPC. No localhost management server is opened.
 
+On Windows, closing the window hides it to the system tray and keeps the local
+Connector running. Click the tray icon or choose **打开 Agents Anywhere** to
+reopen the window. Choose **退出** from the tray menu to confirm exit and stop
+the local Connector; cancelling keeps the app running.
+
 ```text
 Renderer -> narrow preload IPC -> Electron Main -> anywhere-cli rpc -> Server
 ```

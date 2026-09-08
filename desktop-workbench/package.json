@@ -68,6 +68,10 @@
         "to": "build/icon-mac-source.png"
       },
       {
+        "from": "build/icon.ico",
+        "to": "build/icon.ico"
+      },
+      {
         "from": "build/uv",
         "to": "uv",
         "filter": [
