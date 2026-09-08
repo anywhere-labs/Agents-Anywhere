@@ -57,9 +57,34 @@ test('shared IDs are matched against this user, with local order winning over se
     assert.deepEqual(renewed, ['first-locally'])
     assert.equal(registrations, 0)
     devices = [{ id: 'foreign', userId: 'another-user', name: 'Private', status: 'offline' }]
-    await assert.rejects(run(['foreign', 'deleted']), (error: unknown) => error instanceof DeviceRecoveryRequired && error.reason === 'deleted')
-    assert.equal(registrations, 0)
+    const replacement = await run(['foreign', 'deleted'])
+    assert.equal(replacement.connectorId, 'fresh')
+    assert.equal(registrations, 1)
     assert.deepEqual(renewed, ['first-locally'])
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('a fresh login recreates a locally bound device deleted while signed out', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'aa-binding-login-recovery-'))
+  const api = new class extends AccountApi {
+    override async devices() { return [] }
+    override async register(_token: string, name: string, installationId: string) {
+      return { connector: { id: 'replacement', userId: 'user', name, status: 'offline' }, connectorToken: `token-${installationId}` }
+    }
+  }('https://server.test')
+  const account = { apiBaseUrl: api.baseUrl, userId: 'user', displayName: 'User', accessToken: 'USER', expiresAt: Date.now() + 60000 }
+  const key = createHash('sha256').update(`${account.apiBaseUrl}\n${account.userId}`).digest('hex')
+  const path = join(root, 'bindings', `${key}.json`)
+  try {
+    await writeJson(path, { installationId: 'old-installation', connectorId: 'deleted', connectorToken: 'OLD', name: 'Office Mac' })
+    const result = await ensureBinding(root, account, api, new AbortController().signal, {
+      renew: true,
+      machineState: localMachineRegistry(root),
+    })
+    assert.equal(result.connectorId, 'replacement')
+    assert.equal(result.name, 'Office Mac')
+    assert.notEqual(result.installationId, 'old-installation')
+    assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), result)
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 

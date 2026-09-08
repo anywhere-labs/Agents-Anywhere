@@ -62,10 +62,17 @@ export async function ensureBinding(root: string, account: Account, api: Account
   const devices = await api.devices(account.accessToken, signal)
   signal.throwIfAborted()
   const owned = new Map(devices.filter(device => device.userId === account.userId).map(device => [device.id, device]))
-  // A saved device must never be silently replaced or have revoked credentials
-  // renewed on startup/OAuth. Only the recovery button authorizes those actions.
-  if (binding?.replacesConnectorId) throw new DeviceRecoveryRequired(binding.replacesConnectorId, 'deleted')
-  if (binding?.connectorId && !owned.has(binding.connectorId)) throw new DeviceRecoveryRequired(binding.connectorId, 'deleted')
+  // A fresh login explicitly reauthorizes this machine. If the saved device was
+  // deleted while the account was signed out, carry its name forward and create
+  // one replacement in the same login flow instead of surfacing a dead-end
+  // recovery page. Automatic startup keeps the old explicit recovery behavior.
+  if (binding?.replacesConnectorId) {
+    if (!options.renew) throw new DeviceRecoveryRequired(binding.replacesConnectorId, 'deleted')
+    binding = { installationId: randomUUID(), name: binding.name, replacesConnectorId: binding.replacesConnectorId }
+  } else if (binding?.connectorId && !owned.has(binding.connectorId)) {
+    if (!options.renew) throw new DeviceRecoveryRequired(binding.connectorId, 'deleted')
+    binding = { installationId: randomUUID(), name: binding.name, replacesConnectorId: binding.connectorId }
+  }
   let verified = false
   if (binding?.connectorId) {
     verified = Boolean(binding.connectorToken && await api.verifyConnector(binding.connectorId, binding.connectorToken, signal))
