@@ -736,23 +736,6 @@ fun AgentsAnywhereApp(
                     reloadProjects()
                 }
         },
-        onMarkAllRead = {
-            val ids = (projectSessionsById.values.flatten() + sessionsState.sessions + sessionsState.archivedSessions)
-                .associateBy { it.id }.values.filter { it.unread }.map { it.id }
-            val request = sessionsState.beginSessionRequest(ids)
-            sessionsState = request.state
-            runCatching {
-                // The bulk endpoint accepts at most 200 IDs; preserve each successful batch.
-                ids.chunked(200).forEach { batch ->
-                    val update = sessionsController.markSessionsRead(batch, sessionsState.devices).getOrThrow()
-                    sessionsState = sessionsState.withPatchedSessions(update.sessions, request.generation)
-                        .withMissingSessionsRemoved(update.notFound, request.generation)
-                    projectSessionsById = projectSessionsById.mapValues { (_, sessions) ->
-                        sessions.filterNot { it.id in update.notFound }
-                    }
-                }
-            }
-        },
         onUpdateProject = { projectId, name, pinned ->
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update this project."))

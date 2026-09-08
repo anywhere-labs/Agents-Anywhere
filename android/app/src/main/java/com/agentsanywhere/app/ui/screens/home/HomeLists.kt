@@ -267,7 +267,7 @@ private fun SessionList(
             item("empty") { EmptyListText(stringResource(R.string.home_no_sessions_yet)) }
         }
         item("pinned-title") {
-            HomeSectionHeader(
+            HomeListSectionHeader(
                 label = stringResource(R.string.home_pinned),
                 expanded = pinnedExpanded,
                 onClick = { pinnedExpanded = !pinnedExpanded },
@@ -288,7 +288,7 @@ private fun SessionList(
             }
         }
         item("recent-title") {
-            HomeSectionHeader(
+            HomeListSectionHeader(
                 label = stringResource(R.string.home_recents),
                 expanded = recentExpanded,
                 onClick = { recentExpanded = !recentExpanded },

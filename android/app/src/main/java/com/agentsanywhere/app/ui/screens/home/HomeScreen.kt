@@ -124,7 +124,6 @@ fun HomeScreen(
     onRenameSession: suspend (String, String) -> Result<AgentSession>,
     onSetSessionPinned: suspend (String, Boolean) -> Result<AgentSession>,
     onSetSessionArchived: suspend (String, Boolean) -> Result<AgentSession>,
-    onMarkAllRead: suspend () -> Result<Unit>,
     onLoadProjects: suspend () -> Result<List<AgentProject>>,
     onLoadProjectSessions: (String, ProjectSessionStatusFilter) -> Unit,
     onUpdateProject: suspend (String, String?, Boolean?) -> Result<AgentProject>,
@@ -214,7 +213,6 @@ fun HomeScreen(
                     navigate(AppDestination.NewProject)
                 },
                 onRefresh = onRefresh,
-                onMarkAllRead = onMarkAllRead,
                 onLoadMore = onLoadMore,
                 onTabSelected = onTabSelected,
                 onProfile = { onProfileOpenChange(true) },
@@ -461,7 +459,6 @@ private fun HomeContent(
     onRetryProject: (String) -> Unit,
     onCreateProject: () -> Unit,
     onRefresh: () -> Unit,
-    onMarkAllRead: suspend () -> Result<Unit>,
     onLoadMore: (HomeTab) -> Unit,
     onTabSelected: (HomeTab) -> Unit,
     onProfile: () -> Unit,
@@ -494,9 +491,6 @@ private fun HomeContent(
             onTerminalClick = { navigate(AppDestination.Terminal) },
             onFilesClick = { navigate(AppDestination.Files) },
         )
-        if (sidebarViewMode == HomeSidebarViewMode.Session && state.devices.isNotEmpty() && state.sessions.isNotEmpty()) {
-            HomeSessionsHeader(onMarkAllRead = onMarkAllRead)
-        }
         PullToRefreshBox(
             isRefreshing = isRefreshing,
             state = refreshState,

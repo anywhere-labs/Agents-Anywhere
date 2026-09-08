@@ -145,7 +145,7 @@ internal fun HomeProjectList(
     ) {
         if (pinnedProjects.isNotEmpty() || pinnedSessions.isNotEmpty()) {
             item("project-pinned-title") {
-                HomeProjectSectionHeader(
+                HomeListSectionHeader(
                     label = stringResource(R.string.home_pinned),
                     expanded = pinnedExpanded,
                     onClick = { pinnedExpanded = !pinnedExpanded },
@@ -179,7 +179,7 @@ internal fun HomeProjectList(
         }
 
         item("projects-title") {
-            HomeProjectSectionHeader(
+            HomeListSectionHeader(
                 label = stringResource(R.string.home_projects),
                 expanded = projectsExpanded,
                 onClick = projectPreferences::toggleSection,
@@ -365,7 +365,7 @@ private fun HomeProjectRow(
 }
 
 @Composable
-private fun HomeProjectSectionHeader(
+internal fun HomeListSectionHeader(
     label: String,
     expanded: Boolean,
     onClick: () -> Unit,
