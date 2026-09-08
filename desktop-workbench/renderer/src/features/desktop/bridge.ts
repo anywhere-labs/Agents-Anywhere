@@ -109,6 +109,7 @@ export type DesktopServerConnection = {
 
 export type DesktopWorkbenchBridge = {
   platform: string
+  windowMaterial?: "transparent" | "mica" | "opaque"
   ownership?: {
     getState: () => Promise<LocalOwnershipState>
     recheck: () => Promise<LocalOwnershipState>
@@ -116,6 +117,7 @@ export type DesktopWorkbenchBridge = {
     onState: (listener: (state: LocalOwnershipState) => void) => () => void
   }
   window?: {
+    setTheme?: (theme: "light" | "dark") => Promise<void>
     setTitleBarColors: (colors: { color: string; symbolColor: string }) => Promise<void>
   }
   versions: {
@@ -144,9 +146,6 @@ export type DesktopWorkbenchBridge = {
       | null
     >
     onOAuthResult: (listener: () => void) => void | (() => void)
-  }
-  development?: {
-    clearCache: () => Promise<void>
   }
   notifications?: {
     show: (input: {

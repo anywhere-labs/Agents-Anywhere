@@ -116,11 +116,12 @@ test("title bar provider shares the mounted controls target with the workspace",
     },
     WindowsTitleBarControlsContext: { Provider: "Provider" },
     WindowsTitleBar: "WindowsTitleBar",
+    NativeWindowMaterial: "NativeWindowMaterial",
   })
   const rendered = provider({ children })
   assert.equal(rendered.props.value, target)
-  assert.equal(rendered.children[0].props.onControlsMount, setTarget)
-  assert.equal(rendered.children[1], children)
+  assert.equal(rendered.children[1].props.onControlsMount, setTarget)
+  assert.equal(rendered.children[2], children)
 })
 
 test("navigation moves into the Windows title bar once and retains existing actions and disabled states", () => {
@@ -173,23 +174,21 @@ test("navigation moves into the Windows title bar once and retains existing acti
       assert.deepEqual(calls, ["back", "forward"])
       assert.equal(portals.length, titleBarTarget ? 1 : 0)
       if (titleBarTarget) {
-        assert.match(header.props.className, /absolute/)
-        assert.doesNotMatch(header.props.className, /\bz-\d+/)
-        assert.equal(header.props.style.left, canGoBack ? "var(--desktop-sidebar-width)" : 0)
+        assert.equal(header.type, "portal")
         assert.equal(portals[0].target, titleBarTarget)
         assert.match(portals[0].children.props.className, /aa-window-no-drag/)
         assert.match(toggle[0].props.className, /text-sidebar-foreground/)
         assert.ok(!elements.some(element => element.props?.className?.includes("w-[6.5rem]")))
       } else {
-        assert.match(header.props.className, /relative/)
-        assert.equal(header.props.style, undefined)
+        assert.match(header.props.className, /absolute/)
+        assert.equal(header.props.style.width, canGoBack ? "var(--desktop-sidebar-width)" : 224)
         assert.ok(elements.some(element => element.props?.className?.includes("w-[6.5rem]")))
       }
     }
   }
 })
 
-test("only Windows places the same keyed shell header after the workspace without trapping the collapse button", () => {
+test("navigation stays outside the content panels and session chrome is scoped to session pages", () => {
   const shellSource = readFileSync(new URL("../src/components/demo.tsx", import.meta.url), "utf8")
   const shellAst = ts.createSourceFile("demo.tsx", shellSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
   for (const titleBarTarget of [null, {}]) {
@@ -204,6 +203,7 @@ test("only Windows places the same keyed shell header after the workspace withou
         createElement: (type, props, ...children) => ({ type, props, children }),
       },
       useSidebar: () => ({ open: true, setOpen() {} }),
+      useWorkspace: () => ({ page: "device" }),
       WindowsTitleBarControlsContext: {},
       DashboardSidebarControlsContext: { Provider: "Provider" },
       DEFAULT_DESKTOP_LAYOUT: { "dashboard-sidebar": 256, "dashboard-main": 1024 },
@@ -220,9 +220,7 @@ test("only Windows places the same keyed shell header after the workspace withou
     }, shellAst)
     const shell = component().children[0]
     const children = shell.children.filter(Boolean)
-    assert.deepEqual(children.map(child => child.type), titleBarTarget
-      ? ["ResizablePanelGroup", "DesktopShellHeader"]
-      : ["DesktopShellHeader", "ResizablePanelGroup"])
+    assert.deepEqual(children.map(child => child.type), ["ResizablePanelGroup", "DesktopShellHeader"])
     assert.equal(children.find(child => child.type === "DesktopShellHeader").props.key, "desktop-shell-header")
   }
 })

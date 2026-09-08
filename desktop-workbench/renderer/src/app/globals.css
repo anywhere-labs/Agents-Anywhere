@@ -189,6 +189,85 @@ body {
   -webkit-app-region: drag;
 }
 
+/* The native compositor supplies the sidebar glass. Keep content surfaces opaque. */
+html[data-window-material="transparent"],
+html[data-window-material="mica"],
+html:is([data-window-material="transparent"], [data-window-material="mica"]) body {
+  background: transparent;
+}
+
+html:is([data-window-material="transparent"], [data-window-material="mica"]) [data-slot="sidebar-wrapper"],
+html:is([data-window-material="transparent"], [data-window-material="mica"]) .aa-desktop-sidebar [data-slot="sidebar-inner"],
+html:is([data-window-material="transparent"], [data-window-material="mica"]) .aa-windows-title-bar {
+  background: transparent;
+}
+
+.aa-desktop-sidebar {
+  padding-top: 44px;
+  background: var(--sidebar);
+}
+
+html:is([data-window-material="transparent"], [data-window-material="mica"]) .aa-desktop-sidebar {
+  background: transparent;
+  --sidebar-accent: color-mix(in oklch, var(--sidebar-foreground) 10%, transparent);
+}
+
+.aa-desktop-main {
+  border-left: 1px solid var(--sidebar-border);
+}
+
+.aa-desktop-drag-region {
+  display: none;
+}
+
+/* macOS has no native title bar. Reserve a borderless drag area above page
+ * controls; session pages already provide their own draggable header. */
+html[data-desktop-platform="darwin"] .aa-desktop-main:not([data-page="session"]) {
+  padding-top: 28px;
+}
+
+html[data-desktop-platform="darwin"] .aa-desktop-main:not([data-page="session"]) .aa-desktop-drag-region {
+  display: block;
+  position: absolute;
+  inset: 0 12px auto 0;
+  height: 28px;
+  -webkit-app-region: drag;
+}
+
+html[data-windows-title-bar] .aa-desktop-main {
+  border-top: 1px solid var(--sidebar-border);
+  border-top-left-radius: 12px;
+}
+
+.aa-desktop-shell[data-sidebar-open="false"] .aa-desktop-main {
+  padding-top: 44px;
+}
+
+html[data-desktop-platform="darwin"] .aa-desktop-shell[data-sidebar-open="false"] .aa-desktop-main {
+  padding-top: 44px;
+}
+
+html[data-desktop-platform="darwin"] .aa-desktop-shell[data-sidebar-open="false"] .aa-desktop-drag-region {
+  display: block;
+  position: absolute;
+  inset: 0 12px auto 224px;
+  height: 44px;
+  -webkit-app-region: drag;
+}
+
+html[data-windows-title-bar] .aa-desktop-sidebar,
+html[data-windows-title-bar] .aa-desktop-shell[data-sidebar-open="false"] .aa-desktop-main {
+  padding-top: 0;
+}
+
+html[data-desktop-platform="linux"] .aa-traffic-light-spacer {
+  width: 12px;
+}
+
+html:not([data-windows-title-bar]):has(.aa-desktop-shell[data-sidebar-open="false"]) [data-slot="session-tool-sidebar"] {
+  top: 44px;
+}
+
 html[data-windows-title-bar] {
   --aa-title-bar-height: 32px;
 }

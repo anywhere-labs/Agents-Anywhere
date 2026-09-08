@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { DesktopConnectionStatus } from "@/components/desktop/desktop-shell-header"
 import { Plus, Smartphone } from "lucide-react"
 import { toast } from "sonner"
 
@@ -238,6 +239,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
             </SidebarMenuItem>
           ) : null}
         </SidebarMenu>
+        <DesktopConnectionStatus />
       </SidebarHeader>
 
       <SidebarContent className="px-2">
