@@ -211,8 +211,7 @@ internal fun AppearancePopup(
                     .width(204.dp)
                     .shadow(24.dp, RoundedCornerShape(14.dp), ambientColor = colors.appShadow, spotColor = colors.appShadow)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(if (colors.isDark) Color(0xFF303030) else Color(0xFFF4F3EF))
-                    .border(1.dp, if (colors.isDark) Color(0xFF4A4A4A) else Color(0xFFD6D3CD), RoundedCornerShape(14.dp)),
+                    .background(if (colors.isDark) Color(0xFF303030) else Color(0xFFF4F3EF)),
             ) {
                 AppearanceMenuRow(
                     title = stringResource(R.string.profile_follow_system),
@@ -264,8 +263,7 @@ internal fun SidebarViewPopup(
                     .width(204.dp)
                     .shadow(24.dp, RoundedCornerShape(14.dp), ambientColor = colors.appShadow, spotColor = colors.appShadow)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(if (colors.isDark) Color(0xFF303030) else Color(0xFFF4F3EF))
-                    .border(1.dp, if (colors.isDark) Color(0xFF4A4A4A) else Color(0xFFD6D3CD), RoundedCornerShape(14.dp)),
+                    .background(if (colors.isDark) Color(0xFF303030) else Color(0xFFF4F3EF)),
             ) {
                 AppearanceMenuRow(
                     title = stringResource(R.string.profile_project_view),

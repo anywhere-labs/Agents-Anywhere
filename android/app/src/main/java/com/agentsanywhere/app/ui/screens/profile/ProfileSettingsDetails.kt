@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -38,11 +39,10 @@ import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.agentsanywhere.app.ui.screens.update.AppUpdateDownloadProgress
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.ChevronRight
-import com.composables.icons.lucide.Circle
-import com.composables.icons.lucide.Globe
 import com.composables.icons.lucide.KeyRound
 import com.composables.icons.lucide.LogOut
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.MailCheck
 
 @Composable
 internal fun IdentityCard(
@@ -136,37 +136,19 @@ internal fun AccountDetailPage(
                 label = stringResource(R.string.profile_email),
                 value = account.email ?: stringResource(R.string.profile_email_unbound),
             )
-            if (account.email != null) {
-                ProfileDivider(start = 12.dp, end = 12.dp)
-                AccountInfoRow(
-                    label = stringResource(R.string.profile_email_status),
-                    value = stringResource(
-                        if (account.emailVerified) {
-                            R.string.profile_email_verified
-                        } else {
-                            R.string.profile_email_unverified
-                        },
-                    ),
-                )
-            }
-            ProfileDivider(start = 12.dp, end = 12.dp)
-            AccountInfoRow(
-                label = stringResource(R.string.profile_account_id),
-                value = account.userId.ifBlank { stringResource(R.string.profile_account_fallback) },
-            )
             ProfileDivider(start = 12.dp, end = 12.dp)
             AccountInfoRow(label = stringResource(R.string.profile_role), value = account.role.ifBlank { "member" }.prettyRole())
         }
         Spacer(Modifier.height(24.dp))
         ProfileCard {
             AccountActionRow(
-                icon = Lucide.Circle,
+                icon = ImageVector.vectorResource(R.drawable.ic_user_round_arrow_left),
                 text = stringResource(R.string.profile_edit_nickname),
                 onClick = onChangeNickname,
             )
             ProfileDivider(start = 12.dp, end = 12.dp)
             AccountActionRow(
-                icon = Lucide.Globe,
+                icon = Lucide.MailCheck,
                 text = stringResource(R.string.profile_bind_email),
                 onClick = onChangeEmail,
             )
