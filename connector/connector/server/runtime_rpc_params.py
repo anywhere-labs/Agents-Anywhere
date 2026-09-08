@@ -7,14 +7,12 @@ from connector.runtime_protocol import (
     MAX_CONFIG_REVISION,
     RuntimeAttachment,
     RuntimeInstanceSpec,
-    RuntimeInstancesUnsupportedError,
     RuntimeInvalidRequestError,
     RuntimeScope,
-    legacy_runtime_scope,
 )
 
-_V2_RUNTIME_SCOPE_FIELDS = frozenset({"runtime", "runtimeId"})
-_V2_RUNTIME_CONFIG_FIELDS = frozenset(
+_RUNTIME_SCOPE_FIELDS = frozenset({"runtime", "runtimeId"})
+_RUNTIME_CONFIG_FIELDS = frozenset(
     {"runtime", "runtimeId", "name", "config", "configRevision"}
 )
 
@@ -224,26 +222,9 @@ class RuntimeIdParams:
         return self.scope.runtime_type
 
     @classmethod
-    def parse(
-        cls,
-        params: dict[str, Any],
-        *,
-        control_version: str = "1.0",
-    ) -> RuntimeIdParams:
-        if control_version == "2.0":
-            require_only_fields(params, _V2_RUNTIME_SCOPE_FIELDS)
-            return cls(scope=scoped_runtime(params))
-        runtime_id = required_runtime_id(params)
-        if runtime_id.startswith("rti_"):
-            raise RuntimeInstancesUnsupportedError(
-                "named runtime instances require Runtime Control 2.0"
-            )
-        runtime_type = params.get("runtime")
-        if runtime_type is not None and runtime_type != runtime_id:
-            raise RuntimeInvalidRequestError(
-                "legacy runtime and runtimeId must identify the same provider type"
-            )
-        return cls(scope=legacy_runtime_scope(runtime_id))
+    def parse(cls, params: dict[str, Any]) -> RuntimeIdParams:
+        require_only_fields(params, _RUNTIME_SCOPE_FIELDS)
+        return cls(scope=scoped_runtime(params))
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,48 +242,17 @@ class RuntimeConfigParams:
         return self.instance.runtime_type
 
     @classmethod
-    def parse(
-        cls,
-        params: dict[str, Any],
-        *,
-        control_version: str = "1.0",
-        display_name: str | None = None,
-    ) -> RuntimeConfigParams:
-        if control_version == "2.0":
-            require_only_fields(params, _V2_RUNTIME_CONFIG_FIELDS)
-            scope = scoped_runtime(params)
-            instance = RuntimeInstanceSpec(
+    def parse(cls, params: dict[str, Any]) -> RuntimeConfigParams:
+        require_only_fields(params, _RUNTIME_CONFIG_FIELDS)
+        scope = scoped_runtime(params)
+        return cls(
+            instance=RuntimeInstanceSpec(
                 runtime_id=scope.runtime_id,
                 runtime_type=scope.runtime_type,
                 name=required_name(params),
-            )
-            config_revision = required_safe_int(params, "configRevision")
-        else:
-            runtime_id = required_runtime_id(params)
-            if runtime_id.startswith("rti_"):
-                raise RuntimeInstancesUnsupportedError(
-                    "named runtime instances require Runtime Control 2.0"
-                )
-            runtime_type = params.get("runtime")
-            if runtime_type is not None and runtime_type != runtime_id:
-                raise RuntimeInvalidRequestError(
-                    "legacy runtime and runtimeId must identify the same provider type"
-                )
-            scope = legacy_runtime_scope(runtime_id)
-            instance = RuntimeInstanceSpec(
-                runtime_id=scope.runtime_id,
-                runtime_type=scope.runtime_type,
-                name=display_name or scope.runtime_type,
-            )
-            config_revision = optional_safe_int(
-                params,
-                "configRevision",
-                minimum=1,
-            )
-        return cls(
-            instance=instance,
+            ),
             config=runtime_config(params),
-            config_revision=config_revision,
+            config_revision=required_safe_int(params, "configRevision"),
         )
 
 

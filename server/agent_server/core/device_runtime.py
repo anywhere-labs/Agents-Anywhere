@@ -36,51 +36,6 @@ _MAX_SCHEMA_BYTES = 256 * 1024
 MAX_JAVASCRIPT_SAFE_INTEGER = 9_007_199_254_740_991
 
 
-class RuntimeInventoryItem(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    runtimeId: str
-    runtimeType: str = Field(min_length=1, max_length=64)
-    displayName: str = Field(min_length=1, max_length=128)
-    discovery: dict[str, Any] = Field(default_factory=dict)
-    schema_: dict[str, Any] | None = Field(default=None, alias="schema")
-    uiSchema: dict[str, Any] | None = None
-    defaults: dict[str, Any] = Field(default_factory=dict)
-    status: RuntimeStatus = "stopped"
-    configured: bool | None = None
-    capabilities: dict[str, bool] = Field(default_factory=dict)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-    @field_validator("runtimeId")
-    @classmethod
-    def _validate_runtime_id(cls, value: str) -> str:
-        try:
-            return str(validate_runtime_type(value))
-        except RuntimeIdentityError as exc:
-            raise ValueError(str(exc)) from exc
-
-    @field_validator("runtimeType")
-    @classmethod
-    def _validate_runtime_type(cls, value: str) -> str:
-        try:
-            return str(validate_implementation_category(value))
-        except RuntimeIdentityError as exc:
-            raise ValueError(str(exc)) from exc
-
-
-class RuntimeInventory(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    runtimes: list[RuntimeInventoryItem] = Field(default_factory=list, max_length=64)
-
-    @model_validator(mode="after")
-    def _validate_unique_runtime_types(self) -> RuntimeInventory:
-        runtime_types = [runtime.runtimeId for runtime in self.runtimes]
-        if len(runtime_types) != len(set(runtime_types)):
-            raise ValueError("runtime inventory contains duplicate provider types")
-        return self
-
-
 class RuntimeConfigSchemaDescriptor(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
 
@@ -157,14 +112,13 @@ class RuntimeTypeDescriptor(BaseModel):
         return self
 
 
-class RuntimeDiscoverV2Response(BaseModel):
+class RuntimeDiscoveryResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    selectedControlVersion: Literal["2.0"]
     runtimeTypes: list[RuntimeTypeDescriptor] = Field(max_length=64)
 
     @model_validator(mode="after")
-    def _validate_unique_runtime_types(self) -> RuntimeDiscoverV2Response:
+    def _validate_unique_runtime_types(self) -> RuntimeDiscoveryResponse:
         runtime_types = [descriptor.runtimeType for descriptor in self.runtimeTypes]
         if len(runtime_types) != len(set(runtime_types)):
             raise ValueError("runtime discovery contains duplicate runtime types")

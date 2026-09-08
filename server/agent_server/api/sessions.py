@@ -151,41 +151,6 @@ def _raise_session_run_error(exc: SessionRunError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
-async def _session_runtime_control_supported(
-    db: Store,
-    session: SessionView,
-    *,
-    user_id: str | None,
-) -> bool:
-    if _session_runtime_id(session) == session.runtime:
-        return True
-    try:
-        version = await db.get_connector_runtime_control_version(
-            session.connectorId,
-            user_id=user_id,
-        )
-    except KeyError:
-        return False
-    return version == "2.0"
-
-
-async def _require_session_runtime_control(
-    db: Store,
-    session: SessionView,
-    *,
-    user_id: str | None,
-) -> None:
-    if await _session_runtime_control_supported(db, session, user_id=user_id):
-        return
-    raise HTTPException(
-        status_code=409,
-        detail={
-            "code": "runtime_instances_unsupported",
-            "message": "connector does not support named runtime instances",
-        },
-    )
-
-
 async def _publish_session_protocol_update(
     db: Store,
     broker: TimelineBroker,
@@ -573,7 +538,6 @@ async def session_runtime_state(
 ) -> SessionRuntimeStateResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
-        await _require_session_runtime_control(db, session, user_id=user_id)
         state = await read_runtime_state_live(
             db,
             manager,
@@ -595,7 +559,6 @@ async def session_runtime_capabilities(
 ) -> ProtocolCapabilitiesResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
-        await _require_session_runtime_control(db, session, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     session = await with_effective_session_connector_status(manager, session)
@@ -806,7 +769,6 @@ async def session_snapshot(
     try:
         stage_started_at = time.monotonic()
         session = await db.get_session(session_id, user_id=user_id)
-        await _require_session_runtime_control(db, session, user_id=user_id)
         log_snapshot_stage("authorization", stage_started_at)
 
         stage_started_at = time.monotonic()
@@ -1127,7 +1089,6 @@ async def list_session_runtime_commands(
 ) -> SessionCommandListResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
-        await _require_session_runtime_control(db, session, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     await _require_session_action_capability(
@@ -1181,7 +1142,6 @@ async def execute_session_command(
 ) -> SessionCommandResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
-        await _require_session_runtime_control(db, session, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     await _require_session_action_capability(
@@ -1351,7 +1311,6 @@ async def list_session_runtime_notices(
 ) -> RuntimeNoticeListResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
-        await _require_session_runtime_control(db, session, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     notices = await read_session_notices_from_connector(manager, session)
@@ -1376,7 +1335,6 @@ async def respond_interaction(
 ) -> RpcResponsePayload:
     try:
         session = await db.get_session(session_id, user_id=user_id)
-        await _require_session_runtime_control(db, session, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     await _require_session_action_capability(
@@ -1500,9 +1458,7 @@ async def read_runtime_state_live(
     - does not rely on DB status as the source of runtime truth.
     """
 
-    if await _session_runtime_control_supported(
-        db, session, user_id=user_id
-    ) and await manager.is_online(session.connectorId):
+    if await manager.is_online(session.connectorId):
         state = await read_runtime_state_from_connector(manager, session)
         if state is not None:
             persisted_session = await db.set_session_status(session.id, state.status)
@@ -1529,9 +1485,7 @@ async def read_session_capabilities_with_fallback(
       snapshot and WebSocket publish paths.
     """
 
-    if await _session_runtime_control_supported(
-        db, session, user_id=user_id
-    ) and await manager.is_online(session.connectorId):
+    if await manager.is_online(session.connectorId):
         try:
             return await read_session_capabilities_from_connector(manager, session)
         except HTTPException:

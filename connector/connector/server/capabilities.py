@@ -23,28 +23,26 @@ _RUNTIME_CAPABILITY_MAP: tuple[tuple[str, str], ...] = (
 )
 
 
-def protocol_capabilities_from_inventory(
-    inventory: dict[str, Any],
+def protocol_capabilities_from_runtime_types(
+    discovery: dict[str, Any],
     *,
     revision: int = 1,
 ) -> dict[str, Any]:
     capabilities: list[dict[str, Any]] = []
-    runtimes = inventory.get("runtimes")
+    runtimes = discovery.get("runtimeTypes")
     if not isinstance(runtimes, list):
         return {"revision": revision, "capabilities": capabilities}
 
     for runtime_item in runtimes:
         if not isinstance(runtime_item, dict):
             continue
-        runtime_id = runtime_item.get("runtimeId")
+        runtime_id = runtime_item.get("runtimeType")
         if runtime_id not in KNOWN_RUNTIME_CAPABILITY_IDS:
             continue
         raw_capabilities = runtime_item.get("capabilities")
         if not isinstance(raw_capabilities, dict):
             raw_capabilities = {}
-        configured = runtime_item.get("configured") is True
-        status = runtime_item.get("status")
-        base_available = configured and status in {"available", "running"}
+        base_available = runtime_item.get("available") is True
 
         for inventory_key, protocol_id in _RUNTIME_CAPABILITY_MAP:
             if inventory_key not in raw_capabilities:
@@ -61,7 +59,7 @@ def protocol_capabilities_from_inventory(
                 }
             )
 
-        if runtime_item.get("schema") is not None:
+        if runtime_item.get("configSchema") is not None:
             capabilities.append(
                 {
                     "capabilityId": "runtime.config",

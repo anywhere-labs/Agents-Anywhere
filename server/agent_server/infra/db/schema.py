@@ -46,12 +46,6 @@ connectors = Table(
     Column("revoked", Integer, nullable=False, server_default="0"),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
-    Column(
-        "runtime_control_version",
-        Text,
-        nullable=False,
-        server_default="1.0",
-    ),
     # JSON blob written by the daemon to mirror the user's local agent
     # preferences (e.g. ~/.claude/settings.json fields). Read-only from the
     # backend's perspective; the daemon owns the write loop.

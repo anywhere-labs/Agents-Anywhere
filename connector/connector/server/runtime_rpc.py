@@ -6,7 +6,6 @@ from typing import Any, ClassVar
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeHostClient,
-    RuntimeInstancesUnsupportedError,
     RuntimeInvalidRequestError,
     RuntimeScope,
     RuntimeSupervisor,
@@ -20,7 +19,6 @@ from connector.server.runtime_rpc_params import (
     scoped_runtime,
 )
 from connector.server.runtime_rpc_payloads import (
-    agent_inventory_payload,
     capability_set_payload,
     model_catalog_payload,
     permission_catalog_payload,
@@ -88,16 +86,6 @@ class RuntimeRpcHandler:
         self.agent_runtime_supervisor = agent_runtime_supervisor
         self.agent_runtime_host = agent_runtime_host
         self.schedule_background = schedule_background
-        self._negotiated_control_version: str | None = None
-
-    @property
-    def control_version(self) -> str:
-        return self._negotiated_control_version or "1.0"
-
-    @property
-    def negotiated_control_version(self) -> str | None:
-        return self._negotiated_control_version
-
     def supports(self, method: str) -> bool:
         return method in self.METHODS
 
@@ -105,10 +93,7 @@ class RuntimeRpcHandler:
         if method == "runtime.discover":
             return await self.discover_runtimes(params)
         if method == "runtime.configSchema":
-            parsed = RuntimeIdParams.parse(
-                params,
-                control_version=self.control_version,
-            )
+            parsed = RuntimeIdParams.parse(params)
             self._validate_known_scope(parsed.scope)
             schema = await self.agent_runtime_supervisor.provider(
                 parsed.runtime_type
@@ -116,10 +101,7 @@ class RuntimeRpcHandler:
             result = {"configSchema": runtime_config_schema_payload(schema)}
             return self._scoped_result(parsed.scope, result)
         if method == "runtime.config":
-            parsed = RuntimeIdParams.parse(
-                params,
-                control_version=self.control_version,
-            )
+            parsed = RuntimeIdParams.parse(params)
             self._validate_known_scope(parsed.scope)
             entry = self.agent_runtime_supervisor.entry_or_none(parsed.runtime_id)
             if entry is None or entry.runtime is None:
@@ -162,14 +144,7 @@ class RuntimeRpcHandler:
                 {"runtimeId": parsed.runtime_id, "status": "running"},
             )
         if method == "runtime.stop":
-            parsed = RuntimeIdParams.parse(
-                params,
-                control_version=self.control_version,
-            )
-            if self.control_version == "1.0":
-                await self.agent_runtime_supervisor.ensure_legacy_instance(
-                    parsed.runtime_type
-                )
+            parsed = RuntimeIdParams.parse(params)
             self._validate_known_scope(parsed.scope, require_entry=True)
             await self.agent_runtime_supervisor.stop(parsed.runtime_id)
             return self._scoped_result(
@@ -291,32 +266,15 @@ class RuntimeRpcHandler:
         self,
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        request = dict(params or {})
-        requested_version = _select_control_version(request)
-        selected_version = self._negotiated_control_version
-        if requested_version is not None:
-            if selected_version is not None and selected_version != requested_version:
-                raise RuntimeInvalidRequestError(
-                    f"Runtime Control {selected_version} is already selected for "
-                    "this connection"
-                )
-            self._negotiated_control_version = requested_version
-        elif selected_version == "2.0":
-            raise RuntimeInvalidRequestError(
-                "Runtime Control 2.0 is already selected for this connection"
-            )
-
-        if self.control_version == "2.0":
-            descriptors = await self.agent_runtime_supervisor.discover()
-            return {
-                "selectedControlVersion": "2.0",
-                "runtimeTypes": [
-                    runtime_type_descriptor_payload(descriptor)
-                    for descriptor in descriptors
-                ],
-            }
-        items = await self.agent_runtime_supervisor.discover_legacy()
-        return {"runtimes": [agent_inventory_payload(item) for item in items]}
+        if params:
+            raise RuntimeInvalidRequestError("runtime.discover takes no parameters")
+        descriptors = await self.agent_runtime_supervisor.discover()
+        return {
+            "runtimeTypes": [
+                runtime_type_descriptor_payload(descriptor)
+                for descriptor in descriptors
+            ],
+        }
 
     def accept_session_sync(self, params: dict[str, Any]) -> dict[str, Any]:
         """Accept a session sync request and finish it in the background."""
@@ -339,36 +297,10 @@ class RuntimeRpcHandler:
         )
 
     def _parse_config_params(self, params: dict[str, Any]) -> RuntimeConfigParams:
-        display_name = None
-        if self.control_version == "1.0":
-            runtime_id = params.get("runtimeId")
-            if (
-                isinstance(runtime_id, str)
-                and runtime_id
-                and not runtime_id.startswith("rti_")
-            ):
-                display_name = self.agent_runtime_supervisor.provider(
-                    runtime_id
-                ).display_name
-        return RuntimeConfigParams.parse(
-            params,
-            control_version=self.control_version,
-            display_name=display_name,
-        )
+        return RuntimeConfigParams.parse(params)
 
     def _resolve_agent_runtime(self, params: dict[str, Any]) -> AgentRuntime:
-        if self.control_version == "1.0" and any(
-            isinstance(params.get(key), str) and params[key].startswith("rti_")
-            for key in ("runtime", "runtimeId")
-        ):
-            raise RuntimeInstancesUnsupportedError(
-                "named runtime instances require Runtime Control 2.0"
-            )
         scope = scoped_runtime(params)
-        if self.control_version == "1.0" and not scope.is_legacy:
-            raise RuntimeInstancesUnsupportedError(
-                "named runtime instances require Runtime Control 2.0"
-            )
         return self.agent_runtime_supervisor.resolve_runtime(
             scope.runtime_id,
             scope.runtime_type,
@@ -411,31 +343,8 @@ class RuntimeRpcHandler:
         scope: RuntimeScope,
         result: dict[str, Any],
     ) -> dict[str, Any]:
-        if self.control_version != "2.0":
-            return result
         return {
             **result,
             "runtime": scope.runtime_type,
             "runtimeId": scope.runtime_id,
         }
-
-
-def _select_control_version(params: dict[str, Any]) -> str | None:
-    if not params:
-        return None
-    if set(params) != {"supportedControlVersions"}:
-        raise ValueError("runtime.discover params contain unsupported fields")
-    versions = params.get("supportedControlVersions")
-    if not isinstance(versions, list) or not versions:
-        raise TypeError("supportedControlVersions must be a non-empty array")
-    if any(not isinstance(version, str) or not version for version in versions):
-        raise TypeError("supportedControlVersions must contain version strings")
-    if len(set(versions)) != len(versions):
-        raise ValueError("supportedControlVersions must not contain duplicates")
-    if "2.0" in versions:
-        return "2.0"
-    if "1.0" in versions:
-        return "1.0"
-    raise RuntimeInvalidRequestError(
-        "supportedControlVersions does not include a supported Runtime Control version"
-    )

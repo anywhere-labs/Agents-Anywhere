@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import case, delete, func, insert, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
-from agent_server.core.device_runtime import RuntimeInventoryItem, RuntimeTypeDescriptor
+from agent_server.core.device_runtime import RuntimeTypeDescriptor
 from agent_server.core.runtime_identity import (
     RuntimeIdentity,
     RuntimeIdentityError,
@@ -141,169 +141,7 @@ class DeviceRuntimeRepositoryMixin:
                         .values(**values)
                     )
 
-            await conn.execute(
-                update(connectors_t)
-                .where(connectors_t.c.id == connector_id)
-                .values(runtime_control_version="2.0", updated_at=now)
-            )
         return await self.list_connector_runtime_types(connector_id)
-
-    async def replace_device_runtime_inventory(
-        self,
-        connector_id: str,
-        runtimes: list[RuntimeInventoryItem],
-        *,
-        select_control_version: bool = True,
-    ) -> list[dict[str, Any]]:
-        """Persist a legacy 1.0 inventory as types plus compatibility instances."""
-
-        now = utc_now()
-        async with self._engine.begin() as conn:
-            connector = (
-                await conn.execute(
-                    select(connectors_t.c.id).where(
-                        connectors_t.c.id == connector_id,
-                        connectors_t.c.revoked == 0,
-                    )
-                )
-            ).first()
-            if connector is None:
-                raise KeyError(connector_id)
-
-            await conn.execute(
-                update(runtime_types_t)
-                .where(runtime_types_t.c.connector_id == connector_id)
-                .values(
-                    present=0,
-                    available=0,
-                    reason="not_discovered",
-                    recommended=0,
-                    recommendation_rank=None,
-                    last_discovered_at=now,
-                    updated_at=now,
-                )
-            )
-            used_name_keys = set(
-                (
-                    await conn.execute(
-                        select(device_runtimes_t.c.name_key).where(
-                            device_runtimes_t.c.connector_id == connector_id
-                        )
-                    )
-                ).scalars()
-            )
-
-            for runtime in runtimes:
-                # In runtime-control 1.0, runtimeId is the provider identity.
-                # runtimeType is an implementation category for providers such
-                # as DSH ("local-service"), not an instance identity.
-                runtime_type = runtime.runtimeId
-                available = runtime.status != "unavailable"
-                descriptor = (
-                    await conn.execute(
-                        select(runtime_types_t.c.runtime_type).where(
-                            runtime_types_t.c.connector_id == connector_id,
-                            runtime_types_t.c.runtime_type == runtime_type,
-                        )
-                    )
-                ).first()
-                type_values = {
-                    "implementation_type": runtime.runtimeType,
-                    "display_name": runtime.displayName,
-                    "description": None,
-                    "present": 1,
-                    "available": 1 if available else 0,
-                    "reason": None if available else "runtime_unavailable",
-                    "recommended": 0,
-                    "recommendation_rank": None,
-                    "discovery_json": _json_dumps(runtime.discovery),
-                    "config_schema_json": (
-                        _json_dumps(runtime.schema_)
-                        if runtime.schema_ is not None
-                        else None
-                    ),
-                    "ui_schema_json": (
-                        _json_dumps(runtime.uiSchema)
-                        if runtime.uiSchema is not None
-                        else None
-                    ),
-                    "defaults_json": _json_dumps(runtime.defaults),
-                    "capabilities_json": _json_dumps(runtime.capabilities),
-                    "metadata_json": _json_dumps(
-                        _public_runtime_metadata(runtime.metadata)
-                    ),
-                    "instance_policy": "single",
-                    "max_instances": 1,
-                    "last_discovered_at": now,
-                    "updated_at": now,
-                }
-                if descriptor is None:
-                    await conn.execute(
-                        insert(runtime_types_t).values(
-                            connector_id=connector_id,
-                            runtime_type=runtime_type,
-                            created_at=now,
-                            **type_values,
-                        )
-                    )
-                else:
-                    await conn.execute(
-                        update(runtime_types_t)
-                        .where(
-                            runtime_types_t.c.connector_id == connector_id,
-                            runtime_types_t.c.runtime_type == runtime_type,
-                        )
-                        .values(**type_values)
-                    )
-
-                instance = (
-                    await conn.execute(
-                        select(
-                            device_runtimes_t.c.runtime_id,
-                            device_runtimes_t.c.active,
-                        ).where(
-                            device_runtimes_t.c.connector_id == connector_id,
-                            device_runtimes_t.c.runtime_id == runtime_type,
-                        )
-                    )
-                ).first()
-                if instance is None:
-                    name = _unique_runtime_name(
-                        runtime.displayName,
-                        runtime_id=runtime_type,
-                        used_name_keys=used_name_keys,
-                    )
-                    await conn.execute(
-                        insert(device_runtimes_t).values(
-                            connector_id=connector_id,
-                            runtime_id=runtime_type,
-                            runtime_type=runtime_type,
-                            name=name,
-                            name_key=runtime_instance_name_key(name),
-                            config_json=None,
-                            active=0,
-                            status=runtime.status,
-                            error_json=None,
-                            created_at=now,
-                            updated_at=now,
-                        )
-                    )
-                elif not bool(instance.active):
-                    await conn.execute(
-                        update(device_runtimes_t)
-                        .where(
-                            device_runtimes_t.c.connector_id == connector_id,
-                            device_runtimes_t.c.runtime_id == runtime_type,
-                        )
-                        .values(status=runtime.status, updated_at=now)
-                    )
-            if select_control_version:
-                await conn.execute(
-                    update(connectors_t)
-                    .where(connectors_t.c.id == connector_id)
-                    .values(runtime_control_version="1.0", updated_at=now)
-                )
-        return await self.list_device_runtimes(connector_id)
 
     async def list_connector_runtime_types(
         self,
@@ -363,49 +201,6 @@ class DeviceRuntimeRepositoryMixin:
             raise KeyError(runtime_type)
         return _runtime_type_row(row)
 
-    async def get_connector_runtime_control_version(
-        self,
-        connector_id: str,
-        *,
-        user_id: str | None = None,
-    ) -> str:
-        query = select(connectors_t.c.runtime_control_version).where(
-            connectors_t.c.id == connector_id,
-            connectors_t.c.revoked == 0,
-        )
-        if user_id is not None:
-            query = query.where(connectors_t.c.user_id == user_id)
-        async with self._engine.connect() as conn:
-            value = (await conn.execute(query)).scalar_one_or_none()
-        if value is None:
-            raise KeyError(connector_id)
-        return str(value)
-
-    async def set_connector_runtime_control_version(
-        self,
-        connector_id: str,
-        version: str,
-    ) -> None:
-        if version not in {"1.0", "2.0"}:
-            raise ValueError(f"unsupported runtime control version: {version}")
-        now = utc_now()
-        async with self._engine.begin() as conn:
-            connector = (
-                await conn.execute(
-                    select(connectors_t.c.id).where(
-                        connectors_t.c.id == connector_id,
-                        connectors_t.c.revoked == 0,
-                    )
-                )
-            ).first()
-            if connector is None:
-                raise KeyError(connector_id)
-            await conn.execute(
-                update(connectors_t)
-                .where(connectors_t.c.id == connector_id)
-                .values(runtime_control_version=version, updated_at=now)
-            )
-
     async def create_device_runtime(
         self,
         connector_id: str,
@@ -441,7 +236,6 @@ class DeviceRuntimeRepositoryMixin:
                                 runtime_types_t.c.present,
                                 runtime_types_t.c.instance_policy,
                                 runtime_types_t.c.max_instances,
-                                connectors_t.c.runtime_control_version,
                             )
                             .join(
                                 connectors_t,
@@ -459,8 +253,6 @@ class DeviceRuntimeRepositoryMixin:
                 )
                 if type_row is None:
                     raise KeyError(runtime_type)
-                if type_row["runtime_control_version"] != "2.0":
-                    raise ValueError("runtime instances are unsupported")
                 if not bool(type_row["present"]):
                     raise ValueError(
                         "runtime type is not currently present on the connector"

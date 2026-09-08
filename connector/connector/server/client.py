@@ -25,7 +25,7 @@ from connector.runtime_protocol import (
 )
 from connector.runtimes import default_runtime_providers
 from connector.server.auth import ConnectorAuthenticationError, ConnectorAuthenticator
-from connector.server.capabilities import protocol_capabilities_from_inventory
+from connector.server.capabilities import protocol_capabilities_from_runtime_types
 from connector.server.dispatch import (
     ConnectorRequestDispatcher,
     ConnectorRequestSession,
@@ -229,14 +229,8 @@ class BackendRpcClient:
             proxy=None if is_loopback_url(self.config.server_url) else True,
         ) as ws:
             self._rpc.set_connection(ws)
-            inventory = await request_session.discover_runtimes()
-            await self.send_notification("runtime.inventoryUpdated", inventory)
-            await self.send_notification(
-                "protocol.capabilitiesUpdated",
-                protocol_capabilities_from_inventory(
-                    inventory,
-                    revision=self._protocol_revision_clock.next(),
-                ),
+            capabilities_task = asyncio.create_task(
+                self._publish_runtime_capabilities(request_session)
             )
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             await self._runtime_sync.reconnect_event_runtimes()
@@ -252,8 +246,26 @@ class BackendRpcClient:
                     message = json.loads(raw_message)
                     self.start_message(message, request_session=request_session)
             finally:
+                capabilities_task.cancel()
                 heartbeat_task.cancel()
+                await asyncio.gather(capabilities_task, heartbeat_task, return_exceptions=True)
                 self._rpc.clear_connection()
+
+    async def _publish_runtime_capabilities(
+        self, request_session: ConnectorRequestSession
+    ) -> None:
+        try:
+            discovery = await request_session.discover_runtimes()
+            await self.send_notification(
+                "protocol.capabilitiesUpdated",
+                protocol_capabilities_from_runtime_types(
+                    discovery, revision=self._protocol_revision_clock.next()
+                ),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("runtime capability discovery failed; connector RPC remains available")
 
     async def authenticate(self) -> str:
         return await self._auth.authenticate()

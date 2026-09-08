@@ -112,8 +112,6 @@ class ConnectorIngestService:
                 )
                 continue
             accepted += 1
-            if notification.method == "runtime.inventoryUpdated":
-                continue
             if notification.method == "runtime.statusChanged":
                 continue
             effects.append(effect)
@@ -169,12 +167,6 @@ class ConnectorIngestService:
         - may update runtime inventory rows
         - does not publish session WebSocket effects; caller owns publication
         """
-        if notification.method == "runtime.inventoryUpdated":
-            await self._device_runtimes.ingest_unsolicited_inventory(
-                connector_id,
-                notification.params,
-            )
-            return IngestEffect()
         if notification.method == "runtime.statusChanged":
             await self._apply_runtime_status(connector_id, notification.params)
             return IngestEffect()
@@ -192,13 +184,6 @@ class ConnectorIngestService:
         params: dict,
         connection_id: str | None = None,
     ) -> None:
-        if method == "runtime.inventoryUpdated":
-            await self._device_runtimes.ingest_unsolicited_inventory(
-                connector_id,
-                params,
-                expected_connection_id=connection_id,
-            )
-            return
         if method == "runtime.statusChanged":
             await self._apply_runtime_status(
                 connector_id,

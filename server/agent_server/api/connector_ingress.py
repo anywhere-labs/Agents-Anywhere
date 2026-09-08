@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import time
-from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -58,7 +57,6 @@ from agent_server.services.connector_notifications import (
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_runtimes import (
-    RUNTIME_CONTROL_NEGOTIATION_RESPONSE_TAG,
     DeviceRuntimeError,
     DeviceRuntimeService,
 )
@@ -149,12 +147,20 @@ class _ConnectorNotificationPump:
                     continue
                 method, params = notification
                 started_at = time.monotonic()
-                await self._ingest_service.handle_notification_message(
-                    connector_id=self._connector_id,
-                    method=method,
-                    params=params,
-                    connection_id=self._connection_id,
-                )
+                try:
+                    await self._ingest_service.handle_notification_message(
+                        connector_id=self._connector_id,
+                        method=method,
+                        params=params,
+                        connection_id=self._connection_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "connector notification rejected connector_id={} method={}",
+                        self._connector_id,
+                        method,
+                    )
+                    continue
                 elapsed_ms = (time.monotonic() - started_at) * 1000
                 if method == "timeline.itemUpsert" or elapsed_ms >= 100:
                     logger.info(
@@ -172,160 +178,6 @@ class _ConnectorNotificationPump:
                 self._connector_id,
             )
             raise
-
-
-class _RuntimeControlGate:
-    """Bound and order runtime control notifications around discovery."""
-
-    def __init__(self, forward: Callable[[dict[str, Any]], None]) -> None:
-        self._forward = forward
-        self._before_inventory: tuple[int, dict[str, Any]] | None = None
-        self._before_statuses: dict[str, tuple[int, dict[str, Any]]] = {}
-        self._after_inventory: tuple[int, dict[str, Any]] | None = None
-        self._after_statuses: dict[str, tuple[int, dict[str, Any]]] = {}
-        self._response_sequence: int | None = None
-        self._settled = False
-        self._discarded = False
-
-    def enqueue_message(
-        self,
-        message: dict[str, Any],
-        *,
-        receive_sequence: int,
-    ) -> None:
-        if self._settled:
-            if not self._discarded:
-                self._forward(message)
-            return
-
-        method = message.get("method")
-        if method not in {"runtime.inventoryUpdated", "runtime.statusChanged"}:
-            raise ValueError(f"unsupported runtime control notification: {method}")
-
-        item = (receive_sequence, message)
-        if (
-            self._response_sequence is not None
-            and receive_sequence > self._response_sequence
-        ):
-            if method == "runtime.inventoryUpdated":
-                self._after_inventory = item
-            else:
-                self._after_statuses[self._runtime_id(message)] = item
-        else:
-            if method == "runtime.inventoryUpdated":
-                self._before_inventory = item
-            else:
-                self._before_statuses[self._runtime_id(message)] = item
-
-    def mark_negotiation_response(self, receive_sequence: int) -> None:
-        if self._settled:
-            return
-        if self._response_sequence is not None:
-            raise RuntimeError("runtime negotiation response was observed twice")
-        self._response_sequence = receive_sequence
-
-    def settle(self, *, discovery_reason: str | None) -> None:
-        if self._settled:
-            raise RuntimeError("runtime control gate is already settled")
-        if discovery_reason is not None and self._response_sequence is None:
-            raise RuntimeError("runtime negotiation response was not observed")
-
-        if discovery_reason == "runtime.inventory":
-            replay = self._ordered_replay(
-                inventory=self._after_inventory,
-                statuses=self._statuses_after(
-                    *self._after_statuses.values(),
-                    inventory=self._after_inventory,
-                ),
-            )
-        elif discovery_reason == "runtime.types":
-            replay = self._ordered_replay(
-                inventory=None,
-                statuses=self._latest_statuses(
-                    *self._before_statuses.values(),
-                    *self._after_statuses.values(),
-                ),
-            )
-        elif discovery_reason is None:
-            inventories = [
-                item
-                for item in (self._before_inventory, self._after_inventory)
-                if item is not None
-            ]
-            inventory = max(inventories, key=lambda item: item[0], default=None)
-            replay = self._ordered_replay(
-                inventory=inventory,
-                statuses=self._statuses_after(
-                    *self._before_statuses.values(),
-                    *self._after_statuses.values(),
-                    inventory=inventory,
-                ),
-            )
-        else:
-            raise ValueError(f"unsupported runtime discovery reason: {discovery_reason}")
-
-        self._settled = True
-        self._clear_pending()
-        for _receive_sequence, message in replay:
-            self._forward(message)
-
-    def discard(self) -> None:
-        if self._settled:
-            return
-        self._settled = True
-        self._discarded = True
-        self._clear_pending()
-
-    @staticmethod
-    def _runtime_id(message: dict[str, Any]) -> str:
-        params = message.get("params")
-        if isinstance(params, dict):
-            runtime_id = params.get("runtimeId")
-            if isinstance(runtime_id, str) and runtime_id:
-                return runtime_id
-        return "@invalid"
-
-    @staticmethod
-    def _ordered_replay(
-        *,
-        inventory: tuple[int, dict[str, Any]] | None,
-        statuses: Iterable[tuple[int, dict[str, Any]]],
-    ) -> list[tuple[int, dict[str, Any]]]:
-        replay = list(statuses)
-        if inventory is not None:
-            replay.append(inventory)
-        replay.sort(key=lambda item: item[0])
-        return replay
-
-    @classmethod
-    def _latest_statuses(
-        cls,
-        *statuses: tuple[int, dict[str, Any]],
-    ) -> Iterable[tuple[int, dict[str, Any]]]:
-        latest: dict[str, tuple[int, dict[str, Any]]] = {}
-        for status in statuses:
-            runtime_id = cls._runtime_id(status[1])
-            current = latest.get(runtime_id)
-            if current is None or status[0] > current[0]:
-                latest[runtime_id] = status
-        return latest.values()
-
-    @classmethod
-    def _statuses_after(
-        cls,
-        *statuses: tuple[int, dict[str, Any]],
-        inventory: tuple[int, dict[str, Any]] | None,
-    ) -> Iterable[tuple[int, dict[str, Any]]]:
-        cutoff = inventory[0] if inventory is not None else -1
-        return cls._latest_statuses(
-            *(status for status in statuses if status[0] > cutoff)
-        )
-
-    def _clear_pending(self) -> None:
-        self._before_inventory = None
-        self._before_statuses.clear()
-        self._after_inventory = None
-        self._after_statuses.clear()
 
 
 @router.post("/connector/auth", response_model=ConnectorAuthResponse)
@@ -471,8 +323,6 @@ async def connector_ws(
             connector_id,
             device_os=_connector_device_os(websocket.headers.get("x-device-os")),
         )
-        if recorded_connection:
-            await runtime_service.prepare_connection(connector_id)
         if not recorded_connection:
             await websocket.close(code=1008, reason="connector was revoked")
             return
@@ -491,7 +341,6 @@ async def connector_ws(
     completion_task: asyncio.Task[None] | None = None
     reader_task: asyncio.Task[None] | None = None
     notification_pump: _ConnectorNotificationPump | None = None
-    control_gate: _RuntimeControlGate | None = None
     try:
         await publish_dashboard_changed(
             db,
@@ -519,18 +368,14 @@ async def connector_ws(
             connection_id=connection.connection_id,
         )
         notification_pump.start()
-        control_gate = _RuntimeControlGate(notification_pump.enqueue_message)
-        # A v2 Connector sends a legacy inventory before it receives
-        # runtime.discover. Gate the bounded runtime-control lane; session and
-        # timeline notifications continue through the pump while discovery is
-        # in flight.
+        # Discovery refreshes provider metadata independently of request routing.
         discovery_task = asyncio.create_task(
-            _discover_runtime_control(
+            _discover_runtimes(
                 runtime_service,
                 connector_id,
                 connection,
             ),
-            name=f"runtime-control-discover-{connection.connection_id}",
+            name=f"runtime-discover-{connection.connection_id}",
         )
         logger.info("connector connected: {}", connector_id)
         reader_task = asyncio.create_task(
@@ -540,7 +385,6 @@ async def connector_ws(
                 connection,
                 manager,
                 notification_pump,
-                control_gate,
             ),
             name=f"connector-reader-{connection.connection_id}",
         )
@@ -556,7 +400,6 @@ async def connector_ws(
             return
 
         discovery_reason = await discovery_task
-        control_gate.settle(discovery_reason=discovery_reason)
         flush_task = asyncio.create_task(
             notification_pump.flush(),
             name=f"runtime-control-flush-{connection.connection_id}",
@@ -608,8 +451,6 @@ async def connector_ws(
         if completion_task is not None:
             completion_task.cancel()
             await asyncio.gather(completion_task, return_exceptions=True)
-        if control_gate is not None:
-            control_gate.discard()
         if notification_pump is not None:
             await notification_pump.close()
         removed_terminals = await broker.remove_ephemeral_for_connector(
@@ -637,7 +478,7 @@ async def connector_ws(
         )
 
 
-async def _discover_runtime_control(
+async def _discover_runtimes(
     runtime_service: DeviceRuntimeService,
     connector_id: str,
     connection: ConnectorConnection,
@@ -648,7 +489,7 @@ async def _discover_runtime_control(
         raise
     except DeviceRuntimeError as exc:
         logger.warning(
-            "runtime control negotiation failed connector_id={} "
+            "runtime discovery failed connector_id={} "
             "connection_id={} error_code={} error={}",
             connector_id,
             connection.connection_id,
@@ -658,7 +499,7 @@ async def _discover_runtime_control(
         return None
     except Exception:  # noqa: BLE001 - background task errors must be observed
         logger.exception(
-            "runtime control negotiation crashed connector_id={} connection_id={}",
+            "runtime discovery crashed connector_id={} connection_id={}",
             connector_id,
             connection.connection_id,
         )
@@ -831,30 +672,16 @@ async def _read_connector_messages(
     connection: ConnectorConnection,
     manager: ConnectorRpcManager,
     notification_pump: _ConnectorNotificationPump,
-    control_gate: _RuntimeControlGate,
 ) -> None:
-    receive_sequence = 0
     while True:
         message = await websocket.receive_json()
-        receive_sequence += 1
         if not await manager.touch(connector_id, connection):
             return
         message_type = message.get("type")
         if message_type == "response":
-            response_tag = manager.resolve_response(connector_id, message)
-            if response_tag == RUNTIME_CONTROL_NEGOTIATION_RESPONSE_TAG:
-                control_gate.mark_negotiation_response(receive_sequence)
+            manager.resolve_response(connector_id, message)
         elif message_type == "notification":
-            if message.get("method") in {
-                "runtime.inventoryUpdated",
-                "runtime.statusChanged",
-            }:
-                control_gate.enqueue_message(
-                    message,
-                    receive_sequence=receive_sequence,
-                )
-            else:
-                notification_pump.enqueue_message(message)
+            notification_pump.enqueue_message(message)
 
 
 def _parse_connector_authorization(authorization: str) -> tuple[str, str]:

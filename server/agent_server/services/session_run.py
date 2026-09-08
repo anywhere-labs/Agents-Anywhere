@@ -79,16 +79,6 @@ class SessionRunInvalidConfigError(SessionRunError):
     status_code = 422
 
 
-class SessionRunInstancesUnsupportedError(SessionRunConflictError):
-    def __init__(self) -> None:
-        super().__init__(
-            {
-                "code": "runtime_instances_unsupported",
-                "message": "connector does not support named runtime instances",
-            }
-        )
-
-
 SESSION_SOURCE_ERROR_CODES = {
     "archived": "session_archived",
     "unavailable": "session_unavailable",
@@ -815,8 +805,6 @@ class SessionRunService:
 
     @staticmethod
     def _raise_device_runtime_error(exc: DeviceRuntimeError) -> None:
-        if exc.code == "runtime_instances_unsupported":
-            raise SessionRunInstancesUnsupportedError() from exc
         if exc.status_code == 404:
             raise SessionRunNotFoundError(exc.message) from exc
         if exc.status_code == 422:
