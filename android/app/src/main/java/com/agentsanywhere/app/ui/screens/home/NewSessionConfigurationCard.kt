@@ -8,30 +8,24 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.agentsanywhere.app.ui.designsystem.AADropdownMenu
+import com.agentsanywhere.app.ui.designsystem.AADropdownMenuItem
 import com.agentsanywhere.app.ui.designsystem.DownGlyph
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
-import com.composables.icons.lucide.Check
-import com.composables.icons.lucide.Lucide
 import com.valentinilk.shimmer.shimmer
 
 internal enum class NewSessionConfigurationKey {
@@ -180,75 +174,18 @@ private fun NewSessionConfigurationMenu(
     onDismiss: () -> Unit,
     onSelect: (String) -> Unit,
 ) {
-    val colors = LocalAAColors.current
-    val surface = colors.subtle
-    val shadow = colors.appShadow
-    DropdownMenu(
+    AADropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
-        offset = DpOffset(x = 0.dp, y = 4.dp),
-        shape = RoundedCornerShape(18.dp),
-        containerColor = surface,
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-        modifier = Modifier
-            .width(286.dp)
-            .heightIn(max = 328.dp)
-            .shadow(28.dp, RoundedCornerShape(18.dp), ambientColor = shadow, spotColor = shadow)
-            .clip(RoundedCornerShape(18.dp))
-            .background(surface),
     ) {
-        Column(modifier = Modifier.padding(vertical = 6.dp)) {
-            options.forEach { option ->
-                val selected = option.id == selectedId
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .then(
-                            if (option.enabled) {
-                                Modifier.noRippleClickable {
-                                    onSelect(option.id)
-                                    onDismiss()
-                                }
-                            } else {
-                                Modifier
-                            },
-                        )
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = option.label,
-                            color = colors.ink.copy(alpha = if (option.enabled) 1f else 0.42f),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        option.description?.takeIf(String::isNotBlank)?.let { description ->
-                            Text(
-                                text = description,
-                                color = colors.inkSoft.copy(alpha = if (option.enabled) 0.72f else 0.42f),
-                                fontSize = 11.sp,
-                                lineHeight = 14.sp,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                    if (selected) {
-                        Icon(
-                            imageVector = Lucide.Check,
-                            contentDescription = null,
-                            tint = colors.ink,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
-                }
-            }
+        options.forEach { option ->
+            AADropdownMenuItem(
+                text = option.label,
+                selected = option.id == selectedId,
+                enabled = option.enabled,
+                supportingText = option.description,
+                onClick = { onSelect(option.id); onDismiss() },
+            )
         }
     }
 }
