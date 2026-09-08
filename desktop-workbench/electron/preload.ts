@@ -1,3 +1,4 @@
+import { windowMaterial } from "./window-material";
 import type { OwnershipState } from "./local-runtime";
 import { contextBridge, ipcRenderer } from "electron";
 import type { DesktopUpdateState } from "../shared/desktop-updates";
@@ -29,7 +30,9 @@ function subscribe<T>(channel: string, callback: (value: T) => void): () => void
 
 contextBridge.exposeInMainWorld("desktopWorkbench", {
   platform: process.platform,
+  windowMaterial: windowMaterial(),
   window: {
+    setTheme: (theme: "light" | "dark"): Promise<void> => ipcRenderer.invoke("workbench:window:setTheme", theme),
     setTitleBarColors: (colors: { color: string; symbolColor: string }): Promise<void> =>
       ipcRenderer.invoke("workbench:window:setTitleBarColors", colors),
   },
@@ -61,9 +64,6 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
       ipcRenderer.invoke("workbench:auth:consumeOAuthResult"),
     onOAuthResult: (callback: () => void): (() => void) =>
       subscribe("workbench:auth:oauthResultReady", callback),
-  },
-  development: {
-    clearCache: (): Promise<void> => ipcRenderer.invoke("workbench:development:clearCache"),
   },
   notifications: {
     show: (input: DesktopNotificationInput): Promise<DesktopNotificationResult> =>

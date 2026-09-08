@@ -7,6 +7,7 @@ import {
   Menu,
   net,
   Notification,
+  nativeTheme,
   protocol,
   session,
   shell,
@@ -33,6 +34,7 @@ import { DesktopSettingsStore } from "./desktop-settings";
 import { ConnectorLogStore } from "./log-store";
 import { readShellEnvironment } from "./shell-environment";
 import { validateTitleBarColors } from "./title-bar";
+import { windowMaterialOptions } from "./window-material";
 import config from "../config.json";
 import { proxyDesktopApi } from "./api-proxy";
 import {
@@ -297,10 +299,11 @@ function createMainWindow(showOnReady = true): BrowserWindow {
     minHeight: 680,
     show: false,
     title: APP_NAME,
+    ...windowMaterialOptions(),
     icon: appWindowIcon(),
     titleBarStyle: process.platform === "darwin" || process.platform === "win32" ? "hidden" : "default",
     titleBarOverlay: process.platform === "win32"
-      ? { color: "#171717", symbolColor: "#fafafa", height: 32 }
+      ? { color: "#00000000", symbolColor: "#fafafa", height: 32 }
       : undefined,
     trafficLightPosition: process.platform === "darwin" ? { x: 17, y: 16 } : undefined,
     webPreferences: {
@@ -512,10 +515,17 @@ function registerIpcHandlers(): void {
     assertTrustedRenderer(event);
     return requestQuit();
   });
+  ipcMain.handle("workbench:window:setTheme", (event, theme: unknown) => {
+    assertTrustedRenderer(event);
+    if (event.sender !== mainWindow?.webContents) return;
+    if (theme !== "light" && theme !== "dark") throw new Error("Invalid window theme.");
+    nativeTheme.themeSource = theme;
+  });
   ipcMain.handle("workbench:window:setTitleBarColors", (event, input: unknown) => {
     assertTrustedRenderer(event);
     if (process.platform !== "win32" || event.sender !== mainWindow?.webContents) return;
-    mainWindow.setTitleBarOverlay(validateTitleBarColors(input));
+    const colors = validateTitleBarColors(input);
+    mainWindow.setTitleBarOverlay({ ...colors, color: "#00000000" });
   });
   ipcMain.handle("workbench:updates:syncSession", (event, serverUrl: unknown) => {
     assertTrustedRenderer(event);
@@ -584,12 +594,6 @@ function registerIpcHandlers(): void {
     const result = desktopOAuthResult;
     desktopOAuthResult = null;
     return result;
-  });
-  ipcMain.handle("workbench:development:clearCache", async (event) => {
-    assertTrustedRenderer(event);
-    if (app.isPackaged) throw new Error("Cache clearing is only available in development mode.");
-    await event.sender.session.clearCache();
-    event.sender.reloadIgnoringCache();
   });
   ipcMain.handle(
     "workbench:notifications:show",

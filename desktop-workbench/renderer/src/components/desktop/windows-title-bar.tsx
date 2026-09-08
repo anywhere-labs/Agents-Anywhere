@@ -12,6 +12,7 @@ export function WindowsTitleBarProvider({ children }: { children: React.ReactNod
 
   return (
     <WindowsTitleBarControlsContext.Provider value={controlsTarget}>
+      <NativeWindowMaterial />
       <WindowsTitleBar onControlsMount={setControlsTarget} />
       {children}
     </WindowsTitleBarControlsContext.Provider>
@@ -79,4 +80,24 @@ export function WindowsTitleBar({
       />
     </div>
   )
+}
+
+function NativeWindowMaterial() {
+  const { resolvedTheme } = useTheme()
+  React.useLayoutEffect(() => {
+    const bridge = getDesktopWorkbenchBridge()
+    if (!bridge) return
+    const root = document.documentElement
+    root.dataset.desktopPlatform = bridge.platform
+    root.dataset.windowMaterial = bridge.windowMaterial ?? "opaque"
+    return () => {
+      delete root.dataset.desktopPlatform
+      delete root.dataset.windowMaterial
+    }
+  }, [])
+  React.useEffect(() => {
+    if (resolvedTheme !== "light" && resolvedTheme !== "dark") return
+    void getDesktopWorkbenchBridge()?.window?.setTheme?.(resolvedTheme).catch(console.error)
+  }, [resolvedTheme])
+  return null
 }

@@ -7,7 +7,6 @@ import { SidebarProvider, SidebarInset, useSidebar } from "@/components/ui/sideb
 import { DashboardSidebarControlsContext } from "@/components/dashboard-sidebar-controls"
 import { AppSidebar } from "@/components/app-sidebar"
 import { DesktopShellHeader } from "@/components/desktop/desktop-shell-header"
-import { WindowsTitleBarControlsContext } from "@/components/desktop/windows-title-bar"
 import { DesktopSessionNotifications } from "@/components/desktop/desktop-session-notifications"
 import { TaskComposer } from "@/components/task-composer"
 import { SessionView } from "@/components/session-view"
@@ -41,7 +40,6 @@ import {
 } from "@/components/ui/resizable"
 import { useTranslations } from "next-intl"
 import { DesktopConnectorProvider } from "@/features/desktop/desktop-connector-context"
-import { cn } from "@/lib/utils"
 
 const SIDEBAR_LAYOUT_STORAGE_KEY = "agents-anywhere-dashboard-sidebar-layout"
 const DEFAULT_DESKTOP_LAYOUT = {
@@ -85,7 +83,7 @@ function DashboardShell() {
 
 function DesktopResizableShell() {
   const { open, setOpen } = useSidebar()
-  const titleBarControls = React.useContext(WindowsTitleBarControlsContext)
+  const { page } = useWorkspace()
   const desktopShellRef = React.useRef<HTMLDivElement | null>(null)
   const sidebarPanelRef = React.useRef<PanelImperativeHandle | null>(null)
   const sidebarMotionActiveRef = React.useRef(false)
@@ -193,12 +191,12 @@ function DesktopResizableShell() {
     <DashboardSidebarControlsContext.Provider value={sidebarControls}>
       <div
         ref={desktopShellRef}
-        className={cn("flex h-svh min-h-0 w-full flex-col overflow-hidden overscroll-none bg-background", titleBarControls && "relative")}
+        data-sidebar-open={open}
+        className="aa-desktop-shell relative flex h-svh min-h-0 w-full flex-col overflow-hidden overscroll-none"
         style={{
           "--desktop-sidebar-width": `${Math.max(sidebarWidth, DESKTOP_SIDEBAR_MIN_WIDTH)}px`,
         } as React.CSSProperties}
       >
-        {titleBarControls ? null : shellHeader}
         <ResizablePanelGroup
           id="agents-anywhere-dashboard-sidebar"
           defaultLayout={defaultLayout}
@@ -208,7 +206,7 @@ function DesktopResizableShell() {
             }
           }}
           direction="horizontal"
-          className={`min-h-0 flex-1 overflow-hidden overscroll-none bg-background ${panelMotionClassName}`}
+          className={`min-h-0 flex-1 overflow-hidden overscroll-none ${panelMotionClassName}`}
         >
           <ResizablePanel
             id="dashboard-sidebar"
@@ -236,7 +234,7 @@ function DesktopResizableShell() {
             style={{ overflow: "hidden" }}
           >
             <div
-              className="h-full shrink-0 overflow-hidden"
+              className="aa-desktop-sidebar h-full shrink-0 overflow-hidden"
               style={{ width: Math.max(sidebarWidth, DESKTOP_SIDEBAR_MIN_WIDTH) }}
             >
               <AppSidebar contained />
@@ -258,12 +256,21 @@ function DesktopResizableShell() {
             onLostPointerCapture={() => setSidebarResizeActive(false)}
           />
           <ResizablePanel id="dashboard-main" minSize={0} className="min-w-0">
-            <SidebarInset className={cn("h-full min-h-0 overflow-hidden overscroll-none bg-background", titleBarControls && "pt-11")}>
-              <WorkspaceMain />
+            <SidebarInset data-page={page} className="aa-desktop-main h-full min-h-0 overflow-hidden overscroll-none bg-background">
+              <div className="aa-desktop-drag-region" aria-hidden="true" />
+              {page === "session" ? (
+                <header className="aa-window-drag flex h-11 shrink-0 items-center gap-2 px-3">
+                  <div data-slot="desktop-shell-header-session" className="flex min-w-0 flex-1 items-center overflow-hidden" />
+                  <div data-slot="desktop-shell-header-session-actions" className="aa-window-no-drag flex shrink-0 items-center" />
+                </header>
+              ) : null}
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                <WorkspaceMain />
+              </div>
             </SidebarInset>
           </ResizablePanel>
         </ResizablePanelGroup>
-        {titleBarControls ? shellHeader : null}
+        {shellHeader}
       </div>
       <SessionToolSidebarsHost />
     </DashboardSidebarControlsContext.Provider>
