@@ -472,6 +472,28 @@ The generator also accepts a Web `node_modules` directory as its first argument
 when the iOS worktree has no Web dependencies. It never downloads a new package.
 The bundled Lucide license is visible under Settings → About.
 
+## Release resources
+
+The app's `Resources/PrivacyInfo.xcprivacy` declares required-reason API use:
+
+| API category | Reason | Use in this client |
+| --- | --- | --- |
+| User defaults | `CA92.1` | App-local account, appearance and workspace preferences. |
+| System boot time | `35F9.1` | Elapsed time for chat presentation and glyph reveal. |
+| File timestamps | `C617.1` | Eviction ordering for session files in the app's cache. |
+
+The vendored Textual package has its own manifest for its app-local logging
+preference (`CA92.1`), copied through SwiftPM resources. The archived app must
+contain `PrivacyInfo.xcprivacy` at its root and the separate Textual resource
+bundle manifest. These reasons follow Apple's
+[required-reason API declarations](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitype).
+
+Deleting an Agent configuration permanently deletes its associated sessions,
+history and attachments on the current v2 backend. Both the source fallback and
+English/Chinese confirmation copy state this effect. Shared DSH permission labels
+come from the Web catalog; the compiled localization probe checks these strings
+and the destructive confirmation, including interpolation of the Agent name.
+
 ## Verified checks
 
 Verified on 2026-09-06, without starting a server or simulator:

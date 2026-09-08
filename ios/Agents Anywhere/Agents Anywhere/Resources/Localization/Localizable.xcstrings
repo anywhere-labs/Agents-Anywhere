@@ -15124,6 +15124,42 @@
           }
         }
       }
+    },
+    "+%lld": {
+      "comment": "Signed line count in Git change summaries.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "+%lld"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "+%lld"
+          }
+        }
+      }
+    },
+    "−%lld": {
+      "comment": "Signed line count in Git change summaries.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "−%lld"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "−%lld"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

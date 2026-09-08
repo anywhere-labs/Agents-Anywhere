@@ -27,6 +27,17 @@ for language in ["en", "zh-Hans"] {
     let label = String(localized: "dashboard.device.runtimeConfigFields.useSystemCodex.label", bundle: bundle, locale: locale)
     precondition(!label.hasPrefix("dashboard."), "Runtime metadata key was shown without a translation")
     checks += 1
+    let runtimeName = "Work Agent"
+    expect(String(localized: "\(runtimeName) will be stopped and removed from the configured list. All associated sessions, message history, and attachments will be permanently deleted. You can configure the runtime again later; the local installation is kept.", bundle: bundle, locale: locale),
+           chinese ? "Work Agent 会停止并从已配置列表移除，其关联的所有会话、消息记录和附件将被永久删除。之后仍可重新配置 Runtime，本机安装会保留。" : "Work Agent will be stopped and removed from the configured list. All associated sessions, message history, and attachments will be permanently deleted. You can configure the runtime again later; the local installation is kept.")
+    for (mode, english, simplifiedChinese) in [
+        ("readOnly", "read-only", "仅可查看"),
+        ("workspaceWrite", "workspace-write", "工作区内修改"),
+        ("fullAccess", "danger-full-access", "完全权限"),
+    ] {
+        expect(bundle.localizedString(forKey: "dashboard.new.permissionModes.dsh.\(mode).label", value: nil, table: nil),
+               chinese ? simplifiedChinese : english)
+    }
     for count in [0, 1, 2] {
         expect(String(localized: "\(count) projects", bundle: bundle, locale: locale),
                chinese ? "\(count) 个项目" : "\(count) \(count == 1 ? "project" : "projects")")

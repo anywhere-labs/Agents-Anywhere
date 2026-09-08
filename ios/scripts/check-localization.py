@@ -93,8 +93,12 @@ def main():
     extracted = set()
     sources = set()
     if args.derived_data:
-        for path in args.derived_data.glob("Build/Intermediates.noindex/Agents Anywhere.build/**/*.stringsdata"):
+        # Archive actions put target intermediates below ArchiveIntermediates;
+        # the source-path filter also excludes package and generated metadata.
+        for path in args.derived_data.glob("Build/Intermediates.noindex/**/*.stringsdata"):
             data = json.loads(path.read_text())
+            if not data.get("source"):
+                continue
             source = Path(data["source"])
             # Ignore removed files and package/build-generated sources.
             if not source.is_file() or not source.is_relative_to(APP):
