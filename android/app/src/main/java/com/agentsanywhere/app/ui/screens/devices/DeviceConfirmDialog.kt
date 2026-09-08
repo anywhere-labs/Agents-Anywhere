@@ -48,14 +48,6 @@ internal fun DeviceConfirmDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    val colors = LocalAAColors.current
-    val darkMode = colors.canvas == Color(0xFF09090B)
-    val shape = RoundedCornerShape(26.dp)
-    val surface = colors.dialogSurface
-    val secondaryButton = colors.secondaryActionSurface
-    val titleColor = if (darkMode) Color(0xFFF5F5F5) else colors.ink
-    val bodyColor = if (darkMode) Color(0xFF858585) else colors.muted
-    val dangerButton = Color(0xFFEF4444)
     val title: String
     val body: String
     val confirmLabel: String
@@ -115,6 +107,39 @@ internal fun DeviceConfirmDialog(
         }
     }
 
+    DeviceConfirmDialog(
+        title = title,
+        body = body,
+        confirmLabel = confirmLabel,
+        danger = danger,
+        busy = busy,
+        errorMessage = errorMessage,
+        onDismiss = onDismiss,
+        onConfirm = onConfirm,
+    )
+}
+
+@Composable
+internal fun DeviceConfirmDialog(
+    title: String,
+    body: String,
+    confirmLabel: String,
+    dismissLabel: String = stringResource(R.string.common_cancel),
+    danger: Boolean = false,
+    busy: Boolean = false,
+    errorMessage: String? = null,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val colors = LocalAAColors.current
+    val darkMode = colors.isDark
+    val shape = RoundedCornerShape(26.dp)
+    val surface = colors.dialogSurface
+    val secondaryButton = colors.secondaryActionSurface
+    val titleColor = if (darkMode) Color(0xFFF5F5F5) else colors.ink
+    val bodyColor = if (darkMode) Color(0xFF858585) else colors.muted
+    val dangerButton = Color(0xFFEF4444)
+
     Dialog(
         onDismissRequest = { if (!busy) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -159,7 +184,7 @@ internal fun DeviceConfirmDialog(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 DeviceDialogButton(
-                    label = stringResource(R.string.common_cancel),
+                    label = dismissLabel,
                     background = secondaryButton,
                     content = if (darkMode) Color(0xFFF5F5F5) else colors.ink,
                     enabled = !busy,

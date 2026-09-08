@@ -214,18 +214,21 @@ fun AddDeviceScreen(
         }
     }
 
-    if (showExitConfirmation) AlertDialog(
-        onDismissRequest = { showExitConfirmation = false },
-        containerColor = colors.dialogSurface,
-        titleContentColor = colors.ink,
-        textContentColor = colors.muted,
-        title = { Text(stringResource(R.string.device_pairing_exit_title)) },
-        text = { Text(stringResource(if (waitingOnline) R.string.device_pairing_exit_waiting_description else R.string.device_pairing_exit_description, name)) },
-        dismissButton = { TextButton(onClick = { showExitConfirmation = false }) {
-            Text(stringResource(R.string.device_pairing_continue_pairing), color = colors.ink)
-        } },
-        confirmButton = { TextButton(onClick = { showExitConfirmation = false; onBack() }) {
-            Text(stringResource(R.string.device_pairing_close_anyway), color = colors.ink)
-        } },
-    )
+    if (showExitConfirmation) {
+        DeviceConfirmDialog(
+            title = stringResource(R.string.device_pairing_exit_title),
+            body = stringResource(
+                if (waitingOnline) R.string.device_pairing_exit_waiting_description
+                else R.string.device_pairing_exit_description,
+                name,
+            ),
+            dismissLabel = stringResource(R.string.device_pairing_continue_pairing),
+            confirmLabel = stringResource(R.string.device_pairing_close_anyway),
+            onDismiss = { showExitConfirmation = false },
+            onConfirm = {
+                showExitConfirmation = false
+                onBack()
+            },
+        )
+    }
 }
