@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.sessions.recentWorkspacePaths
 import com.agentsanywhere.app.feature.sessions.workspacePathKey
 import com.agentsanywhere.app.feature.sessions.workspaceProject
 import com.agentsanywhere.app.feature.sessions.workspaceProjectName
@@ -42,7 +43,6 @@ import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.Folder
-import com.composables.icons.lucide.FolderOpen
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 
@@ -67,9 +67,9 @@ internal fun WorkspaceSection(
     val colors = LocalAAColors.current
     val available = projects.filter { it.connectorId == connectorId }
     val homeProject = workspaceProject(available, connectorId.orEmpty(), homePath.orEmpty(), deviceOs)
-    val recent = (sessions.filter { it.connectorId == connectorId }.mapNotNull { it.cwd } + available.map { it.workspacePath })
-        .filter(String::isNotBlank).distinctBy { workspacePathKey(it, deviceOs) }
-        .filterNot { workspacePathKey(it, deviceOs) == workspacePathKey(homePath.orEmpty(), deviceOs) }
+    val recent = remember(projectMode, connectorId, deviceOs, homePath, sessions, projects) {
+        if (projectMode) emptyList() else recentWorkspacePaths(connectorId, deviceOs, homePath, sessions, projects)
+    }
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(
             text = stringResource(if (projectMode) R.string.home_projects else R.string.new_session_workspace),
@@ -83,13 +83,13 @@ internal fun WorkspaceSection(
             contentPadding = PaddingValues(bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            if (projectMode) item(key = "create-project") {
+            item(key = if (projectMode) "create-project" else "browse") {
                 WorkspaceActionRow(
-                    title = stringResource(R.string.new_session_create_project),
+                    title = stringResource(if (projectMode) R.string.new_session_create_project else R.string.workspace_browse),
                     icon = Lucide.Plus,
-                    enabled = canCreateProject,
+                    enabled = if (projectMode) canCreateProject else connectorId != null,
                     raised = true,
-                    onClick = onCreate,
+                    onClick = if (projectMode) onCreate else onBrowse,
                 )
             }
             if (!projectMode || homeProject == null) item(key = "home") {
@@ -105,14 +105,6 @@ internal fun WorkspaceSection(
                 }
                 if (available.isEmpty()) item { Text(stringResource(R.string.new_session_no_projects), modifier = Modifier.padding(vertical = 16.dp), color = colors.muted) }
             } else {
-                item(key = "browse") {
-                    WorkspaceActionRow(
-                        title = stringResource(R.string.workspace_browse),
-                        icon = Lucide.FolderOpen,
-                        enabled = connectorId != null,
-                        onClick = onBrowse,
-                    )
-                }
                 items(recent, key = { "directory:${workspacePathKey(it, deviceOs)}" }) { directory ->
                     WorkspaceOptionRow(workspaceProjectName(directory), directory, workspacePathKey(path, deviceOs) == workspacePathKey(directory, deviceOs)) { onSelect(WorkspaceChoice(directory)) }
                 }

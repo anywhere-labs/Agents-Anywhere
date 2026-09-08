@@ -29,6 +29,8 @@ data class AgentSession(
     val runtimeName: String = runtimeLabel,
     val archivedAt: String? = null,
     val optimisticTopUntil: Long = 0L,
+    // Preserve the canonical timestamp, including null, separately from the display activity fallback.
+    val sortAt: String? = null,
 ) {
     val runtimeLabels: RuntimeInstanceLabels
         get() = runtimeInstanceLabels(runtimeName, runtimeType)

@@ -58,6 +58,7 @@ internal fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>)
         runtimeType = runtimeType,
         runtimeName = this.runtimeName,
         archivedAt = archivedAt,
+        sortAt = sortAt,
     )
 }
 

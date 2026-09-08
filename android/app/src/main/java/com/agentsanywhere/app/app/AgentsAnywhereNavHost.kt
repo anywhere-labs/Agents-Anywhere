@@ -238,6 +238,7 @@ internal fun AgentsAnywhereNavHost(
                 AppDestination.NewSession, AppDestination.NewProject -> androidx.compose.runtime.key(serverUrl, userId, destination) { NewSessionScreen(
                     navigate = navigate,
                     sessionsState = sessionsState,
+                    projectSessionsById = projectSessionsById,
                     serverUrl = serverUrl,
                     userId = userId,
                     onListDirectory = onListDirectory,

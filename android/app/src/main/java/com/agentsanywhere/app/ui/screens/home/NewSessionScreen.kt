@@ -52,6 +52,7 @@ import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeSelectionState
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentProject
+import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.feature.sessions.availableProjectName
 import com.agentsanywhere.app.feature.sessions.activeNewSessionRuntimes
 import com.agentsanywhere.app.feature.sessions.workspaceProject
@@ -75,6 +76,7 @@ import kotlinx.coroutines.launch
 fun NewSessionScreen(
     navigate: (AppDestination) -> Unit,
     sessionsState: SessionsState,
+    projectSessionsById: Map<String, List<AgentSession>>,
     serverUrl: String,
     userId: String,
     sidebarViewMode: String = HomeSidebarViewMode.Project,
@@ -124,6 +126,9 @@ fun NewSessionScreen(
         } else {
             sessionsState.projects + local
         }
+    }
+    val workspaceSessions = remember(projectSessionsById, sessionsState.sessions, sessionsState.archivedSessions) {
+        projectSessionsById.values.flatten() + sessionsState.sessions + sessionsState.archivedSessions
     }
     var title by rememberSaveable { mutableStateOf(defaultTitle) }
     var editingTitle by rememberSaveable { mutableStateOf(false) }
@@ -907,6 +912,8 @@ fun NewSessionScreen(
                         error = pathError,
                         darkMode = darkMode,
                         canUseCurrent = canUseCurrentPath,
+                        currentSelected = canUseCurrentPath && workspacePathKey(currentPath, selectedDeviceOs) ==
+                            workspacePathKey(selectedWorkspacePath, selectedDeviceOs),
                         modifier = Modifier.weight(1f),
                         onBack = { choosePath = false },
                         onParent = {
@@ -924,7 +931,6 @@ fun NewSessionScreen(
                                 selectedWorkspacePath = currentPath
                                 projectCreateError = null
                                 if (!creatingProject) selectedProjectId = workspaceProject(projects, selectedDeviceId.orEmpty(), currentPath, selectedDeviceOs)?.id
-                                choosePath = false
                             }
                         },
                         onOpenEntry = { entry ->
@@ -944,14 +950,20 @@ fun NewSessionScreen(
                         homePath = homePath,
                         projectMode = sidebarViewMode == HomeSidebarViewMode.Project,
                         projects = projects,
-                        sessions = sessionsState.sessions + sessionsState.archivedSessions,
+                        sessions = workspaceSessions,
                         listState = workspaceListState,
                         canCreateProject = onlineDevices.isNotEmpty(),
                         modifier = Modifier.weight(1f),
                         onCreate = ::beginProjectCreation,
                         onBrowse = {
+                            val home = homePath?.takeIf(String::isNotBlank) ?: "~"
                             choosePath = true
-                            scope.launch { loadDirectory(selectedWorkspacePath.ifBlank { homePath ?: "~" }) }
+                            scope.launch {
+                                loadDirectory(
+                                    targetPath = if (home == "~") "." else home,
+                                    fallbackRoot = home,
+                                )
+                            }
                         },
                         onSelect = { choice ->
                             selectedProjectId = choice.projectId

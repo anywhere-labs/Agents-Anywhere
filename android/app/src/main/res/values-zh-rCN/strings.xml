@@ -330,7 +330,7 @@
     <string name="new_session_no_online_agent">没有可用的在线设备。</string>
     <string name="new_session_starting">启动中...</string>
     <string name="new_session_start_chat">开始聊天</string>
-    <string name="new_session_workspace">项目</string>
+    <string name="new_session_workspace">工作目录</string>
     <string name="new_session_choose_path">选择路径</string>
     <string name="new_session_expand_directory">展开目录列表</string>
     <string name="new_session_collapse_directory">收起目录列表</string>
@@ -682,7 +682,7 @@
     <string name="workspace_home">主目录</string>
     <string name="workspace_resolving_home">正在解析主目录…</string>
     <string name="workspace_resolve_failed">无法解析此目录，请重试。</string>
-    <string name="workspace_browse">浏览目录</string>
+    <string name="workspace_browse">浏览文件系统</string>
     <string name="workspace_selected">已选择</string>
     <string name="project_name_adjusted">名称刚刚被占用，已生成可用名称，请确认后再次提交。</string>
     <string name="project_workspace_conflict_title">此目录已有项目</string>

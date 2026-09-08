@@ -331,7 +331,7 @@
     <string name="new_session_no_online_agent">No online device with an attached agent.</string>
     <string name="new_session_starting">Starting...</string>
     <string name="new_session_start_chat">Start chat</string>
-    <string name="new_session_workspace">Project</string>
+    <string name="new_session_workspace">Working directory</string>
     <string name="new_session_choose_path">Choose path</string>
     <string name="new_session_expand_directory">Expand directory list</string>
     <string name="new_session_collapse_directory">Collapse directory list</string>
@@ -683,7 +683,7 @@
     <string name="workspace_home">Home directory</string>
     <string name="workspace_resolving_home">Resolving home directory…</string>
     <string name="workspace_resolve_failed">Could not resolve this directory. Try again.</string>
-    <string name="workspace_browse">Browse directories</string>
+    <string name="workspace_browse">Browse filesystem</string>
     <string name="workspace_selected">Selected</string>
     <string name="project_name_adjusted">This name was just taken. An available name is ready; confirm it and submit again.</string>
     <string name="project_workspace_conflict_title">This directory already belongs to a project</string>

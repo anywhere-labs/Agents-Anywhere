@@ -38,9 +38,9 @@ import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessions.NewSessionPathEntry
 import com.agentsanywhere.app.ui.designsystem.BackGlyph
-import com.agentsanywhere.app.ui.designsystem.CheckGlyph
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
@@ -69,9 +69,13 @@ internal fun ChoosePathSection(
     collapsible: Boolean = false,
 ) {
     var expanded by rememberSaveable { mutableStateOf(true) }
-    val listExpanded = !collapsible || expanded
+    val listExpanded = expanded
     val listState = rememberLazyListState()
     val haptic = LocalHapticFeedback.current
+    val openParent = {
+        expanded = true
+        onParent()
+    }
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -107,13 +111,23 @@ internal fun ChoosePathSection(
             canGoParent = parentPath != null && enabled && !loading,
             canUseCurrent = canUseCurrent && enabled && !loading && error == null,
             currentSelected = currentSelected,
-            onParent = onParent,
-            onUseCurrent = onUseCurrent,
+            onParent = openParent,
+            onUseCurrent = onUseCurrent?.let { selectCurrent ->
+                {
+                    selectCurrent()
+                    expanded = false
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                }
+            },
             enabled = enabled,
             listExpanded = listExpanded,
             onToggleList = if (collapsible) ({
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 expanded = !expanded
+            }) else null,
+            onOpenList = if (!collapsible && !expanded) ({
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                expanded = true
             }) else null,
         )
         if (listExpanded || loading || error != null) Box(
@@ -141,7 +155,7 @@ internal fun ChoosePathSection(
                     else -> {
                         if (parentPath != null) {
                             item(key = "$currentPath/..") {
-                                PathRow(name = "..", icon = Lucide.Folder, darkMode = darkMode, enabled = enabled, onClick = onParent)
+                                PathRow(name = "..", icon = Lucide.Folder, darkMode = darkMode, enabled = enabled, onClick = openParent)
                             }
                         }
                         if (entries.isEmpty()) {
@@ -153,7 +167,10 @@ internal fun ChoosePathSection(
                                 icon = Lucide.Folder,
                                 darkMode = darkMode,
                                 enabled = enabled,
-                                onClick = { onOpenEntry(entry) },
+                                onClick = {
+                                    expanded = true
+                                    onOpenEntry(entry)
+                                },
                             )
                         }
                     }
@@ -175,6 +192,7 @@ private fun CurrentDirectoryBar(
     enabled: Boolean,
     listExpanded: Boolean,
     onToggleList: (() -> Unit)?,
+    onOpenList: (() -> Unit)?,
 ) {
     Row(
         modifier = Modifier
@@ -183,6 +201,7 @@ private fun CurrentDirectoryBar(
             .clip(RoundedCornerShape(18.dp))
             .background(if (darkMode) LocalAAColors.current.raisedSurface else Color(0xFFF7F7F7))
             .border(1.dp, if (darkMode) Color(0xFF27272A) else Color(0xFFE8E8E8), RoundedCornerShape(18.dp))
+            .then(if (onOpenList != null) Modifier.noRippleClickable(enabled = enabled, onClick = onOpenList) else Modifier)
             .padding(start = 13.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -243,7 +262,12 @@ private fun CurrentDirectoryBar(
                 darkMode -> Color(0xFFA1A1AA)
                 else -> Color(0xFF16A34A)
             }
-            CheckGlyph(color = checkColor)
+            Icon(
+                imageVector = Lucide.Check,
+                contentDescription = stringResource(R.string.common_done),
+                tint = checkColor,
+                modifier = Modifier.size(22.dp),
+            )
         }
     }
 }
