@@ -217,8 +217,11 @@ started by this invocation. `local-up.sh` does not call or depend on
 
 Connector is opt-in: pass `--with-connector` (and optionally
 `--connector-config PATH`) when debugging a local Codex/Claude Connector.
-`--skip-install` skips dependency synchronization, `--no-reload` disables
-Server hot reload, and `--reset-data` removes the local PostgreSQL/Redis
+Server hot reload is off by default so editing source or test files does not
+restart the Server and interrupt Connector/WebSocket connections. Pass
+`--reload` to enable it; `--no-reload` remains available to explicitly disable
+it. `--skip-install` skips dependency synchronization.
+`--reset-data` removes the local PostgreSQL/Redis
 volumes before applying migrations to an empty database. Use `--reset-data`
 only when the local data can be discarded.
 

@@ -14,7 +14,7 @@ CONNECTOR_CONFIG_EXPLICIT=false
 LISTEN_HOST_CLI=""
 SKIP_INSTALL=false
 WITH_CONNECTOR=false
-SERVER_RELOAD=true
+SERVER_RELOAD=false
 RESET_DATA=false
 SHUTTING_DOWN=false
 
@@ -37,7 +37,8 @@ Options:
   --skip-install        Skip uv sync and yarn install
   --with-connector      Also start the local Connector
   --connector-config P  Connector config used with --with-connector
-  --no-reload           Disable uvicorn source reload
+  --reload              Enable uvicorn source reload (off by default)
+  --no-reload           Disable uvicorn source reload (default)
   --reset-data          Remove the local PostgreSQL and Redis volumes first
   -h, --help            Show this help
 
@@ -88,6 +89,10 @@ while [[ $# -gt 0 ]]; do
       CONNECTOR_CONFIG="$2"
       CONNECTOR_CONFIG_EXPLICIT=true
       shift 2
+      ;;
+    --reload)
+      SERVER_RELOAD=true
+      shift
       ;;
     --no-reload)
       SERVER_RELOAD=false
