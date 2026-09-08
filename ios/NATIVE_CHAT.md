@@ -494,6 +494,43 @@ English/Chinese confirmation copy state this effect. Shared DSH permission label
 come from the Web catalog; the compiled localization probe checks these strings
 and the destructive confirmation, including interpolation of the Agent name.
 
+### Release validation on 2026-09-08
+
+Candidate `2.0.0 (7)` at `53e39431`, minimum iOS 26.5:
+
+- 226 client-core tests across 27 suites pass, including the regenerated backend
+  fixtures and creation requests with the current empty `runtimeOptions` default.
+- Backend fixture consistency and the four Web-copy conversion tests pass.
+- All 862 English/Chinese catalog entries and 375 shared Web messages pass the
+  localization check. All 763 compiler-extracted keys from 214 active Swift files
+  are covered, including the Git addition/deletion counts.
+- A complete unsigned Release archive succeeds with Xcode 27.0 (`27A5237l`).
+  Both privacy manifests are present in their expected bundles and match the
+  committed sources. All 58 compiled localization checks pass; the archived
+  resources also contain both Git count strings and omit the old deletion promise.
+- The coverage checker accepts both build and archive intermediate layouts,
+  ignores generated/package sources and still rejects empty DerivedData.
+
+Reproduce the archive and compiled resource checks without starting the app:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodebuild \
+  -project 'ios/Agents Anywhere/Agents Anywhere.xcodeproj' \
+  -scheme 'Agents Anywhere' -configuration Release \
+  -destination 'generic/platform=iOS' -derivedDataPath ios/.build/release \
+  -archivePath ios/.build/AgentsAnywhere.xcarchive \
+  -onlyUsePackageVersionsFromResolvedFile -jobs 4 CODE_SIGNING_ALLOWED=NO archive
+uv run --no-project python ios/scripts/check-localization.py --derived-data ios/.build/release
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer swift \
+  ios/Tests/LocalizationProbe.swift \
+  'ios/.build/AgentsAnywhere.xcarchive/Products/Applications/Agents Anywhere.app'
+```
+
+The beta compiler reports Swift isolation warnings during the successful build.
+Distribution signing, App Store Connect validation/upload and the manual device
+checks below remain to be performed. Cloud sign-in awaits the v2 backend
+deployment; this preparation does not change its endpoint or login flow.
+
 ## Verified checks
 
 Verified on 2026-09-06, without starting a server or simulator:
