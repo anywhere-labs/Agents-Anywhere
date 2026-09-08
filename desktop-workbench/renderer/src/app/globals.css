@@ -212,6 +212,12 @@ html:is([data-window-material="transparent"], [data-window-material="mica"]) .aa
   --sidebar-accent: color-mix(in oklch, var(--sidebar-foreground) 10%, transparent);
 }
 
+/* Keep a neutral scrim over macOS vibrancy so wallpaper colors do not wash
+ * out sidebar labels. The sidebar token also follows the light theme. */
+html[data-desktop-platform="darwin"][data-window-material="transparent"] .aa-desktop-sidebar {
+  background: color-mix(in oklch, var(--sidebar) 65%, transparent);
+}
+
 .aa-desktop-main {
   border-left: 1px solid var(--sidebar-border);
 }
