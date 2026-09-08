@@ -9,6 +9,7 @@ import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,6 +35,7 @@ import com.agentsanywhere.app.feature.auth.WebLoginState
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
 import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.feature.devices.DevicesController
+import com.agentsanywhere.app.feature.devices.DevicePairingMonitor
 import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.realtime.DashboardRealtimeController
 import com.agentsanywhere.app.feature.realtime.RealtimeClientIdStore
@@ -428,6 +430,20 @@ fun AgentsAnywhereApp(
 
     val realtimeServerUrl = sessionStore.readServerUrl()
     val realtimeAccessToken = sessionStore.readAccessToken()
+    val devicePairingMonitor = remember(realtimeServerUrl, realtimeAccessToken) { DevicePairingMonitor() }
+    val devicePairingStates by devicePairingMonitor.states.collectAsState()
+    LaunchedEffect(devicePairingMonitor, appVisible, hasAuthSession) {
+        if (!hasAuthSession || !appVisible) return@LaunchedEffect
+        devicePairingMonitor.observe(
+            loadDevice = devicesController::getDevice,
+            onOnline = { device ->
+                if (sessionStore.readServerUrl() == realtimeServerUrl && sessionStore.readAccessToken() == realtimeAccessToken) {
+                    sessionsState = sessionsState.withPatchedDevice(device)
+                    scope.launch { refreshSessions(showInitialLoading = false, showRefreshIndicator = false) }
+                }
+            },
+        )
+    }
     LaunchedEffect(
         hasAuthSession,
         appVisible,
@@ -618,6 +634,14 @@ fun AgentsAnywhereApp(
                     .onSuccess { device ->
                         sessionsState = sessionsState.withPatchedDevice(device)
                     }
+            }
+        },
+        devicePairingStates = devicePairingStates,
+        onWaitForPairingDevice = devicePairingMonitor::waitForDevice,
+        onClearDevicePairing = devicePairingMonitor::clear,
+        onDevicePairingComplete = {
+            if (hasAuthSession) scope.launch {
+                refreshSessions(showInitialLoading = false, showRefreshIndicator = false)
             }
         },
         onListDeviceRuntimes = { connectorId ->

@@ -16,6 +16,18 @@ class DevicesApi(
         ).optJSONArray("connectors").toObjectList { toRemoteDevice() }
     }
 
+    fun getDevice(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+    ): RemoteDevice {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}",
+            authorizationToken = authorizationToken,
+        ).getJSONObject("connector").toRemoteDevice()
+    }
+
     fun createDevice(
         serverUrl: String,
         authorizationToken: String,

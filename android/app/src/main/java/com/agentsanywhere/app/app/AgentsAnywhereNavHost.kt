@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
 import com.agentsanywhere.app.feature.devices.DeviceRuntime
+import com.agentsanywhere.app.feature.devices.DevicePairingStatus
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
 import com.agentsanywhere.app.feature.files.FilesController
@@ -112,6 +113,10 @@ internal fun AgentsAnywhereNavHost(
     onPrepareDeviceSetup: suspend (String) -> Result<DeviceSetupCredential>,
     onCreateDeviceSetup: suspend (String) -> Result<DeviceSetupCredential>,
     onClaimDevicePairCode: suspend (DeviceSetupCredential, String) -> Result<AgentDevice>,
+    devicePairingStates: Map<String, DevicePairingStatus>,
+    onWaitForPairingDevice: (String) -> Unit,
+    onClearDevicePairing: (String) -> Unit,
+    onDevicePairingComplete: () -> Unit,
     onListDeviceRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
     onSetDeviceRuntimeActive: suspend (String, String, Boolean) -> Result<DeviceRuntime>,
     onDeleteDeviceRuntimeConfig: suspend (String, String) -> Result<DeviceRuntime>,
@@ -320,12 +325,22 @@ internal fun AgentsAnywhereNavHost(
                     controller = filesController,
                     onPairDevice = { navigate(AppDestination.DeviceSetup) },
                 )
-                AppDestination.DeviceSetup -> AddDeviceScreen(
-                    devices = sessionsState.devices,
-                    onBack = { navigate(deviceSetupReturnDestination) },
-                    onCreateCredential = onCreateDeviceSetup,
-                    onRenameDevice = onRenameDevice,
-                )
+                AppDestination.DeviceSetup -> androidx.compose.runtime.key(serverUrl, userId) {
+                    AddDeviceScreen(
+                        devices = sessionsState.devices,
+                        pairingStates = devicePairingStates,
+                        onBack = { navigate(deviceSetupReturnDestination) },
+                        onComplete = {
+                            onDevicePairingComplete()
+                            navigate(deviceSetupReturnDestination)
+                        },
+                        onCreateCredential = onCreateDeviceSetup,
+                        onRenameDevice = onRenameDevice,
+                        onClaimPairCode = onClaimDevicePairCode,
+                        onWaitForDevice = onWaitForPairingDevice,
+                        onClearPairing = onClearDevicePairing,
+                    )
+                }
                 AppDestination.ArchivedSessions -> androidx.compose.runtime.key(serverUrl, userId) {
                     ArchivedSessionsScreen(
                         projects = sessionsState.projects,
