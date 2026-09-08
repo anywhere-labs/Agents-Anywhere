@@ -23,7 +23,6 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
-import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { LoadingState } from "@/components/loading-state"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
@@ -715,12 +714,11 @@ export function DevicePage() {
   }
 
   return (
-    <ScrollArea className="h-full min-h-0 w-full">
-      <div className="mx-auto w-full max-w-3xl px-6 py-8">
+    <ScrollArea className="@container/page h-full min-h-0 w-full">
+      <div className="mx-auto w-full max-w-3xl px-6 pb-8 pt-14 @min-[52rem]/page:pt-8">
 
         {/* Header */}
         <div className="flex items-center gap-3">
-          <DashboardSidebarToggle className="-ml-2" />
           {editingName ? (
             <Input
               value={nameDraft}

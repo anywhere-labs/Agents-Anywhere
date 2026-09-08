@@ -20,7 +20,6 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { CascadingSelector } from "@/components/cascading-selector"
 import { useSessionToolSidebarStore } from "@/components/session-tool-sidebar-state"
-import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { AgentSelectionDrawer } from "@/components/session/agent-selection-drawer"
 import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
 import {
@@ -820,9 +819,8 @@ export function TaskComposer() {
       onDrop={onDrop}
     >
       <DragOverlay isDragging={isDragging} />
-      <div className="absolute left-3 top-3 flex items-center gap-2">
-        <DashboardSidebarToggle />
-        {showCollapsedBrand ? (
+      {showCollapsedBrand ? (
+        <div className="absolute left-15 top-2.5 flex h-9 items-center">
           <button
             type="button"
             onClick={goHome}
@@ -830,8 +828,8 @@ export function TaskComposer() {
           >
             Agents Anywhere
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       <div className="w-full max-w-3xl">
         <h1 className="mb-6 flex h-10 items-center justify-center overflow-hidden text-center text-3xl font-semibold leading-tight tracking-tight sm:h-auto sm:min-h-[3rem] sm:text-4xl" aria-live="polite">

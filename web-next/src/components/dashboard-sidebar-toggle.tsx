@@ -25,20 +25,20 @@ export function DashboardSidebarToggle({ className, standalone = false }: { clas
     else toggleSidebar()
   }, [isMobile, sidebarControls, toggleSidebar])
 
-  if (managed && !standalone) return <span aria-hidden="true" className={cn("size-8 shrink-0", className)} />
+  if (managed && !standalone) return <span aria-hidden="true" className={cn("size-9 shrink-0", className)} />
 
   return (
     <Button
       variant="ghost"
-      size="icon-sm"
+      size="icon-lg"
       type="button"
       aria-label={(isMobile ? openMobile : open) ? tActions("collapse") : tActions("expand")}
       aria-expanded={isMobile ? openMobile : open}
       data-slot="workspace-sidebar-toggle"
       onClick={toggleDashboardSidebar}
-      className={cn("shrink-0 text-muted-foreground hover:text-foreground", className)}
+      className={cn("shrink-0 text-muted-foreground hover:text-foreground [&_svg:not([class*='size-'])]:size-5", className)}
     >
-      <PanelLeft className="size-4" />
+      <PanelLeft data-icon="inline-start" />
     </Button>
   )
 }

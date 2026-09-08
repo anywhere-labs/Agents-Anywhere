@@ -94,7 +94,7 @@ export function SessionViewHeader({
       {HEADER_BLUR_LAYERS.map((layer) => (
         <div key={layer.key} className={layer.className} style={layer.style} />
       ))}
-      <div className="pointer-events-auto relative flex h-14 items-center gap-2 px-2">
+      <div className="pointer-events-auto relative flex h-14 items-center gap-3 px-3">
         <DashboardSidebarToggle />
         {editingTitle ? (
           <Input
@@ -239,14 +239,14 @@ function SessionMetaBadge({
   return (
     <HoverCard openDelay={120} closeDelay={80}>
       <HoverCardTrigger asChild>
-        <Badge variant="secondary" className="shrink-0 cursor-default gap-1.5 font-normal">
+        <Badge variant="secondary" className="max-w-[45%] shrink-0 cursor-default gap-1.5 font-normal">
           <span
             className={cn(
               "size-1.5 rounded-full",
               session.connectorStatus === "online" ? "bg-emerald-500" : "bg-muted-foreground/40",
             )}
           />
-          {label}
+          <span className="truncate">{label}</span>
         </Badge>
       </HoverCardTrigger>
       <HoverCardContent align="end" sideOffset={10} className="w-[420px] rounded-xl p-4">

@@ -15,7 +15,6 @@ import {
 } from "recharts"
 import {
   ChevronDown,
-  ChevronLeft,
   Gauge,
   Laptop,
   LineChart,
@@ -28,7 +27,7 @@ import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth/auth-context"
-import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
+import { PageHeader } from "@/components/pages/page-header"
 import { LoadingState } from "@/components/loading-state"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -94,7 +93,6 @@ export function DashboardPage() {
   const { navigate } = useWorkspace()
   const { session } = useAuth()
   const t = useTranslations("pages.opsDashboard")
-  const tCommon = useTranslations("common")
   const [tab, setTab] = React.useState<DashboardTab>("overview")
   const [toDate, setToDate] = React.useState(todayDate)
   const [fromDate, setFromDate] = React.useState(() => shiftDate(todayDate(), -29))
@@ -165,38 +163,19 @@ export function DashboardPage() {
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <div className="px-5 pb-0 pt-5 sm:px-8 sm:pt-8">
-        <div className="mb-6 -ml-2 flex items-center gap-1">
-          <DashboardSidebarToggle />
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate("home")}
-            className="gap-1.5 text-muted-foreground"
-          >
-            <ChevronLeft className="size-4" />
-            {tCommon("back")}
+      <div className="px-5 pb-0 pt-14 sm:px-8">
+        <PageHeader title={t("title")} description={t("description")} onBack={() => navigate("home")}>
+          <DateField label={t("from")} value={fromDate} onChange={setFromDate} />
+          <DateField label={t("to")} value={toDate} onChange={setToDate} />
+          <Button type="button" variant="outline" onClick={() => void load()}>
+            <RefreshCw data-icon="inline-start" />
+            {t("load")}
           </Button>
-        </div>
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold">{t("title")}</h1>
-            <p className="mt-1 text-sm text-muted-foreground">{t("description")}</p>
-          </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <DateField label={t("from")} value={fromDate} onChange={setFromDate} />
-            <DateField label={t("to")} value={toDate} onChange={setToDate} />
-            <Button type="button" variant="outline" onClick={() => void load()}>
-              <RefreshCw data-icon="inline-start" />
-              {t("load")}
-            </Button>
-            <Button type="button" onClick={() => void refreshToday()} disabled={refreshing}>
-              {refreshing ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
-              {t("refreshToday")}
-            </Button>
-          </div>
-        </div>
+          <Button type="button" onClick={() => void refreshToday()} disabled={refreshing}>
+            {refreshing ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
+            {t("refreshToday")}
+          </Button>
+        </PageHeader>
         <DashboardCategoryDrawer
           tab={tab}
           activeIcon={ActiveNavIcon}

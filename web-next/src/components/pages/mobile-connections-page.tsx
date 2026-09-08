@@ -5,7 +5,6 @@ import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth/auth-context"
-import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { MobileConnectionDialog } from "@/components/pages/mobile-signin-panel"
 import { Button } from "@/components/ui/button"
 import { accountDisplayName } from "@/features/auth/account-profile"
@@ -23,14 +22,13 @@ export function MobileConnectionsPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <header className="flex h-14 shrink-0 items-center gap-1 px-3">
-        <DashboardSidebarToggle />
+    <div className="relative flex h-full min-h-0 flex-col bg-background">
+      <div className="absolute right-3 top-3 z-10 rounded-md bg-background">
         <Button type="button" variant="ghost" size="sm" onClick={toggleSidebarVisibility}>
           {sidebarVisible ? <EyeOff data-icon="inline-start" /> : <Eye data-icon="inline-start" />}
           {t(sidebarVisible ? "hideFromSidebar" : "showInSidebar")}
         </Button>
-      </header>
+      </div>
 
       <main className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto grid min-h-full w-full max-w-[88rem] items-center gap-12 px-6 py-12 md:px-8 xl:grid-cols-2 xl:px-10 2xl:gap-20 2xl:px-12">

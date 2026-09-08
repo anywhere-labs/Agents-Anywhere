@@ -3,7 +3,6 @@
 import * as React from "react"
 import {
   Ban,
-  ChevronLeft,
   KeyRound,
   MoreHorizontal,
   Pencil,
@@ -73,7 +72,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
+import { PageHeader } from "@/components/pages/page-header"
 import { useAuth } from "@/components/auth/auth-context"
 import { EmailCodeField, DisplayNameField } from "@/components/auth/account-identity-fields"
 import { accountDisplayName, isValidEmail, isValidDisplayName } from "@/features/auth/account-profile"
@@ -108,7 +107,6 @@ export function TeamPage() {
   const { navigate } = useWorkspace()
   const { session, me } = useAuth()
   const t = useTranslations("pages.team")
-  const tCommon = useTranslations("common")
   const [users, setUsers] = React.useState<AdminUser[]>([])
   const [filterTab, setFilterTab] = React.useState<FilterTab>("all")
   const [search, setSearch] = React.useState("")
@@ -216,34 +214,14 @@ export function TeamPage() {
   ]
 
   return (
-    <ScrollArea className="h-full bg-background">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-8 pb-16 pt-8">
-        <div>
-          <div className="mb-6 -ml-2 flex items-center gap-1">
-            <DashboardSidebarToggle />
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => navigate("home")}
-              className="gap-1.5 text-muted-foreground"
-            >
-              <ChevronLeft className="size-4" />
-              {tCommon("back")}
-            </Button>
-          </div>
-
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-semibold">{t("title")}</h1>
-              <p className="mt-1 text-sm text-muted-foreground">{t("description")}</p>
-            </div>
-            <Button size="sm" disabled={!isAdmin} onClick={() => setCreateOpen(true)}>
-              <Plus data-icon="inline-start" />
-              {t("newUser")}
-            </Button>
-          </div>
-        </div>
+    <ScrollArea className="@container/page h-full w-full bg-background">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-8 pb-16 pt-14 @min-[68rem]/page:pt-8">
+        <PageHeader title={t("title")} description={t("description")} onBack={() => navigate("home")}>
+          <Button size="sm" disabled={!isAdmin} onClick={() => setCreateOpen(true)}>
+            <Plus data-icon="inline-start" />
+            {t("newUser")}
+          </Button>
+        </PageHeader>
 
         {!isAdmin ? (
           <div className="rounded-xl border border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">

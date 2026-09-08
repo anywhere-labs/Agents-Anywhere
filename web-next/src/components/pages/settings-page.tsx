@@ -6,7 +6,6 @@ import {
   Archive,
   Camera,
   ChevronDown,
-  ChevronLeft,
   RotateCw,
   Smartphone,
   Sun,
@@ -55,7 +54,7 @@ import { AccountProfileCard } from "@/components/pages/account-profile-card"
 import { accountDisplayName } from "@/features/auth/account-profile"
 import { MobileConnectionDialog } from "@/components/pages/mobile-signin-panel"
 import { ArchivedSessionsTab } from "@/components/settings/archived-sessions-tab"
-import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
+import { PageHeader } from "@/components/pages/page-header"
 import { useAuth } from "@/components/auth/auth-context"
 import { LocaleSwitcher } from "@/components/locale-switcher"
 import { LoadingState } from "@/components/loading-state"
@@ -558,7 +557,6 @@ export function SettingsPage() {
   const { navigate, openSession, projects, refreshData, settingsTab, upsertSession } = useWorkspace()
   const { session, me: authMe, refreshMe } = useAuth()
   const t = useTranslations("pages.settings")
-  const tCommon = useTranslations("common")
   const [tab, setTab] = React.useState<SettingsTab>(() => (
     navItems.some((item) => item.id === settingsTab) ? settingsTab as SettingsTab : "account"
   ))
@@ -631,22 +629,8 @@ export function SettingsPage() {
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <div className="px-5 pb-0 pt-5 sm:px-8 sm:pt-8">
-        <div className="mb-6 -ml-2 flex items-center gap-1">
-          <DashboardSidebarToggle />
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate("home")}
-            className="gap-1.5 text-muted-foreground"
-          >
-            <ChevronLeft className="size-4" />
-            {tCommon("back")}
-          </Button>
-        </div>
-        <h1 className="text-2xl font-semibold">{t("title")}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{t("description")}</p>
+      <div className="px-5 pb-0 pt-14 sm:px-8">
+        <PageHeader title={t("title")} description={t("description")} onBack={() => navigate("home")} />
         <SettingsCategoryDrawer
           tab={tab}
           activeIcon={ActiveNavIcon}

@@ -3,7 +3,6 @@
 import * as React from "react"
 import {
   Check,
-  ChevronLeft,
   Copy,
   ExternalLink,
   Globe,
@@ -16,7 +15,7 @@ import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth/auth-context"
-import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
+import { PageHeader } from "@/components/pages/page-header"
 import { ServiceEmailCard } from "@/components/pages/service-email-card"
 import { LoadingState } from "@/components/loading-state"
 import { Button } from "@/components/ui/button"
@@ -345,33 +344,14 @@ export function ServicePage() {
   const publicUrl = browserPublicUrl(serviceInfo.endpoint)
 
   return (
-    <ScrollArea className="h-full bg-background">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-8 pb-16 pt-8">
-        <div>
-          <div className="mb-6 -ml-2 flex items-center gap-1">
-            <DashboardSidebarToggle />
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => navigate("home")}
-              className="gap-1.5 text-muted-foreground"
-            >
-              <ChevronLeft />
-              {tCommon("back")}
-            </Button>
-          </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <h1 className="text-2xl font-semibold">{t("title")}</h1>
-              <p className="mt-1 text-sm text-muted-foreground">{t("description")}</p>
-            </div>
-            <Button type="button" variant="outline" onClick={() => load()} disabled={loading}>
-              <RefreshCw data-icon="inline-start" />
-              {t("refresh")}
-            </Button>
-          </div>
-        </div>
+    <ScrollArea className="@container/page h-full w-full bg-background">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-8 pb-16 pt-14 @min-[68rem]/page:pt-8">
+        <PageHeader title={t("title")} description={t("description")} onBack={() => navigate("home")}>
+          <Button type="button" variant="outline" onClick={() => load()} disabled={loading}>
+            <RefreshCw data-icon="inline-start" />
+            {t("refresh")}
+          </Button>
+        </PageHeader>
 
         <ServerCard
           info={serviceInfo}
