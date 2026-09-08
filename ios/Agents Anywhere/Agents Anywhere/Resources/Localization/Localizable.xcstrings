@@ -71,20 +71,20 @@
         }
       }
     },
-    "%@ will be stopped and removed from the configured list. You can add it again later; its instance identity, sessions, and timeline history are kept, and the local installation is not deleted.": {
+    "%@ will be stopped and removed from the configured list. All associated sessions, message history, and attachments will be permanently deleted. You can configure the runtime again later; the local installation is kept.": {
       "comment": "Shared with Web: dashboard.device.deleteRuntimeConfigDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%@ will be stopped and removed from the configured list. You can add it again later; its instance identity, sessions, and timeline history are kept, and the local installation is not deleted."
+            "value": "%@ will be stopped and removed from the configured list. All associated sessions, message history, and attachments will be permanently deleted. You can configure the runtime again later; the local installation is kept."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "%@ 会停止并从已配置列表移除，之后仍可重新添加。实例身份、已有会话和 Timeline 历史都会保留，本机安装也不会被删除。"
+            "value": "%@ 会停止并从已配置列表移除，其关联的所有会话、消息记录和附件将被永久删除。之后仍可重新配置 Runtime，本机安装会保留。"
           }
         }
       }
@@ -15067,6 +15067,60 @@
           "stringUnit": {
             "state": "translated",
             "value": "这条文件变更记录未提供 diff。"
+          }
+        }
+      }
+    },
+    "dashboard.new.permissionModes.dsh.fullAccess.label": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.dsh.fullAccess.label. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "danger-full-access"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完全权限"
+          }
+        }
+      }
+    },
+    "dashboard.new.permissionModes.dsh.readOnly.label": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.dsh.readOnly.label. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "read-only"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅可查看"
+          }
+        }
+      }
+    },
+    "dashboard.new.permissionModes.dsh.workspaceWrite.label": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.dsh.workspaceWrite.label. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "workspace-write"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作区内修改"
           }
         }
       }

@@ -7,7 +7,7 @@
         "name": "@"
       }
     },
-    "%@ will be stopped and removed from the configured list. You can add it again later; its instance identity, sessions, and timeline history are kept, and the local installation is not deleted.": {
+    "%@ will be stopped and removed from the configured list. All associated sessions, message history, and attachments will be permanently deleted. You can configure the runtime again later; the local installation is kept.": {
       "source": "dashboard.device.deleteRuntimeConfigDescription",
       "arguments": {
         "name": "@"

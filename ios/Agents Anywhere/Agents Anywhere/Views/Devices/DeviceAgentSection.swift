@@ -77,7 +77,7 @@ struct DeviceAgentSection: View {
                 Task { try? await model.remove(runtime) }
             }
         } message: {
-            Text(String(localized: "\(deleting?.sessionDisplayName ?? "") will be stopped and removed from the configured list. You can add it again later; its instance identity, sessions, and timeline history are kept, and the local installation is not deleted."))
+            Text(String(localized: "\(deleting?.sessionDisplayName ?? "") will be stopped and removed from the configured list. All associated sessions, message history, and attachments will be permanently deleted. You can configure the runtime again later; the local installation is kept."))
         }
         .alert(String(localized: "重命名 Agent"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField(String(localized: "实例名称"), text: $proposedName)

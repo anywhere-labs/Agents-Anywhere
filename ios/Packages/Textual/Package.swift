@@ -26,7 +26,8 @@ let package = Package(
         .product(name: "SwiftUIMath", package: "swiftui-math"),
       ],
       resources: [
-        .process("Internal/Highlighter/Prism")
+        .process("Internal/Highlighter/Prism"),
+        .copy("PrivacyInfo.xcprivacy"),
       ],
       swiftSettings: [
         .define(

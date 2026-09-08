@@ -124,6 +124,7 @@ struct V2SessionCreateAndStartRequest: Encodable, Hashable {
     let cwd: String?
     let content: String
     let selections: [V2RuntimeSelectionScope: V2SelectionID]
+    var runtimeOptions: [String: JSONValue] = [:]
     let attachments: [V2InlineAttachment]
     let clientMessageId: String?
 
@@ -136,6 +137,7 @@ struct V2SessionCreateAndStartRequest: Encodable, Hashable {
         case cwd
         case content
         case selections
+        case runtimeOptions
         case attachments
         case clientMessageId
     }
@@ -153,6 +155,7 @@ struct V2SessionCreateAndStartRequest: Encodable, Hashable {
             result[entry.key.rawValue] = entry.value
         }
         try container.encode(rawSelections, forKey: .selections)
+        try container.encode(runtimeOptions, forKey: .runtimeOptions)
         try container.encode(attachments, forKey: .attachments)
         try container.encodeIfPresent(clientMessageId, forKey: .clientMessageId)
     }

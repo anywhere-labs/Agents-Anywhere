@@ -580,6 +580,7 @@
     },
     "createProject": {
       "connectorId": "device",
+      "manuallyCreated": true,
       "name": "Workspace",
       "workspacePath": "/workspace"
     },
@@ -596,6 +597,7 @@
       "projectId": "project",
       "runtime": "claude",
       "runtimeId": "rti_work",
+      "runtimeOptions": {},
       "selections": {
         "model": "sel_model"
       }

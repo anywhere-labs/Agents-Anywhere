@@ -8,6 +8,10 @@ snapshot test suite is not included.
 This local package keeps the text-selection crash fix reproducible in Xcode and
 on another development machine. Do not patch a DerivedData checkout.
 
+The package also bundles its own `PrivacyInfo.xcprivacy`. Its `CA92.1` declaration
+covers the app-local UserDefaults flag that enables Textual logging; the library
+does not rely on the app's manifest to declare its own API use.
+
 The selection changes adapt the stale-position validation from
 [upstream PR 80](https://github.com/gonzalezreal/textual/pull/80) and the
 empty-paragraph/layout-size fixes from the first two commits of
