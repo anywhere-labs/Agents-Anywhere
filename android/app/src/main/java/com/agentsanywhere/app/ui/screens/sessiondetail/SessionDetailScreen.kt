@@ -1803,7 +1803,6 @@ fun SessionDetailScreen(
             modelErrorMessage = if (isPreparedSession) preparedModelError else state.catalogs.modelErrorMessage,
             permissionErrorMessage = if (isPreparedSession) preparedPermissionError else state.catalogs.permissionErrorMessage,
             busy = if (isPreparedSession) preparedSessionCreating else state.selectionUpdating,
-            darkMode = darkMode,
             onDismiss = { if (!state.selectionUpdating) showRuntimeSettings = false },
             onRetryModels = ::loadModelCatalog,
             onRetryPermissions = ::loadPermissionCatalog,

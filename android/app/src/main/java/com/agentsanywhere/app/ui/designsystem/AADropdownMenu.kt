@@ -1,6 +1,7 @@
 package com.agentsanywhere.app.ui.designsystem
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -29,7 +30,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -74,7 +74,7 @@ fun AADropdownMenu(
         onDismissRequest = onDismissRequest,
         offset = DpOffset(0.dp, MenuGap),
         shape = MenuShape,
-        containerColor = colors.subtle,
+        containerColor = if (colors.isDark) colors.subtle else colors.raisedSurface,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
         modifier = modifier.width(width).heightIn(max = maxHeight).menuSurface(colors),
@@ -173,9 +173,9 @@ fun AADropdownMenuLabel(text: String) {
 }
 
 private fun Modifier.menuSurface(colors: AgentsAnywhereColors): Modifier =
-    shadow(28.dp, MenuShape, ambientColor = colors.appShadow, spotColor = colors.appShadow)
-        .clip(MenuShape)
-        .background(colors.subtle)
+    clip(MenuShape)
+        .background(if (colors.isDark) colors.subtle else colors.raisedSurface)
+        .border(1.dp, if (colors.isDark) Color.Transparent else colors.border, MenuShape)
 
 /** Window positioning shared with existing project action popups. */
 @Composable

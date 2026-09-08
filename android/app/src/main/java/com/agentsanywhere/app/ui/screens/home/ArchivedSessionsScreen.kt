@@ -9,6 +9,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -124,6 +125,7 @@ fun ArchivedSessionsScreen(
                     onClick = { filterOpen = true },
                     modifier = Modifier.onGloballyPositioned { filterBounds = it.boundsInWindow() },
                 )
+                Spacer(Modifier.height(12.dp))
                 when {
                     state.loading -> ArchivedStatusPanel(
                         title = stringResource(R.string.archive_loading),
@@ -150,7 +152,7 @@ fun ArchivedSessionsScreen(
                     )
                     else -> key(projectId) {
                         LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().clipToBounds(),
                             contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
                         ) {
                             groups.forEach { group ->

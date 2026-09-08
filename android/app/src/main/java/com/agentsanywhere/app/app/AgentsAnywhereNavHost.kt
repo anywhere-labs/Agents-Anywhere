@@ -12,7 +12,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -140,6 +142,7 @@ internal fun AgentsAnywhereNavHost(
 ) {
     val context = LocalContext.current
     val colors = LocalAAColors.current
+    var profileOpen by rememberSaveable(serverUrl, userId) { mutableStateOf(false) }
     var deviceAgentPreviewRefreshKey by remember { mutableLongStateOf(0L) }
     val deviceAgentPreviews = rememberDeviceAgentPreviews(
         devices = sessionsState.devices,
@@ -209,6 +212,8 @@ internal fun AgentsAnywhereNavHost(
                     onAppearanceModeChange = onAppearanceModeChange,
                     onLanguageModeChange = onLanguageModeChange,
                     onSidebarViewModeChange = onSidebarViewModeChange,
+                    profileOpen = profileOpen,
+                    onProfileOpenChange = { profileOpen = it },
                     onOpenArchivedSessions = { navigate(AppDestination.ArchivedSessions) },
                     onLoadAccount = onLoadAccount,
                     onLoadAccountAuthConfig = onLoadAccountAuthConfig,

@@ -109,6 +109,8 @@ fun HomeScreen(
     onAppearanceModeChange: (String) -> Unit,
     onLanguageModeChange: (String) -> Unit,
     onSidebarViewModeChange: (String) -> Unit,
+    profileOpen: Boolean,
+    onProfileOpenChange: (Boolean) -> Unit,
     onOpenArchivedSessions: () -> Unit,
     onLoadAccount: suspend () -> Result<AuthMeResponse>,
     onLoadAccountAuthConfig: suspend () -> Result<com.agentsanywhere.app.api.AuthConfigResponse>,
@@ -140,7 +142,6 @@ fun HomeScreen(
     var renamingSession by remember { mutableStateOf<AgentSession?>(null) }
     var renameErrorMessage by remember { mutableStateOf<String?>(null) }
     var renameBusy by remember { mutableStateOf(false) }
-    var profileOpen by remember { mutableStateOf(false) }
     var projectActionMenu by remember { mutableStateOf<HomeProjectActionMenu?>(null) }
     val projectPreferences = rememberHomeProjectPreferences(serverUrl, userId)
     val projectSessionStatus = projectPreferences.sessionStatus
@@ -216,7 +217,7 @@ fun HomeScreen(
                 onMarkAllRead = onMarkAllRead,
                 onLoadMore = onLoadMore,
                 onTabSelected = onTabSelected,
-                onProfile = { profileOpen = true },
+                onProfile = { onProfileOpenChange(true) },
                 onSearch = { showToast(context.getString(R.string.home_search_coming_soon)) },
                 onSessionLongPress = { session, bounds -> actionMenu = HomeSessionActionMenu(session, bounds, projectView = sidebarViewMode == HomeSidebarViewMode.Project) },
                 onProjectMenu = { projectActionMenu = it },
@@ -324,7 +325,7 @@ fun HomeScreen(
                 onChangePassword = onChangePassword,
                 onOpenArchivedSessions = onOpenArchivedSessions,
                 onSignOut = onSignOut,
-                onClose = { profileOpen = false },
+                onClose = { onProfileOpenChange(false) },
                 onNotice = ::showToast,
             )
             AAToastHost(
