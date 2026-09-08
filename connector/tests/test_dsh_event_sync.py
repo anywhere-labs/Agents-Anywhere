@@ -160,13 +160,16 @@ def test_legacy_workspace_inventory_does_not_write_projects_or_local_state():
     asyncio.run(exercise())
 
 
-def test_fresh_source_state_waits_for_ingestion_and_archive_send_returns_standard_error():
+def test_fresh_source_state_waits_for_ingestion_and_archive_send_returns_standard_error(tmp_path):
     async def exercise():
         entered, release = asyncio.Event(), asyncio.Event()
         async def publish(*args):
             entered.set()
             await release.wait()
-        runtime = DshRuntime(Mock(), SimpleNamespace(publish_runtime_notifications=publish))
+        runtime = DshRuntime(
+            SimpleNamespace(values={"dshHome": str(tmp_path)}),
+            SimpleNamespace(publish_runtime_notifications=publish),
+        )
         source = {"availability": "archived", "reason": "archived_in_dsh", "observedAt": "2026-09-07T00:00:00Z"}
         runtime._request = AsyncMock(return_value={"runtime": "dsh", "sessionId": "session", "externalSessionId": "native",
             "status": "blocked", "selections": {}, "sourceState": source})
