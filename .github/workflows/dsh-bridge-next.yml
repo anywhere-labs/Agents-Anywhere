@@ -74,7 +74,11 @@ jobs:
         run: corepack yarn check
       - name: Test Connector DSH and ownership flows
         working-directory: connector
-        run: uv run --frozen pytest tests/test_dsh*.py tests/test_runtime_owner.py tests/test_connector_control.py tests/test_connector_ownership_rpc.py -q
+        run: >-
+          uv run --frozen pytest tests/test_dsh*.py
+          tests/test_runtime_owner.py tests/test_connector_control.py
+          tests/test_connector_ownership_rpc.py tests/test_runtime_control_v2.py
+          tests/test_connector_runtime.py -q
       - name: Test Server runtime, onboarding and attachment flows
         working-directory: server
         run: >-
@@ -84,6 +88,11 @@ jobs:
           tests/test_connector_deletion.py
           tests/test_runtime_deletion.py
           tests/test_runtime_config.py
+          tests/test_runtime_instances_lifecycle.py
+          tests/test_runtime_discovery_recovery.py
+          tests/test_runtime_discovery_connection.py
+          tests/test_connector_ingress_dispatch.py
+          tests/test_connector_rpc_manager.py
           tests/test_plugin_onboarding.py
           tests/test_device_data_storage.py
           tests/test_device_runtime_repository.py

@@ -42,7 +42,6 @@ from connector.runtime_protocol import (
     RuntimeConfig,
     RuntimeConfigSchema,
     RuntimeIdentity,
-    RuntimeInvalidRequestError,
     RuntimeInventoryItem,
     RuntimeModelCatalog,
     RuntimeModelItem,
@@ -70,7 +69,7 @@ from connector.runtimes import default_runtime_providers
 from connector.runtimes.claude.provider import ClaudeProvider
 from connector.runtimes.codex.provider import CodexProvider
 from connector.server.auth import ConnectorAuthenticationError
-from connector.server.capabilities import protocol_capabilities_from_inventory
+from connector.server.capabilities import protocol_capabilities_from_runtime_types
 from connector.server.client import BackendRpcClient
 from connector.server.errors import ConnectorNetworkError
 from connector.server.ingest import (
@@ -983,9 +982,9 @@ def test_connector_runtime_publishes_named_instance_status_scope() -> None:
         client = _client()
         websocket = FakeWebSocket()
         client._rpc.set_connection(websocket)  # type: ignore[arg-type]
-        negotiated = await client.dispatch(
+        discovered = await client.dispatch(
             "runtime.discover",
-            {"supportedControlVersions": ["2.0", "1.0"]},
+            {},
         )
 
         await client.dispatch(
@@ -999,7 +998,7 @@ def test_connector_runtime_publishes_named_instance_status_scope() -> None:
             },
         )
 
-        assert negotiated["selectedControlVersion"] == "2.0"
+        assert set(discovered) == {"runtimeTypes"}
         status_scopes = [
             message["params"]
             for message in websocket.messages
@@ -1012,78 +1011,6 @@ def test_connector_runtime_publishes_named_instance_status_scope() -> None:
         ]
         assert all(scope["runtime"] == "codex" for scope in status_scopes)
         assert all(scope["runtimeId"] == "rti_codex_named" for scope in status_scopes)
-
-    asyncio.run(run())
-
-
-def test_runtime_control_negotiation_isolated_across_reconnect_race(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def run() -> None:
-        client = _client()
-        old_connection = client._dispatcher.new_session()
-        new_connection = client._dispatcher.new_session()
-        discover_started = asyncio.Event()
-        discover_release = asyncio.Event()
-        original_discover = client.agent_runtime_supervisor.discover
-        calls = 0
-
-        async def delayed_first_discover():  # type: ignore[no-untyped-def]
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                discover_started.set()
-                await discover_release.wait()
-            return await original_discover()
-
-        monkeypatch.setattr(
-            client.agent_runtime_supervisor,
-            "discover",
-            delayed_first_discover,
-        )
-        old_negotiation = asyncio.create_task(
-            old_connection.dispatch(
-                "runtime.discover",
-                {"supportedControlVersions": ["2.0", "1.0"]},
-            )
-        )
-        await discover_started.wait()
-
-        new_legacy = await new_connection.dispatch("runtime.discover", {})
-        assert set(new_legacy) == {"runtimes"}
-        assert new_connection.runtime_rpc.control_version == "1.0"
-
-        discover_release.set()
-        old_result = await old_negotiation
-        assert old_result["selectedControlVersion"] == "2.0"
-        assert old_connection.runtime_rpc.control_version == "2.0"
-        assert new_connection.runtime_rpc.control_version == "1.0"
-
-        with pytest.raises(RuntimeInvalidRequestError, match="already selected"):
-            await old_connection.dispatch(
-                "runtime.discover",
-                {"supportedControlVersions": ["1.0"]},
-            )
-        assert new_connection.runtime_rpc.control_version == "1.0"
-
-    asyncio.run(run())
-
-
-def test_backend_connection_bootstrap_does_not_lock_control_version() -> None:
-    async def run() -> None:
-        client = _client()
-        connection = client._dispatcher.new_session()
-
-        inventory = await connection.discover_runtimes()
-        assert set(inventory) == {"runtimes"}
-        assert connection.runtime_rpc.negotiated_control_version is None
-
-        negotiated = await connection.dispatch(
-            "runtime.discover",
-            {"supportedControlVersions": ["2.0", "1.0"]},
-        )
-        assert negotiated["selectedControlVersion"] == "2.0"
-        assert connection.runtime_rpc.negotiated_control_version == "2.0"
 
     asyncio.run(run())
 
@@ -1188,14 +1115,13 @@ def test_connector_coalesces_duplicate_timeline_upserts_within_batch() -> None:
 
 
 def test_connector_projects_inventory_capabilities_to_protocol_ids() -> None:
-    payload = protocol_capabilities_from_inventory(
+    payload = protocol_capabilities_from_runtime_types(
         {
-            "runtimes": [
+            "runtimeTypes": [
                 {
-                    "runtimeId": "codex",
-                    "status": "available",
-                    "configured": True,
-                    "schema": {"type": "object"},
+                    "runtimeType": "codex",
+                    "available": True,
+                    "configSchema": {"schema": {"type": "object"}},
                     "capabilities": {
                         "modelCatalog": True,
                         "permissionCatalog": True,
@@ -1207,20 +1133,18 @@ def test_connector_projects_inventory_capabilities_to_protocol_ids() -> None:
                     },
                 },
                 {
-                    "runtimeId": "claude",
-                    "status": "available",
-                    "configured": True,
-                    "schema": {"type": "object"},
+                    "runtimeType": "claude",
+                    "available": True,
+                    "configSchema": {"schema": {"type": "object"}},
                     "capabilities": {
                         "modelCatalog": False,
                         "permissionCatalog": True,
                     },
                 },
                 {
-                    "runtimeId": "dsh",
-                    "status": "running",
-                    "configured": True,
-                    "schema": {"type": "object"},
+                    "runtimeType": "dsh",
+                    "available": True,
+                    "configSchema": {"schema": {"type": "object"}},
                     "capabilities": {
                         "modelCatalog": True,
                         "permissionCatalog": True,
@@ -1232,9 +1156,8 @@ def test_connector_projects_inventory_capabilities_to_protocol_ids() -> None:
                     },
                 },
                 {
-                    "runtimeId": "unknown-agent",
-                    "status": "available",
-                    "configured": True,
+                    "runtimeType": "unknown-agent",
+                    "available": True,
                     "capabilities": {"modelCatalog": True},
                 },
             ]
@@ -2047,6 +1970,97 @@ def test_preferences_push_sends_only_on_change() -> None:
     asyncio.run(_exercise_preferences_push())
 
 
+@pytest.mark.parametrize("discovery_fails", [False, True])
+def test_pending_or_failed_capability_discovery_does_not_block_rpc(
+    monkeypatch, discovery_fails
+) -> None:
+    async def run() -> None:
+        client = _client()
+        discovery_started = asyncio.Event()
+        discovery_finished = asyncio.Event()
+        response_sent = asyncio.Event()
+
+        class StreamingWebSocket(FakeWebSocket):
+            def __init__(self):
+                super().__init__()
+                self.delivered = False
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                if self.delivered:
+                    await response_sent.wait()
+                    raise StopAsyncIteration
+                await discovery_started.wait()
+                self.delivered = True
+                return json.dumps(
+                    {
+                        "id": "rpc_named",
+                        "type": "request",
+                        "method": "runtime.config",
+                        "params": {"runtime": "codex", "runtimeId": "rti_work"},
+                    }
+                )
+
+            async def send(self, payload):
+                await super().send(payload)
+                if self.messages[-1].get("id") == "rpc_named":
+                    response_sent.set()
+
+        websocket = StreamingWebSocket()
+
+        class WebSocketContext:
+            async def __aenter__(self):
+                return websocket
+
+            async def __aexit__(self, *args):
+                return None
+
+        async def authenticate(**kwargs):
+            return "fixture-access-token"
+
+        async def discover():
+            discovery_started.set()
+            try:
+                if discovery_fails:
+                    raise RuntimeError("Fixture discovery failure")
+                await asyncio.Event().wait()
+            finally:
+                discovery_finished.set()
+
+        original_new_session = client._dispatcher.new_session
+
+        def new_session():
+            session = original_new_session()
+            monkeypatch.setattr(session, "discover_runtimes", discover)
+            return session
+
+        monkeypatch.setattr(client, "ensure_access_token", authenticate)
+        monkeypatch.setattr(client._dispatcher, "new_session", new_session)
+        monkeypatch.setattr(
+            "connector.server.client.websockets.connect",
+            lambda *args, **kwargs: WebSocketContext(),
+        )
+        try:
+            await asyncio.wait_for(client.run_once(), timeout=2)
+            response = next(
+                message
+                for message in websocket.messages
+                if message.get("id") == "rpc_named"
+            )
+            assert response["ok"] is True
+            assert response["result"]["runtimeId"] == "rti_work"
+            assert discovery_finished.is_set()
+            assert not client._rpc.connected
+        finally:
+            if client._runtime_sync_task is not None:
+                client._runtime_sync_task.cancel()
+                await asyncio.gather(client._runtime_sync_task, return_exceptions=True)
+
+    asyncio.run(run())
+
+
 def test_connector_runtime_reconnects_quietly_on_websocket_close(monkeypatch) -> None:
     asyncio.run(_exercise_websocket_close_reconnect(monkeypatch))
 
@@ -2075,7 +2089,16 @@ async def _exercise_runtime() -> None:
 
     client.send_backend_notification = notify  # type: ignore[method-assign]
     client.agent_runtime_host._notifier = notify  # type: ignore[attr-defined]
-    await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
+    await client.dispatch(
+        "runtime.start",
+        {
+            "runtime": "codex",
+            "runtimeId": "codex",
+            "name": "Codex",
+            "config": {},
+            "configRevision": 1,
+        },
+    )
 
     await client.handle_message(
         {
@@ -2121,6 +2144,8 @@ async def _exercise_runtime() -> None:
         "result": {
             "sessionId": "sess_1",
             "externalSessionId": "thr_created",
+            "runtime": "codex",
+            "runtimeId": "codex",
         },
     }
 
@@ -2138,7 +2163,10 @@ async def _exercise_runtime() -> None:
         }
     )
     assert runtime.calls[-1][0] == "turn.start"
-    assert ws.messages[-1]["result"] == {}
+    assert ws.messages[-1]["result"] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+    }
 
     await client.handle_message(
         {
@@ -2180,6 +2208,8 @@ async def _exercise_runtime() -> None:
         message for message in ws.messages if message.get("id") == "rpc_4"
     )
     assert sync_response["result"] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
         "accepted": True,
         "background": True,
         "sessionId": "sess_1",
@@ -2336,7 +2366,11 @@ async def _exercise_runtime() -> None:
             "selections": {"permission": "sel_permission"},
         },
     )
-    assert ws.messages[-1]["result"] == {"updated": True}
+    assert ws.messages[-1]["result"] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "updated": True,
+    }
 
     await client.handle_message(
         {
@@ -2403,6 +2437,8 @@ async def _exercise_runtime() -> None:
         },
     )
     assert ws.messages[-1]["result"] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
         "command": "resume",
         "ok": True,
         "code": None,
@@ -2433,7 +2469,12 @@ async def _exercise_runtime() -> None:
             "inputData": {"requestId": 42},
         },
     )
-    assert ws.messages[-1]["result"] == {"resolved": True, "noticeId": "notice_1"}
+    assert ws.messages[-1]["result"] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "resolved": True,
+        "noticeId": "notice_1",
+    }
 
     await client.handle_message(
         {
@@ -2486,7 +2527,16 @@ async def _exercise_nonblocking_runtime_rpc() -> None:
     client = _client(runtime)
     ws = FakeWebSocket()
     client._rpc.set_connection(ws)  # type: ignore[arg-type]
-    await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
+    await client.dispatch(
+        "runtime.start",
+        {
+            "runtime": "codex",
+            "runtimeId": "codex",
+            "name": "Codex",
+            "config": {},
+            "configRevision": 1,
+        },
+    )
 
     client.start_message(
         {
@@ -2516,7 +2566,7 @@ async def _exercise_nonblocking_runtime_rpc() -> None:
         }
     )
     fast_response = await wait_for_ws_response(ws, "rpc_fast")
-    assert fast_response["result"] == {}
+    assert fast_response["result"] == {"runtime": "codex", "runtimeId": "codex"}
     assert not any(message.get("id") == "rpc_slow" for message in ws.messages)
 
     runtime.state_release.set()
@@ -2648,6 +2698,7 @@ async def _exercise_runtime_sync_task_survives_websocket_reconnect(monkeypatch) 
             return self
 
         async def __anext__(self) -> str:
+            await asyncio.sleep(0)
             raise StopAsyncIteration
 
     class WebSocketContext:
@@ -2662,7 +2713,7 @@ async def _exercise_runtime_sync_task_survives_websocket_reconnect(monkeypatch) 
         return "access-token"
 
     async def discover_runtimes() -> dict[str, list[Any]]:
-        return {"runtimes": []}
+        return {"runtimeTypes": []}
 
     async def send_notification(method: str, params: dict[str, Any]) -> None:
         notifications.append((method, params))
@@ -3102,8 +3153,26 @@ async def _exercise_runtime_protocol_routing() -> None:
         )
     )
     client._rpc.set_connection(FakeWebSocket())  # type: ignore[arg-type]
-    await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
-    await client.dispatch("runtime.start", {"runtimeId": "claude", "config": {}})
+    await client.dispatch(
+        "runtime.start",
+        {
+            "runtime": "codex",
+            "runtimeId": "codex",
+            "name": "Codex",
+            "config": {},
+            "configRevision": 1,
+        },
+    )
+    await client.dispatch(
+        "runtime.start",
+        {
+            "runtime": "claude",
+            "runtimeId": "claude",
+            "name": "Claude",
+            "config": {},
+            "configRevision": 1,
+        },
+    )
 
     await client.dispatch(
         "session.send_message", {"runtime": "codex", "sessionId": "s1", "content": "hi"}
@@ -3136,7 +3205,16 @@ async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
     agent_runtime = FakeAgentRuntime()
     client = _client(runtime=agent_runtime)
     client._rpc.set_connection(FakeWebSocket())  # type: ignore[arg-type]
-    await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
+    await client.dispatch(
+        "runtime.start",
+        {
+            "runtime": "codex",
+            "runtimeId": "codex",
+            "name": "Codex",
+            "config": {},
+            "configRevision": 1,
+        },
+    )
 
     started = await client.dispatch(
         "session.send_message",
@@ -3171,9 +3249,10 @@ async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
     )
 
     assert agent_runtime.started is True
-    assert started == {}
-    assert steered == {"steered": True}
-    assert interrupted == {"interrupted": True, "alreadyStopped": False}
+    scope = {"runtime": "codex", "runtimeId": "codex"}
+    assert started == scope
+    assert steered == {**scope, "steered": True}
+    assert interrupted == {**scope, "interrupted": True, "alreadyStopped": False}
     assert [call[0] for call in agent_runtime.calls] == [
         "turn.start",
         "turn.steer",
@@ -3191,27 +3270,20 @@ async def _exercise_agent_runtime_discovery() -> None:
 
     inventory = await client.dispatch("runtime.discover", {})
 
-    assert inventory["runtimes"] == [
-        {
-            "runtimeId": "codex",
-            "runtimeType": "codex",
-            "displayName": "Codex",
-            "discovery": {"available": True},
-            "schema": None,
-            "uiSchema": None,
-            "defaults": {},
-            "status": "available",
-            "configured": True,
-            "capabilities": {},
-            "metadata": {},
-        }
-    ]
+    assert set(inventory) == {"runtimeTypes"}
+    assert len(inventory["runtimeTypes"]) == 1
+    descriptor = inventory["runtimeTypes"][0]
+    assert descriptor["runtimeType"] == "codex"
+    assert descriptor["available"] is True
+    assert descriptor["displayName"] == "Codex"
 
 
 async def _exercise_runtime_config_schema_read() -> None:
     client = _client(runtime=FakeAgentRuntime("codex"))
 
-    result = await client.dispatch("runtime.configSchema", {"runtimeId": "codex"})
+    result = await client.dispatch(
+        "runtime.configSchema", {"runtime": "codex", "runtimeId": "codex"}
+    )
 
     assert result["configSchema"] == {
         "runtime": "codex",
@@ -3233,23 +3305,31 @@ async def _exercise_runtime_config_read() -> None:
     client = _client(runtime=runtime)
     client._rpc.set_connection(FakeWebSocket())  # type: ignore[arg-type]
 
-    stopped = await client.dispatch("runtime.config", {"runtimeId": "codex"})
+    stopped = await client.dispatch(
+        "runtime.config", {"runtime": "codex", "runtimeId": "codex"}
+    )
     await client.dispatch(
         "runtime.start",
         {
+            "runtime": "codex",
             "runtimeId": "codex",
+            "name": "Codex",
             "config": {"environment": {"EXAMPLE": "1"}},
             "configRevision": 42,
         },
     )
-    running = await client.dispatch("runtime.config", {"runtimeId": "codex"})
+    running = await client.dispatch(
+        "runtime.config", {"runtime": "codex", "runtimeId": "codex"}
+    )
 
     assert stopped == {
+        "runtime": "codex",
         "runtimeId": "codex",
         "running": False,
         "config": None,
     }
     assert running == {
+        "runtime": "codex",
         "runtimeId": "codex",
         "running": True,
         "config": {

@@ -9,7 +9,6 @@ from sqlalchemy.exc import IntegrityError
 from agent_server.core.device_runtime import RuntimeTypeDescriptor
 from agent_server.core.runtime_identity import (
     RuntimeIdentity,
-    RuntimeIdentityError,
     generate_runtime_instance_id,
     normalize_runtime_instance_name,
     runtime_instance_name_key,
@@ -600,28 +599,6 @@ def _runtime_row(row: Any) -> dict[str, Any]:
 def _stored_v2_descriptor(discovery: dict[str, Any]) -> dict[str, Any] | None:
     descriptor = discovery.get(_CONTROL_V2_DESCRIPTOR_KEY)
     return descriptor if isinstance(descriptor, dict) else None
-
-
-def _unique_runtime_name(
-    display_name: str,
-    *,
-    runtime_id: str,
-    used_name_keys: set[str],
-) -> str:
-    try:
-        base = normalize_runtime_instance_name(display_name)
-    except RuntimeIdentityError:
-        base = normalize_runtime_instance_name(runtime_id)
-    candidate = base
-    key = runtime_instance_name_key(candidate)
-    suffix = 1
-    while key in used_name_keys:
-        marker = runtime_id if suffix == 1 else f"{runtime_id}-{suffix}"
-        candidate = normalize_runtime_instance_name(f"{base} ({marker})")
-        key = runtime_instance_name_key(candidate)
-        suffix += 1
-    used_name_keys.add(key)
-    return candidate
 
 
 def _public_runtime_metadata(value: dict[str, Any]) -> dict[str, Any]:

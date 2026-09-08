@@ -35,8 +35,8 @@
       "maxInstances": 1,
       "metadata": {},
       "reason": null,
-      "recommended": true,
       "recommendationRank": 0,
+      "recommended": true,
       "runtimeType": "codex"
     },
     {
@@ -50,10 +50,9 @@
       "maxInstances": null,
       "metadata": {},
       "reason": "DSH Bridge is not installed",
-      "recommended": false,
       "recommendationRank": null,
+      "recommended": false,
       "runtimeType": "dsh"
     }
-  ],
-  "selectedControlVersion": "2.0"
+  ]
 }

@@ -1,3 +1,9 @@
+> Historical implementation plan. The negotiation and rolling-version policy
+> below was retired on 2026-09-08. Server and Connector now ship one protocol;
+> discovery refreshes provider metadata and never gates named-instance RPCs.
+> Follow the [current Runtime Control contract](../../contracts/runtime-control/2.0/README.md)
+> and [current handoff](../migrations/main-to-v2/frontend-desktop-follow-up.md).
+
 # Runtime Instances v2 Rewrite
 
 Status: implemented, verified, and merged into `v2` on 2026-08-26.

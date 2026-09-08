@@ -400,7 +400,7 @@ POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" \
   docker compose -f "${COMPOSE_FILE}" up -d --wait
 INFRA_STARTED=true
 
-printf '%s[setup]%s Applying v2.24 database migrations...\n' "${CYAN}" "${RESET}"
+printf '%s[setup]%s Applying database migrations...\n' "${CYAN}" "${RESET}"
 (
   cd "${SERVER_DIR}"
   env \

@@ -11,6 +11,7 @@ from typing import Any
 import anyio
 import pytest
 from conftest import ApiV2TestClient as TestClient
+from runtime_fixtures import seed_runtime_inventory
 from sqlalchemy import text
 from starlette.websockets import WebSocketDisconnect
 
@@ -363,7 +364,8 @@ def _seed_running_runtime(
     )
 
     async def _seed() -> None:
-        await client.app.state.device_runtime_service.ingest_inventory(
+        await seed_runtime_inventory(
+            client.app.state.store,
             connector_id,
             _runtime_inventory(runtime),
         )

@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from runtime_fixtures import describe_inventory, seed_runtime_inventory
+
 from conftest import ApiV2TestClient as TestClient
 
 from agent_server.app import create_app
@@ -37,7 +39,7 @@ class FakeRpc:
         if error is not None:
             raise error
         if method == "runtime.discover":
-            return self.inventory
+            return describe_inventory(self.inventory).model_dump(mode="json")
         if method == "runtime.modelCatalog":
             return {
                 "catalog": {
@@ -187,7 +189,7 @@ def _make_client(tmp_path) -> tuple[TestClient, FakeRpc, str, dict[str, str]]:
     app.state.rpc = rpc
     app.state.device_runtime_service = DeviceRuntimeService(app.state.store, rpc)
     asyncio.run(
-        app.state.device_runtime_service.ingest_inventory(connector_id, rpc.inventory)
+        seed_runtime_inventory(app.state.store, connector_id, rpc.inventory)
     )
     return client, rpc, connector_id, headers
 
@@ -308,7 +310,8 @@ def test_custom_executable_path_is_not_constrained_to_discovered_default(tmp_pat
 
     assert response.status_code == 200, response.text
     assert response.json()["config"] == config
-    assert rpc.requests[-1][2] == {"runtimeId": "codex", "config": config}
+    params = rpc.requests[-1][2]
+    assert params == {"runtime": "codex", "runtimeId": "codex", "name": "Codex", "config": config, "configRevision": params["configRevision"]}
 
 
 def test_model_gateway_key_round_trips_without_redaction(tmp_path):
@@ -326,9 +329,9 @@ def test_model_gateway_key_round_trips_without_redaction(tmp_path):
         gateway_schema
     )
     asyncio.run(
-        client.app.state.device_runtime_service.ingest_inventory(
+        client.app.state.device_runtime_service.ingest_runtime_types(
             connector_id,
-            rpc.inventory,
+            describe_inventory(rpc.inventory),
         )
     )
     config = {
@@ -349,7 +352,11 @@ def test_model_gateway_key_round_trips_without_redaction(tmp_path):
     assert loaded.status_code == 200, loaded.text
     assert saved.json()["config"] == config
     assert loaded.json()["runtimes"][0]["config"] == config
-    assert rpc.requests[-1][2] == {"runtimeId": "codex", "config": config}
+    params = rpc.requests[-1][2]
+    assert params["runtime"] == params["runtimeId"] == "codex"
+    assert params["config"] == config
+    assert params["name"] == "Codex"
+    assert isinstance(params["configRevision"], int)
 
 
 def test_server_rejects_invalid_config_before_connector_rpc(tmp_path):
@@ -690,7 +697,7 @@ def test_reconcile_active_forwards_persisted_config_after_schema_upgrade(tmp_pat
     upgraded_inventory = _inventory()
     upgraded_inventory["runtimes"][0]["schema"]["properties"] = {}
     upgraded_inventory["runtimes"][0]["uiSchema"] = {}
-    asyncio.run(runtime_service.ingest_inventory(connector_id, upgraded_inventory))
+    asyncio.run(runtime_service.ingest_runtime_types(connector_id, describe_inventory(upgraded_inventory)))
     asyncio.run(
         store.set_device_runtime_config(
             connector_id,
@@ -730,7 +737,7 @@ def test_inventory_refresh_preserves_active_runtime_error(tmp_path):
     )
 
     asyncio.run(runtime_service.apply_status(connector_id, "codex", "available"))
-    asyncio.run(runtime_service.ingest_inventory(connector_id, rpc.inventory))
+    asyncio.run(runtime_service.ingest_runtime_types(connector_id, describe_inventory(rpc.inventory)))
 
     runtime = client.get(
         f"/connectors/{connector_id}/runtimes", headers=headers
@@ -813,7 +820,9 @@ def test_deactivation_settles_sessions_without_persisted_notices(tmp_path):
 
 def test_explicit_discovery_stops_runtime_that_server_has_not_activated(tmp_path):
     client, rpc, connector_id, headers = _make_client(tmp_path)
-    rpc.inventory = _inventory(status="running")
+    asyncio.run(client.app.state.device_runtime_service.apply_status(
+        connector_id, "codex", "running"
+    ))
 
     response = client.post(
         f"/connectors/{connector_id}/runtimes/discover",
@@ -826,4 +835,4 @@ def test_explicit_discovery_stops_runtime_that_server_has_not_activated(tmp_path
         "runtime.discover",
         "runtime.stop",
     ]
-    assert rpc.requests[0][2] == {"supportedControlVersions": ["2.0", "1.0"]}
+    assert rpc.requests[0][2] == {}

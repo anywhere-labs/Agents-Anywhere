@@ -20,7 +20,6 @@ from connector.runtime_protocol import (
     RuntimeIdentity,
     RuntimeInstance,
     RuntimeInstancePolicy,
-    RuntimeInstancesUnsupportedError,
     RuntimeInvalidRequestError,
     RuntimeOperationResult,
     RuntimeProvider,
@@ -201,100 +200,6 @@ def _handler() -> tuple[RuntimeRpcHandler, RuntimeSupervisor]:
     return RuntimeRpcHandler(supervisor, host), supervisor
 
 
-def test_runtime_discover_bootstrap_allows_v2_and_preserves_legacy_shape() -> None:
-    asyncio.run(_test_runtime_discover_bootstrap_allows_v2_and_preserves_legacy_shape())
-
-
-async def _test_runtime_discover_bootstrap_allows_v2_and_preserves_legacy_shape() -> (
-    None
-):
-    handler, _supervisor = _handler()
-
-    legacy = await handler.dispatch("runtime.discover", {})
-    assert set(legacy) == {"runtimes"}
-    assert handler.control_version == "1.0"
-    assert handler.negotiated_control_version is None
-
-    offered = _load_json(
-        FIXTURE_DIR
-        / "valid"
-        / "runtime-discover-request"
-        / "prefer-v2-with-v1-fallback.json"
-    )
-    negotiated = await handler.dispatch("runtime.discover", offered)
-
-    _contract_validator("runtime-discover-response").validate(negotiated)
-    assert handler.control_version == "2.0"
-    assert handler.negotiated_control_version == "2.0"
-    assert negotiated["selectedControlVersion"] == "2.0"
-    assert negotiated["runtimeTypes"][0]["runtimeType"] == "codex"
-    assert negotiated["runtimeTypes"][1]["maxInstances"] == 1
-
-    repeated = await handler.dispatch(
-        "runtime.discover",
-        {"supportedControlVersions": ["2.0", "1.0"]},
-    )
-    assert repeated["selectedControlVersion"] == "2.0"
-
-    with pytest.raises(RuntimeInvalidRequestError, match="already selected"):
-        await handler.dispatch(
-            "runtime.discover",
-            {"supportedControlVersions": ["1.0"]},
-        )
-    with pytest.raises(RuntimeInvalidRequestError, match="already selected"):
-        await handler.dispatch("runtime.discover", {})
-    assert handler.control_version == "2.0"
-
-
-def test_runtime_control_v1_only_discovery_remains_legacy() -> None:
-    asyncio.run(_test_runtime_control_v1_only_discovery_remains_legacy())
-
-
-async def _test_runtime_control_v1_only_discovery_remains_legacy() -> None:
-    handler, _supervisor = _handler()
-
-    v1_only = await handler.dispatch(
-        "runtime.discover",
-        {"supportedControlVersions": ["1.0"]},
-    )
-    assert set(v1_only) == {"runtimes"}
-    assert handler.control_version == "1.0"
-    assert handler.negotiated_control_version == "1.0"
-
-    repeated = await handler.dispatch(
-        "runtime.discover",
-        {"supportedControlVersions": ["1.0"]},
-    )
-    assert set(repeated) == {"runtimes"}
-
-    with pytest.raises(RuntimeInvalidRequestError, match="1.0 is already selected"):
-        await handler.dispatch(
-            "runtime.discover",
-            {"supportedControlVersions": ["2.0", "1.0"]},
-        )
-    assert handler.control_version == "1.0"
-    assert handler.negotiated_control_version == "1.0"
-
-
-def test_runtime_control_rejects_unsupported_only_offer() -> None:
-    async def run() -> None:
-        handler, _supervisor = _handler()
-
-        with pytest.raises(
-            RuntimeInvalidRequestError,
-            match="does not include a supported Runtime Control version",
-        ):
-            await handler.dispatch(
-                "runtime.discover",
-                {"supportedControlVersions": ["3.0"]},
-            )
-
-        assert handler.control_version == "1.0"
-        assert handler.negotiated_control_version is None
-
-    asyncio.run(run())
-
-
 def test_runtime_control_v2_lifecycle_and_scoped_rpc_use_type_and_instance() -> None:
     asyncio.run(
         _test_runtime_control_v2_lifecycle_and_scoped_rpc_use_type_and_instance()
@@ -305,10 +210,6 @@ async def _test_runtime_control_v2_lifecycle_and_scoped_rpc_use_type_and_instanc
     None
 ):
     handler, supervisor = _handler()
-    await handler.dispatch(
-        "runtime.discover",
-        {"supportedControlVersions": ["2.0", "1.0"]},
-    )
     validate_params = _load_json(
         FIXTURE_DIR / "valid" / "runtime-validate-config-params" / "named-codex.json"
     )
@@ -413,12 +314,48 @@ async def _test_runtime_control_v2_lifecycle_and_scoped_rpc_use_type_and_instanc
     }
 
 
+def test_failed_discovery_does_not_block_named_runtime_requests(monkeypatch) -> None:
+    async def run() -> None:
+        handler, supervisor = _handler()
+        original_discover = supervisor.discover
+
+        async def fail_discovery():
+            raise RuntimeError("Fixture discovery failure")
+
+        monkeypatch.setattr(supervisor, "discover", fail_discovery)
+        with pytest.raises(RuntimeError, match="Fixture discovery failure"):
+            await handler.dispatch("runtime.discover", {})
+        params = _load_json(
+            FIXTURE_DIR / "valid" / "runtime-start-params" / "max-safe-revision.json"
+        )
+        result = await handler.dispatch("runtime.start", params)
+        assert result["runtimeId"] == params["runtimeId"]
+        assert result["status"] == "running"
+        monkeypatch.setattr(supervisor, "discover", original_discover)
+        discovered = await handler.dispatch("runtime.discover", {})
+        _contract_validator("runtime-discover-response").validate(discovered)
+        assert set(discovered) == {"runtimeTypes"}
+
+    asyncio.run(run())
+
+
+def test_invalid_discovery_request_is_independent_of_the_next_request() -> None:
+    async def run() -> None:
+        handler, _ = _handler()
+        with pytest.raises(RuntimeInvalidRequestError, match="takes no parameters"):
+            await handler.dispatch("runtime.discover", {"unexpected": True})
+        discovered = await handler.dispatch("runtime.discover", {})
+        _contract_validator("runtime-discover-response").validate(discovered)
+
+    asyncio.run(run())
+
+
 def test_runtime_config_reports_retained_error_handle_as_not_running() -> None:
     async def run() -> None:
         handler, supervisor = _handler()
         await handler.dispatch(
             "runtime.discover",
-            {"supportedControlVersions": ["2.0", "1.0"]},
+            {},
         )
         params = {
             "runtime": "codex",
@@ -467,7 +404,7 @@ async def _test_runtime_control_v2_rejects_invalid_lifecycle_contracts() -> None
     handler, _supervisor = _handler()
     await handler.dispatch(
         "runtime.discover",
-        {"supportedControlVersions": ["2.0", "1.0"]},
+        {},
     )
 
     missing_name = _load_json(
@@ -516,40 +453,4 @@ async def _test_runtime_control_v2_rejects_invalid_lifecycle_contracts() -> None
         await handler.dispatch(
             "runtime.stop",
             {"runtime": "claude", "runtimeId": "rti_codex_work_01"},
-        )
-
-
-def test_runtime_control_v1_accepts_only_type_equal_legacy_instances() -> None:
-    asyncio.run(_test_runtime_control_v1_accepts_only_type_equal_legacy_instances())
-
-
-async def _test_runtime_control_v1_accepts_only_type_equal_legacy_instances() -> None:
-    handler, _supervisor = _handler()
-    assert set(await handler.dispatch("runtime.discover", {})) == {"runtimes"}
-
-    started = await handler.dispatch(
-        "runtime.start",
-        {"runtimeId": "codex", "config": {}, "configRevision": 1},
-    )
-    assert started == {"runtimeId": "codex", "status": "running"}
-
-    capabilities = await handler.dispatch(
-        "runtime.capabilities",
-        {"runtime": "codex"},
-    )
-    assert set(capabilities) == {"capabilitySet"}
-    assert capabilities["capabilitySet"]["runtime"] == "codex"
-    assert capabilities["capabilitySet"]["runtimeId"] == "codex"
-
-    with pytest.raises(RuntimeInstancesUnsupportedError) as unsupported:
-        await handler.dispatch(
-            "runtime.start",
-            {"runtimeId": "rti_codex_work_01", "config": {}},
-        )
-    assert unsupported.value.code == "runtime_instances_unsupported"
-
-    with pytest.raises(RuntimeInvalidRequestError, match="same provider type"):
-        await handler.dispatch(
-            "runtime.start",
-            {"runtime": "claude", "runtimeId": "codex", "config": {}},
         )

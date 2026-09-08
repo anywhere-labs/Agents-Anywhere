@@ -1,8 +1,9 @@
 # Runtime Control 2.0 Contract
 
 Runtime Control is the Server-to-Connector RPC contract for discovering and
-operating runtime types and named runtime instances. It is versioned separately
-from the Agent Runtime Protocol, application releases, and database revisions.
+operating runtime types and named runtime instances. Server and Connector are
+released together and use one protocol. Runtime requests never negotiate versions
+or depend on a persisted compatibility mode.
 
 The files under this directory are the source of truth for Runtime Control 2.0.
 `contracts/protocol/1.0` is frozen and must not be changed to implement named
@@ -42,25 +43,24 @@ Implementation models and generated client types must use the exact
 
 ## Discovery
 
-A 2.0-capable Server calls `runtime.discover` with params matching
-`runtime-discover-request.schema.json`:
+The Server calls `runtime.discover` with an empty parameter object:
 
 ```json
-{
-  "supportedControlVersions": ["2.0", "1.0"]
-}
+{}
 ```
 
-The list is in preference order and must contain `2.0` for the request to be a
-Runtime Control 2.0 document. A Connector selecting 2.0 returns exactly the
-shape in `runtime-discover-response.schema.json`:
+The Connector returns provider descriptors:
 
 ```json
 {
-  "selectedControlVersion": "2.0",
   "runtimeTypes": []
 }
 ```
+
+Discovery refreshes provider metadata. Instance lifecycle and session RPCs can
+run immediately after a connection is established, including while discovery
+is pending or after a discovery error. All scoped calls carry `runtime` and
+`runtimeId`; discovery does not enable or disable those identities.
 
 `RuntimeTypeDescriptor.configSchema` contains its own non-negative safe-integer
 revision, JSON configuration schema, optional UI schema, defaults, and open
@@ -68,23 +68,14 @@ metadata. `available: false` requires a non-empty `reason`. Capability keys are
 extensible strings with boolean availability values. `recommendationRank` is a
 nullable non-negative safe integer; lower values are recommended first.
 
-## V1 Fallback
+## Independent failures
 
-An empty discover request and a legacy `{ "runtimes": [...] }` result are v1
-fallback messages only. They are intentionally absent from the 2.0 schemas and
-fixtures, and must never be accepted as 2.0 after negotiation.
-
-| Server | Connector | Discover behavior | Named instances |
-| --- | --- | --- | --- |
-| New | New | Server offers versions; Connector returns `selectedControlVersion: "2.0"` and `runtimeTypes`. | Enabled after 2.0 is selected. |
-| New | Legacy | Legacy Connector ignores the offer and returns `{ "runtimes": [...] }`; Server records v1. | Disabled; expose one compatibility instance per provider with `runtimeId == runtime`. |
-| Legacy | New | Legacy Server sends empty params; new Connector returns the exact legacy `{ "runtimes": [...] }` shape. | Disabled; Connector uses v1 lifecycle semantics. |
-| Legacy | Legacy | Existing empty-request and legacy-result exchange. | Not supported. |
-
-When a Connector connection is operating in v1, the Server must not send an
-`rti_*` identifier. Attempts to create or operate a named instance must fail
-with a stable `runtime_instances_unsupported` error instead of being translated
-silently.
+An invalid request, unavailable provider, or failed discovery affects that
+request only. The connection remains usable and later requests can retry.
+The Server forwards the explicit instance identity and reports errors returned
+by the Connector. It does not infer support from a version field or reject a
+snapshot because an earlier discovery did not complete. Read-only snapshots
+can still use persisted state when the runtime is unavailable.
 
 ## Lifecycle
 

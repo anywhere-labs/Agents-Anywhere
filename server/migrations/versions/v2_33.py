@@ -14,11 +14,17 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.drop_column("connectors", "runtime_control_version")
+    columns = {
+        column["name"] for column in sa.inspect(op.get_bind()).get_columns("connectors")
+    }
+    if "runtime_control_version" in columns:
+        op.drop_column("connectors", "runtime_control_version")
 
 
 def downgrade() -> None:
     op.add_column(
         "connectors",
-        sa.Column("runtime_control_version", sa.Text(), nullable=False, server_default="1.0"),
+        sa.Column(
+            "runtime_control_version", sa.Text(), nullable=False, server_default="1.0"
+        ),
     )

@@ -382,6 +382,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_29", "v2_30"),
         ("v2_30", "v2_31"),
         ("v2_31", "v2_32"),
+        ("v2_32", "v2_33"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -403,6 +404,58 @@ def test_every_adjacent_schema_upgrade(
                 ).scalar_one()
                 == target_revision
             )
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("previous_control_version", ["1.0", "2.0"])
+def test_v2_33_removes_negotiation_state_and_preserves_runtime_data(
+    tmp_path,
+    previous_control_version: str,
+) -> None:
+    path = tmp_path / "v2_33-runtime-state.sqlite3"
+    _seed_v2_13_runtime_storage(path)
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_32")
+    engine = create_engine(f"sqlite:///{path}")
+    tables = (
+        "connectors",
+        "connector_runtime_types",
+        "device_runtimes",
+        "sessions",
+        "session_active_runs",
+        "connector_runtime_catalogs",
+    )
+
+    def snapshot():
+        with engine.connect() as connection:
+            result = {}
+            for table in tables:
+                rows = [
+                    dict(row)
+                    for row in connection.execute(
+                        text(f"SELECT * FROM {table}")
+                    ).mappings()
+                ]
+                for row in rows:
+                    row.pop("runtime_control_version", None)
+                result[table] = sorted(
+                    rows, key=lambda row: json.dumps(row, sort_keys=True)
+                )
+            return result
+
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE connectors SET runtime_control_version = :version"),
+                {"version": previous_control_version},
+            )
+        before = snapshot()
+        assert before["device_runtimes"] and before["sessions"]
+        upgrade_database(db_url=_sqlite_url(path), revision="v2_33")
+        assert "runtime_control_version" not in {
+            column["name"] for column in inspect(engine).get_columns("connectors")
+        }
+        assert snapshot() == before
     finally:
         engine.dispose()
 
@@ -1072,9 +1125,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_32() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_32"
-    assert CURRENT_SCHEMA_VERSION == "2.32"
+def test_current_schema_version_is_v2_33() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_33"
+    assert CURRENT_SCHEMA_VERSION == "2.33"
 
 
 def test_retiring_releases_preserves_history(tmp_path) -> None:
@@ -2148,9 +2201,6 @@ def _create_legacy_v1_database(path) -> None:
         )
         connection.execute(
             text("ALTER TABLE connectors DROP COLUMN presence_connection_id")
-        )
-        connection.execute(
-            text("ALTER TABLE connectors DROP COLUMN runtime_control_version")
         )
         connection.execute(text("ALTER TABLE connectors DROP COLUMN connector_kind"))
         connection.execute(

@@ -300,9 +300,7 @@ class DeviceRuntimeService:
                     "runtime type is not currently present on the connector"
                 )
             if runtime_type_row.schema_ is None:
-                raise DeviceRuntimeConflictError(
-                    "runtime config schema is unavailable"
-                )
+                raise DeviceRuntimeConflictError("runtime config schema is unavailable")
             self._validate(
                 config,
                 _config_schema_for_instance(
@@ -358,7 +356,7 @@ class DeviceRuntimeService:
         user_id: str,
     ) -> DeviceRuntimeView:
         async with self._runtime_lock(connector_id, runtime_id):
-            runtime = await self._get_owned(
+            await self._get_owned(
                 connector_id,
                 runtime_id,
                 user_id=user_id,
@@ -675,15 +673,13 @@ class DeviceRuntimeService:
         await self._store.set_device_runtime_status(
             runtime.connectorId, runtime.runtimeId, "starting"
         )
-        params = (
-            {
-                "runtime": runtime.runtimeType,
-                "runtimeId": runtime.runtimeId,
-                "name": runtime.name,
-                "config": runtime.config,
-                "configRevision": _config_revision(runtime),
-            }
-        )
+        params = {
+            "runtime": runtime.runtimeType,
+            "runtimeId": runtime.runtimeId,
+            "name": runtime.name,
+            "config": runtime.config,
+            "configRevision": _config_revision(runtime),
+        }
         try:
             if connection is None:
                 await self._manager.request(
@@ -761,12 +757,10 @@ class DeviceRuntimeService:
         await self._store.set_device_runtime_status(
             runtime.connectorId, runtime.runtimeId, "stopping"
         )
-        params = (
-            {
-                "runtime": runtime.runtimeType,
-                "runtimeId": runtime.runtimeId,
-            }
-        )
+        params = {
+            "runtime": runtime.runtimeType,
+            "runtimeId": runtime.runtimeId,
+        }
         try:
             if connection is None:
                 await self._manager.request(
@@ -838,15 +832,13 @@ class DeviceRuntimeService:
         runtime: DeviceRuntimeView,
         config: dict[str, Any],
     ) -> None:
-        params = (
-            {
-                "runtime": runtime.runtimeType,
-                "runtimeId": runtime.runtimeId,
-                "name": runtime.name,
-                "config": config,
-                "configRevision": _config_revision(runtime),
-            }
-        )
+        params = {
+            "runtime": runtime.runtimeType,
+            "runtimeId": runtime.runtimeId,
+            "name": runtime.name,
+            "config": config,
+            "configRevision": _config_revision(runtime),
+        }
         try:
             await self._manager.request(
                 runtime.connectorId,

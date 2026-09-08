@@ -6,7 +6,7 @@
       "path": "schemas/runtime-discover-request.schema.json",
       "rpcMethod": "runtime.discover",
       "rpcPart": "params",
-      "sha256": "4eac3cd10d85ab2768ccf5105a5a0c459bd1ea0c02ad9f2d68489b78dba7095d",
+      "sha256": "361c1c91dc1652cd663a7538bec33e23b47dc091b0aac5444c00d1cfbfb7f626",
       "slug": "runtime-discover-request"
     },
     {
@@ -15,7 +15,7 @@
       "path": "schemas/runtime-discover-response.schema.json",
       "rpcMethod": "runtime.discover",
       "rpcPart": "result",
-      "sha256": "2dcb25fa716b76402db6bae3cb100ef93b30076c619682e6a1c27b504c3e59f8",
+      "sha256": "3ff9d21091883aa7152bcf68b2efc5d876d300de419b2a5f297a15196535e90e",
       "slug": "runtime-discover-response"
     },
     {

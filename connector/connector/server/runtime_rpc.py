@@ -86,6 +86,7 @@ class RuntimeRpcHandler:
         self.agent_runtime_supervisor = agent_runtime_supervisor
         self.agent_runtime_host = agent_runtime_host
         self.schedule_background = schedule_background
+
     def supports(self, method: str) -> bool:
         return method in self.METHODS
 

@@ -233,22 +233,24 @@ class BackendRpcClient:
                 self._publish_runtime_capabilities(request_session)
             )
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-            await self._runtime_sync.reconnect_event_runtimes()
-            if self._runtime_sync_task is None or self._runtime_sync_task.done():
-                self._runtime_sync_task = asyncio.create_task(
-                    self._runtime_sync.sync_existing_loop()
-                )
-            logger.info(
-                "connector startup complete; runtime sync started in background"
-            )
             try:
+                await self._runtime_sync.reconnect_event_runtimes()
+                if self._runtime_sync_task is None or self._runtime_sync_task.done():
+                    self._runtime_sync_task = asyncio.create_task(
+                        self._runtime_sync.sync_existing_loop()
+                    )
+                logger.info(
+                    "connector startup complete; runtime sync started in background"
+                )
                 async for raw_message in ws:
                     message = json.loads(raw_message)
                     self.start_message(message, request_session=request_session)
             finally:
                 capabilities_task.cancel()
                 heartbeat_task.cancel()
-                await asyncio.gather(capabilities_task, heartbeat_task, return_exceptions=True)
+                await asyncio.gather(
+                    capabilities_task, heartbeat_task, return_exceptions=True
+                )
                 self._rpc.clear_connection()
 
     async def _publish_runtime_capabilities(
@@ -265,7 +267,9 @@ class BackendRpcClient:
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("runtime capability discovery failed; connector RPC remains available")
+            logger.exception(
+                "runtime capability discovery failed; connector RPC remains available"
+            )
 
     async def authenticate(self) -> str:
         return await self._auth.authenticate()

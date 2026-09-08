@@ -39,7 +39,6 @@ class ConnectorConnection:
     last_seen_monotonic: float
     ready: bool = False
     pending: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
-    pending_response_tags: dict[str, str] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -126,8 +125,7 @@ class ConnectorRpcManager:
             statuses.update(
                 {
                     connector_id: bool(
-                        (lease := self._parse_lease(raw)) is not None
-                        and lease.ready
+                        (lease := self._parse_lease(raw)) is not None and lease.ready
                     )
                     for connector_id, raw in zip(remote_ids, values, strict=True)
                 }
@@ -184,10 +182,9 @@ class ConnectorRpcManager:
 
     async def _mark_ready(self, connection: ConnectorConnection) -> bool:
         connector_id = connection.connector_id
-        if (
-            self._connections.get(connector_id) is not connection
-            or not self._is_local_live(connection)
-        ):
+        if self._connections.get(
+            connector_id
+        ) is not connection or not self._is_local_live(connection):
             return False
         if connection.ready:
             return True
@@ -345,7 +342,6 @@ class ConnectorRpcManager:
         params: dict[str, Any],
         *,
         timeout: float = 30,
-        response_tag: str | None = None,
     ) -> Any:
         if self._connections.get(connection.connector_id) is not connection:
             raise ConnectorOfflineError("connector connection was replaced")
@@ -354,7 +350,6 @@ class ConnectorRpcManager:
             method,
             params,
             timeout=timeout,
-            response_tag=response_tag,
         )
 
     async def is_connection_id_current(
@@ -364,9 +359,8 @@ class ConnectorRpcManager:
     ) -> bool:
         connection = self._connections.get(connector_id)
         if connection is not None:
-            if (
-                connection.connection_id != connection_id
-                or not self._is_local_online(connection)
+            if connection.connection_id != connection_id or not self._is_local_online(
+                connection
             ):
                 return False
             if not self._coordinator.distributed:
@@ -382,16 +376,14 @@ class ConnectorRpcManager:
             return False
         lease = await self._get_lease(connector_id)
         return (
-            lease is not None
-            and lease.ready
-            and lease.connection_id == connection_id
+            lease is not None and lease.ready and lease.connection_id == connection_id
         )
 
     def resolve_response(
         self,
         connector_id: str,
         message: dict[str, Any],
-    ) -> str | None:
+    ) -> None:
         connection = self._connections.get(connector_id)
         if connection is None:
             return None
@@ -401,7 +393,6 @@ class ConnectorRpcManager:
         future = connection.pending.get(request_id)
         if future is not None and not future.done():
             future.set_result(message)
-            return connection.pending_response_tags.get(request_id)
         return None
 
     async def _request_local(
@@ -411,7 +402,6 @@ class ConnectorRpcManager:
         params: dict[str, Any],
         *,
         timeout: float,
-        response_tag: str | None = None,
     ) -> Any:
         connector_id = connection.connector_id
         request_id = f"rpc_{secrets.token_urlsafe(10)}"
@@ -420,8 +410,6 @@ class ConnectorRpcManager:
             asyncio.get_running_loop().create_future()
         )
         connection.pending[request_id] = future
-        if response_tag is not None:
-            connection.pending_response_tags[request_id] = response_tag
         try:
             async with connection.send_lock:
                 if self._connections.get(
@@ -458,7 +446,6 @@ class ConnectorRpcManager:
             )
         finally:
             connection.pending.pop(request_id, None)
-            connection.pending_response_tags.pop(request_id, None)
 
         if response.get("ok") is True:
             return response.get("result")

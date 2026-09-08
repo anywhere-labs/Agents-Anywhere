@@ -9,7 +9,7 @@ from conftest import ApiV2TestClient as TestClient
 from sqlalchemy import insert
 
 from agent_server.app import create_app
-from agent_server.core.device_runtime import RuntimeInventoryItem
+from runtime_fixtures import seed_runtime_inventory
 from agent_server.core.models import TimelineItemIn
 from agent_server.infra.db import dashboard_daily_metrics as dashboard_daily_metrics_t
 
@@ -51,24 +51,10 @@ def create_connector(client: TestClient, headers: dict[str, str], name: str) -> 
 
 
 async def configure_runtime(store: Any, connector_id: str, runtime: str) -> None:
-    await store.replace_device_runtime_inventory(
-        connector_id,
-        [
-            RuntimeInventoryItem.model_validate(
-                {
-                    "runtimeId": runtime,
-                    "runtimeType": runtime,
-                    "displayName": runtime.title(),
-                    "discovery": {"executablePath": f"/bin/{runtime}"},
-                    "schema": {
-                        "type": "object",
-                        "properties": {},
-                        "additionalProperties": False,
-                    },
-                }
-            )
-        ],
-    )
+    await seed_runtime_inventory(store, connector_id, {"runtimes": [{
+        "runtimeId": runtime, "runtimeType": runtime, "displayName": runtime.title(),
+        "schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    }]})
     await store.set_device_runtime_config(connector_id, runtime, {})
 
 

@@ -327,7 +327,7 @@ async def connector_ws(
             await websocket.close(code=1008, reason="connector was revoked")
             return
         await db.record_connector_activity(connector_id)
-        # Reset persisted connection state before making this socket routable.
+        # Finish authentication and registration before making this socket routable.
         await websocket.accept()
         if not await manager.mark_ready(connection):
             await websocket.close(code=4409, reason="connector ownership was lost")
@@ -402,7 +402,7 @@ async def connector_ws(
         discovery_reason = await discovery_task
         flush_task = asyncio.create_task(
             notification_pump.flush(),
-            name=f"runtime-control-flush-{connection.connection_id}",
+            name=f"runtime-discovery-flush-{connection.connection_id}",
         )
         done, _pending = await asyncio.wait(
             {reader_task, flush_task, notification_pump.task},

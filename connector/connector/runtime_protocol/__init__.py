@@ -10,7 +10,6 @@ from connector.runtime_protocol.attachments import (
 )
 from connector.runtime_protocol.errors import (
     RuntimeConflictError,
-    RuntimeInstancesUnsupportedError,
     RuntimeInvalidRequestError,
     RuntimeProtocolError,
     RuntimeUnavailableError,
@@ -229,7 +228,6 @@ __all__ = [
     "RuntimeInstancePolicy",
     "RuntimeInstanceSpec",
     "RuntimeInstanceStatus",
-    "RuntimeInstancesUnsupportedError",
     "RuntimeInvalidRequestError",
     "RuntimeInventoryItem",
     "RuntimeLifecycleStatus",
