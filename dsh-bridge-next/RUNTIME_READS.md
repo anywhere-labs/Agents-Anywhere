@@ -2,7 +2,7 @@
 
 ## 当前实现
 
-2026-09-08：按用户要求回退到图片功能之前的 DSH 实现，并撤回提前进入同步模块的配置读取扩展。回退与验证状态见 [验证记录](./VERIFICATION.md)。
+2026-09-08：图片与配置功能已恢复；保留桥接日志和单会话历史读取失败隔离。读取继续使用官方 `ctx.sessionQuery`，不会直接解析、修复或改写原生日志。当前验证状态见 [验证记录](./VERIFICATION.md)。
 
 插件 Host 独立挂载 `agentsAnywhereRuntime`，要求官方 `sessions`、`sessionQuery`、`workspaceRegistry` 服务就绪。官方 `agents` 服务存在时提供文本发送和中断。是否登录、是否打开手机连接弹窗、是否发现 AA Desktop，都不会决定 runtime 端口是否启动。
 
@@ -13,7 +13,7 @@
 ```
 
 - `server.ts`：仅监听 `127.0.0.1`，随机端口和随机 token；负责鉴权、8 MiB 帧限制、取消、连接与卸载清理。
-- `router.ts`：会话查询、当前状态、分页捕获、订阅与文本请求；纯读取不调用 Agent create/resume。
+- `router.ts`：会话查询、当前状态、分页捕获、订阅、图片/文本请求与配置目录；纯读取不调用 Agent create/resume。
 - `native.ts`、`visibility.ts`、`sync.ts`：官方事件与读写、侧栏过滤、初始校准及实时推送。
 - `sessions/source.ts`：官方会话清单、明确的归档/不可见/缺失状态及即时可用性检查。
 - `history.ts`、`tools.ts`：原始事件转换为统一 Timeline。Python 不解释 DSH 原始消息。
@@ -45,7 +45,7 @@ Connector 先验证发现文件、进程与回环地址，再执行限时鉴权�
 | 插件注入的 user-role 消息 | 不输出 | 环境、技能等内部注入不进入 Timeline |
 | assistant 文本 | `message / markdown` | 流式片段和最终消息使用相同 ID、顺序 |
 | reasoning | `system / reasoning` | 与普通文本分开 |
-| image | 文本占位 + 原生附件引用 | 暂不声明附件传输能力，不伪造平台文件 ID |
+| image | 附件引用及必要的占位 | AA 发送的图片通过持久化回执恢复平台附件 ID；原生图片保留原生引用，不伪造平台文件 ID |
 | `tool-call`、`tool/call`、`tool/result` | 同一条 `tool` | 以 callId 合并输入、结果、错误与最终状态 |
 | bash / pwsh | `tool / command` | 保留 command；没有事实依据时不猜退出码 |
 | write / edit / str_replace_editor | `tool / file_change` 或通用工具 | 有合法原生 diff meta 时使用上下文片段，绝不读取当前磁盘拼历史 |

@@ -21,6 +21,17 @@ export class BridgeError extends Error {
 export function publicError(error: unknown): BridgeError {
   if (error instanceof BridgeError) return error
   const nativeCode = record(error).code
+  if (record(error).isDSHRemoteError === true) {
+    if (nativeCode === 'session/attachment-invalid') {
+      const reason = record(record(error).details).reason
+      return new BridgeError('INVALID_PARAMS', reason === 'MODEL_DOES_NOT_SUPPORT_IMAGES'
+        ? 'The selected DSH model does not support images. Choose an image-capable model.'
+        : 'DSH rejected the image. Check its format, contents and size limits.')
+    }
+    if (nativeCode === 'session/model-unavailable') return new BridgeError('INVALID_PARAMS', 'DSH could not apply the selected provider, model or effort. Refresh and choose an available model.')
+    if (typeof nativeCode === 'string' && nativeCode.startsWith('agent-preset/')) return new BridgeError('INVALID_PARAMS', 'DSH could not load the selected Agent mode. Refresh the Runtime configuration.')
+    return new BridgeError('DSH_SERVICE_UNAVAILABLE', 'DSH could not complete this operation. Refresh the session state and retry.', true)
+  }
   if (nativeCode === 'SESSION_QUERY_SESSION_NOT_FOUND') {
     return new BridgeError('SESSION_NOT_FOUND', 'The DSH session no longer exists.')
   }

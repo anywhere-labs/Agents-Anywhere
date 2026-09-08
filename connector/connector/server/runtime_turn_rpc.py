@@ -34,6 +34,7 @@ async def dispatch_session_create(
         parsed.selections,
         parsed.attachments,
         parsed.client_message_id,
+        **({"runtime_options": parsed.runtime_options} if parsed.runtime_options else {}),
     )
     return operation_result_payload(result)
 

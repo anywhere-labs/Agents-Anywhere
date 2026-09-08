@@ -9,7 +9,8 @@ import { promisify } from 'node:util'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { createAssistantMessage, createToolResultMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { nativeRuntime } from '../fixtures/native-runtime.js'
-import { mountAgents, TextAdapter } from '../fixtures/agent-runtime.js'
+import { corruptHistory } from '../fixtures/corrupt-history.js'
+import { mountAgents, TextAdapter, initialSelections } from '../fixtures/agent-runtime.js'
 import { SyncFeed, SYNC_FLUSH_MS, type SyncBatch, type SyncOperation } from '../../src/host/dsh-runtime/sync.js'
 import { projectHistory } from '../../src/host/dsh-runtime/history.js'
 import { nativeSessionId, sessionId } from '../../src/host/dsh-runtime/identity.js'
@@ -373,8 +374,8 @@ test('real AgentLoop sends text once, streams before idle, queues followups and 
   const id = SessionId(nativeSessionId('test', 'sess-new'))
   try {
     await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'baseline')
-    await native.send(id, '第一条', 'client-1', home, true)
-    await native.send(id, '第一条', 'client-1', home, true)
+    await native.send(id, '第一条', 'client-1', home, true, initialSelections, 'standard')
+    await native.send(id, '第一条', 'client-1', home, true, initialSelections, 'standard')
     await until(() => !!adapter.release, 'model started')
     await until(() => {
       const operations = stream.ops()
@@ -410,17 +411,7 @@ test('official native loop crosses Python and backend despite corrupt history, i
   const home = await realpath(await mkdtemp(join(tmpdir(), 'dsh-pipeline-')))
   const adapter = new TextAdapter()
   const fixture = await nativeRuntime(home, async ctx => {
-    const bad = ctx.sessions.prepare(SessionId('corrupt-history'), { meta: { cwd: home } })
-    const detach = ctx.sessions.enter(bad)
-    ctx.sessions.announce(bad)
-    bad.append('turn/start', { turn: 1 })
-    bad.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'unreadable history' }] }), { surfaceOp: 'append' })
-    bad.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
-    await ctx.sessions.flush(bad)
-    detach()
-    const path = ctx.sessionPersistence.locate(bad.header)!.path
-    await writeFile(path, Buffer.concat([await readFile(path), Buffer.from(`${JSON.stringify({ seq: 1, time: Date.now(), type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } })}\n`)]))
-    await assert.rejects(ctx.sessionQuery.readSession(bad.id))
+    await corruptHistory(ctx, home)
     await mountAgents(ctx, adapter)
   })
   let closed = false

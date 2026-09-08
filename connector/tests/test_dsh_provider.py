@@ -13,7 +13,6 @@ from connector.runtime_protocol import (
     RuntimeConfig,
     RuntimeInvalidRequestError,
     RuntimeUnavailableError,
-    RuntimeUnsupportedError,
     RuntimeUpstreamError,
 )
 from connector.runtimes.dsh.discovery import BridgeEndpoint, DshDiscovery, discover
@@ -255,12 +254,13 @@ def test_snapshot_requires_all_pages_from_same_capture() -> None:
     asyncio.run(run())
 
 
-def test_text_runtime_requires_message_identity_and_does_not_expose_catalogs() -> None:
+def test_text_runtime_requires_message_identity_and_forwards_catalogs() -> None:
     async def run() -> None:
-        runtime = _Pages([])
-        for call in [runtime.list_model_catalog, runtime.list_permission_catalog]:
-            with pytest.raises(RuntimeUnsupportedError):
-                await call()
+        runtime = _Pages([{"runtime": "dsh", "revision": 3, "models": []}, {"runtime": "dsh", "revision": 3, "permissions": []}])
+        assert (await runtime.list_model_catalog()).models == ()
+        assert (await runtime.list_permission_catalog()).permissions == ()
+        assert [method for method, _ in runtime.calls] == ["catalog.listModels", "catalog.listPermissions"]
+        runtime.calls.clear()
         with pytest.raises(RuntimeInvalidRequestError):
             await runtime.start_turn("a", "native-a", "hello")
         assert runtime.calls == []

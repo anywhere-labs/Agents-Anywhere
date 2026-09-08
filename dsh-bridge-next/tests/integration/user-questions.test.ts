@@ -14,7 +14,7 @@ import * as AskUserTool from '@deepseek-ai/dsh-tool-ask-user'
 import { createUserMessage, LlmAdapter, type GenerateOptions, type StreamChunk, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { nativeRuntime } from '../fixtures/native-runtime.js'
-import { mountAgents } from '../fixtures/agent-runtime.js'
+import { mountAgents, initialSelections } from '../fixtures/agent-runtime.js'
 import { RuntimeRouter } from '../../src/host/dsh-runtime/router.js'
 import { SyncFeed, type SyncBatch } from '../../src/host/dsh-runtime/sync.js'
 import { sessionId } from '../../src/host/dsh-runtime/identity.js'
@@ -76,7 +76,16 @@ async function remote(ctx: Context) {
   const abort = new AbortController()
   const stream = (await ctx.typertGateway.wireStream.open('$events', { args: {} }, abort.signal))[Symbol.asyncIterator]()
   const ready = (await stream.next()).value as { clientId: string }
-  return { next: async () => (await stream.next()).value as Record<string, unknown>, close: () => abort.abort(),
+  const questions = new Set<unknown>()
+  return { next: async () => {
+    while (true) {
+      const next = await stream.next()
+      if (next.done) throw new Error('Remote stream ended before the expected question')
+      const frame = next.value as Record<string, unknown>
+      if (frame.event === 'user-questions/request') { questions.add(frame.eventId); return frame }
+      if (frame.type === 'cancel' && questions.has(frame.eventId)) return frame
+    }
+  }, close: () => abort.abort(),
     reply: async (eventId: string, outcome: unknown) => {
       const rpcId = randomUUID()
       const response = await ctx.connection.createSharedFetchHandler('/api').fetch(new Request('http://127.0.0.1/api/$events/result', {
@@ -93,8 +102,8 @@ test('published Host pauses the real ask_user_question tool, accepts platform an
   const platformId = sessionId('test', id)
   const client = await remote(f.ctx)
   try {
-    const handle = await f.ctx.agents.create({ sessionId: id, agentOptions: { provider: 'test', model: 'text' }, meta: { cwd: f.home } })
-    await f.runtime.send(id, '请先问我三个问题', 'message-1', f.home, true)
+    await f.runtime.send(id, '请先问我三个问题', 'message-1', f.home, true, initialSelections, 'standard')
+    const agent = f.ctx.agents.get(id)!
     await until(() => f.runtime.questions.waiting(id), 'actual tool is waiting')
     const state = await f.request('session.getState', { sessionId: platformId }) as { status: string }
     assert.equal(state.status, 'waiting_approval')
@@ -108,8 +117,8 @@ test('published Host pauses the real ask_user_question tool, accepts platform an
     assert.equal((await f.request('session.respondInteraction', { sessionId: sessionId('test', 'native-main'), noticeId: notice.noticeId, actionId: 'cancel' }) as { ok: boolean }).ok, false)
     const result = await f.request('session.respondInteraction', { sessionId: platformId, noticeId: notice.noticeId, actionId: 'submit', inputData: input })
     assert.equal((result as { ok: boolean }).ok, true)
-    await until(() => handle.agent.session.snapshotEvents().some(e => e.type === 'turn/end'), 'agent continues after answer')
-    const toolResult = handle.agent.session.snapshotEvents().find(e => e.type === 'tool/result')
+    await until(() => agent.session.snapshotEvents().some(e => e.type === 'turn/end'), 'agent continues after answer')
+    const toolResult = agent.session.snapshotEvents().find(e => e.type === 'tool/result')
     assert.equal(toolResult?.type, 'tool/result')
     if (toolResult?.type === 'tool/result') {
       const block = toolResult.data.message.content.find(c => c.type === 'tool-result')!
@@ -125,10 +134,9 @@ test('published Host pauses the real ask_user_question tool, accepts platform an
     await until(() => f.runtime.questions.waiting(id), 'second real tool waits')
     const cancelled = f.runtime.questions.notices('test', id).find(n => n.status === 'open')!
     assert.equal((await f.request('session.respondInteraction', { sessionId: platformId, noticeId: cancelled.noticeId, actionId: 'cancel' }) as { ok: boolean }).ok, true)
-    await until(() => handle.agent.session.snapshotEvents().filter(e => e.type === 'turn/end').length === 2, 'cancel follows the native tool error path')
-    const cancelledResult = handle.agent.session.snapshotEvents().findLast(e => e.type === 'tool/result')!
+    await until(() => agent.session.snapshotEvents().filter(e => e.type === 'turn/end').length === 2, 'cancel follows the native tool error path')
+    const cancelledResult = agent.session.snapshotEvents().findLast(e => e.type === 'tool/result')!
     if (cancelledResult.type === 'tool/result') assert.equal(cancelledResult.data.message.content.find(c => c.type === 'tool-result')?.isError, true)
-    await handle.dispose()
   } finally { client.close(); await f.close() }
 })
 

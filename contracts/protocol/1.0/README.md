@@ -30,7 +30,7 @@ schema revision.
 ## Attachment MIME restrictions
 
 `runtime.attachment` can declare an optional `metadata.allowedMimeTypes` array of
-exact, lowercase MIME types. For example, an image-only runtime can declare
+exact, lowercase MIME types. For example, DSH declares
 `["image/png", "image/jpeg", "image/webp", "image/gif"]`.
 
 - Omitted: no additional MIME restriction, preserving existing runtime behavior.

@@ -724,6 +724,7 @@ class SessionCreateAndStartRequest(BaseModel):
     cwd: str | None = None
     content: str
     selections: dict[str, str | None] = Field(default_factory=dict)
+    runtimeOptions: dict[str, Any] = Field(default_factory=dict, max_length=16)
     attachments: list[InlineAttachmentRef] = Field(default_factory=list, max_length=10)
     clientMessageId: str | None = None
 

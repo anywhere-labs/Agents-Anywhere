@@ -18,7 +18,15 @@
 
 用户重启后，15:36 的真实插件进程完成 51 个会话的首次同步；检查时 207 个批次均收到 Connector ACK，坏会话记录为读取失败，未导致同步流关闭。真实模型新回复和用户随后提出的页面现象继续单独确认。日志页提交 `87679039` 的 [Linux CI](https://github.com/anywhere-labs/Agents-Anywhere/actions/runs/34199519011) 三个任务全部通过；本节隔离修复的远程检查另行更新。
 
-## 当前分支：回退 DSH 图片与配置扩展
+## 当前分支：恢复 DSH 图片与配置，保留读取隔离
+
+2026-09-08，分支 `codex/dsh-features-with-sync-fix`。用户确认恢复图片及模型/effort/权限、Agent 模式配置。以回退前实现为基础恢复完整协议链，保留独立桥接日志、单会话读取失败隔离、Python 启动互斥和 ID 历史、Desktop 安装信息职责。配置状态读取复用已捕获的官方快照；后续读取失败也按会话处理。
+
+本地完整插件检查 **105 项通过**，包括类型、构建、产物和真实 Client factory 的 DOM 检查；Connector DSH/生命周期 **85 项通过**；Server 相关及全部迁移 **175 项通过**，有一条 TestClient 弃用提示。图片端到端测试加入坏历史会话，继续覆盖真实 Python Connector、已认证 AA Server、图片发送与纯文本续聊、持久化回执和冷重启。测试使用受控模型适配器，不能替代真实模型及手机验收。
+
+恢复功能的构建需要同时重新加载 DSH 和 Python Connector；只重启一端不会恢复完整能力。远程 CI 和实际客户端结果另行记录。后续继续检查通用 RPC 错误隔离，确保失败请求不会影响同连接的后续请求。
+
+## 历史排查：回退 DSH 图片与配置扩展
 
 2026-09-08，分支 `codex/dsh-before-images`。用户报告：CLI 已连接 AA，AA 发往 DSH 的 RPC 能产生效果，但 DSH session 没有自动同步、数据没有正确回传。因此按要求撤回 `742d09be` 的 DSH 图片与同期模型/effort/权限、模式配置实现，回到 `65ad5d9f` 的文本运行时。
 
@@ -28,9 +36,9 @@
 
 本地检查：插件 92 项、Connector 81 项、Server 相关 76 项通过；插件类型检查、构建和产物检查通过。远程结果见 [回退分支的 CI](https://github.com/anywhere-labs/Agents-Anywhere/actions/workflows/dsh-bridge-next.yml?query=branch%3Acodex%2Fdsh-before-images)。本地未自动重启用户的 DSH、CLI 或开发服务，真实环境是否恢复仍需加载回退构建后确认。
 
-当前手动验收顺序：重新加载 DSH Host 和 CLI（已有配对用 `uv run anywhere-cli start`），确认原生 session 自动出现在 AA，再从 AA 新建/续聊，检查运行中增量及结束状态，最后检查断线重连。图片、AA 侧 DSH 模型/effort/权限切换暂不在当前功能范围内。
+当时的手动验收顺序：重新加载 DSH Host 和 CLI（已有配对用 `uv run anywhere-cli start`），确认原生 session 自动出现在 AA，再从 AA 新建/续聊，检查运行中增量及结束状态，最后检查断线重连。当时图片、AA 侧 DSH 模型/effort/权限切换暂停提供，现已恢复。
 
-以下保留前两轮的历史检查记录，不代表回退后仍提供图片与配置扩展。
+以下保留前两轮的历史检查记录；当前功能及检查范围以上面的恢复记录为准。
 
 ## 历史基线：图片与配置扩展
 
@@ -109,7 +117,7 @@ corepack yarn test:main
 
 [DSH Bridge Next CI](../.github/workflows/dsh-bridge-next.yml) 在 Linux 上运行这些检查，不启动真实 DSH、开发服务器、Docker 或 Electron。GitHub 中的对应 run 才是远程检查结果，不能用本地通过代替。
 
-## 图片与配置扩展的历史验收清单
+## 图片与配置扩展的手动验收清单
 
 启动方法见 [README](./README.md#本地构建与安装)。由开发者手动启动当前源码版本的 Server/Web 和链接安装的 DSH 插件；扫码前确认手机能访问连接中使用的服务器地址。只监听回环地址或二维码仍含 `127.0.0.1` 时，先跳过手机步骤。
 

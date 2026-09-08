@@ -1,12 +1,12 @@
-# DSH 过滤、事件同步与文本发送
+# DSH 过滤、事件同步与消息发送
 
-2026-09-08：DSH 已回退到图片功能之前，继续验证自动会话同步和数据回传。目标 DSH 0.1.2-rc.1。
+2026-09-08：DSH 图片与配置功能已恢复，自动会话同步和数据回传保留单会话读取失败隔离及桥接日志。目标 DSH 0.1.2-rc.1。
 
 **最新约束：后端不新增接口、逻辑、表或迁移。** 本文替代先前涉及后端扩展的方案。已撤回原先的同步代次、事务 checkpoint、项目写入与投影物理删除扩展。
 
 ## 分工
 
-- 插件 `host/dsh-runtime`：首条真实用户消息过滤、原生事件、历史和实时 Timeline 投影、明确归档状态、官方 Agent 文本发送。
+- 插件 `host/dsh-runtime`：首条真实用户消息过滤、原生事件、历史和实时 Timeline 投影、明确归档状态、官方 SessionController 图片/文本发送及配置。
 - Connector `runtimes/dsh`：发现/鉴权、标准 DTO 转发、快照分页拼接、有序交付和重连。
 - 后端：只复用现有 `/api/v2/connector/ingest`，继续使用 `timeline.sync` 完整替换及 `timeline.itemUpsert` 增量更新。
 - 其他 Runtime 保留原有 scanner；登录、onboarding 和 Desktop 页面不属于本轮修改范围。

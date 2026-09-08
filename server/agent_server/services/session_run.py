@@ -222,6 +222,8 @@ class SessionRunService:
             params["cwd"] = payload.cwd
         if selections:
             params["selections"] = selections
+        if payload.runtimeOptions:
+            params["runtimeOptions"] = dict(payload.runtimeOptions)
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
         persisted_attachment_refs: list[dict[str, Any]] = []

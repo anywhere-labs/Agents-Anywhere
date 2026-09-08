@@ -160,6 +160,7 @@ class AgentRuntime(ABC):
         selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
+        *, runtime_options: Mapping[str, Any] | None = None,
     ) -> RuntimeOperationResult:
         raise RuntimeUnsupportedError("create_and_start_session")
 
