@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import os, { tmpdir } from 'node:os'
 import { syncBuiltinESMExports } from 'node:module'
 import { join } from 'node:path'
@@ -25,6 +25,10 @@ test('published Host is callable through the actual rc.1 Gateway and disposes it
     for (let n = 0; n < 100 && !ctx.get('agentsAnywhereOnboarding'); n++) await delay(5)
     const result = await ctx.typertGateway.invoke({ namespace: 'agentsAnywhereOnboarding', method: 'inspect', args: {} }) as { stage: string }
     assert.equal(result.stage, 'idle')
+    await mkdir(join(root, 'logs'), { recursive: true })
+    await writeFile(join(root, 'logs', 'dsh-runtime.jsonl'), JSON.stringify({ time: new Date().toISOString(), level: 'error', event: 'sync.failed', errorCode: 'PERSISTENCE_ERROR' }) + '\n')
+    const logs = await ctx.typertGateway.invoke({ namespace: 'agentsAnywhereOnboarding', method: 'readBridgeLogs', args: {} }) as { entries: { event: string }[] }
+    assert.equal(logs.entries[0]?.event, 'sync.failed', 'Bridge logs remain readable without runtime services or a Connector')
     await assert.rejects(ctx.typertGateway.invoke({ namespace: 'agentsAnywhereOnboarding', method: 'begin', args: {
       input: { target: 'server', serverUrl: 'https://api.example.test/login' },
     } }), /页面路径/)

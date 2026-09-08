@@ -6,6 +6,10 @@ import { OnboardingManager } from '../onboarding/manager.js'
 import type {} from '../dsh-runtime/index.js'
 import type { ConnectorAction, ConnectorFolder, ConnectorSettings } from '../../contracts/connector.js'
 import type { MobileLoginSnapshot } from '../../contracts/mobile.js'
+import { join } from 'node:path'
+import { stateRoot } from '../config.js'
+import { readBridgeLogs } from '../dsh-runtime/log-reader.js'
+import type { BridgeLogSnapshot } from '../../contracts/logs.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context { agentsAnywhereOnboarding: OnboardingService }
@@ -15,9 +19,11 @@ declare module '@deepseek-ai/cordis' {
 export class OnboardingService extends TypertRemoteService implements OnboardingHostApi {
   static Config = Config
   private readonly manager: OnboardingManager
+  private readonly logsDirectory: string
 
   constructor(ctx: Context, config: Config) {
     super(ctx, HOST_NAMESPACE)
+    this.logsDirectory = join(stateRoot(config), 'logs')
     this.manager = new OnboardingManager(resolveConfig(config))
     ctx.effect(() => () => this.manager.dispose(), 'agentsAnywhereOnboarding.dispose')
   }
@@ -31,6 +37,8 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
 
   @Remote('inspect')
   inspect(): Promise<OnboardingSnapshot> { return this.manager.inspect() }
+  @Remote('readBridgeLogs')
+  readBridgeLogs(): Promise<BridgeLogSnapshot> { return readBridgeLogs(this.logsDirectory) }
   @Remote('begin')
   begin(input?: LoginRequest): Promise<{ url: string }> { return this.manager.begin(input) }
   @Remote('cancel')

@@ -91,6 +91,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     let inspectGate: Promise<void> | null = null
     let failLogout = false
     let failRecovery = false
+    let failLogs = false
     const reconfigurationUrl = 'http://127.0.0.1:5174/#/onboarding?source=dsh-plugin&connectorId=conn_reconfigured&flowId=4c7b8c71-134e-4495-a3ee-b704962414f9'
     type EntryProps = { host: OnboardingHostApi; wide: boolean }
     let entry: { Component: ComponentType<EntryProps>; props: { host: OnboardingHostApi } } | undefined
@@ -98,6 +99,10 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     ctx.provide('connection', { rpc: { call: async (channel: string, endpoint: string, payload: unknown) => {
         assert.equal(channel, '/api')
         calls.push({ endpoint, payload })
+        if (endpoint.endsWith('/readBridgeLogs')) return failLogs ? { ok: false, error: { message: 'read failed' } } : {
+          ok: true, value: { updatedAt: new Date().toISOString(), entries: [{ time: new Date().toISOString(),
+            level: 'error', event: 'session.visibility_read.failed', details: '{"sessionId":"native-test","errorCode":"PERSISTENCE_ERROR"}' }] },
+        }
         if (endpoint.endsWith('/inspect')) {
           const inspected = snapshot
           if (inspectGate) await inspectGate
@@ -279,7 +284,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.match(dialog()!.textContent!, /Connector运行中/)
     assert.equal(dialog()!.querySelector('[data-state]')?.getAttribute('data-state'), 'done')
     assert.doesNotMatch(dialog()!.textContent!, /连接手机|继续设置|连接服务器|浏览器没有打开|登录 Agents Anywhere Cloud|OR/)
-    assert.deepEqual(Array.from(dialog()!.querySelectorAll('button')).map(element => element.textContent).filter(Boolean), ['登录和连接', '设置', '打开 Web', '手机连接', '退出登录'])
+    assert.deepEqual(Array.from(dialog()!.querySelectorAll('button')).map(element => element.textContent).filter(Boolean), ['登录和连接', '设置', '桥接日志', '打开 Web', '手机连接', '退出登录'])
     const avatarImage = dialog()!.querySelector('img')!
     assert.equal(avatarImage.getAttribute('src'), avatar)
     await act(async () => { avatarImage.dispatchEvent(new dom.window.Event('error')) })
@@ -411,6 +416,25 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.match(dialog()!.textContent!, /读取状态失败/)
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang|打开 Web|退出登录|登录 Agents Anywhere Cloud/)
     assert.ok(button('重新检查'))
+    // Diagnostics must stay accessible when installation/ownership inspection fails.
+    await act(async () => { button('桥接日志').click() })
+    assert.match(dialog()!.textContent!, /session.visibility_read.failed/)
+    assert.match(dialog()!.textContent!, /native-test/)
+    assert.equal(dialog()!.querySelector('[role="tabpanel"]')?.getAttribute('aria-labelledby'), button('桥接日志').id)
+    assert.doesNotMatch(dialog()!.textContent!, /BensonWang|benson@example/)
+    await act(async () => { button('暂停刷新').click() })
+    const pausedReads = calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 2100)) })
+    assert.equal(calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length, pausedReads)
+    failLogs = true
+    await act(async () => { button('刷新').click() })
+    assert.match(dialog()!.textContent!, /暂时无法读取桥接日志/)
+    assert.match(dialog()!.textContent!, /native-test/, 'Failed refresh keeps the last successful logs')
+    failLogs = false
+    await act(async () => { button('刷新').click(); button('继续刷新').click() })
+    const resumedReads = calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 2100)) })
+    assert.ok(calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length > resumedReads)
     failInspect = false
     await reopen()
 
@@ -426,7 +450,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       assert.match(dialog()!.textContent!, /已安装桌面端，连接功能即将开放。/)
       assert.equal(dialog()!.querySelector('input, img, form, a'), null)
       assert.doesNotMatch(dialog()!.textContent!, /BensonWang|账号信息|Connector|打开 Web|退出登录|登录 Agents Anywhere Cloud/)
-      assert.equal(dialog()!.querySelectorAll('button').length, 1, 'Desktop placeholder only has the official close control')
+      assert.equal(dialog()!.querySelectorAll('button').length, 4, 'Desktop placeholder retains access to bridge diagnostics')
     }
     assert.equal(calls.filter(call => /\/(begin|logout|cancel)$/.test(call.endpoint)).length, actionsBeforeDesktop)
 

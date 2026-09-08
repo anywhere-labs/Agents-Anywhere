@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { link, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { dirname } from 'node:path'
@@ -6,6 +6,7 @@ import { acquireManagerLock } from '../storage/files.js'
 import { BridgeError, publicError } from './errors.js'
 import { RuntimeRouter, type SessionReader } from './router.js'
 import { record } from './types.js'
+import { quietDiagnostics, type RuntimeDiagnostics } from './diagnostics.js'
 
 export const MAX_FRAME_BYTES = 8 * 1024 * 1024
 export interface Endpoint { version: 1, host: '127.0.0.1', port: number, token: string, pid: number }
@@ -30,7 +31,8 @@ export class RuntimeServer {
   private closeTask: Promise<void> | undefined
   private releaseLease: (() => Promise<void>) | undefined
 
-  constructor(readonly endpointPath: string, private readonly reader: SessionReader) {}
+  constructor(readonly endpointPath: string, private readonly reader: SessionReader,
+    private readonly diagnostics: RuntimeDiagnostics = reader.native?.diagnostics ?? quietDiagnostics) {}
 
   start(): Promise<Endpoint> {
     this.startTask ??= this.openWithLease()
@@ -43,6 +45,7 @@ export class RuntimeServer {
     this.releaseLease = await acquireManagerLock(this.endpointPath, () => { void this.close().catch(() => undefined) })
     try { return await this.open() }
     catch (error) {
+      this.diagnostics.log('error', 'bridge.start_failed', {}, error)
       await this.releaseLease()
       this.releaseLease = undefined
       throw error
@@ -75,6 +78,7 @@ export class RuntimeServer {
         await link(temporary, this.endpointPath)
       } finally { await unlink(temporary).catch(() => undefined) }
       this.endpoint = endpoint
+      this.diagnostics.log('info', 'bridge.listening', { host: endpoint.host, port: endpoint.port, protocolVersion: '1.0', projectionVersion: 2 })
       return endpoint
     } catch (error) {
       for (const socket of this.sockets) socket.destroy()
@@ -104,13 +108,16 @@ export class RuntimeServer {
       const release = this.releaseLease
       this.releaseLease = undefined
       await release?.()
+      this.diagnostics.log('info', 'bridge.stopped')
     }
   }
 
   private accept(socket: Socket, token: string): void {
     if (this.closed || this.sockets.size >= 16) { socket.destroy(); return }
+    const connectionId = randomUUID()
+    this.diagnostics.log('debug', 'bridge.connected', { connectionId })
     this.sockets.add(socket)
-    socket.on('error', () => undefined)
+    socket.on('error', error => this.diagnostics.log('warn', 'bridge.socket_error', { connectionId }, error))
     const inFlight = new Map<string | number, AbortController>()
     const authTimer = setTimeout(() => socket.destroy(), 10_000)
     authTimer.unref()
@@ -126,6 +133,8 @@ export class RuntimeServer {
 
     const dispatch = async (line: Buffer) => {
       let id: string | number | undefined
+      let method = 'invalid'
+      const start = performance.now()
       try {
         let raw: unknown
         try { raw = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(line)) }
@@ -136,6 +145,7 @@ export class RuntimeServer {
           throw new BridgeError('INVALID_REQUEST', 'Expected a JSON-RPC request object.')
         }
         const params = record(request.params)
+        method = /^[a-zA-Z$/][a-zA-Z0-9.$/_]{0,79}$/.test(request.method) ? request.method : 'invalid'
         if (request.method === '$/cancelRequest' && request.id === undefined && router) {
           const target = params.id
           if (typeof target === 'string' || typeof target === 'number') inFlight.get(target)?.abort()
@@ -159,8 +169,12 @@ export class RuntimeServer {
           if (typeof namespace !== 'string' || !namespace || namespace.length > 512) throw new BridgeError('INVALID_PARAMS', 'A runtime namespace is required.')
           router = new RuntimeRouter(this.reader, namespace,
             batch => send({ jsonrpc: '2.0', method: 'runtime.sync.batch', params: batch }),
-            error => { send({ jsonrpc: '2.0', method: 'runtime.error', params: publicError(error).toJSON() }); socket.end() })
+            error => {
+              this.diagnostics.log('error', 'bridge.sync_failed', { connectionId }, error)
+              send({ jsonrpc: '2.0', method: 'runtime.error', params: publicError(error).toJSON() }); socket.end()
+            })
           clearTimeout(authTimer)
+          this.diagnostics.log('info', 'bridge.initialized', { connectionId, syncMode: this.reader.native ? 'events' : 'polling' })
           send({ jsonrpc: '2.0', id, result: {
             identity: { runtime: 'dsh', runtimeVersion: '0.1.2-rc.1', bridgeVersion: '0.1.0-dev.0', protocolVersion: '1.0', displayName: 'DeepSeek Harness' },
             storage: { mode: 'dsh-native', sameSessionWriterLimit: 1, crossProcessWriterExclusion: false },
@@ -175,8 +189,10 @@ export class RuntimeServer {
           const result = await router.request(request.method, params, abort.signal)
           abort.signal.throwIfAborted()
           send({ jsonrpc: '2.0', id, result })
+          if (method !== 'runtime.sync.ack') this.diagnostics.log('debug', 'rpc.completed', { connectionId, method, elapsedMs: Math.round(performance.now() - start) })
         } finally { inFlight.delete(id) }
       } catch (error) {
+        this.diagnostics.log('error', 'rpc.failed', { connectionId, method, elapsedMs: Math.round(performance.now() - start) }, error)
         fail(id, error)
         if (!router) socket.end()
       }
@@ -194,6 +210,7 @@ export class RuntimeServer {
       if (buffer.length > MAX_FRAME_BYTES) socket.destroy()
     })
     socket.on('close', () => {
+      this.diagnostics.log('info', 'bridge.disconnected', { connectionId, initialized: Boolean(router), pendingRequests: inFlight.size })
       router?.close()
       clearTimeout(authTimer)
       for (const abort of inFlight.values()) abort.abort()

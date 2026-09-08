@@ -1,5 +1,6 @@
 import type { ConnectorAction, ConnectorFolder, ConnectorManagement, ConnectorSettings } from './connector.js'
 import type { MobileLoginSnapshot } from './mobile.js'
+import type { BridgeLogSnapshot } from './logs.js'
 
 // The Connector bridge protocol stays in contracts/dsh-bridge.
 export const HOST_NAMESPACE = 'agentsAnywhereOnboarding'
@@ -50,6 +51,7 @@ export interface OnboardingSnapshot {
 }
 
 export interface OnboardingHostApi {
+  readBridgeLogs(): Promise<BridgeLogSnapshot>
   inspect(): Promise<OnboardingSnapshot>
   /** No input resumes the currently configured account; explicit input selects a login target. */
   begin(input?: LoginRequest): Promise<{ url: string }>

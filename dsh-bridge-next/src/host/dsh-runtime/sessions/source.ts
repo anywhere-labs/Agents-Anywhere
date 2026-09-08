@@ -3,6 +3,7 @@ import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionRecord } from '@deepseek-ai/dsh-session-query'
 import { BridgeError } from '../errors.js'
 import { isUserMessage, sessionVisible } from '../visibility.js'
+import { quietDiagnostics, type RuntimeDiagnostics } from '../diagnostics.js'
 
 export interface SourceState {
   availability: 'available' | 'archived' | 'unavailable' | 'missing'
@@ -16,7 +17,7 @@ export class NativeSessionSource {
   private readonly withUserMessages = new Set<string>()
   readonly records = new Map<string, SessionRecord>()
 
-  constructor(private ctx: Context) {
+  constructor(private ctx: Context, private diagnostics: RuntimeDiagnostics = quietDiagnostics) {
     this.archived = new Set(ctx.workspaceRegistry.archivedSessionIds)
   }
 
@@ -28,7 +29,7 @@ export class NativeSessionSource {
 
   async refresh(signal?: AbortSignal): Promise<void> {
     const previous = new Map(this.records)
-    const entries = await this.ctx.sessionQuery.listSessions(signal)
+    const entries = await this.diagnostics.measure('inventory.query', {}, () => this.ctx.sessionQuery.listSessions(signal))
     signal?.throwIfAborted()
     const listed = new Set<string>(entries.map(entry => entry.header.id))
     // A catalog captured before a new session's events must not erase those events' identity.
@@ -53,7 +54,7 @@ export class NativeSessionSource {
     if (!header || header.origin === 'subagent' || this.archived.has(id)) return false
     if (!this.withUserMessages.has(id)) {
       if (!live && this.records.get(id)?.persisted === false) return false
-      const events = live?.snapshotEvents() ?? (await this.ctx.sessionQuery.readSession(id as SessionId)).events
+      const events = live?.snapshotEvents() ?? (await this.diagnostics.measure('session.visibility_read', { sessionId: id }, () => this.ctx.sessionQuery.readSession(id as SessionId))).events
       // Cache positive evidence only: an earlier blank read must not hide a later first message.
       if (events.some(isUserMessage)) this.withUserMessages.add(id)
     }

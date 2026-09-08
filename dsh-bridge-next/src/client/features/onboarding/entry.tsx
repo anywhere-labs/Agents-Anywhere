@@ -8,6 +8,10 @@ import { AccountPanel } from './account-panel.js'
 import { useOnboardingState } from './state.js'
 import css from './entry.module.css'
 import { SettingsPanel } from './settings-panel.js'
+import { BridgeLogsPanel } from './bridge-logs-panel.js'
+
+const tabs = ['connection', 'settings', 'logs'] as const
+const tabLabels = { connection: '登录和连接', settings: '设置', logs: '桥接日志' }
 
 export interface ConnectionEntryProps {
   wide: boolean
@@ -16,7 +20,7 @@ export interface ConnectionEntryProps {
 
 export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
   const [open, setOpen] = useState(false)
-  const [tab, setTab] = useState<'connection' | 'settings'>('connection')
+  const [tab, setTab] = useState<typeof tabs[number]>('connection')
   const tabId = useId()
   const state = useOnboardingState(host, open)
   const snapshot = state.snapshot
@@ -107,33 +111,35 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
       onClose={close}
       title={standalone ? 'Agents Anywhere' : '手机连接'}
       closeLabel="关闭手机连接"
-      className={clsx(css.dialog, standalone ? css.wordmarkDialog : css.accountDialog)}
+      className={clsx(css.dialog, standalone ? css.wordmarkDialog : css.accountDialog, tab === 'logs' && css.logsDialog)}
       contentClassName={clsx(css.dialogContent)}
     >
       <div ref={content}>
-        {ownershipError ? <p className={css.placeholder} role="alert">{ownershipError}</p> : !standalone ? <>
-          <p className={css.placeholder} role={detectionError ? 'alert' : 'status'}>{detectionMessage}</p>
-          {detectionError ? <Button variant="outline" disabled={state.busy} onClick={() => void state.run(state.refresh)}>重新检查</Button> : null}
-        </> : <>
           <div className={css.tabs} role="tablist" aria-label="连接管理">
-            {(['connection', 'settings'] as const).map(value => <Button key={value} variant={tab === value ? 'outline' : 'ghost'}
+            {tabs.map(value => <Button key={value} variant={tab === value ? 'outline' : 'ghost'}
               role="tab" id={`${tabId}-${value}`} aria-selected={tab === value} aria-controls={`${tabId}-panel`}
               tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => {
                 if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
                 event.preventDefault()
-                const next = event.key === 'Home' ? 'connection' : event.key === 'End' ? 'settings' : value === 'connection' ? 'settings' : 'connection'
+                const index = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+                  : (tabs.indexOf(value) + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+                const next = tabs[index]!
                 setTab(next); document.getElementById(`${tabId}-${next}`)?.focus()
-              }}>{value === 'connection' ? '登录和连接' : '设置'}</Button>)}
+              }}>{tabLabels[value]}</Button>)}
           </div>
           <div id={`${tabId}-panel`} role="tabpanel" aria-labelledby={`${tabId}-${tab}`}>
+        {tab === 'logs' ? <BridgeLogsPanel host={host} /> : ownershipError ? <p className={css.placeholder} role="alert">{ownershipError}</p> : !standalone ? <>
+          <p className={css.placeholder} role={detectionError ? 'alert' : 'status'}>{detectionMessage}</p>
+          {detectionError ? <Button variant="outline" disabled={state.busy} onClick={() => void state.run(state.refresh)}>重新检查</Button> : null}
+        </> : <>
             {tab === 'settings' ? <SettingsPanel host={host} state={state} snapshot={snapshot} onConnection={() => setTab('connection')} />
               : snapshot.account ? <AccountPanel key={`${snapshot.settings.apiBaseUrl}:${snapshot.account.userId}`} host={host} state={state} snapshot={snapshot} account={snapshot.account} />
                 : <>
                   {showLogin ? <p className={css.loginDescription}>在所有设备间访问你的 Agent、会话和工作空间。</p> : null}
                   <OnboardingSection host={host} state={state} />
                 </>}
-          </div>
         </>}
+          </div>
       </div>
     </Modal>
   </>

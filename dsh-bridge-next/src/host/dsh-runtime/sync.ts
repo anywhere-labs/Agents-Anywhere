@@ -41,13 +41,24 @@ export class SyncFeed {
       this.wake?.(); this.wake = undefined
     })
   }
-  start(): void { void this.run().catch(error => { if (!this.closed) this.fail(error) }) }
-  private fail(error: unknown): void { this.close(); this.failed(error) }
+  start(): void {
+    this.native.diagnostics.log('info', 'sync.started', { streamId: this.id })
+    void this.run().catch(error => { if (!this.closed) this.fail(error) })
+  }
+  private fail(error: unknown): void {
+    this.native.diagnostics.log('error', 'sync.failed', { streamId: this.id, batchSeq: this.batchSeq, waitingAck: this.waitAck?.seq, queuedEvents: this.queue.length }, error)
+    this.close(); this.failed(error)
+  }
   ack(seq: number): void {
     if (seq > this.batchSeq || !Number.isSafeInteger(seq)) throw new Error('Invalid event acknowledgement')
-    if (this.waitAck?.seq === seq) { const pending = this.waitAck; this.waitAck = undefined; pending.resolve() }
+    if (this.waitAck?.seq === seq) {
+      this.native.diagnostics.log('debug', 'sync.ack', { streamId: this.id, batchSeq: seq, elapsedMs: Math.round(performance.now() - this.lastSentAt) })
+      const pending = this.waitAck; this.waitAck = undefined; pending.resolve()
+    }
   }
   close(): void {
+    if (this.closed) return
+    this.native.diagnostics.log('info', 'sync.stopped', { streamId: this.id, batchSeq: this.batchSeq, waitingAck: this.waitAck?.seq })
     this.closed = true
     this.abort.abort()
     this.unwatch()
@@ -90,7 +101,10 @@ export class SyncFeed {
     await new Promise<void>((resolve, reject) => {
       this.waitAck = { seq: batch.batchSeq, resolve, reject }
       this.lastSentAt = performance.now()
-      try { this.notify(batch) } catch (error) { this.waitAck = undefined; reject(error) }
+      try {
+        this.native.diagnostics.log('debug', 'sync.batch', { streamId: this.id, batchSeq: batch.batchSeq, operations: operations.length, kinds: operations.map(op => op.kind).join(',') })
+        this.notify(batch)
+      } catch (error) { this.waitAck = undefined; reject(error) }
     })
   }
   private async notification(method: string, params: Record<string, unknown>): Promise<void> {
@@ -118,6 +132,8 @@ export class SyncFeed {
   }
   private async baseline(id: string): Promise<void> {
     if (!await this.native.visible(id)) return
+    const start = performance.now()
+    this.native.diagnostics.log('debug', 'snapshot.started', { streamId: this.id, sessionId: id })
     const log = await this.native.read(id as SessionId)
     const platformId = sessionId(this.namespace, id)
     const projection = createProjection(id, platformId)
@@ -146,6 +162,7 @@ export class SyncFeed {
     this.sourceAvailability.set(id, 'available')
     await this.notices(id)
     await this.state(id)
+    this.native.diagnostics.log('info', 'snapshot.completed', { streamId: this.id, sessionId: id, items: contentItems(projection.snapshot()).length, elapsedMs: Math.round(performance.now() - start) })
   }
   private async notices(id: string): Promise<void> {
     for (const notice of this.native.questions.notices(this.namespace, id)) await this.notification('notice.upsert', notice)
@@ -238,6 +255,7 @@ export class SyncFeed {
       externalSessionId: id, sourceState: await this.native.source.state(id) })
     await this.notification('session.inventory.complete', { scanToken: this.id, complete: true,
       sessions })
+    this.native.diagnostics.log('info', 'sync.inventory_completed', { streamId: this.id, sessions: this.published.size })
     while (!this.closed) {
       if (!this.queue.length) await new Promise<void>(resolve => { this.wake = resolve })
       if (this.closed) break

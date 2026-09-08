@@ -6,6 +6,7 @@ from pathlib import Path
 
 from connector.runtimes.dsh.bridge.client import BridgeClient
 from connector.runtimes.dsh.discovery import BridgeEndpoint
+from connector.logging import logger
 
 
 def test_bridge_client_handshake_notification_and_disconnect(tmp_path: Path) -> None:
@@ -140,3 +141,28 @@ def test_bridge_client_observes_notification_handler_failure(tmp_path: Path) -> 
         assert loop_errors == []
 
     asyncio.run(run())
+
+
+def test_bridge_runtime_error_is_logged_without_native_message(tmp_path: Path) -> None:
+    async def ignore(*_args: object) -> None:
+        pass
+
+    client = BridgeClient(
+        endpoint=BridgeEndpoint("127.0.0.1", 1, "private-token", 1, tmp_path / "endpoint.json"),
+        connector_id="test", client_version="test", startup_timeout=2,
+        request_timeout=2, notification_handler=ignore, exit_handler=ignore,
+    )
+    messages: list[str] = []
+    sink = logger.add(lambda message: messages.append(message.record["message"]))
+    try:
+        client._handle_frame(json.dumps({
+            "jsonrpc": "2.0", "method": "runtime.error", "params": {
+                "message": "PRIVATE_SESSION_JSON private-token", "code": -32008,
+                "data": {"code": "PERSISTENCE_ERROR", "retryable": False},
+            },
+        }).encode())
+        assert client.failure_code == "PERSISTENCE_ERROR"
+        assert any("PERSISTENCE_ERROR" in message for message in messages)
+        assert all("PRIVATE_SESSION_JSON" not in message and "private-token" not in message for message in messages)
+    finally:
+        logger.remove(sink)

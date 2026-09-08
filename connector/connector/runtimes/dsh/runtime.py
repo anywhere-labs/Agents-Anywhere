@@ -22,6 +22,7 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.logging import logger
 from connector.runtimes.dsh import discovery, provider_config
 from connector.runtimes.dsh.bridge import models
 from connector.runtimes.dsh.bridge.client import BridgeClient, BridgeRpcError
@@ -373,6 +374,7 @@ class DshRuntime(AgentRuntime):
                 raise RuntimeUnavailableError(str(exc)) from exc
             raise RuntimeUpstreamError(str(exc)) from exc
         except (OSError, TimeoutError, ConnectionError, RuntimeError) as exc:
+            logger.warning("DSH bridge request unavailable method={} error_type={}; check the plugin Bridge logs page", method, type(exc).__name__)
             raise RuntimeUnavailableError("DSH bridge is unavailable") from exc
         except ValueError as exc:
             raise RuntimeUpstreamError(str(exc)) from exc

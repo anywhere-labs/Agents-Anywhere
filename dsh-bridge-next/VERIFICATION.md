@@ -1,5 +1,13 @@
 # DSH Bridge Next 验证记录
 
+## 桥接日志页与实机定位（2026-09-08）
+
+插件新增「手机连接 → 桥接日志」：固定读取本插件两份运行日志，最近 200 条，每两秒刷新，可暂停；不依赖 Connector 所有权、账号或安装检测成功。DSH 日志分类与文件均记录错误码、读取阶段、会话 ID 和去除异常正文后的堆栈，Python 同时记录插件发出的 `runtime.error`。
+
+类型检查、构建、产物及真实 Client factory 的 DOM 交互检查通过；插件 94 项测试通过，Connector 相关 24 项通过。首次本地全量运行遇到一个临时管理端口占用，重跑 94 项通过。上一轮回退 CI 的 endpoint 等待超时已延长；后续远程状态单独核对。
+
+用户重启后的真实日志显示：历史会话读取报 `SESSION_QUERY_PERSISTENCE_FAILED`，cause 在 DSH `SessionLogScanner.consumeEventLine`；插件首次 inventory 尚未完成就关闭事件连接，重连后在同一会话再次失败。日志页已在真实环境显示这些错误，故障修复与恢复验收另行记录。
+
 ## 当前分支：回退 DSH 图片与配置扩展
 
 2026-09-08，分支 `codex/dsh-before-images`。用户报告：CLI 已连接 AA，AA 发往 DSH 的 RPC 能产生效果，但 DSH session 没有自动同步、数据没有正确回传。因此按要求撤回 `742d09be` 的 DSH 图片与同期模型/effort/权限、模式配置实现，回到 `65ad5d9f` 的文本运行时。

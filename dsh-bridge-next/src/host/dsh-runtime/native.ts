@@ -15,6 +15,7 @@ import { ClientPresence } from './visibility.js'
 import { NativeSessionSource } from './sessions/source.js'
 import { record } from './types.js'
 import { UserQuestions } from './questions.js'
+import { RuntimeDiagnostics } from './diagnostics.js'
 
 export type NativeChange = { type: 'event', id: string, event: SessionEvent }
   | { type: 'session', id: string } | { type: 'status', id: string }
@@ -33,9 +34,9 @@ export class NativeRuntime {
   private writes = new Map<string, Promise<unknown>>()
   private closed = false
 
-  constructor(readonly ctx: Context) {
+  constructor(readonly ctx: Context, readonly diagnostics = new RuntimeDiagnostics(ctx.logger('agents-anywhere-runtime'))) {
     this.presence = new ClientPresence(() => this.emit({ type: 'visibility' }))
-    this.source = new NativeSessionSource(ctx)
+    this.source = new NativeSessionSource(ctx, diagnostics)
     this.questions = new UserQuestions(ctx, id => this.visible(id), id => this.emit(id ? { type: 'question', id } : { type: 'capabilities' }))
     ctx.on('session/created', session => {
       this.source.observe(session)
@@ -87,12 +88,13 @@ export class NativeRuntime {
       signal?.throwIfAborted()
       if (await this.visible(entry.header.id)) result.push(entry)
     }
+    this.diagnostics.log('info', 'inventory.completed', { candidates: this.source.records.size, visible: result.length, archived: this.source.archived.size })
     return result
   }
   visible(id: string): Promise<boolean> { return this.source.visible(id) }
   async read(id: SessionId): Promise<SessionLogSnapshot> {
     await this.source.requireAvailable(id)
-    const snapshot = await this.ctx.sessionQuery.readSession(id)
+    const snapshot = await this.diagnostics.measure('session.read', { sessionId: id }, () => this.ctx.sessionQuery.readSession(id))
     await this.source.requireAvailable(id)
     return snapshot
   }

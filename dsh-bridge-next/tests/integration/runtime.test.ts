@@ -15,7 +15,8 @@ import { sessionId } from '../../src/host/dsh-runtime/identity.js'
 
 const execute = promisify(execFile)
 async function endpoint(path: string): Promise<Endpoint> {
-  for (let n = 0; n < 100; n++) {
+  // Host children initialize asynchronously; allow a loaded headless CI runner.
+  for (let n = 0; n < 1000; n++) {
     try { return JSON.parse(await readFile(path, 'utf8')) as Endpoint } catch { await delay(10) }
   }
   throw new Error('Runtime did not publish its endpoint')
