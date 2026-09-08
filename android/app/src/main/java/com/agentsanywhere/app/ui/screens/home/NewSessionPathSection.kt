@@ -64,7 +64,6 @@ internal fun ChoosePathSection(
     onOpenEntry: (NewSessionPathEntry) -> Unit,
     title: String? = null,
     enabled: Boolean = true,
-    currentSelected: Boolean = false,
     onRetry: (() -> Unit)? = null,
     collapsible: Boolean = false,
 ) {
@@ -110,7 +109,6 @@ internal fun ChoosePathSection(
             darkMode = darkMode,
             canGoParent = parentPath != null && enabled && !loading,
             canUseCurrent = canUseCurrent && enabled && !loading && error == null,
-            currentSelected = currentSelected,
             onParent = openParent,
             onUseCurrent = onUseCurrent?.let { selectCurrent ->
                 {
@@ -186,7 +184,6 @@ private fun CurrentDirectoryBar(
     darkMode: Boolean,
     canGoParent: Boolean,
     canUseCurrent: Boolean,
-    currentSelected: Boolean,
     onParent: () -> Unit,
     onUseCurrent: (() -> Unit)?,
     enabled: Boolean,
@@ -252,15 +249,13 @@ private fun CurrentDirectoryBar(
             }
         } else if (onUseCurrent != null) CircleMiniButton(
             darkMode = darkMode,
-            selected = currentSelected || (!darkMode && canUseCurrent),
             enabled = canUseCurrent,
             onClick = onUseCurrent,
         ) {
             val checkColor = when {
                 !canUseCurrent -> if (darkMode) Color(0xFF52525B) else Color(0xFFBDBDBD)
-                currentSelected -> Color(0xFF16A34A)
                 darkMode -> Color(0xFFA1A1AA)
-                else -> Color(0xFF16A34A)
+                else -> Color(0xFF555555)
             }
             Icon(
                 imageVector = Lucide.Check,

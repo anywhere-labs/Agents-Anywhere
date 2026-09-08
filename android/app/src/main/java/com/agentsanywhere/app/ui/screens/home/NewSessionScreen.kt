@@ -50,7 +50,6 @@ import com.agentsanywhere.app.feature.sessions.NewSessionPreferenceStore
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeCapabilities
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeSelectionState
 import com.agentsanywhere.app.feature.sessions.SessionsState
-import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.feature.sessions.availableProjectName
@@ -89,7 +88,6 @@ fun NewSessionScreen(
     onPrepareSession: (NewSessionDraft) -> Unit,
     onRefreshDevices: () -> Unit,
     devicesRefreshing: Boolean,
-    onOpenDevice: (AgentDevice) -> Unit,
     initialProjectId: String? = null,
     projectOnly: Boolean = false,
     onCreateProject: suspend (String, String, String) -> Result<AgentProject> = { _, _, _ ->
@@ -303,8 +301,9 @@ fun NewSessionScreen(
         selectedConnectorId = selectedDeviceId,
         hasSelectedRuntime = hasAvailableSelectedRuntime,
     )
+    val checkingDevices = setupState?.reason == NewSessionSetupReason.CheckingDevices
     val checkingAgents = setupState?.reason == NewSessionSetupReason.CheckingAgents
-    val setupPageState = setupState?.takeUnless { it.reason == NewSessionSetupReason.CheckingAgents }
+    val setupPageState = setupState?.takeUnless { checkingDevices || checkingAgents }
     LaunchedEffect(setupPageState?.reason) {
         if (setupPageState != null) {
             editingTitle = false
@@ -458,11 +457,11 @@ fun NewSessionScreen(
         homePath = resolved
     }
 
-    LaunchedEffect(homePath, selectedDevice?.id, hasAvailableSelectedRuntime, creatingProject) {
+    LaunchedEffect(homePath, selectedDevice?.id, hasAvailableSelectedRuntime, creatingProject, choosePath) {
         val deviceId = selectedDevice?.id ?: return@LaunchedEffect
         val resolved = homePath ?: return@LaunchedEffect
         // Do not lock onto a home-directory project before an available Agent determines the device.
-        if (!creatingProject && hasAvailableSelectedRuntime && selectedWorkspacePath.isBlank()) {
+        if (!creatingProject && !choosePath && hasAvailableSelectedRuntime && selectedWorkspacePath.isBlank()) {
             val project = workspaceProject(projects, deviceId, resolved, selectedDeviceOs)
             selectedProjectId = project?.id
             selectedWorkspacePath = project?.workspacePath ?: resolved
@@ -486,7 +485,12 @@ fun NewSessionScreen(
     }
 
     val canUseCurrentPath = isSelectableRemoteDirectory(currentPath, selectedDeviceOs)
-    val effectiveWorkspacePath = selectedWorkspacePath
+    val effectiveWorkspacePath = if (choosePath) currentPath else selectedWorkspacePath
+    val workspaceReady = if (choosePath) {
+        canUseCurrentPath && !pathLoading && pathError == null
+    } else {
+        effectiveWorkspacePath.isNotBlank()
+    }
     val catalogsLoading = selectedRuntime != null && (
         !runtimeSelection.capabilities.loaded ||
             runtimeSelection.capabilities.loading ||
@@ -529,6 +533,7 @@ fun NewSessionScreen(
                     NewSessionConfigurationOption(id = device.id, label = device.name)
                 },
                 enabled = devices.isNotEmpty() && !projectCreating,
+                loading = checkingDevices,
             ),
         )
         if (!projectOnly) add(
@@ -544,7 +549,7 @@ fun NewSessionScreen(
                     )
                 },
                 enabled = !creatingProject && selectedDevice != null && runtimeSelection.runtimes.isNotEmpty(),
-                loading = checkingAgents || (selectedDevice != null && runtimeSelection.runtimesLoading),
+                loading = checkingDevices || checkingAgents || (selectedDevice != null && runtimeSelection.runtimesLoading),
             ),
         )
         if (!projectOnly && showModelConfiguration) {
@@ -629,7 +634,7 @@ fun NewSessionScreen(
         runtimeSelection.connectorId == selectedDevice.id &&
         selectedRuntime != null &&
         runtimeSelection.readyForCreate &&
-        effectiveWorkspacePath.isNotBlank() &&
+        workspaceReady &&
         !creatingProject
 
     fun submitTitle() {
@@ -642,6 +647,11 @@ fun NewSessionScreen(
         val device = selectedDevice ?: return
         val runtime = selectedRuntime ?: return
         if (!canStart) return
+        val project = if (choosePath) {
+            workspaceProject(projects, device.id, effectiveWorkspacePath, device.deviceOs)
+        } else {
+            selectedProject
+        }
         preferenceStore.save(
             connectorId = device.id,
             runtimeId = runtime.id,
@@ -650,7 +660,7 @@ fun NewSessionScreen(
         onPrepareSession(
             NewSessionDraft(
                 connectorId = device.id,
-                projectId = selectedProject?.id.orEmpty(),
+                projectId = project?.id.orEmpty(),
                 runtime = runtime.type,
                 title = title.trim().takeIf(String::isNotBlank),
                 cwd = effectiveWorkspacePath.trim().takeIf(String::isNotBlank),
@@ -843,10 +853,7 @@ fun NewSessionScreen(
                 NewSessionSetupPanel(
                     state = setupPageState,
                     refreshing = devicesRefreshing || inventory.pendingInitial.isNotEmpty(),
-                    onConnectDevice = { navigate(AppDestination.DeviceSetup) },
-                    onOpenDevices = { device ->
-                        if (device == null) navigate(AppDestination.Devices) else onOpenDevice(device)
-                    },
+                    onOpenDevices = { navigate(AppDestination.Devices) },
                     onRetry = {
                         onRefreshDevices()
                         inventory.refresh()
@@ -932,8 +939,6 @@ fun NewSessionScreen(
                         error = pathError,
                         darkMode = darkMode,
                         canUseCurrent = canUseCurrentPath,
-                        currentSelected = canUseCurrentPath && workspacePathKey(currentPath, selectedDeviceOs) ==
-                            workspacePathKey(selectedWorkspacePath, selectedDeviceOs),
                         modifier = Modifier.weight(1f),
                         onBack = { choosePath = false },
                         onParent = {
@@ -1002,7 +1007,7 @@ fun NewSessionScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                 val runtimeError = when {
-                    checkingAgents || inventory.loading -> null
+                    checkingDevices || checkingAgents || inventory.loading -> null
                     onlineDevices.isEmpty() -> stringResource(R.string.new_session_no_online_agent)
                     devices.isEmpty() -> inventory.errors.values.firstOrNull()
                         ?: stringResource(R.string.new_session_no_attached_agents)

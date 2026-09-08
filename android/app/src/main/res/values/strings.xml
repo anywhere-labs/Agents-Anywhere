@@ -302,7 +302,7 @@
     <string name="new_session_checking_devices">Checking devices</string>
     <string name="new_session_checking_devices_description">Getting the connection status of your devices.</string>
     <string name="new_session_devices_unavailable">Unable to load devices</string>
-    <string name="new_session_devices_unavailable_description">Check your phone\'s connection and try again, or open Devices to check the connection status.</string>
+    <string name="new_session_devices_unavailable_description">Unable to check device status. Please try again.</string>
     <string name="new_session_connect_device_title">Connect a device first</string>
     <string name="new_session_connect_device_description">Sessions run on your computer. Connect a device, then choose an Agent to start chatting.</string>
     <string name="new_session_devices_offline_title">Your device is offline</string>
@@ -318,6 +318,7 @@
     <string name="new_session_agent_starting_title">Agent is starting</string>
     <string name="new_session_agent_starting_description">Your Agent is starting and will be ready to chat soon.</string>
     <string name="new_session_configure_agent_action">Set up Agent</string>
+    <string name="new_session_no_available_agents">No available online Agent found.\nCheck your device and Agent settings.</string>
     <string name="new_session_start_agent_action">Start Agent</string>
     <string name="new_session_view_agent_action">View Agent</string>
     <string name="new_session_connect_device_action">Connect device</string>

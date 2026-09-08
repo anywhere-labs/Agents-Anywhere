@@ -249,7 +249,6 @@ internal fun AgentsAnywhereNavHost(
                     onPrepareSession = onPrepareSession,
                     onRefreshDevices = onRefreshSessions,
                     devicesRefreshing = isRefreshingSessions,
-                    onOpenDevice = onOpenDevice,
                     initialProjectId = initialNewSessionProjectId.takeIf { destination == AppDestination.NewSession },
                     projectOnly = destination == AppDestination.NewProject,
                     sidebarViewMode = sidebarViewMode,
