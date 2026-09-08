@@ -615,8 +615,6 @@ private fun SessionUnreadIndicator(
     Box(
         modifier = Modifier
             .size(18.dp)
-            .clip(CircleShape)
-            .background(color.copy(alpha = 0.14f))
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {

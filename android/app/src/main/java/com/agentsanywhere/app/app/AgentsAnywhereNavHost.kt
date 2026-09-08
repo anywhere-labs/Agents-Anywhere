@@ -329,7 +329,6 @@ internal fun AgentsAnywhereNavHost(
                         onLoadPage = onLoadArchivedPage,
                         onRestoreSession = { onSetSessionArchived(it, false) },
                         onRestoreProject = onRestoreProject,
-                        onOpenSession = onOpenSession,
                         onBack = { navigate(AppDestination.Sessions) },
                     )
                 }

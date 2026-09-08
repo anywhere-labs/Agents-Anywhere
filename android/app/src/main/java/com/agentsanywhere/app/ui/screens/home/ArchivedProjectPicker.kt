@@ -13,6 +13,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -35,26 +36,34 @@ internal fun ArchivedProjectSelector(
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalAAColors.current
+    val filterDescription = stringResource(R.string.archive_filter_label)
     val expandedDescription = stringResource(if (expanded) R.string.archive_filter_expanded else R.string.archive_filter_collapsed)
     Surface(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.fillMaxWidth().semantics { stateDescription = expandedDescription },
+        modifier = modifier.fillMaxWidth().semantics {
+            contentDescription = filterDescription
+            stateDescription = expandedDescription
+        },
         shape = RoundedCornerShape(18.dp),
         color = colors.raisedSurface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, colors.border),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            modifier = Modifier.heightIn(min = 48.dp).padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Icon(Lucide.Folder, null, tint = archiveSecondaryInk(), modifier = Modifier.size(21.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(stringResource(R.string.archive_filter_label), color = archiveSecondaryInk(), fontSize = 11.sp)
-                Text(project?.name ?: stringResource(R.string.archived_all_projects), color = colors.ink,
-                    fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+            Text(
+                project?.name ?: stringResource(R.string.archived_all_projects),
+                modifier = Modifier.weight(1f),
+                color = colors.ink,
+                fontSize = 15.sp,
+                lineHeight = 20.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             Icon(if (expanded) Lucide.ChevronUp else Lucide.ChevronDown, null, tint = archiveSecondaryInk(), modifier = Modifier.size(18.dp))
         }
     }

@@ -30,6 +30,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -40,10 +41,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.agentsanywhere.app.R
 import com.agentsanywhere.app.ui.designsystem.BackIconButton
-import com.agentsanywhere.app.ui.designsystem.CheckGlyph
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Pencil
 
@@ -140,7 +142,12 @@ internal fun NewSessionHeader(
         }
         if (editable) HeaderCircleButton(darkMode = darkMode, onClick = onEditToggle) {
             if (editing) {
-                CheckGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF333333))
+                Icon(
+                    imageVector = Lucide.Check,
+                    contentDescription = stringResource(R.string.common_done),
+                    tint = colors.ink,
+                    modifier = Modifier.size(22.dp),
+                )
             } else {
                 Icon(
                     imageVector = Lucide.Pencil,

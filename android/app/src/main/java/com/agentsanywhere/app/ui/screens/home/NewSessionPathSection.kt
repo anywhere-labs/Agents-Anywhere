@@ -42,6 +42,7 @@ import com.agentsanywhere.app.ui.designsystem.CheckGlyph
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.composables.icons.lucide.ChevronDown
+import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.Lucide
@@ -205,7 +206,12 @@ private fun CurrentDirectoryBar(
         )
         if (canGoParent) {
             CircleMiniButton(darkMode = darkMode, onClick = onParent) {
-                BackGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777))
+                Icon(
+                    imageVector = Lucide.ChevronLeft,
+                    contentDescription = stringResource(R.string.common_back),
+                    tint = LocalAAColors.current.ink,
+                    modifier = Modifier.size(22.dp),
+                )
             }
         }
         if (onToggleList != null) {
