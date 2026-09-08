@@ -1,5 +1,6 @@
 package com.agentsanywhere.app.ui.screens.home
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -31,7 +33,6 @@ import com.agentsanywhere.app.R
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
-import com.composables.icons.lucide.Bot
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Monitor
 import com.composables.icons.lucide.RefreshCw
@@ -47,22 +48,24 @@ internal fun NewSessionSetupPanel(
 ) {
     val colors = LocalAAColors.current
     val reason = state.reason
-    val checking = reason == NewSessionSetupReason.CheckingDevices || reason == NewSessionSetupReason.CheckingAgents
-    val deviceStep = reason in setOf(
-        NewSessionSetupReason.CheckingDevices, NewSessionSetupReason.DeviceLoadFailed,
-        NewSessionSetupReason.NoDevices, NewSessionSetupReason.DevicesOffline,
-    )
-    val retryFirst = reason == NewSessionSetupReason.DeviceLoadFailed || reason == NewSessionSetupReason.AgentLoadFailed
+    // Agent checks stay in the form; only a confirmed result gets a separate state.
+    if (reason == NewSessionSetupReason.CheckingAgents) return
+    if (reason in setOf(
+            NewSessionSetupReason.AgentLoadFailed, NewSessionSetupReason.NeedsAgentSetup,
+            NewSessionSetupReason.NeedsAgentStart, NewSessionSetupReason.AgentStarting,
+        )
+    ) {
+        NewSessionAgentSetupPanel(state, onOpenDevices, onRetry, modifier)
+        return
+    }
+    val checking = reason == NewSessionSetupReason.CheckingDevices
+    val retryFirst = reason == NewSessionSetupReason.DeviceLoadFailed
     val (title, description) = when (reason) {
         NewSessionSetupReason.CheckingDevices -> R.string.new_session_checking_devices to R.string.new_session_checking_devices_description
         NewSessionSetupReason.DeviceLoadFailed -> R.string.new_session_devices_unavailable to R.string.new_session_devices_unavailable_description
         NewSessionSetupReason.NoDevices -> R.string.new_session_connect_device_title to R.string.new_session_connect_device_description
         NewSessionSetupReason.DevicesOffline -> R.string.new_session_devices_offline_title to R.string.new_session_devices_offline_description
-        NewSessionSetupReason.CheckingAgents -> R.string.new_session_checking_agents to R.string.new_session_checking_agents_description
-        NewSessionSetupReason.AgentLoadFailed -> R.string.new_session_agents_unavailable to R.string.new_session_agents_unavailable_description
-        NewSessionSetupReason.NeedsAgentSetup -> R.string.new_session_setup_agent_title to R.string.new_session_setup_agent_description
-        NewSessionSetupReason.NeedsAgentStart -> R.string.new_session_start_agent_title to R.string.new_session_start_agent_description
-        NewSessionSetupReason.AgentStarting -> R.string.new_session_agent_starting_title to R.string.new_session_agent_starting_description
+        else -> return
     }
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
@@ -74,10 +77,10 @@ internal fun NewSessionSetupPanel(
                 modifier = Modifier.size(72.dp).clip(RoundedCornerShape(24.dp)).background(colors.raisedSurface),
                 contentAlignment = Alignment.Center,
             ) {
-                if (checking || reason == NewSessionSetupReason.AgentStarting) {
+                if (checking) {
                     CircularProgressIndicator(Modifier.size(30.dp), color = colors.inkSoft, strokeWidth = 2.dp)
                 } else {
-                    Icon(if (deviceStep) Lucide.Monitor else Lucide.Bot, null, tint = colors.inkSoft, modifier = Modifier.size(32.dp))
+                    Icon(Lucide.Monitor, null, tint = colors.inkSoft, modifier = Modifier.size(32.dp))
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -95,7 +98,6 @@ internal fun NewSessionSetupPanel(
                         retryFirst && refreshing -> R.string.new_session_checking_again
                         retryFirst -> R.string.new_session_check_again
                         reason == NewSessionSetupReason.NoDevices -> R.string.new_session_connect_device_action
-                        reason == NewSessionSetupReason.NeedsAgentStart -> R.string.new_session_manage_agents
                         else -> R.string.new_session_view_devices
                     }),
                     enabled = !retryFirst || !refreshing,
@@ -125,6 +127,59 @@ internal fun NewSessionSetupPanel(
                         color = colors.muted, fontSize = 14.sp,
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NewSessionAgentSetupPanel(
+    state: NewSessionSetupState,
+    onOpenDevices: (AgentDevice?) -> Unit,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = LocalAAColors.current
+    val (message, action) = when (state.reason) {
+        NewSessionSetupReason.AgentLoadFailed ->
+            R.string.new_session_agents_unavailable_description to R.string.common_retry
+        NewSessionSetupReason.NeedsAgentSetup ->
+            R.string.new_session_setup_agent_description to R.string.new_session_configure_agent_action
+        NewSessionSetupReason.NeedsAgentStart ->
+            R.string.new_session_start_agent_description to R.string.new_session_start_agent_action
+        NewSessionSetupReason.AgentStarting ->
+            R.string.new_session_agent_starting_description to R.string.new_session_view_agent_action
+        else -> return
+    }
+    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth()
+                .verticalScroll(rememberScrollState()).padding(horizontal = 28.dp, vertical = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Image(
+                painter = painterResource(R.drawable.ic_agent_unavailable),
+                contentDescription = null,
+                modifier = Modifier.size(168.dp),
+            )
+            Spacer(Modifier.height(24.dp))
+            Text(
+                text = stringResource(message),
+                color = colors.inkSoft,
+                fontSize = 16.sp,
+                lineHeight = 25.sp,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(28.dp))
+            Box(Modifier.widthIn(max = 224.dp).fillMaxWidth()) {
+                StartChatButton(
+                    label = stringResource(action),
+                    enabled = true,
+                    onClick = {
+                        if (state.reason == NewSessionSetupReason.AgentLoadFailed) onRetry()
+                        else onOpenDevices(state.device)
+                    },
+                )
             }
         }
     }

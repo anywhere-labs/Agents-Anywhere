@@ -135,7 +135,11 @@ fun NewSessionScreen(
     var selectedProjectId by rememberSaveable(initialProjectId) { mutableStateOf(initialProjectId) }
     var pendingInitialProjectId by rememberSaveable(initialProjectId) { mutableStateOf(initialProjectId) }
     var selectedDeviceId by rememberSaveable {
-        mutableStateOf(sessionsState.projects.firstOrNull { it.id == initialProjectId }?.connectorId ?: initialPreference?.connectorId)
+        mutableStateOf(
+            sessionsState.projects.firstOrNull { it.id == initialProjectId }?.connectorId
+                ?: initialPreference?.connectorId?.takeIf { id -> onlineDevices.any { it.id == id } }
+                ?: onlineDevices.firstOrNull()?.id,
+        )
     }
     var runtimeSelection by remember {
         mutableStateOf(
@@ -265,33 +269,44 @@ fun NewSessionScreen(
         }
     }
 
-    LaunchedEffect(devices, sessionsState.hasLoaded, inventory.hasLoaded, creatingProject, selectedProject?.id, preference?.connectorId) {
+    LaunchedEffect(devices, onlineDevices, sessionsState.hasLoaded, inventory.hasLoaded, creatingProject, selectedProject?.id, preference?.connectorId) {
         val projectTarget = projects.firstOrNull { it.id == selectedProjectId }
         if (!creatingProject && projectTarget != null) {
             selectedDeviceId = projectTarget.connectorId
         } else {
             val preferred = preference?.connectorId?.takeIf { id -> devices.any { it.id == id } }
             val current = selectedDeviceId?.takeIf { id -> devices.any { it.id == id } }
-            val next = (if (creatingProject) current ?: preferred else preferred ?: current) ?: devices.firstOrNull()?.id
+            val next = (if (creatingProject) current ?: preferred else preferred ?: current)
+                ?: devices.firstOrNull()?.id
+                // A connected device can load its directories while Agent availability is still unknown.
+                ?: selectedDeviceId?.takeIf { id -> onlineDevices.any { it.id == id } }
+                ?: preference?.connectorId?.takeIf { id -> onlineDevices.any { it.id == id } }
+                ?: onlineDevices.firstOrNull()?.id
             if (next != selectedDeviceId && (next != null || (sessionsState.hasLoaded && inventory.hasLoaded))) {
                 selectDevice(next)
             }
         }
     }
 
-    val selectedDevice = devices.firstOrNull { it.id == selectedDeviceId }
+    val selectedDevice = onlineDevices.firstOrNull { it.id == selectedDeviceId }
     val selectedDeviceOs = selectedDevice?.deviceOs
     val isWindowsDevice = isWindowsDeviceOs(selectedDeviceOs)
     val selectedRuntime = runtimeSelection.selectedRuntime
+    val hasAvailableSelectedRuntime = selectedDevice != null && selectedDevice.id !in inventory.errors &&
+        runtimeSelection.connectorId == selectedDevice.id &&
+        !runtimeSelection.runtimesLoading && runtimeSelection.runtimesErrorMessage == null &&
+        activeNewSessionRuntimes(inventory.results[selectedDevice.id]?.runtimes.orEmpty()).any { it.id == selectedRuntime?.id }
     val setupState = if (creatingProject) null else newSessionSetupState(
         sessions = sessionsState,
         inventory = inventory,
         projectConnectorId = selectedProject?.connectorId,
         selectedConnectorId = selectedDeviceId,
-        hasSelectedRuntime = selectedDevice != null && runtimeSelection.connectorId == selectedDevice.id && selectedRuntime != null,
+        hasSelectedRuntime = hasAvailableSelectedRuntime,
     )
-    LaunchedEffect(setupState?.reason) {
-        if (setupState != null) {
+    val checkingAgents = setupState?.reason == NewSessionSetupReason.CheckingAgents
+    val setupPageState = setupState?.takeUnless { it.reason == NewSessionSetupReason.CheckingAgents }
+    LaunchedEffect(setupPageState?.reason) {
+        if (setupPageState != null) {
             editingTitle = false
             choosePath = false
             expandedConfiguration = null
@@ -369,8 +384,8 @@ fun NewSessionScreen(
         }
     }
 
-    LaunchedEffect(selectedDevice?.id, runtimeSelection.connectorId, selectedRuntime?.id, selectedRuntime?.type, creatingProject) {
-        if (!creatingProject && selectedDevice != null && selectedRuntime != null && runtimeSelection.connectorId == selectedDevice.id) {
+    LaunchedEffect(selectedDevice?.id, runtimeSelection.connectorId, selectedRuntime?.id, selectedRuntime?.type, creatingProject, setupState?.reason) {
+        if (!creatingProject && setupState == null && selectedDevice != null && selectedRuntime != null && runtimeSelection.connectorId == selectedDevice.id) {
             loadRuntimeDetails()
         }
     }
@@ -441,7 +456,13 @@ fun NewSessionScreen(
         if (selectedDeviceId != deviceId) return@LaunchedEffect
         val resolved = result.getOrNull()?.path?.takeIf(String::isNotBlank) ?: "~"
         homePath = resolved
-        if (!creatingProject && selectedWorkspacePath.isBlank()) {
+    }
+
+    LaunchedEffect(homePath, selectedDevice?.id, hasAvailableSelectedRuntime, creatingProject) {
+        val deviceId = selectedDevice?.id ?: return@LaunchedEffect
+        val resolved = homePath ?: return@LaunchedEffect
+        // Do not lock onto a home-directory project before an available Agent determines the device.
+        if (!creatingProject && hasAvailableSelectedRuntime && selectedWorkspacePath.isBlank()) {
             val project = workspaceProject(projects, deviceId, resolved, selectedDeviceOs)
             selectedProjectId = project?.id
             selectedWorkspacePath = project?.workspacePath ?: resolved
@@ -508,7 +529,6 @@ fun NewSessionScreen(
                     NewSessionConfigurationOption(id = device.id, label = device.name)
                 },
                 enabled = devices.isNotEmpty() && !projectCreating,
-                loading = !creatingProject && inventory.loading,
             ),
         )
         if (!projectOnly) add(
@@ -524,7 +544,7 @@ fun NewSessionScreen(
                     )
                 },
                 enabled = !creatingProject && selectedDevice != null && runtimeSelection.runtimes.isNotEmpty(),
-                loading = selectedDevice != null && runtimeSelection.runtimesLoading,
+                loading = checkingAgents || (selectedDevice != null && runtimeSelection.runtimesLoading),
             ),
         )
         if (!projectOnly && showModelConfiguration) {
@@ -605,7 +625,7 @@ fun NewSessionScreen(
             )
         }
     }
-    val canStart = selectedDevice != null &&
+    val canStart = setupState == null && selectedDevice != null &&
         runtimeSelection.connectorId == selectedDevice.id &&
         selectedRuntime != null &&
         runtimeSelection.readyForCreate &&
@@ -806,7 +826,7 @@ fun NewSessionScreen(
         return
     }
 
-    if (setupState != null) {
+    if (setupPageState != null) {
         ScreenScaffold {
             Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars)) {
                 NewSessionHeader(
@@ -821,7 +841,7 @@ fun NewSessionScreen(
                     onEditToggle = {},
                 )
                 NewSessionSetupPanel(
-                    state = setupState,
+                    state = setupPageState,
                     refreshing = devicesRefreshing || inventory.pendingInitial.isNotEmpty(),
                     onConnectDevice = { navigate(AppDestination.DeviceSetup) },
                     onOpenDevices = { device ->
@@ -982,7 +1002,7 @@ fun NewSessionScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                 val runtimeError = when {
-                    inventory.loading -> null
+                    checkingAgents || inventory.loading -> null
                     onlineDevices.isEmpty() -> stringResource(R.string.new_session_no_online_agent)
                     devices.isEmpty() -> inventory.errors.values.firstOrNull()
                         ?: stringResource(R.string.new_session_no_attached_agents)
