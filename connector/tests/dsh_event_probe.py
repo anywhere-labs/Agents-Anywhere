@@ -114,6 +114,11 @@ async def main(home: Path) -> None:
                 await until(ready, "initial inventory failed")
                 sessions = await store.list_sessions_for_connector(connector.id)
                 assert {s.externalSessionId for s in sessions} == {"native-main", "persisted-only"}
+                inventory = next(n for n in transport.notifications if n["method"] == "session.inventory.complete")
+                corrupt = next(item for item in inventory["params"]["sessions"] if item["externalSessionId"] == "corrupt-history")
+                assert corrupt["sourceState"]["availability"] == "unavailable"
+                assert corrupt["sourceState"]["reason"] == "read_failed"
+                initial_client = runtime._client
                 cold = next(s for s in sessions if s.externalSessionId == "persisted-only")
                 assert len(await stored(cold.id)) == 1005, "all history pages must replace together"
                 for session in sessions:
@@ -149,6 +154,7 @@ async def main(home: Path) -> None:
                 await until(lambda: partial_text_since(offset), "second partial text was not delivered incrementally")
                 await native_action("release")
                 await until(lambda: finished("sess-new", 2), "second text did not finish")
+                assert runtime._client is initial_client and initial_client.connected, "a corrupt history must not disconnect new sessions or either live reply"
                 before = await stored("sess-new")
                 assert len([i for i in before if i.role == "user"]) == 2, "retry duplicated user input"
                 assert {i.source.clientMessageId for i in before if i.role == "user"} == {"msg-1", "msg-2"}

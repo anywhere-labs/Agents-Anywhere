@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, rm, readFile, realpath } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -32,6 +32,45 @@ function follow(native: ReturnType<typeof nativeRuntime> extends Promise<infer T
   feed.start()
   return { feed, batches, errors, ops: () => batches.flatMap(b => b.operations) }
 }
+
+test('one corrupt persisted session does not break inventory, healthy streaming or explicit recovery', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-unreadable-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  const id = SessionId('persisted-only')
+  const entry = (await fixture.ctx.sessionQuery.listSessions()).find(item => item.header.id === id)!
+  const path = fixture.ctx.sessionPersistence.locate(entry.header)!.path
+  const original = await readFile(path)
+  // A committed turn with a sequence gap reproduces the official reader failure.
+  const corrupt = Buffer.concat([original, Buffer.from(`${JSON.stringify({ seq: 1004, time: Date.now(), type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } })}\n`)])
+  let stream: ReturnType<typeof follow> | undefined
+  try {
+    await writeFile(path, corrupt)
+    await assert.rejects(fixture.ctx.sessionQuery.readSession(id))
+    stream = follow(native)
+    const notes = () => notifications(stream!.ops())
+    await until(() => notes().some(note => note.method === 'session.inventory.complete'), 'healthy inventory completes despite the unreadable session')
+    assert.equal((await native.source.state(id)).reason, 'read_failed')
+    assert.ok(stream.ops().some(op => op.kind === 'snapshot.commit' && op.sessionId === sessionId('test', 'native-main')))
+    assert.ok(!stream.ops().some(op => op.kind === 'snapshot.begin' && op.sessionId === sessionId('test', id)))
+    const inventory = notes().find(note => note.method === 'session.inventory.complete')!
+    const failed = (inventory.params.sessions as { externalSessionId: string, sourceState: { availability: string, reason: string } }[]).find(item => item.externalSessionId === id)!
+    assert.equal(failed.sourceState.availability, 'unavailable')
+    assert.equal(failed.sourceState.reason, 'read_failed')
+    fixture.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'healthy feedback survives' }] }), { surfaceOp: 'append' })
+    await until(() => notes().some(note => note.method === 'timeline.itemUpsert' && JSON.stringify(note.params).includes('healthy feedback survives')), 'healthy live feedback reaches the same stream')
+    await writeFile(path, original)
+    native.refresh(id)
+    await until(() => stream!.ops().some(op => op.kind === 'snapshot.commit' && op.sessionId === sessionId('test', id)), 'explicit refresh retries the repaired session')
+    const committed = stream.ops().filter(op => op.kind === 'snapshot.commit' && op.sessionId === sessionId('test', id)).length
+    await writeFile(path, corrupt)
+    native.refresh(id)
+    await until(() => notes().some(note => note.method === 'session.source.updated' && note.params.externalSessionId === id && note.params.reason === 'read_failed'), 'a later snapshot failure is isolated as well')
+    assert.equal(stream.ops().filter(op => op.kind === 'snapshot.commit' && op.sessionId === sessionId('test', id)).length, committed, 'no empty or partial snapshot replaces the accepted history')
+    assert.deepEqual(stream.errors, [])
+    assert.equal(Buffer.compare(await readFile(path), corrupt), 0, 'the bridge never repairs or rewrites native history')
+  } finally { stream?.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
 
 test('fast mixed native events flush at 30 Hz with complete final text, tool results and ordered completion', { timeout: 30_000 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'dsh-flush-'))
@@ -367,10 +406,23 @@ test('real AgentLoop sends text once, streams before idle, queues followups and 
   } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })
 
-test('official native loop crosses Python adapter and authenticated backend, including lost ACK and reconnect', { timeout: 75_000 }, async () => {
+test('official native loop crosses Python and backend despite corrupt history, including two turns, lost ACK and reconnect', { timeout: 75_000 }, async () => {
   const home = await realpath(await mkdtemp(join(tmpdir(), 'dsh-pipeline-')))
   const adapter = new TextAdapter()
-  const fixture = await nativeRuntime(home, ctx => mountAgents(ctx, adapter))
+  const fixture = await nativeRuntime(home, async ctx => {
+    const bad = ctx.sessions.prepare(SessionId('corrupt-history'), { meta: { cwd: home } })
+    const detach = ctx.sessions.enter(bad)
+    ctx.sessions.announce(bad)
+    bad.append('turn/start', { turn: 1 })
+    bad.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'unreadable history' }] }), { surfaceOp: 'append' })
+    bad.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    await ctx.sessions.flush(bad)
+    detach()
+    const path = ctx.sessionPersistence.locate(bad.header)!.path
+    await writeFile(path, Buffer.concat([await readFile(path), Buffer.from(`${JSON.stringify({ seq: 1, time: Date.now(), type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } })}\n`)]))
+    await assert.rejects(ctx.sessionQuery.readSession(bad.id))
+    await mountAgents(ctx, adapter)
+  })
   let closed = false
   const mutations = (async () => {
     while (!closed) {

@@ -42,11 +42,13 @@ export class RuntimeServer {
   private async openWithLease(): Promise<Endpoint> {
     // Reuse the process-scoped OS lease; a crash releases it automatically.
     // It serializes stale-file takeover as well as publication and disposal.
-    this.releaseLease = await acquireManagerLock(this.endpointPath, () => { void this.close().catch(() => undefined) })
-    try { return await this.open() }
+    try {
+      this.releaseLease = await acquireManagerLock(this.endpointPath, () => { void this.close().catch(() => undefined) })
+      return await this.open()
+    }
     catch (error) {
       this.diagnostics.log('error', 'bridge.start_failed', {}, error)
-      await this.releaseLease()
+      await this.releaseLease?.()
       this.releaseLease = undefined
       throw error
     }

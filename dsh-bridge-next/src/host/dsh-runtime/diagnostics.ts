@@ -17,11 +17,14 @@ export function errorDetails(error: unknown, depth = 0): Record<string, unknown>
   const code = typeof value.code === 'string' && /^[A-Z][A-Z0-9_]{0,79}$/.test(value.code) ? value.code : undefined
   const stack = error instanceof Error ? error.stack?.split('\n')
     .filter(line => /^\s+at .+:\d+:\d+\)?$/.test(line)).slice(0, 12).map(line => line.trim()) : undefined
+  // Extract only numeric context from the official persistence validator.
+  const gap = error instanceof Error ? error.message.match(/^corrupt session log: seq gap in committed region at line (\d+) \(expected (\d+), got (\d+)\)$/) : null
   return {
     errorType: error instanceof Error ? error.name : typeof error,
     ...(code ? { errorCode: code } : {}),
     ...(error instanceof BridgeError ? { bridgeCode: error.code, retryable: error.retryable } : {}),
     ...(stack?.length ? { stack } : {}),
+    ...(gap ? { reason: 'sequence_gap', line: Number(gap[1]), expectedSeq: Number(gap[2]), actualSeq: Number(gap[3]) } : {}),
     ...(value.cause && depth < 3 ? { cause: errorDetails(value.cause, depth + 1) } : {}),
   }
 }

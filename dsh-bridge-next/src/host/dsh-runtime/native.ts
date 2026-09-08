@@ -68,7 +68,7 @@ export class NativeRuntime {
     this.listeners.add(callback)
     return () => this.listeners.delete(callback)
   }
-  refresh(id: string): void { this.emit({ type: 'refresh', id }) }
+  refresh(id: string): void { this.source.retry(id); this.emit({ type: 'refresh', id }) }
   private emit(change: NativeChange): void {
     for (const listener of this.listeners) {
       try { listener(change) } catch { /* Feed owns its error/recovery channel. */ }
@@ -94,7 +94,13 @@ export class NativeRuntime {
   visible(id: string): Promise<boolean> { return this.source.visible(id) }
   async read(id: SessionId): Promise<SessionLogSnapshot> {
     await this.source.requireAvailable(id)
-    const snapshot = await this.diagnostics.measure('session.read', { sessionId: id }, () => this.ctx.sessionQuery.readSession(id))
+    let snapshot: SessionLogSnapshot
+    try {
+      snapshot = await this.diagnostics.measure('session.read', { sessionId: id }, () => this.ctx.sessionQuery.readSession(id))
+    } catch (error) {
+      if (!(error instanceof Error && error.name === 'AbortError')) this.source.markReadFailed(id)
+      throw error
+    }
     await this.source.requireAvailable(id)
     return snapshot
   }

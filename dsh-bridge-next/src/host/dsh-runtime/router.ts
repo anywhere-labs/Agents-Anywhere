@@ -58,7 +58,8 @@ export class RuntimeRouter {
         this.feed.ack(params.batchSeq); return { ok: true }
       case 'runtime.sync.unsubscribe': this.close(); return { ok: true }
       case 'runtime.sync.refresh': {
-        const id = await this.resolve(params, signal)
+        // Unreadable sessions must remain addressable for an explicit retry.
+        const id = await this.resolve(params, signal, true)
         if (!this.reader.native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Event sync is unavailable.')
         this.reader.native.refresh(id)
         return { accepted: true }
@@ -131,7 +132,10 @@ export class RuntimeRouter {
       if (params.sessionId !== undefined && params.sessionId !== sessionId(this.namespace, externalId)) {
         throw new BridgeError('INVALID_PARAMS', 'The session does not belong to this runtime namespace.')
       }
-      if (this.reader.native && !includeUnavailable) await this.reader.native.source.requireAvailable(externalId)
+      if (this.reader.native && !includeUnavailable) {
+        this.reader.native.source.retry(externalId)
+        await this.reader.native.source.requireAvailable(externalId)
+      }
       return externalId as SessionId
     }
     if (typeof params.sessionId !== 'string' || !params.sessionId) throw new BridgeError('INVALID_PARAMS', 'A session identity is required.')
@@ -140,7 +144,10 @@ export class RuntimeRouter {
       : (await this.reader.query.listSessions(signal)).map(item => item.header.id)
     const id = ids.find(id => sessionId(this.namespace, id) === params.sessionId)
     if (!id) throw new BridgeError('SESSION_NOT_FOUND', 'The DSH session is not visible.')
-    if (this.reader.native && !includeUnavailable) await this.reader.native.source.requireAvailable(id)
+    if (this.reader.native && !includeUnavailable) {
+      this.reader.native.source.retry(id)
+      await this.reader.native.source.requireAvailable(id)
+    }
     return id as SessionId
   }
 

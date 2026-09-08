@@ -131,10 +131,18 @@ export class SyncFeed {
     if (page.length && await this.native.visible(id)) await sendPage()
   }
   private async baseline(id: string): Promise<void> {
-    if (!await this.native.visible(id)) return
+    if (!await this.native.visible(id)) { await this.unavailable(id); return }
     const start = performance.now()
     this.native.diagnostics.log('debug', 'snapshot.started', { streamId: this.id, sessionId: id })
-    const log = await this.native.read(id as SessionId)
+    let log: Awaited<ReturnType<NativeRuntime['read']>>
+    try { log = await this.native.read(id as SessionId) }
+    catch (error) {
+      // Only native reads are isolated here. Transport/ACK failures below still
+      // close the stream so a reconnect can recalibrate unacknowledged data.
+      if (this.closed || error instanceof Error && error.name === 'AbortError') throw error
+      await this.unavailable(id)
+      return
+    }
     const platformId = sessionId(this.namespace, id)
     const projection = createProjection(id, platformId)
     for (const event of log.events) projection.apply(event)
@@ -182,18 +190,21 @@ export class SyncFeed {
   }
   private async reconcile(): Promise<void> {
     for (const id of this.native.candidates()) if (!await this.native.visible(id)) {
-      const source = await this.native.source.state(id)
-      // Source notifications can create rows in the existing ingest API too.
-      // Only report changes for sessions this feed has already imported.
-      if (this.sourceAvailability.has(id) && this.sourceAvailability.get(id) !== source.availability) {
-        await this.notification('session.source.updated', { sessionId: sessionId(this.namespace, id), externalSessionId: id,
-          ...source, observationOrigin: 'event' })
-        this.sourceAvailability.set(id, source.availability)
-      }
-      this.published.delete(id); this.projections.delete(id)
+      await this.unavailable(id)
     }
     // Recheck source availability; selecting a draft never makes it eligible for import.
     for (const id of this.native.candidates()) if (!this.published.has(id)) await this.baseline(id)
+  }
+  private async unavailable(id: string): Promise<void> {
+    const source = await this.native.source.state(id)
+    // Preserve AA history; a failed read never publishes an empty snapshot.
+    // Only feeds that imported this session may create live source updates.
+    if (this.sourceAvailability.has(id) && this.sourceAvailability.get(id) !== source.availability) {
+      await this.notification('session.source.updated', { sessionId: sessionId(this.namespace, id), externalSessionId: id,
+        ...source, observationOrigin: 'event' })
+      this.sourceAvailability.set(id, source.availability)
+    }
+    this.published.delete(id); this.projections.delete(id)
   }
   private async changes(changes: NativeChange[]): Promise<void> {
     const touched = new Set<string>(), statuses = new Set<string>()

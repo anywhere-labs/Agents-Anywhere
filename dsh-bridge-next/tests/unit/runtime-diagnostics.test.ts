@@ -10,7 +10,9 @@ test('bridge diagnostics preserve the failing read and stack without native cont
   const root = await mkdtemp(join(tmpdir(), 'aa-bridge-logs-'))
   try {
     const log = new RuntimeDiagnostics(undefined, root)
-    const cause = Object.assign(new Error('PRIVATE_PROMPT PRIVATE_TOKEN'), { code: 'SESSION_UNKNOWN_EVENT' })
+    const cause = Object.assign(new Error('PRIVATE_PROMPT PRIVATE_TOKEN', {
+      cause: new Error('corrupt session log: seq gap in committed region at line 730 (expected 9044, got 9041)'),
+    }), { code: 'SESSION_UNKNOWN_EVENT' })
     const error = new Error('PRIVATE_SESSION_JSON', { cause })
     await assert.rejects(log.measure('session.visibility_read', { sessionId: 'session-1' }, async () => { throw error }))
     await log.flush()
@@ -24,6 +26,8 @@ test('bridge diagnostics preserve the failing read and stack without native cont
     assert.match(failed.details, /session-1/)
     assert.match(failed.details, /runtime-diagnostics.test.ts/)
     assert.match(failed.details, /SESSION_UNKNOWN_EVENT/)
+    assert.equal(JSON.parse(failed.details).cause.cause.expectedSeq, 9044)
+    assert.equal(JSON.parse(failed.details).cause.cause.actualSeq, 9041)
     assert.doesNotMatch(JSON.stringify(result), /PRIVATE_/)
     if (process.platform !== 'win32') assert.equal((await stat(join(root, 'dsh-runtime.jsonl'))).mode & 0o777, 0o600)
   } finally { await rm(root, { recursive: true, force: true }) }
