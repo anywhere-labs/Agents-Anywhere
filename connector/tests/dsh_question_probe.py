@@ -8,7 +8,8 @@ import asyncio
 import sys
 from pathlib import Path
 
-from dsh_event_probe import CheckedRuntime, IngestTransport, until
+from dsh_event_probe import CheckedRuntime, until
+from dsh_probe_transport import IngestTransport
 import httpx
 from jsonschema import Draft202012Validator
 

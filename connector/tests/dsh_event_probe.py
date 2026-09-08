@@ -20,6 +20,7 @@ os.environ.pop("AGENT_SERVER_DB_URL", None)
 
 import httpx
 from jsonschema import Draft202012Validator
+from dsh_probe_transport import IngestTransport
 
 from agent_server.app import create_app
 from agent_server.core.auth import create_connector_access_token
@@ -45,28 +46,6 @@ async def until(check, label: str) -> None:
             return
         await asyncio.sleep(0.02)
     raise AssertionError(label)
-
-
-class IngestTransport(httpx.AsyncBaseTransport):
-    def __init__(self, app) -> None:
-        self.inner = httpx.ASGITransport(app)
-        self.notifications: list[dict] = []
-        self.lose_snapshot_reply = False
-        self.lost = False
-
-    async def handle_async_request(self, request):
-        assert request.url.path == "/api/v2/connector/ingest"
-        notices = json.loads(request.content)["notifications"]
-        response = await self.inner.handle_async_request(request)
-        await response.aread()
-        assert response.status_code == 200, response.text
-        assert not response.json().get("rejected"), response.text
-        self.notifications.extend(notices)
-        if self.lose_snapshot_reply and any(n["method"] == "timeline.sync" for n in notices):
-            self.lose_snapshot_reply = False
-            self.lost = True
-            raise httpx.ReadError("Simulated lost HTTP reply after ingestion", request=request)
-        return response
 
 
 async def main(home: Path) -> None:
