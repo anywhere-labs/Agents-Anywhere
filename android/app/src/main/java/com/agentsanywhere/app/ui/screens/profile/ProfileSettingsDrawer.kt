@@ -290,10 +290,7 @@ fun ProfileSettingsDrawer(
                             ProfileRow(
                                 icon = Lucide.Archive,
                                 title = stringResource(R.string.profile_archived_sessions),
-                                onClick = {
-                                    onClose()
-                                    onOpenArchivedSessions()
-                                },
+                                onClick = onOpenArchivedSessions,
                             )
                         }
                     }

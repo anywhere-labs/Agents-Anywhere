@@ -7,12 +7,27 @@ import com.agentsanywhere.app.api.RemoteDevice
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
 import com.agentsanywhere.app.model.AgentDevice
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 
 class DevicesController(
     private val devicesApi: DevicesApi,
     private val sessionStore: AuthSessionStore,
 ) {
+    suspend fun getDevice(connectorId: String): Result<AgentDevice> {
+        val auth = authSession()
+            ?: return Result.failure(IllegalStateException("Sign in again to load this device."))
+        return withContext(Dispatchers.IO) {
+            try {
+                Result.success(devicesApi.getDevice(auth.serverUrl, auth.accessToken, connectorId).toAgentDevice())
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Result.failure(error)
+            }
+        }
+    }
+
     suspend fun renameDevice(
         connectorId: String,
         name: String,

@@ -1,6 +1,8 @@
 package com.agentsanywhere.app.ui.screens.home
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,8 +22,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -52,8 +57,19 @@ internal fun NewProjectScreen(
 ) {
     val colors = LocalAAColors.current
     val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val fieldShape = RoundedCornerShape(18.dp)
+    val fieldBorder = if (colors.isDark) Modifier
+        else Modifier.border(1.dp, Color(0xFFE7E6E2), fieldShape)
     ScreenScaffold {
-        Column(Modifier.fillMaxSize().imePadding()) {
+        Column(
+            Modifier.fillMaxSize().imePadding().pointerInput(focus, keyboard) {
+                detectTapGestures(onTap = {
+                    focus.clearFocus()
+                    keyboard?.hide()
+                })
+            },
+        ) {
             Box(Modifier.fillMaxWidth().height(58.dp).padding(horizontal = 18.dp)) {
                 Text(
                     text = stringResource(R.string.new_session_create_project),
@@ -78,6 +94,7 @@ internal fun NewProjectScreen(
                     onToggle = { onToggleDevice() },
                     onDismiss = onDismissDevice,
                     onSelect = { _, id -> onSelectDevice(id) },
+                    modifier = fieldBorder,
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(stringResource(R.string.new_session_project_name), color = colors.inkSoft, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
@@ -87,12 +104,16 @@ internal fun NewProjectScreen(
                         enabled = !creating,
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth().height(54.dp)
-                            .clip(RoundedCornerShape(18.dp)).background(colors.raisedSurface)
+                            .clip(fieldShape).background(colors.raisedSurface)
+                            .then(fieldBorder)
                             .padding(horizontal = 16.dp),
                         textStyle = TextStyle(color = colors.ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold),
                         cursorBrush = SolidColor(colors.ink),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
+                        keyboardActions = KeyboardActions(onDone = {
+                            focus.clearFocus()
+                            keyboard?.hide()
+                        }),
                         decorationBox = { field ->
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
                                 if (name.isBlank()) Text(stringResource(R.string.new_session_project_name_placeholder), color = colors.faint, fontSize = 15.sp)

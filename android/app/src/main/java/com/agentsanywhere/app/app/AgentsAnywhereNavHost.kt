@@ -12,12 +12,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
 import com.agentsanywhere.app.feature.devices.DeviceRuntime
+import com.agentsanywhere.app.feature.devices.DevicePairingStatus
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
 import com.agentsanywhere.app.feature.files.FilesController
@@ -110,6 +113,10 @@ internal fun AgentsAnywhereNavHost(
     onPrepareDeviceSetup: suspend (String) -> Result<DeviceSetupCredential>,
     onCreateDeviceSetup: suspend (String) -> Result<DeviceSetupCredential>,
     onClaimDevicePairCode: suspend (DeviceSetupCredential, String) -> Result<AgentDevice>,
+    devicePairingStates: Map<String, DevicePairingStatus>,
+    onWaitForPairingDevice: (String) -> Unit,
+    onClearDevicePairing: (String) -> Unit,
+    onDevicePairingComplete: () -> Unit,
     onListDeviceRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
     onSetDeviceRuntimeActive: suspend (String, String, Boolean) -> Result<DeviceRuntime>,
     onDeleteDeviceRuntimeConfig: suspend (String, String) -> Result<DeviceRuntime>,
@@ -122,7 +129,6 @@ internal fun AgentsAnywhereNavHost(
     onLoadProjects: suspend () -> Result<List<AgentProject>>,
     onLoadArchivedPage: suspend (String?, String?) -> Result<com.agentsanywhere.app.feature.sessions.SessionPageAppend>,
     onRestoreProject: suspend (String) -> Result<List<AgentSession>>,
-    onMarkAllRead: suspend () -> Result<Unit>,
     onUpdateProject: suspend (String, String?, Boolean?) -> Result<AgentProject>,
     onArchiveProjectSessions: suspend (String) -> Result<List<AgentSession>>,
     onCreateProject: suspend (String, String, String) -> Result<AgentProject>,
@@ -140,6 +146,7 @@ internal fun AgentsAnywhereNavHost(
 ) {
     val context = LocalContext.current
     val colors = LocalAAColors.current
+    var profileOpen by rememberSaveable(serverUrl, userId) { mutableStateOf(false) }
     var deviceAgentPreviewRefreshKey by remember { mutableLongStateOf(0L) }
     val deviceAgentPreviews = rememberDeviceAgentPreviews(
         devices = sessionsState.devices,
@@ -209,6 +216,8 @@ internal fun AgentsAnywhereNavHost(
                     onAppearanceModeChange = onAppearanceModeChange,
                     onLanguageModeChange = onLanguageModeChange,
                     onSidebarViewModeChange = onSidebarViewModeChange,
+                    profileOpen = profileOpen,
+                    onProfileOpenChange = { profileOpen = it },
                     onOpenArchivedSessions = { navigate(AppDestination.ArchivedSessions) },
                     onLoadAccount = onLoadAccount,
                     onLoadAccountAuthConfig = onLoadAccountAuthConfig,
@@ -222,7 +231,6 @@ internal fun AgentsAnywhereNavHost(
                     onRenameSession = onRenameSession,
                     onSetSessionPinned = onSetSessionPinned,
                     onSetSessionArchived = onSetSessionArchived,
-                    onMarkAllRead = onMarkAllRead,
                     onLoadProjectSessions = onLoadProjectSessions,
                     onUpdateProject = onUpdateProject,
                     onArchiveProjectSessions = onArchiveProjectSessions,
@@ -235,6 +243,7 @@ internal fun AgentsAnywhereNavHost(
                 AppDestination.NewSession, AppDestination.NewProject -> androidx.compose.runtime.key(serverUrl, userId, destination) { NewSessionScreen(
                     navigate = navigate,
                     sessionsState = sessionsState,
+                    projectSessionsById = projectSessionsById,
                     serverUrl = serverUrl,
                     userId = userId,
                     onListDirectory = onListDirectory,
@@ -245,7 +254,6 @@ internal fun AgentsAnywhereNavHost(
                     onPrepareSession = onPrepareSession,
                     onRefreshDevices = onRefreshSessions,
                     devicesRefreshing = isRefreshingSessions,
-                    onOpenDevice = onOpenDevice,
                     initialProjectId = initialNewSessionProjectId.takeIf { destination == AppDestination.NewSession },
                     projectOnly = destination == AppDestination.NewProject,
                     sidebarViewMode = sidebarViewMode,
@@ -317,19 +325,28 @@ internal fun AgentsAnywhereNavHost(
                     controller = filesController,
                     onPairDevice = { navigate(AppDestination.DeviceSetup) },
                 )
-                AppDestination.DeviceSetup -> AddDeviceScreen(
-                    devices = sessionsState.devices,
-                    onBack = { navigate(deviceSetupReturnDestination) },
-                    onCreateCredential = onCreateDeviceSetup,
-                    onRenameDevice = onRenameDevice,
-                )
+                AppDestination.DeviceSetup -> androidx.compose.runtime.key(serverUrl, userId) {
+                    AddDeviceScreen(
+                        devices = sessionsState.devices,
+                        pairingStates = devicePairingStates,
+                        onBack = { navigate(deviceSetupReturnDestination) },
+                        onComplete = {
+                            onDevicePairingComplete()
+                            navigate(deviceSetupReturnDestination)
+                        },
+                        onCreateCredential = onCreateDeviceSetup,
+                        onRenameDevice = onRenameDevice,
+                        onClaimPairCode = onClaimDevicePairCode,
+                        onWaitForDevice = onWaitForPairingDevice,
+                        onClearPairing = onClearDevicePairing,
+                    )
+                }
                 AppDestination.ArchivedSessions -> androidx.compose.runtime.key(serverUrl, userId) {
                     ArchivedSessionsScreen(
                         projects = sessionsState.projects,
                         onLoadPage = onLoadArchivedPage,
                         onRestoreSession = { onSetSessionArchived(it, false) },
                         onRestoreProject = onRestoreProject,
-                        onOpenSession = onOpenSession,
                         onBack = { navigate(AppDestination.Sessions) },
                     )
                 }

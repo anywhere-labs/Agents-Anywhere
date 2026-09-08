@@ -9,6 +9,7 @@ import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,6 +35,7 @@ import com.agentsanywhere.app.feature.auth.WebLoginState
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
 import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.feature.devices.DevicesController
+import com.agentsanywhere.app.feature.devices.DevicePairingMonitor
 import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.realtime.DashboardRealtimeController
 import com.agentsanywhere.app.feature.realtime.RealtimeClientIdStore
@@ -428,6 +430,20 @@ fun AgentsAnywhereApp(
 
     val realtimeServerUrl = sessionStore.readServerUrl()
     val realtimeAccessToken = sessionStore.readAccessToken()
+    val devicePairingMonitor = remember(realtimeServerUrl, realtimeAccessToken) { DevicePairingMonitor() }
+    val devicePairingStates by devicePairingMonitor.states.collectAsState()
+    LaunchedEffect(devicePairingMonitor, appVisible, hasAuthSession) {
+        if (!hasAuthSession || !appVisible) return@LaunchedEffect
+        devicePairingMonitor.observe(
+            loadDevice = devicesController::getDevice,
+            onOnline = { device ->
+                if (sessionStore.readServerUrl() == realtimeServerUrl && sessionStore.readAccessToken() == realtimeAccessToken) {
+                    sessionsState = sessionsState.withPatchedDevice(device)
+                    scope.launch { refreshSessions(showInitialLoading = false, showRefreshIndicator = false) }
+                }
+            },
+        )
+    }
     LaunchedEffect(
         hasAuthSession,
         appVisible,
@@ -620,6 +636,14 @@ fun AgentsAnywhereApp(
                     }
             }
         },
+        devicePairingStates = devicePairingStates,
+        onWaitForPairingDevice = devicePairingMonitor::waitForDevice,
+        onClearDevicePairing = devicePairingMonitor::clear,
+        onDevicePairingComplete = {
+            if (hasAuthSession) scope.launch {
+                refreshSessions(showInitialLoading = false, showRefreshIndicator = false)
+            }
+        },
         onListDeviceRuntimes = { connectorId ->
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to load runtimes."))
@@ -735,23 +759,6 @@ fun AgentsAnywhereApp(
                         (sessions + projectSessionsById[projectId].orEmpty()).distinctBy { it.id })
                     reloadProjects()
                 }
-        },
-        onMarkAllRead = {
-            val ids = (projectSessionsById.values.flatten() + sessionsState.sessions + sessionsState.archivedSessions)
-                .associateBy { it.id }.values.filter { it.unread }.map { it.id }
-            val request = sessionsState.beginSessionRequest(ids)
-            sessionsState = request.state
-            runCatching {
-                // The bulk endpoint accepts at most 200 IDs; preserve each successful batch.
-                ids.chunked(200).forEach { batch ->
-                    val update = sessionsController.markSessionsRead(batch, sessionsState.devices).getOrThrow()
-                    sessionsState = sessionsState.withPatchedSessions(update.sessions, request.generation)
-                        .withMissingSessionsRemoved(update.notFound, request.generation)
-                    projectSessionsById = projectSessionsById.mapValues { (_, sessions) ->
-                        sessions.filterNot { it.id in update.notFound }
-                    }
-                }
-            }
         },
         onUpdateProject = { projectId, name, pinned ->
             if (!hasAuthSession) {

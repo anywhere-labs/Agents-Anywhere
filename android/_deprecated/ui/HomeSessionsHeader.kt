@@ -1,3 +1,4 @@
+// Retired: the session view now starts directly with its pinned/recent sections.
 package com.agentsanywhere.app.ui.screens.home
 
 import android.widget.Toast

@@ -1,11 +1,11 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 · native AA theme */
 package com.agentsanywhere.app.ui.screens.home
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -13,9 +13,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -41,13 +46,9 @@ internal fun archiveSecondaryInk(): Color {
 
 @Composable
 internal fun ArchivedPageHeader(
-    refreshing: Boolean,
-    refreshEnabled: Boolean,
     onBack: () -> Unit,
-    onRefresh: () -> Unit,
 ) {
     val colors = LocalAAColors.current
-    val refreshDescription = stringResource(R.string.archived_refresh)
     Row(
         modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 18.dp).height(64.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -64,15 +65,7 @@ internal fun ArchivedPageHeader(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        IconButton(
-            onClick = onRefresh,
-            enabled = refreshEnabled,
-            modifier = Modifier.size(40.dp).clip(CircleShape).background(colors.raisedSurface)
-                .border(1.dp, colors.border, CircleShape).semantics { contentDescription = refreshDescription },
-        ) {
-            if (refreshing) CircularProgressIndicator(Modifier.size(18.dp), color = archiveSecondaryInk(), strokeWidth = 2.dp)
-            else Icon(Lucide.RefreshCw, null, tint = if (refreshEnabled) colors.inkSoft else colors.faint, modifier = Modifier.size(18.dp))
-        }
+        Spacer(Modifier.width(40.dp))
     }
 }
 
@@ -85,27 +78,45 @@ internal fun ArchivedProjectHeader(
 ) {
     val colors = LocalAAColors.current
     val name = project?.name ?: stringResource(R.string.archived_unknown_project)
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 12.dp),
     ) {
-        Icon(Lucide.FolderOpen, null, tint = archiveSecondaryInk(), modifier = Modifier.size(19.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(name, color = colors.inkSoft, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.semantics { heading() })
-            project?.workspacePath?.takeIf { it.isNotBlank() }?.let { path ->
-                Text(path, color = archiveSecondaryInk(), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+        Row(
+            modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(Lucide.FolderOpen, null, tint = archiveSecondaryInk(), modifier = Modifier.size(20.dp))
+            Text(
+                name,
+                modifier = Modifier.weight(1f).semantics { heading() },
+                color = colors.ink,
+                fontSize = 15.sp,
+                lineHeight = 20.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (project != null) ArchiveActionButton(
+                label = stringResource(R.string.archived_restore_project),
+                busy = restoring,
+                enabled = enabled,
+                filled = false,
+                description = stringResource(R.string.archive_restore_project_description, name),
+                onClick = onRestore,
+            )
         }
-        if (project != null) ArchiveActionButton(
-            label = stringResource(R.string.archived_restore_project),
-            busy = restoring,
-            enabled = enabled,
-            filled = false,
-            description = stringResource(R.string.archive_restore_project_description, name),
-            onClick = onRestore,
-        )
+        project?.workspacePath?.takeIf { it.isNotBlank() }?.let { path ->
+            Text(
+                path,
+                modifier = Modifier.fillMaxWidth().padding(start = 28.dp, end = 12.dp),
+                color = archiveSecondaryInk(),
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -126,7 +137,10 @@ internal fun ArchivedSessionRow(
         bottomStart = if (last) 18.dp else 0.dp,
         bottomEnd = if (last) 18.dp else 0.dp,
     )
-    Column(Modifier.fillMaxWidth().clip(shape).background(colors.raisedSurface)) {
+    Column(
+        Modifier.fillMaxWidth().clip(shape).background(colors.raisedSurface)
+            .then(if (colors.isDark) Modifier else Modifier.archivedGroupBorder(first, last)),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -134,7 +148,7 @@ internal fun ArchivedSessionRow(
         ) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(session.title, color = colors.ink, fontSize = 15.sp, lineHeight = 21.sp,
-                    fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    fontWeight = FontWeight.Medium, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                 Text(stringResource(R.string.archive_archived_at, archivedTime), color = archiveSecondaryInk(),
                     fontSize = 11.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -151,6 +165,40 @@ internal fun ArchivedSessionRow(
             modifier = Modifier.padding(horizontal = 16.dp),
             color = colors.ink.copy(alpha = 0.07f),
         )
+    }
+}
+
+// Each lazy row draws only its part of the shared card outline.
+private fun Modifier.archivedGroupBorder(first: Boolean, last: Boolean): Modifier = drawWithCache {
+    val width = 1.dp.toPx()
+    val inset = width / 2f
+    val radius = 18.dp.toPx()
+    val right = size.width - inset
+    val bottom = size.height - inset
+    val diameter = radius * 2f
+    val outline = Path().apply {
+        if (first) {
+            moveTo(inset, radius)
+            arcTo(Rect(inset, inset, diameter - inset, diameter - inset), 180f, 90f, false)
+            lineTo(size.width - radius, inset)
+            arcTo(Rect(size.width - diameter + inset, inset, right, diameter - inset), 270f, 90f, false)
+        } else {
+            moveTo(right, 0f)
+        }
+        lineTo(right, if (last) size.height - radius else size.height)
+        if (last) {
+            arcTo(Rect(size.width - diameter + inset, size.height - diameter + inset, right, bottom), 0f, 90f, false)
+            lineTo(radius, bottom)
+            arcTo(Rect(inset, size.height - diameter + inset, diameter - inset, bottom), 90f, 90f, false)
+        } else {
+            moveTo(inset, size.height)
+        }
+        lineTo(inset, if (first) radius else 0f)
+        if (first && last) close()
+    }
+    onDrawWithContent {
+        drawContent()
+        drawPath(outline, Color(0xFFE7E6E2), style = Stroke(width))
     }
 }
 
@@ -172,6 +220,7 @@ internal fun ArchiveActionButton(
         onClick = onClick,
         enabled = enabled && !busy,
         shape = RoundedCornerShape(12.dp),
+        border = if (filled && !colors.isDark) BorderStroke(1.dp, Color(0xFFE7E6E2)) else null,
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
         modifier = modifier.heightIn(min = 44.dp).semantics {
             if (description != null) contentDescription = description
@@ -200,6 +249,7 @@ internal fun ArchivedStatusPanel(
     title: String,
     description: String? = null,
     icon: ImageVector = Lucide.Archive,
+    showEmptyIllustration: Boolean = false,
     loading: Boolean = false,
     actionLabel: String? = null,
     actionLoading: Boolean = false,
@@ -211,12 +261,20 @@ internal fun ArchivedStatusPanel(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(
-            modifier = Modifier.size(80.dp).clip(RoundedCornerShape(26.dp)).background(colors.raisedSurface),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (loading) CircularProgressIndicator(Modifier.size(26.dp), color = colors.inkSoft, strokeWidth = 2.dp)
-            else Icon(icon, null, tint = archiveSecondaryInk(), modifier = Modifier.size(32.dp))
+        if (showEmptyIllustration) {
+            Image(
+                painter = painterResource(if (colors.isDark) R.drawable.ic_archive_empty_dark else R.drawable.ic_archive_empty_light),
+                contentDescription = null,
+                modifier = Modifier.size(128.dp),
+            )
+        } else {
+            Box(
+                modifier = Modifier.size(80.dp).clip(RoundedCornerShape(26.dp)).background(colors.raisedSurface),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (loading) CircularProgressIndicator(Modifier.size(26.dp), color = colors.inkSoft, strokeWidth = 2.dp)
+                else Icon(icon, null, tint = archiveSecondaryInk(), modifier = Modifier.size(32.dp))
+            }
         }
         Spacer(Modifier.height(24.dp))
         Text(title, color = colors.inkSoft, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,

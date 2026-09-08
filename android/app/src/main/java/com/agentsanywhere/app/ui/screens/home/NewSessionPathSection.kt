@@ -38,10 +38,11 @@ import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessions.NewSessionPathEntry
 import com.agentsanywhere.app.ui.designsystem.BackGlyph
-import com.agentsanywhere.app.ui.designsystem.CheckGlyph
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.ChevronDown
+import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.Lucide
@@ -63,14 +64,18 @@ internal fun ChoosePathSection(
     onOpenEntry: (NewSessionPathEntry) -> Unit,
     title: String? = null,
     enabled: Boolean = true,
-    currentSelected: Boolean = false,
     onRetry: (() -> Unit)? = null,
     collapsible: Boolean = false,
+    directoryBorderColor: Color? = null,
 ) {
     var expanded by rememberSaveable { mutableStateOf(true) }
-    val listExpanded = !collapsible || expanded
+    val listExpanded = expanded
     val listState = rememberLazyListState()
     val haptic = LocalHapticFeedback.current
+    val openParent = {
+        expanded = true
+        onParent()
+    }
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -103,16 +108,26 @@ internal fun ChoosePathSection(
         CurrentDirectoryBar(
             currentPath = currentPathLabel,
             darkMode = darkMode,
+            borderColor = directoryBorderColor,
             canGoParent = parentPath != null && enabled && !loading,
             canUseCurrent = canUseCurrent && enabled && !loading && error == null,
-            currentSelected = currentSelected,
-            onParent = onParent,
-            onUseCurrent = onUseCurrent,
+            onParent = openParent,
+            onUseCurrent = onUseCurrent?.let { selectCurrent ->
+                {
+                    selectCurrent()
+                    expanded = false
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                }
+            },
             enabled = enabled,
             listExpanded = listExpanded,
             onToggleList = if (collapsible) ({
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 expanded = !expanded
+            }) else null,
+            onOpenList = if (!collapsible && !expanded) ({
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                expanded = true
             }) else null,
         )
         if (listExpanded || loading || error != null) Box(
@@ -140,7 +155,7 @@ internal fun ChoosePathSection(
                     else -> {
                         if (parentPath != null) {
                             item(key = "$currentPath/..") {
-                                PathRow(name = "..", icon = Lucide.Folder, darkMode = darkMode, enabled = enabled, onClick = onParent)
+                                PathRow(name = "..", icon = Lucide.Folder, darkMode = darkMode, enabled = enabled, onClick = openParent)
                             }
                         }
                         if (entries.isEmpty()) {
@@ -152,7 +167,10 @@ internal fun ChoosePathSection(
                                 icon = Lucide.Folder,
                                 darkMode = darkMode,
                                 enabled = enabled,
-                                onClick = { onOpenEntry(entry) },
+                                onClick = {
+                                    expanded = true
+                                    onOpenEntry(entry)
+                                },
                             )
                         }
                     }
@@ -166,22 +184,25 @@ internal fun ChoosePathSection(
 private fun CurrentDirectoryBar(
     currentPath: String,
     darkMode: Boolean,
+    borderColor: Color?,
     canGoParent: Boolean,
     canUseCurrent: Boolean,
-    currentSelected: Boolean,
     onParent: () -> Unit,
     onUseCurrent: (() -> Unit)?,
     enabled: Boolean,
     listExpanded: Boolean,
     onToggleList: (() -> Unit)?,
+    onOpenList: (() -> Unit)?,
 ) {
+    val outlineColor = borderColor ?: if (darkMode) Color(0xFF27272A) else Color(0xFFE8E8E8)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(56.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(if (darkMode) LocalAAColors.current.raisedSurface else Color(0xFFF7F7F7))
-            .border(1.dp, if (darkMode) Color(0xFF27272A) else Color(0xFFE8E8E8), RoundedCornerShape(18.dp))
+            .border(1.dp, outlineColor, RoundedCornerShape(18.dp))
+            .then(if (onOpenList != null) Modifier.noRippleClickable(enabled = enabled, onClick = onOpenList) else Modifier)
             .padding(start = 13.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -205,7 +226,12 @@ private fun CurrentDirectoryBar(
         )
         if (canGoParent) {
             CircleMiniButton(darkMode = darkMode, onClick = onParent) {
-                BackGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777))
+                Icon(
+                    imageVector = Lucide.ChevronLeft,
+                    contentDescription = stringResource(R.string.common_back),
+                    tint = LocalAAColors.current.ink,
+                    modifier = Modifier.size(22.dp),
+                )
             }
         }
         if (onToggleList != null) {
@@ -227,17 +253,20 @@ private fun CurrentDirectoryBar(
             }
         } else if (onUseCurrent != null) CircleMiniButton(
             darkMode = darkMode,
-            selected = currentSelected || (!darkMode && canUseCurrent),
             enabled = canUseCurrent,
             onClick = onUseCurrent,
         ) {
             val checkColor = when {
                 !canUseCurrent -> if (darkMode) Color(0xFF52525B) else Color(0xFFBDBDBD)
-                currentSelected -> Color(0xFF16A34A)
                 darkMode -> Color(0xFFA1A1AA)
-                else -> Color(0xFF16A34A)
+                else -> Color(0xFF555555)
             }
-            CheckGlyph(color = checkColor)
+            Icon(
+                imageVector = Lucide.Check,
+                contentDescription = stringResource(R.string.common_done),
+                tint = checkColor,
+                modifier = Modifier.size(22.dp),
+            )
         }
     }
 }

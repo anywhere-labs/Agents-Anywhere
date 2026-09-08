@@ -51,18 +51,15 @@ internal fun SmallPill(
 @Composable
 internal fun CircleMiniButton(
     darkMode: Boolean,
-    selected: Boolean = false,
     enabled: Boolean = true,
     onClick: () -> Unit,
     content: @Composable () -> Unit,
 ) {
     val background = when {
-        selected -> Color(0xFFEFFBF4)
         darkMode -> LocalAAColors.current.subtle
         else -> Color.White
     }
     val border = when {
-        selected -> Color(0xFFBAE7C8)
         darkMode -> Color(0xFF27272A)
         else -> Color(0xFFE8E8E8)
     }

@@ -145,7 +145,7 @@ internal fun HomeProjectList(
     ) {
         if (pinnedProjects.isNotEmpty() || pinnedSessions.isNotEmpty()) {
             item("project-pinned-title") {
-                HomeProjectSectionHeader(
+                HomeListSectionHeader(
                     label = stringResource(R.string.home_pinned),
                     expanded = pinnedExpanded,
                     onClick = { pinnedExpanded = !pinnedExpanded },
@@ -179,7 +179,7 @@ internal fun HomeProjectList(
         }
 
         item("projects-title") {
-            HomeProjectSectionHeader(
+            HomeListSectionHeader(
                 label = stringResource(R.string.home_projects),
                 expanded = projectsExpanded,
                 onClick = projectPreferences::toggleSection,
@@ -365,7 +365,7 @@ private fun HomeProjectRow(
 }
 
 @Composable
-private fun HomeProjectSectionHeader(
+internal fun HomeListSectionHeader(
     label: String,
     expanded: Boolean,
     onClick: () -> Unit,
@@ -493,7 +493,6 @@ internal fun HomeProjectActionOverlay(
                 .offset { IntOffset(row.left.roundToInt(), row.top.roundToInt()) }
                 .width(with(density) { row.width.toDp() })
                 .height(with(density) { row.height.toDp() })
-                .shadow(18.dp, highlightShape)
                 .clip(highlightShape)
                 .background(if (darkMode) Color(0xFF202020) else Color.White),
         ) {
@@ -557,7 +556,6 @@ private fun HomeProjectActionCard(
         modifier = modifier
             .width(252.dp)
             .height(168.dp)
-            .shadow(34.dp, RoundedCornerShape(22.dp))
             .clip(RoundedCornerShape(22.dp))
             .background(surface)
             .border(1.dp, border, RoundedCornerShape(22.dp))

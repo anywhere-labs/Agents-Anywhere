@@ -1,10 +1,5 @@
 package com.agentsanywhere.app.ui.screens.profile
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -26,7 +21,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
@@ -35,16 +29,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.ui.designsystem.AAAppearanceMode
+import com.agentsanywhere.app.ui.designsystem.AADropdownMenu
+import com.agentsanywhere.app.ui.designsystem.AADropdownMenuItem
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereColors
 import com.agentsanywhere.app.ui.designsystem.BackIconButton
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.agentsanywhere.app.ui.screens.home.HomeSidebarViewMode
-import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Circle
 import com.composables.icons.lucide.Folder
@@ -193,49 +186,25 @@ internal fun AppearancePopup(
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val colors = LocalAAColors.current
-    if (!open) return
-    Popup(
-        alignment = Alignment.TopEnd,
-        offset = androidx.compose.ui.unit.IntOffset(x = 0, y = 48),
-        onDismissRequest = onDismiss,
-        properties = PopupProperties(focusable = true),
-    ) {
-        AnimatedVisibility(
-            visible = true,
-            enter = fadeIn() + slideInVertically(initialOffsetY = { -10 }),
-            exit = fadeOut() + slideOutVertically(targetOffsetY = { -10 }),
-        ) {
-            Column(
-                modifier = Modifier
-                    .width(204.dp)
-                    .shadow(24.dp, RoundedCornerShape(14.dp), ambientColor = colors.appShadow, spotColor = colors.appShadow)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(if (colors.isDark) Color(0xFF303030) else Color(0xFFF4F3EF))
-                    .border(1.dp, if (colors.isDark) Color(0xFF4A4A4A) else Color(0xFFD6D3CD), RoundedCornerShape(14.dp)),
-            ) {
-                AppearanceMenuRow(
-                    title = stringResource(R.string.profile_follow_system),
-                    icon = Lucide.Circle,
-                    selected = selectedMode == AAAppearanceMode.System,
-                    onClick = { onSelect(AAAppearanceMode.System) },
-                )
-                ProfileDivider(start = 0.dp, end = 0.dp)
-                AppearanceMenuRow(
-                    title = stringResource(R.string.profile_light),
-                    icon = Lucide.Sun,
-                    selected = selectedMode == AAAppearanceMode.Light,
-                    onClick = { onSelect(AAAppearanceMode.Light) },
-                )
-                ProfileDivider(start = 0.dp, end = 0.dp)
-                AppearanceMenuRow(
-                    title = stringResource(R.string.profile_dark),
-                    icon = Lucide.Moon,
-                    selected = selectedMode == AAAppearanceMode.Dark,
-                    onClick = { onSelect(AAAppearanceMode.Dark) },
-                )
-            }
-        }
+    ProfileDropdown(open, onDismiss) {
+        AADropdownMenuItem(
+            text = stringResource(R.string.profile_follow_system),
+            icon = Lucide.Circle,
+            selected = selectedMode == AAAppearanceMode.System,
+            onClick = { onSelect(AAAppearanceMode.System); onDismiss() },
+        )
+        AADropdownMenuItem(
+            text = stringResource(R.string.profile_light),
+            icon = Lucide.Sun,
+            selected = selectedMode == AAAppearanceMode.Light,
+            onClick = { onSelect(AAAppearanceMode.Light); onDismiss() },
+        )
+        AADropdownMenuItem(
+            text = stringResource(R.string.profile_dark),
+            icon = Lucide.Moon,
+            selected = selectedMode == AAAppearanceMode.Dark,
+            onClick = { onSelect(AAAppearanceMode.Dark); onDismiss() },
+        )
     }
 }
 
@@ -246,78 +215,32 @@ internal fun SidebarViewPopup(
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val colors = LocalAAColors.current
-    if (!open) return
-    Popup(
-        alignment = Alignment.TopEnd,
-        offset = androidx.compose.ui.unit.IntOffset(x = 0, y = 48),
-        onDismissRequest = onDismiss,
-        properties = PopupProperties(focusable = true),
-    ) {
-        AnimatedVisibility(
-            visible = true,
-            enter = fadeIn() + slideInVertically(initialOffsetY = { -10 }),
-            exit = fadeOut() + slideOutVertically(targetOffsetY = { -10 }),
-        ) {
-            Column(
-                modifier = Modifier
-                    .width(204.dp)
-                    .shadow(24.dp, RoundedCornerShape(14.dp), ambientColor = colors.appShadow, spotColor = colors.appShadow)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(if (colors.isDark) Color(0xFF303030) else Color(0xFFF4F3EF))
-                    .border(1.dp, if (colors.isDark) Color(0xFF4A4A4A) else Color(0xFFD6D3CD), RoundedCornerShape(14.dp)),
-            ) {
-                AppearanceMenuRow(
-                    title = stringResource(R.string.profile_project_view),
-                    icon = Lucide.Folder,
-                    selected = selectedMode == HomeSidebarViewMode.Project,
-                    onClick = { onSelect(HomeSidebarViewMode.Project) },
-                )
-                ProfileDivider(start = 0.dp, end = 0.dp)
-                AppearanceMenuRow(
-                    title = stringResource(R.string.profile_session_view),
-                    icon = Lucide.ListIcon,
-                    selected = selectedMode == HomeSidebarViewMode.Session,
-                    onClick = { onSelect(HomeSidebarViewMode.Session) },
-                )
-            }
-        }
+    ProfileDropdown(open, onDismiss) {
+        AADropdownMenuItem(
+            text = stringResource(R.string.profile_project_view),
+            icon = Lucide.Folder,
+            selected = selectedMode == HomeSidebarViewMode.Project,
+            onClick = { onSelect(HomeSidebarViewMode.Project); onDismiss() },
+        )
+        AADropdownMenuItem(
+            text = stringResource(R.string.profile_session_view),
+            icon = Lucide.ListIcon,
+            selected = selectedMode == HomeSidebarViewMode.Session,
+            onClick = { onSelect(HomeSidebarViewMode.Session); onDismiss() },
+        )
     }
 }
 
 @Composable
-private fun AppearanceMenuRow(
-    title: String,
-    icon: ImageVector,
-    selected: Boolean,
-    onClick: () -> Unit,
+private fun ProfileDropdown(
+    open: Boolean,
+    onDismiss: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
 ) {
-    val colors = LocalAAColors.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(48.dp)
-            .noRippleClickable(onClick = onClick)
-            .padding(start = 12.dp, end = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (selected) {
-            Icon(Lucide.Check, contentDescription = null, tint = colors.ink, modifier = Modifier.size(18.dp))
-        } else {
-            Spacer(Modifier.width(18.dp))
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopEnd) {
+        Box(Modifier.width(1.dp)) {
+            AADropdownMenu(expanded = open, onDismissRequest = onDismiss, content = content)
         }
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = title,
-            modifier = Modifier.weight(1f),
-            color = colors.ink,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-            lineHeight = 19.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Icon(icon, contentDescription = null, tint = colors.inkSoft, modifier = Modifier.size(20.dp))
     }
 }
 
