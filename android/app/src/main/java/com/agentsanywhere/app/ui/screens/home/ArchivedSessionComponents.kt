@@ -140,7 +140,7 @@ internal fun ArchivedSessionRow(
         ) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(session.title, color = colors.ink, fontSize = 15.sp, lineHeight = 21.sp,
-                    fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    fontWeight = FontWeight.Medium, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                 Text(stringResource(R.string.archive_archived_at, archivedTime), color = archiveSecondaryInk(),
                     fontSize = 11.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }

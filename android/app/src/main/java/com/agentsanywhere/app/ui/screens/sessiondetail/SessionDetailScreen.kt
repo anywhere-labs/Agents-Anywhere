@@ -1090,7 +1090,13 @@ fun SessionDetailScreen(
 
     fun updateSelection(scopeName: String, selectionId: String) {
         val id = sessionId ?: return
-        if (state.selectionUpdating) return
+        if (state.selectionUpdating || state.takeoverInFlight) return
+        if (state.session?.takeover != true) {
+            showRuntimeSettings = false
+            unfocusComposer()
+            takeoverConfirm = true
+            return
+        }
         val selections = state.runtime.selections.toMutableMap().apply { put(scopeName, selectionId) }
         optimisticSelections = optimisticSelections + (scopeName to selectionId)
         state = state.copy(selectionUpdating = true, actionError = null)
@@ -1802,7 +1808,7 @@ fun SessionDetailScreen(
             permissionLoading = if (isPreparedSession) preparedPermissionLoading else state.catalogs.permissionLoading,
             modelErrorMessage = if (isPreparedSession) preparedModelError else state.catalogs.modelErrorMessage,
             permissionErrorMessage = if (isPreparedSession) preparedPermissionError else state.catalogs.permissionErrorMessage,
-            busy = if (isPreparedSession) preparedSessionCreating else state.selectionUpdating,
+            busy = if (isPreparedSession) preparedSessionCreating else state.selectionUpdating || state.takeoverInFlight,
             onDismiss = { if (!state.selectionUpdating) showRuntimeSettings = false },
             onRetryModels = ::loadModelCatalog,
             onRetryPermissions = ::loadPermissionCatalog,
