@@ -39,7 +39,9 @@ async def discover(values: dict[str, Any]) -> DshDiscovery:
             None,
             reason="请启动 DSH，并启用手机连接插件。",
         )
-    if not _process_exists(endpoint.pid):
+    # Windows os.kill(pid, 0) is not a process-existence probe: it uses
+    # TerminateProcess. On Windows rely on the authenticated handshake below.
+    if os.name != "nt" and not _process_exists(endpoint.pid):
         return DshDiscovery(
             False,
             False,
