@@ -9,7 +9,7 @@ import { promisify } from 'node:util'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { createAssistantMessage, createToolResultMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { nativeRuntime } from '../fixtures/native-runtime.js'
-import { mountAgents, TextAdapter, initialSelections } from '../fixtures/agent-runtime.js'
+import { mountAgents, TextAdapter } from '../fixtures/agent-runtime.js'
 import { SyncFeed, SYNC_FLUSH_MS, type SyncBatch, type SyncOperation } from '../../src/host/dsh-runtime/sync.js'
 import { projectHistory } from '../../src/host/dsh-runtime/history.js'
 import { nativeSessionId, sessionId } from '../../src/host/dsh-runtime/identity.js'
@@ -334,8 +334,8 @@ test('real AgentLoop sends text once, streams before idle, queues followups and 
   const id = SessionId(nativeSessionId('test', 'sess-new'))
   try {
     await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'baseline')
-    await native.send(id, '第一条', 'client-1', home, true, initialSelections, 'standard')
-    await native.send(id, '第一条', 'client-1', home, true, initialSelections, 'standard')
+    await native.send(id, '第一条', 'client-1', home, true)
+    await native.send(id, '第一条', 'client-1', home, true)
     await until(() => !!adapter.release, 'model started')
     await until(() => {
       const operations = stream.ops()

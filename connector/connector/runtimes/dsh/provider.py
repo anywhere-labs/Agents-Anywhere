@@ -20,7 +20,7 @@ from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.dsh import discovery, provider_config
 from connector.runtimes.dsh.runtime import DshRuntime
 
-DSH_CONFIG_SCHEMA_REVISION = 3
+DSH_CONFIG_SCHEMA_REVISION = 2
 LEGACY_CONFIG_KEYS = frozenset(
     {
         "environment",
@@ -37,14 +37,6 @@ class DshProvider(RuntimeProvider):
     def __init__(self, discoverer: Discovery | None = None) -> None:
         self._discoverer = discoverer or discovery.discover
         self._last_discovery: discovery.DshDiscovery | None = None
-        self._last_values = provider_config.default_config_values()
-        self._preset_catalog: dict[str, Any] = {}
-
-    def _remember(self, result: discovery.DshDiscovery) -> None:
-        self._last_discovery = result
-        catalog = (result.metadata or {}).get("agentPresetCatalog")
-        if isinstance(catalog, dict):
-            self._preset_catalog = catalog
 
     @property
     def runtime(self) -> str:
@@ -67,14 +59,14 @@ class DshProvider(RuntimeProvider):
         return "DeepSeek Harness local service runtime"
 
     async def discover(self) -> RuntimeTypeDescriptor:
-        values = self._last_values
+        values = provider_config.default_config_values()
         result = await self._discoverer(values)
-        self._remember(result)
+        self._last_discovery = result
         metadata = dict(result.metadata or {})
         metadata.update(
             {
                 "protocolVersion": "1.0",
-                "readOnly": not provider_config.dsh_capabilities(metadata.get("runtimeCapabilities"))["startTurn"],
+                "readOnly": True,
                 "storageMode": "dsh-native",
                 "sameSessionWriterLimit": 1,
                 "crossProcessWriterExclusion": False,
@@ -87,13 +79,13 @@ class DshProvider(RuntimeProvider):
             description=self.description,
             implementation_type=self.implementation_type,
             available=result.available,
-            capabilities=provider_config.dsh_capabilities(metadata.get("runtimeCapabilities")),
+            capabilities=provider_config.dsh_capabilities(),
             reason=(
                 result.reason
                 if result.available
                 else result.reason or "DeepSeek Harness is unavailable"
             ),
-            config_schema=self._config_schema(),
+            config_schema=await self.get_config_schema(),
             instance_policy=self.instance_policy,
             max_instances=self.max_instances,
             recommended=False,
@@ -101,24 +93,12 @@ class DshProvider(RuntimeProvider):
         )
 
     async def get_config_schema(self) -> RuntimeConfigSchema:
-        self._remember(await self._discoverer(self._last_values))
-        return self._config_schema()
-
-    def _config_schema(self) -> RuntimeConfigSchema:
-        schema = provider_config.dsh_config_schema()
-        field = self._preset_catalog.get("configField")
-        defaults = provider_config.default_config_values()
-        if isinstance(field, dict):
-            schema["properties"]["defaultAgentPreset"] = dict(field)
-            if isinstance(field.get("default"), str):
-                defaults["defaultAgentPreset"] = field["default"]
         return RuntimeConfigSchema(
             runtime=self.runtime,
             revision=DSH_CONFIG_SCHEMA_REVISION,
-            schema=schema,
+            schema=provider_config.dsh_config_schema(),
             ui_schema={
                 "order": [
-                    "defaultAgentPreset",
                     "dshHome",
                     "startupTimeoutMs",
                     "requestTimeoutMs",
@@ -126,9 +106,8 @@ class DshProvider(RuntimeProvider):
                     "restartBackoffMs",
                 ],
                 "dshHome": {"component": "path"},
-                "defaultAgentPreset": self._preset_catalog.get("uiField", {"component": "select", "options": []}),
             },
-            defaults=defaults,
+            defaults=provider_config.default_config_values(),
             metadata={
                 "storageMode": "dsh-native",
                 "sameSessionWriterLimit": 1,
@@ -140,8 +119,9 @@ class DshProvider(RuntimeProvider):
         raw = {
             key: value for key, value in values.items() if key not in LEGACY_CONFIG_KEYS
         }
+        schema_info = await self.get_config_schema()
         errors = sorted(
-            Draft202012Validator(provider_config.dsh_config_schema()).iter_errors(raw),
+            Draft202012Validator(schema_info.schema).iter_errors(raw),
             key=lambda error: list(error.absolute_path),
         )
         if errors:
@@ -151,23 +131,14 @@ class DshProvider(RuntimeProvider):
             )
         normalized = provider_config.normalized_config_values(raw)
         result = await self._discoverer(normalized)
-        self._remember(result)
+        self._last_discovery = result
         if not result.available or not result.configured or result.endpoint is None:
             raise RuntimeInvalidRequestError(result.reason or "DSH is unavailable")
-        schema_info = self._config_schema()
-        if "defaultAgentPreset" not in normalized and "defaultAgentPreset" in schema_info.defaults:
-            normalized["defaultAgentPreset"] = schema_info.defaults["defaultAgentPreset"]
-        preset = normalized.get("defaultAgentPreset")
-        catalog = (result.metadata or {}).get("agentPresetCatalog")
-        if preset is not None and isinstance(catalog, dict):
-            if not any(row.get("id") == preset and row.get("enabled") is True for row in catalog.get("presets", []) if isinstance(row, dict)):
-                raise RuntimeInvalidRequestError("所选 DSH 模式已删除或不可用，请重新选择新会话默认模式。")
-        self._last_values = normalized
         metadata = dict(result.metadata or {})
         metadata.update(
             {
                 "protocolVersion": "1.0",
-                "readOnly": not provider_config.dsh_capabilities(metadata.get("runtimeCapabilities"))["startTurn"],
+                "readOnly": True,
                 "storageMode": "dsh-native",
                 "sameSessionWriterLimit": 1,
                 "crossProcessWriterExclusion": False,

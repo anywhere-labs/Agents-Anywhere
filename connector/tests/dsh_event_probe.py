@@ -26,7 +26,6 @@ from agent_server.app import create_app
 from agent_server.core.auth import create_connector_access_token
 from connector.runtimes.dsh.provider import DshProvider
 from connector.runtimes.dsh.runtime import DshRuntime
-from connector.runtimes.dsh.identity import model_selection_id, permission_selection_id
 from connector.server.ingest import ConnectorIngestClient
 from connector.server.runtime_host import ConnectorRuntimeHost
 
@@ -139,9 +138,9 @@ async def main(home: Path) -> None:
 
                 await until(first_native_message, "first native user message did not create the AA session and timeline")
 
-                result = await runtime.create_and_start_session("sess-new", "第一条", cwd=str(home), selections={"model": model_selection_id("test", "text", None), "permission": permission_selection_id("workspace-write")}, runtime_options={"agentPreset": "standard"}, client_message_id="msg-1")
+                result = await runtime.create_and_start_session("sess-new", "第一条", cwd=str(home), client_message_id="msg-1")
                 external_id = result.result["externalSessionId"]
-                await runtime.create_and_start_session("sess-new", "第一条", cwd=str(home), selections={"model": model_selection_id("test", "text", None), "permission": permission_selection_id("workspace-write")}, runtime_options={"agentPreset": "standard"}, client_message_id="msg-1")
+                await runtime.create_and_start_session("sess-new", "第一条", cwd=str(home), client_message_id="msg-1")
                 await until(lambda: partial_text_since(0, allow_snapshot=True), "first partial text was not delivered while the model was running")
                 await native_action("release")
                 await until(lambda: finished("sess-new", 1), "first text did not finish")

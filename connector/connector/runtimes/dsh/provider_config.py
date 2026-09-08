@@ -19,11 +19,6 @@ def dsh_config_schema() -> dict[str, Any]:
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "properties": {
-            "defaultAgentPreset": {
-                "type": "string", "minLength": 1, "maxLength": 256,
-                "title": "新会话默认模式",
-                "description": "仅用于以后创建的会话，已有会话保持原模式。",
-            },
             "dshHome": {
                 "type": "string",
                 "minLength": 1,
@@ -64,11 +59,6 @@ def default_config_values() -> dict[str, Any]:
 
 def normalized_config_values(raw: dict[str, Any]) -> dict[str, Any]:
     values = {**default_config_values(), **raw}
-    if "defaultAgentPreset" in values and (
-        not isinstance(values["defaultAgentPreset"], str)
-        or not 1 <= len(values["defaultAgentPreset"]) <= 256
-    ):
-        raise RuntimeInvalidRequestError("defaultAgentPreset must be a non-empty mode ID")
     dsh_home = values.get("dshHome")
     if dsh_home is not None:
         if (
@@ -117,24 +107,20 @@ def endpoint_path(values: dict[str, Any]) -> Path:
     )
 
 
-def dsh_capabilities(reported: dict[str, Any] | None = None) -> dict[str, bool]:
-    enabled = {
-        row.get("capabilityId") for row in (reported or {}).get("capabilities", [])
-        if isinstance(row, dict) and row.get("supported") and row.get("available") and row.get("allowed")
-    }
+def dsh_capabilities() -> dict[str, bool]:
     return {
-        "modelCatalog": "catalog.model" in enabled,
-        "permissionCatalog": "catalog.permission" in enabled,
+        "modelCatalog": False,
+        "permissionCatalog": False,
         "sessionDiscovery": True,
         "sessionSnapshot": True,
         "sessionState": True,
         "sessionNotices": False,
-        "createAndStartSession": "session.send_message" in enabled,
-        "startTurn": "session.send_message" in enabled,
+        "createAndStartSession": False,
+        "startTurn": False,
         "steerTurn": False,
-        "interruptTurn": "session.interrupt" in enabled,
+        "interruptTurn": False,
         "commands": False,
         "interactions": False,
-        "attachments": "runtime.attachment" in enabled,
+        "attachments": False,
         "ipc": True,
     }

@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import { receiptKey } from './attachments.js'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { createProjection, type SessionProjection } from './history.js'
 import { sessionId } from './identity.js'
 import type { NativeChange, NativeRuntime } from './native.js'
 import { record, type TimelineItem } from './types.js'
+import { capabilities } from './capabilities.js'
 
 export type SyncOperation = { kind: string, [key: string]: unknown }
 export interface SyncBatch { streamId: string, batchSeq: number, projectionVersion: number, operations: SyncOperation[] }
@@ -121,7 +121,7 @@ export class SyncFeed {
     const log = await this.native.read(id as SessionId)
     const platformId = sessionId(this.namespace, id)
     const projection = createProjection(id, platformId)
-    for (const event of log.events) projection.apply(event, log.attachmentReceipts?.[receiptKey(event) ?? ''])
+    for (const event of log.events) projection.apply(event)
     const title = log.events.findLast(event => event.type === 'session/title')
     const snapshotId = randomUUID()
     if (!await this.native.visible(id)) return
@@ -161,8 +161,7 @@ export class SyncFeed {
     const last = log?.snapshotEvents().findLast(e => e.type === 'turn/end')
     const status = pending.size || this.native.questions.waiting(id) ? 'waiting_approval' : this.native.status(id as SessionId)
       ?? (last?.type === 'turn/end' && last.data.reason.kind === 'error' ? 'error' : 'idle')
-    await this.notification('session.state.updated', { sessionId: this.published.get(id), externalSessionId: id, status,
-      ...await this.native.configuration.state(id as SessionId) })
+    await this.notification('session.state.updated', { sessionId: this.published.get(id), externalSessionId: id, status })
   }
   private async reconcile(): Promise<void> {
     for (const id of this.native.candidates()) if (!await this.native.visible(id)) {
@@ -180,18 +179,12 @@ export class SyncFeed {
     for (const id of this.native.candidates()) if (!this.published.has(id)) await this.baseline(id)
   }
   private async changes(changes: NativeChange[]): Promise<void> {
-    const touched = new Set<string>(), statuses = new Set<string>(), capabilities = new Set<string>()
+    const touched = new Set<string>(), statuses = new Set<string>()
     const ended: [string, Record<string, unknown>][] = []
     let reconcile = false
     for (const change of changes) {
       if (change.type === 'capabilities') {
-        await this.notification('runtime.capability.updated', await this.native.capabilities())
-        continue
-      }
-      if (change.type === 'catalogs') {
-        if (this.native.ctx.get('llm')) await this.notification('catalog.model.update', { ...await this.native.catalogs.models() })
-        if (this.native.ctx.get('permissionPresets')) await this.notification('catalog.permission.update', this.native.catalogs.permissions())
-        await this.notification('runtime.capability.updated', await this.native.capabilities())
+        await this.notification('runtime.capability.updated', capabilities(undefined, Boolean(this.native.ctx.get('agents')), this.native.questions.available))
         continue
       }
       if (change.type === 'visibility') { reconcile = true; continue }
@@ -205,22 +198,18 @@ export class SyncFeed {
       if (!this.published.has(id)) continue
       if (change.type === 'question') await this.notices(id)
       if (change.type === 'event') {
-        if (['model/selection', 'agent-preset/selected'].includes(change.event.type)) capabilities.add(id)
         if (change.event.type === 'turn/end') ended.push([id, {
           sessionId: this.published.get(id), externalSessionId: id,
           sourceObservedAt: new Date(change.event.time).toISOString(),
           outcome: change.event.data.reason.kind === 'error' ? 'failed'
             : ['aborted', 'interrupted'].includes(change.event.data.reason.kind) ? 'interrupted' : 'completed',
         }])
-        if (['turn/start', 'turn/end', 'approval/asked', 'approval/decided', 'model/selection', 'request/header',
-          'permission/preset', 'sandbox/mode', 'approval/policy', 'agent-preset/selected'].includes(change.event.type)) statuses.add(id)
+        if (['turn/start', 'turn/end', 'approval/asked', 'approval/decided'].includes(change.event.type)) statuses.add(id)
         const projection = this.projections.get(id)
         if (!projection) { await this.baseline(id); continue }
         this.projections.delete(id); this.projections.set(id, projection)
         if (Number(change.event.seq) <= projection.throughSeq) continue
-        const key = receiptKey(change.event)
-        const receipt = key ? (await this.native.images.readReceipts(id))[key] : undefined
-        try { projection.apply(change.event, receipt) } catch { await this.baseline(id); continue }
+        try { projection.apply(change.event) } catch { await this.baseline(id); continue }
         touched.add(id)
         if (change.event.type === 'session/title') await this.notification('session.meta.upsert', {
           sessionId: this.published.get(id), externalSessionId: id, title: change.event.data.title })
@@ -236,7 +225,6 @@ export class SyncFeed {
     }
     for (const [id, params] of ended) if (await this.native.visible(id)) await this.notification('session.turnEnded', params)
     for (const id of statuses) await this.state(id)
-    for (const id of capabilities) await this.notification('session.capability.updated', await this.native.capabilities(this.published.get(id), id as SessionId))
     if (reconcile) await this.reconcile()
     this.trimProjections()
   }

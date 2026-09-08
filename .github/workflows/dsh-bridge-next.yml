@@ -16,6 +16,7 @@ on:
       - v2
       - feat/benson-0905
       - codex/connector-owned-lifecycle
+      - codex/dsh-before-images
     paths:
       - dsh-bridge-next/**
       - connector/**

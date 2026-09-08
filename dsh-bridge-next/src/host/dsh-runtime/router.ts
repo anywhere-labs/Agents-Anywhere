@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { parseImages } from './attachments.js'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionQueryEngine, SessionRecord } from '@deepseek-ai/dsh-session-query'
 import { capabilities } from './capabilities.js'
-import { BridgeError, publicError } from './errors.js'
-import { parseSelections } from './selections.js'
+import { BridgeError } from './errors.js'
 import { projectHistory } from './history.js'
 import { sessionId, nativeSessionId } from './identity.js'
 import type { NativeRuntime } from './native.js'
@@ -69,51 +67,19 @@ export class RuntimeRouter {
       case 'session.startTurn': {
         const native = this.reader.native
         if (!native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Text messaging is unavailable.')
-        const attachments = parseImages(params.attachments)
+        if (params.attachments != null && (!Array.isArray(params.attachments) || params.attachments.length)) throw new BridgeError('UNSUPPORTED_OPERATION', 'Attachments are not supported yet.')
         if (typeof params.sessionId !== 'string' || !params.sessionId || typeof params.content !== 'string' || typeof params.clientMessageId !== 'string') throw new BridgeError('INVALID_PARAMS', 'Session ID, text and clientMessageId are required.')
         const create = method === 'session.createAndStart'
         const id = create ? nativeSessionId(this.namespace, params.sessionId) as SessionId : await this.resolve(params, signal, true)
         try {
-          await native.send(id, params.content, params.clientMessageId, typeof params.cwd === 'string' ? params.cwd : undefined, create,
-            parseSelections(params.selections), typeof params.agentPreset === 'string' ? params.agentPreset : undefined, signal, attachments, params.sessionId)
+          await native.send(id, params.content, params.clientMessageId, typeof params.cwd === 'string' ? params.cwd : undefined, create)
         } catch (error) {
-          const failure = publicError(error)
+          if (!(error instanceof BridgeError) || !['SESSION_ARCHIVED', 'SESSION_NOT_FOUND'].includes(error.code)) throw error
           const sourceState = await native.source.state(id)
-          const configuration = native.ctx.sessions.get(id) ? await native.configuration.state(id).catch(() => undefined) : undefined
-          return { ok: false, code: failure.code === 'SESSION_ARCHIVED' ? 'session_archived' : failure.code === 'SESSION_NOT_FOUND' ? 'session_unavailable' : failure.code,
-            message: failure.message, result: { sessionId: params.sessionId, externalSessionId: id, sourceState,
-              ...(configuration ? { configuration, created: create, messageAccepted: false } : {}) } }
+          return { ok: false, code: sourceState.availability === 'archived' ? 'session_archived' : 'session_unavailable',
+            message: error.message, result: { sessionId: params.sessionId, externalSessionId: id, sourceState } }
         }
         return { accepted: true, sessionId: sessionId(this.namespace, id), externalSessionId: id }
-      }
-      case 'catalog.listModels': {
-        if (!this.reader.native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Model catalog is unavailable.')
-        const catalog = await this.reader.native.catalogs.models(true)
-        const query = typeof params.query === 'string' ? params.query.toLocaleLowerCase() : ''
-        return { ...catalog, models: catalog.models.filter(item => `${item.title} ${item.metadata.providerName} ${item.metadata.model}`.toLocaleLowerCase().includes(query))
-          .slice(0, integer(params.limit, 1000, 10_000)) }
-      }
-      case 'catalog.listPermissions': {
-        if (!this.reader.native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Permission catalog is unavailable.')
-        return this.reader.native.catalogs.permissions()
-      }
-      case 'catalog.listAgentPresets': {
-        if (!this.reader.native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Agent modes are unavailable.')
-        return this.reader.native.catalogs.agentPresets()
-      }
-      case 'session.updateSelections': {
-        const native = this.reader.native
-        if (!native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Configuration changes are unavailable.')
-        const id = await this.resolve(params, signal)
-        const selections = parseSelections(params.selections)
-        if (!Object.keys(selections).length) throw new BridgeError('INVALID_PARAMS', 'Choose a configuration to change.')
-        try { await native.updateSelections(id, selections, signal) }
-        catch (error) {
-          const failure = publicError(error)
-          return { ok: false, code: failure.code, message: failure.message,
-            result: { state: await this.request('session.getState', params, new AbortController().signal).catch(() => null) } }
-        }
-        return { ok: true, result: { state: await this.request('session.getState', params, signal) } }
       }
       case 'session.interrupt': {
         if (!this.reader.native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Interrupt is unavailable.')
@@ -124,7 +90,7 @@ export class RuntimeRouter {
       case 'ping': return { ok: true }
       case 'runtime.getConfig': return { runtime: 'dsh', revision: 2, values: {}, metadata: { readOnly: !this.reader.native?.ctx.get('agents'), storageMode: 'dsh-native' } }
       case 'workspace.list': return { workspaces: this.reader.native?.workspaces() ?? [] }
-      case 'runtime.getCapabilities': return this.reader.native?.capabilities() ?? capabilities()
+      case 'runtime.getCapabilities': return capabilities(undefined, Boolean(this.reader.native?.ctx.get('agents')), this.reader.native?.questions.available)
       case 'session.list': return this.list(params, signal)
       case 'session.getSnapshot': return this.snapshot(params, signal)
       case 'session.getState': {
@@ -136,13 +102,12 @@ export class RuntimeRouter {
           status: 'blocked', selections: {}, sourceState, metadata: { readOnly: true, attached: false },
         }
         const native = await this.reader.query.readSession(id)
-        const configuration = await this.reader.native?.configuration.state(id, native)
         signal.throwIfAborted()
         const lastEnd = native.events.findLast(event => event.type === 'turn/end')
         const liveStatus = this.reader.status(id)
         return { runtime: 'dsh', sessionId: sessionId(this.namespace, id), externalSessionId: id, sourceState,
-          status: this.reader.native?.questions.waiting(id) ? 'waiting_approval' : liveStatus ?? (lastEnd?.data.reason.kind === 'error' ? 'error' : 'idle'), selections: configuration?.selections ?? {},
-          metadata: { ...configuration?.metadata, readOnly: !this.reader.native?.ctx.get('sessionController'), attached: liveStatus !== undefined } }
+          status: this.reader.native?.questions.waiting(id) ? 'waiting_approval' : liveStatus ?? (lastEnd?.data.reason.kind === 'error' ? 'error' : 'idle'), selections: {},
+          metadata: { readOnly: !this.reader.native?.ctx.get('agents'), attached: liveStatus !== undefined } }
       }
       case 'session.getNotices': {
         const id = await this.resolve(params, signal)
@@ -153,10 +118,8 @@ export class RuntimeRouter {
         if (!this.reader.native || typeof params.noticeId !== 'string' || typeof params.actionId !== 'string') throw new BridgeError('INVALID_PARAMS', 'A question and action are required.')
         return this.reader.native.questions.respond(this.namespace, id, params.noticeId, params.actionId, params.inputData)
       }
-      case 'session.getCapabilities': {
-        const id = await this.resolve(params, signal)
-        return this.reader.native?.capabilities(sessionId(this.namespace, id), id) ?? capabilities(sessionId(this.namespace, id))
-      }
+      case 'session.getCapabilities':
+        return capabilities(sessionId(this.namespace, await this.resolve(params, signal)), Boolean(this.reader.native?.ctx.get('agents')), this.reader.native?.questions.available)
       default:
         throw new BridgeError('UNSUPPORTED_OPERATION', `The DSH runtime does not support ${method}.`)
     }
