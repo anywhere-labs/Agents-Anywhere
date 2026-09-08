@@ -1,6 +1,7 @@
 package com.agentsanywhere.app.ui.screens.home
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -892,6 +894,7 @@ fun NewSessionScreen(
             ) {
                 NewSessionConfigurationCard(
                     fields = configurationFields,
+                    modifier = if (darkMode) Modifier else Modifier.border(1.dp, Color(0xFFE7E6E2), RoundedCornerShape(18.dp)),
                     expanded = expandedConfiguration,
                     onToggle = { key ->
                         expandedConfiguration = if (expandedConfiguration == key) null else key
@@ -940,6 +943,7 @@ fun NewSessionScreen(
                         error = pathError,
                         darkMode = darkMode,
                         canUseCurrent = canUseCurrentPath,
+                        directoryBorderColor = Color(0xFFE7E6E2).takeUnless { darkMode },
                         modifier = Modifier.weight(1f),
                         onBack = { choosePath = false },
                         onParent = {

@@ -2,6 +2,7 @@ package com.agentsanywhere.app.ui.screens.home
 
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -121,6 +122,7 @@ private fun WorkspaceOptionRow(title: String, path: String, selected: Boolean, e
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .background(if (selected) colors.raisedSurface else Color.Transparent)
+            .then(if (selected && !colors.isDark) Modifier.border(1.dp, Color(0xFFE7E6E2), RoundedCornerShape(16.dp)) else Modifier)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -155,6 +157,7 @@ private fun WorkspaceActionRow(title: String, icon: ImageVector, enabled: Boolea
             .shadow(elevation, RoundedCornerShape(16.dp), ambientColor = colors.appShadow, spotColor = colors.appShadow)
             .clip(RoundedCornerShape(16.dp))
             .background(if (raised) colors.raisedSurface else Color.Transparent)
+            .then(if (raised && !colors.isDark) Modifier.border(1.dp, Color(0xFFE7E6E2), RoundedCornerShape(16.dp)) else Modifier)
             .clickable(enabled = enabled, interactionSource = interactionSource, indication = null, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
