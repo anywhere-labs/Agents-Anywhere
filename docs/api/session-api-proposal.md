@@ -181,6 +181,7 @@ All routes are mounted under `/api/v2`.
 
 ```text
 GET   /sessions
+GET   /sessions/list
 GET   /sessions/{sessionId}/meta
 PATCH /sessions/{sessionId}/meta
 POST  /sessions/read
@@ -190,6 +191,13 @@ POST  /sessions/unarchive
 
 `GET /sessions` returns SessionMeta summaries for dashboard/list views. It may
 include connector presence, but must not include runtime state as durable fact.
+
+`GET /sessions/list` returns `{ sessions, serverTime }` with the complete owned
+SessionMeta inventory, including active and archived sessions across all projects.
+Web and iOS use this endpoint for explicit dashboard refresh and derive project,
+device and archive views locally. It has no pagination or project filter and does
+not read timeline bodies or call each session's runtime. The paginated
+`GET /sessions` endpoint retains its cursor/filter contract for other callers.
 
 `PATCH /sessions/{sessionId}/meta` updates only Server-owned display metadata:
 

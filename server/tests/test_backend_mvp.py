@@ -12176,7 +12176,8 @@ def test_dashboard_snapshot_includes_projects_and_refreshes_after_create(tmp_pat
 
     with client.websocket_connect(f"/dashboard/ws?ticket={ticket}") as ws:
         initial = ws.receive_json()
-        assert initial["projects"] == []
+        assert len(initial["projects"]) == 1
+        existing_project_id = initial["projects"][0]["id"]
 
         created = client.post(
             "/projects",
@@ -12184,15 +12185,15 @@ def test_dashboard_snapshot_includes_projects_and_refreshes_after_create(tmp_pat
             json={
                 "name": "Live Project",
                 "connectorId": connector_id,
-                "workspacePath": "/repo",
+                "workspacePath": "/live-project",
             },
         )
         assert created.status_code == 200, created.text
         project_id = created.json()["project"]["id"]
         refreshed = ws.receive_json()
 
-    assert [project["id"] for project in refreshed["projects"]] == [project_id]
+    assert {project["id"] for project in refreshed["projects"]} == {existing_project_id, project_id}
     refreshed_session = next(
         session for session in refreshed["sessions"] if session["id"] == session_id
     )
-    assert refreshed_session["projectId"] is None
+    assert refreshed_session["projectId"] == existing_project_id

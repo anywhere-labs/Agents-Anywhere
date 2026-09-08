@@ -816,6 +816,7 @@
       "pinned": "Pinned",
       "projects": "Projects",
       "recents": "Recents",
+      "unassignedSessions": "Ungrouped sessions",
       "sessions": "Sessions"
     },
     "session": {

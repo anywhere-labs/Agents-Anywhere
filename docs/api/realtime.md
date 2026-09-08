@@ -128,7 +128,8 @@ The Web client should prefer dashboard WebSocket and stop fixed-interval polling
 
 ```text
 GET /api/v2/connectors
-GET /api/v2/sessions
+GET /api/v2/projects
+GET /api/v2/sessions/list
 ```
 
 ### Current dashboard behavior
@@ -140,6 +141,20 @@ dashboard.snapshot
 ```
 
 on connect, and sends another full snapshot when a debounced `dashboard.changed` invalidation arrives.
+
+Each snapshot contains the complete owned project and session metadata inventories,
+including both active and archived sessions. `sessionPages` reports no more pages.
+Web and iOS group, filter and sort these sessions locally. Expanding a project,
+switching a device filter or opening archives does not fetch another session list.
+An explicit HTTP refresh reads `/projects` and `/sessions/list` once each, alongside
+the connector list; it does not issue a request for every project or archive state.
+
+Project mutations refresh the shared project list. A session with an unknown or
+missing project binding also triggers a shared project refresh and remains visible
+under ungrouped sessions. Clients coalesce concurrent project reads and remember
+unresolved bindings, so every message on an unassigned session does not cause a new
+request. A failed read can retry after a later update. Newer push or mutation data
+takes precedence over an earlier HTTP read.
 
 This is acceptable as a near-term replacement for polling. If full snapshots become too heavy, the next step is delta events:
 

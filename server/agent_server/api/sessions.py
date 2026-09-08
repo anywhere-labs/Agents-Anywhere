@@ -331,6 +331,24 @@ async def list_sessions(
     }
 
 
+@router.get("/list")
+async def list_session_inventory(
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    runtime_state_cache: SessionRuntimeStateCache = Depends(get_session_runtime_state_cache),
+    timeline_write_buffer: TimelineWriteBuffer = Depends(get_timeline_write_buffer),
+) -> dict[str, Any]:
+    dirty_ids = await timeline_write_buffer.dirty_session_ids()
+    for session_id in await db.list_owned_session_ids(dirty_ids, user_id=user_id):
+        await timeline_write_buffer.flush_through(session_id)
+    sessions = await db.list_session_inventory(user_id=user_id)
+    return {
+        "sessions": await project_session_meta_for_dashboard(manager, runtime_state_cache, sessions),
+        "serverTime": utc_now(),
+    }
+
+
 @router.get("/{session_id}/meta", response_model=SessionResponse)
 async def get_session_meta(
     session_id: str,

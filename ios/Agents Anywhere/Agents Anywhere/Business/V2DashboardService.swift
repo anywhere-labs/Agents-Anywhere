@@ -3,9 +3,7 @@ import Foundation
 struct V2DashboardData: Hashable {
     let connectors: [V2Connector]
     let projects: [V2Project]
-    let active: V2SessionListResponse
-    let archived: V2SessionListResponse
-    var sessions: [V2SessionMeta] { active.sessions + archived.sessions }
+    let sessions: [V2SessionMeta]
 }
 
 struct V2DashboardService {
@@ -18,12 +16,11 @@ struct V2DashboardService {
     func load() async throws -> V2DashboardData {
         async let connectors = connectorAPI.listConnectors()
         async let projects = projectAPI.list()
-        async let active = sessionAPI.listSessions(archived: false, cursor: nil)
-        async let archived = sessionAPI.listSessions(archived: true, cursor: nil)
-        let (connectorResponse, projectResponse, activeResponse, archivedResponse) = try await (connectors, projects, active, archived)
+        async let inventory = sessionAPI.sessionInventory()
+        let (connectorResponse, projectResponse, sessionResponse) = try await (connectors, projects, inventory)
         return V2DashboardData(
             connectors: connectorResponse.connectors,
-            projects: projectResponse.projects, active: activeResponse, archived: archivedResponse
+            projects: projectResponse.projects, sessions: sessionResponse.sessions
         )
     }
 

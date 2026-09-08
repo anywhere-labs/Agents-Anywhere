@@ -1,5 +1,4 @@
 import type { WorkspaceSessionView } from "@/components/workspace-context"
-import { compareSessionListOrder } from "@/components/session/session-list-order"
 import type { ProjectView } from "@/features/dashboard/types"
 import { filterSessions, type FilterValue } from "@/lib/demo-api"
 import { sortProjectsBySessionActivity } from "./project-list-order"
@@ -73,23 +72,15 @@ export function selectAllSessions(
 
 export function selectProjectSessions(
   sessions: WorkspaceSessionView[],
-  currentSessionsById: Map<string, WorkspaceSessionView>,
   status: ProjectSessionStatusFilter = "active",
 ): WorkspaceSessionView[] {
-  const currentSessions = sessions.map(
-    (session) => currentSessionsById.get(session.id) ?? session,
-  )
-  const filtered = currentSessions.filter((session) => projectSessionMatchesStatus(session, status))
-  const currentOrder = new Map(
-    Array.from(currentSessionsById.keys()).map((id, index) => [id, index]),
-  )
+  return sessions.filter((session) => projectSessionMatchesStatus(session, status))
+}
 
-  return [...filtered].sort((left, right) => {
-    const leftIndex = currentOrder.get(left.id)
-    const rightIndex = currentOrder.get(right.id)
-    if (leftIndex !== undefined && rightIndex !== undefined) return leftIndex - rightIndex
-    if (leftIndex !== undefined) return -1
-    if (rightIndex !== undefined) return 1
-    return compareSessionListOrder(left, right)
-  })
+export function groupSessionsByProject(sessions: WorkspaceSessionView[]): Record<string, WorkspaceSessionView[]> {
+  const groups: Record<string, WorkspaceSessionView[]> = Object.create(null)
+  for (const session of sessions) {
+    if (session.projectId) (groups[session.projectId] ??= []).push(session)
+  }
+  return groups
 }

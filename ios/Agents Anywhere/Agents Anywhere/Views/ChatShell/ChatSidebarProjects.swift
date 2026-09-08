@@ -25,6 +25,7 @@ struct ChatSidebarProjects: View {
     }
     var body: some View {
         let projects = ProjectSidebarPresentation.projects(repository.projects, filter: filter, sessions: repository.sessions)
+        let unassigned = ProjectSidebarPresentation.unassignedSessions(repository.sessions, projects: repository.projects, filter: filter)
         // Capture the value in this body, then pass it through the lazy builders.
         // Pinning moves a row between sections before the request clears busy;
         // cached row content must receive that final state change explicitly.
@@ -61,6 +62,11 @@ struct ChatSidebarProjects: View {
                     Text(String(localized: "创建一个项目，开始新的任务。"))
                         .font(.footnote).foregroundStyle(.secondary).padding(10)
                 }
+            }
+            if !unassigned.isEmpty {
+                Text(String(localized: "未分组会话")).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 10).padding(.top, 16).padding(.bottom, 6)
+                sessionRows(unassigned, inset: false)
             }
         }
         .sheet(isPresented: $createsProject) {
@@ -141,32 +147,22 @@ struct ChatSidebarProjects: View {
     }
 
     private func projectSessions(_ project: V2Project) -> some View {
+        sessionRows(ProjectSidebarPresentation.sessions(repository.sessions, projectID: project.id, filter: filter), inset: true)
+    }
+    private func sessionRows(_ sessions: [V2SessionMeta], inset: Bool) -> some View {
         LazyVStack(alignment: .leading, spacing: 2) {
-            ForEach(ProjectSidebarPresentation.sessions(repository.sessions, projectID: project.id, filter: filter)) { session in
+            ForEach(sessions) { session in
                 ChatSidebarSessionRow(session: .init(session: session), isSelected: selectedSessionID == session.id,
-                    inset: true,
+                    inset: inset,
                     onOpen: { onOpenSession(session.id) }, onRename: { onRenameSession(session.id, $0) },
                     onTogglePinned: { onPinSession(session.id, !session.pinned) }, onArchive: { onArchiveSession(session.id) },
                     onCopyId: { onCopySession(session.id) })
             }
-            ForEach(scopes(project.id), id: \.self) { scope in
-                DashboardPageButton(repository: repository, scope: scope).padding(.leading, 26)
-            }
-        }
-        .task(id: "\(filter.rawValue):\(repository.canWrite)") {
-            for scope in scopes(project.id) { await repository.ensureProjectPage(scope) }
         }
     }
     private func toggleProject(_ id: String) {
         if expanded.contains(id) { repository.sidebarPreferences.expandedProjects.remove(id) }
         else { repository.sidebarPreferences.expandedProjects.insert(id) }
-    }
-    private func scopes(_ id: String) -> [V2SessionListScope] {
-        switch filter {
-        case .active: [.init(projectID: id)]
-        case .archived: [.init(projectID: id, archived: true)]
-        case .all: [.init(projectID: id), .init(projectID: id, archived: true)]
-        }
     }
     private func perform(_ id: String, operation: @escaping () async throws -> Void) {
         guard !busy.contains(id) else { return }
@@ -174,24 +170,6 @@ struct ChatSidebarProjects: View {
         Task {
             defer { busy.remove(id) }
             do { try await operation() } catch { self.error = error.localizedDescription }
-        }
-    }
-}
-
-struct DashboardPageButton: View {
-    let repository: V2DashboardRepository
-    let scope: V2SessionListScope
-    var body: some View {
-        if repository.loadingPages.contains(scope) {
-            ProgressView(String(localized: "加载会话…")).font(.footnote).padding(10)
-        } else if let error = repository.pageErrors[scope] {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(error).font(.caption).foregroundStyle(.secondary)
-                Button(String(localized: "重试")) { Task { await repository.loadPage(scope) } }.disabled(!repository.canWrite)
-            }.padding(10)
-        } else if repository.pages[scope]?.hasMore == true {
-            Button(scope.archived ? String(localized: "加载更多归档会话") : String(localized: "加载更多会话")) { Task { await repository.loadPage(scope) } }
-                .font(.footnote).padding(10).disabled(!repository.canWrite)
         }
     }
 }
@@ -226,12 +204,10 @@ struct ArchivedSessionsSheet: View {
                             .accessibilityLabel(String(localized: "恢复会话"))
                     }
                 }
-                DashboardPageButton(repository: repository, scope: .init(archived: true))
             }
             .navigationTitle(String(localized: "归档会话")).navigationBarTitleDisplayMode(.inline)
             .toolbar { SheetCloseToolbar { dismiss() } }
-            .refreshable { await repository.loadPage(.init(archived: true), refresh: true) }
-            .task { if repository.pages[.init(archived: true)] == nil { await repository.loadPage(.init(archived: true)) } }
+            .refreshable { await repository.refresh() }
         }
         .appSheetPresentation(.compact)
         .alert(String(localized: "无法恢复会话，请稍后重试。"), isPresented: $restoreError) { Button(String(localized: "好"), role: .cancel) {} }

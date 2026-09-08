@@ -36,7 +36,6 @@ import {
 } from "@/components/ui/tooltip"
 import type { WorkspaceSessionView } from "@/components/workspace-context"
 import { SessionSidebarItem } from "@/components/sidebar/session-sidebar-item"
-import { SidebarLoadingItem } from "@/components/sidebar/sidebar-loading-item"
 import { OverflowMarquee } from "@/components/sidebar/overflow-marquee"
 import type { ProjectView } from "@/features/dashboard/types"
 import { cn } from "@/lib/utils"
@@ -46,7 +45,6 @@ export function ProjectSidebarItem({
   project,
   sessions,
   expanded,
-  loading,
   activeSessionId,
   onExpandedChange,
   onOpenSession,
@@ -61,7 +59,6 @@ export function ProjectSidebarItem({
   project: ProjectView
   sessions: WorkspaceSessionView[]
   expanded: boolean
-  loading: boolean
   activeSessionId: string | null
   onExpandedChange: (open: boolean) => void
   onOpenSession: (sessionId: string) => void
@@ -166,9 +163,7 @@ export function ProjectSidebarItem({
 
         <CollapsibleContent>
           <SidebarMenu>
-            {loading ? (
-              <SidebarLoadingItem label={t("status.loadingSessions")} />
-            ) : sessions.length === 0 ? (
+            {sessions.length === 0 ? (
               <li className="py-2 pl-9 pr-3 text-xs text-muted-foreground">{t("projects.noSessions")}</li>
             ) : (
               sessions.map((session) => (

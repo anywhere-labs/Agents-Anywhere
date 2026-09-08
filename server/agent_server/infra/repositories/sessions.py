@@ -587,6 +587,24 @@ class SessionRepositoryMixin:
         return str(explicit.id)
 
 
+    async def list_session_inventory(self, *, user_id: str) -> list[SessionView]:
+        """Return the owned session metadata used to group the entire workspace."""
+        latest_item = _latest_timeline_item_subquery()
+        query = (
+            _session_view_query(latest_item)
+            .where(connectors_t.c.revoked == 0, connectors_t.c.user_id == user_id)
+            .order_by(
+                sessions_t.c.pinned.desc(),
+                _session_sort_at(latest_item).desc(),
+                func.coalesce(latest_item.c.latest_item_order_seq, -1).desc(),
+                sessions_t.c.updated_seq.desc(),
+                sessions_t.c.id.desc(),
+            )
+        )
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [await self._session_from_row(row) for row in rows]
+
     async def list_sessions_page(
         self,
         *,

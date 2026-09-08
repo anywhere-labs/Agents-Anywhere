@@ -30,7 +30,6 @@ from agent_server.services.session_meta_projection import (
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
-SESSION_PAGE_LIMIT = 100
 
 
 def _get_ws_tickets(conn: HTTPConnection) -> ClientWsTicketManager:
@@ -46,17 +45,7 @@ async def _dashboard_snapshot(
 ) -> dict[str, Any]:
     connectors = await db.list_connectors(user_id=user_id)
     projects = await db.list_projects(user_id=user_id)
-    active_page, active_has_more, active_cursor = await db.list_sessions_page(
-        archived=False,
-        limit=SESSION_PAGE_LIMIT,
-        user_id=user_id,
-    )
-    archived_page, archived_has_more, archived_cursor = await db.list_sessions_page(
-        archived=True,
-        limit=SESSION_PAGE_LIMIT,
-        user_id=user_id,
-    )
-    sessions = active_page + archived_page
+    sessions = await db.list_session_inventory(user_id=user_id)
     sessions = await project_session_meta_for_dashboard(
         manager,
         runtime_state_cache,
@@ -78,12 +67,12 @@ async def _dashboard_snapshot(
         ],
         "sessionPages": {
             "active": {
-                "hasMore": active_has_more,
-                "nextCursor": active_cursor,
+                "hasMore": False,
+                "nextCursor": None,
             },
             "archived": {
-                "hasMore": archived_has_more,
-                "nextCursor": archived_cursor,
+                "hasMore": False,
+                "nextCursor": None,
             },
         },
         "serverTime": utc_now(),

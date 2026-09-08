@@ -50,7 +50,7 @@ nonisolated private final class InterceptingURLProtocol: URLProtocol, @unchecked
         return URLSession(configuration: config)
     }
 
-    @Test func refreshedTokenKeepsTheClientAndLoadedProjectPages() async throws {
+    @Test func refreshedTokenKeepsTheClientAndSharedSessionInventory() async throws {
         let session = session(); defer { session.invalidateAndCancel() }
         let provider = MutableAuthTokenProvider(token: "first-test-token")
         let api = V2APIClient(serverURL: URL(string: "https://example.test")!, tokenProvider: provider, urlSession: session)
@@ -58,13 +58,12 @@ nonisolated private final class InterceptingURLProtocol: URLProtocol, @unchecked
             sessionAPI: api.sessions, realtimeAPI: api.realtime))
         repository.apply(try fixture("dashboard"))
         InterceptingURLProtocol.state.reset(try ["sessions", "projects"].map { .response(200, try fixtureData($0)) })
-        await repository.ensureProjectPage(.init(projectID: "project"))
+        _ = try await api.sessions.sessionInventory()
         provider.update("second-test-token")
         repository.apply(try fixture("dashboard"))
-        await repository.ensureProjectPage(.init(projectID: "project"))
         _ = try await api.projects.list()
         let requests = InterceptingURLProtocol.state.requests
-        #expect(requests.count == 2, "Refreshing authentication must not re-query an expanded project")
+        #expect(requests.count == 2, "Refreshing authentication must not re-query the session inventory")
         #expect(requests[0].value(forHTTPHeaderField: "Authorization") == "Bearer first-test-token")
         #expect(requests[1].value(forHTTPHeaderField: "Authorization") == "Bearer second-test-token")
         provider.update(nil)

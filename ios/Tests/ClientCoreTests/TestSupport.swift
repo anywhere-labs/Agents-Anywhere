@@ -82,7 +82,7 @@ func event(_ type: String, seq: Int = 10, id: String? = nil, sessionID: String =
     func count(_ suffix: String) -> Int { calls.filter { $0.path.hasSuffix(suffix) }.count }
 
     func defaultResponse(_ call: Call) throws -> Data {
-        let fixtures = ["projects": "projects", "connectors": "connectors", "sessions": "sessions", "snapshot": "snapshot", "timeline": "timeline", "state": "state",
+        let fixtures = ["projects": "projects", "connectors": "connectors", "sessions": "sessions", "sessions/list": "sessions", "snapshot": "snapshot", "timeline": "timeline", "state": "state",
                         "capabilities": "capabilities", "notices": "notices", "catalogs/model": "modelCatalog",
                         "catalogs/permission": "permissionCatalog", "selections": "selectionResponse", "takeover": "takeover",
                         "runtime-types": "runtimeTypes", "runtimes": "runtimes", "preferences": "preferences",

@@ -11740,6 +11740,23 @@
         }
       }
     },
+    "未分组会话": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ungrouped sessions"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未分组会话"
+          }
+        }
+      }
+    },
     "未命名会话": {
       "comment": "Shared with Web: dashboard.session.untitled. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",

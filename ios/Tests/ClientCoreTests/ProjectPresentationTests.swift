@@ -43,7 +43,7 @@ import Testing
         #expect(ProjectSidebarPresentation.projects([unloaded, archived, empty], filter: .active).map(\.id) == ["empty", "archive", "unloaded"])
         let autoArchived = project("auto-archive", manual: false, archived: 3, activity: "2026-05-01T00:00:00Z")
         #expect(!ProjectSidebarPresentation.visible(autoArchived, filter: .active))
-        #expect(ProjectSidebarPresentation.visible(autoArchived, filter: .archived))
+        #expect(ProjectSidebarPresentation.visible(autoArchived, filter: .archived, sessions: [try session("archived", project: "auto-archive", archived: true)]))
     }
     @Test func sortingNormalizesTimezoneAndUsesStableCreatedNameAndIDTies() {
         let values = [project("z", name: "Same", active: 1, activity: "2026-01-01T08:00:00+08:00"),
@@ -109,18 +109,17 @@ import Testing
         let otherServer = ProjectSidebarPreferences(scope: .init(serverURL: URL(string: "https://another.test")!, accountID: "one"), defaults: defaults)
         #expect(other.expandedProjects.isEmpty && otherServer.expandedProjects.isEmpty)
     }
-    @Test func restoredExpansionQueriesOnceAcrossRemountsAndDashboardRefreshes() async throws {
+    @Test func restoredExpansionUsesSharedInventoryWithoutReads() async throws {
         let http = TestHTTPTransport()
         let repository = V2DashboardRepository(service: .init(connectorAPI: V2ConnectorAPI(transport: http), projectAPI: .init(transport: http),
             sessionAPI: V2SessionAPI(transport: http), realtimeAPI: TestRealtimeAPI()))
         repository.sidebarPreferences.expandedProjects = ["project"]
         repository.apply(try fixture("dashboard"))
-        let scope = V2SessionListScope(projectID: "project")
-        await repository.ensureProjectPage(scope)
-        await repository.ensureProjectPage(scope)
-        repository.apply(try fixture("dashboard"))
-        await repository.ensureProjectPage(scope)
-        #expect(http.count("/projects/project/sessions") == 1)
-        #expect(repository.pages[scope] != nil)
+        for _ in 0..<3 {
+            #expect(ProjectSidebarPresentation.sessions(repository.sessions, projectID: "project", filter: .active).count == 1)
+            repository.apply(try fixture("dashboard"))
+        }
+        #expect(http.calls.isEmpty)
+
     }
 }

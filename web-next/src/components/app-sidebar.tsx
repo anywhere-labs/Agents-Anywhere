@@ -22,6 +22,7 @@ import {
   selectPinnedProjects,
   selectPinnedSessions,
   selectAllSessions,
+  groupSessionsByProject,
   selectProjectSessions,
   selectRegularProjects,
   type ProjectSessionStatusFilter,
@@ -47,11 +48,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     connectors,
     sessions,
     projects,
-    projectSessionsById,
-    loadingProjectSessionIds,
     isLoading,
-    hasMoreSessions,
-    isLoadingMoreSessions,
     activeSessionId,
     activeConnectorId,
     page,
@@ -70,8 +67,6 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     toggleArchiveSession,
     renameSession,
     refreshData,
-    loadMoreSessions,
-    loadProjectSessions,
   } = useWorkspace()
   const { signOut, me, session: authSession } = useAuth()
   const [mobileConnectionsSidebarVisible] = useMobileConnectionsSidebarVisibility()
@@ -100,18 +95,21 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     () => selectAllSessions(sessions, filter, search),
     [filter, search, sessions],
   )
-  const sessionsById = React.useMemo(
-    () => new Map(sessions.map((session) => [session.id, session])),
+  const projectSessionsById = React.useMemo(
+    () => groupSessionsByProject(sessions),
     [sessions],
   )
+  const unassignedSessions = React.useMemo(() => {
+    const projectIds = new Set(projects.map((project) => project.id))
+    return allSessions.filter((session) => !session.projectId || !projectIds.has(session.projectId))
+  }, [allSessions, projects])
 
   const sessionsForProject = React.useCallback(
     (projectId: string, status: ProjectSessionStatusFilter = "active") => selectProjectSessions(
       projectSessionsById[projectId] ?? [],
-      sessionsById,
       status,
     ),
-    [projectSessionsById, sessionsById],
+    [projectSessionsById],
   )
 
   const markAllRead = React.useCallback(async () => {
@@ -121,25 +119,6 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     await dashboardApi.bulkMarkSessionsRead(authSession.accessToken, unreadIds)
     refreshData()
   }, [authSession?.accessToken, refreshData, sessions])
-
-  const loadedExpandedProjects = React.useRef({ userId: authSession?.userId, ids: new Set<string>() })
-  React.useEffect(() => {
-    if (loadedExpandedProjects.current.userId !== authSession?.userId) {
-      loadedExpandedProjects.current = { userId: authSession?.userId, ids: new Set() }
-    }
-    const loaded = loadedExpandedProjects.current.ids
-    const visible = new Set([...pinnedProjects, ...regularProjects].map((project) => project.id))
-    const expanded = new Set(sidebarShowsSessions ? [] : expandedProjectIds.filter((id) => visible.has(id)))
-    for (const id of loaded) {
-      if (!expanded.has(id)) loaded.delete(id)
-    }
-    if (isLoading || !authSession?.accessToken) return
-    for (const id of expanded) {
-      if (loaded.has(id)) continue
-      loaded.add(id)
-      void loadProjectSessions(id)
-    }
-  }, [authSession?.accessToken, authSession?.userId, expandedProjectIds, isLoading, loadProjectSessions, pinnedProjects, regularProjects, sidebarShowsSessions])
 
   const toggleProjectPin = React.useCallback(async (project: ProjectView) => {
     const updated = await updateProject(project.id, { pinned: !project.pinned })
@@ -190,7 +169,6 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   const projectController: ProjectListController = {
     sessionsForProject,
     expandedProjectIds,
-    loadingProjectSessionIds,
     activeSessionId,
     onExpandedChange: setProjectExpanded,
     onOpenSession: openSession,
@@ -266,15 +244,12 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
             label={t("sections.sessions")}
             sessions={allSessions}
             isLoading={isLoading}
-            hasMoreSessions={hasMoreSessions}
-            isLoadingMoreSessions={isLoadingMoreSessions}
             activeSessionId={activeSessionId}
             onMarkAllRead={markAllRead}
             onOpenSession={openSession}
             onToggleSessionPin={togglePinSession}
             onToggleSessionArchive={requestToggleSessionArchive}
             onRenameSession={renameSession}
-            onLoadMoreSessions={loadMoreSessions}
           />
         ) : (
           <>
@@ -288,6 +263,19 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
               onSessionStatusChange={setProjectSessionStatus}
               onAddProject={() => setProjectEditor({ mode: "create" })}
             />
+            {unassignedSessions.length > 0 ? (
+              <RecentSessionsSection
+                label={t("sections.unassignedSessions")}
+                sessions={unassignedSessions}
+                isLoading={isLoading}
+                activeSessionId={activeSessionId}
+                onMarkAllRead={markAllRead}
+                onOpenSession={openSession}
+                onToggleSessionPin={togglePinSession}
+                onToggleSessionArchive={requestToggleSessionArchive}
+                onRenameSession={renameSession}
+              />
+            ) : null}
           </>
         )}
       </SidebarContent>

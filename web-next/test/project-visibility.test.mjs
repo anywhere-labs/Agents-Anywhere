@@ -11,6 +11,7 @@ const project = (active = 0, archived = 0, manuallyCreated = false) => ({
   manuallyCreated,
   sidebarSessionCounts: { active, archived },
 })
+const session = (archived = false) => ({ projectId: "project", archived, pinned: false })
 
 test("manual projects stay visible in every filter, including when empty", () => {
   for (const status of statuses) {
@@ -20,15 +21,14 @@ test("manual projects stay visible in every filter, including when empty", () =>
 })
 
 test("automatic project visibility follows the selected session status", () => {
-  assert.deepEqual(statuses.map((status) => projectHasVisibleSessions(project(2, 0), [], status)), [true, false, true])
-  assert.deepEqual(statuses.map((status) => projectHasVisibleSessions(project(0, 3), [], status)), [false, true, true])
-  assert.deepEqual(statuses.map((status) => projectHasVisibleSessions(project(2, 3), [], status)), [true, true, true])
+  assert.deepEqual(statuses.map((status) => projectHasVisibleSessions(project(), [session()], status)), [true, false, true])
+  assert.deepEqual(statuses.map((status) => projectHasVisibleSessions(project(), [session(true)], status)), [false, true, true])
+  assert.deepEqual(statuses.map((status) => projectHasVisibleSessions(project(), [session(), session(true)], status)), [true, true, true])
 })
 
-test("server counts keep projects with unloaded history visible", () => {
-  assert.equal(projectHasVisibleSessions(project(105, 0), [], "active"), true)
-  const staleSession = { projectId: "project", archived: false, pinned: false }
-  assert.equal(projectHasVisibleSessions(project(), [staleSession], "active"), false)
+test("the full session inventory determines visibility even before project counts refresh", () => {
+  assert.equal(projectHasVisibleSessions(project(105, 0), [], "active"), false)
+  assert.equal(projectHasVisibleSessions(project(), [session()], "active"), true)
 })
 
 test("only rows actually shown inside projects count, including the pinned exception", () => {
@@ -46,5 +46,5 @@ test("archiving a manual project removes its empty-project exception", () => {
   const after = { ...before, manuallyCreated: false }
   assert.equal(projectHasVisibleSessions(before, [], "active"), true)
   assert.equal(projectHasVisibleSessions(after, [], "active"), false)
-  assert.equal(projectHasVisibleSessions(project(0, 4), [], "archived"), true)
+  assert.equal(projectHasVisibleSessions(project(0, 4), [session(true)], "archived"), true)
 })

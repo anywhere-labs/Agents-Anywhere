@@ -97,7 +97,6 @@ struct ChatSidebarView: View {
                             onArchive: onArchiveSession,
                             onCopyId: onCopySessionId
                         )
-                        DashboardPageButton(repository: repository, scope: .init())
                     } else {
                         ChatSidebarProjects(repository: repository, showsSessionList: $showsSessionList,
                             selectedSessionID: selectedSessionId, onShowArchives: { showsArchives = true },

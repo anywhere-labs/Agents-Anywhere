@@ -56,7 +56,8 @@ test("empty priority follows the existing Web manual-project exception without r
     project("recent", time(10)),
     project("archived-automatic", time(5), { manuallyCreated: false, activeSessionCount: 0, sidebarSessionCounts: { active: 0, archived: 2 } }),
   ]
-  const visible = status => projects.filter(item => projectHasVisibleSessions(item, [], status))
+  const sessions = [{ projectId: "archived-automatic", archived: true, pinned: false }]
+  const visible = status => projects.filter(item => projectHasVisibleSessions(item, sessions, status))
   assert.deepEqual(ids(sortProjectsBySessionActivity(visible("active"))), ["manual-empty", "recent"])
   assert.deepEqual(ids(sortProjectsBySessionActivity(visible("all"))), ["manual-empty", "recent", "archived-automatic"])
   assert.deepEqual(ids(sortProjectsBySessionActivity([projects[0], projects[2], projects[1]])), ["manual-empty", "recent", "automatic-empty"])

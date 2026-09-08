@@ -816,6 +816,7 @@
       "pinned": "置顶",
       "projects": "项目",
       "recents": "最近",
+      "unassignedSessions": "未分组会话",
       "sessions": "会话"
     },
     "session": {

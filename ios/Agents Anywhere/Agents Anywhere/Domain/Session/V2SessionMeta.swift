@@ -58,6 +58,11 @@ struct V2SessionListResponse: Decodable, Hashable {
     let serverTime: String
 }
 
+struct V2SessionInventoryResponse: Decodable, Hashable {
+    let sessions: [V2SessionMeta]
+    let serverTime: String
+}
+
 struct V2SessionMetaResponse: Decodable, Hashable {
     let session: V2SessionMeta
     let serverTime: String

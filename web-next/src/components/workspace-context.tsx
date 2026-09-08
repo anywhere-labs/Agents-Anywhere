@@ -20,7 +20,6 @@ import type {
   ProjectPatchRequest,
   ProjectView,
   SessionLocalTimelineState,
-  SessionPageInfo,
   SessionRuntimeState,
   SessionView as RealSessionView,
   TimelineItem,
@@ -186,13 +185,6 @@ function mapSession(session: RealSessionView): SessionView {
   }
 }
 
-function sameSessionServerState(left: SessionView, right: SessionView): boolean {
-  return sameStableValue(
-    { ...left, updatedAt: null },
-    { ...right, updatedAt: null },
-  )
-}
-
 function projectSortMillis(project: ProjectView): number {
   const raw = project.pinnedAt || project.lastActivityAt || project.updatedAt
   const value = Date.parse(raw)
@@ -206,29 +198,6 @@ function sortProjectViews(projects: ProjectView[]): ProjectView[] {
     a.name.localeCompare(b.name) ||
     a.id.localeCompare(b.id),
   )
-}
-
-function mergeProjectSessions(
-  current: Record<string, SessionView[]>,
-  incoming: SessionView[],
-): Record<string, SessionView[]> {
-  const mergedById = new Map<string, SessionView>()
-  for (const sessions of Object.values(current)) {
-    for (const session of sessions) mergedById.set(session.id, session)
-  }
-  for (const session of incoming) mergedById.set(session.id, session)
-
-  const next: Record<string, SessionView[]> = {}
-  for (const session of mergedById.values()) {
-    if (!session.projectId) continue
-    const group = next[session.projectId] ?? []
-    group.push(session)
-    next[session.projectId] = group
-  }
-  for (const [projectId, sessions] of Object.entries(next)) {
-    next[projectId] = sortSessionViews(sessions)
-  }
-  return sameStableValue(current, next) ? current : next
 }
 
 function resolveSessionAlias(sessionId: string, aliases: Record<string, string>): string {
@@ -266,21 +235,10 @@ function parseDashboardSnapshotMessage(value: unknown): DashboardSnapshotMessage
     message.type === "dashboard.snapshot" &&
     Array.isArray(message.connectors) &&
     Array.isArray(message.projects) &&
-    Array.isArray(message.sessions) &&
-    isSessionPageInfo(message.sessionPages?.active) &&
-    isSessionPageInfo(message.sessionPages?.archived)
+    Array.isArray(message.sessions)
   )) return null
 
   return message as DashboardSnapshotMessage
-}
-
-function isSessionPageInfo(value: unknown): value is SessionPageInfo {
-  if (!value || typeof value !== "object") return false
-  const page = value as Partial<SessionPageInfo>
-  return (
-    typeof page.hasMore === "boolean" &&
-    (typeof page.nextCursor === "string" || page.nextCursor === null)
-  )
 }
 
 function relativeSessionTime(session: RealSessionView): string {
@@ -307,11 +265,7 @@ export type WorkspaceState = {
   connectors: ConnectorView[]
   sessions: SessionView[]
   projects: ProjectView[]
-  projectSessionsById: Record<string, SessionView[]>
-  loadingProjectSessionIds: string[]
   isLoading: boolean
-  hasMoreSessions: boolean
-  isLoadingMoreSessions: boolean
   routeReady: boolean
 
   // Navigation
@@ -358,7 +312,6 @@ export type WorkspaceState = {
   togglePinSession: (id: string) => void
   toggleArchiveSession: (id: string, archived?: boolean) => Promise<SessionView | null>
   renameSession: (id: string, title: string) => Promise<boolean>
-  loadProjectSessions: (projectId: string) => Promise<boolean>
   createProject: (payload: ProjectCreateRequest) => Promise<ProjectView | null>
   resolveProject: (payload: Pick<ProjectCreateRequest, "connectorId" | "workspacePath">) => Promise<ProjectView>
   updateProject: (projectId: string, patch: ProjectPatchRequest) => Promise<ProjectView | null>
@@ -377,7 +330,6 @@ export type WorkspaceState = {
   appendPathToComposer: (path: string) => boolean
   consumeComposerInsertion: (id: number) => void
   refreshData: () => void
-  loadMoreSessions: () => void
 }
 
 const WorkspaceContext = React.createContext<WorkspaceState | null>(null)
@@ -461,28 +413,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [connectors, setConnectors] = React.useState<ConnectorView[]>([])
   const [sessions, setSessions] = React.useState<SessionView[]>([])
   const [projects, setProjects] = React.useState<ProjectView[]>([])
-  const [projectSessionsById, setProjectSessionsById] = React.useState<Record<string, SessionView[]>>({})
-  const projectSessionsByIdRef = React.useRef(projectSessionsById)
-  projectSessionsByIdRef.current = projectSessionsById
-  const [loadingProjectSessionIds, setLoadingProjectSessionIds] = React.useState<string[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
-  const [sessionPages, setSessionPages] = React.useState<DashboardSnapshotMessage["sessionPages"]>({
-    active: { hasMore: false, nextCursor: null },
-    archived: { hasMore: false, nextCursor: null },
-  })
-  const [loadingSessionPages, setLoadingSessionPages] = React.useState({
-    active: false,
-    archived: false,
-  })
-  const firstPageSessionIdsRef = React.useRef({
-    active: new Set<string>(),
-    archived: new Set<string>(),
-  })
-  const loadingSessionPagesRef = React.useRef({ active: false, archived: false })
-  const loadedBeyondFirstPageRef = React.useRef({ active: false, archived: false })
   const sessionStreamSeqRef = React.useRef(new Map<string, number>())
   const pendingSessionIndicatorRef = React.useRef(new Map<string, SessionView>())
-  const loadingProjectSessionIdsRef = React.useRef(new Set<string>())
   // Local sends temporarily affect presentation order only; remote status stays authoritative.
   const optimisticTopUntilRef = React.useRef(new Map<string, number>())
   const optimisticTopTimersRef = React.useRef(new Map<string, number>())
@@ -601,235 +534,148 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   optimisticMessagesRef.current = optimisticMessages
   sessionAliasesRef.current = sessionAliases
 
-  // ── Fetch data from mock API ──────────────────────────────
+  // ── Shared workspace inventory ────────────────────────────
   const initialLoadDoneRef = React.useRef(false)
   const lastDashboardSnapshotKeyRef = React.useRef<string | null>(null)
   const dashboardDataGenerationRef = React.useRef(0)
+  const projectDataGenerationRef = React.useRef(0)
+  const checkedMissingProjectsRef = React.useRef(new Set<string>())
+  const projectRefreshInFlightRef = React.useRef<{ token: string; generation: number; promise: Promise<void> } | null>(null)
+
+  const refreshProjects = React.useCallback((): Promise<void> => {
+    const token = authSession?.accessToken
+    if (!token) return Promise.resolve()
+    const pending = projectRefreshInFlightRef.current
+    const generation = projectDataGenerationRef.current
+    if (pending?.token === token && pending.generation === generation) return pending.promise
+    const promise = dashboardApi.listProjects(token).then((response) => {
+      if (currentAccessTokenRef.current !== token || projectDataGenerationRef.current !== generation) return
+      dashboardDataGenerationRef.current += 1
+      const next = sortProjectViews(response.projects)
+      setProjects((current) => sameStableValue(current, next) ? current : next)
+    })
+    const request = { token, generation, promise }
+    projectRefreshInFlightRef.current = request
+    const clear = () => { if (projectRefreshInFlightRef.current === request) projectRefreshInFlightRef.current = null }
+    void promise.then(clear, clear)
+    return promise
+  }, [authSession?.accessToken])
+
+  React.useEffect(() => {
+    if (!authSession?.accessToken || isLoading) return
+    const projectIds = new Set(projects.map((project) => project.id))
+    const missing = new Set(sessions
+      .filter((session) => !session.id.startsWith("local:") && (!session.projectId || !projectIds.has(session.projectId)))
+      .map((session) => session.projectId ? `project:${session.projectId}` : `session:${session.id}`))
+    checkedMissingProjectsRef.current.forEach((key) => {
+      if (!missing.has(key)) checkedMissingProjectsRef.current.delete(key)
+    })
+    const unchecked = [...missing].filter((key) => !checkedMissingProjectsRef.current.has(key))
+    if (unchecked.length === 0) return
+    unchecked.forEach((key) => checkedMissingProjectsRef.current.add(key))
+    void refreshProjects().catch(() => {
+      // Retry on a later data update, without repeatedly fetching an orphan's project list.
+      unchecked.forEach((key) => checkedMissingProjectsRef.current.delete(key))
+    })
+  }, [authSession?.accessToken, isLoading, projects, refreshProjects, sessions])
 
   const applyDashboardSnapshot = React.useCallback((message: DashboardSnapshotMessage) => {
     const snapshotKey = stableJson({
       connectors: message.connectors,
       projects: message.projects,
       sessions: message.sessions,
-      sessionPages: message.sessionPages,
     })
     if (lastDashboardSnapshotKeyRef.current === snapshotKey) return
     lastDashboardSnapshotKeyRef.current = snapshotKey
     dashboardDataGenerationRef.current += 1
+    projectDataGenerationRef.current += 1
 
     const nextConnectors = message.connectors.map(mapConnector)
     const nextProjects = sortProjectViews(message.projects)
-    const nextSessions = message.sessions.map(mapSession)
-    const previousFirstPageIds = new Set([
-      ...firstPageSessionIdsRef.current.active,
-      ...firstPageSessionIdsRef.current.archived,
-    ])
-    firstPageSessionIdsRef.current = {
-      active: new Set(nextSessions.filter((session) => !session.archived).map((session) => session.id)),
-      archived: new Set(nextSessions.filter((session) => session.archived).map((session) => session.id)),
-    }
     setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
     setProjects((current) => sameStableValue(current, nextProjects) ? current : nextProjects)
-    setProjectSessionsById((current) => mergeProjectSessions(current, nextSessions))
     setSessions((current) => {
       const currentById = new Map(current.map((session) => [session.id, session]))
-      const merged = new Map(
-        current
-          .filter((session) => !previousFirstPageIds.has(session.id))
-          .map((session) => [session.id, session]),
-      )
-      nextSessions.forEach((session) => {
-        merged.set(
-          session.id,
-          reconcileSessionIndicator(currentById.get(session.id), session),
-        )
-      })
-      const sorted = sortSessions(Array.from(merged.values()))
-      return sameStableValue(current, sorted) ? current : sorted
+      const next = sortSessions(message.sessions.map((session) => {
+        const mapped = mapSession(session)
+        const previous = currentById.get(mapped.id)
+        if (previous && previous.updatedSeq > mapped.updatedSeq) return previous
+        return reconcileSessionIndicator(currentById.get(mapped.id), mapped)
+      }))
+      const present = new Set(next.map((session) => session.id))
+      const pending = new Set(optimisticMessagesRef.current.flatMap((message) => [message.sessionId, message.localSessionId]))
+      const merged = sortSessions([...next, ...current.filter((session) => !present.has(session.id) && pending.has(session.id))])
+      return sameStableValue(current, merged) ? current : merged
     })
-    setSessionPages((current) => {
-      const next = {
-        active: loadedBeyondFirstPageRef.current.active ? current.active : message.sessionPages.active,
-        archived: loadedBeyondFirstPageRef.current.archived ? current.archived : message.sessionPages.archived,
-      }
-      return sameStableValue(current, next) ? current : next
-    })
-    loadingSessionPagesRef.current = { active: false, archived: false }
-    setLoadingSessionPages({ active: false, archived: false })
     setIsLoading(false)
     initialLoadDoneRef.current = true
   }, [reconcileSessionIndicator, sortSessions])
 
-  const fetchData = React.useCallback(async (): Promise<boolean> => {
-    const requestGeneration = dashboardDataGenerationRef.current + 1
-    dashboardDataGenerationRef.current = requestGeneration
-    let completionGeneration = requestGeneration
-    const accessTokenAtStart = authSession?.accessToken ?? null
-    let committed = false
-    loadingSessionPagesRef.current = { active: false, archived: false }
-    setLoadingSessionPages({ active: false, archived: false })
-    if (!initialLoadDoneRef.current) {
-      setIsLoading(true)
-    }
-    try {
-      if (authSession?.accessToken) {
-        const [connRes, projectRes, activeRes, archivedRes] = await Promise.all([
-          dashboardApi.listConnectors(authSession.accessToken),
-          dashboardApi.listProjects(authSession.accessToken),
-          dashboardApi.listSessions(authSession.accessToken, { archived: false, limit: 100 }),
-          dashboardApi.listSessions(authSession.accessToken, { archived: true, limit: 100 }),
-        ])
-        if (
-          dashboardDataGenerationRef.current !== requestGeneration ||
-          currentAccessTokenRef.current !== accessTokenAtStart
-        ) return false
-        dashboardDataGenerationRef.current += 1
-        completionGeneration = dashboardDataGenerationRef.current
-        loadingSessionPagesRef.current = { active: false, archived: false }
-        setLoadingSessionPages({ active: false, archived: false })
-        const nextConnectors = connRes.connectors.map(mapConnector)
-        const nextProjects = sortProjectViews(projectRes.projects)
-        const nextSessions = sortSessions(
-          [...activeRes.sessions, ...archivedRes.sessions].map(mapSession),
-        )
-        firstPageSessionIdsRef.current = {
-          active: new Set(activeRes.sessions.map((session) => session.id)),
-          archived: new Set(archivedRes.sessions.map((session) => session.id)),
+  const fetchDataInFlightRef = React.useRef<{ token: string | null; promise: Promise<boolean> } | null>(null)
+  const fetchData = React.useCallback((): Promise<boolean> => {
+    const token = authSession?.accessToken ?? null
+    const pending = fetchDataInFlightRef.current
+    if (pending?.token === token) return pending.promise
+
+    const requestGeneration = ++dashboardDataGenerationRef.current
+    if (!initialLoadDoneRef.current) setIsLoading(true)
+    const promise = (async () => {
+      try {
+        if (token) {
+          const [connRes, projectRes, sessionRes] = await Promise.all([
+            dashboardApi.listConnectors(token),
+            dashboardApi.listProjects(token),
+            dashboardApi.listSessionInventory(token),
+          ])
+          if (
+            dashboardDataGenerationRef.current !== requestGeneration ||
+            currentAccessTokenRef.current !== token
+          ) return false
+          applyDashboardSnapshot({
+            type: "dashboard.snapshot",
+            connectors: connRes.connectors,
+            projects: projectRes.projects,
+            sessions: sessionRes.sessions,
+            sessionPages: { active: { hasMore: false, nextCursor: null }, archived: { hasMore: false, nextCursor: null } },
+            serverTime: sessionRes.serverTime,
+          })
+        } else {
+          const [connRes, sessRes] = await Promise.all([listMockConnectors("mock-token"), listMockSessions("mock-token")])
+          if (dashboardDataGenerationRef.current !== requestGeneration || currentAccessTokenRef.current !== token) return false
+          setConnectors(connRes.connectors)
+          setProjects([])
+          setSessions(sortSessions(sessRes.sessions))
+          initialLoadDoneRef.current = true
+          setIsLoading(false)
         }
-        loadedBeyondFirstPageRef.current = { active: false, archived: false }
-        setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
-        setProjects((current) => sameStableValue(current, nextProjects) ? current : nextProjects)
-        setProjectSessionsById((current) => mergeProjectSessions(current, nextSessions))
-        setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
-        setSessionPages({
-          active: { hasMore: activeRes.hasMore, nextCursor: activeRes.nextCursor },
-          archived: { hasMore: archivedRes.hasMore, nextCursor: archivedRes.nextCursor },
-        })
-        committed = true
         return true
+      } catch {
+        return false
+      } finally {
+        if (currentAccessTokenRef.current === token) setIsLoading(false)
       }
-      const [connRes, sessRes] = await Promise.all([
-        listMockConnectors("mock-token"),
-        listMockSessions("mock-token"),
-      ])
-      if (
-        dashboardDataGenerationRef.current !== requestGeneration ||
-        currentAccessTokenRef.current !== accessTokenAtStart
-      ) return false
-      dashboardDataGenerationRef.current += 1
-      completionGeneration = dashboardDataGenerationRef.current
-      loadingSessionPagesRef.current = { active: false, archived: false }
-      setLoadingSessionPages({ active: false, archived: false })
-      const nextSessions = sortSessions(sessRes.sessions)
-      setConnectors((current) => sameStableValue(current, connRes.connectors) ? current : connRes.connectors)
-      setProjects([])
-      setProjectSessionsById({})
-      setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
-      setSessionPages({
-        active: { hasMore: false, nextCursor: null },
-        archived: { hasMore: false, nextCursor: null },
-      })
-      committed = true
-      return true
-    } catch {
-      return false
-    } finally {
-      if (
-        dashboardDataGenerationRef.current === completionGeneration &&
-        currentAccessTokenRef.current === accessTokenAtStart
-      ) {
-        setIsLoading(false)
-        if (committed) initialLoadDoneRef.current = true
-      }
-    }
-  }, [authSession?.accessToken, sortSessions])
+    })()
+    const request = { token, promise }
+    fetchDataInFlightRef.current = request
+    void promise.finally(() => { if (fetchDataInFlightRef.current === request) fetchDataInFlightRef.current = null })
+    return promise
+  }, [applyDashboardSnapshot, authSession?.accessToken, sortSessions])
 
   const setSidebarShowsSessions = React.useCallback((show: boolean) => {
     setSidebarShowsSessionsState(show)
     writeStoredSidebarShowsSessions(show)
   }, [])
 
-  const loadMoreSessions = React.useCallback(async () => {
-    const token = authSession?.accessToken
-    const pageKind = filter.status === "archived" ? "archived" : "active"
-    const page = sessionPages[pageKind]
-    if (!token || !page.hasMore || !page.nextCursor || loadingSessionPagesRef.current[pageKind]) return
-    const dataGenerationAtStart = dashboardDataGenerationRef.current
-    const sessionsAtRequestStart = new Map<string, SessionView>()
-    for (const cachedSessions of Object.values(projectSessionsByIdRef.current)) {
-      for (const session of cachedSessions) sessionsAtRequestStart.set(session.id, session)
-    }
-    for (const session of sessionsRef.current) sessionsAtRequestStart.set(session.id, session)
-    loadingSessionPagesRef.current[pageKind] = true
-    setLoadingSessionPages((current) => ({ ...current, [pageKind]: true }))
-    try {
-      const response = await dashboardApi.listSessions(token, {
-        archived: pageKind === "archived",
-        limit: 100,
-        cursor: page.nextCursor,
-      })
-      if (dashboardDataGenerationRef.current !== dataGenerationAtStart) return
-      const incoming = response.sessions.map(mapSession)
-      const changedSinceRequest = (session: SessionView) => {
-        const startingSession = sessionsAtRequestStart.get(session.id)
-        return !startingSession || !sameSessionServerState(startingSession, session)
-      }
-      setSessions((current) => {
-        const merged = new Map(current.map((session) => [session.id, session]))
-        incoming.forEach((session) => {
-          const existing = merged.get(session.id)
-          if (existing && changedSinceRequest(existing)) return
-          merged.set(session.id, reconcileSessionIndicator(existing, session))
-        })
-        return sortSessions(Array.from(merged.values()))
-      })
-      setProjectSessionsById((current) => {
-        const currentById = new Map<string, SessionView>()
-        for (const cachedSessions of Object.values(current)) {
-          for (const session of cachedSessions) currentById.set(session.id, session)
-        }
-        for (const session of sessionsRef.current) currentById.set(session.id, session)
-        const resolvedIncoming = incoming.map((session) => {
-          const existing = currentById.get(session.id)
-          return existing && changedSinceRequest(existing)
-            ? existing
-            : reconcileSessionIndicator(existing, session)
-        })
-        return mergeProjectSessions(current, resolvedIncoming)
-      })
-      loadedBeyondFirstPageRef.current[pageKind] = true
-      setSessionPages((current) => ({
-        ...current,
-        [pageKind]: { hasMore: response.hasMore, nextCursor: response.nextCursor },
-      }))
-    } catch {
-      // Keep the current cursor so reaching the sentinel can retry later.
-    } finally {
-      if (dashboardDataGenerationRef.current === dataGenerationAtStart) {
-        loadingSessionPagesRef.current[pageKind] = false
-        setLoadingSessionPages((current) => ({ ...current, [pageKind]: false }))
-      }
-    }
-  }, [authSession?.accessToken, filter.status, reconcileSessionIndicator, sessionPages, sortSessions])
-
   React.useEffect(() => {
     initialLoadDoneRef.current = false
     lastDashboardSnapshotKeyRef.current = null
     dashboardDataGenerationRef.current += 1
-    firstPageSessionIdsRef.current = { active: new Set(), archived: new Set() }
-    loadingSessionPagesRef.current = { active: false, archived: false }
-    setLoadingSessionPages({ active: false, archived: false })
-    loadedBeyondFirstPageRef.current = { active: false, archived: false }
+    projectDataGenerationRef.current += 1
+    checkedMissingProjectsRef.current = new Set()
     sessionStreamSeqRef.current = new Map()
     pendingSessionIndicatorRef.current = new Map()
-    loadingProjectSessionIdsRef.current = new Set()
-    setLoadingProjectSessionIds([])
-    setProjectSessionsById({})
     setProjects([])
-    setSessionPages({
-      active: { hasMore: false, nextCursor: null },
-      archived: { hasMore: false, nextCursor: null },
-    })
+    setSessions([])
     setIsLoading(true)
   }, [authSession?.accessToken])
 
@@ -1082,6 +928,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   // ── Project mutation helpers ────────────────────────────
 
   const upsertProject = React.useCallback((project: ProjectView) => {
+    dashboardDataGenerationRef.current += 1
+    projectDataGenerationRef.current += 1
     setProjects((current) => {
       const index = current.findIndex((item) => item.id === project.id)
       if (index === -1) return sortProjectViews([project, ...current])
@@ -1091,115 +939,17 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     })
   }, [])
 
-  const loadProjectSessions = React.useCallback(async (projectId: string): Promise<boolean> => {
-    const token = authSession?.accessToken
-    if (
-      !token ||
-      !projects.some((project) => project.id === projectId) ||
-      loadingProjectSessionIdsRef.current.has(projectId)
-    ) return false
-
-    const sessionsAtRequestStart = new Map<string, SessionView>()
-    for (const session of projectSessionsByIdRef.current[projectId] ?? []) {
-      sessionsAtRequestStart.set(session.id, session)
-    }
-    for (const session of sessionsRef.current) {
-      if (session.projectId === projectId) sessionsAtRequestStart.set(session.id, session)
-    }
-    loadingProjectSessionIdsRef.current.add(projectId)
-    setLoadingProjectSessionIds(Array.from(loadingProjectSessionIdsRef.current))
-    try {
-      const loadAllProjectSessions = async (archived: boolean) => {
-        const sessions: Array<{ session: RealSessionView; observedAt: number }> = []
-        let cursor: string | null = null
-
-        do {
-          const response = await dashboardApi.listProjectSessions(token, projectId, {
-            archived,
-            limit: 100,
-            cursor,
-          })
-          const parsedServerTime = Date.parse(response.serverTime)
-          const observedAt = Number.isFinite(parsedServerTime) ? parsedServerTime : Date.now()
-          sessions.push(...response.sessions.map((session) => ({ session, observedAt })))
-          cursor = response.hasMore ? response.nextCursor : null
-        } while (cursor)
-
-        return sessions
-      }
-      const [activeSessions, archivedSessions] = await Promise.all([
-        loadAllProjectSessions(false),
-        loadAllProjectSessions(true),
-      ])
-      const incomingById = new Map<string, { session: SessionView; observedAt: number }>()
-      for (const observed of [...activeSessions, ...archivedSessions]) {
-        const session = mapSession(observed.session)
-        const existing = incomingById.get(session.id)
-        if (!existing || observed.observedAt >= existing.observedAt) {
-          incomingById.set(session.id, { session, observedAt: observed.observedAt })
-        }
-      }
-      const incoming = Array.from(incomingById.values(), ({ session }) => session)
-      const changedSinceRequest = (session: SessionView) => {
-        const startingSession = sessionsAtRequestStart.get(session.id)
-        return !startingSession || !sameSessionServerState(startingSession, session)
-      }
-      setSessions((current) => {
-        const merged = new Map(current.map((session) => [session.id, session]))
-        incoming.forEach((session) => {
-          const existing = merged.get(session.id)
-          if (existing && changedSinceRequest(existing)) return
-          merged.set(session.id, reconcileSessionIndicator(existing, session))
-        })
-        return sortSessions(Array.from(merged.values()))
-      })
-      setProjectSessionsById((current) => {
-        const currentById = new Map<string, SessionView>()
-        const rememberCurrent = (session: SessionView) => {
-          if (session.projectId !== projectId) return
-          currentById.set(session.id, session)
-        }
-        for (const session of (current[projectId] ?? [])) rememberCurrent(session)
-        sessionsRef.current.forEach(rememberCurrent)
-
-        const nextById = new Map<string, SessionView>()
-        for (const session of incoming) {
-          const existing = currentById.get(session.id)
-          const resolved = existing && changedSinceRequest(existing)
-            ? existing
-            : session
-          if (resolved.projectId === projectId) nextById.set(resolved.id, resolved)
-        }
-        for (const [sessionId, session] of currentById) {
-          if (incomingById.has(sessionId)) continue
-          if (changedSinceRequest(session)) {
-            nextById.set(sessionId, session)
-          }
-        }
-
-        return {
-          ...current,
-          [projectId]: sortSessions(Array.from(nextById.values())),
-        }
-      })
-      return true
-    } catch {
-      return false
-    } finally {
-      loadingProjectSessionIdsRef.current.delete(projectId)
-      setLoadingProjectSessionIds(Array.from(loadingProjectSessionIdsRef.current))
-    }
-  }, [authSession?.accessToken, projects, reconcileSessionIndicator, sortSessions])
-
   const createProject = React.useCallback(async (
     payload: ProjectCreateRequest,
   ): Promise<ProjectView | null> => {
     const token = authSession?.accessToken
     if (!token) return null
     const response = await dashboardApi.createProject(token, payload)
+    if (currentAccessTokenRef.current !== token) return null
     upsertProject(response.project)
+    void refreshProjects().catch(() => undefined)
     return response.project
-  }, [authSession?.accessToken, upsertProject])
+  }, [authSession?.accessToken, refreshProjects, upsertProject])
 
   const updateProject = React.useCallback(async (
     projectId: string,
@@ -1209,13 +959,15 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     if (!token) return null
     try {
       const response = await dashboardApi.updateProject(token, projectId, patch)
+      if (currentAccessTokenRef.current !== token) return null
       upsertProject(response.project)
+      void refreshProjects().catch(() => undefined)
       return response.project
     } catch (error) {
       if (isApiError(error) && error.code === "project_name_conflict") throw error
       return null
     }
-  }, [authSession?.accessToken, upsertProject])
+  }, [authSession?.accessToken, refreshProjects, upsertProject])
 
   const resolveProject = React.useCallback(async (payload: Pick<ProjectCreateRequest, "connectorId" | "workspacePath">): Promise<ProjectView> => {
     const token = authSession?.accessToken
@@ -1243,21 +995,19 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     if (!token) return false
     try {
       await dashboardApi.deleteProject(token, projectId)
+      if (currentAccessTokenRef.current !== token) return false
+      dashboardDataGenerationRef.current += 1
+      projectDataGenerationRef.current += 1
       setProjects((current) => current.filter((project) => project.id !== projectId))
       setSessions((current) => sortSessions(current.map((session) =>
         session.projectId === projectId ? { ...session, projectId: null } : session,
       )))
-      setProjectSessionsById((current) => {
-        if (!(projectId in current)) return current
-        const next = { ...current }
-        delete next[projectId]
-        return next
-      })
+      void refreshProjects().catch(() => undefined)
       return true
     } catch {
       return false
     }
-  }, [authSession?.accessToken, sortSessions])
+  }, [authSession?.accessToken, refreshProjects, sortSessions])
 
   const archiveProjectSessions = React.useCallback(async (projectId: string): Promise<boolean> => {
     const token = authSession?.accessToken
@@ -1267,13 +1017,15 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         archived: true,
         scope: "all",
       })
+      if (currentAccessTokenRef.current !== token) return false
+      dashboardDataGenerationRef.current += 1
+      projectDataGenerationRef.current += 1
       const archivedSessions = response.sessions.map(mapSession)
       setSessions((current) => {
         const merged = new Map(current.map((session) => [session.id, session]))
         archivedSessions.forEach((session) => merged.set(session.id, session))
         return sortSessions(Array.from(merged.values()))
       })
-      setProjectSessionsById((current) => mergeProjectSessions(current, archivedSessions))
       setProjects((current) => sortProjectViews(current.map((project) =>
         project.id === projectId ? {
           ...project,
@@ -1282,13 +1034,15 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           sidebarSessionCounts: { active: 0, archived: archivedSessions.length },
         } : project,
       )))
+      void refreshProjects().catch(() => undefined)
       return true
     } catch {
       return false
     }
-  }, [authSession?.accessToken, sortSessions])
+  }, [authSession?.accessToken, refreshProjects, sortSessions])
 
   const upsertSession = React.useCallback((session: RealSessionView) => {
+    dashboardDataGenerationRef.current += 1
     const mapped = mapSession(session)
     setSessions((prev) => {
       const index = prev.findIndex((item) => item.id === mapped.id)
@@ -1297,7 +1051,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       next[index] = reconcileSessionIndicator(prev[index], mapped)
       return sortSessions(next)
     })
-    setProjectSessionsById((current) => mergeProjectSessions(current, [mapped]))
   }, [reconcileSessionIndicator, sortSessions])
 
   const reportSessionStreamProgress = React.useCallback((
@@ -1459,7 +1212,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         : mapped
       return sortSessions(next)
     })
-    setProjectSessionsById((current) => mergeProjectSessions(current, [mapped]))
     const currentRoute = routeRef.current
     if (currentRoute.page === "session" && currentRoute.sessionId === localSessionId) {
       replaceRoute({ page: "session", sessionId: session.id })
@@ -1586,11 +1338,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     connectors,
     sessions,
     projects,
-    projectSessionsById,
-    loadingProjectSessionIds,
     isLoading,
-    hasMoreSessions: sessionPages[filter.status === "archived" ? "archived" : "active"].hasMore,
-    isLoadingMoreSessions: loadingSessionPages[filter.status === "archived" ? "archived" : "active"],
     routeReady,
     page,
     activeSessionId,
@@ -1629,7 +1377,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     togglePinSession,
     toggleArchiveSession,
     renameSession,
-    loadProjectSessions,
     createProject,
     resolveProject,
     updateProject,
@@ -1648,7 +1395,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     appendPathToComposer,
     consumeComposerInsertion,
     refreshData: fetchData,
-    loadMoreSessions,
   }
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>

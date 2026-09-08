@@ -98,7 +98,7 @@ import Testing
         #expect(model.pendingMessages.isEmpty && http.calls.isEmpty)
         restored.reset()
     }
-    @Test func restoredDashboardStaysReadableWhileItsFreshFirstPageRefreshesPagination() async throws {
+    @Test func restoredDashboardStaysReadableUntilTheCompleteInventoryReplacesIt() async throws {
         let url = location(); defer { try? FileManager.default.removeItem(at: url) }
         let local = V2LocalStore(directory: url); let http = TestHTTPTransport()
         let service = V2DashboardService(connectorAPI: V2ConnectorAPI(transport: http), projectAPI: .init(transport: http),
@@ -109,9 +109,9 @@ import Testing
         await restored.restoreCache()
         #expect(restored.hasLoaded && !restored.isFresh && !restored.canWrite && !restored.sessions.isEmpty)
         var next = try fixtureObject("dashboard")
-        next["sessionPages"] = ["active": ["hasMore": true, "nextCursor": "new:100"], "archived": ["hasMore": false]]
+        next["sessions"] = []
         restored.apply(try decode(next))
-        #expect(restored.isFresh && restored.pages[.init()]?.nextCursor == "new:100")
+        #expect(restored.isFresh && restored.sessions.isEmpty)
         restored.invalidate()
     }
     @Test func localCreationOpensImmediatelyAndBindsTheSameBubbleAndAttachmentToServerID() async throws {

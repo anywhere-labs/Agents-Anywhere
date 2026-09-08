@@ -54,14 +54,6 @@ struct DeviceManagementView: View {
     private var collectionTitle: String {
         showsSessionList ? String(localized: "工作目录") : String(localized: "Projects")
     }
-    private var pageScopes: [V2SessionListScope] {
-        switch model.sessionFilter {
-        case .active: [.init(projectID: model.projectID)]
-        case .archived: [.init(projectID: model.projectID, archived: true)]
-        case .all: [.init(projectID: model.projectID), .init(projectID: model.projectID, archived: true)]
-        }
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
@@ -93,7 +85,6 @@ struct DeviceManagementView: View {
                             onArchive: { performArchive([$0.id], archived: !$0.archived) },
                             onArchiveAll: { confirmsArchiveAll = true })
                     }
-                    ForEach(pageScopes, id: \.self) { DashboardPageButton(repository: dashboard, scope: $0) }
                 }
             }
             .padding(.bottom, 24)
@@ -133,10 +124,6 @@ struct DeviceManagementView: View {
         .onChange(of: allSessions, initial: true) { _, values in model.updateSessions(connectorId: connector.id, allSessions: values) }
         .onChange(of: model.errorMessage, initial: true) { _, error in report(error, source: "device") }
         .onChange(of: dashboard.error, initial: true) { _, error in report(error, source: "sync") }
-        .task(id: pageRequestKey) {
-            guard tab == .sessions, dashboard.canWrite else { return }
-            for scope in pageScopes where dashboard.pages[scope] == nil { await dashboard.loadPage(scope) }
-        }
         .sheet(isPresented: $createsProject) { ProjectEditorSheet(repository: dashboard, connectorID: connector.id) }
         .sheet(item: $editingProject) { ProjectEditorSheet(repository: dashboard, project: $0) }
         .sheet(item: $selectedWorkspace) {
@@ -217,7 +204,6 @@ struct DeviceManagementView: View {
             connector.status == .online ? String(localized: "Online") : String(localized: "Device offline")
         return [connector.deviceOs, status].compactMap { $0 }.joined(separator: " · ")
     }
-    private var pageRequestKey: String { "\(tab):\(model.projectID ?? ""):\(model.sessionFilter):\(dashboard.canWrite)" }
     private func report(_ message: String?, source: String) {
         toasts.update(source: source, failure: message.map { .init(kind: .rejected, message: $0) })
     }
