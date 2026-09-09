@@ -1686,7 +1686,9 @@
       "today": "today",
       "oneDayAgo": "1d ago",
       "daysAgo": "{count}d ago",
-      "weeksAgo": "{count}w ago"
+      "weeksAgo": "{count}w ago",
+      "email": "Email",
+      "emailDescription": "This address is used to sign in."
     },
     "opsDashboard": {
       "title": "Dashboard",

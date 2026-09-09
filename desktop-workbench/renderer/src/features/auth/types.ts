@@ -11,6 +11,17 @@ export type AuthConfig = {
   serverTime: string;
 };
 
+export type AuthResponse = {
+  userId: string;
+  email: string | null;
+  displayName: string;
+  emailVerified: boolean;
+  role: UserRole;
+  accessToken: string;
+  tokenType: string;
+  serverTime: string;
+};
+
 export type AuthMe = {
   userId: string;
   email: string | null;
@@ -26,6 +37,57 @@ export type ChangePasswordRequest = {
   newPassword?: string;
   newPasswordVerifier?: string;
   newPasswordSalt?: string;
+};
+
+export type AuthCredentials = {
+  email: string;
+  displayName?: string;
+  code?: string;
+  password?: string;
+  passwordVerifier?: string;
+  passwordSalt?: string;
+  setupToken?: string;
+};
+
+export type AuthPasswordSaltResponse = {
+  salt: string;
+  serverTime: string;
+};
+
+export type OAuthStartResponse = {
+  authorizeUrl: string;
+  serverTime: string;
+};
+
+export type OAuthAuthorizePayload = {
+  response_type: string;
+  client_id: string;
+  redirect_uri: string;
+  code_challenge: string;
+  code_challenge_method?: string;
+  scope?: string;
+  state?: string;
+};
+
+export type OAuthAuthorizeResponse = {
+  redirectUrl: string;
+  serverTime: string;
+};
+
+export type OAuthFinalizePayload = {
+  pendingToken: string;
+  email?: string;
+  displayName?: string;
+  code?: string;
+  password?: string;
+  passwordVerifier?: string;
+  passwordSalt?: string;
+  setPassword?: boolean;
+};
+
+export type OAuthFinalizeResponse = {
+  auth: AuthResponse;
+  serverTime: string;
 };
 
 export type OAuthProviderConfig = {
@@ -98,6 +160,7 @@ export type StoredSession = {
   accessToken: string;
   userId: string;
   role: UserRole;
+  /** Desktop-only: which self-hosted or Cloud server this session belongs to. */
   serverUrl?: string;
 };
 

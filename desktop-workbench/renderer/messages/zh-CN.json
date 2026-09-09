@@ -1686,7 +1686,9 @@
       "today": "今天",
       "oneDayAgo": "1 天前",
       "daysAgo": "{count} 天前",
-      "weeksAgo": "{count} 周前"
+      "weeksAgo": "{count} 周前",
+      "email": "邮箱",
+      "emailDescription": "用户将使用此邮箱登录。"
     },
     "opsDashboard": {
       "title": "看板",
