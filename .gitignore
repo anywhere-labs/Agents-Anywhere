@@ -30,6 +30,10 @@ agent-server/*-review.html
 *.db
 agent-server/agent-server.files/
 
+# Downloaded uv binaries bundled into the packaged Desktop apps.
+desktop-workbench/build/uv/
+desktop-next/build/uv/
+
 # Generated reference-doc caches live under docs/reference locally.
 docs/reference/*
 !docs/reference/README.md

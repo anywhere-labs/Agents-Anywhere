@@ -67,6 +67,7 @@ export class BackendState {
       dataPath: init.dataPath,
       connectorDir: init.connectorDir,
       resourcesPath: init.resourcesPath,
+      uvBundleDir: init.uvBundleDir,
       packaged: init.packaged,
       homePath: init.homePath,
       shellEnvironment: {},

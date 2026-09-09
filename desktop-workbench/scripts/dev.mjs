@@ -4,6 +4,7 @@ import http from "node:http";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ensureUvBundle } from "./prepare-uv.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rendererPackage = "agents-anywhere-desktop-renderer";
@@ -18,6 +19,10 @@ const yarnCommand = process.platform === "win32" ? "yarn.cmd" : "yarn";
 
 let webProcess = null;
 let devUrl = explicitWebUrl;
+
+// Development runs the same uv the installer ships, so provision it up front
+// instead of depending on whatever `uv` the developer has on PATH.
+const uvBundle = prepareBundledUv();
 
 if (!explicitWebUrl) {
   const port = explicitWebPort ?? await findAvailablePort(5184);
@@ -40,6 +45,7 @@ if (!explicitWebUrl) {
 
 try {
   await waitForUrl(devUrl);
+  await uvBundle;
   const electronProcess = spawn(path.join(root, "node_modules", ".bin", process.platform === "win32" ? "electron.cmd" : "electron"), ["."], {
     cwd: root,
     stdio: "inherit",
@@ -65,6 +71,20 @@ try {
   console.error(error);
   webProcess?.kill();
   process.exit(1);
+}
+
+/**
+ * Downloads the bundled uv on first use. A failure is not fatal: the Desktop
+ * falls back to `uv` on PATH, so only warn and let the app report the rest.
+ */
+async function prepareBundledUv() {
+  try {
+    const [uvPath] = await ensureUvBundle({ log: (message) => console.log(message) });
+    console.log(`Using bundled uv at ${uvPath}`);
+  } catch (error) {
+    console.warn(`Could not prepare the bundled uv: ${error instanceof Error ? error.message : error}`);
+    console.warn("Falling back to uv on PATH; run `yarn bundle:uv` to retry the download.");
+  }
 }
 
 function parsePort(value) {

@@ -18,9 +18,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:main": "yarn build:main && node --test dist/electron/*.test.js dist/electron/backend/*.test.js",
     "dev": "yarn build:main && node scripts/dev.mjs",
-    "start": "yarn build:main && electron .",
+    "start": "yarn ensure:uv && yarn build:main && electron .",
     "build:web": "node scripts/build-web.mjs",
     "build": "yarn build:main && yarn build:web",
+    "ensure:uv": "node scripts/ensure-uv.mjs",
     "bundle:uv": "node scripts/prepare-uv.mjs",
     "pack": "yarn bundle:uv && yarn build && electron-builder --dir",
     "dist": "yarn bundle:uv && yarn build && electron-builder"

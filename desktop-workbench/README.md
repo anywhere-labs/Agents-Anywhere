@@ -118,13 +118,32 @@ cd desktop-workbench
 WORKBENCH_API_ORIGIN=http://127.0.0.1:8000 WORKBENCH_API_NAMESPACE= yarn dev
 ```
 
-The development shell resolves `uv` from the login-shell environment and runs
-the repo-level `../connector` project. Override either location when needed:
+Development runs the repo-level `../connector` project with the same `uv` the
+packaged app ships, so a dev launch never depends on the developer's PATH.
+`yarn dev` and `yarn start` download that uv into
+`build/uv/<platform>-<arch>/uv[.exe]` on first use (once, then cached under
+`.cache/uv`); `yarn ensure:uv` does the same without starting the app.
+
+`uv` resolution order is the saved `uvPath` setting, then the bundled
+`build/uv/<platform>-<arch>/uv[.exe]` (packaged builds read the same directory
+from `resources/uv`), then `uv` on PATH. `yarn bundle:uv` re-bundles explicitly
+after changing `UV_BUNDLE_VERSION` and also fetches the third-party license
+notices that packaging ships. Override the connector source or launcher when
+needed:
 
 ```bash
 WORKBENCH_CONNECTOR_DIR=/absolute/path/to/connector yarn dev
 WORKBENCH_CONNECTOR_CLI=/absolute/path/to/anywhere-cli yarn dev
+WORKBENCH_UV_BUNDLE_DIR=/absolute/path/to/uv-bundle yarn dev
 ```
+
+The first launch after that also runs `uv sync`, which downloads Python and every
+Connector dependency. The window shows a preparing screen while the ownership
+probe waits for it; that probe alone allows up to 15 minutes, while every later
+RPC keeps its 30-second deadline. The saved `uvPypiIndexUrl` mirror covers
+package downloads through `UV_DEFAULT_INDEX`, `UV_INDEX_URL` and `PIP_INDEX_URL`;
+the Python interpreter itself comes from GitHub, so a slow network needs
+`UV_PYTHON_INSTALL_MIRROR` in the environment (it is passed through unchanged).
 
 Do not start a second Connector with the same Desktop config while the app is
 running. Standalone CLI devices remain supported and should use their own

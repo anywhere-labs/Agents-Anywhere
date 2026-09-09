@@ -35,6 +35,7 @@ function initFor(root: string): BackendInit {
     configPath: path.join(root, "connector.json"),
     connectorDir: root,
     resourcesPath: root,
+    uvBundleDir: path.join(root, "build", "uv"),
     homePath: root,
     documentsPath: root,
     packaged: false,

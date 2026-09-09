@@ -41,6 +41,12 @@ export type BackendInit = {
   configPath: string;
   connectorDir: string;
   resourcesPath: string;
+  /**
+   * Directory holding `<platform>-<arch>/uv[.exe]`, the uv that packaging
+   * bundles. Development passes its build output so a dev launch runs the exact
+   * uv the installer ships instead of whatever is on the developer's PATH.
+   */
+  uvBundleDir: string;
   homePath: string;
   documentsPath: string;
   packaged: boolean;

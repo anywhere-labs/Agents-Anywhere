@@ -36,6 +36,8 @@ test("first pre-login provisioning receives the initialized mirror and honors sa
   fs.writeFileSync(script, runtime);
   const spawn = childProcess.spawn;
   t.mock.method(childProcess, "spawn", (command: string, args: readonly string[], options: childProcess.SpawnOptions) => {
+    // Windows process-tree termination is not a Connector launch.
+    if (command === "taskkill.exe") return spawn(command, args, options);
     assert.equal(command, process.execPath);
     assert.deepEqual(args.slice(0, 5), ["run", "--project", root, "anywhere-cli", "rpc"]);
     return spawn(process.execPath, [script, captured], options);
@@ -49,6 +51,7 @@ test("first pre-login provisioning receives the initialized mirror and honors sa
     settings.save({ uvPath: process.execPath, ...(choice === undefined ? {} : { uvPypiIndexUrl: choice }) });
     const supervisor = new ConnectorSupervisor({
       configPath: path.join(root, "connector.json"), dataPath: root, connectorDir: root, resourcesPath: root,
+      uvBundleDir: path.join(root, "build", "uv"),
       packaged: false, homePath: root, settings,
       shellEnvironment: { UV_DEFAULT_INDEX: "https://inherited.example/simple", UV_INDEX_URL: "https://inherited.example/simple" },
       binding: new DesktopBindingStore(path.join(root, "binding.json")),
@@ -89,7 +92,9 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
   settings.save({ uvPath: process.execPath });
   const spawn = childProcess.spawn;
   let launches = 0;
-  t.mock.method(childProcess, "spawn", (_command: string, _args: readonly string[], options: childProcess.SpawnOptions) => {
+  t.mock.method(childProcess, "spawn", (command: string, args: readonly string[], options: childProcess.SpawnOptions) => {
+    // Windows process-tree termination is not a Connector launch.
+    if (command === "taskkill.exe") return spawn(command, args, options);
     launches += 1;
     assert.equal(options.env?.AA_CONNECTOR_OWNER_KIND, "desktop-workbench");
     return spawn(process.execPath, [script, ready], options);
@@ -98,6 +103,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
   const logs: string[] = [];
   const supervisor = new ConnectorSupervisor({
     configPath, dataPath: root, connectorDir: root, resourcesPath: root,
+    uvBundleDir: path.join(root, "build", "uv"),
     packaged: false, homePath: root, shellEnvironment: {}, settings,
     binding: new DesktopBindingStore(path.join(root, "binding.json")),
     logs: new ConnectorLogStore(path.join(root, "logs"), () => settings.get()),
@@ -117,5 +123,49 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     assert.equal(ownership.at(-1)?.status, "owned");
     assert.equal((await supervisor.start()).running, true);
     assert.equal(launches, 1, "A failed acquisition keeps its RPC channel available for retry");
+  } finally { await supervisor.shutdown(); }
+});
+
+test("development launches the bundled uv instead of the developer's PATH", { timeout: 15_000 }, async (t) => {
+  if (process.env.WORKBENCH_CONNECTOR_CLI?.trim()) {
+    t.skip("WORKBENCH_CONNECTOR_CLI overrides launcher resolution");
+    return;
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-uv-bundle-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "pyproject.toml"), "");
+  const uvBundleDir = path.join(root, "build", "uv");
+  const bundledUv = path.join(uvBundleDir, `${process.platform}-${process.arch}`, process.platform === "win32" ? "uv.exe" : "uv");
+  fs.mkdirSync(path.dirname(bundledUv), { recursive: true });
+  fs.writeFileSync(bundledUv, "");
+  const script = path.join(root, "runtime.cjs");
+  fs.writeFileSync(script, `
+require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { running: false, status: 'stopped' } }) + '\\n');
+});
+`);
+  const settings = new DesktopSettingsStore(path.join(root, "settings.json"), ["en-US"]);
+  const spawn = childProcess.spawn;
+  const launches: Array<{ command: string; args: readonly string[] }> = [];
+  t.mock.method(childProcess, "spawn", (command: string, args: readonly string[], options: childProcess.SpawnOptions) => {
+    launches.push({ command, args });
+    return spawn(process.execPath, [script], options);
+  });
+  const supervisor = new ConnectorSupervisor({
+    configPath: path.join(root, "connector.json"), dataPath: root, connectorDir: root, resourcesPath: root,
+    uvBundleDir, packaged: false, homePath: root, shellEnvironment: {}, settings,
+    binding: new DesktopBindingStore(path.join(root, "binding.json")),
+    logs: new ConnectorLogStore(path.join(root, "logs"), () => settings.get()),
+    onState: () => {}, onLog: () => {},
+  });
+  try {
+    await supervisor.getState();
+    assert.equal(launches.length, 1);
+    assert.equal(launches[0]?.command, bundledUv, "development must run the uv that packaging bundles");
+    assert.deepEqual(
+      [...(launches[0]?.args ?? [])],
+      ["run", "--project", root, "anywhere-cli", "rpc", "--config", path.join(root, "connector.json")],
+    );
   } finally { await supervisor.shutdown(); }
 });

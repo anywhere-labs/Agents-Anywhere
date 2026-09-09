@@ -4,13 +4,15 @@ import { createWriteStream } from "node:fs";
 import { chmod, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { get } from "node:https";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { ProxyAgent } from "proxy-agent";
 
 const UV_VERSION = process.env.UV_BUNDLE_VERSION || "0.11.26";
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CACHE_ROOT = join(PROJECT_ROOT, ".cache", "uv", UV_VERSION);
-const OUTPUT_ROOT = join(PROJECT_ROOT, "build", "uv");
+const OUTPUT_ROOT = process.env.WORKBENCH_UV_BUNDLE_DIR?.trim()
+  ? resolve(process.env.WORKBENCH_UV_BUNDLE_DIR.trim())
+  : join(PROJECT_ROOT, "build", "uv");
 const RELEASE_BASE = `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}`;
 const RAW_BASE = `https://raw.githubusercontent.com/astral-sh/uv/${UV_VERSION}`;
 const DOWNLOAD_TIMEOUT_MS = Number(process.env.UV_BUNDLE_DOWNLOAD_TIMEOUT_MS || 30_000);
@@ -138,7 +140,42 @@ async function prepareTarget(key) {
   await copyFile(executablePath, join(outputDir, target.executable));
   if (target.executable !== "uv.exe") await chmod(join(outputDir, target.executable), 0o755);
   await writeFile(join(outputDir, "UV_VERSION"), `${UV_VERSION}\n`, "utf8");
-  console.log(`Bundled uv ${UV_VERSION} for ${key}`);
+}
+
+export function runtimeTargetKey() {
+  return `${process.platform}-${process.arch}`;
+}
+
+async function isCurrent(outputDir, target) {
+  if (!(await exists(join(outputDir, target.executable)))) return false;
+  try {
+    return (await readFile(join(outputDir, "UV_VERSION"), "utf8")).trim() === UV_VERSION;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Guarantees the bundled uv exists for the requested targets and returns their
+ * executable paths. Development calls this so `yarn dev` runs the same uv the
+ * installer ships without a separate manual step; an already-current bundle is
+ * reused, and a cached download is never repeated.
+ */
+export async function ensureUvBundle({ targets = [runtimeTargetKey()], log = () => {} } = {}) {
+  await mkdir(OUTPUT_ROOT, { recursive: true });
+  const bundled = [];
+  for (const key of targets) {
+    const target = TARGETS[key];
+    if (!target) throw new Error(`Unsupported uv bundle target: ${key}`);
+    const outputDir = join(OUTPUT_ROOT, key);
+    const executablePath = join(outputDir, target.executable);
+    if (!(await isCurrent(outputDir, target))) {
+      log(`Preparing bundled uv ${UV_VERSION} for ${key} (downloads once, then cached)`);
+      await prepareTarget(key);
+    }
+    bundled.push(executablePath);
+  }
+  return bundled;
 }
 
 async function prepareLicenses() {
@@ -150,14 +187,16 @@ async function prepareLicenses() {
 }
 
 async function main() {
-  const requested = process.env.UV_BUNDLE_TARGETS || `${process.platform}-${process.arch}`;
+  const requested = process.env.UV_BUNDLE_TARGETS || runtimeTargetKey();
   const targets = requested === "all" ? Object.keys(TARGETS) : requested.split(",").map((value) => value.trim()).filter(Boolean);
-  await mkdir(OUTPUT_ROOT, { recursive: true });
-  await Promise.all(targets.map(prepareTarget));
+  await ensureUvBundle({ targets });
   await prepareLicenses();
+  console.log(`Bundled uv ${UV_VERSION} for ${targets.join(", ")}`);
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  });
+}

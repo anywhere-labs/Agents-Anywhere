@@ -495,6 +495,19 @@ function resolveConnectorDir(): string {
   return path.resolve(app.getAppPath(), "..", "connector");
 }
 
+/**
+ * The uv that packaging bundles. Development uses the same build output, so a
+ * dev launch runs the exact uv the installer ships instead of whatever `uv`
+ * happens to be on the developer's PATH. Run `yarn bundle:uv` to create it.
+ */
+function resolveUvBundleDir(): string {
+  if (process.env.WORKBENCH_UV_BUNDLE_DIR?.trim()) {
+    return path.resolve(process.env.WORKBENCH_UV_BUNDLE_DIR.trim());
+  }
+  if (app.isPackaged) return path.join(process.resourcesPath, "uv");
+  return path.join(app.getAppPath(), "build", "uv");
+}
+
 function appWindowIcon(): string {
   if (app.isPackaged) return path.join(process.resourcesPath, "build", "icon-mac-source.png");
   return path.join(app.getAppPath(), "build", "icon-mac-source.png");
@@ -786,6 +799,7 @@ function backendInit(): BackendInit {
     configPath: path.join(dataPath, "connector.json"),
     connectorDir: resolveConnectorDir(),
     resourcesPath: process.resourcesPath,
+    uvBundleDir: resolveUvBundleDir(),
     homePath: app.getPath("home"),
     documentsPath: app.getPath("documents"),
     packaged: app.isPackaged,

@@ -31,6 +31,8 @@ type ConnectorSupervisorOptions = {
   dataPath: string;
   connectorDir: string;
   resourcesPath: string;
+  /** Directory holding `<platform>-<arch>/uv[.exe]`; packaged resources or `build/uv`. */
+  uvBundleDir: string;
   packaged: boolean;
   homePath: string;
   shellEnvironment: NodeJS.ProcessEnv;
@@ -556,12 +558,15 @@ export class ConnectorSupervisor {
     return "";
   }
 
+  /**
+   * A saved `uvPath` wins because it is an explicit user choice. Otherwise the
+   * bundled uv wins in development exactly as it does when packaged, so a dev
+   * launch never depends on the developer's PATH; PATH is only the last resort.
+   */
   private resolveUvPath(): string {
     const executableName = process.platform === "win32" ? "uv.exe" : "uv";
     const configured = this.options.settings.get().uvPath;
-    const bundled = this.options.packaged
-      ? path.join(this.options.resourcesPath, "uv", `${process.platform}-${process.arch}`, executableName)
-      : "";
+    const bundled = path.join(this.options.uvBundleDir, `${process.platform}-${process.arch}`, executableName);
     for (const candidate of [configured, bundled, executableName]) {
       const resolved = this.resolveExecutable(candidate);
       if (resolved) return resolved;
