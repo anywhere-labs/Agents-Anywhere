@@ -24,7 +24,9 @@
     "ensure:uv": "node scripts/ensure-uv.mjs",
     "bundle:uv": "node scripts/prepare-uv.mjs",
     "pack": "yarn bundle:uv && yarn build && electron-builder --dir",
-    "dist": "yarn bundle:uv && yarn build && electron-builder"
+    "dist": "yarn bundle:uv && yarn build && electron-builder",
+    "dist:mac": "node scripts/dist-desktop.mjs mac",
+    "dist:win": "node scripts/dist-desktop.mjs win"
   },
   "devDependencies": {
     "@types/node": "^24.10.2",

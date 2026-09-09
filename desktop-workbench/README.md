@@ -170,19 +170,42 @@ checks run headlessly without starting Electron or a development server.
 The release build bundles the Connector source and a platform-specific `uv`:
 
 ```bash
-yarn bundle:uv       # current platform by default
-yarn pack            # unpacked Electron application
-yarn dist            # installer / DMG / AppImage
+yarn dist:mac               # macOS DMG for the host architecture
+yarn dist:mac --universal   # one DMG for Apple Silicon and Intel
+yarn dist:win               # Windows NSIS installer (x64)
+yarn pack                   # unpacked Electron application
+yarn dist                   # host-platform build without credential handling
 ```
 
-Set `UV_BUNDLE_TARGETS=all` or a comma-separated target list for multi-platform
-artifact preparation. Packaged builds keep the Connector virtual environment,
-uv cache, config, binding, and logs under Electron `userData`; signed resources
-are never modified at runtime.
+`dist:mac` and `dist:win` read the signing environment, run the `uv` bundle and
+the app build with those secrets stripped, and hand them to electron-builder
+only. The signing material is therefore never visible to a build or test
+subprocess. Add `--arm64`, `--x64` or `--universal` (macOS) to select the
+architecture, or `--dir` for an unpacked build. `dist:mac` must run on macOS and
+`dist:win` on Windows.
 
-The build expects signing/notarization credentials to be supplied by release
-CI. `bundle:uv` verifies the upstream archive checksum before copying it into
-`build/uv`.
+| Environment | Effect |
+| --- | --- |
+| `MAC_CERT_P12_BASE64` + `MACOS_SIGN_IDENTITY` + `CSC_KEY_PASSWORD` | macOS signing from a Base64 PKCS#12, mapped to `CSC_LINK`/`CSC_NAME` |
+| `CSC_LINK` + `CSC_KEY_PASSWORD` (`CSC_NAME` optional) | Signing from a certificate file or URL |
+| `CSC_NAME` | Select a Keychain identity; without it auto-discovery picks one |
+| `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID` | Notarize through notarytool |
+| `APPLE_API_KEY` + `APPLE_API_KEY_ID` + `APPLE_API_ISSUER` | Notarize through an App Store Connect API key |
+| `APPLE_KEYCHAIN_PROFILE` (`APPLE_KEYCHAIN` optional) | Notarize through a stored keychain profile |
+| `WIN_CSC_LINK` + `WIN_CSC_KEY_PASSWORD`, or `WIN_CERT_P12_BASE64` + `WIN_CSC_KEY_PASSWORD` | Authenticode signing |
+| `CSC_IDENTITY_AUTO_DISCOVERY=false` | Force an unsigned build |
+
+A credential group is all-or-nothing: a half-configured release fails before
+anything is packaged. With no credentials the artifact is built unsigned and the
+script says which step was skipped. After a signed macOS build the script runs
+`codesign --verify` (and `xcrun stapler validate` when notarized).
+
+Set `UV_BUNDLE_TARGETS=all` or a comma-separated target list for multi-platform
+artifact preparation; `dist:mac --universal` prepares both macOS `uv` builds
+automatically. Packaged builds keep the Connector virtual environment, uv cache,
+config, binding, and logs under Electron `userData`; signed resources are never
+modified at runtime. `bundle:uv` verifies the upstream archive checksum before
+copying it into `build/uv`.
 
 ## Desktop updates
 

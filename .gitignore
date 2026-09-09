@@ -34,6 +34,8 @@ agent-server/agent-server.files/
 
 # Downloaded uv binaries bundled into the packaged Desktop apps.
 desktop-workbench/build/uv/
+desktop-workbench/.cache/
+desktop-workbench/release/
 desktop-next/build/uv/
 
 # Generated reference-doc caches live under docs/reference locally.
