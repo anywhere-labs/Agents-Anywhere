@@ -16,7 +16,7 @@
     "build:main": "tsc -p tsconfig.json",
     "renderer:typecheck": "yarn workspace agents-anywhere-desktop-renderer typecheck",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:main": "yarn build:main && node --test dist/electron/*.test.js",
+    "test:main": "yarn build:main && node --test dist/electron/*.test.js dist/electron/backend/*.test.js",
     "dev": "yarn build:main && node scripts/dev.mjs",
     "start": "yarn build:main && electron .",
     "build:web": "node scripts/build-web.mjs",
@@ -41,6 +41,7 @@
       "dist/config.json",
       "!dist/electron/development-login.js",
       "!dist/electron/*.test.js",
+      "!dist/electron/backend/*.test.js",
       "!node_modules/agents-anywhere-desktop-renderer/**",
       "renderer/out/**",
       "package.json"

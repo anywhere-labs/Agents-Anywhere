@@ -800,8 +800,9 @@ function LogsTab() {
     const bridge = getDesktopWorkbenchBridge()
     if (!supported || !bridge?.connector) return
     void loadLogs()
-    const unsubscribeLog = bridge.connector.onLog((entry) => {
-      setLogs((current) => [...current.slice(-199), entry])
+    const unsubscribeLog = bridge.connector.onLog((entries) => {
+      if (entries.length === 0) return
+      setLogs((current) => [...current, ...entries].slice(-200))
     })
     const unsubscribeCleared = bridge.connector.onLogsCleared(() => setLogs([]))
     return () => {

@@ -17,7 +17,6 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { ConnectorSupervisor } from "./connector-supervisor";
 import {
   DESKTOP_OAUTH_PROTOCOL,
   createDesktopOAuthRequest,
@@ -27,14 +26,10 @@ import {
   type DesktopOAuthPending,
   type DesktopOAuthResult,
 } from "./desktop-oauth";
-import { DesktopBindingStore } from "./desktop-binding";
-import { DesktopDeviceService } from "./desktop-device-service";
 import { DesktopUpdateService } from "./desktop-updates";
-import { desktopInstallation, MachineStateStore } from "./machine-state";
-import { DesktopSettingsStore } from "./desktop-settings";
-import { ConnectorLogStore } from "./log-store";
-import { readShellEnvironment } from "./shell-environment";
 import { validateTitleBarColors } from "./title-bar";
+import type { BackendInit } from "./backend/protocol";
+import { DesktopBackendClient } from "./backend-client";
 import { windowMaterialOptions } from "./window-material";
 import config from "../config.json";
 import { proxyDesktopApi } from "./api-proxy";
@@ -48,17 +43,10 @@ import {
   type DesktopServerConnection,
 } from "./desktop-server";
 import type {
-  ConnectorConfigPatch,
   ConnectorLogEntry,
-  ConnectorLogQuery,
-  DesktopDeviceAuthInput,
   DesktopFactoryResetInput,
-  DesktopDeviceNameInput,
-  DesktopDeviceProvisionInput,
-  DesktopDeviceReconnectInput,
   DesktopNotificationInput,
   DesktopNotificationResult,
-  DesktopSettingsPatch,
 } from "./connector-types";
 
 const APP_NAME = "Agents Anywhere";
@@ -66,6 +54,8 @@ const APP_ID = "dev.agentsanywhere.workbench";
 const WEB_PROTOCOL = "aa-workbench";
 const WEB_HOST = "web";
 const LOGIN_ITEM_HIDDEN_ARG = "--hidden";
+/** A backend that never reports ownership must not block the renderer forever. */
+const OWNERSHIP_FIRST_RESULT_TIMEOUT_MS = 15_000;
 const API_ROUTE_PREFIXES = [
   "/admin",
   "/agents",
@@ -82,15 +72,14 @@ const API_ROUTE_PREFIXES = [
 
 let ownership: OwnershipState = { status: "error", message: "正在检查本机 Connector…" };
 let recheckingOwnership: Promise<OwnershipState> | null = null;
+/** Resolves with the backend's first real ownership result. */
+let ownershipReady: Promise<OwnershipState> | null = null;
+let ownershipSettled = false;
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let devOrigin: string | null = null;
-let settingsStore: DesktopSettingsStore | null = null;
-let bindingStore: DesktopBindingStore | null = null;
-let logStore: ConnectorLogStore | null = null;
-let connector: ConnectorSupervisor | null = null;
-let devices: DesktopDeviceService | null = null;
+let backend: DesktopBackendClient | null = null;
 let updates: DesktopUpdateService | null = null;
 let isQuitting = false;
 let shutdownComplete = false;
@@ -212,6 +201,12 @@ function registerStaticWebProtocol(): void {
   protocol.handle(WEB_PROTOCOL, (request) => {
     const url = new URL(request.url);
     if (url.hostname !== WEB_HOST) return new Response("Not found", { status: 404 });
+
+    const backendPath = DesktopBackendClient.proxyPath(url.pathname);
+    if (backendPath) {
+      if (!backend) return new Response("Desktop backend is not ready.", { status: 503 });
+      return backend.proxy(request, backendPath, url.search);
+    }
 
     if (shouldProxyApiPath(url.pathname)) {
       return proxyDesktopApi(
@@ -464,12 +459,12 @@ function loginItemOptions(): { path?: string; args?: string[] } {
   if (process.platform !== "win32") return {};
   return {
     path: process.execPath,
-    args: settingsStore?.get().silentLaunch ? [LOGIN_ITEM_HIDDEN_ARG] : [],
+    args: backend?.getSettings()?.silentLaunch ? [LOGIN_ITEM_HIDDEN_ARG] : [],
   };
 }
 
 function applyLoginItemSettings(): void {
-  const settings = settingsStore?.get();
+  const settings = backend?.getSettings();
   if (!settings) return;
   app.setLoginItemSettings({
     openAtLogin: settings.openAtLogin,
@@ -478,10 +473,13 @@ function applyLoginItemSettings(): void {
   });
 }
 
+/** Main-process messages join the same log stream the renderer already reads. */
 function appendMainLog(entry: string | Partial<ConnectorLogEntry>): void {
-  if (!logStore) return;
-  const normalized = logStore.append(entry);
-  sendToRenderer("workbench:connector:log", normalized);
+  if (!backend) return;
+  const payload = typeof entry === "string"
+    ? { level: "INFO", message: entry }
+    : { level: entry.level ?? "INFO", message: String(entry.message ?? "") };
+  void backend.request("/logs/append", { method: "POST", body: JSON.stringify(payload) }).catch(() => undefined);
 }
 
 function syncDesktopUpdateSession(serverUrl: unknown) {
@@ -497,32 +495,28 @@ function syncDesktopUpdateSession(serverUrl: unknown) {
   return updates?.check(connection) ?? null;
 }
 
+/** Throws on a Connector conflict, matching the previous acquire semantics. */
 async function requireLocalOwnership(): Promise<void> {
-  if (isQuitting || !connector) throw new Error("Desktop is shutting down or not ready.");
-  await connector.acquireOwnership();
-}
-
-async function startOwnedConnector(): Promise<void> {
-  const state = await requireConnector().getState();
-  if (requireSettings().get().startConnectorOnLaunch && state.hasCredential && !state.manualDisconnected) {
-    await requireConnector().start();
-  }
+  if (isQuitting || !backend) throw new Error("Desktop is shutting down or not ready.");
+  ownership = await backend.request<OwnershipState>("/ownership/acquire", { method: "POST", body: "{}" });
 }
 
 function registerIpcHandlers(): void {
   ipcMain.handle("workbench:ownership:getState", event => {
     assertTrustedRenderer(event);
-    return ownership;
+    // The backend probes ownership asynchronously. Reporting the placeholder
+    // would make the renderer show its conflict dialog on every launch, so the
+    // first read waits for the real result.
+    return ownershipSettled ? ownership : (ownershipReady ?? ownership);
   });
   ipcMain.handle("workbench:ownership:recheck", event => {
     assertTrustedRenderer(event);
     recheckingOwnership ??= (async () => {
-      if (isQuitting || !connector) return ownership;
-      try { await requireLocalOwnership(); } catch { return ownership; }
-      if (ownership.status === "owned") {
-        void startOwnedConnector().catch(error => appendMainLog({ level: "ERROR", message: errorMessage(error) }));
-        if (app.isPackaged) void drainDesktopOAuthCallbacks();
-      }
+      if (isQuitting || !backend) return ownership;
+      try {
+        ownership = await backend.request<OwnershipState>("/ownership/recheck", { method: "POST", body: "{}" });
+      } catch { return ownership; }
+      if (ownership.status === "owned" && app.isPackaged) void drainDesktopOAuthCallbacks();
       return ownership;
     })().finally(() => { recheckingOwnership = null; });
     return recheckingOwnership;
@@ -558,6 +552,14 @@ function registerIpcHandlers(): void {
       return action();
     });
   }
+  ipcMain.handle("workbench:backend:endpoint", (event) => {
+    assertTrustedRenderer(event);
+    // Only the development renderer needs this: it is served from an HTTP
+    // origin, where the same-origin /desktop-api proxy does not exist.
+    if (app.isPackaged) throw new Error("The Desktop backend endpoint is only available in development.");
+    if (!backend) throw new Error("Desktop backend is not ready.");
+    return { baseUrl: backend.origin, token: backend.token };
+  });
   ipcMain.handle("workbench:openExternal", async (event, url: string) => {
     assertTrustedRenderer(event);
     if (!/^https?:\/\//i.test(url)) throw new Error("Only http(s) URLs can be opened externally.");
@@ -615,7 +617,7 @@ function registerIpcHandlers(): void {
     "workbench:notifications:show",
     (event, input: DesktopNotificationInput): DesktopNotificationResult => {
       assertTrustedRenderer(event);
-      if (!requireSettings().get().notificationsEnabled) {
+      if (!backend?.getSettings()?.notificationsEnabled) {
         return { shown: false, reason: "disabled" };
       }
       if (!Notification.isSupported()) {
@@ -639,61 +641,6 @@ function registerIpcHandlers(): void {
       return { shown: true };
     },
   );
-  ipcMain.handle("workbench:connector:getState", async (event) => {
-    assertTrustedRenderer(event);
-    return requireConnector().getState();
-  });
-  ipcMain.handle("workbench:connector:getConfig", (event) => {
-    assertTrustedRenderer(event);
-    return requireConnector().getPublicConfig();
-  });
-  ipcMain.handle("workbench:connector:saveConfig", (event, patch: ConnectorConfigPatch) => {
-    assertTrustedRenderer(event);
-    return requireConnector().saveConfig(patch ?? {});
-  });
-  ipcMain.handle("workbench:connector:start", (event) => {
-    assertTrustedRenderer(event);
-    return requireConnector().start();
-  });
-  ipcMain.handle("workbench:connector:stop", (event) => {
-    assertTrustedRenderer(event);
-    return requireConnector().stop();
-  });
-  ipcMain.handle("workbench:connector:restart", (event) => {
-    assertTrustedRenderer(event);
-    return requireConnector().restart();
-  });
-  ipcMain.handle("workbench:connector:getLogs", (event, query: ConnectorLogQuery) => {
-    assertTrustedRenderer(event);
-    return requireLogs().read(query ?? {});
-  });
-  ipcMain.handle("workbench:connector:clearLogs", (event) => {
-    assertTrustedRenderer(event);
-    const page = requireLogs().clear();
-    sendToRenderer("workbench:connector:logsCleared");
-    return page;
-  });
-  ipcMain.handle("workbench:connector:saveSettings", async (event, patch: DesktopSettingsPatch) => {
-    assertTrustedRenderer(event);
-    const previous = requireSettings().get();
-    const saved = requireSettings().save(patch ?? {});
-    try {
-      const state = await requireConnector().applySettings(previous);
-      applyLoginItemSettings();
-      requireLogs().updateSettings(() => requireSettings().get());
-      return state;
-    } catch (error) {
-      requireSettings().save(previous);
-      try {
-        await requireConnector().applySettings(saved);
-      } catch (rollbackError) {
-        appendMainLog({ level: "ERROR", message: `Failed to restore Connector settings: ${errorMessage(rollbackError)}` });
-      }
-      applyLoginItemSettings();
-      requireLogs().updateSettings(() => requireSettings().get());
-      throw error;
-    }
-  });
   ipcMain.handle("workbench:connector:openDataFolder", async (event) => {
     assertTrustedRenderer(event);
     fs.mkdirSync(connectorDataPath(), { recursive: true, mode: 0o700 });
@@ -716,53 +663,42 @@ function registerIpcHandlers(): void {
       ? await dialog.showSaveDialog(mainWindow, options)
       : await dialog.showSaveDialog(options);
     if (result.canceled || !result.filePath) return { canceled: true, filePath: null, count: 0 };
-    const count = requireLogs().exportTo(result.filePath);
-    return { canceled: false, filePath: result.filePath, count };
+    const exported = await requireBackend().request<{ count: number }>("/logs/export", {
+      method: "POST",
+      body: JSON.stringify({ filePath: result.filePath }),
+    });
+    return { canceled: false, filePath: result.filePath, count: exported.count };
   });
   ipcMain.handle("workbench:connector:factoryReset", async (event, input: DesktopFactoryResetInput) => {
     assertTrustedRenderer(event);
     const forceLocal = input?.forceLocal === true;
-    if (requireDevices().getLocalBinding() && !forceLocal) {
+    const client = requireBackend();
+    const binding = await client.request<{ connectorId: string } | null>("/device/binding");
+    if (binding && !forceLocal) {
       // Server revoke happens first. If it fails, local credentials and binding
       // remain untouched so the user can retry instead of creating an orphan.
-      await requireDevices().disconnectLocal({
-        userToken: input?.userToken ?? "",
-        userId: input?.userId ?? "",
-        serverUrl: input?.serverUrl,
+      await client.request("/device/disconnect", {
+        method: "POST",
+        body: JSON.stringify({
+          userToken: input?.userToken ?? "",
+          userId: input?.userId ?? "",
+          serverUrl: input?.serverUrl,
+        }),
       });
     }
     isQuitting = true;
     quiesceRendererForShutdown();
-    await requireConnector().shutdown();
+    await client.shutdown();
     await session.defaultSession.clearStorageData();
     await session.defaultSession.clearCache();
-    fs.rmSync(connectorDataPath(), { recursive: true, force: true });
-    fs.rmSync(connectorLogsPath(), { recursive: true, force: true });
-    fs.rmSync(desktopSettingsPath(), { force: true });
-    fs.rmSync(path.join(app.getPath("userData"), "desktop-server.json"), { force: true });
+    // Async removal keeps the UI process free; the app is about to relaunch.
+    await fs.promises.rm(connectorDataPath(), { recursive: true, force: true });
+    await fs.promises.rm(connectorLogsPath(), { recursive: true, force: true });
+    await fs.promises.rm(desktopSettingsPath(), { force: true });
+    await fs.promises.rm(path.join(app.getPath("userData"), "desktop-server.json"), { force: true });
     app.relaunch();
     shutdownComplete = true;
     app.exit(0);
-  });
-  ipcMain.handle("workbench:device:createAndConnect", (event, input: DesktopDeviceProvisionInput) => {
-    assertTrustedRenderer(event);
-    return requireDevices().createAndConnect(input);
-  });
-  ipcMain.handle("workbench:device:reconnectAndConnect", (event, input: DesktopDeviceReconnectInput) => {
-    assertTrustedRenderer(event);
-    return requireDevices().reconnectAndConnect(input);
-  });
-  ipcMain.handle("workbench:device:disconnectLocal", (event, input: DesktopDeviceAuthInput) => {
-    assertTrustedRenderer(event);
-    return requireDevices().disconnectLocal(input);
-  });
-  ipcMain.handle("workbench:device:getLocalBinding", (event) => {
-    assertTrustedRenderer(event);
-    return requireDevices().getLocalBinding();
-  });
-  ipcMain.handle("workbench:device:updateLocalBindingName", (event, input: DesktopDeviceNameInput) => {
-    assertTrustedRenderer(event);
-    return requireDevices().updateLocalBindingName(input?.name ?? "");
   });
 }
 
@@ -771,79 +707,79 @@ function normalizeNotificationText(value: unknown, maximumLength: number): strin
   return value.replace(/\s+/g, " ").trim().slice(0, maximumLength);
 }
 
-function requireConnector(): ConnectorSupervisor {
-  if (ownership.status !== "owned") throw new Error(ownership.message);
-  if (!connector) throw new Error("Connector supervisor is not ready.");
-  return connector;
+function requireBackend(): DesktopBackendClient {
+  if (!backend) throw new Error("Desktop backend is not ready.");
+  return backend;
 }
 
-function requireDevices(): DesktopDeviceService {
-  if (ownership.status !== "owned") throw new Error(ownership.message);
-  if (!devices) throw new Error("Desktop device service is not ready.");
-  return devices;
-}
-
-function requireSettings(): DesktopSettingsStore {
-  if (!settingsStore) throw new Error("Desktop settings are not ready.");
-  return settingsStore;
-}
-
-function requireLogs(): ConnectorLogStore {
-  if (!logStore) throw new Error("Connector logs are not ready.");
-  return logStore;
-}
-
-async function initializeDesktopServices(): Promise<void> {
-  const machineState = new MachineStateStore();
-  serverStore = new DesktopServerStore(path.join(app.getPath("userData"), "desktop-server.json"), activeDesktopServer());
+function backendInit(): BackendInit {
   const dataPath = connectorDataPath();
-  fs.mkdirSync(dataPath, { recursive: true, mode: 0o700 });
-  settingsStore = new DesktopSettingsStore(desktopSettingsPath(), app.getPreferredSystemLanguages());
-  logStore = new ConnectorLogStore(connectorLogsPath(), () => requireSettings().get());
-  bindingStore = new DesktopBindingStore(path.join(dataPath, "desktop-binding.json"));
-  const shellEnvironment = await readShellEnvironment();
-  connector = new ConnectorSupervisor({
-    onOwnership: (state) => {
-      ownership = state;
-      sendToRenderer("workbench:ownership:state", state);
-    },
-    configPath: path.join(dataPath, "connector.json"),
+  return {
     dataPath,
+    logsPath: connectorLogsPath(),
+    settingsPath: desktopSettingsPath(),
+    bindingPath: path.join(dataPath, "desktop-binding.json"),
+    configPath: path.join(dataPath, "connector.json"),
     connectorDir: resolveConnectorDir(),
     resourcesPath: process.resourcesPath,
-    packaged: app.isPackaged,
     homePath: app.getPath("home"),
-    shellEnvironment,
-    settings: settingsStore,
-    binding: bindingStore,
-    logs: logStore,
-    onState: (state) => {
-      sendToRenderer("workbench:connector:state", state);
-    },
-    onLog: (entry) => sendToRenderer("workbench:connector:log", entry),
+    documentsPath: app.getPath("documents"),
+    packaged: app.isPackaged,
+    preferredLanguages: app.getPreferredSystemLanguages(),
+    defaultServerUrl: apiOrigin(),
+    apiNamespace: apiNamespace(),
+    desktopExecutablePath: process.platform === "linux" && app.isPackaged && process.env.APPIMAGE
+      ? process.env.APPIMAGE
+      : process.execPath,
+    desktopAppPath: app.getAppPath(),
+  };
+}
+
+/**
+ * Starts the backend process. The window no longer waits for Connector
+ * ownership, the login-shell environment snapshot, or installation bookkeeping;
+ * those run inside the backend and arrive over the event stream.
+ */
+async function initializeDesktopServices(): Promise<void> {
+  serverStore = new DesktopServerStore(path.join(app.getPath("userData"), "desktop-server.json"), activeDesktopServer());
+  let settleOwnership: (state: OwnershipState) => void = () => undefined;
+  ownershipReady = new Promise<OwnershipState>((resolve) => {
+    const timer = setTimeout(() => resolve(ownership), OWNERSHIP_FIRST_RESULT_TIMEOUT_MS);
+    timer.unref?.();
+    settleOwnership = (state) => {
+      clearTimeout(timer);
+      ownershipSettled = true;
+      resolve(state);
+    };
   });
-  try { await requireLocalOwnership(); } catch { /* The renderer shows the RPC error and retry action. */ }
-  try {
-    await machineState.recordInstallation(desktopInstallation({
-      executablePath: process.platform === "linux" && app.isPackaged && process.env.APPIMAGE ? process.env.APPIMAGE : process.execPath,
-      appPath: app.getAppPath(), packaged: app.isPackaged, platform: process.platform,
-    }));
-  } catch (error) {
-    appendMainLog({ level: "ERROR", message: `Could not record Desktop installation: ${errorMessage(error)}` });
-  }
-  const config = connector.loadPrivateConfig();
-  if (config && !bindingStore.get()) bindingStore.adoptConfig(config);
-  connector.bindingChanged();
-  devices = new DesktopDeviceService({
-    requireOwnership: requireLocalOwnership,
-    binding: bindingStore,
-    connector,
+  const client = new DesktopBackendClient({
     fetcher: (input, init) => net.fetch(String(input), init),
-    defaultServerUrl: apiOrigin,
-    apiNamespace,
-    readLocalConnectorIds: () => machineState.readConnectorIds(),
+    onEvent: (event) => {
+      if (event.event === "ownership") {
+        ownership = event.data as OwnershipState;
+        settleOwnership(ownership);
+        sendToRenderer("workbench:ownership:state", ownership);
+        if (ownership.status === "owned" && app.isPackaged) void drainDesktopOAuthCallbacks();
+        return;
+      }
+      if (event.event === "settings") applyLoginItemSettings();
+    },
+    onExit: (reason) => {
+      appendMainLog({ level: "ERROR", message: `Desktop backend stopped unexpectedly (${reason}).` });
+    },
   });
+  backend = client;
+  await client.start(backendInit());
+  ownership = client.getOwnership();
   applyLoginItemSettings();
+}
+
+/** Only a silent login-item launch has to wait for the first ownership result. */
+async function waitForOwnership(timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (ownership.status !== "owned" && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
 }
 
 async function confirmQuit(): Promise<boolean> {
@@ -885,7 +821,7 @@ async function requestQuit({ confirm = false }: { confirm?: boolean } = {}): Pro
       tray?.destroy();
       tray = null;
       quiesceRendererForShutdown();
-      await connector?.shutdown();
+      await backend?.shutdown();
     } finally {
       shutdownComplete = true;
       app.quit();
@@ -932,15 +868,21 @@ if (hasSingleInstanceLock) {
       },
       onState: (state) => sendToRenderer("workbench:updates:state", state),
     });
-    const settings = requireSettings().get();
-    const showOnLaunch = ownership.status !== "owned" || !settings.silentLaunch || !launchedAsLoginItem() || Boolean(process.env.WORKBENCH_WEB_URL);
     createWindowsTray();
+    // A silent login-item launch must not flash a window when this machine
+    // already owns the Connector, so it is the one case that waits.
+    const silentLoginLaunch = backend?.getSettings()?.silentLaunch === true
+      && launchedAsLoginItem()
+      && !process.env.WORKBENCH_WEB_URL;
+    let showOnLaunch = true;
+    if (silentLoginLaunch) {
+      await waitForOwnership(10_000);
+      showOnLaunch = ownership.status !== "owned";
+    }
     createMainWindow(showOnLaunch);
     if (app.isPackaged && ownership.status === "owned") await drainDesktopOAuthCallbacks();
     if (process.platform === "darwin" && app.dock) app.dock.setIcon(appWindowIcon());
     if (!showOnLaunch) hideDockIfIdle();
-
-    if (ownership.status === "owned") await startOwnedConnector();
   }).catch((error) => {
     console.error("Failed to initialize Desktop Workbench", error);
     void requestQuit();

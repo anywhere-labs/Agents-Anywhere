@@ -1,18 +1,32 @@
 # Desktop Workbench
 
 Agents Anywhere Desktop combines the web workbench and a locally managed
-Connector in one Electron application. The renderer remains the control
-console; Electron Main owns the Connector CLI process and communicates with it
-over stdio JSON-RPC. No localhost management server is opened.
+Connector in one Electron application.
+
+The Connector, its logs, the Desktop settings and the local binding live in an
+independent backend process (`child_process.fork` with `ELECTRON_RUN_AS_NODE`).
+It never touches the window, so a blocked or crashed backend cannot freeze the
+user interface. The backend serves a loopback HTTP + SSE API; Electron Main
+re-exposes it under `/desktop-api` on the app origin, so the renderer keeps
+talking to one same-origin endpoint and never sees the port or the per-launch
+token. Native shell concerns — window, tray, updates, notifications, OAuth and
+file dialogs — stay in Main over IPC.
+
+```text
+Renderer -> /desktop-api (same origin) -> Electron Main -> loopback HTTP+SSE -> Desktop backend -> anywhere-cli rpc -> Server
+Renderer -> narrow preload IPC --------------------------------------------------> Electron Main (window, updates, OAuth, dialogs)
+```
+
+The backend reports ready as soon as its loopback server is listening. Connector
+ownership, the login-shell environment snapshot and installation bookkeeping run
+afterwards, so none of them delay the window. Connector log lines are coalesced
+into batches before they reach the renderer, which keeps one chatty Connector
+from causing a render per line.
 
 On Windows, closing the window hides it to the system tray and keeps the local
 Connector running. Click the tray icon or choose **打开 Agents Anywhere** to
 reopen the window. Choose **退出** from the tray menu to confirm exit and stop
 the local Connector; cancelling keeps the app running.
-
-```text
-Renderer -> narrow preload IPC -> Electron Main -> anywhere-cli rpc -> Server
-```
 
 ## Run
 

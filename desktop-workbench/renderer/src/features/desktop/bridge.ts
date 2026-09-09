@@ -207,7 +207,8 @@ export type DesktopWorkbenchBridge = {
         }
     ) => Promise<void>
     onState: (listener: (state: DesktopConnectorState) => void) => void | (() => void)
-    onLog: (listener: (entry: DesktopConnectorLog) => void) => void | (() => void)
+    /** Entries are batched by the backend, so one callback covers many lines. */
+    onLog: (listener: (entries: DesktopConnectorLog[]) => void) => void | (() => void)
     onLogsCleared: (listener: () => void) => void | (() => void)
   }
 }

@@ -36,7 +36,7 @@ function quitFixture(options: { confirm?: boolean; shutdown?: () => Promise<void
       isDestroyed: () => false,
       destroy: () => calls.push("destroy-renderer"),
     },
-    connector: { shutdown: async () => { calls.push("stop-local-connector"); await options.shutdown?.(); } },
+    backend: { shutdown: async () => { calls.push("stop-local-connector"); await options.shutdown?.(); } },
     updates: { dispose: () => calls.push("stop-updates") },
     app: { quit: () => calls.push("quit") },
     net: { fetch: () => assert.fail("Desktop quit must not close or renew terminals through the API") },
