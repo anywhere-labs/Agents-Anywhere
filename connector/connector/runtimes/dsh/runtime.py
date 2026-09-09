@@ -336,7 +336,7 @@ class DshRuntime(AgentRuntime):
             endpoint = discovery.load_endpoint(values)
         except (OSError, ValueError) as exc:
             raise RuntimeUnavailableError(
-                "Start DSH with the phone connection plugin"
+                "请启动 DSH，并启用手机连接插件。"
             ) from exc
         client = BridgeClient(
             endpoint=endpoint,
@@ -383,6 +383,11 @@ class DshRuntime(AgentRuntime):
             if self._sync_mode == "events":
                 self._sync = SyncRelay(client, self.host)
                 self._sync.start()
+            # Recovery after a dropped bridge: the first start is already
+            # reported by the supervisor, and an instance without a live
+            # runtime ignores this hint.
+            with suppress(Exception):
+                await self.host.runtime_health_update("running")
         except BaseException:
             await client.close()
             raise
@@ -459,6 +464,17 @@ class DshRuntime(AgentRuntime):
                 "DSH_BRIDGE_EXITED",
                 "DeepSeek Harness bridge disconnected",
                 details={"retryable": True},
+            )
+        # The instance is still the user's active runtime, but it is no longer
+        # usable: surface that instead of leaving the platform showing "running".
+        with suppress(Exception):
+            await self.host.runtime_health_update(
+                "error",
+                {
+                    "code": "runtime_unavailable",
+                    "message": "DSH 已断开，请重新启动 DSH 并启用手机连接插件。",
+                    "retryable": True,
+                },
             )
         if self._restart_task is None or self._restart_task.done():
             self._restart_task = asyncio.create_task(self._restart_loop())

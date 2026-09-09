@@ -17,7 +17,12 @@ from connector.runtime_protocol import (
     RuntimeUnavailableError,
     RuntimeUpstreamError,
 )
-from connector.runtimes.dsh.discovery import BridgeEndpoint, DshDiscovery, discover
+from connector.runtimes.dsh.discovery import (
+    BridgeEndpoint,
+    DshDiscovery,
+    discover,
+    probe,
+)
 from connector.runtimes.dsh.provider import DshProvider
 from connector.runtimes.dsh.runtime import DshRuntime
 from connector.runtimes.providers import default_runtime_providers
@@ -310,7 +315,13 @@ def test_stale_or_invalid_endpoint_cannot_be_added(tmp_path: Path, monkeypatch) 
     path.parent.mkdir(parents=True)
 
     async def run() -> None:
-        assert not (await discover({})).available
+        # Discovery only reports that this connector supports DSH.
+        supported = await discover({})
+        assert supported.available is True
+        assert supported.reason is None
+
+        # Reachability is a configuration/start check.
+        assert not (await probe({})).available
         # A live process with a dead port is not an available runtime.
         path.write_text(
             json.dumps(
@@ -323,8 +334,8 @@ def test_stale_or_invalid_endpoint_cannot_be_added(tmp_path: Path, monkeypatch) 
                 }
             )
         )
-        assert not (await discover({})).available
-        with pytest.raises(RuntimeInvalidRequestError):
+        assert not (await probe({})).available
+        with pytest.raises(RuntimeUnavailableError):
             await DshProvider().validate_config({})
 
     asyncio.run(run())

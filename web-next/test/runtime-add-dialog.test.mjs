@@ -37,7 +37,7 @@ function instance(runtimeType, extra = {}) {
   }
 }
 
-async function render(t, { runtimeType = "codex", initialRuntimes = [], locale = "zh-CN", available = true } = {}) {
+async function render(t, { runtimeType = "codex", initialRuntimes = [], locale = "zh-CN", reason = null } = {}) {
   let inventory = [...initialRuntimes]
   const calls = []
   const updates = []
@@ -70,7 +70,7 @@ async function render(t, { runtimeType = "codex", initialRuntimes = [], locale =
   document.body.append(container)
   const root = createRoot(container)
   await act(async () => root.render(h(NextIntlClientProvider, { locale, messages, timeZone: "Asia/Shanghai" }, h(RuntimeAddDialog, {
-    runtimeType: { ...typeFor(runtimeType), available }, runtimes: initialRuntimes,
+    runtimeType: { ...typeFor(runtimeType), reason }, runtimes: initialRuntimes,
     token: "fixture-token", connectorId: "conn_fixture",
     onOpenChange: (open) => { result.closed = !open },
     onRuntimeUpdated: (runtime) => updates.push(runtime),
@@ -78,7 +78,7 @@ async function render(t, { runtimeType = "codex", initialRuntimes = [], locale =
   t.after(async () => { await act(async () => root.unmount()); container.remove() })
   if (process.env.AA_RUNTIME_ADD_QA_DIR) {
     mkdirSync(process.env.AA_RUNTIME_ADD_QA_DIR, { recursive: true })
-    writeFileSync(`${process.env.AA_RUNTIME_ADD_QA_DIR}/${runtimeType}-${locale}-${available ? "ready" : "unavailable"}.html`, document.body.innerHTML)
+    writeFileSync(`${process.env.AA_RUNTIME_ADD_QA_DIR}/${runtimeType}-${locale}-${reason ? "unsupported" : "ready"}.html`, document.body.innerHTML)
   }
   return result
 }
@@ -242,11 +242,11 @@ test("failed quick add keeps the name and can configure the persisted instance b
   assert.equal(state.updates.at(-1).name, "Work Fixed")
 })
 
-test("the English dialog exposes the same actions and unavailable runtime guidance", async (t) => {
-  await render(t, { runtimeType: "dsh", locale: "en", available: false })
+test("the English dialog exposes the same actions and unsupported runtime guidance", async (t) => {
+  await render(t, { runtimeType: "dsh", locale: "en", reason: "This connector does not support DeepSeek Harness." })
   assert.equal(document.querySelector("input").value, "DSH")
   assert.equal(button("Quick add").dataset.variant, "default")
   assert.equal(button("Configure").dataset.variant, "outline")
   assert.ok(button("Cancel"))
-  assert.match(document.querySelector("[role=alert]").textContent, /No available runtime/)
+  assert.match(document.querySelector("[role=alert]").textContent, /does not support DeepSeek Harness/)
 })

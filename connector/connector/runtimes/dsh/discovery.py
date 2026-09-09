@@ -29,7 +29,35 @@ class DshDiscovery:
     metadata: dict[str, Any] | None = None
 
 
+def _static_metadata(values: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "endpoint": str(provider_config.endpoint_path(values)),
+        "storageMode": "dsh-native",
+        "sameSessionWriterLimit": 1,
+        "crossProcessWriterExclusion": False,
+    }
+
+
 async def discover(values: dict[str, Any]) -> DshDiscovery:
+    """Report that this connector supports the DSH runtime type.
+
+    The device list only answers "which runtime types does this connector
+    support", so discovery must not touch the DSH bridge. Whether a bridge is
+    actually reachable is a configuration/start concern and belongs to
+    probe(); ``configured`` and ``endpoint`` are only meaningful there.
+    """
+    return DshDiscovery(
+        True,
+        True,
+        None,
+        reason=None,
+        metadata=_static_metadata(values),
+    )
+
+
+async def probe(values: dict[str, Any]) -> DshDiscovery:
+    """Authenticate against a running DSH bridge. Configuration/start only."""
+
     try:
         endpoint = load_endpoint(values)
     except (OSError, ValueError, json.JSONDecodeError):
@@ -88,13 +116,7 @@ async def discover(values: dict[str, Any]) -> DshDiscovery:
         True,
         endpoint,
         bridge_version=result["identity"].get("bridgeVersion"),
-        metadata={
-            **extra,
-            "endpoint": str(endpoint.path),
-            "storageMode": "dsh-native",
-            "sameSessionWriterLimit": 1,
-            "crossProcessWriterExclusion": False,
-        },
+        metadata={**extra, **_static_metadata(values)},
     )
 
 

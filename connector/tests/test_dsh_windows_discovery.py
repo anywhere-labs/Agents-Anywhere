@@ -71,7 +71,7 @@ def test_windows_discovery_authenticates_without_signalling_process(
             encoding="utf-8",
         )
         try:
-            result = await discovery.discover({"dshHome": str(tmp_path)})
+            result = await discovery.probe({"dshHome": str(tmp_path)})
             assert result.available is valid_token
             assert ("ping" in methods) is valid_token
             kill.assert_not_called()
@@ -79,7 +79,7 @@ def test_windows_discovery_authenticates_without_signalling_process(
             server.close()
             await server.wait_closed()
 
-        result = await discovery.discover({"dshHome": str(tmp_path)})
+        result = await discovery.probe({"dshHome": str(tmp_path)})
         assert not result.available
         assert result.reason
         kill.assert_not_called()

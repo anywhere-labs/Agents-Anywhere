@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from connector.launch import LaunchTarget
-from connector.runtime_protocol import RuntimeInvalidRequestError
+from connector.runtime_protocol import RuntimeInvalidRequestError, RuntimeUnavailableError
 from connector.runtimes.claude.provider import ClaudeProvider
 from connector.runtimes.claude.runtime import ClaudeRuntime
 
@@ -60,9 +60,13 @@ async def _test_claude_provider_reports_unavailable_without_sdk() -> None:
 
     item = await provider.discover()
 
-    assert item.available is False
-    assert item.metadata["configured"] is False
-    assert "claude_agent_sdk" in (item.reason or "")
+    # Discovery reports the supported type; a missing SDK is a config/start failure.
+    assert item.available is True
+    assert item.reason is None
+    assert item.metadata["configured"] is True
+    assert item.metadata["sdk"]["available"] is False
+    with pytest.raises(RuntimeUnavailableError, match="SDK is not available"):
+        await provider.validate_config({})
 
 
 def test_claude_provider_schema_and_config_validation() -> None:

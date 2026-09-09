@@ -136,6 +136,20 @@ class RuntimeHostClient(ABC):
     ) -> None:
         raise NotImplementedError
 
+    async def runtime_health_update(
+        self,
+        status: str,
+        error: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Report a provider-owned health change for this runtime instance.
+
+        The Connector routes this to the owning supervisor so runtime status
+        stays one state machine. Hosts that are not bound to an instance ignore
+        it.
+        """
+
+        return None
+
     async def attachment_download(
         self,
         session_id: str,

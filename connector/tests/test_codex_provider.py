@@ -16,6 +16,7 @@ from connector.runtime_protocol import (
     RuntimeInstanceSpec,
     RuntimeInvalidRequestError,
     RuntimeSupervisor,
+    RuntimeUnavailableError,
 )
 from connector.runtime_protocol.filesystem import filesystem_resource_key
 from connector.runtimes.codex import provider_config
@@ -44,15 +45,16 @@ async def _test_codex_provider_requires_sdk_for_runnable_surface() -> None:
 
     item = await provider.discover()
 
-    assert item.available is False
-    assert item.metadata["configured"] is False
+    # Discovery reports the supported type; a missing SDK is a config/start failure.
+    assert item.available is True
+    assert item.reason is None
+    assert item.metadata["configured"] is True
     assert item.instance_policy == "single"
     assert item.capabilities["commands"] is False
     assert item.capabilities["ipc"] is False
     assert item.metadata["sdk"]["available"] is False
     assert item.metadata["runtimeBinary"]["mode"] == "prefer_system"
     assert "appServer" not in item.metadata
-    assert item.reason == "Codex SDK is unavailable"
 
 
 def test_codex_provider_treats_sdk_as_only_active_surface() -> None:
@@ -327,7 +329,7 @@ def test_codex_provider_rejects_missing_sdk() -> None:
 async def _test_codex_provider_rejects_missing_sdk() -> None:
     provider = CodexProvider(sdk_checker=_missing_sdk)
 
-    with pytest.raises(RuntimeInvalidRequestError, match="SDK is not available"):
+    with pytest.raises(RuntimeUnavailableError, match="SDK is not available"):
         await provider.validate_config({})
 
 
@@ -536,7 +538,7 @@ def test_codex_provider_rejects_runtime_with_unavailable_sdk_metadata() -> None:
 async def _test_codex_provider_rejects_runtime_with_unavailable_sdk_metadata() -> None:
     provider = CodexProvider(sdk_checker=_available_sdk)
 
-    with pytest.raises(RuntimeInvalidRequestError, match="SDK is not available"):
+    with pytest.raises(RuntimeUnavailableError, match="SDK is not available"):
         await provider.create_runtime(
             RuntimeConfig(
                 runtime="codex",

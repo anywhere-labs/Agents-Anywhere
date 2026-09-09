@@ -12,6 +12,27 @@ This document defines how Web should consume Agent Runtime Protocol v1.
 - Message sending must not carry model/permission selection ids for existing sessions.
 - Commands are not messages.
 
+## Device runtime presentation
+
+Runtime types and runtime instances carry different facts; Web must not mix them.
+
+- A runtime type in the device list means "this connector supports this type". It
+  carries no availability and no error state, so it is never rendered with a
+  warning or error colour. Whether the local program is running is not part of
+  the type list.
+- Only a configured instance has availability and error states. Availability
+  means "configured and running". A configured instance that was never started
+  is a neutral state, not a failure.
+- The connector decides real usability when the user configures or starts an
+  instance (`runtime.validateConfig` / `runtime.start`), never during
+  `runtime.discover`. A failed configuration or start records its reason on the
+  instance, and Web renders that reason on the instance.
+- `runtime_unavailable`, `runtime_not_started`, `runtime_not_configured` and
+  `connector_offline` mean "not usable yet" and are rendered as a warning with
+  the connector's reason, not as a fault.
+- `starting` and `stopping` are real states. Web shows the transition instead of
+  jumping from stopped straight to running.
+
 ## New session
 
 Flow:

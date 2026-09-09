@@ -10,6 +10,7 @@ import { dashboardApi } from '@/features/dashboard/api'
 import { quickAddRuntime } from '@/features/dashboard/quick-add-runtime'
 import { discoverConnectorRuntimeOverview, type ConnectorRuntimeOverview } from '@/features/dashboard/runtime-discovery'
 import { addableRuntimeTypes, configuredRuntimeInstances, runtimeInstanceName } from '@/features/dashboard/runtime-instances'
+import { runtimeErrorReason } from '@/features/dashboard/runtime-status-presentation'
 import type { DeviceRuntimeView, RuntimeTypeView } from '@/features/dashboard/types'
 import { isApiError } from '@/lib/api/errors'
 import { isTransientHttpStatus } from '@/lib/retry'
@@ -119,12 +120,13 @@ export function AgentSetupContent({ connector, onContinue, onSkip, onChanged, co
           const displayName = runtime.runtimeType === 'dsh' && instanceName === 'DeepSeek Harness' ? 'DSH' : instanceName
           const ready = runtime.active && runtime.status === 'running'
           const starting = runtime.active && runtime.status === 'starting'
+          const reason = runtimeErrorReason(runtime)
           const needsSetup = inline ? !ready && !starting : !runtime.active || runtime.status === 'error' || runtime.status === 'stopped'
           return <div key={runtime.runtimeId} className={rowClassName}>
             {!inline ? <CheckCircle2 className="size-5 shrink-0 text-primary" /> : null}
             <div className="min-w-0 flex-1">
               <p className={inline ? 'truncate text-base font-medium' : 'truncate text-sm font-medium'}>{displayName}</p>
-              <p className="text-xs text-muted-foreground">{inline ? ready ? '已就绪' : starting ? '正在启动' : '未就绪' : t(runtime.status === 'running' ? 'agentRunning' : 'agentConfigured')}</p>
+              <p className="text-xs text-muted-foreground">{inline ? ready ? '已就绪' : starting ? '正在启动' : reason ?? '未就绪' : t(runtime.status === 'running' ? 'agentRunning' : 'agentConfigured')}</p>
             </div>
             {inline && ready ? <CheckCircle2 className="size-5 shrink-0 text-[var(--success)]" /> : null}
             {inline && starting ? <Loader2 className="mx-1 size-4 shrink-0 animate-spin text-muted-foreground" /> : null}

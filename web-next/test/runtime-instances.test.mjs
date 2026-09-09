@@ -57,7 +57,7 @@ test("runtime identity keeps provider type separate from a named instance", () =
   assert.equal(runtimeInstanceName({ ...legacyRuntime, name: "Work" }), "Work")
 })
 
-test("an unavailable provider can still create an instance for custom configuration", () => {
+test("a provider synthesised from an instance stays supported when discovery reported unavailable", () => {
   const [runtimeType] = mergeRuntimeTypes([], [{
     ...legacyRuntime,
     runtimeId: "claude",
@@ -66,7 +66,10 @@ test("an unavailable provider can still create an instance for custom configurat
     present: true,
     discovery: { available: false },
   }])
-  assert.equal(runtimeType.available, false)
+  // Type-level availability means "the connector supports this type"; real
+  // availability is decided once the instance is configured and started.
+  assert.equal(runtimeType.available, true)
+  assert.equal(runtimeType.reason, null)
   assert.equal(runtimeTypeCanCreateInstance(runtimeType, []), true)
 })
 
