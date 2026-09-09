@@ -212,6 +212,14 @@ Session snapshot should return separate fields:
 
 Do not include model/permission catalogs in session snapshot as the primary selection source. Catalogs are read on demand from runtime-level APIs.
 
+Snapshot hydration must not block first paint on a runtime-owned read. `state` is
+the newest cached or persisted runtime fact; when the connector is online the
+server refreshes the live state after the response and publishes a protocol
+update only when an observable fact (status, selections, external session id,
+status reason, error) changed. A live runtime read of a large history can take
+seconds, so it never sits on the hydration path. Notices and session capabilities
+stay best-effort live reads with their persisted fallbacks.
+
 ## Compatibility cleanup
 
 Remove or deprecate:

@@ -41,6 +41,23 @@ class SqlTimelineStore:
         async with self._engine.begin() as conn:
             await self.replace_all(conn, session_id, items)
 
+    async def delete_items(
+        self,
+        conn: AsyncConnection,
+        session_id: str,
+        item_ids: set[str],
+    ) -> None:
+        """Delete the given stable IDs inside the caller's transaction."""
+
+        ids = list(item_ids)
+        for offset in range(0, len(ids), 500):
+            await conn.execute(
+                delete(timeline_items).where(
+                    timeline_items.c.session_id == session_id,
+                    timeline_items.c.id.in_(ids[offset : offset + 500]),
+                )
+            )
+
     async def replace_all(
         self,
         conn: AsyncConnection,

@@ -171,3 +171,85 @@ async def test_incremental_batch_reserves_consecutive_item_revisions(tmp_path) -
         assert await store.get_session_seq(session.id) == before_sequence + 3
     finally:
         await store.close()
+
+
+@pytest.mark.anyio
+async def test_complete_snapshot_only_writes_changed_items(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A complete snapshot must write the delta, not the whole session.
+
+    Rewriting every row made one reconnect a full table rewrite, which left
+    ``timeline_items`` heavily bloated. The write calls themselves are observed
+    here because unchanged rows keep their revision either way.
+    """
+
+    db_path = tmp_path / "timeline-replace-diff.sqlite3"
+    upgrade_database(sqlite_path=db_path)
+    store = Store(db_path)
+    try:
+        connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
+        session = await create_session_with_project(store, connector_id=connector.id)
+        items = [
+            timeline_input(f"item_{index}", order_seq=index).model_copy(
+                update={"sessionId": session.id}
+            )
+            for index in range(1, 4)
+        ]
+
+        written: list[list[str]] = []
+        deleted: list[set[str]] = []
+        upsert_many = store.timeline.upsert_many
+        delete_items = store.timeline.delete_items
+
+        async def spy_upsert_many(conn, batch):
+            written.append([item.id for item in batch])
+            return await upsert_many(conn, batch)
+
+        async def spy_delete_items(conn, session_id, item_ids):
+            deleted.append(set(item_ids))
+            return await delete_items(conn, session_id, item_ids)
+
+        monkeypatch.setattr(store.timeline, "upsert_many", spy_upsert_many)
+        monkeypatch.setattr(store.timeline, "delete_items", spy_delete_items)
+
+        await store.replace_timeline_snapshot(session_id=session.id, items=items)
+        assert written == [["item_1", "item_2", "item_3"]]
+        assert deleted == [set()]
+
+        changed = [
+            item.model_copy(
+                update={
+                    "content": {"text": "changed", "format": "markdown"},
+                    "contentHash": "sha256:changed",
+                }
+            )
+            if item.id == "item_2"
+            else item
+            for item in items
+        ]
+        second = await store.replace_timeline_snapshot(
+            session_id=session.id,
+            items=changed,
+        )
+
+        assert second.changed is True
+        # Only the rebuilt row is written; the identical rows are untouched.
+        assert written[-1] == ["item_2"]
+        assert deleted[-1] == set()
+
+        # A row that is absent from the complete snapshot is removed.
+        third = await store.replace_timeline_snapshot(
+            session_id=session.id,
+            items=[changed[0]],
+        )
+
+        assert third.changed is True
+        assert written[-1] == []
+        assert deleted[-1] == {"item_2", "item_3"}
+        assert {
+            item.id for item in await store.timeline.read(session.id)
+        } == {"item_1"}
+    finally:
+        await store.close()

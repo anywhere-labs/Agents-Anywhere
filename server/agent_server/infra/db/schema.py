@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     false,
+    text,
 )
 
 metadata = MetaData()
@@ -494,7 +495,13 @@ timeline_items = Table(
     Column("payload_json", Text, nullable=False),
     PrimaryKeyConstraint("session_id", "id"),
     Index("idx_timeline_items_session_updated_seq", "session_id", "updated_seq"),
-    Index("idx_timeline_items_session_item_time", "session_id", "item_time"),
+    Index(
+        "idx_timeline_items_session_latest",
+        "session_id",
+        text("coalesce(item_time, '') DESC"),
+        text("order_seq DESC"),
+        text("updated_seq DESC"),
+    ),
     Index(
         "idx_timeline_items_session_order_seq",
         "session_id",

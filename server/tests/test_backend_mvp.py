@@ -4699,6 +4699,7 @@ def test_session_snapshot_includes_effective_capabilities(tmp_path):
 
     takeover = client.post(f"/sessions/{session_id}/takeover", headers=headers)
     assert takeover.status_code == 200, takeover.text
+    ticket = ws_ticket(client, session_id, headers)
     fake_rpc.runtime_states[session_id] = {
         "sessionId": session_id,
         "runtime": "codex",
@@ -4707,11 +4708,23 @@ def test_session_snapshot_includes_effective_capabilities(tmp_path):
         "selections": {"model": "sel_model_runtime"},
         "metadata": {"source": "test.runtime"},
     }
-    state_snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
-    assert state_snapshot.status_code == 200, state_snapshot.text
-    state_body = state_snapshot.json()["state"]
-    assert state_body["status"] == "running"
-    assert state_body["selections"] == {"model": "sel_model_runtime"}
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+
+        # Hydration must not block first paint on the runtime read: it serves the
+        # persisted fact and refreshes the live state after the response.
+        state_snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+        assert state_snapshot.status_code == 200, state_snapshot.text
+        state_body = state_snapshot.json()["state"]
+        assert state_body["status"] == "idle"
+        assert state_body["selections"] == {}
+
+        pushed = receive_session_ws_event(ws, "runtime.state.updated")
+        assert pushed["payload"]["state"]["status"] == "running"
+        assert pushed["payload"]["state"]["selections"] == {
+            "model": "sel_model_runtime"
+        }
 
     running_snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
     assert running_snapshot.status_code == 200, running_snapshot.text
@@ -4833,6 +4846,23 @@ def test_session_snapshot_falls_back_when_live_notices_and_capabilities_timeout(
     notices = client.get(f"/sessions/{session_id}/runtime/notices", headers=headers)
     assert notices.status_code == 504, notices.text
     assert notices.json()["detail"]["code"] == "runtime_notices_timeout"
+
+
+def test_session_snapshot_does_not_block_on_runtime_state_read(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.timeout_session_methods = {"session.state"}
+    client.app.state.rpc = fake_rpc
+
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+
+    assert snapshot.status_code == 200, snapshot.text
+    body = snapshot.json()
+    assert body["state"]["status"] == "idle"
+    assert body["state"]["selections"] == {}
 
 
 def test_running_tool_item_keeps_session_interruptible(tmp_path):

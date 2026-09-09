@@ -274,8 +274,17 @@ class _ConnectorNotificationPump:
                 )
                 return
             elapsed_ms = (time.monotonic() - started_at) * 1000
-            if method == "timeline.itemUpsert" or elapsed_ms >= 100:
+            if elapsed_ms >= 100:
                 logger.info(
+                    "connector notification handled connector_id={} method={} session_id={} elapsed_ms={:.1f}",
+                    self._connector_id,
+                    method,
+                    params.get("sessionId"),
+                    elapsed_ms,
+                )
+            elif method == "timeline.itemUpsert":
+                # High-frequency streaming path: only useful while debugging.
+                logger.debug(
                     "connector notification handled connector_id={} method={} session_id={} elapsed_ms={:.1f}",
                     self._connector_id,
                     method,

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+
 from test_backend_mvp import (
     _create_extra_session,
     create_connector_and_session,
     dashboard_ws_ticket,
     make_client,
 )
+
+from agent_server.core.models import TimelineItemIn
 
 
 def test_inventory_and_push_include_all_owned_active_and_archived_sessions(tmp_path):
@@ -56,3 +60,95 @@ def test_inventory_requires_authentication_and_does_not_change_paged_queries(tmp
         assert page.json()["nextCursor"]
         inventory = client.get("/sessions/list", headers=headers).json()
         assert {row["id"] for row in inventory["sessions"]} == {first_id, second_id}
+
+
+def _timeline_item(
+    session_id: str,
+    item_id: str,
+    *,
+    order_seq: int,
+    item_time: str,
+) -> TimelineItemIn:
+    return TimelineItemIn.model_validate(
+        {
+            "id": item_id,
+            "sessionId": session_id,
+            "type": "message",
+            "status": "done",
+            "role": "assistant",
+            "content": {"text": item_id, "format": "markdown"},
+            "source": {
+                "runtime": "codex",
+                "sessionId": "thread_1",
+                "itemId": item_id,
+            },
+            "orderSeq": order_seq,
+            "revision": 1,
+            "contentHash": f"sha256:{item_id}",
+            "createdAt": item_time,
+            "updatedAt": item_time,
+        }
+    )
+
+
+def test_inventory_projects_the_newest_timeline_item_of_each_session(tmp_path):
+    """The latest-item lookup must resolve ties by order_seq, per session.
+
+    ``item_time`` is shared by every item of a turn, so the newest row is
+    decided by the ``(item_time, order_seq, updated_seq)`` ordering. The list
+    query reads that row through a correlated lookup per session, which must
+    not leak a neighbouring session's newest item.
+    """
+    with make_client(tmp_path) as client:
+        connector_id, _, first_id, headers = create_connector_and_session(client)
+        second_id = _create_extra_session(
+            client, headers, connector_id, "newest-item", title="Second"
+        )
+        store = client.app.state.store
+
+        async def seed() -> None:
+            await store.sync_timeline_items(
+                session_id=first_id,
+                items=[
+                    _timeline_item(
+                        first_id,
+                        "tl_first_old",
+                        order_seq=1,
+                        item_time="2026-01-01T00:00:00Z",
+                    ),
+                    _timeline_item(
+                        first_id,
+                        "tl_first_tied_low",
+                        order_seq=2,
+                        item_time="2026-01-02T00:00:00Z",
+                    ),
+                    _timeline_item(
+                        first_id,
+                        "tl_first_tied_high",
+                        order_seq=3,
+                        item_time="2026-01-02T00:00:00Z",
+                    ),
+                ],
+            )
+            await store.sync_timeline_items(
+                session_id=second_id,
+                items=[
+                    _timeline_item(
+                        second_id,
+                        "tl_second_only",
+                        order_seq=1,
+                        item_time="2025-12-31T00:00:00Z",
+                    ),
+                ],
+            )
+
+        asyncio.run(seed())
+
+        rows = {
+            row["id"]: row
+            for row in client.get("/sessions/list", headers=headers).json()["sessions"]
+        }
+        assert rows[first_id]["lastItemOrderSeq"] == 3
+        assert rows[first_id]["lastItemAt"] == "2026-01-02T00:00:00Z"
+        assert rows[second_id]["lastItemOrderSeq"] == 1
+        assert rows[second_id]["lastItemAt"] == "2025-12-31T00:00:00Z"

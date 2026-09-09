@@ -49,34 +49,39 @@ def _source_archive_update(
     return {}
 
 
-def _latest_timeline_item_subquery() -> Any:
-    ranked = select(
-        timeline_items_t.c.session_id,
-        timeline_items_t.c.item_time,
-        timeline_items_t.c.order_seq,
-        timeline_items_t.c.updated_seq,
-        timeline_items_t.c.payload_json,
-        func.row_number()
-        .over(
-            partition_by=timeline_items_t.c.session_id,
-            order_by=(
-                func.coalesce(timeline_items_t.c.item_time, "").desc(),
-                timeline_items_t.c.order_seq.desc(),
-                timeline_items_t.c.updated_seq.desc(),
-            ),
+def _latest_timeline_item_source() -> tuple[Any, Any]:
+    """Return the join source for the newest timeline row of each session.
+
+    The previous shape ranked every timeline row in the database with
+    ``row_number()`` before keeping ``rank = 1``. A session list cannot push a
+    session predicate into that projection, so every list read scanned and
+    sorted the whole ``timeline_items`` table. This shape looks the newest row
+    up per returned session instead, using the
+    ``idx_timeline_items_session_latest`` index for the correlated lookup and
+    the ``(session_id, id)`` primary key for the row itself.
+
+    A correlated subquery is used rather than ``LATERAL`` because SQLite (the
+    default test backend) does not implement ``LATERAL``. The subquery
+    correlates on ``sessions.id`` rather than on the aliased join target:
+    correlating on the alias makes the subquery depend on the table it is
+    joined to, so the planner cannot drive the join from the session rows and
+    degrades into a scan of the whole timeline table.
+    """
+
+    latest = timeline_items_t.alias("latest_timeline_item")
+    newest_item_id = (
+        select(timeline_items_t.c.id)
+        .where(timeline_items_t.c.session_id == sessions_t.c.id)
+        .order_by(
+            func.coalesce(timeline_items_t.c.item_time, "").desc(),
+            timeline_items_t.c.order_seq.desc(),
+            timeline_items_t.c.updated_seq.desc(),
         )
-        .label("rank"),
-    ).subquery("ranked_session_timeline_items")
-    return (
-        select(
-            ranked.c.session_id,
-            ranked.c.item_time.label("latest_item_time"),
-            ranked.c.order_seq.label("latest_item_order_seq"),
-            ranked.c.updated_seq.label("latest_item_updated_seq"),
-            ranked.c.payload_json.label("latest_item_payload_json"),
-        )
-        .where(ranked.c.rank == 1)
-        .subquery("latest_session_timeline_item")
+        .limit(1)
+        .scalar_subquery()
+    )
+    return latest, (latest.c.session_id == sessions_t.c.id) & (
+        latest.c.id == newest_item_id
     )
 
 
@@ -180,7 +185,7 @@ def _binding_identity(
 
 
 def _session_sort_at(latest_item: Any) -> Any:
-    latest_item_time = func.nullif(latest_item.c.latest_item_time, "")
+    latest_item_time = func.nullif(latest_item.c.item_time, "")
     last_activity_at = func.nullif(sessions_t.c.last_activity_at, "")
     latest_activity_at = case(
         (latest_item_time.is_(None), last_activity_at),
@@ -195,19 +200,20 @@ def _session_sort_at(latest_item: Any) -> Any:
     )
 
 
-def _session_view_query(latest_item: Any | None = None) -> Any:
+def _session_view_query(latest_item: tuple[Any, Any] | None = None) -> Any:
     if latest_item is None:
-        latest_item = _latest_timeline_item_subquery()
-    session_sort_at = _session_sort_at(latest_item).label("session_sort_at")
+        latest_item = _latest_timeline_item_source()
+    latest_source, latest_join = latest_item
+    session_sort_at = _session_sort_at(latest_source).label("session_sort_at")
     return select(
         sessions_t,
         connectors_t.c.status.label("connector_status"),
         device_runtimes_t.c.name.label("runtime_name"),
         connector_runtime_types_t.c.display_name.label("runtime_type_display_name"),
-        latest_item.c.latest_item_time,
-        latest_item.c.latest_item_order_seq,
-        latest_item.c.latest_item_updated_seq,
-        latest_item.c.latest_item_payload_json,
+        latest_source.c.item_time.label("latest_item_time"),
+        latest_source.c.order_seq.label("latest_item_order_seq"),
+        latest_source.c.updated_seq.label("latest_item_updated_seq"),
+        latest_source.c.payload_json.label("latest_item_payload_json"),
         session_sort_at,
     ).select_from(
         sessions_t.join(
@@ -224,10 +230,7 @@ def _session_view_query(latest_item: Any | None = None) -> Any:
             (connector_runtime_types_t.c.connector_id == sessions_t.c.connector_id)
             & (connector_runtime_types_t.c.runtime_type == sessions_t.c.runtime),
         )
-        .outerjoin(
-            latest_item,
-            latest_item.c.session_id == sessions_t.c.id,
-        )
+        .outerjoin(latest_source, latest_join)
     )
 
 
@@ -719,14 +722,15 @@ class SessionRepositoryMixin:
 
     async def list_session_inventory(self, *, user_id: str) -> list[SessionView]:
         """Return the owned session metadata used to group the entire workspace."""
-        latest_item = _latest_timeline_item_subquery()
+        latest_item = _latest_timeline_item_source()
+        latest_source = latest_item[0]
         query = (
             _session_view_query(latest_item)
             .where(connectors_t.c.revoked == 0, connectors_t.c.user_id == user_id)
             .order_by(
                 sessions_t.c.pinned.desc(),
-                _session_sort_at(latest_item).desc(),
-                func.coalesce(latest_item.c.latest_item_order_seq, -1).desc(),
+                _session_sort_at(latest_source).desc(),
+                func.coalesce(latest_source.c.order_seq, -1).desc(),
                 sessions_t.c.updated_seq.desc(),
                 sessions_t.c.id.desc(),
             )
@@ -744,12 +748,13 @@ class SessionRepositoryMixin:
         user_id: str | None = None,
         project_id: str | None = None,
     ) -> tuple[list[SessionView], bool, str | None]:
-        latest_item = _latest_timeline_item_subquery()
+        latest_item = _latest_timeline_item_source()
+        latest_source = latest_item[0]
         latest_order_seq = func.coalesce(
-            latest_item.c.latest_item_order_seq,
+            latest_source.c.order_seq,
             -1,
         )
-        sort_at = _session_sort_at(latest_item)
+        sort_at = _session_sort_at(latest_source)
         query = (
             _session_view_query(latest_item)
             .where(

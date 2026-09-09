@@ -1125,9 +1125,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_34() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_34"
-    assert CURRENT_SCHEMA_VERSION == "2.34"
+def test_current_schema_version_is_v2_35() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_35"
+    assert CURRENT_SCHEMA_VERSION == "2.35"
 
 
 def test_retiring_releases_preserves_history(tmp_path) -> None:
@@ -2274,3 +2274,55 @@ def _create_legacy_v1_database(path) -> None:
                 "now": "2026-07-20T00:00:00Z",
             },
         )
+
+
+def test_v2_35_replaces_the_session_item_time_index(tmp_path) -> None:
+    path = tmp_path / "timeline-latest-index.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_34")
+
+    def index_names() -> set[str]:
+        engine = create_engine(f"sqlite:///{path}")
+        try:
+            with engine.connect() as connection:
+                return {
+                    row[0]
+                    for row in connection.execute(
+                        text(
+                            "SELECT name FROM sqlite_master "
+                            "WHERE type = 'index' AND tbl_name = 'timeline_items'"
+                        )
+                    )
+                }
+        finally:
+            engine.dispose()
+
+    assert "idx_timeline_items_session_item_time" in index_names()
+    assert "idx_timeline_items_session_latest" not in index_names()
+
+    upgrade_database(db_url=url, revision="v2_35")
+
+    names = index_names()
+    assert "idx_timeline_items_session_latest" in names
+    assert "idx_timeline_items_session_item_time" not in names
+    # The remaining timeline indexes must survive the swap.
+    assert {
+        "idx_timeline_items_session_updated_seq",
+        "idx_timeline_items_session_order_seq",
+        "idx_timeline_items_item_time_type_role",
+    }.issubset(names)
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.connect() as connection:
+            definition = connection.execute(
+                text(
+                    "SELECT sql FROM sqlite_master WHERE type = 'index' "
+                    "AND name = 'idx_timeline_items_session_latest'"
+                )
+            ).scalar_one()
+        assert "coalesce(item_time, '') DESC" in definition
+        assert "order_seq DESC" in definition
+        assert "updated_seq DESC" in definition
+    finally:
+        engine.dispose()

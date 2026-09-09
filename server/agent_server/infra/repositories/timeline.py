@@ -317,7 +317,24 @@ class TimelineRepositoryMixin:
                     )
                     for item in incoming_by_id.values()
                 ]
-                await self.timeline.replace_all(conn, session_id, normalized)
+                # ``timeline_item_from_snapshot`` returns the stored row itself
+                # for unchanged items, so only rebuilt rows need a write.
+                # Rewriting the whole session (delete-all + insert-all) turned
+                # every reconnect into a full table rewrite and left the table
+                # heavily bloated.
+                await self.timeline.upsert_many(
+                    conn,
+                    [
+                        item
+                        for item in normalized
+                        if current_by_id.get(item.id) is not item
+                    ],
+                )
+                await self.timeline.delete_items(
+                    conn,
+                    session_id,
+                    set(current_by_id) - set(incoming_by_id),
+                )
         return TimelineBatchWriteResult(
             items=tuple(normalized),
             changed=True,

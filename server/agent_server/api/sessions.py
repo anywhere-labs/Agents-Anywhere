@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Body,
     Depends,
     HTTPException,
@@ -216,6 +217,127 @@ async def _best_effort_publish_session_protocol_update(
         )
     except Exception:
         return
+
+
+def runtime_state_semantically_equal(
+    left: SessionRuntimeState | None,
+    right: SessionRuntimeState | None,
+) -> bool:
+    """Compare the runtime-owned facts a client can observe.
+
+    Volatile bookkeeping (revision, timestamps, observation metadata) must not
+    make a refresh publish-worthy on its own.
+    """
+
+    if left is None or right is None:
+        return left is right
+    return (
+        left.status == right.status
+        and left.selections == right.selections
+        and left.externalSessionId == right.externalSessionId
+        and left.statusReason == right.statusReason
+        and left.error == right.error
+    )
+
+
+async def _publish_session_runtime_state_update(
+    db: Store,
+    broker: TimelineBroker,
+    manager: ConnectorRpcManager,
+    runtime_state_cache: SessionRuntimeStateCache,
+    session_id: str,
+    runtime_state: SessionRuntimeState,
+) -> None:
+    """Publish one already-read runtime state to session subscribers."""
+
+    async with db.session_revision_fence(session_id):
+        next_seq = await db.get_session_seq(session_id)
+        session = await db.get_session(session_id)
+        # A live event may have arrived while the RPC was in flight. Publish the
+        # newest cached state together with the current session revision.
+        latest_state = await runtime_state_cache.get(session_id) or runtime_state
+        session = session_with_runtime_state(session, latest_state)
+        session = await with_effective_session_connector_status(manager, session)
+        await broker.publish(
+            session_id,
+            {
+                "sessionId": session_id,
+                "nextSeq": next_seq,
+                "session": session.model_dump(mode="json"),
+                "runtimeState": latest_state.model_dump(mode="json"),
+            },
+        )
+
+
+async def read_runtime_state_snapshot(
+    db: Store,
+    runtime_state_cache: SessionRuntimeStateCache,
+    session: SessionView,
+    user_id: str | None,
+) -> SessionRuntimeState:
+    """Read the runtime state a snapshot can serve without connector RPC.
+
+    A live read is runtime-owned work that can take seconds on a large history
+    (for example a DSH session log replay). Snapshot hydration therefore returns
+    the newest cached or persisted fact and refreshes the live state in the
+    background, where a real change is pushed to subscribers.
+    """
+
+    cached_state = await runtime_state_cache.get(session.id)
+    if cached_state is not None:
+        return cached_state
+    return await db.get_session_runtime_state(session.id, user_id=user_id)
+
+
+_runtime_state_refreshes: set[str] = set()
+
+
+async def refresh_runtime_state_in_background(
+    *,
+    db: Store,
+    broker: TimelineBroker,
+    manager: ConnectorRpcManager,
+    runtime_state_cache: SessionRuntimeStateCache,
+    session_id: str,
+    previous_state: SessionRuntimeState,
+) -> None:
+    """Read the live runtime state and publish it only when it changed.
+
+    Side effects:
+    - may perform connector RPC to the owning runtime;
+    - persists the runtime-owned status and updates the process cache;
+    - publishes a protocol update to session subscribers on a real change.
+    """
+
+    if session_id in _runtime_state_refreshes:
+        return
+    _runtime_state_refreshes.add(session_id)
+    try:
+        session = await db.get_session(session_id)
+        if not await manager.is_online(session.connectorId):
+            return
+        state = await read_runtime_state_from_connector(manager, session)
+        if state is None:
+            return
+        persisted_session = await db.set_session_status(session.id, state.status)
+        state = state.model_copy(update={"updatedSeq": persisted_session.updatedSeq})
+        await runtime_state_cache.put(state)
+        if runtime_state_semantically_equal(previous_state, state):
+            return
+        await _publish_session_runtime_state_update(
+            db,
+            broker,
+            manager,
+            runtime_state_cache,
+            session_id,
+            state,
+        )
+    except Exception:
+        logger.opt(exception=True).debug(
+            "background runtime state refresh failed session_id={}", session_id
+        )
+    finally:
+        _runtime_state_refreshes.discard(session_id)
 
 
 @router.post("")
@@ -760,10 +882,12 @@ async def session_timeline(
 @router.get("/{session_id}/snapshot", response_model=ProtocolSessionSnapshotResponse)
 async def session_snapshot(
     session_id: str,
+    background_tasks: BackgroundTasks,
     limit: int = Query(100, ge=1, le=500),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    broker: TimelineBroker = Depends(get_timeline_broker),
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
@@ -794,9 +918,9 @@ async def session_snapshot(
         log_snapshot_stage("notices", stage_started_at)
 
         stage_started_at = time.monotonic()
-        runtime_state = await read_runtime_state_live(
+        # First paint must not wait on a runtime-owned history read.
+        runtime_state = await read_runtime_state_snapshot(
             db,
-            manager,
             runtime_state_cache,
             session,
             user_id,
@@ -847,6 +971,17 @@ async def session_snapshot(
         log_snapshot_stage("database", stage_started_at)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
+    # Refresh the live runtime state after the response so a slow runtime read
+    # never delays first paint. A real change is pushed to the session stream.
+    background_tasks.add_task(
+        refresh_runtime_state_in_background,
+        db=db,
+        broker=broker,
+        manager=manager,
+        runtime_state_cache=runtime_state_cache,
+        session_id=session_id,
+        previous_state=runtime_state,
+    )
     return ProtocolSessionSnapshotResponse(
         session=session.model_dump(mode="json"),
         state=(
