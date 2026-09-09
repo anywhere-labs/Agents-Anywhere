@@ -46,9 +46,17 @@ def verify_connector_access_token(token: str) -> str | None:
     return connector_id
 
 
+def _password_iterations() -> int:
+    """PBKDF2 cost. Tests lower this; production keeps the default."""
+    try:
+        return int(os.environ.get("AGENT_SERVER_PASSWORD_ITERATIONS", "120000"))
+    except ValueError:
+        return 120_000
+
+
 def hash_password(password: str, *, salt: str | None = None) -> str:
     salt = salt or secrets.token_urlsafe(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), _password_iterations())
     return f"pbkdf2_sha256${salt}${base64.urlsafe_b64encode(digest).decode('ascii').rstrip('=')}"
 
 

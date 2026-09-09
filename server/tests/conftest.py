@@ -9,9 +9,47 @@ from __future__ import annotations
 
 import asyncio
 import os
+import pathlib
+import shutil
+import tempfile
 
 import pytest
 from fastapi.testclient import TestClient
+
+# Tests that open a connector socket without a responder must not wait the full
+# production timeout for every runtime RPC.
+os.environ.setdefault("AGENT_SERVER_RUNTIME_RPC_TIMEOUT_SECONDS", "0.2")
+os.environ.setdefault("AGENT_SERVER_SESSION_RPC_TIMEOUT_SECONDS", "0.2")
+# Every test signs in at least once; the production PBKDF2 cost dominates otherwise.
+os.environ.setdefault("AGENT_SERVER_PASSWORD_ITERATIONS", "1000")
+
+_TEMPLATE_DB: pathlib.Path | None = None
+
+
+def migrated_template_db() -> pathlib.Path:
+    """One migrated database per session.
+
+    Building the schema costs ~0.15s per test and the suite creates one database
+    per test, so the schema is migrated once and copied afterwards (~0.01s).
+    """
+    global _TEMPLATE_DB
+    if _TEMPLATE_DB is None:
+        from agent_server.app import create_app
+
+        directory = pathlib.Path(tempfile.mkdtemp(prefix="agent-server-template-"))
+        path = directory / "template.sqlite3"
+        create_app(path)
+        _TEMPLATE_DB = path
+    return _TEMPLATE_DB
+
+
+def make_test_client(destination: pathlib.Path) -> TestClient:
+    """Return a client backed by a private copy of the migrated template."""
+    from agent_server.app import create_app
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(migrated_template_db(), destination)
+    return ApiV2TestClient(create_app(destination))
 
 _PG_PREFIX = "postgresql"
 _API_PREFIX = "/api/v2"

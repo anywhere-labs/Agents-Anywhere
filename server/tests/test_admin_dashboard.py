@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from conftest import ApiV2TestClient as TestClient
+from conftest import ApiV2TestClient as TestClient, make_test_client
 from sqlalchemy import insert
 
 from agent_server.app import create_app
@@ -15,7 +15,7 @@ from agent_server.infra.db import dashboard_daily_metrics as dashboard_daily_met
 
 
 def make_client(tmp_path) -> TestClient:
-    return TestClient(create_app(tmp_path / "test.sqlite3"))
+    return make_test_client(tmp_path / "test.sqlite3")
 
 
 def bearer(token: str) -> dict[str, str]:

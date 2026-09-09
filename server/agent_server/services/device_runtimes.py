@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+import os
 from typing import Any
 
 from loguru import logger
@@ -30,6 +31,16 @@ from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.repository_ports import DeviceRuntimeRepository
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
+
+
+
+def _runtime_rpc_timeout_seconds() -> float:
+    """Runtime RPCs can be slow on a large corpus; tests shorten this to fail fast."""
+    try:
+        return float(os.environ.get("AGENT_SERVER_RUNTIME_RPC_TIMEOUT_SECONDS", "90"))
+    except ValueError:
+        return 90.0
+
 
 
 class DeviceRuntimeError(RuntimeError):
@@ -251,14 +262,14 @@ class DeviceRuntimeService:
                     connector_id,
                     "runtime.discover",
                     params,
-                    timeout=90,
+                    timeout=_runtime_rpc_timeout_seconds(),
                 )
             else:
                 result = await self._manager.request_on_connection(
                     connection,
                     "runtime.discover",
                     params,
-                    timeout=90,
+                    timeout=_runtime_rpc_timeout_seconds(),
                 )
                 return result, connection.connection_id
         except ConnectorOfflineError as exc:
@@ -719,14 +730,14 @@ class DeviceRuntimeService:
                     runtime.connectorId,
                     "runtime.start",
                     params,
-                    timeout=90,
+                    timeout=_runtime_rpc_timeout_seconds(),
                 )
             else:
                 await self._manager.request_on_connection(
                     connection,
                     "runtime.start",
                     params,
-                    timeout=90,
+                    timeout=_runtime_rpc_timeout_seconds(),
                 )
         except ConnectorOfflineError as exc:
             await self._store.set_device_runtime_status(
@@ -800,14 +811,14 @@ class DeviceRuntimeService:
                     runtime.connectorId,
                     "runtime.stop",
                     params,
-                    timeout=90,
+                    timeout=_runtime_rpc_timeout_seconds(),
                 )
             else:
                 await self._manager.request_on_connection(
                     connection,
                     "runtime.stop",
                     params,
-                    timeout=90,
+                    timeout=_runtime_rpc_timeout_seconds(),
                 )
         except ConnectorOfflineError as exc:
             await self._store.set_device_runtime_status(
@@ -877,7 +888,7 @@ class DeviceRuntimeService:
                 runtime.connectorId,
                 "runtime.validateConfig",
                 params,
-                timeout=90,
+                timeout=_runtime_rpc_timeout_seconds(),
             )
         except ConnectorOfflineError as exc:
             raise DeviceRuntimeOfflineError(str(exc)) from exc

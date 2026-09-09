@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from collections import deque
 from collections.abc import Mapping
@@ -338,6 +339,14 @@ async def refresh_runtime_state_in_background(
         )
     finally:
         _runtime_state_refreshes.discard(session_id)
+
+
+def _session_rpc_timeout_seconds() -> float:
+    """Live session reads are best effort; tests shorten the wait for an absent runtime."""
+    try:
+        return float(os.environ.get("AGENT_SERVER_SESSION_RPC_TIMEOUT_SECONDS", "10"))
+    except ValueError:
+        return 10.0
 
 
 @router.post("")
@@ -1664,7 +1673,7 @@ async def read_runtime_state_from_connector(
             session.connectorId,
             "session.state",
             params,
-            timeout=10,
+            timeout=_session_rpc_timeout_seconds(),
         )
     except (ConnectorOfflineError, ConnectorRpcError, TimeoutError):
         return None
@@ -1760,7 +1769,7 @@ async def read_session_notices_from_connector(
             session.connectorId,
             "session.notices",
             params,
-            timeout=10,
+            timeout=_session_rpc_timeout_seconds(),
         )
     except ConnectorOfflineError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -1829,7 +1838,7 @@ async def best_effort_runtime_notice_context(
             session.connectorId,
             "session.notices",
             params,
-            timeout=10,
+            timeout=_session_rpc_timeout_seconds(),
         )
     except (ConnectorOfflineError, ConnectorRpcError):
         return {}
