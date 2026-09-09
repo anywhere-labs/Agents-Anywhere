@@ -23,7 +23,8 @@ export default defineConfig([
     plugins: [{
       name: 'standard-remote-decorators',
       transform(code, id) {
-        if (!id.endsWith('/rpc/service.ts')) return
+        // Module ids keep the platform separator, so compare a normalized path.
+        if (!id.replaceAll('\\', '/').endsWith('/rpc/service.ts')) return
         const output = ts.transpileModule(code, {
           fileName: id,
           compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, sourceMap: true, experimentalDecorators: false },
