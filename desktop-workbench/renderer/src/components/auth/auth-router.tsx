@@ -8,6 +8,7 @@ import { SignedOutScreen } from "./signed-out-screen"
 import { Demo } from "@/components/demo"
 import { FilePreviewPage } from "@/components/file-preview-page"
 import { LoadingState } from "@/components/loading-state"
+import { DesktopOnboardingPage } from "@/components/onboarding/desktop-onboarding-page"
 import { SessionToolSidebarStateProvider } from "@/components/session-tool-sidebar-state"
 import { DesktopUpdateProvider } from "@/features/desktop/desktop-update-provider"
 
@@ -21,6 +22,7 @@ function AuthRouterInner() {
   }
   if (screen === "app") return isAuthenticated ? <Demo /> : <LoginScreen />
   if (screen === "signed-out") return <SignedOutScreen />
+  if (screen === "onboarding") return <DesktopOnboardingPage />
   if (screen === "preview") {
     return (
       <Suspense fallback={null}>

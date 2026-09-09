@@ -21,6 +21,7 @@ import type {
   PublicLocalDesktopBinding,
 } from "./connector-types";
 import type { DesktopOAuthResult } from "./desktop-oauth";
+import type { DesktopOnboardingEntry } from "./desktop-onboarding";
 import type { DesktopOAuthStartResult, DesktopServerConnection } from "./desktop-server";
 
 function subscribe<T>(channel: string, callback: (value: T) => void): () => void {
@@ -179,6 +180,13 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
       ipcRenderer.invoke("workbench:auth:consumeOAuthResult"),
     onOAuthResult: (callback: () => void): (() => void) =>
       subscribe("workbench:auth:oauthResultReady", callback),
+  },
+  onboarding: {
+    /** Recorded only from the complete page; a later user launch then skips the flow. */
+    complete: (source: DesktopOnboardingEntry["source"]): Promise<{ completedAt: string | null; source: string | null }> =>
+      ipcRenderer.invoke("workbench:onboarding:complete", { source }),
+    onOpen: (callback: (entry: Omit<DesktopOnboardingEntry, "key">) => void): (() => void) =>
+      subscribe("workbench:onboarding:open", callback),
   },
   notifications: {
     show: (input: DesktopNotificationInput): Promise<DesktopNotificationResult> =>

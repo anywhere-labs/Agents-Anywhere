@@ -213,6 +213,29 @@ not create a duplicate device. Tokens remain private. See the
 Sidebar devices use fixed Chinese pinyin/name ordering and an ID tie-breaker,
 so polling, presence changes and same-name devices do not reorder the list.
 
+## Desktop onboarding
+
+Desktop owns its onboarding at `#/onboarding`: four pages (认识 Agent → 配置设备
+→ 连接手机 → 准备就绪) copied unchanged from
+`web-next/src/components/onboarding/reference`. Only the data source differs —
+Desktop provisions its own local device instead of reading one handed over by
+the plugin. The complete page records completion through
+`workbench:onboarding:complete`; entering the flow never records it.
+
+| Entry | Behavior |
+| --- | --- |
+| The user launches Desktop normally | Shown once, until `onboarding.completedAt` exists in the shared record. |
+| `agents-anywhere-desktop://onboarding?source=dsh-plugin&flowId=<id>` from the DSH plugin | Always shown, flag or not. A redelivered `flowId` is ignored; every new click starts a new flow. |
+| A silent login-item launch | Never shown and never recorded. |
+
+The flag lives in `<OS user home>/.agents-anywhere/connector-runtime.json` under
+`onboarding`, is written by the backend under the same short file transaction
+as the installation metadata, and is read by Main before the window is created.
+The plugin neither reads nor writes it. Onboarding entries bypass the Connector
+ownership gate, so a user can finish setup before the local Connector is ready.
+Development builds do not register the OS protocol, so a plugin entry arrives
+through argv instead of `open-url`.
+
 ## Connector lifecycle
 
 Startup exclusion is implemented entirely in Python and includes CLI, Desktop and

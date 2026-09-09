@@ -17,6 +17,10 @@ Python Connector 统一维护启动互斥、运行记录和本机 Connector ID �
     "launchArgs": [],
     "packaged": true
   },
+  "onboarding": {
+    "completedAt": "2026-09-09T06:40:00.000Z",
+    "source": "desktop"
+  },
   "connectorIds": ["conn_first", "conn_second"],
   "runtime": {
     "instanceId": "c4944154-836c-45c8-b918-c59328753158",
@@ -30,7 +34,9 @@ Python Connector 统一维护启动互斥、运行记录和本机 Connector ID �
 }
 ```
 
-`desktop` 和 `runtime` 均可缺省。`connectorIds` 按首次记录顺序去重。`kind` 记录启动来源：`cli`、`desktop-workbench` 或 `dsh-plugin`；它只是标签，不授予绕过互斥的权限。记录中不包含用户 token 或 Connector token。未知字段原样保留；损坏记录或未知版本报错，不覆盖。
+`desktop`、`onboarding` 和 `runtime` 均可缺省。`connectorIds` 按首次记录顺序去重。`kind` 记录启动来源：`cli`、`desktop-workbench` 或 `dsh-plugin`；它只是标签，不授予绕过互斥的权限。记录中不包含用户 token 或 Connector token。未知字段原样保留；损坏记录或未知版本报错，不覆盖。
+
+`onboarding` 由 Desktop 独占写入，插件和 Python 都不修改。`completedAt` 只在 Desktop 引导的完成页确认后写入，`source` 记录这次完成来自 `desktop`（用户主动启动）还是 `dsh-plugin`（插件深链唤起）。用户主动启动 Desktop 时读取该字段决定是否显示引导；插件深链唤起时每次都显示引导，与字段无关。
 
 ## Python 的启动判断
 
@@ -69,9 +75,9 @@ Python Connector 统一维护启动互斥、运行记录和本机 Connector ID �
 
 ## Desktop 安装信息与只读发现
 
-Desktop 每次主进程启动校验自身真实应用位置和可执行文件权限，只更新 `desktop`。开发模式记录 Electron、项目路径与启动参数；正式模式记录实际安装位置。安装信息相同则不重写。写入时保留 Python 的 `runtime`、`connectorIds` 和未知字段；不修改、补登记或修复 ID 历史。
+Desktop 每次主进程启动校验自身真实应用位置和可执行文件权限，只更新 `desktop`。开发模式记录 Electron、项目路径与启动参数；正式模式记录实际安装位置。安装信息相同则不重写。写入时保留 Python 的 `runtime`、`connectorIds` 和未知字段；不修改、补登记或修复 ID 历史。`onboarding` 与 `desktop` 属于同一写入方，使用同一个短期文件事务，只在完成引导时更新。
 
-插件读取安装信息用于判断管理入口，读取 ID 历史用于设备复用。读取不会创建文件、迁移旧文件、清除失效 PID 或修复内容。安装目标不存在时保留历史并允许原 Web 流程；损坏记录和权限错误明确报告。有效 Desktop 安装仍进入现有占位页面，协议唤起和专门 onboarding 需后续接入。
+插件读取安装信息用于判断管理入口，读取 ID 历史用于设备复用。读取不会创建文件、迁移旧文件、清除失效 PID 或修复内容。安装目标不存在时保留历史并允许原 Web 流程；损坏记录和权限错误明确报告。插件不读取也不写入 `onboarding`：它每次深链唤起 Desktop 都进入引导，是否跳过由 Desktop 自己判断。
 
 两端配对都将有序本机 ID 与当前服务器、当前登录账号的设备列表匹配，取第一个交集。匹配到已有设备时轮换其 token，没有匹配才注册；读取、列设备或换 token 失败时停止并允许重试。私有凭据先持久化，Python 接受启动时再写共享历史。
 

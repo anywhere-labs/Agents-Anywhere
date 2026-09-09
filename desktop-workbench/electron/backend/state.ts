@@ -5,6 +5,7 @@ import { DesktopBindingStore } from "../desktop-binding";
 import { DesktopDeviceService } from "../desktop-device-service";
 import { DesktopSettingsStore } from "../desktop-settings";
 import { desktopInstallation, MachineStateStore } from "../machine-state";
+import type { DesktopOnboardingSource, DesktopOnboardingState } from "../machine-state";
 import { readShellEnvironment } from "../shell-environment";
 import { LogBatcher } from "./log-batcher";
 import type { OwnershipState } from "../local-runtime";
@@ -140,6 +141,18 @@ export class BackendState {
 
   getSettings(): DesktopSettings {
     return this.settings.get();
+  }
+
+  /** Read-only view used by the main process before it creates the window. */
+  getOnboarding(): DesktopOnboardingState {
+    return this.machineState.readOnboarding();
+  }
+
+  /** Called from the complete page only; the entry itself never records completion. */
+  completeOnboarding(input: { source?: unknown }): Promise<DesktopOnboardingState> {
+    const source = input?.source;
+    if (source !== "desktop" && source !== "dsh-plugin") throw new Error("Unsupported Desktop onboarding source.");
+    return this.machineState.completeOnboarding(source as DesktopOnboardingSource);
   }
 
   saveSettings(patch: DesktopSettingsPatch): Promise<ConnectorState> {

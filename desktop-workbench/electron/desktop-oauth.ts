@@ -111,7 +111,17 @@ export function desktopOAuthCodeFromCallback(
 }
 
 export function desktopOAuthUrlFromArgv(argv: readonly string[]): string | null {
-  return argv.find((value) => value.startsWith(`${DESKTOP_OAUTH_PROTOCOL}:`)) ?? null;
+  return argv.find((value) => isDesktopOAuthCallback(value)) ?? null;
+}
+
+/** The scheme also carries onboarding entries, which must never reach the OAuth queue. */
+export function isDesktopOAuthCallback(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === `${DESKTOP_OAUTH_PROTOCOL}:` && url.hostname === "oauth";
+  } catch {
+    return false;
+  }
 }
 
 function normalizeWebOrigin(value: string): string {

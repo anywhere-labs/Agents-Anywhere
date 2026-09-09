@@ -107,6 +107,13 @@ export type DesktopServerConnection = {
   oauthWebOrigin: string
 }
 
+export type DesktopOnboardingOpen = {
+  /** Hash route the renderer must open, query included. */
+  route: string
+  source: "desktop" | "dsh-plugin"
+  flowId: string | null
+}
+
 export type DesktopWorkbenchBridge = {
   platform: string
   windowMaterial?: "transparent" | "mica" | "opaque"
@@ -146,6 +153,11 @@ export type DesktopWorkbenchBridge = {
       | null
     >
     onOAuthResult: (listener: () => void) => void | (() => void)
+  }
+  onboarding?: {
+    complete: (source: "desktop" | "dsh-plugin") => Promise<{ completedAt: string | null; source: string | null }>
+    /** A plugin deep link that arrived while the app was already running. */
+    onOpen: (listener: (entry: DesktopOnboardingOpen) => void) => void | (() => void)
   }
   notifications?: {
     show: (input: {

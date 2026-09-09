@@ -13,7 +13,7 @@ import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
 import { getDesktopServerConnection, setDesktopServerConnection } from "@/features/desktop/server-connection"
 import { useTranslations } from "next-intl"
 
-export type AuthScreen = "login" | "signed-out" | "preview" | "app"
+export type AuthScreen = "login" | "signed-out" | "preview" | "onboarding" | "app"
 
 type AuthState = {
   screen: AuthScreen
@@ -46,6 +46,7 @@ function hashToScreen(hash: string): AuthScreen {
   if (path === "login") return "login"
   if (path === "signed-out") return "signed-out"
   if (path === "preview") return "preview"
+  if (path === "onboarding") return "onboarding"
 
   const isAppRoute =
     path === "" ||
@@ -67,6 +68,7 @@ function screenToHash(screen: AuthScreen): string {
     login: "#/login",
     "signed-out": "#/signed-out",
     preview: "#/preview",
+    onboarding: "#/onboarding",
     app: "#/",
   }
   return map[screen]
@@ -160,6 +162,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setSession(nextSession)
     setMe(currentUser)
     setError(null)
+    // Signing in from onboarding must return to the flow, not skip it.
+    if (hashToScreen(window.location.hash) === "onboarding") {
+      setScreenState("onboarding")
+      return
+    }
     window.location.hash = "#/"
     setScreenState("app")
   }, [])
@@ -207,6 +214,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (typeof unsubscribe === "function") unsubscribe()
     }
   }, [desktopAuthBridge, finishDesktopOAuth, loading, t])
+
+  // A plugin deep link that arrives while the app is already running must start
+  // a new flow instead of being ignored by the current screen.
+  const onboardingBridge = getDesktopWorkbenchBridge()?.onboarding
+  React.useEffect(() => {
+    if (!onboardingBridge?.onOpen) return
+    const unsubscribe = onboardingBridge.onOpen((entry) => {
+      window.location.hash = entry.route.replace(/^\//, "")
+      setScreenState("onboarding")
+    })
+    return () => { if (typeof unsubscribe === "function") unsubscribe() }
+  }, [onboardingBridge])
 
   const startDesktopOAuth = React.useCallback(async (serverUrl?: string) => {
     if (!desktopAuthBridge || startingOAuth.current) return

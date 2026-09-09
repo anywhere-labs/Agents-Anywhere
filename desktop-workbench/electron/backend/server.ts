@@ -101,6 +101,7 @@ export class BackendServer {
       if (path === "/state") return this.state.getConnectorState();
       if (path === "/config") return this.state.getPublicConfig();
       if (path === "/settings") return this.state.getSettings();
+      if (path === "/onboarding") return this.state.getOnboarding();
       if (path === "/ownership") return this.state.ownershipState();
       if (path === "/logs") return this.state.readLogs({
         pageSize: numberOrUndefined(url.searchParams.get("pageSize")),
@@ -112,6 +113,7 @@ export class BackendServer {
     if (method === "POST") {
       if (path === "/config") return this.state.saveConfig(body as never);
       if (path === "/settings") return this.state.saveSettings(body as never);
+      if (path === "/onboarding/complete") return this.state.completeOnboarding(body);
       if (path === "/start") return this.state.startConnector();
       if (path === "/stop") return this.state.stopConnector();
       if (path === "/restart") return this.state.restartConnector();

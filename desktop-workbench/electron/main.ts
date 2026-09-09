@@ -23,9 +23,16 @@ import {
   exchangeDesktopOAuthCode,
   desktopOAuthCodeFromCallback,
   desktopOAuthUrlFromArgv,
+  isDesktopOAuthCallback,
   type DesktopOAuthPending,
   type DesktopOAuthResult,
 } from "./desktop-oauth";
+import {
+  desktopOnboardingFromArgv,
+  desktopOnboardingFromUrl,
+  desktopOnboardingRoute,
+  type DesktopOnboardingEntry,
+} from "./desktop-onboarding";
 import { DesktopUpdateService } from "./desktop-updates";
 import { validateTitleBarColors } from "./title-bar";
 import type { BackendInit } from "./backend/protocol";
@@ -93,6 +100,9 @@ let pendingDesktopOAuth: (DesktopOAuthPending & { server: DesktopServerConnectio
 let desktopOAuthResult: DesktopOAuthResult | null = null;
 const pendingDesktopOAuthCallbacks: string[] = [];
 let desktopOAuthDrainPromise: Promise<void> | null = null;
+/** Onboarding entries that still have to reach the renderer. */
+const pendingOnboarding: DesktopOnboardingEntry[] = [];
+const handledOnboardingKeys = new Set<string>();
 
 app.setName(APP_NAME);
 if (process.platform === "win32") {
@@ -147,9 +157,53 @@ function registerDesktopOAuthProtocol(): void {
 }
 
 function queueDesktopOAuthCallback(rawUrl: string): void {
-  if (!rawUrl.startsWith(`${DESKTOP_OAUTH_PROTOCOL}:`)) return;
+  if (!isDesktopOAuthCallback(rawUrl)) return;
   pendingDesktopOAuthCallbacks.push(rawUrl);
   if (app.isReady()) void drainDesktopOAuthCallbacks();
+}
+
+/**
+ * Plugin entries are independent of Connector ownership: the user may open
+ * onboarding before signing in or while another Connector still holds the
+ * machine. A redelivered URL is ignored so one click runs one flow.
+ */
+function queueDesktopOnboarding(entry: DesktopOnboardingEntry): void {
+  if (handledOnboardingKeys.has(entry.key)) return;
+  handledOnboardingKeys.add(entry.key);
+  pendingOnboarding.push(entry);
+  if (app.isReady()) drainDesktopOnboarding();
+}
+
+function drainDesktopOnboarding(): void {
+  if (isQuitting || pendingOnboarding.length === 0) return;
+  const window = mainWindow;
+  if (!window || window.isDestroyed() || window.webContents.isLoading()) return;
+  for (const entry of pendingOnboarding.splice(0)) {
+    sendToRenderer("workbench:onboarding:open", {
+      route: entry.route,
+      source: entry.source,
+      flowId: entry.flowId,
+    });
+  }
+  showMainWindow();
+}
+
+/**
+ * A user launch opens onboarding once, until the complete page records it.
+ * Plugin entries and silent login-item launches never consult the flag.
+ */
+async function resolveLaunchRoute(silentLoginLaunch: boolean): Promise<string> {
+  const queued = pendingOnboarding.shift();
+  if (queued) return queued.route;
+  if (silentLoginLaunch) return "/";
+  try {
+    const state = await backend?.request<{ completedAt?: unknown }>("/onboarding");
+    if (typeof state?.completedAt === "string" && state.completedAt) return "/";
+  } catch (error) {
+    // A damaged record must not silently skip the flow; show it and log why.
+    appendMainLog({ level: "ERROR", message: `Could not read Desktop onboarding state: ${errorMessage(error)}` });
+  }
+  return desktopOnboardingRoute({ source: "desktop" });
 }
 
 function drainDesktopOAuthCallbacks(): Promise<void> {
@@ -286,7 +340,7 @@ function escapeHtml(value: string): string {
     .replaceAll('"', "&quot;");
 }
 
-function createMainWindow(showOnReady = true): BrowserWindow {
+function createMainWindow(showOnReady = true, route = "/"): BrowserWindow {
   const devUrl = process.env.WORKBENCH_WEB_URL?.trim();
   devOrigin = devUrl ? new URL(devUrl).origin : null;
   const window = new BrowserWindow({
@@ -357,7 +411,9 @@ function createMainWindow(showOnReady = true): BrowserWindow {
   window.on("closed", () => {
     if (mainWindow === window) mainWindow = null;
   });
-  void window.loadURL(devUrl || staticWorkbenchUrl("/"));
+  // A deep link that arrived before the renderer mounted waits here.
+  window.webContents.on("did-finish-load", () => drainDesktopOnboarding());
+  void window.loadURL(devUrl ? `${devUrl.replace(/\/+$/, "")}${route}` : staticWorkbenchUrl(route));
   return window;
 }
 
@@ -564,6 +620,14 @@ function registerIpcHandlers(): void {
     assertTrustedRenderer(event);
     if (!/^https?:\/\//i.test(url)) throw new Error("Only http(s) URLs can be opened externally.");
     await shell.openExternal(url);
+  });
+  // Only the complete page calls this. Entering onboarding never records it.
+  ipcMain.handle("workbench:onboarding:complete", (event, input?: { source?: unknown }) => {
+    assertTrustedRenderer(event);
+    if (!backend) throw new Error("Desktop backend is not ready.");
+    const source = input?.source === "dsh-plugin" || input?.source === "desktop" ? input.source : null;
+    if (!source) throw new Error("Unsupported Desktop onboarding source.");
+    return backend.request("/onboarding/complete", { method: "POST", body: JSON.stringify({ source }) });
   });
   ipcMain.handle("workbench:auth:getServer", (event) => {
     assertTrustedRenderer(event);
@@ -842,14 +906,23 @@ function errorMessage(error: unknown): string {
 
 if (hasSingleInstanceLock) {
   registerIpcHandlers();
+  // Onboarding entries also work in development, where the OS protocol handler
+  // is not installed and the URL only arrives through argv.
+  const initialOnboarding = desktopOnboardingFromArgv(process.argv);
+  if (initialOnboarding) queueDesktopOnboarding(initialOnboarding);
   if (app.isPackaged) {
     const initialDesktopOAuthUrl = desktopOAuthUrlFromArgv(process.argv);
     if (initialDesktopOAuthUrl) queueDesktopOAuthCallback(initialDesktopOAuthUrl);
-    app.on("open-url", (event, rawUrl) => {
-      event.preventDefault();
-      queueDesktopOAuthCallback(rawUrl);
-    });
   }
+  app.on("open-url", (event, rawUrl) => {
+    event.preventDefault();
+    const onboarding = desktopOnboardingFromUrl(rawUrl);
+    if (onboarding) {
+      queueDesktopOnboarding(onboarding);
+      return;
+    }
+    if (app.isPackaged) queueDesktopOAuthCallback(rawUrl);
+  });
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
     registerStaticWebProtocol();
@@ -879,7 +952,7 @@ if (hasSingleInstanceLock) {
       await waitForOwnership(10_000);
       showOnLaunch = ownership.status !== "owned";
     }
-    createMainWindow(showOnLaunch);
+    createMainWindow(showOnLaunch, await resolveLaunchRoute(silentLoginLaunch));
     if (app.isPackaged && ownership.status === "owned") await drainDesktopOAuthCallbacks();
     if (process.platform === "darwin" && app.dock) app.dock.setIcon(appWindowIcon());
     if (!showOnLaunch) hideDockIfIdle();
@@ -890,7 +963,9 @@ if (hasSingleInstanceLock) {
 
   app.on("activate", () => showMainWindow());
   app.on("second-instance", (_event, argv) => {
-    if (app.isPackaged) {
+    const onboarding = desktopOnboardingFromArgv(argv);
+    if (onboarding) queueDesktopOnboarding(onboarding);
+    else if (app.isPackaged) {
       const rawUrl = desktopOAuthUrlFromArgv(argv);
       if (rawUrl) queueDesktopOAuthCallback(rawUrl);
     }
