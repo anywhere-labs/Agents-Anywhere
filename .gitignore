@@ -21,6 +21,8 @@ pnpm-lock.yaml
 # Local Claude tooling (launch.json, transcripts, worktree metadata)
 .claude/
 .codex-run/
+# Local editor/agent project marker (per-machine UUID)
+.freebuff/
 agent-server/*-review.html
 
 # Local runtime state
