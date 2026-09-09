@@ -18,9 +18,11 @@ type Props = {
   onPageChange: (page: number) => void
   /** Desktop records onboarding completion before leaving the flow. */
   onComplete?: () => void | Promise<void>
+  /** Desktop hides it: the window's own chrome owns that corner. */
+  wordmark?: boolean
 }
 
-export function App({ connector, token, userId, initialPage, onPageChange, onComplete }: Props) {
+export function App({ connector, token, userId, initialPage, onPageChange, onComplete, wordmark = true }: Props) {
   const [page, setPage] = useState(initialPage)
   const [transitioning, setTransitioning] = useState(false)
   const [direction, setDirection] = useState(1)
@@ -89,7 +91,7 @@ export function App({ connector, token, userId, initialPage, onPageChange, onCom
 
   return (
     <>
-      <OnboardingShell artwork={page === 0 ? "desktop" : page === 2 ? "phone" : undefined}>
+      <OnboardingShell artwork={page === 0 ? "desktop" : page === 2 ? "phone" : undefined} wordmark={wordmark}>
         <div key={page} ref={pageRef} className={page === 0 ? "slide-page slide-page-welcome" : "slide-page"} inert={transitioning} style={{ "--entry-x": `${direction * 22}px` } as CSSProperties}>
           {page === 0 && <WelcomeSlide onNext={next} onSkip={(trigger) => openDialog("skip", trigger)} />}
           {page === 1 && <DeviceSlide connector={connector} onNext={next} />}

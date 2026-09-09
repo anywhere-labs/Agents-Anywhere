@@ -87,6 +87,9 @@ test("a desktop launch starts on the copied web welcome slide", async (t) => {
   assert.ok(container.querySelector('img[src="/images/onboarding/desktop.webp"]'))
   assert.ok(button(container, "下一页"))
   assert.ok(button(container, "跳过引导"))
+  // Frameless window: this screen carries its own drag band and no wordmark.
+  assert.ok(container.querySelector(".aa-window-drag"))
+  assert.equal(container.querySelector(".aa-wordmark"), null)
 })
 
 test("skipping records completion for a user launch and opens the app", async (t) => {

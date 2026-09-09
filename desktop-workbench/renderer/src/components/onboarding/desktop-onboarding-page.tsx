@@ -144,7 +144,7 @@ function DeviceOnboarding({ source, token, userId }: {
     <p className="text-sm leading-6 text-muted-foreground">正在准备本机设备，就绪后会自动继续。</p>
   </OnboardingFrame>
 
-  return <div className="onboarding-viewport">
+  return <OnboardingViewport>
     <Onboarding
       connector={connector}
       token={token}
@@ -152,12 +152,25 @@ function DeviceOnboarding({ source, token, userId }: {
       initialPage={0}
       onPageChange={() => undefined}
       onComplete={complete}
+      wordmark={false}
     />
-  </div>
+  </OnboardingViewport>
 }
 
 function OnboardingFrame({ children }: { children: React.ReactNode }) {
+  return <OnboardingViewport>
+    <OnboardingShell wordmark={false}><div className="flex max-w-xl flex-col gap-6">{children}</div></OnboardingShell>
+  </OnboardingViewport>
+}
+
+/**
+ * The window is frameless on macOS and Windows, so this screen needs its own
+ * draggable band. It mirrors the login shell: the wordmark is gone and the
+ * shell header below is empty, which is exactly where the band belongs.
+ */
+function OnboardingViewport({ children }: { children: React.ReactNode }) {
   return <div className="onboarding-viewport">
-    <OnboardingShell><div className="flex max-w-xl flex-col gap-6">{children}</div></OnboardingShell>
+    <header aria-hidden="true" className="aa-window-drag fixed inset-x-0 top-0 z-20 h-12" />
+    {children}
   </div>
 }
