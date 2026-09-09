@@ -1,6 +1,6 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import { HOST_NAMESPACE, type DeviceRecoveryAction, type DeviceRecoveryResult, type LoginRequest, type OnboardingHostApi, type OnboardingSnapshot } from '../../contracts/index.js'
+import { HOST_NAMESPACE, type DesktopLaunch, type DeviceRecoveryAction, type DeviceRecoveryResult, type LoginRequest, type OnboardingHostApi, type OnboardingSnapshot } from '../../contracts/index.js'
 import { Config, resolveConfig } from '../config.js'
 import { OnboardingManager } from '../onboarding/manager.js'
 import type {} from '../dsh-runtime/index.js'
@@ -37,6 +37,8 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
 
   @Remote('inspect')
   inspect(): Promise<OnboardingSnapshot> { return this.manager.inspect() }
+  @Remote('openDesktop')
+  openDesktop(): Promise<DesktopLaunch> { return this.manager.openDesktop() }
   @Remote('readBridgeLogs')
   readBridgeLogs(): Promise<BridgeLogSnapshot> { return readBridgeLogs(this.logsDirectory) }
   @Remote('begin')

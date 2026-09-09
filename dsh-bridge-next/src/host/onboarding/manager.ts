@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { CLOUD_API_BASE_URL, type ConnectionSettings, type DesktopDetection, type DeviceRecovery, type DeviceRecoveryAction, type DeviceRecoveryResult, type FlowStage, type LoginRequest, type OnboardingSnapshot } from '../../contracts/index.js'
+import { CLOUD_API_BASE_URL, type ConnectionSettings, type DesktopDetection, type DesktopLaunch, type DeviceRecovery, type DeviceRecoveryAction, type DeviceRecoveryResult, type FlowStage, type LoginRequest, type OnboardingSnapshot } from '../../contracts/index.js'
 import { resolveOnboardingUrl, resolveWebAppUrl } from '../../contracts/web-address.js'
 import { AccountApi, ApiError, publicProfile, type Account } from '../account/api.js'
 import { DeviceRecoveryRequired, ensureBinding, readBoundDevice, recoverBinding, verifyBoundDevice, type BoundDevice } from '../account/binding.js'
@@ -10,6 +10,7 @@ import { checkServer, normalizeServerOrigin, resolveOAuthWebOrigin } from '../ac
 import type { ResolvedConfig } from '../config.js'
 import { ConnectorCredentialError, SourceConnector, type ConnectorProcess } from '../connector/process.js'
 import { detectDesktop } from '../desktop/detect.js'
+import { desktopOnboardingUrl, launchDesktop, newDesktopFlowId, type DesktopLauncher } from '../desktop/launch.js'
 import type { LocalMachineRegistry } from '../desktop/machine-state.js'
 import { acquireManagerLock, readJson, writeJson } from '../storage/files.js'
 import { LoopbackFlow } from './loopback.js'
@@ -23,6 +24,7 @@ interface Dependencies {
   rolePollIntervalMs?: number
   connector?: ConnectorProcess
   detect?: () => Promise<DesktopDetection>
+  launchDesktop?: DesktopLauncher
   api?: (baseUrl: string) => AccountApi
   checkServer?: (baseUrl: string) => Promise<void>
   machineState?: LocalMachineRegistry
@@ -56,6 +58,7 @@ export class OnboardingManager {
   private operations: Promise<unknown> = Promise.resolve()
   private readonly connector: ConnectorProcess
   private readonly detect: () => Promise<DesktopDetection>
+  private readonly launchDesktop: DesktopLauncher
   private readonly apiFactory: (base: string) => AccountApi
   private readonly connectorSettings: ConnectorSettingsStore
   private readonly mobile = new MobileLogin()
@@ -68,6 +71,7 @@ export class OnboardingManager {
     this.connectorSettings = new ConnectorSettingsStore(config, dependencies.systemLanguages)
     this.connector = dependencies.connector ?? new SourceConnector(config, undefined, () => this.connectorSettings.get())
     this.detect = dependencies.detect ?? detectDesktop
+    this.launchDesktop = dependencies.launchDesktop ?? launchDesktop
     this.apiFactory = dependencies.api ?? (base => new AccountApi(base))
     this.unsubscribeConnector = this.connector.onState(state => {
       if (state.authFailed && this.binding && this.account && !this.disposed) {
@@ -133,6 +137,32 @@ export class OnboardingManager {
     if (this.desktop.status === 'absent') this.refreshProfile()
     else this.mobile.clear()
     return this.snapshot()
+  }
+
+  /**
+   * Hand this machine over to the Desktop app. The plugin never manages the
+   * account, the device or the Connector once Desktop is installed; it only
+   * publishes its DSH runtime endpoint and opens the Desktop onboarding entry.
+   * Every request starts a new flow, and the URL carries no credentials and no
+   * caller-supplied path or command.
+   */
+  async openDesktop(): Promise<DesktopLaunch> {
+    await this.initialize()
+    if (this.disposed) throw new Error('插件已关闭。')
+    await this.refreshRole()
+    if (this.desktop.status !== 'installed') throw new Error(this.desktop.message)
+    const flowId = newDesktopFlowId()
+    const url = desktopOnboardingUrl(flowId)
+    try {
+      await this.launchDesktop({
+        executablePath: this.desktop.executablePath,
+        launchArgs: this.desktop.launchArgs,
+        packaged: this.desktop.packaged,
+      }, url)
+    } catch (error) {
+      throw new Error(`无法打开 Agents Anywhere 桌面端：${error instanceof Error ? error.message : String(error)}`)
+    }
+    return { flowId, url }
   }
 
   private refreshProfile(): void {

@@ -9,8 +9,14 @@ export const CLOUD_API_BASE_URL = 'https://web.agents-anywhere.com'
 
 export type DesktopDetection =
   | { status: 'absent'; message: string }
-  | { status: 'installed'; message: string; executablePath: string }
+  | { status: 'installed'; message: string; executablePath: string; launchArgs: string[]; packaged: boolean }
   | { status: 'error'; message: string }
+
+/** Result of handing this machine over to the Desktop app's own onboarding. */
+export interface DesktopLaunch {
+  flowId: string
+  url: string
+}
 
 export type FlowStage = 'idle' | 'authorizing' | 'pairing' | 'starting' | 'ready' | 'error'
 
@@ -53,6 +59,8 @@ export interface OnboardingSnapshot {
 export interface OnboardingHostApi {
   readBridgeLogs(): Promise<BridgeLogSnapshot>
   inspect(): Promise<OnboardingSnapshot>
+  /** Opens the Desktop app on its onboarding entry; no argument is accepted. */
+  openDesktop(): Promise<DesktopLaunch>
   /** No input resumes the currently configured account; explicit input selects a login target. */
   begin(input?: LoginRequest): Promise<{ url: string }>
   cancel(): Promise<null>

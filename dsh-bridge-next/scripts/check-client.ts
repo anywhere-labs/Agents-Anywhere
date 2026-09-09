@@ -7,7 +7,7 @@ import { JSDOM } from 'jsdom'
 import { transform } from 'lightningcss'
 import { act, createElement, type ComponentType } from 'react'
 import { Context } from '@deepseek-ai/cordis'
-import type { OnboardingHostApi, OnboardingSnapshot } from '../src/contracts/index.ts'
+import type { DesktopDetection, OnboardingHostApi, OnboardingSnapshot } from '../src/contracts/index.ts'
 import { DEFAULT_CONNECTOR_SETTINGS } from '../src/contracts/connector.ts'
 import type { MobileLoginSnapshot } from '../src/contracts/mobile.ts'
 
@@ -92,6 +92,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     let failLogout = false
     let failRecovery = false
     let failLogs = false
+    let failOpenDesktop = false
     const reconfigurationUrl = 'http://127.0.0.1:5174/#/onboarding?source=dsh-plugin&connectorId=conn_reconfigured&flowId=4c7b8c71-134e-4495-a3ee-b704962414f9'
     type EntryProps = { host: OnboardingHostApi; wide: boolean }
     let entry: { Component: ComponentType<EntryProps>; props: { host: OnboardingHostApi } } | undefined
@@ -107,6 +108,11 @@ export async function checkClient(source: string, packageId: string): Promise<vo
           const inspected = snapshot
           if (inspectGate) await inspectGate
           return failInspect ? { ok: false, error: { message: '读取状态失败。' } } : { ok: true, value: inspected }
+        }
+        if (endpoint.endsWith('/openDesktop')) {
+          if (failOpenDesktop) return { ok: false, error: { message: '无法打开 Agents Anywhere 桌面端：spawn failed' } }
+          return { ok: true, value: { flowId: 'abcdefghijklmnopqrstuvwx',
+            url: 'agents-anywhere-desktop://onboarding?source=dsh-plugin&flowId=abcdefghijklmnopqrstuvwx' } }
         }
         if (endpoint.endsWith('/begin')) {
           if (failNextBegin) { failNextBegin = false; return { ok: false, error: { message: '无法连接服务器，请检查地址和网络后重试。' } } }
@@ -439,7 +445,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     await reopen()
 
     const signedInSnapshot = snapshot
-    const installed = { status: 'installed', executablePath: '/example/Electron', message: 'installed' } as const
+    const installed: DesktopDetection = { status: 'installed', executablePath: '/example/Electron', launchArgs: [], packaged: false, message: 'installed' }
     const actionsBeforeDesktop = calls.filter(call => /\/(begin|logout|cancel)$/.test(call.endpoint)).length
     for (const account of [signedInSnapshot.account, null]) {
       snapshot = { ...signedInSnapshot, account, desktop: installed }
@@ -447,11 +453,18 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       await reopen()
       assert.ok(calls.filter(call => call.endpoint.endsWith('/inspect')).length > readsBefore, 'Every opening must perform a fresh detection')
       assert.equal(dialog()!.getAttribute('aria-label'), '手机连接')
-      assert.match(dialog()!.textContent!, /已安装桌面端，连接功能即将开放。/)
+      assert.match(dialog()!.textContent!, /检测到本机已安装 Agents Anywhere 桌面端，请点击下面按钮在 Agents Anywhere 进行配置。/)
       assert.equal(dialog()!.querySelector('input, img, form, a'), null)
       assert.doesNotMatch(dialog()!.textContent!, /BensonWang|账号信息|Connector|打开 Web|退出登录|登录 Agents Anywhere Cloud/)
-      assert.equal(dialog()!.querySelectorAll('button').length, 4, 'Desktop placeholder retains access to bridge diagnostics')
+      assert.equal(dialog()!.querySelectorAll('button').length, 5, 'Desktop handoff keeps the open action and bridge diagnostics')
     }
+    const openBefore = calls.filter(call => call.endpoint.endsWith('/openDesktop')).length
+    await act(async () => { button('打开 Agents Anywhere 进行配置').click() })
+    assert.equal(calls.filter(call => call.endpoint.endsWith('/openDesktop')).length, openBefore + 1)
+    failOpenDesktop = true
+    await act(async () => { button('打开 Agents Anywhere 进行配置').click() })
+    assert.match(dialog()!.textContent!, /无法打开 Agents Anywhere 桌面端/)
+    failOpenDesktop = false
     assert.equal(calls.filter(call => /\/(begin|logout|cancel)$/.test(call.endpoint)).length, actionsBeforeDesktop)
 
     snapshot = signedInSnapshot
@@ -465,7 +478,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang|登录 Agents Anywhere Cloud|已安装桌面端/)
     await act(async () => { releaseInspection() })
     inspectGate = null
-    assert.match(dialog()!.textContent!, /已安装桌面端，连接功能即将开放。/)
+    assert.match(dialog()!.textContent!, /检测到本机已安装 Agents Anywhere 桌面端/)
 
     // A response from an earlier, closed opening must not overwrite the current mode.
     inspectGate = new Promise(resolve => { releaseInspection = resolve })
@@ -476,7 +489,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     snapshot = { ...signedInSnapshot, desktop: installed }
     await reopen()
     await act(async () => { releaseInspection() })
-    assert.match(dialog()!.textContent!, /已安装桌面端，连接功能即将开放。/)
+    assert.match(dialog()!.textContent!, /检测到本机已安装 Agents Anywhere 桌面端/)
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang/)
 
     snapshot = { ...signedInSnapshot, desktop: { status: 'error', message: '安装记录无法读取。' } }

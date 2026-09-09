@@ -26,7 +26,18 @@ export async function detectDesktop(home = userInfo().homedir, platform = proces
       if (typeof record['appPath'] !== 'string' || !isAbsolute(record['appPath'])) throw new Error('开发目录无效')
       if (!(await stat(record['appPath'])).isDirectory()) throw new Error('开发目录无效')
     }
-    return { status: 'installed', executablePath, message: '已发现 Agents Anywhere 桌面端，请由桌面端管理本机设备。' }
+    const launchArgs = record['launchArgs']
+    if (launchArgs !== undefined && (!Array.isArray(launchArgs) || launchArgs.some(value => typeof value !== 'string' || !value))) {
+      return { status: 'error', message: '桌面端启动参数无效，请打开一次 Agents Anywhere 桌面端后重试。' }
+    }
+    if (record['packaged'] !== undefined && typeof record['packaged'] !== 'boolean') {
+      return { status: 'error', message: '桌面端安装记录无效，请打开一次 Agents Anywhere 桌面端后重试。' }
+    }
+    return {
+      status: 'installed', executablePath, launchArgs: (launchArgs as string[] | undefined) ?? [],
+      packaged: record['packaged'] !== false,
+      message: '已发现 Agents Anywhere 桌面端，请由桌面端管理本机设备。',
+    }
   } catch (error) {
     if (hasCode(error, 'ENOENT')) return { status: 'absent', message: '桌面端已不在原安装位置，可以通过 Web 继续连接本机设备。' }
     return { status: 'error', message: '无法读取或验证桌面端安装记录，请检查文件格式与访问权限。' }

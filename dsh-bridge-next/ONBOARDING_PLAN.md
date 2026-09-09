@@ -1,6 +1,6 @@
 # Onboarding 业务方案
 
-状态：无 AA Desktop 的登录、设备上线、Web Agent 配置、可选手机连接和完成页已实现。插件现在另有「登录和连接」「设置」两页，支持在插件内直接扫码连接手机、确认授权和管理本机 Connector；本页后续的下载步骤仅指 Web onboarding。Runtime 的后续实现见 [会话读取](./RUNTIME_READS.md)、[实时同步](./RUNTIME_SYNC_PLAN.md)和[用户问答](./USER_QUESTIONS.md)。
+状态：无 AA Desktop 的登录、设备上线、Web Agent 配置、可选手机连接和完成页已实现；有 AA Desktop 时的检测、深链唤起和桌面端专门引导页也已实现。插件现在另有「登录和连接」「设置」两页，支持在插件内直接扫码连接手机、确认授权和管理本机 Connector；本页后续的下载步骤仅指 Web onboarding。Runtime 的后续实现见 [会话读取](./RUNTIME_READS.md)、[实时同步](./RUNTIME_SYNC_PLAN.md)和[用户问答](./USER_QUESTIONS.md)。
 
 运行与验证说明见 [README](./README.md)。以下同时保留后续 Desktop 和 runtime 的目标设计；尚未接入的部分不代表当前已可用。
 
@@ -21,7 +21,7 @@
 | AA 账号和用户凭据 | Desktop 管理 | 插件 Host 管理 |
 | 本机设备注册、自动配对 | Desktop 管理 | 插件 Host 管理 |
 | Connector 凭据和进程 | Desktop 管理 | 插件管理内部以源码运行的 Connector |
-| onboarding 页面 | Desktop 专门页面 | 插件发起，OAuth 后进入 Web 专门页面 |
+| onboarding 页面 | Desktop 的 `#/onboarding` 专门页面 | 插件发起，OAuth 后进入 Web 专门页面 |
 | DSH Agent 实现 | 插件 `host/dsh-runtime/` | 插件 `host/dsh-runtime/` |
 | DSH 协议转发 | Connector 的 `runtimes/dsh/` | Connector 的 `runtimes/dsh/` |
 
@@ -99,17 +99,15 @@ Node 入口使用 `os.userInfo().homedir`，Python 在 POSIX 读取当前 UID �
 
 ### 5.1 插件打开 Desktop
 
-插件页面检测到有效安装后显示“打开 Agents Anywhere”。用户点击后，Host 启动或唤起记录中的 Desktop，并携带专门的 onboarding 入口信息。
-
-建议沿用 Desktop 应用协议，新增与 OAuth 回调分离的 onboarding 入口。以下为待接入的协议形态，不表示已经实现：
+插件页面检测到有效安装后显示“打开 Agents Anywhere 进行配置”。用户点击后，Host 重新校验安装记录，生成一次性 `flowId`，并唤起记录中的 Desktop：
 
 ```text
 agents-anywhere-desktop://onboarding?source=dsh-plugin&flowId=<本次流程标识>
 ```
 
-入口上下文要能定位发起插件的 DSH 实例，防止多实例时配置错对象。使用经过校验的实例标识或受限的本机上下文读取方式；URL 不携带账号或 Connector 凭据，不允许调用方传任意可执行命令或任意回跳地址。
+入口信息只有来源和流程标识；URL 不携带账号、Connector 凭据、可执行命令或回跳地址，`openDesktop()` 也不接受任何入参，路径一律取自共享记录中已校验的安装信息。macOS 通过系统协议处理器唤起（已有实例收到 `open-url`，未启动则冷启动携带 argv）；Windows、Linux 和开发态用记录中的可执行文件加启动参数传参，由已有实例的 `second-instance` 接收。开发态不注册系统协议，因此只走 argv。
 
-Desktop 已运行时，同样处理入口并显示 onboarding 页面。重复来源请求按 `flowId` 避免重复创建设备；新的插件打开请求仍进入一次新的引导流程。
+Desktop 已运行时，同样处理入口并显示 onboarding 页面。同一 `flowId` 的重复投递只处理一次；每次新的插件点击都生成新的 `flowId`，因此每次都是一次新的引导流程，不重复登录、不重复配对、不重复添加 Agent。
 
 ### 5.2 Desktop 专门页面的执行顺序
 
@@ -129,7 +127,7 @@ Desktop 已运行时，同样处理入口并显示 onboarding 页面。重复来
 | 用户普通启动 Desktop，已经完成引导 | 直接进入主页面 |
 | 用户从插件点击打开 Desktop | 每次都进入，不受已完成标记阻挡 |
 
-建议将完成状态保存到 `<用户主目录>/.agentsanywhere/desktop/onboarding.json`，由 Desktop 独占写入。在完成页点击“打开应用”后记录完成；中途退出不记录。插件来源完成后也可写入完成标记，但下次插件来源仍必须进入流程。
+完成状态保存在共享记录的 `onboarding` 字段（`<用户主目录>/.agents-anywhere/connector-runtime.json`），由 Desktop 独占写入，与安装信息共用同一个短期文件事务。只在完成页点击「立刻体验」后写入 `completedAt`，中途退出不记录。插件来源完成后也会写入，但下次插件来源仍必须进入流程。
 
 “每次进入”不代表重复登录、重复配对或重复添加 Agent。每次重新验证实际状态，已满足的步骤自动通过。
 
@@ -218,11 +216,11 @@ Web 统一配置中增加/明确 `desktopDownloadUrl`、`landingPageUrl` 与应�
 | D. 手机和完成页 | 页面内手机下载、扫码授权、可选跳过及双按钮完成页，集中配置下载/官网地址 | 完整走完流程，立即体验进入 Web App，下载和官网链接正确 |
 | E. DSH 业务与真实验收 | DSH 业务集中迁入插件，按稳定协议收薄 Python 适配器；验证首条消息、实时输出、历史及恢复 | 从引导完成到实际 DSH 对话可用，并验证重启与重复进入 |
 
-本轮已实现 A 的只读记录检测、B、C 和 D。有效 Desktop 记录会阻止插件启动自己的管理进程；安装器写入和未首启补查仍待 Desktop 接入。D 的桌面端和官网地址按用户确认留空。自动化验证覆盖本机回调、真实 Typert Gateway、进程清理、页面步骤及服务端授权；真实账号与 GUI 联调由用户启动。
+本轮已实现 A 的只读记录检测、B、C 和 D，以及已安装 Desktop 的完整交接：插件按钮、深链唤起、Desktop 引导页与完成标记。有效 Desktop 记录会阻止插件启动自己的管理进程；安装器写入和未首启补查仍待 Desktop 接入。D 的桌面端和官网地址按用户确认留空。自动化验证覆盖本机回调、真实 Typert Gateway、进程清理、页面步骤及服务端授权；真实账号与 GUI 联调由用户启动。
 
 下一阶段先手动验收现有 Web 引导链路，再按 E 阶段接入 DSH 端点、运行时业务和 Connector 薄转发。引导完成不要求本轮尚未实现的 DSH runtime 就绪。
 
-Desktop 的安装信息写入及 Python 启动互斥已接入；专门 onboarding 页面、协议唤起和首次完成标记作为后续一条工作线。
+Desktop 的安装信息写入、Python 启动互斥、专门 onboarding 页面、协议唤起和完成标记均已接入。
 
 首次开发不自动迁移已有 Desktop 或旧插件的凭据和进程。实现使用独立测试数据，启动服务和真实账号联调由用户明确发起。
 

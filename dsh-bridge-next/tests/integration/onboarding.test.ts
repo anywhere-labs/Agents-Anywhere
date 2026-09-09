@@ -213,7 +213,7 @@ test('reset preserves credentials on failed revoke and explicit local reset remo
 test('installed Desktop blocks every new standalone management and phone endpoint', async () => {
   const h = await fixture()
   try {
-    h.setDesktop({ status: 'installed', message: 'managed by Desktop', executablePath: '/example/Desktop' })
+    h.setDesktop({ status: 'installed', message: 'managed by Desktop', executablePath: '/example/Desktop', launchArgs: [], packaged: true })
     for (const action of [
       () => h.manager.controlConnector('start'), () => h.manager.controlConnector('stop'),
       () => h.manager.saveConnectorSettings(DEFAULT_CONNECTOR_SETTINGS), () => h.manager.openConnectorFolder('data'),
@@ -450,7 +450,7 @@ test('Desktop presence or an invalid registry prevents the plugin from becoming 
   const h = await fixture()
   try {
     for (const detection of [
-      { status: 'installed', executablePath: '/example/desktop', message: 'use desktop' },
+      { status: 'installed', executablePath: '/example/desktop', launchArgs: [], packaged: true, message: 'use desktop' },
       { status: 'error', message: 'broken record' },
     ] as const) {
       h.setDesktop(detection)
@@ -465,7 +465,7 @@ test('Desktop presence or an invalid registry prevents the plugin from becoming 
 for (const signedIn of [false, true]) {
   test(`startup and each inspect check Desktop before account management (signed in: ${signedIn})`, async () => {
     const h = await fixture()
-    h.setDesktop({ status: 'installed', executablePath: '/example/Electron', message: 'installed' })
+    h.setDesktop({ status: 'installed', executablePath: '/example/Electron', launchArgs: [], packaged: true, message: 'installed' })
     try {
       if (signedIn) await writeJson(join(h.root, 'account.json'), {
         apiBaseUrl: h.api.baseUrl, userId: 'user-test', displayName: '测试用户',
@@ -635,7 +635,7 @@ test('a Connector RPC conflict is shown and retry reuses the saved device', asyn
 test('installed Desktop skips standalone Connector startup', async () => {
   const h = await fixture()
   try {
-    h.setDesktop({ status: 'installed', message: 'Desktop installed', executablePath: process.execPath })
+    h.setDesktop({ status: 'installed', message: 'Desktop installed', executablePath: process.execPath, launchArgs: [], packaged: true })
     const snapshot = await h.manager.inspect()
     assert.equal(snapshot.desktop.status, 'installed')
     assert.equal(h.connector.starts, 0)
@@ -649,7 +649,7 @@ test('installing Desktop stops the plugin Connector while its panel stays closed
   try {
     await callback((await h.manager.begin()).url)
     await until(async () => (await h.manager.inspect()).stage === 'ready')
-    h.setDesktop({ status: 'installed', message: 'Desktop installed', executablePath: process.execPath })
+    h.setDesktop({ status: 'installed', message: 'Desktop installed', executablePath: process.execPath, launchArgs: [], packaged: true })
     await until(async () => !h.connector.running)
   } finally { await h.close() }
 })
