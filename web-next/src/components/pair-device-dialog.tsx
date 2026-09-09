@@ -383,7 +383,7 @@ export function PairDeviceDialog({
             {step === "connection-method" ? (
               <>
                 <DialogHeader>
-                  <DialogTitle className="text-lg">{title ?? t("connectionTitle")}</DialogTitle>
+                  <DialogTitle>{title ?? t("connectionTitle")}</DialogTitle>
                   <DialogDescription>{t("connectionDescription")}</DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-3 py-2">
@@ -429,7 +429,7 @@ export function PairDeviceDialog({
                     </div>
                   </li>
                 </ol>
-                <DialogFooter className="gap-2 sm:justify-between">
+                <DialogFooter className="sm:justify-between">
                   <Button type="button" variant="ghost" size="sm" onClick={goBack} className="gap-1.5">
                     <ArrowLeft data-icon="inline-start" />
                     {tCommon("back")}
@@ -454,7 +454,7 @@ export function PairDeviceDialog({
                   <DialogDescription>{t("commandWarningDescription")}</DialogDescription>
                 </DialogHeader>
                 <p className="text-sm text-muted-foreground">{t("commandWarningFallback")}</p>
-                <DialogFooter className="gap-2 sm:justify-between">
+                <DialogFooter className="sm:justify-between">
                   <Button type="button" variant="ghost" size="sm" onClick={goBack}>
                     <ArrowLeft data-icon="inline-start" />
                     {tCommon("back")}
@@ -523,7 +523,7 @@ export function PairDeviceDialog({
                     />
                   </Field>
                 </FieldGroup>
-                <DialogFooter className="gap-2 sm:justify-between">
+                <DialogFooter className="sm:justify-between">
                   <Button type="button" variant="ghost" size="sm" onClick={goBack} disabled={creating}>
                     <ArrowLeft data-icon="inline-start" />
                     {tCommon("back")}
@@ -596,7 +596,7 @@ export function PairDeviceDialog({
                   </FieldGroup>
                   {claiming ? <PollingIndicator label={t("confirming")} /> : null}
                 </div>
-                <DialogFooter className="gap-2 sm:justify-between">
+                <DialogFooter className="sm:justify-between">
                   <Button
                     type="button"
                     variant="ghost"

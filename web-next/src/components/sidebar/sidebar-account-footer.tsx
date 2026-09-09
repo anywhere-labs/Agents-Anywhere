@@ -118,7 +118,7 @@ export function SidebarAccountFooter({
               {t("signOut.description")}
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-2">
+          <DialogFooter>
             <Button variant="outline" onClick={() => setSignOutOpen(false)}>
               {tCommon("cancel")}
             </Button>

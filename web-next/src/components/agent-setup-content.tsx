@@ -106,7 +106,7 @@ export function AgentSetupContent({ connector, onContinue, onSkip, onChanged, co
   const busy = addingType !== null
   const inline = presentation === 'onboarding'
   const rowClassName = inline ? 'flex min-h-20 items-center gap-3 border-b border-border/60 py-5 last:border-b-0' : 'flex items-center gap-3 rounded-lg border p-4'
-  const buttonClassName = inline ? 'h-9 rounded-lg px-3' : undefined
+  const buttonClassName = inline ? 'h-9 rounded-full px-4' : undefined
   React.useEffect(() => { onBusyChange?.(busy || loading) }, [busy, loading, onBusyChange])
 
   return <div className="flex flex-col gap-6">

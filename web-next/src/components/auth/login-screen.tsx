@@ -13,6 +13,7 @@ import { useTranslations } from "next-intl"
 export function LoginScreen() {
   const { navigate, login, loading, error, oauthEnabled, oauthProviderLabel, registrationOpen, startOAuth } = useAuth()
   const t = useTranslations("auth")
+  const tPrivacy = useTranslations("privacy")
   const [showPassword, setShowPassword] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -114,6 +115,16 @@ export function LoginScreen() {
             <p>{t("login.forgot")}</p>
           </div>
         ) : null}
+
+        <p className="text-center text-xs text-muted-foreground">
+          {t("login.privacyNotice")}{" "}
+          <a
+            href="/privacy"
+            className="font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            {tPrivacy("title")}
+          </a>
+        </p>
       </FieldGroup>
     </AuthShell>
   )

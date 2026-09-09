@@ -821,7 +821,7 @@ export function TaskComposer() {
     >
       <DragOverlay isDragging={isDragging} />
       {showCollapsedBrand ? (
-        <div className="absolute left-15 top-2.5 flex h-9 items-center">
+        <div className="absolute left-13 top-2.5 flex h-9 items-center">
           <button
             type="button"
             onClick={goHome}

@@ -14,6 +14,7 @@ import { useTranslations } from "next-intl"
 export function RegisterScreen() {
   const { navigate, register, loading, error, emailVerificationRequired } = useAuth()
   const t = useTranslations("auth")
+  const tPrivacy = useTranslations("privacy")
   const [showPassword, setShowPassword] = useState(false)
   const [displayName, setDisplayName] = useState("")
   const [code, setCode] = useState("")
@@ -123,6 +124,16 @@ export function RegisterScreen() {
           >
             {t("register.signIn")}
           </button>
+        </p>
+
+        <p className="text-center text-xs text-muted-foreground">
+          {t("register.privacyNotice")}{" "}
+          <a
+            href="/privacy"
+            className="font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            {tPrivacy("title")}
+          </a>
         </p>
       </FieldGroup>
     </AuthShell>

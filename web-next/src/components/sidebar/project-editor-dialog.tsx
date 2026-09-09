@@ -289,7 +289,7 @@ export function ProjectEditorDialog({
               </Field>
             </FieldGroup>
 
-            <DialogFooter className="gap-2 sm:gap-2">
+            <DialogFooter>
               <Button type="button" variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>
                 {tCommon("cancel")}
               </Button>

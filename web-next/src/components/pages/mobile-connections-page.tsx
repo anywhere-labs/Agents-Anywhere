@@ -31,13 +31,14 @@ export function MobileConnectionsPage() {
       </div>
 
       <main className="min-h-0 flex-1 overflow-y-auto">
+        {/* Same type scale, spacing and artwork treatment as the onboarding slides. */}
         <div className="mx-auto grid min-h-full w-full max-w-[88rem] items-center gap-12 px-6 py-12 md:px-8 xl:grid-cols-2 xl:px-10 2xl:gap-20 2xl:px-12">
-          <section className="flex max-w-[36rem] flex-col items-start gap-8">
-            <div className="flex flex-col gap-5">
-              <h2 className="text-pretty text-4xl font-semibold leading-[1.12] tracking-tight sm:text-[2.75rem] xl:text-5xl">
+          <section className="flex max-w-[42rem] flex-col items-start gap-9">
+            <div className="flex flex-col gap-6">
+              <h2 className="text-pretty text-[clamp(2.5rem,4.6vw,4rem)] font-medium leading-[1.16] tracking-[-0.055em]">
                 {t("heroTitle")}
               </h2>
-              <p className="max-w-xl text-pretty text-base leading-7 text-muted-foreground sm:text-lg">
+              <p className="max-w-xl text-pretty text-[17px] leading-[1.85] text-muted-foreground">
                 {t("heroDescription")}
               </p>
             </div>
@@ -52,11 +53,11 @@ export function MobileConnectionsPage() {
             </MobileConnectionDialog>
           </section>
 
-          <div className="mx-auto w-full max-w-[36rem] overflow-hidden rounded-[2rem] border border-border bg-muted/30 shadow-2xl shadow-foreground/10">
+          <div className="mx-auto w-full max-w-[36rem]">
             <img
               src="/mobile-connections-preview.png"
               alt={t("previewAlt")}
-              className="block h-auto w-full"
+              className="block h-auto w-full drop-shadow-[12px_16px_28px_color-mix(in_oklch,var(--foreground)_5%,transparent)]"
               width={1920}
               height={1440}
             />

@@ -521,10 +521,12 @@
       "completeTitle": "Phone connected",
       "confirmConnection": "Confirm connection",
       "confirmFailed": "Failed to confirm the phone connection.",
+      "confirmDevice": "Scanned device",
       "confirming": "Confirming connection...",
       "connect": "Connect phone",
-      "androidDownloadOption": "Android",
-      "downloadPrompt": "Download Agents Anywhere for mobile first",
+      "downloadPrompt": "Download the Agents Anywhere mobile app from our website. Once it is installed, come back here and we will connect your phone to this computer with a QR code.",
+      "openDownloadPage": "Open download page",
+      "downloadUrlHint": "Or open {url} manually",
       "errorTitle": "Unable to continue",
       "expiredDescription": "Generate a new QR code to keep your account secure.",
       "expiredTitle": "QR code expired",
@@ -540,12 +542,13 @@
       "heroTitle": "Keep working with your Agent away from your desk",
       "hiddenToast": "Mobile connection is hidden in the sidebar.",
       "hideFromSidebar": "Hide in sidebar",
-      "installedContinue": "Installed, continue",
+      "installedContinue": "Installed — show pairing QR code",
       "installTitle": "Download the mobile app",
-      "iosDownloadOption": "iOS",
       "onboardingDescription": "Download the app and scan a QR code. It only takes two steps.",
       "onboardingTitle": "Connect a phone",
       "pendingConfirmationDescription": "Only confirm if you started this scan yourself.",
+      "pendingConfirmationDevice": "{device} wants to sign in to your account",
+      "pendingConfirmationHint": "Confirm this is your device",
       "pendingConfirmationTitle": "Confirm this phone connection",
       "previewAlt": "Agents Anywhere mobile interface preview",
       "qrAlt": "QR code for connecting a phone",
@@ -1174,6 +1177,42 @@
       "addDevice": "Add device"
     }
   },
+  "privacy": {
+    "title": "Privacy policy",
+    "updated": "Last updated: September 9, 2026",
+    "back": "Back",
+    "introduction": "This policy explains how the Agents Anywhere web and desktop clients handle information. The server you connect to, connected devices and model services may be operated by different parties and have their own privacy policies.",
+    "sections": {
+      "local": {
+        "title": "Information on this device",
+        "body": "The client stores sign-in credentials, account details, preferences and cached project and session data on this device to restore your workspace. Previewing or downloading files may create temporary files."
+      },
+      "server": {
+        "title": "Information sent to your server",
+        "body": "To sign in and use the service, the client exchanges account details, authorization credentials, device and project information, messages and attachments with the server you choose. Agent settings, including API keys you enter, are also sent to that server to configure your agents. The server receives connection information such as your IP address."
+      },
+      "agents": {
+        "title": "Agents and external services",
+        "body": "The server forwards your tasks to the device and agent you select. Depending on their configuration, agents may send messages, attachments and workspace content to model providers or a custom gateway. Those services process information under their own policies."
+      },
+      "external": {
+        "title": "External content and links",
+        "body": "Displaying remote images or web previews and opening external links may connect to the corresponding website, which can receive connection information such as your IP address."
+      },
+      "permissions": {
+        "title": "Local access and permissions",
+        "body": "The web client requests no system permissions; attachments are chosen by you through a file picker. The desktop client needs local network and file system access to start and configure the Connector, and only reads and writes files in the workspaces you specify."
+      },
+      "retention": {
+        "title": "Retention and deletion",
+        "body": "Signing out removes the client's saved sign-in credentials from this device and clears the current account's local cache. It does not delete your account or content already stored on servers, connected devices or model services. Retention and deletion of that content depend on the relevant operator or provider; contact them to request deletion."
+      },
+      "contact": {
+        "title": "Contact and updates",
+        "body": "For questions about the client's handling of information, use the project's support channels. For access to, correction or deletion of information held by a server or model service, contact its operator. Policy updates will be reflected in the date above."
+      }
+    }
+  },
   "auth": {
     "actions": {
       "hidePassword": "Hide password",
@@ -1210,6 +1249,7 @@
     "login": {
       "createAccount": "Create an account",
       "description": "Sign in with your email address and password.",
+      "privacyNotice": "By signing in, you agree to the",
       "forgot": "Forgot your password? Ask your instance admin to reset it.",
       "newHere": "New here?",
       "oauth": "Sign in with {provider}",
@@ -1284,6 +1324,7 @@
       "confirmPlaceholder": "Repeat password",
       "descriptionPrefix": "You're joining a self-hosted",
       "descriptionSuffix": "instance.",
+      "privacyNotice": "By creating an account, you agree to the",
       "haveAccount": "Already have an account?",
       "passwordMismatch": "Passwords don't match",
       "passwordPlaceholder": "At least 8 characters",

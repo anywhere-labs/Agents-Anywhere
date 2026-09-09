@@ -135,8 +135,8 @@ test('one-click setup reuses a stopped Claude configuration and blocks continuat
 test('phone dialog runs download and QR confirmation before advancing to completion', async (t) => {
   mockDevice(t)
   t.mock.method(authApi, 'createMobileLoginQr', async () => ({ userId: 'user1', loginToken: 'QR-TEST', expiresAt: new Date(Date.now() + 60_000).toISOString() }))
-  t.mock.method(authApi, 'mobileLoginStatus', async () => ({ status: 'pending_web_confirm' }))
-  const confirmation = t.mock.method(authApi, 'confirmMobileLogin', async () => ({ status: 'consumed' }))
+  t.mock.method(authApi, 'mobileLoginStatus', async () => ({ status: 'pending_web_confirm', deviceName: 'iPhone 15 Pro' }))
+  const confirmation = t.mock.method(authApi, 'confirmMobileLogin', async () => ({ status: 'consumed', deviceName: 'iPhone 15 Pro' }))
   const container = await render(t, h(PluginOnboardingPage))
   await until(() => container.querySelector('[data-slide="welcome"]'))
   await click(container, '下一页')
@@ -144,11 +144,15 @@ test('phone dialog runs download and QR confirmation before advancing to complet
   await click(container, '连接手机')
   const dialog = document.querySelector('[role="dialog"]')
   assert.match(dialog.textContent, /下载移动端 App/)
-  await click(dialog, '我已安装，继续')
+  await click(dialog, '我已安装，显示配对二维码')
   await until(() => dialog.textContent.includes('确认这次手机连接'))
+  // The confirmation step names the device that scanned, so the user can verify it.
+  assert.match(dialog.textContent, /iPhone 15 Pro/)
   assert.equal(container.querySelector('[data-slide="complete"]'), null)
   await click(dialog, '确认连接')
   assert.equal(confirmation.mock.calls[0].arguments[2], true)
+  await until(() => dialog.textContent.includes('手机连接完成'))
+  assert.match(dialog.textContent, /iPhone 15 Pro/)
   await click(dialog, '完成')
   assert.ok(container.querySelector('[data-slide="complete"]'))
   assert.equal(document.querySelector('[role="dialog"]'), null)
@@ -200,9 +204,21 @@ test('an expired phone QR can be regenerated without reporting a completed conne
   t.mock.method(authApi, 'mobileLoginStatus', async () => ({ status: 'expired' }))
   let completed = false
   const container = await render(t, h(MobileConnectionContent, { token: 'test-session', userId: 'user1', onComplete: () => { completed = true }, onCancel: () => {} }))
-  await click(container, '我已安装，继续')
+  await click(container, '我已安装，显示配对二维码')
   await until(() => container.textContent.includes('二维码已过期'))
   await click(container, '重新生成')
   await until(() => count === 2 && container.textContent.includes('二维码已过期'))
   assert.equal(completed, false)
+})
+
+test('onboarding slide buttons keep the shared pill shape', async (t) => {
+  mockDevice(t)
+  const container = await render(t, h(PluginOnboardingPage))
+  await until(() => container.querySelector('[data-slide="welcome"]'))
+  const buttons = [...container.querySelectorAll('[data-slide] button')]
+  assert.ok(buttons.length >= 2, 'expected the slide actions to render')
+  for (const button of buttons) {
+    assert.match(button.className, /rounded-full/, `Not a pill button: ${button.textContent}`)
+    assert.doesNotMatch(button.className, /rounded-lg/)
+  }
 })

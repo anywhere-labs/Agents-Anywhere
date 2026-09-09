@@ -12,7 +12,7 @@ export function WorkspaceSidebarControl({ children }: { children: React.ReactNod
     <WorkspaceSidebarControlContext.Provider value>
       <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
         {children}
-        <div className="absolute left-3 top-2.5 z-40">
+        <div className="absolute left-3 top-3.5 z-40">
           <DashboardSidebarToggle standalone />
         </div>
       </div>
