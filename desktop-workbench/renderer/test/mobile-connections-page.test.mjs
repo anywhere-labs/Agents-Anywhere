@@ -20,10 +20,9 @@ const { AuthProvider } = await import("../src/components/auth/auth-context.tsx")
 const { MobileConnectionsPage } = await import("../src/components/pages/mobile-connections-page.tsx")
 const { authApi } = await import("../src/features/auth/api.ts")
 hooks.deregister()
-const messages = JSON.parse(readFileSync(new URL("../messages/zh-CN.json", import.meta.url), "utf8"))
 const account = { userId: "user1", displayName: "测试用户", role: "admin" }
 
-async function render(t) {
+async function render(t, { locale = "zh-CN" } = {}) {
   window.localStorage.clear()
   window.history.replaceState({}, "", "/#/mobile-connections")
   window.localStorage.setItem("aa.session.v1", JSON.stringify({ ...account, accessToken: "test-session" }))
@@ -33,8 +32,11 @@ async function render(t) {
   document.body.append(container)
   const root = createRoot(container)
   await act(async () => root.render(
-    h(NextIntlClientProvider, { locale: "zh-CN", messages, timeZone: "Asia/Shanghai" },
-      h(AuthProvider, null, h(MobileConnectionsPage))),
+    h(NextIntlClientProvider, {
+      locale,
+      messages: JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8")),
+      timeZone: "Asia/Shanghai",
+    }, h(AuthProvider, null, h(MobileConnectionsPage))),
   ))
   t.after(async () => { await act(async () => root.unmount()); container.remove() })
   return container
@@ -70,6 +72,14 @@ test("the slide's connect button opens the QR dialog", async (t) => {
   const dialog = document.querySelector('[role="dialog"]')
   assert.ok(dialog, "the connect dialog did not open")
   assert.match(dialog.textContent, /下载移动端 App/)
+})
+
+test("the slide copy comes from translations, not from hardcoded strings", async (t) => {
+  const container = await render(t, { locale: "en" })
+  await until(() => container.querySelector('[data-slide="phone"]'))
+  assert.match(container.textContent, /Agents at work\./)
+  assert.match(container.textContent, /You, anywhere\./)
+  assert.ok(button(container, "Connect phone"))
 })
 
 test("the sidebar visibility toggle stays available on the page", async (t) => {

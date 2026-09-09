@@ -233,7 +233,7 @@ test("session creation retains preference persistence as a final fallback", () =
   assert.doesNotMatch(create, /writeNewSessionPreference\(nextPreference\)/)
 })
 
-test("the composer footer keeps the send button on the option row", () => {
+test("the composer footers keep the send button on the option row", () => {
   const footer = sourceBetween(
     'className="flex items-center gap-1 px-3 pb-2 pt-1.5"',
     'aria-label={t("sendTask")}',
@@ -253,5 +253,19 @@ test("the composer footer keeps the send button on the option row", () => {
   assert.match(selector, /className="min-w-0 shrink gap-1\.5 text-muted-foreground"/)
   assert.match(selector, /<span className="min-w-0 truncate text-foreground">\{primaryLabel\}<\/span>/)
   assert.match(selector, /<span className="min-w-0 truncate text-foreground">\{secondaryValueLabel\}<\/span>/)
+
+  // The in-session composer shares the same footer contract.
+  const sessionComposer = readFileSync(
+    new URL("../src/components/session/session-composer.tsx", import.meta.url),
+    "utf8",
+  )
+  const sessionFooter = sessionComposer.slice(
+    sessionComposer.indexOf('className="flex items-center gap-1 px-3 pb-3 pt-2"'),
+    sessionComposer.indexOf("aria-label={showInterrupt"),
+  )
+  assert.doesNotMatch(sessionFooter, /flex-wrap/)
+  assert.match(sessionFooter, /className="h-8 min-w-0 shrink gap-1\.5 rounded-xl px-2\.5 text-muted-foreground"/)
+  assert.match(sessionFooter, /<span className="min-w-0 max-w-40 truncate text-foreground">\{modelLabel\}<\/span>/)
+  assert.match(sessionFooter, /"ml-auto flex h-8 shrink-0 items-center gap-2 rounded-xl/)
 })
 

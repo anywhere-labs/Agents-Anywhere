@@ -39,7 +39,12 @@ export function MobileConnectionsPage() {
       <div className="onboarding-viewport onboarding-viewport-embedded">
         <OnboardingShell artwork="phone" wordmark={false}>
           <div className="slide-page">
-            <PhoneSlide onConnect={() => setDialogOpen(true)} />
+            <PhoneSlide
+              title={t("slideTitle")}
+              description={t("slideDescription")}
+              connectLabel={t("connect")}
+              onConnect={() => setDialogOpen(true)}
+            />
           </div>
         </OnboardingShell>
       </div>

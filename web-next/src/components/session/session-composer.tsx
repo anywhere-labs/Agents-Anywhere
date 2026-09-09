@@ -447,7 +447,9 @@ export function SessionComposer({
               className="min-h-12 max-h-40 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
           </div>
-          <div className="flex flex-wrap items-center gap-1 px-3 pb-3 pt-2">
+          {/* No wrapping: the option controls shrink instead, so the takeover
+              switch and send button always stay on the same row. */}
+          <div className="flex items-center gap-1 px-3 pb-3 pt-2">
             <AttachmentButton
               attachments={attachments}
               onAttach={add}
@@ -486,11 +488,11 @@ export function SessionComposer({
                         type="button"
                         variant="ghost"
                         size="sm"
-                        className="h-8 gap-1.5 rounded-xl px-2.5 text-muted-foreground"
+                        className="h-8 min-w-0 shrink gap-1.5 rounded-xl px-2.5 text-muted-foreground"
                         disabled={permissionSelectorDisabled}
                       >
-                        <span className="size-1.5 rounded-full bg-primary" />
-                        <span className="text-foreground">{permissionLabel}</span>
+                        <span className="size-1.5 shrink-0 rounded-full bg-primary" />
+                        <span className="min-w-0 truncate text-foreground">{permissionLabel}</span>
                         <ChevronDown className="size-3.5 opacity-60" />
                       </Button>
                     </DropdownMenuTrigger>
@@ -526,12 +528,12 @@ export function SessionComposer({
                         type="button"
                         variant="ghost"
                         size="sm"
-                        className="h-8 gap-1.5 rounded-xl px-2.5 text-muted-foreground"
+                        className="h-8 min-w-0 shrink gap-1.5 rounded-xl px-2.5 text-muted-foreground"
                         disabled={modelSelectorDisabled}
                       >
                         {effortItems.length > 0 ? <span className="text-foreground">{effortLabel}</span> : null}
                         {effortItems.length > 0 ? <span className="text-muted-foreground/50">·</span> : null}
-                        <span className="max-w-40 truncate text-foreground">{modelLabel}</span>
+                        <span className="min-w-0 max-w-40 truncate text-foreground">{modelLabel}</span>
                         <ChevronDown className="size-3.5 opacity-60" />
                       </Button>
                     </DropdownMenuTrigger>
@@ -609,7 +611,7 @@ export function SessionComposer({
               aria-disabled={!connectorOnline || takeoverBusy || creatingSession}
               tabIndex={connectorOnline && !takeoverBusy && !creatingSession ? 0 : -1}
               className={cn(
-                "ml-auto flex h-8 items-center gap-2 rounded-xl px-2.5 text-sm text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                "ml-auto flex h-8 shrink-0 items-center gap-2 rounded-xl px-2.5 text-sm text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                 connectorOnline && !takeoverBusy && !creatingSession && "cursor-pointer hover:bg-accent hover:text-accent-foreground",
                 (!connectorOnline || takeoverBusy || creatingSession) && "opacity-50",
                 session.takeover && "text-foreground",
@@ -639,7 +641,7 @@ export function SessionComposer({
               )}
               {tSession("takeover")}
             </div>
-            <span className="mx-1 h-5 w-px bg-border" />
+            <span className="mx-1 h-5 w-px shrink-0 bg-border" />
             <Button
               type="button"
               size="icon"
