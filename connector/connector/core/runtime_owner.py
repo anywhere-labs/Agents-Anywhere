@@ -38,32 +38,48 @@ def runtime_path(config_path: str | Path | None = None) -> Path:
     return system_home() / ".agents-anywhere" / "connector-runtime.json"
 
 
-@contextmanager
-def state_lock(path: Path, timeout: float = 5) -> Iterator[None]:
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    identity = str(path.parent.resolve() / path.name)
+def state_lock_port(path: str | Path) -> int:
+    """The per-user TCP port that represents this record's cross-process mutex."""
+    file = Path(path)
+    identity = str(file.parent.resolve() / file.name)
     if sys.platform == "win32":
         identity = identity.lower()
     digest = hashlib.sha256(f"aa-machine-state-v1\n{identity}".encode()).digest()
-    port = 49152 + int.from_bytes(digest[:2], "big") % 16384
-    deadline = time.monotonic() + timeout
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as lease:
-        if sys.platform == "win32":
-            lease.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        else:
-            lease.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        while True:
-            try:
-                lease.bind(("127.0.0.1", port))
-                lease.listen()
-                break
-            except OSError as exc:
-                if exc.errno not in {errno.EADDRINUSE, errno.EACCES}:
-                    raise
-                if time.monotonic() >= deadline:
-                    raise RuntimeError("The local Connector record is busy. Please retry.") from exc
-                time.sleep(0.02)
+    return 49152 + int.from_bytes(digest[:2], "big") % 16384
+
+
+def _claim_state_lock(port: int, deadline: float) -> socket.socket:
+    """Binding alone claims the port, so a failed attempt must never reuse its socket.
+
+    SO_REUSEADDR is deliberately not set on POSIX: Linux then lets a second process bind
+    the same port while the owner sits between bind() and listen(), which both breaks the
+    exclusion and makes the next bind() fail with EINVAL.
+    """
+    while True:
+        lease = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            if sys.platform == "win32":
+                lease.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            lease.bind(("127.0.0.1", port))
+            lease.listen()
+            return lease
+        except OSError as exc:
+            lease.close()
+            if exc.errno not in {errno.EADDRINUSE, errno.EACCES}:
+                raise
+            if time.monotonic() >= deadline:
+                raise RuntimeError("The local Connector record is busy. Please retry.") from exc
+            time.sleep(0.02)
+
+
+@contextmanager
+def state_lock(path: Path, timeout: float = 5) -> Iterator[None]:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lease = _claim_state_lock(state_lock_port(path), time.monotonic() + timeout)
+    try:
         yield
+    finally:
+        lease.close()
 
 
 def _json(path: Path) -> dict[str, Any] | None:

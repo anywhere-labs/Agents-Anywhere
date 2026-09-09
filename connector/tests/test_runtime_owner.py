@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 
@@ -131,6 +132,21 @@ def test_corrupt_or_newer_records_fail_closed(value):
 ])
 def test_process_check_recognizes_connector_entry_points_only(executable, arguments, expected):
     assert runtime_owner._connector_command(executable, arguments) is expected
+
+
+def test_state_lock_excludes_a_socket_that_has_not_started_listening(tmp_path):
+    """A racing owner must block the lock even between its bind() and listen()."""
+    path = tmp_path / "connector-runtime.json"
+    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    holder.bind(("127.0.0.1", runtime_owner.state_lock_port(path)))
+    try:
+        with pytest.raises(RuntimeError, match="busy"), runtime_owner.state_lock(path, timeout=0.2):
+            pytest.fail("Claimed a port that another socket already holds")
+    finally:
+        holder.close()
+    with runtime_owner.state_lock(path, timeout=0.2):
+        pass
 
 
 def test_live_unrelated_process_does_not_block_connector_start():
