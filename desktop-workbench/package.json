@@ -24,7 +24,7 @@
     "ensure:uv": "node scripts/ensure-uv.mjs",
     "bundle:uv": "node scripts/prepare-uv.mjs",
     "pack": "yarn bundle:uv && yarn build && electron-builder --dir",
-    "dist": "yarn bundle:uv && yarn build && electron-builder",
+    "dist": "node scripts/dist-desktop.mjs",
     "dist:mac": "node scripts/dist-desktop.mjs mac",
     "dist:win": "node scripts/dist-desktop.mjs win"
   },
@@ -109,7 +109,15 @@
       "entitlementsInherit": "build/entitlements.mac.plist",
       "notarize": true,
       "gatekeeperAssess": false,
-      "target": "dmg"
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "x64ArchFiles": "Contents/Resources/uv/darwin-*/uv"
     },
     "linux": {
       "icon": "build/icon-mac-source.png",
