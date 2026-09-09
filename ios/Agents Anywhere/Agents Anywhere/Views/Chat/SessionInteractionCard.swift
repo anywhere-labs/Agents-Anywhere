@@ -55,7 +55,8 @@ struct SessionInteractionCard: View {
             .padding(.horizontal, 12).padding(.vertical, 10)
             .frame(height: height ?? metrics.compactHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .glassEffect(.regular, in: .rect(cornerRadius: 24))
+            // A solid card avoids nested glass and shadows clipped by the dock.
+            .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 24))
         }
         .sheet(item: $destination) { target in
             switch target {
