@@ -10,7 +10,7 @@ from typing import Any
 
 import anyio
 import pytest
-from conftest import ApiV2TestClient as TestClient
+from conftest import ApiV2TestClient as TestClient, make_test_client
 from runtime_fixtures import seed_runtime_inventory
 from sqlalchemy import text
 from starlette.websockets import WebSocketDisconnect
@@ -33,7 +33,7 @@ from agent_server.services.effective_capabilities import (
 
 
 def make_client(tmp_path):
-    return TestClient(create_app(tmp_path / "test.sqlite3"))
+    return make_test_client(tmp_path / "test.sqlite3")
 
 
 ADMIN_USER = "user1"
@@ -2349,10 +2349,13 @@ def test_connector_ingest_publishes_dashboard_for_new_idle_session(tmp_path):
         json={
             "notifications": [
                 {
-                    "method": "session.state.updated",
+                    # A new session must resolve to a project workspace, so only
+                    # the meta-carrying notification can introduce one.
+                    "method": "session.updated",
                     "params": {
                         "sessionId": new_session_id,
                         "runtime": "codex",
+                        "cwd": "/repo",
                         "status": "idle",
                     },
                 }
@@ -7830,7 +7833,17 @@ def test_dsh_visible_inventory_preserves_all_aa_archives(tmp_path):
 
 def test_connector_http_ingest_accepts_state_update_before_external_id(tmp_path):
     client = make_client(tmp_path)
-    _, access_token, _, headers = create_connector_and_session(client)
+    connector_id, access_token, _, headers = create_connector_and_session(client)
+    # A session must resolve to a project workspace before state can arrive.
+    asyncio.run(
+        client.app.state.store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id="sess_codex_out_of_order",
+            runtime="codex",
+            cwd="/repo",
+            external_session_id=None,
+        )
+    )
 
     response = client.post(
         "/connector/ingest",
@@ -11946,7 +11959,7 @@ class FakeWebSocket:
         await self.sent.put(message)
 
 
-def test_project_crud_allows_shared_workspaces_without_attaching_sessions_and_enforces_ownership(
+def test_project_crud_adopts_the_workspace_project_and_enforces_ownership(
     tmp_path,
 ):
     client = make_client(tmp_path)
@@ -11966,26 +11979,32 @@ def test_project_crud_allows_shared_workspaces_without_attaching_sessions_and_en
     body = created.json()
     project = body["project"]
     project_id = project["id"]
-    assert project == {
+    # The session already at /repo resolves into this project, so the count is 1
+    # even though project creation never binds sessions (attachedSessions stays 0).
+    me = client.get("/auth/me", headers=headers).json()
+    assert {key: value for key, value in project.items() if key != "lastActivityAt"} == {
         "id": project_id,
-        "userId": ADMIN_USER,
+        "userId": me["userId"],
         "connectorId": connector_id,
         "name": "Agents Anywhere",
         "workspacePath": "/repo",
         "pinned": False,
         "pinnedAt": None,
-        "activeSessionCount": 0,
-        "lastActivityAt": None,
+        "manuallyCreated": True,
+        "activeSessionCount": 1,
+        "sidebarSessionCounts": {"active": 1, "archived": 0},
         "createdAt": project["createdAt"],
         "updatedAt": project["updatedAt"],
     }
+    assert project["lastActivityAt"] is not None
     assert body["attachedSessions"] == 0
 
+    # The session already resolves to this workspace's project.
     session = client.get(
         f"/sessions/{session_id}/meta",
         headers=headers,
     ).json()["session"]
-    assert session["projectId"] is None
+    assert session["projectId"] == project_id
 
     listed = client.get("/projects", headers=headers)
     assert listed.status_code == 200, listed.text
@@ -12019,7 +12038,8 @@ def test_project_crud_allows_shared_workspaces_without_attaching_sessions_and_en
     )
     assert same_workspace.status_code == 200, same_workspace.text
     second_project = same_workspace.json()["project"]
-    assert second_project["id"] != project_id
+    # One project per workspace: a second create adopts the existing project.
+    assert second_project["id"] == project_id
     assert second_project["workspacePath"] == project["workspacePath"]
     assert same_workspace.json()["attachedSessions"] == 0
 
@@ -12027,9 +12047,9 @@ def test_project_crud_allows_shared_workspaces_without_attaching_sessions_and_en
         f"/sessions/{session_id}/meta",
         headers=headers,
     ).json()["session"]
-    assert session["projectId"] is None
+    assert session["projectId"] == project_id
     projects = client.get("/projects", headers=headers).json()["projects"]
-    assert {item["id"] for item in projects} == {project_id, second_project["id"]}
+    assert [item["id"] for item in projects] == [project_id]
 
     other_headers = auth_headers(client, user_id="user2")
     assert client.get("/projects", headers=other_headers).json()["projects"] == []
@@ -12044,7 +12064,7 @@ def test_project_crud_allows_shared_workspaces_without_attaching_sessions_and_en
     assert client.delete(f"/projects/{project_id}", headers=other_headers).status_code == 404
 
 
-def test_project_delete_unbinds_sessions_without_deleting_them(tmp_path):
+def test_project_delete_is_refused_while_sessions_still_resolve_to_it(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
     created = client.post(
@@ -12065,23 +12085,25 @@ def test_project_delete_unbinds_sessions_without_deleting_them(tmp_path):
         project_id=project_id,
     )
 
+    # sessions.project_id is ON DELETE RESTRICT, so the delete is refused while
+    # any session still points at the project; nothing is unbound implicitly.
     deleted = client.delete(f"/projects/{project_id}", headers=headers)
-    assert deleted.status_code == 200, deleted.text
-    assert deleted.json()["detachedSessions"] == 1
-    assert deleted.json()["projectId"] == project_id
+    assert deleted.status_code == 409, deleted.text
+    assert "archive or move them" in deleted.json()["detail"]
+
+    projects = client.get("/projects", headers=headers).json()["projects"]
+    assert [item["id"] for item in projects] == [project_id]
     bound_session = client.get(
         f"/sessions/{bound_session_id}/meta",
         headers=headers,
     )
     assert bound_session.status_code == 200
-    assert bound_session.json()["session"]["projectId"] is None
+    assert bound_session.json()["session"]["projectId"] == project_id
     standalone_session = client.get(
         f"/sessions/{session_id}/meta",
         headers=headers,
     )
     assert standalone_session.status_code == 200
-    assert standalone_session.json()["session"]["projectId"] is None
-    assert client.get("/projects", headers=headers).json()["projects"] == []
 
 
 def test_project_sessions_list_and_archive_all_are_scoped_to_project(tmp_path):

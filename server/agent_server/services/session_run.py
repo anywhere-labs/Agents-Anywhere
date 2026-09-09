@@ -721,7 +721,7 @@ class SessionRunService:
             )
 
         if attachment_media_types:
-            _validate_attachment_mime_types(capability.metadata, attachment_media_types)
+            _validate_attachment_mime_types(_capability_metadata(capability), attachment_media_types)
 
     async def _require_session_capability(
         self,
@@ -767,7 +767,7 @@ class SessionRunService:
             )
 
         if attachment_media_types:
-            _validate_attachment_mime_types(capability.metadata, attachment_media_types)
+            _validate_attachment_mime_types(_capability_metadata(capability), attachment_media_types)
 
     async def _require_runtime_instance(
         self,
@@ -1064,6 +1064,12 @@ def _decode_inline_attachment(attachment: InlineAttachmentRef) -> bytes:
                 f"attachment {attachment.fileId} sha256 does not match content"
             )
     return data
+
+
+def _capability_metadata(capability: Any) -> dict[str, Any]:
+    """Optional runtime restrictions a capability may not publish at all."""
+    metadata = getattr(capability, "metadata", None)
+    return metadata if isinstance(metadata, dict) else {}
 
 
 def _validate_attachment_mime_types(metadata: dict[str, Any], media_types: list[str]) -> None:
