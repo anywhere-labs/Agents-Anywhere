@@ -153,6 +153,7 @@ function DeviceOnboarding({ source, token, userId }: {
       onPageChange={() => undefined}
       onComplete={complete}
       wordmark={false}
+      showDownload={false}
     />
   </OnboardingViewport>
 }

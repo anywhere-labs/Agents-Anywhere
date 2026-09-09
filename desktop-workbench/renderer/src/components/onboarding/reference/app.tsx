@@ -20,9 +20,11 @@ type Props = {
   onComplete?: () => void | Promise<void>
   /** Desktop hides it: the window's own chrome owns that corner. */
   wordmark?: boolean
+  /** Desktop hides it: the user is already running the desktop app. */
+  showDownload?: boolean
 }
 
-export function App({ connector, token, userId, initialPage, onPageChange, onComplete, wordmark = true }: Props) {
+export function App({ connector, token, userId, initialPage, onPageChange, onComplete, wordmark = true, showDownload = true }: Props) {
   const [page, setPage] = useState(initialPage)
   const [transitioning, setTransitioning] = useState(false)
   const [direction, setDirection] = useState(1)
@@ -96,7 +98,7 @@ export function App({ connector, token, userId, initialPage, onPageChange, onCom
           {page === 0 && <WelcomeSlide onNext={next} onSkip={(trigger) => openDialog("skip", trigger)} />}
           {page === 1 && <DeviceSlide connector={connector} onNext={next} />}
           {page === 2 && <PhoneSlide onNext={next} onConnect={(trigger) => openDialog("phone", trigger)} />}
-          {page === 3 && <CompleteSlide onExperience={() => { void experience() }} />}
+          {page === 3 && <CompleteSlide onExperience={() => { void experience() }} showDownload={showDownload} />}
         </div>
       </OnboardingShell>
       <OnboardingDialogs

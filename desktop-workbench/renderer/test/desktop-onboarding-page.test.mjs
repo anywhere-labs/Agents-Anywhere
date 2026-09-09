@@ -104,6 +104,8 @@ test("skipping records completion for a user launch and opens the app", async (t
     await delay(10)
   })
   await until(() => container.querySelector('[data-slide="complete"]'))
+  // The desktop app never offers to download itself.
+  assert.equal([...container.querySelectorAll("a")].some((item) => item.textContent.includes("下载桌面程序")), false)
   await act(async () => { button(container, "立刻体验").click(); await delay(10) })
   await until(() => completed.length === 1)
   assert.deepEqual(completed, ["desktop"])
