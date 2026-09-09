@@ -111,9 +111,9 @@ function DeviceOnboarding({ source, token, userId }: {
     const bridge = getDesktopWorkbenchBridge()
     if (!bridge?.device) return
     setReconnecting(true)
-    setError(null)
     try {
       await bridge.device.reconnectAndConnect({ userToken: token, userId })
+      setError(null)
       setNeedsReconnect(false)
       setReload(value => value + 1)
     } catch (cause) {

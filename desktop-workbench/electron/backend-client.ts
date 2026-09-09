@@ -78,6 +78,13 @@ export class DesktopBackendClient {
       stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     this.child = child;
+    // The bridge must outlive startup: device registration and reconnect keep
+    // issuing netFetch long after the backend reports ready. A listener removed
+    // with the startup handshake silently drops them, and the backend only
+    // fails once its own request timeout expires.
+    child.on("message", (message: BackendControlMessage) => {
+      if (message.type === "netFetch") void this.handleNetFetch(message);
+    });
     this.exitPromise = new Promise<void>((resolve) => {
       child.once("exit", (code, signal) => {
         const reason = signal ? `signal ${signal}` : `code ${code ?? "null"}`;
@@ -157,10 +164,6 @@ export class DesktopBackendClient {
         reject(new Error("Desktop backend did not become ready in time."));
       }, BACKEND_READY_TIMEOUT_MS);
       const onMessage = (message: BackendControlMessage) => {
-        if (message.type === "netFetch") {
-          void this.handleNetFetch(message);
-          return;
-        }
         if (message.type === "ready") {
           this.port = message.port;
           this.authToken = message.token;
