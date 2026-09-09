@@ -30,6 +30,18 @@ export type NativeChange = { type: 'event', id: string, event: SessionEvent }
   | { type: 'visibility' } | { type: 'catalogs' }
 export interface NativeWorkspace { id: string, title: string, path: string, sessionIds: string[] }
 
+/** Configuration facts a session state read needs, without retaining the event log. */
+export interface SessionFacts {
+  configuration: Awaited<ReturnType<RuntimeConfiguration['state']>>
+  lastTurnEndKind: string | undefined
+}
+
+/** Last terminal turn outcome, which decides a cold session's status. */
+export function lastTurnEndKind(events: readonly SessionEvent[]): string | undefined {
+  const last = events.findLast(event => event.type === 'turn/end')
+  return last?.type === 'turn/end' ? last.data.reason.kind : undefined
+}
+
 /** All native interpretation stays in the Host; observers never await transport work. */
 export class NativeRuntime {
   readonly presence: ClientPresence
@@ -42,6 +54,7 @@ export class NativeRuntime {
   private closed = false
   private creations: CreationIntents
   readonly images: RuntimeImages
+  private readonly facts = new Map<string, { revision: string, value: SessionFacts }>()
 
   constructor(readonly ctx: Context, creationDirectory: string,
     readonly diagnostics = new RuntimeDiagnostics(ctx.logger('agents-anywhere-runtime'))) {
@@ -129,6 +142,35 @@ export class NativeRuntime {
     return result
   }
   visible(id: string): Promise<boolean> { return this.source.visible(id) }
+  /** Refresh the corpus only when this identity was never observed. */
+  async ensureKnown(id: string, signal?: AbortSignal): Promise<void> {
+    if (this.source.records.has(id) || this.ctx.sessions.get(id as SessionId) !== undefined) return
+    await this.source.refresh(signal)
+  }
+  /**
+   * Read the configuration facts of one session.
+   *
+   * Replaying a large session log is expensive and owned by DSH, so facts derived
+   * from an unchanged log are reused. The key is the log identity, never wall time,
+   * and nothing but the derived facts is retained.
+   */
+  async stateFacts(id: SessionId): Promise<SessionFacts> {
+    const revision = await this.source.freshRevisionOf(id)
+    if (revision !== undefined) {
+      const cached = this.facts.get(id)
+      if (cached !== undefined && cached.revision === revision) return cached.value
+    }
+    const live = this.ctx.sessions.get(id)
+    const snapshot = live !== undefined ? undefined : await this.ctx.sessionQuery.readSession(id)
+    const configuration = await this.configuration.state(id, snapshot)
+    const events = live?.snapshotEvents() ?? snapshot!.events
+    const value: SessionFacts = {
+      configuration,
+      lastTurnEndKind: lastTurnEndKind(events),
+    }
+    if (revision !== undefined) this.facts.set(id, { revision, value })
+    return value
+  }
   async read(id: SessionId): Promise<AttachmentSnapshot> {
     await this.source.requireAvailable(id)
     let snapshot: AttachmentSnapshot

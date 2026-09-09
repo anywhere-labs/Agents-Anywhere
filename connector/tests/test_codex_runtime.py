@@ -1833,6 +1833,29 @@ async def _test_codex_runtime_reports_idle_session_capabilities() -> None:
     assert capabilities[CAPABILITY_SESSION_STEER].available is False
 
 
+def test_codex_runtime_session_capabilities_never_read_a_cold_thread() -> None:
+    asyncio.run(_test_codex_runtime_session_capabilities_never_read_a_cold_thread())
+
+
+async def _test_codex_runtime_session_capabilities_never_read_a_cold_thread() -> None:
+    client = FakeCodexClient()
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    capability_set = await runtime.get_session_capabilities("sess_cold", "thread_cold")
+
+    # Availability only needs cached status, the active-turn fact and the binding.
+    assert [method for method, _ in client.requests if method == "thread/read"] == []
+    capabilities = {
+        capability.capability_id: capability
+        for capability in capability_set.capabilities
+    }
+    assert capabilities[CAPABILITY_SESSION_SEND_MESSAGE].available is True
+    assert capabilities[CAPABILITY_SESSION_INTERRUPT].available is False
+    assert capabilities[CAPABILITY_SESSION_INTERRUPT].unavailable_reason == (
+        "no_active_turn"
+    )
+
+
 def test_codex_runtime_reports_error_session_can_send_message() -> None:
     asyncio.run(_test_codex_runtime_reports_error_session_can_send_message())
 

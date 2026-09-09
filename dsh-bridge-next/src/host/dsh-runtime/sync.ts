@@ -14,6 +14,12 @@ export type SyncOperation = { kind: string, [key: string]: unknown }
 export interface SyncBatch { streamId: string, batchSeq: number, projectionVersion: number, operations: SyncOperation[] }
 const MAX_BUFFER = 10_000
 const MAX_BYTES = 6 * 1024 * 1024
+/**
+ * Retained per-session projections. Evicting one makes that session's next event
+ * pay a full log read plus a complete re-snapshot, so the cap stays above a
+ * normal device's session count.
+ */
+const MAX_RETAINED_PROJECTIONS = 64
 export const SYNC_FLUSH_MS = Math.ceil(1000 / 30)
 
 class SyncTransportError extends Error {}
@@ -362,7 +368,7 @@ export class SyncFeed {
   private takeChanges(): NativeChange[] { this.queuedBytes = 0; return this.queue.splice(0) }
   private trimProjections(): void {
     for (const [id, projection] of this.projections) {
-      if (this.projections.size <= 16) break
+      if (this.projections.size <= MAX_RETAINED_PROJECTIONS) break
       if (!projection.dirty) this.projections.delete(id)
     }
   }

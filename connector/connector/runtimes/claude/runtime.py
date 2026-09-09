@@ -198,7 +198,17 @@ class ClaudeRuntime(AgentRuntime):
         session_id: str,
         external_session_id: str | None = None,
     ) -> RuntimeCapabilitySet:
-        state = await self.get_session_state(session_id, external_session_id)
+        """Report session capabilities from facts already known to this process.
+
+        Only the cached live status decides turn-based availability; a cold history
+        read would return an idle state this set treats identically.
+        """
+
+        state = self._session_states.get(session_id)
+        if state is None and external_session_id is not None:
+            state = self._session_states.get_by_external_session_id(
+                external_session_id
+            )
         return claude_session_capabilities(
             ClaudeCapabilityContext(
                 connector_id=self.host.connector_id,

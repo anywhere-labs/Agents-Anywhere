@@ -2949,6 +2949,28 @@ async def _test_claude_runtime_projects_error_blocks_as_failed_system_items() ->
     assert error_item.content["text"] == "tool failed"
 
 
+def test_claude_runtime_session_capabilities_do_not_read_history() -> None:
+    asyncio.run(_test_claude_runtime_session_capabilities_do_not_read_history())
+
+
+async def _test_claude_runtime_session_capabilities_do_not_read_history() -> None:
+    reads: list[dict[str, Any]] = []
+    sdk = _default_sdk()
+    sdk.get_session_info = lambda **kwargs: reads.append(kwargs)
+    runtime = _runtime(sdk=sdk)
+
+    capability_set = await runtime.get_session_capabilities("sess_cold", "ext_cold")
+
+    # Only a cached live status can make turn-based availability true.
+    assert reads == []
+    capabilities = {
+        capability.capability_id: capability
+        for capability in capability_set.capabilities
+    }
+    assert capabilities["session.send_message"].available is True
+    assert capabilities["session.interrupt"].available is False
+
+
 def test_claude_runtime_interrupts_active_turn() -> None:
     asyncio.run(_test_claude_runtime_interrupts_active_turn())
 

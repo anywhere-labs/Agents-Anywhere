@@ -8,6 +8,7 @@ import { parseSelections } from './selections.js'
 import { projectHistory } from './history.js'
 import { sessionId, nativeSessionId } from './identity.js'
 import type { NativeRuntime } from './native.js'
+import { lastTurnEndKind } from './native.js'
 import { SyncFeed, type SyncBatch } from './sync.js'
 import type { TimelineItem } from './types.js'
 
@@ -133,21 +134,31 @@ export class RuntimeRouter {
       case 'session.list': return this.list(params, signal)
       case 'session.getSnapshot': return this.snapshot(params, signal)
       case 'session.getState': {
-        await this.reader.native?.source.refresh(signal)
         const id = await this.resolve(params, signal, true)
-        const sourceState = await this.reader.native?.source.state(id)
-        if (sourceState && sourceState.availability !== 'available') return {
+        const native = this.reader.native
+        if (!native) {
+          // A carrier without a Host answers from the query reader alone.
+          const log = await this.reader.query.readSession(id)
+          const liveStatus = this.reader.status(id)
+          return { runtime: 'dsh', sessionId: sessionId(this.namespace, id), externalSessionId: id,
+            status: liveStatus ?? (lastTurnEndKind(log.events) === 'error' ? 'error' : 'idle'), selections: {},
+            metadata: { readOnly: true, attached: liveStatus !== undefined } }
+        }
+        // Only an unknown identity pays for a corpus listing; a known one is
+        // answered from the observed records.
+        await native.ensureKnown(id, signal)
+        const sourceState = await native.source.state(id)
+        if (sourceState.availability !== 'available') return {
           runtime: 'dsh', sessionId: sessionId(this.namespace, id), externalSessionId: id,
           status: 'blocked', selections: {}, sourceState, metadata: { readOnly: true, attached: false },
         }
-        const native = await this.reader.query.readSession(id)
-        const configuration = await this.reader.native?.configuration.state(id, native)
+        const facts = await native.stateFacts(id)
         signal.throwIfAborted()
-        const lastEnd = native.events.findLast(event => event.type === 'turn/end')
         const liveStatus = this.reader.status(id)
         return { runtime: 'dsh', sessionId: sessionId(this.namespace, id), externalSessionId: id, sourceState,
-          status: this.reader.native?.questions.waiting(id) ? 'waiting_approval' : liveStatus ?? (lastEnd?.data.reason.kind === 'error' ? 'error' : 'idle'), selections: configuration?.selections ?? {},
-          metadata: { ...configuration?.metadata, readOnly: !this.reader.native?.ctx.get('sessionController'), attached: liveStatus !== undefined } }
+          status: native.questions.waiting(id) ? 'waiting_approval' : liveStatus ?? (facts.lastTurnEndKind === 'error' ? 'error' : 'idle'),
+          selections: facts.configuration.selections,
+          metadata: { ...facts.configuration.metadata, readOnly: !native.ctx.get('sessionController'), attached: liveStatus !== undefined } }
       }
       case 'session.getNotices': {
         const id = await this.resolve(params, signal)

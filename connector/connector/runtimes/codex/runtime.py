@@ -198,10 +198,18 @@ class CodexRuntime(AgentRuntime):
         session_id: str,
         external_session_id: str | None = None,
     ) -> RuntimeCapabilitySet:
-        state = await self.get_session_state(
-            session_id=session_id,
-            external_session_id=external_session_id,
-        )
+        """Report session capabilities from facts already known to this process.
+
+        Availability depends on the cached session status, the active-turn fact and
+        the native thread binding. A cold thread read here would fetch selections
+        this set never uses, so the cache is the only state source.
+        """
+
+        state = self._session_states.get(session_id)
+        if state is None and external_session_id is not None:
+            state = self._session_states.get_by_external_session_id(
+                external_session_id
+            )
         context = codex_capability_context(
             connector_id=self.host.connector_id,
             revision=self.config.revision,
