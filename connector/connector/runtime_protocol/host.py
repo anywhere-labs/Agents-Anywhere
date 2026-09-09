@@ -20,7 +20,7 @@ class RuntimeHostClient(ABC):
     """Runtime -> Connector."""
 
     async def publish_runtime_notifications(
-        self, runtime: str, notifications: list[dict[str, Any]], *, runtime_id: str | None = None
+        self, runtime: str, notifications: list[dict[str, Any]], runtime_id: str | None = None
     ) -> None:
         """Await the existing Connector ingest path, without the fallback queue."""
         raise NotImplementedError("Synchronous notification ingestion is unavailable")
