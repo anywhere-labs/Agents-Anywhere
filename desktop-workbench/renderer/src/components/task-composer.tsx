@@ -856,7 +856,9 @@ export function TaskComposer() {
             <Separator />
           </div>
 
-          <div className="flex flex-wrap items-center gap-1 px-3 pb-2 pt-1.5">
+          {/* No wrapping: the option controls shrink instead, so the send
+              button always stays on the same row. */}
+          <div className="flex items-center gap-1 px-3 pb-2 pt-1.5">
             <AttachmentButton
               attachments={attachments}
               onAttach={add}
@@ -920,9 +922,9 @@ export function TaskComposer() {
                   <>
                     {permissionOptions.length > 0 ? <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
-                          {permissionOptions.length > 0 ? <span className="size-1.5 rounded-full bg-primary" /> : null}
-                          <span className="text-foreground">{permissionLabel}</span>
+                        <Button variant="ghost" size="sm" className="min-w-0 shrink gap-1.5 text-muted-foreground">
+                          {permissionOptions.length > 0 ? <span className="size-1.5 shrink-0 rounded-full bg-primary" /> : null}
+                          <span className="min-w-0 truncate text-foreground">{permissionLabel}</span>
                           <ChevronDown className="size-3.5 opacity-50" />
                         </Button>
                       </DropdownMenuTrigger>
@@ -954,10 +956,10 @@ export function TaskComposer() {
                     {hasOnlineDevice && models.length > 0 ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="max-w-72 gap-1.5 text-muted-foreground">
+                          <Button variant="ghost" size="sm" className="min-w-0 shrink max-w-72 gap-1.5 text-muted-foreground">
                             {reasoningOptions.length > 0 ? <span className="text-foreground">{effortLabel}</span> : null}
                             {reasoningOptions.length > 0 ? <span className="text-muted-foreground/50">·</span> : null}
-                            <span className="truncate text-foreground">{modelLabel}</span>
+                            <span className="min-w-0 truncate text-foreground">{modelLabel}</span>
                             <ChevronDown className="size-3.5 shrink-0 opacity-50" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -1033,7 +1035,7 @@ export function TaskComposer() {
             <Button
               size="icon"
               aria-label={t("sendTask")}
-              className="ml-auto rounded-full"
+              className="ml-auto shrink-0 rounded-full"
               disabled={!canCreate}
               onClick={handleCreate}
             >
@@ -1115,7 +1117,7 @@ function ComposerSelectorLoading({ className }: { className?: string }) {
       variant="ghost"
       size="sm"
       disabled
-      className={cn("justify-start gap-2 text-muted-foreground opacity-100", className)}
+      className={cn("shrink justify-start gap-2 text-muted-foreground opacity-100", className)}
     >
       <Spinner className="size-3.5" />
       <span className="h-3 w-16 rounded-full bg-muted-foreground/20" />

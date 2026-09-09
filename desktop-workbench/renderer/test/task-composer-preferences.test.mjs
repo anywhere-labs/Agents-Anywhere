@@ -232,3 +232,26 @@ test("session creation retains preference persistence as a final fallback", () =
   assert.match(create, /persistPreference\(nextPreference\)/)
   assert.doesNotMatch(create, /writeNewSessionPreference\(nextPreference\)/)
 })
+
+test("the composer footer keeps the send button on the option row", () => {
+  const footer = sourceBetween(
+    'className="flex items-center gap-1 px-3 pb-2 pt-1.5"',
+    'aria-label={t("sendTask")}',
+  )
+  // Wrapping is what pushed the send button onto a row of its own.
+  assert.doesNotMatch(footer, /flex-wrap/)
+  assert.match(footer, /className="min-w-0 shrink gap-1\.5 text-muted-foreground"/)
+  assert.match(footer, /className="min-w-0 shrink max-w-72 gap-1\.5 text-muted-foreground"/)
+  assert.match(footer, /<span className="min-w-0 truncate text-foreground">\{modelLabel\}<\/span>/)
+  assert.match(source, /className="ml-auto shrink-0 rounded-full"/)
+
+  // The device/agent selector truncates for the same reason.
+  const selector = readFileSync(
+    new URL("../src/components/cascading-selector.tsx", import.meta.url),
+    "utf8",
+  )
+  assert.match(selector, /className="min-w-0 shrink gap-1\.5 text-muted-foreground"/)
+  assert.match(selector, /<span className="min-w-0 truncate text-foreground">\{primaryLabel\}<\/span>/)
+  assert.match(selector, /<span className="min-w-0 truncate text-foreground">\{secondaryValueLabel\}<\/span>/)
+})
+

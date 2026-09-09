@@ -50,11 +50,11 @@ export function CascadingSelector({
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
+        <Button variant="ghost" size="sm" className="min-w-0 shrink gap-1.5 text-muted-foreground">
           {icon}
-          <span className="text-foreground">{primaryLabel}</span>
+          <span className="min-w-0 truncate text-foreground">{primaryLabel}</span>
           <span className="text-muted-foreground/40">·</span>
-          <span className="text-foreground">{secondaryValueLabel}</span>
+          <span className="min-w-0 truncate text-foreground">{secondaryValueLabel}</span>
           <ChevronDown className="size-3.5 opacity-50" />
         </Button>
       </DropdownMenuTrigger>

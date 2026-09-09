@@ -46,6 +46,7 @@ import {
   ToolMarkerRowContent,
 } from "@/components/session/session-tool-cards"
 import { timelineRunCounts } from "@/components/session/timeline-summary"
+import { needsOlderTimelinePage } from "@/components/session/timeline-autofill"
 import { createTimelineScrollFollow } from "@/components/session/timeline-scroll-follow"
 import { createSessionEventBuffer } from "@/components/session/session-event-buffer"
 import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
@@ -827,6 +828,14 @@ export function SessionDetail({
     if (!viewport || viewport.scrollTop > LOAD_OLDER_SCROLL_THRESHOLD) return
     void loadOlderTimeline()
   }, [loadOlderTimeline, updateScrollBottomState])
+
+  // A first page that does not fill the viewport cannot be scrolled, so the
+  // scroll handler above never fires. Pull older pages until it can scroll.
+  React.useEffect(() => {
+    if (loading || loadingOlder || !state?.hasMore) return
+    if (!needsOlderTimelinePage(timelineRef.current, state.hasMore)) return
+    void loadOlderTimeline()
+  }, [loadOlderTimeline, loading, loadingOlder, state])
 
   React.useEffect(() => {
     initialScrollDoneRef.current = false

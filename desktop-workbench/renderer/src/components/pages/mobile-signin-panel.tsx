@@ -37,7 +37,10 @@ import { PRODUCT_LINKS } from "@/lib/product-links"
 type Props = {
   token: string
   userId: string
-  children: React.ReactElement
+  /** Rendered as the dialog trigger. Omit it to drive the dialog with `open`. */
+  children?: React.ReactElement
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }
 
 type Stage = "install" | "generating" | "scan" | "confirming"
@@ -77,12 +80,17 @@ function mobileLoginQrPayload(qr: MobileLoginQrCreateResponse) {
   }
 }
 
-export function MobileConnectionDialog({ token, userId, children }: Props) {
+export function MobileConnectionDialog({ token, userId, children, open: controlledOpen, onOpenChange }: Props) {
   const t = useTranslations("dashboard.mobileConnections")
-  const [open, setOpen] = React.useState(false)
+  const [uncontrolledOpen, setUncontrolledOpen] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
+  const open = controlledOpen ?? uncontrolledOpen
+  const setOpen = (next: boolean) => {
+    if (onOpenChange) onOpenChange(next)
+    else setUncontrolledOpen(next)
+  }
   return <Dialog open={open} onOpenChange={(next) => { if (!busy) setOpen(next) }}>
-    <DialogTrigger asChild>{children}</DialogTrigger>
+    {children ? <DialogTrigger asChild>{children}</DialogTrigger> : null}
     <DialogContent className="sm:max-w-md" showCloseButton={!busy}
       onEscapeKeyDown={(event) => { if (busy) event.preventDefault() }}
       onPointerDownOutside={(event) => { if (busy) event.preventDefault() }}>
