@@ -35,7 +35,11 @@ def timeline_item_from_runtime_input(
     order_seq: int | None = None,
     revision: int | None = None,
 ) -> TimelineItem:
-    data = item.model_dump()
+    # ``dict(item)`` is a shallow field copy, so the (potentially large)
+    # ``content`` payload is carried by reference.  ``model_dump()`` deep-copies
+    # it, which made this normalization one of the most expensive steps of the
+    # streaming hot path.
+    data = dict(item)
     data["updatedSeq"] = updated_seq
     if order_seq is not None:
         data["orderSeq"] = order_seq

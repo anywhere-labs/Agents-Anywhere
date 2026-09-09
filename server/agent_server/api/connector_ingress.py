@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import (
@@ -68,26 +69,61 @@ from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 router = APIRouter(tags=["connector-ingress"])
 
 
-@dataclass(frozen=True)
-class _NotificationBarrier:
-    completed: asyncio.Future[None]
+DEFAULT_NOTIFICATION_CONCURRENCY = 4
+
+
+@dataclass(slots=True)
+class _NotificationLane:
+    """FIFO work for one ordering key, with superseded entries dropped."""
+
+    queue: asyncio.Queue[tuple[str, dict[str, Any], str | None, int]] = field(
+        default_factory=asyncio.Queue
+    )
+    # Highest queued version per stable item ID. A queued entry whose version is
+    # no longer the latest for its item has been fully replaced and is skipped.
+    latest: dict[str, int] = field(default_factory=dict)
+    version: int = 0
 
 
 class _ConnectorNotificationPump:
+    """Apply connector notifications with per-session ordering and coalescing.
+
+    Notifications for one session are still applied strictly in arrival order:
+    revisions and timeline items for that session must never overtake each
+    other. Independent sessions no longer queue behind each other, and
+    connector-level notifications (no ``sessionId``) share one lane so their
+    relative order is preserved. ``max_concurrency`` bounds how many lanes may
+    run at the same time.
+
+    ``timeline.itemUpsert`` carries a complete replacement for one stable item
+    ID, so an entry still queued when a newer value for the same item arrives is
+    dropped before it costs anything. The existing pending-projection dedup only
+    avoids the database write; this drops the whole per-delta cost.
+    """
+
     def __init__(
         self,
         connector_id: str,
         ingest_service: ConnectorIngestService,
         *,
         connection_id: str | None = None,
+        max_concurrency: int = DEFAULT_NOTIFICATION_CONCURRENCY,
     ) -> None:
         self._connector_id = connector_id
         self._connection_id = connection_id
         self._ingest_service = ingest_service
-        self._queue: asyncio.Queue[
-            tuple[str, dict[str, Any]] | _NotificationBarrier | None
-        ] = asyncio.Queue()
+        self._queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = (
+            asyncio.Queue()
+        )
         self._task: asyncio.Task[None] | None = None
+        self._lanes: dict[str, _NotificationLane] = {}
+        self._active_lanes: set[str] = set()
+        self._lane_guard = asyncio.Lock()
+        self._slots = asyncio.Semaphore(max(1, max_concurrency))
+        self._pending = 0
+        self._idle = asyncio.Event()
+        self._idle.set()
+        self.coalesced = 0
 
     @property
     def task(self) -> asyncio.Task[None]:
@@ -110,6 +146,7 @@ class _ConnectorNotificationPump:
         method = message.get("method")
         params = message.get("params") or {}
         if isinstance(method, str) and isinstance(params, dict):
+            self._mark_pending(1)
             self._queue.put_nowait((method, params))
 
     async def close(self) -> None:
@@ -117,6 +154,9 @@ class _ConnectorNotificationPump:
             return
         if not self._task.done():
             self._queue.put_nowait(None)
+            await asyncio.gather(self._task, return_exceptions=True)
+            await self._idle.wait()
+            return
         await asyncio.gather(self._task, return_exceptions=True)
 
     async def flush(self) -> None:
@@ -124,16 +164,18 @@ class _ConnectorNotificationPump:
         if task.done():
             await task
             raise RuntimeError("connector notification pump stopped unexpectedly")
-        completed: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-        self._queue.put_nowait(_NotificationBarrier(completed))
-        done, _pending = await asyncio.wait(
-            {task, completed},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        if task in done:
+        await self._idle.wait()
+        if task.done():
             await task
             raise RuntimeError("connector notification pump stopped unexpectedly")
-        await completed
+
+    def _mark_pending(self, delta: int) -> None:
+        self._pending += delta
+        if self._pending <= 0:
+            self._pending = 0
+            self._idle.set()
+        else:
+            self._idle.clear()
 
     async def _run(self) -> None:
         try:
@@ -141,35 +183,8 @@ class _ConnectorNotificationPump:
                 notification = await self._queue.get()
                 if notification is None:
                     return
-                if isinstance(notification, _NotificationBarrier):
-                    if not notification.completed.done():
-                        notification.completed.set_result(None)
-                    continue
                 method, params = notification
-                started_at = time.monotonic()
-                try:
-                    await self._ingest_service.handle_notification_message(
-                        connector_id=self._connector_id,
-                        method=method,
-                        params=params,
-                        connection_id=self._connection_id,
-                    )
-                except Exception:
-                    logger.exception(
-                        "connector notification rejected connector_id={} method={}",
-                        self._connector_id,
-                        method,
-                    )
-                    continue
-                elapsed_ms = (time.monotonic() - started_at) * 1000
-                if method == "timeline.itemUpsert" or elapsed_ms >= 100:
-                    logger.info(
-                        "connector notification handled connector_id={} method={} session_id={} elapsed_ms={:.1f}",
-                        self._connector_id,
-                        method,
-                        params.get("sessionId"),
-                        elapsed_ms,
-                    )
+                await self._dispatch(method, params)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -178,6 +193,118 @@ class _ConnectorNotificationPump:
                 self._connector_id,
             )
             raise
+
+    async def _dispatch(self, method: str, params: dict[str, Any]) -> None:
+        key = self._lane_key(params)
+        item_key = self._item_key(method, params)
+        async with self._lane_guard:
+            lane = self._lanes.get(key)
+            if lane is None:
+                lane = _NotificationLane()
+                self._lanes[key] = lane
+            version = 0
+            if item_key is not None:
+                lane.version += 1
+                version = lane.version
+                lane.latest[item_key] = version
+            lane.queue.put_nowait((method, params, item_key, version))
+            if key not in self._active_lanes:
+                self._active_lanes.add(key)
+                asyncio.create_task(
+                    self._run_lane(key, lane),
+                    name=f"connector-notifications-{self._connector_id}-{key}",
+                )
+
+    async def _run_lane(self, key: str, lane: _NotificationLane) -> None:
+        try:
+            while True:
+                try:
+                    method, params, item_key, version = lane.queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    async with self._lane_guard:
+                        if lane.queue.empty():
+                            self._active_lanes.discard(key)
+                            self._lanes.pop(key, None)
+                            return
+                        continue
+                if item_key is not None:
+                    if lane.latest.get(item_key) != version:
+                        # A newer complete value for this item is already
+                        # queued, so this one can never be observed.
+                        self.coalesced += 1
+                        self._mark_pending(-1)
+                        continue
+                    lane.latest.pop(item_key, None)
+                async with self._slots:
+                    await self._handle(method, params)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - one lane must not stop the pump
+            logger.exception(
+                "connector notification lane failed connector_id={} lane={}",
+                self._connector_id,
+                key,
+            )
+        finally:
+            async with self._lane_guard:
+                self._active_lanes.discard(key)
+                self._lanes.pop(key, None)
+                dropped = 0
+                while not lane.queue.empty():
+                    lane.queue.get_nowait()
+                    dropped += 1
+            if dropped:
+                self._mark_pending(-dropped)
+
+    async def _handle(self, method: str, params: dict[str, Any]) -> None:
+        started_at = time.monotonic()
+        try:
+            try:
+                await self._ingest_service.handle_notification_message(
+                    connector_id=self._connector_id,
+                    method=method,
+                    params=params,
+                    connection_id=self._connection_id,
+                )
+            except Exception:
+                logger.exception(
+                    "connector notification rejected connector_id={} method={}",
+                    self._connector_id,
+                    method,
+                )
+                return
+            elapsed_ms = (time.monotonic() - started_at) * 1000
+            if method == "timeline.itemUpsert" or elapsed_ms >= 100:
+                logger.info(
+                    "connector notification handled connector_id={} method={} session_id={} elapsed_ms={:.1f}",
+                    self._connector_id,
+                    method,
+                    params.get("sessionId"),
+                    elapsed_ms,
+                )
+        finally:
+            self._mark_pending(-1)
+
+    @staticmethod
+    def _lane_key(params: dict[str, Any]) -> str:
+        session_id = params.get("sessionId")
+        if isinstance(session_id, str) and session_id:
+            return f"session:{session_id}"
+        return "connector"
+
+    @staticmethod
+    def _item_key(method: str, params: dict[str, Any]) -> str | None:
+        """Return the stable item ID a full-replacement notification targets."""
+
+        if method != "timeline.itemUpsert":
+            return None
+        item = params.get("item")
+        if not isinstance(item, dict):
+            return None
+        item_id = item.get("id")
+        if not isinstance(item_id, str) or not item_id:
+            return None
+        return item_id
 
 
 @router.post("/connector/auth", response_model=ConnectorAuthResponse)
@@ -366,6 +493,9 @@ async def connector_ws(
             connector_id,
             ingest_service,
             connection_id=connection.connection_id,
+            max_concurrency=int(
+                os.environ.get("AGENT_SERVER_NOTIFICATION_CONCURRENCY", "4")
+            ),
         )
         notification_pump.start()
         # Discovery refreshes provider metadata independently of request routing.

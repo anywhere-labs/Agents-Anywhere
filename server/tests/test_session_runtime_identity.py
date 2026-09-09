@@ -16,9 +16,14 @@ from agent_server.core.runtime_identity import (
 
 
 def test_session_requests_default_to_the_compatibility_instance() -> None:
-    create = SessionCreateRequest(connectorId="conn_1", runtime="codex")
+    create = SessionCreateRequest(
+        connectorId="conn_1",
+        projectId="proj_1",
+        runtime="codex",
+    )
     start = SessionCreateAndStartRequest(
         connectorId="conn_1",
+        projectId="proj_1",
         runtime="dsh",
         content="hello",
     )
@@ -30,6 +35,7 @@ def test_session_requests_default_to_the_compatibility_instance() -> None:
 def test_session_requests_keep_named_runtime_identity() -> None:
     request = SessionCreateAndStartRequest(
         connectorId="conn_1",
+        projectId="proj_1",
         runtime="codex",
         runtimeId="rti_work",
         content="hello",
@@ -42,6 +48,7 @@ def test_session_requests_keep_named_runtime_identity() -> None:
 def test_session_requests_accept_normalized_discovered_runtime_types() -> None:
     request = SessionCreateRequest(
         connectorId="conn_1",
+        projectId="proj_1",
         runtime="example-runtime",
         runtimeId="rti_example",
     )
@@ -54,6 +61,7 @@ def test_session_requests_reject_noncanonical_runtime_types() -> None:
     with pytest.raises(ValidationError, match="runtime type"):
         SessionCreateRequest(
             connectorId="conn_1",
+            projectId="proj_1",
             runtime="Example Runtime",
             runtimeId="rti_example",
         )
@@ -63,6 +71,7 @@ def test_session_requests_reject_mismatched_legacy_identity() -> None:
     with pytest.raises(ValidationError, match="runtime instance ID"):
         SessionCreateRequest(
             connectorId="conn_1",
+            projectId="proj_1",
             runtime="codex",
             runtimeId="claude",
         )

@@ -792,6 +792,23 @@ class SessionView(BaseModel):
         return self
 
 
+class ConnectorSessionResolution(BaseModel):
+    """One connector notification's session resolution.
+
+    ``sessionId`` is the canonical session the notification applies to, or
+    ``None`` when no session matched. ``runtime``/``runtimeId`` are the identity
+    the lookup used. The ``bound*`` fields describe the raw session row when it
+    exists but was not usable, so the caller can still raise its binding error.
+    """
+
+    sessionId: str | None = None
+    runtime: str | None = None
+    runtimeId: str | None = None
+    boundConnectorId: str | None = None
+    boundRuntime: str | None = None
+    boundRuntimeId: str | None = None
+
+
 class SessionRuntimeState(BaseModel):
     sessionId: str
     runtime: RuntimeName

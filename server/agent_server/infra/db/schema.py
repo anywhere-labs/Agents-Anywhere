@@ -495,6 +495,11 @@ timeline_items = Table(
     PrimaryKeyConstraint("session_id", "id"),
     Index("idx_timeline_items_session_updated_seq", "session_id", "updated_seq"),
     Index("idx_timeline_items_session_item_time", "session_id", "item_time"),
+    Index(
+        "idx_timeline_items_session_order_seq",
+        "session_id",
+        "order_seq",
+    ),
     Index("idx_timeline_items_item_time_type_role", "item_time", "type", "role"),
 )
 

@@ -6,6 +6,7 @@ from typing import Any, Protocol
 from agent_server.core.catalogs import CatalogType, CatalogUpdateOutcome
 from agent_server.core.device_runtime import RuntimeTypeDescriptor
 from agent_server.core.models import (
+    ConnectorSessionResolution,
     ConnectorView,
     ProjectView,
     SessionRuntimeState,
@@ -227,6 +228,18 @@ class ConnectorNotificationRepository(
 ):
     async def clear_active_run(self, session_id: str) -> None: ...
 
+    async def resolve_connector_session_binding(
+        self,
+        *,
+        connector_id: str,
+        session_id: str,
+        external_session_id: str | None = None,
+        runtime: str | None = None,
+        runtime_id: str | None = None,
+        source_runtime: str | None = None,
+        source_runtime_id: str | None = None,
+    ) -> ConnectorSessionResolution: ...
+
     async def begin_session_inventory(
         self,
         connector_id: str,
@@ -381,6 +394,12 @@ class DeviceRuntimeRepository(
         user_id: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
+    async def list_user_device_runtimes(
+        self,
+        *,
+        user_id: str,
+    ) -> list[dict[str, Any]]: ...
+
     async def list_connector_runtime_types(
         self,
         connector_id: str,
@@ -512,6 +531,15 @@ class AdminDashboardRepository(Protocol):
     engine: Any
 
     async def list_connectors(self, *, user_id: str | None = None) -> list[ConnectorView]: ...
+
+
+class ConnectorTerminalRepository(Protocol):
+    async def get_connector_terminal_root(
+        self,
+        *,
+        connector_id: str,
+        terminal_id: str,
+    ) -> dict[str, str] | None: ...
 
 
 TerminalRepository = SessionLookupRepository

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -16,6 +18,9 @@ from agent_server.infra.repositories.shares import SessionShareRepositoryMixin
 from agent_server.infra.repositories.timeline import TimelineRepositoryMixin
 from agent_server.infra.repositories.users import UserRepositoryMixin
 from agent_server.infra.repositories.store_support import *
+
+_MAX_TRACKED_LOCKS = 4096
+_TRACKED_LOCK_IDLE_SECONDS = 900.0
 
 
 class Store(
@@ -53,6 +58,7 @@ class Store(
 
         self._timeline_locks: dict[str, asyncio.Lock] = {}
         self._timeline_locks_guard = asyncio.Lock()
+        self._timeline_lock_used: dict[str, float] = {}
         self._session_revision_fence_factory: Any | None = None
         self._session_revision_publisher: Any | None = None
         self._session_revision_range_sealer: Any | None = None
@@ -104,6 +110,41 @@ class Store(
     @property
     def engine(self) -> AsyncEngine:
         return self._engine
+
+    async def timeline_lock(self, session_id: str) -> asyncio.Lock:
+        """Return this session's SQLite writer lock, keeping the registry bounded.
+
+        Only the SQLite backend uses these locks, but a long-lived dev or test
+        process still touches many sessions, so the registry evicts idle,
+        unlocked entries instead of growing without bound.
+        """
+
+        async with self._timeline_locks_guard:
+            lock = self._timeline_locks.get(session_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._timeline_locks[session_id] = lock
+            self._timeline_lock_used[session_id] = time.monotonic()
+            if len(self._timeline_locks) > _MAX_TRACKED_LOCKS:
+                self._evict_timeline_locks_locked()
+            return lock
+
+    def _evict_timeline_locks_locked(self) -> None:
+        cutoff = time.monotonic() - _TRACKED_LOCK_IDLE_SECONDS
+        removable = [
+            session_id
+            for session_id, lock in self._timeline_locks.items()
+            if not lock.locked() and self._timeline_lock_used.get(session_id, 0.0) <= cutoff
+        ]
+        if not removable:
+            removable = [
+                session_id
+                for session_id, lock in self._timeline_locks.items()
+                if not lock.locked()
+            ]
+        for session_id in removable:
+            self._timeline_locks.pop(session_id, None)
+            self._timeline_lock_used.pop(session_id, None)
 
     async def close(self) -> None:
         await self._engine.dispose()

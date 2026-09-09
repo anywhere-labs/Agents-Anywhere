@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -576,11 +575,7 @@ class TimelineRepositoryMixin:
         """Serialize concurrent writers for one session timeline."""
 
         if self.backend == SQLITE_BACKEND:
-            async with self._timeline_locks_guard:
-                lock = self._timeline_locks.get(session_id)
-                if lock is None:
-                    lock = asyncio.Lock()
-                    self._timeline_locks[session_id] = lock
+            lock = await self.timeline_lock(session_id)
             async with lock:
                 yield
             return

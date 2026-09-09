@@ -18,6 +18,7 @@ from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.db.migrations import upgrade_database
 from agent_server.infra.repositories.facade import Store
 from agent_server.services.event_recovery import EventRecoveryService
+from session_fixtures import create_session_with_project
 
 
 def test_event_cursor_is_a_strict_durable_revision_token() -> None:
@@ -278,13 +279,12 @@ def test_timeline_snapshot_replace_requires_snapshot_for_deleted_items(
                 name="dev",
                 user_id="user-1",
             )
-            session = await store.create_session(
+            session = await create_session_with_project(
+                store,
                 connector_id=connector.id,
                 user_id="user-1",
-                runtime="codex",
                 external_session_id="thread-1",
                 title="Recovery",
-                cwd="/repo",
             )
             first = _timeline_item(session.id, "item-1", 1)
             second = _timeline_item(session.id, "item-2", 2)

@@ -20,6 +20,30 @@ from contextlib import suppress
 from agent_server.infra.redis_coordinator import RedisCoordinator
 
 
+def timeline_envelope_message(
+    *,
+    session_id: str,
+    next_seq: int,
+    raw_items: list[str],
+) -> str:
+    """Build a live timeline envelope from already-encoded item JSON.
+
+    The hot path serializes each item once for the pending projection and then
+    splices that same encoding into the envelope, instead of dumping the model
+    a second time just to publish it.
+    """
+
+    return (
+        '{"sessionId":'
+        + json.dumps(session_id, ensure_ascii=False)
+        + ',"nextSeq":'
+        + str(next_seq)
+        + ',"items":['
+        + ",".join(raw_items)
+        + "]}"
+    )
+
+
 class TimelineBroker:
     def __init__(
         self,
@@ -68,14 +92,20 @@ class TimelineBroker:
 
     async def publish(self, session_id: str, payload: dict) -> None:
         message = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        await self.publish_message(session_id, message)
+
+    async def publish_message(self, session_id: str, message: str) -> None:
+        """Publish a pre-encoded envelope so callers can reuse a serialization."""
+
         if self._coordinator.distributed:
             lock_name = f"session-revision:{session_id}"
             channel = self._coordinator.channel("timeline", session_id)
             if self._coordinator.holds_lock(lock_name):
-                async with self._coordinator.pipeline_while_lock_owned(
-                    lock_name
-                ) as pipeline:
-                    pipeline.publish(channel, message)
+                await self._coordinator.publish_while_lock_owned(
+                    lock_name,
+                    channel,
+                    message,
+                )
             else:
                 await self._coordinator.client.publish(channel, message)
             return

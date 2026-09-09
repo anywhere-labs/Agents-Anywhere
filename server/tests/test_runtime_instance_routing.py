@@ -31,6 +31,7 @@ def test_session_catalog_and_active_run_state_are_instance_scoped(tmp_path) -> N
                 runtime="codex",
                 runtime_id="rti_work",
                 external_session_id="shared_external",
+                cwd="/repo",
             )
         )
         second = asyncio.run(
@@ -40,6 +41,7 @@ def test_session_catalog_and_active_run_state_are_instance_scoped(tmp_path) -> N
                 runtime="codex",
                 runtime_id="rti_personal",
                 external_session_id="shared_external",
+                cwd="/repo",
             )
         )
 
@@ -140,6 +142,7 @@ def test_connector_cannot_rebind_an_existing_session(tmp_path) -> None:
                 runtime="codex",
                 runtime_id="rti_work",
                 external_session_id="external_a",
+                cwd="/repo",
             )
         )
 
@@ -151,6 +154,7 @@ def test_connector_cannot_rebind_an_existing_session(tmp_path) -> None:
                     runtime="codex",
                     runtime_id="rti_work",
                     external_session_id="external_b",
+                    cwd="/repo",
                 )
             )
 
@@ -365,6 +369,11 @@ def test_legacy_runtime_catalog_uses_catalog_runtime_as_compatibility_identity(
 
 async def _insert_connector(store: Store, connector_id: str) -> None:
     now = "2026-08-25T00:00:00Z"
+    if not await store.user_exists("user_runtime_routing"):
+        await store.create_user(
+            user_id="user_runtime_routing",
+            password="test-password",
+        )
     async with store.engine.begin() as connection:
         await connection.execute(
             insert(connectors).values(
@@ -379,3 +388,77 @@ async def _insert_connector(store: Store, connector_id: str) -> None:
                 updated_at=now,
             )
         )
+
+
+def test_connector_session_binding_resolves_match_and_reports_mismatch(tmp_path) -> None:
+    path = tmp_path / "connector-binding-resolution.sqlite3"
+    upgrade_database(db_url=f"sqlite+aiosqlite:///{path}")
+    store = Store(path)
+
+    async def resolve(**kwargs):
+        return await store.resolve_connector_session_binding(**kwargs)
+
+    try:
+        asyncio.run(_insert_connector(store, "conn_a"))
+        asyncio.run(_insert_connector(store, "conn_b"))
+        asyncio.run(
+            store.upsert_connector_session(
+                connector_id="conn_a",
+                session_id="sess_imported",
+                runtime="codex",
+                runtime_id="rti_work",
+                external_session_id="external_a",
+                cwd="/repo",
+            )
+        )
+
+        explicit = asyncio.run(
+            resolve(
+                connector_id="conn_a",
+                session_id="sess_imported",
+                external_session_id="external_a",
+                runtime="codex",
+                runtime_id="rti_work",
+            )
+        )
+        assert explicit.sessionId == "sess_imported"
+        assert explicit.runtime == "codex"
+        assert explicit.runtimeId == "rti_work"
+
+        external_match = asyncio.run(
+            resolve(
+                connector_id="conn_a",
+                session_id="sess_unknown",
+                external_session_id="external_a",
+                runtime="codex",
+                runtime_id="rti_work",
+            )
+        )
+        assert external_match.sessionId == "sess_imported"
+
+        missing = asyncio.run(
+            resolve(
+                connector_id="conn_a",
+                session_id="sess_missing",
+                external_session_id=None,
+                runtime="codex",
+                runtime_id="rti_work",
+            )
+        )
+        assert missing.sessionId is None
+        assert missing.boundConnectorId is None
+
+        foreign = asyncio.run(
+            resolve(
+                connector_id="conn_b",
+                session_id="sess_imported",
+                external_session_id=None,
+                runtime="codex",
+                runtime_id="rti_work",
+            )
+        )
+        assert foreign.sessionId is None
+        assert foreign.boundConnectorId == "conn_a"
+        assert foreign.boundRuntime == "codex"
+    finally:
+        asyncio.run(store.close())

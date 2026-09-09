@@ -855,20 +855,27 @@ class TimelineNotificationHandler:
                 "turn lifecycle markers must use dedicated session notifications",
             )
         item = TimelineItemIn.model_validate(params["item"])
-        runtime, runtime_id = await timeline_runtime_identity_from_params(
-            self._store,
-            params,
+        resolution = await self._store.resolve_connector_session_binding(
+            connector_id=connector_id,
+            session_id=params["sessionId"],
+            external_session_id=item.source.sessionId,
+            runtime=params.get("runtime"),
+            runtime_id=params.get("runtimeId"),
+            source_runtime=item.source.runtime,
+            source_runtime_id=None,
         )
-        session_id = await _resolve_timeline_session_id(
-            self._store,
-            connector_id,
-            params["sessionId"],
-            [item],
-            runtime=runtime,
-            runtime_id=runtime_id,
-        )
-        if await _session_disabled(self._store, session_id):
+        if resolution.sessionId is None:
+            if resolution.boundConnectorId is not None:
+                _require_bound_session_identity(
+                    bound_connector_id=resolution.boundConnectorId,
+                    bound_runtime=resolution.boundRuntime or "",
+                    bound_runtime_id=resolution.boundRuntimeId or "",
+                    connector_id=connector_id,
+                    runtime=resolution.runtime or "",
+                    runtime_id=resolution.runtimeId or "",
+                )
             return IngestEffect()
+        session_id = resolution.sessionId
         item = _timeline_item_for_session(item, session_id)
         if self._timeline_write_buffer is None:
             result = await self._store.upsert_timeline_item(
@@ -1141,6 +1148,29 @@ def _require_session_binding(
             "notification connector does not match the session binding",
         )
     if session.runtime != runtime or session.runtimeId != runtime_id:
+        raise NotificationValidationError(
+            "session_runtime_mismatch",
+            "notification runtime does not match the session binding",
+        )
+
+
+def _require_bound_session_identity(
+    *,
+    bound_connector_id: str,
+    bound_runtime: str,
+    bound_runtime_id: str,
+    connector_id: str,
+    runtime: str,
+    runtime_id: str,
+) -> None:
+    """Reject a notification whose session is bound to another connector/runtime."""
+
+    if bound_connector_id != connector_id:
+        raise NotificationValidationError(
+            "session_connector_mismatch",
+            "notification connector does not match the session binding",
+        )
+    if bound_runtime != runtime or bound_runtime_id != runtime_id:
         raise NotificationValidationError(
             "session_runtime_mismatch",
             "notification runtime does not match the session binding",

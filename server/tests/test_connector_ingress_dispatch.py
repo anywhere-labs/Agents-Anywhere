@@ -213,3 +213,202 @@ def test_notification_pump_flush_waits_for_prior_messages() -> None:
         await pump.close()
 
     asyncio.run(exercise())
+
+
+def test_notification_pump_runs_independent_sessions_concurrently() -> None:
+    class ConcurrencyIngest(RecordingIngestService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.both_started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.max_in_flight = 0
+            self._in_flight = 0
+            self._started = 0
+
+        async def handle_notification_message(
+            self,
+            *,
+            connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            connection_id: str | None = None,
+        ) -> None:
+            self._in_flight += 1
+            self._started += 1
+            self.max_in_flight = max(self.max_in_flight, self._in_flight)
+            if self._started >= 2:
+                self.both_started.set()
+            try:
+                await self.release.wait()
+            finally:
+                self._in_flight -= 1
+
+    async def exercise() -> None:
+        ingest = ConcurrencyIngest()
+        pump = _ConnectorNotificationPump(
+            "conn_1",
+            ingest,  # type: ignore[arg-type]
+            max_concurrency=2,
+        )
+        pump.start()
+        try:
+            pump.enqueue_message(
+                {"method": "timeline.itemUpsert", "params": {"sessionId": "sess_a"}}
+            )
+            pump.enqueue_message(
+                {"method": "timeline.itemUpsert", "params": {"sessionId": "sess_b"}}
+            )
+            await asyncio.wait_for(ingest.both_started.wait(), timeout=1)
+            assert ingest.max_in_flight == 2
+            ingest.release.set()
+            await asyncio.wait_for(pump.flush(), timeout=1)
+        finally:
+            await pump.close()
+
+    asyncio.run(exercise())
+
+
+def test_notification_pump_keeps_per_session_fifo_order() -> None:
+    async def exercise() -> None:
+        seen: dict[str, list[str]] = {"sess_a": [], "sess_b": []}
+
+        class OrderedIngest(RecordingIngestService):
+            async def handle_notification_message(
+                self,
+                *,
+                connector_id: str,
+                method: str,
+                params: dict[str, Any],
+                connection_id: str | None = None,
+            ) -> None:
+                # sess_a is deliberately slower, so only per-session ordering
+                # can keep its own messages in arrival order.
+                await asyncio.sleep(0.01 if params["sessionId"] == "sess_a" else 0.001)
+                seen[params["sessionId"]].append(method)
+
+        ingest = OrderedIngest()
+        pump = _ConnectorNotificationPump(
+            "conn_1",
+            ingest,  # type: ignore[arg-type]
+            max_concurrency=4,
+        )
+        pump.start()
+        try:
+            for index in range(6):
+                pump.enqueue_message(
+                    {
+                        "method": f"timeline.item{index}",
+                        "params": {
+                            "sessionId": "sess_b" if index % 2 == 0 else "sess_a"
+                        },
+                    }
+                )
+            await asyncio.wait_for(pump.flush(), timeout=2)
+        finally:
+            await pump.close()
+
+        assert seen["sess_b"] == ["timeline.item0", "timeline.item2", "timeline.item4"]
+        assert seen["sess_a"] == ["timeline.item1", "timeline.item3", "timeline.item5"]
+
+    asyncio.run(exercise())
+
+
+def test_notification_pump_drops_superseded_item_upserts() -> None:
+    class BlockingIngest(RecordingIngestService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.contents: list[str] = []
+
+        async def handle_notification_message(
+            self,
+            *,
+            connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            connection_id: str | None = None,
+        ) -> None:
+            self.contents.append(params["item"]["content"])
+            self.started.set()
+            await self.release.wait()
+
+    async def exercise() -> None:
+        ingest = BlockingIngest()
+        pump = _ConnectorNotificationPump(
+            "conn_1",
+            ingest,  # type: ignore[arg-type]
+        )
+        pump.start()
+        try:
+            pump.enqueue_message(
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": "sess_a",
+                        "item": {"id": "item_1", "content": "v1"},
+                    },
+                }
+            )
+            await asyncio.wait_for(ingest.started.wait(), timeout=1)
+            for content in ("v2", "v3", "v4"):
+                pump.enqueue_message(
+                    {
+                        "method": "timeline.itemUpsert",
+                        "params": {
+                            "sessionId": "sess_a",
+                            "item": {"id": "item_1", "content": content},
+                        },
+                    }
+                )
+            ingest.release.set()
+            await asyncio.wait_for(pump.flush(), timeout=2)
+
+            assert ingest.contents == ["v1", "v4"]
+            assert pump.coalesced == 2
+        finally:
+            await pump.close()
+
+    asyncio.run(exercise())
+
+
+def test_notification_pump_keeps_distinct_items_and_other_methods() -> None:
+    async def exercise() -> None:
+        ingest = RecordingIngestService()
+        pump = _ConnectorNotificationPump(
+            "conn_1",
+            ingest,  # type: ignore[arg-type]
+        )
+        pump.start()
+        try:
+            for index in range(5):
+                pump.enqueue_message(
+                    {
+                        "method": "timeline.itemUpsert",
+                        "params": {
+                            "sessionId": "sess_a",
+                            "item": {"id": f"item_{index}"},
+                        },
+                    }
+                )
+            for _ in range(3):
+                pump.enqueue_message(
+                    {"method": "session.state.updated", "params": {"sessionId": "sess_a"}}
+                )
+            await asyncio.wait_for(pump.flush(), timeout=2)
+        finally:
+            await pump.close()
+
+        assert ingest.methods == [
+            "timeline.itemUpsert",
+            "timeline.itemUpsert",
+            "timeline.itemUpsert",
+            "timeline.itemUpsert",
+            "timeline.itemUpsert",
+            "session.state.updated",
+            "session.state.updated",
+            "session.state.updated",
+        ]
+        assert pump.coalesced == 0
+
+    asyncio.run(exercise())

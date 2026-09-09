@@ -9,6 +9,7 @@ from agent_server.core.timeline import (
 )
 from agent_server.infra.db.migrations import upgrade_database
 from agent_server.infra.repositories.facade import Store
+from session_fixtures import create_session_with_project
 
 
 def timeline_input(
@@ -120,14 +121,7 @@ async def test_incremental_sync_does_not_read_complete_timeline(
     store = Store(db_path)
     try:
         connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-        session = await store.create_session(
-            connector_id=connector.id,
-            user_id="user_1",
-            runtime="codex",
-            external_session_id="thread_1",
-            title="Timeline",
-            cwd="/repo",
-        )
+        session = await create_session_with_project(store, connector_id=connector.id)
 
         async def reject_complete_read(_session_id: str) -> list[TimelineItem]:
             raise AssertionError("incremental sync read the complete timeline")
@@ -155,14 +149,7 @@ async def test_incremental_batch_reserves_consecutive_item_revisions(tmp_path) -
     store = Store(db_path)
     try:
         connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-        session = await store.create_session(
-            connector_id=connector.id,
-            user_id="user_1",
-            runtime="codex",
-            external_session_id="thread_1",
-            title="Timeline",
-            cwd="/repo",
-        )
+        session = await create_session_with_project(store, connector_id=connector.id)
         before_sequence = await store.get_session_seq(session.id)
         items = [
             timeline_input(f"item_{index}", order_seq=index).model_copy(
