@@ -313,6 +313,7 @@ class RuntimeSupervisor:
                 base=self._host,
                 instance=instance,
                 source_key=_provider_source_key(entry.provider, config),
+                status_reporter=self.report_status,
             )
             native_runtime = await entry.provider.create_runtime(config, scoped_host)
             bound_runtime = RuntimeInstance(
@@ -354,6 +355,28 @@ class RuntimeSupervisor:
         lock = self._locks[runtime_id]
         async with lock, self._resource_lock:
             await self._stop_locked(runtime_id)
+
+    async def report_status(
+        self,
+        runtime_id: str,
+        status: RuntimeLifecycleStatus,
+        error: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Record a provider-owned health change for a live instance.
+
+        Deliberately lock-free: this is a best-effort hint raised from a
+        provider's own background task (for example a dropped bridge), while
+        user-driven start/stop always runs afterwards and overwrites it. An
+        instance without a live runtime, or one the user already stopped, is
+        left untouched.
+        """
+
+        entry = self._entries.get(runtime_id)
+        if entry is None or entry.runtime is None:
+            return
+        if entry.status in {"stopped", "stopping"}:
+            return
+        await self._set_entry(runtime_id, status=status, error=error)
 
     def resolve_runtime(
         self,

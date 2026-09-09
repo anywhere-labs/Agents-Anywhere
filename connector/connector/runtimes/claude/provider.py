@@ -17,6 +17,7 @@ from connector.runtime_protocol import (
     RuntimeInvalidRequestError,
     RuntimeProvider,
     RuntimeTypeDescriptor,
+    RuntimeUnavailableError,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.claude import discovery, provider_config
@@ -63,6 +64,8 @@ class ClaudeProvider(RuntimeProvider):
         self._discovered_target = None
 
     async def discover(self) -> RuntimeTypeDescriptor:
+        """Report the supported runtime type; SDK availability is a config/start check."""
+
         sdk = discovery.check_claude_sdk(self._sdk_loader)
         self._discovered_sdk = sdk
         environment = provider_config.merge_environment({})
@@ -70,22 +73,18 @@ class ClaudeProvider(RuntimeProvider):
             self._command_checker,
             environment,
         )
-        available = bool(sdk.get("available"))
-        reason = (
-            None if available else sdk.get("reason") or "claude-agent-sdk unavailable"
-        )
         return RuntimeTypeDescriptor(
             runtime_type=self.runtime_type,
             display_name=self.display_name,
             description=self.description,
-            available=available,
+            available=True,
             capabilities=provider_config.claude_capabilities(),
-            reason=reason,
+            reason=None,
             config_schema=await self.get_config_schema(),
             instance_policy=self.instance_policy,
             max_instances=self.max_instances,
             metadata={
-                "configured": available,
+                "configured": True,
                 "sdk": sdk,
                 "launchTarget": discovery.target_metadata(self._discovered_target),
                 "platform": sys.platform,
@@ -136,7 +135,7 @@ class ClaudeProvider(RuntimeProvider):
         environment = provider_config.merge_environment(raw_values.get("environment"))
         sdk = self._discovered_sdk or discovery.check_claude_sdk(self._sdk_loader)
         if not sdk.get("available"):
-            raise RuntimeInvalidRequestError("Claude Agent SDK is not available")
+            raise RuntimeUnavailableError("Claude Agent SDK is not available")
 
         executable_path = raw_values.get("executablePath")
         launch_metadata = discovery.target_metadata(self._discovered_target)

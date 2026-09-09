@@ -106,7 +106,11 @@ def _make_client(
     connector_id = created.json()["connector"]["id"]
     rpc = FakeRuntimeRpc(discovery)
     app.state.rpc = rpc
-    app.state.device_runtime_service = DeviceRuntimeService(app.state.store, rpc)
+    app.state.device_runtime_service = DeviceRuntimeService(
+        app.state.store,
+        rpc,
+        app.state.timeline_broker,
+    )
     return client, rpc, connector_id, headers
 
 
@@ -286,7 +290,11 @@ def test_v2_create_and_rename_enforce_identity_and_name_invariants(
     assert runtime["name"] == "Work Codex"
     assert runtime["displayName"] == "Work Codex"
     assert runtime["typeDisplayName"] == "Codex"
-    assert runtime["available"] is True
+    # Instance availability follows the instance: configured but not started.
+    assert runtime["configured"] is True
+    assert runtime["active"] is False
+    assert runtime["status"] == "stopped"
+    assert runtime["available"] is False
     assert runtime["defaults"] == {"home": "/tmp/codex"}
     assert runtime["capabilities"] == {"modelCatalog": True}
     assert runtime["createdAt"]
@@ -380,7 +388,10 @@ def test_v2_unavailable_type_can_be_created_configured_and_started(
     )
     assert created.status_code == 201, created.text
     runtime_id = created.json()["runtimeId"]
-    assert created.json()["available"] is False
+    # Type-level discovery facts never gate the instance: this type reports
+    # available=False, yet the instance is configured, started and therefore
+    # available on its own terms.
+    assert created.json()["available"] is True
     assert created.json()["configured"] is True
     assert created.json()["active"] is True
     assert created.json()["status"] == "running"
@@ -957,6 +968,51 @@ def test_v2_discovery_requires_contract_nullable_fields(tmp_path: Any) -> None:
     )
     assert response.status_code == 502, response.text
     assert response.json()["detail"]["code"] == "invalid_runtime_discovery"
+
+
+def test_dashboard_snapshot_pushes_runtime_lifecycle(tmp_path: Any) -> None:
+    client, rpc, connector_id, headers = _make_client(tmp_path, _v2_discovery())
+    _discover_types(client, connector_id, headers)
+    created = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": "codex",
+            "name": "Snapshot Codex",
+            "config": {"home": "/snapshot/codex"},
+            "active": False,
+        },
+    )
+    assert created.status_code == 201, created.text
+    runtime_id = created.json()["runtimeId"]
+
+    ticket = client.post(
+        "/ws-ticket",
+        headers=headers,
+        json={"clientId": "web_dashboard_test", "scope": {"dashboard": True}},
+    )
+    assert ticket.status_code == 200, ticket.text
+    with client.websocket_connect(
+        f"/dashboard/ws?ticket={ticket.json()['ticket']}"
+    ) as websocket:
+        initial = websocket.receive_json()
+        assert [
+            (row["runtimeId"], row["status"], row["available"], row["configured"])
+            for row in initial["runtimes"]
+        ] == [(runtime_id, "stopped", False, True)]
+
+        activated = client.put(
+            f"/connectors/{connector_id}/runtimes/{runtime_id}/active",
+            headers=headers,
+            json={"active": True},
+        )
+        assert activated.status_code == 200, activated.text
+        pushed = websocket.receive_json()
+
+    assert [
+        (row["runtimeId"], row["status"], row["available"])
+        for row in pushed["runtimes"]
+    ] == [(runtime_id, "running", True)]
 
 
 async def _insert_named_runtime(

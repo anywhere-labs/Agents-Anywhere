@@ -33,10 +33,10 @@ from agent_server.api import (
     pairing,
     projects,
     service,
-    shares,
     sessions,
     sessions_fs,
     sessions_terminal,
+    shares,
 )
 from agent_server.core.api_namespace import API_V2_PREFIX
 from agent_server.core.setup_token import SetupToken
@@ -190,6 +190,7 @@ def create_app(
         health_check_interval_seconds=float(
             os.environ.get("AGENT_SERVER_REDIS_HEALTH_CHECK_INTERVAL", "30")
         ),
+        slow_lock_ms=float(os.environ.get("AGENT_SERVER_LOCK_SLOW_MS", "0")),
     )
     app.state.rpc = ConnectorRpcManager(
         app.state.redis,
@@ -214,6 +215,21 @@ def create_app(
         revision_lease_size=int(
             os.environ.get("AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE", "4096")
         ),
+        profile_hotpath=os.environ.get(
+            "AGENT_SERVER_TIMELINE_PROFILE", ""
+        ).strip().lower()
+        in {"1", "true", "yes"},
+        profile_min_ms=float(
+            os.environ.get("AGENT_SERVER_TIMELINE_PROFILE_MIN_MS", "0")
+        ),
+        single_instance=os.environ.get(
+            "AGENT_SERVER_TIMELINE_SINGLE_INSTANCE", ""
+        ).strip().lower()
+        in {"1", "true", "yes"},
+        lane_idle_seconds=float(
+            os.environ.get("AGENT_SERVER_TIMELINE_LANE_IDLE_SECONDS", "900")
+        ),
+        max_lanes=int(os.environ.get("AGENT_SERVER_TIMELINE_MAX_LANES", "4096")),
     )
     app.state.session_runtime_state_cache = SessionRuntimeStateCache()
     app.state.device_runtime_service = DeviceRuntimeService(

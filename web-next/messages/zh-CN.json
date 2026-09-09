@@ -596,6 +596,8 @@
       "runtimeExecutableNotFound": "没有找到可执行文件；配置时请填写路径",
       "runtimeNotReported": "Connector 当前没有上报这个 Runtime。",
       "runtimeIssue": "异常",
+      "runtimeNotStarted": "未启动",
+      "runtimeNotReady": "未就绪",
       "unknownVersion": "未知",
       "runtimeStatus": {
         "stopped": "已停止",

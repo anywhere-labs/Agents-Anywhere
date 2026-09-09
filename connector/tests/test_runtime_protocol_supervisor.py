@@ -60,6 +60,7 @@ class FakeProvider(RuntimeProvider):
         self.discoveries = 0
         self.validated: list[dict[str, Any]] = []
         self.created: list[RuntimeConfig] = []
+        self.hosts: list[RuntimeHostClient] = []
         self.stopped: list[AgentRuntime] = []
         self.fail_discover = False
         self.fail_validate = False
@@ -139,6 +140,7 @@ class FakeProvider(RuntimeProvider):
     ) -> AgentRuntime:
         assert host.connector_id == "conn_test"
         self.created.append(config)
+        self.hosts.append(host)
         return FakeRuntime(runtime=config.runtime, fail_start=self.fail_start)
 
     async def stop_runtime(self, runtime: AgentRuntime) -> None:
@@ -236,6 +238,45 @@ async def _test_runtime_protocol_supervisor_starts_and_reuses_same_config() -> N
     assert len(provider.created) == 1
     assert supervisor.resolve_runtime("fake") is first
     assert statuses == ["validating", "starting", "running"]
+
+
+def test_runtime_protocol_supervisor_reports_provider_health_for_live_instances() -> None:
+    asyncio.run(_test_runtime_protocol_supervisor_reports_provider_health_for_live_instances())
+
+
+async def _test_runtime_protocol_supervisor_reports_provider_health_for_live_instances() -> None:
+    provider = FakeProvider()
+    statuses: list[tuple[str, Mapping[str, Any] | None]] = []
+    supervisor = RuntimeSupervisor(
+        providers=(provider,),
+        host=FakeHost(),
+        status_sink=lambda _runtime, status, error: _append(
+            statuses, (status, error)
+        ),
+    )
+
+    await supervisor.start("fake", {"mode": "auto"})
+    host = provider.hosts[0]
+
+    await host.runtime_health_update(
+        "error",
+        {"code": "runtime_unavailable", "message": "bridge gone"},
+    )
+    assert supervisor.entry("fake").status == "error"
+    assert statuses[-1] == (
+        "error",
+        {"code": "runtime_unavailable", "message": "bridge gone"},
+    )
+    with pytest.raises(RuntimeUnavailableError):
+        supervisor.resolve_runtime("fake")
+
+    await host.runtime_health_update("running")
+    assert supervisor.entry("fake").status == "running"
+    assert statuses[-1] == ("running", None)
+
+    await supervisor.stop("fake")
+    await host.runtime_health_update("error", {"code": "runtime_unavailable"})
+    assert supervisor.entry("fake").status == "stopped"
 
 
 def test_runtime_protocol_supervisor_restarts_when_config_changes() -> None:

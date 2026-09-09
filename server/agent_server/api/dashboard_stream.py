@@ -10,6 +10,7 @@ from starlette.requests import HTTPConnection
 from agent_server.api.server_push_websocket import (
     run_server_push_until_disconnect,
 )
+from agent_server.core.device_runtime import DeviceRuntimeView
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     get_rpc,
@@ -51,6 +52,7 @@ async def _dashboard_snapshot(
         runtime_state_cache,
         sessions,
     )
+    runtimes = await db.list_user_device_runtimes(user_id=user_id)
     return {
         "type": "dashboard.snapshot",
         "connectors": [
@@ -64,6 +66,15 @@ async def _dashboard_snapshot(
         "sessions": [
             session.model_dump(mode="json")
             for session in sessions
+        ],
+        # Device pages render runtime lifecycle from this list, so a status
+        # change reaches them without a manual refresh.
+        "runtimes": [
+            DeviceRuntimeView.model_validate(row).model_dump(
+                mode="json",
+                by_alias=True,
+            )
+            for row in runtimes
         ],
         "sessionPages": {
             "active": {

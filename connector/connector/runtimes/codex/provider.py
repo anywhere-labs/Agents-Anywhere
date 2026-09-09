@@ -17,6 +17,7 @@ from connector.runtime_protocol import (
     RuntimeResourceClaim,
     RuntimeSourceKey,
     RuntimeTypeDescriptor,
+    RuntimeUnavailableError,
 )
 from connector.runtime_protocol.filesystem import filesystem_resource_key
 from connector.runtime_protocol.host import RuntimeHostClient
@@ -80,32 +81,30 @@ class CodexProvider(RuntimeProvider):
         self._discovered_sdk: dict[str, Any] | None = None
 
     async def discover(self) -> RuntimeTypeDescriptor:
+        """Report the supported runtime type; SDK availability is a config/start check."""
+
         sdk = self._sdk_checker()
         self._discovered_sdk = sdk
-        available = bool(sdk.get("available"))
         runtime_environment, shell_path = codex_runtime_environment(None)
         binary_selection = select_codex_runtime_binary(
             "prefer_system",
             runtime_environment,
             shell_path,
         )
-        reason = None
-        if not available:
-            reason = "Codex SDK is unavailable"
         return RuntimeTypeDescriptor(
             runtime_type=self.runtime_type,
             display_name=self.display_name,
             description=self.description,
-            available=available,
+            available=True,
             recommended=self.recommended,
             recommendation_rank=self.recommendation_rank,
             capabilities=provider_config.codex_capabilities(),
-            reason=reason,
+            reason=None,
             config_schema=await self.get_config_schema(),
             instance_policy=self.instance_policy,
             max_instances=self.max_instances,
             metadata={
-                "configured": available,
+                "configured": True,
                 "sdk": sdk,
                 "runtimeBinary": runtime_binary_metadata(binary_selection),
                 "platform": sys.platform,
@@ -181,7 +180,7 @@ class CodexProvider(RuntimeProvider):
 
         sdk = self._discovered_sdk or self._sdk_checker()
         if not sdk.get("available"):
-            raise RuntimeInvalidRequestError("Codex SDK is not available")
+            raise RuntimeUnavailableError("Codex SDK is not available")
         provider_config.merge_environment(raw_values.get("environment"))
         provider_config.validate_codex_executable_path(codex_executable_path)
         codex_home = provider_config.effective_codex_home(configured_codex_home)
@@ -232,7 +231,7 @@ class CodexProvider(RuntimeProvider):
     ) -> AgentRuntime:
         sdk = config.metadata.get("sdk") if isinstance(config.metadata, dict) else None
         if isinstance(sdk, dict) and not sdk.get("available", True):
-            raise RuntimeInvalidRequestError("Codex SDK is not available")
+            raise RuntimeUnavailableError("Codex SDK is not available")
         provider_config.ensure_codex_home(str(config.values["codexHome"]))
         client = self._sdk_client_factory(config)
         return CodexRuntime(

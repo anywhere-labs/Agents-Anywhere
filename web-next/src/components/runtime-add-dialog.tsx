@@ -123,8 +123,8 @@ export function RuntimeAddDialog({
       cancelLabel={tCommon("cancel")}
       saving={saving}
       errorMessage={error}
-      notice={!runtimeType.available ? (
-        <Alert><AlertDescription>{t("runtimeAddUnavailable")}</AlertDescription></Alert>
+      notice={runtimeType.reason ? (
+        <Alert><AlertDescription>{runtimeType.reason}</AlertDescription></Alert>
       ) : null}
       secondaryAction={{
         label: t("configure"),

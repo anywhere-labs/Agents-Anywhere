@@ -5,6 +5,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from connector.logging import logger
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeConfig,
@@ -14,6 +15,7 @@ from connector.runtime_protocol import (
     RuntimeResourceClaim,
     RuntimeSourceKey,
     RuntimeTypeDescriptor,
+    RuntimeUnavailableError,
 )
 from connector.runtime_protocol.filesystem import filesystem_resource_key
 from connector.runtime_protocol.host import RuntimeHostClient
@@ -31,11 +33,20 @@ LEGACY_CONFIG_KEYS = frozenset(
     }
 )
 Discovery = Callable[[dict[str, Any]], Awaitable[discovery.DshDiscovery]]
+Probe = Callable[[dict[str, Any]], Awaitable[discovery.DshDiscovery]]
 
 
 class DshProvider(RuntimeProvider):
-    def __init__(self, discoverer: Discovery | None = None) -> None:
+    def __init__(
+        self,
+        discoverer: Discovery | None = None,
+        prober: Probe | None = None,
+    ) -> None:
         self._discoverer = discoverer or discovery.discover
+        # Reachability is a configuration/start concern. Callers that inject a
+        # discoverer (tests, embedders) keep using it for both so a single fake
+        # still drives the whole provider surface.
+        self._prober = prober or discoverer or discovery.probe
         self._last_discovery: discovery.DshDiscovery | None = None
         self._last_values = provider_config.default_config_values()
         self._preset_catalog: dict[str, Any] = {}
@@ -67,29 +78,35 @@ class DshProvider(RuntimeProvider):
         return "DeepSeek Harness local service runtime"
 
     async def discover(self) -> RuntimeTypeDescriptor:
+        """Report the supported runtime type. Bridge reachability is not discovery."""
+
         values = self._last_values
         result = await self._discoverer(values)
         self._remember(result)
         metadata = dict(result.metadata or {})
+        capabilities = provider_config.dsh_capabilities(
+            metadata.get("runtimeCapabilities")
+        )
         metadata.update(
             {
                 "protocolVersion": "1.0",
-                "readOnly": not provider_config.dsh_capabilities(metadata.get("runtimeCapabilities"))["startTurn"],
                 "storageMode": "dsh-native",
                 "sameSessionWriterLimit": 1,
                 "crossProcessWriterExclusion": False,
                 "configured": result.configured,
             }
         )
+        if "runtimeCapabilities" in metadata:
+            metadata["readOnly"] = not capabilities["startTurn"]
         return RuntimeTypeDescriptor(
             runtime_type=self.runtime_type,
             display_name=self.display_name,
             description=self.description,
             implementation_type=self.implementation_type,
             available=result.available,
-            capabilities=provider_config.dsh_capabilities(metadata.get("runtimeCapabilities")),
+            capabilities=capabilities,
             reason=(
-                result.reason
+                None
                 if result.available
                 else result.reason or "DeepSeek Harness is unavailable"
             ),
@@ -101,8 +118,19 @@ class DshProvider(RuntimeProvider):
         )
 
     async def get_config_schema(self) -> RuntimeConfigSchema:
-        self._remember(await self._discoverer(self._last_values))
+        await self._refresh_presets()
         return self._config_schema()
+
+    async def _refresh_presets(self) -> None:
+        """Best-effort preset refresh: the catalog only exists while DSH runs."""
+
+        try:
+            self._remember(await self._prober(self._last_values))
+        except Exception as exc:  # noqa: BLE001 - configuration stays usable without a bridge
+            logger.warning(
+                "dsh agent preset refresh failed error_type={}",
+                exc.__class__.__name__,
+            )
 
     def _config_schema(self) -> RuntimeConfigSchema:
         schema = provider_config.dsh_config_schema()
@@ -150,10 +178,10 @@ class DshProvider(RuntimeProvider):
                 f"dsh config is invalid at {path or '/'}: {errors[0].message}"
             )
         normalized = provider_config.normalized_config_values(raw)
-        result = await self._discoverer(normalized)
+        result = await self._prober(normalized)
         self._remember(result)
         if not result.available or not result.configured or result.endpoint is None:
-            raise RuntimeInvalidRequestError(result.reason or "DSH is unavailable")
+            raise RuntimeUnavailableError(result.reason or "DSH is unavailable")
         schema_info = self._config_schema()
         if "defaultAgentPreset" not in normalized and "defaultAgentPreset" in schema_info.defaults:
             normalized["defaultAgentPreset"] = schema_info.defaults["defaultAgentPreset"]

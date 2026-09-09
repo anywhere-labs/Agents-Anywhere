@@ -583,3 +583,165 @@ def test_interactive_terminal_routes_relay_and_scrollback_cross_instances() -> N
             await browser_broker.close()
 
     asyncio.run(exercise())
+
+
+def test_lock_stats_record_acquisition_and_hold() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = _coordinator(fake_server)
+
+        async with coordinator.lock(
+            "stats:lock", timeout_seconds=1, lease_seconds=30
+        ):
+            await coordinator.incrby_while_lock_owned("stats:lock", "counter", 1)
+
+        stats = coordinator.stats
+        assert stats.acquisitions == 1
+        assert stats.hold_ms_max > 0.0
+        assert stats.wait_ms_max >= 0.0
+        assert stats.timeouts == 0
+        assert stats.renewal_failures == 0
+        assert stats.release_mismatches == 0
+
+    asyncio.run(exercise())
+
+
+def test_lock_stats_count_acquire_timeout() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        holder = _coordinator(fake_server)
+        waiter = _coordinator(fake_server)
+
+        async with holder.lock(
+            "stats:contended", timeout_seconds=1, lease_seconds=30
+        ):
+            try:
+                async with waiter.lock(
+                    "stats:contended", timeout_seconds=0.05, lease_seconds=30
+                ):
+                    raise AssertionError("second coordinator acquired a held lock")
+            except TimeoutError:
+                pass
+
+        assert waiter.stats.timeouts == 1
+        assert waiter.stats.acquisitions == 0
+        assert holder.stats.acquisitions == 1
+
+    asyncio.run(exercise())
+
+
+def test_lock_stats_count_release_mismatch() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = _coordinator(fake_server)
+        error: Exception | None = None
+
+        try:
+            async with coordinator.lock(
+                "stats:release", timeout_seconds=1, lease_seconds=30
+            ):
+                await coordinator.client.set(
+                    coordinator.key("lock", "stats:release"), "someone-else"
+                )
+        except RuntimeError as exc:
+            error = exc
+
+        assert error is not None
+        assert "no longer owned" in str(error)
+        assert coordinator.stats.release_mismatches == 1
+
+    asyncio.run(exercise())
+
+
+def test_fenced_scripts_reject_a_replaced_lock_owner() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = _coordinator(fake_server)
+        failures = 0
+
+        try:
+            async with coordinator.lock(
+                "fence:lost", timeout_seconds=1, lease_seconds=30
+            ):
+                await coordinator.client.set(
+                    coordinator.key("lock", "fence:lost"), "someone-else"
+                )
+                attempts = (
+                    coordinator.incrby_while_lock_owned("fence:lost", "counter", 1),
+                    coordinator.set_max_while_lock_owned("fence:lost", "counter", 1),
+                    coordinator.store_pending_while_lock_owned(
+                        "fence:lost",
+                        items_key="items",
+                        source_key="source",
+                        mark_read_key="mark",
+                        dirty_key="dirty",
+                        session_id="sess_lost",
+                        item_id="item_lost",
+                        raw_item='{"id":"item_lost"}',
+                    ),
+                    coordinator.publish_while_lock_owned(
+                        "fence:lost", "channel", "{}"
+                    ),
+                )
+                for attempt in attempts:
+                    try:
+                        await attempt
+                    except RuntimeError as exc:
+                        assert "no longer owned" in str(exc)
+                        failures += 1
+                    else:
+                        raise AssertionError(
+                            "fenced script mutated after lock replacement"
+                        )
+        except RuntimeError as exc:
+            assert "no longer owned" in str(exc)
+
+        assert failures == 4
+
+    asyncio.run(exercise())
+
+
+def test_set_max_while_lock_owned_never_lowers_a_watermark() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = _coordinator(fake_server)
+
+        async with coordinator.lock(
+            "fence:max", timeout_seconds=1, lease_seconds=30
+        ):
+            await coordinator.set_max_while_lock_owned("fence:max", "wm", 5)
+            await coordinator.set_max_while_lock_owned("fence:max", "wm", 3)
+
+        assert await coordinator.client.get("wm") == "5"
+
+    asyncio.run(exercise())
+
+
+def test_store_pending_script_stages_projection_and_dirty_marker() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = _coordinator(fake_server)
+
+        async with coordinator.lock(
+            "fence:store", timeout_seconds=1, lease_seconds=30
+        ):
+            await coordinator.store_pending_while_lock_owned(
+                "fence:store",
+                items_key="items",
+                source_key="source",
+                mark_read_key="mark",
+                dirty_key="dirty",
+                session_id="sess_1",
+                source_observed_at="2026-09-09T00:00:00Z",
+                item_id="item_1",
+                raw_item='{"id":"item_1"}',
+                mark_read_on_change=True,
+            )
+
+        client = coordinator.client
+        assert await client.hget("items", "item_1") == '{"id":"item_1"}'
+        assert await client.get("source") == "2026-09-09T00:00:00Z"
+        assert await client.get("mark") == "1"
+        assert await client.smembers("dirty") == {"sess_1"}
+
+    asyncio.run(exercise())

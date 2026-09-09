@@ -24,7 +24,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "fakeredis>=2.30.0",
+    "fakeredis[lua]>=2.30.0",
     "httpx>=0.28.1",
     "pytest>=9.0.3",
     "ruff>=0.15.13",

@@ -362,6 +362,30 @@ class DeviceRuntimeRepositoryMixin:
                 raise KeyError(connector_id)
         return [_runtime_row(row) for row in rows]
 
+    async def list_user_device_runtimes(
+        self,
+        *,
+        user_id: str,
+    ) -> list[dict[str, Any]]:
+        """Every runtime instance the user can see, for the dashboard snapshot."""
+
+        query = (
+            _runtime_instance_select()
+            .where(
+                connectors_t.c.user_id == user_id,
+                connectors_t.c.revoked == 0,
+                or_(
+                    runtime_types_t.c.present == 1,
+                    device_runtimes_t.c.config_json.is_not(None),
+                    device_runtimes_t.c.runtime_id != device_runtimes_t.c.runtime_type,
+                ),
+            )
+            .order_by(device_runtimes_t.c.name_key, device_runtimes_t.c.runtime_id)
+        )
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [_runtime_row(row) for row in rows]
+
     async def get_device_runtime(
         self,
         connector_id: str,
@@ -512,8 +536,6 @@ def _runtime_instance_select() -> Any:
             device_runtimes_t,
             runtime_types_t.c.display_name.label("type_display_name"),
             runtime_types_t.c.present.label("type_present"),
-            runtime_types_t.c.available.label("type_available"),
-            runtime_types_t.c.reason.label("type_reason"),
             runtime_types_t.c.discovery_json.label("type_discovery_json"),
             runtime_types_t.c.metadata_json.label("type_metadata_json"),
             runtime_types_t.c.config_schema_json.label("type_config_schema_json"),
@@ -569,6 +591,9 @@ def _runtime_type_row(row: Any) -> dict[str, Any]:
 def _runtime_row(row: Any) -> dict[str, Any]:
     name = str(row["name"])
     discovery = _json_loads(row["type_discovery_json"]) or {}
+    configured = row["config_json"] is not None
+    status = str(row["status"])
+    error = _json_loads(row["error_json"])
     return {
         "connectorId": str(row["connector_id"]),
         "runtimeId": str(row["runtime_id"]),
@@ -577,11 +602,18 @@ def _runtime_row(row: Any) -> dict[str, Any]:
         "displayName": name,
         "typeDisplayName": str(row["type_display_name"]),
         "present": bool(row["type_present"]),
-        "available": bool(row["type_available"]),
-        "reason": row["type_reason"],
-        "configured": row["config_json"] is not None,
+        # Availability is an instance fact: a runtime is usable only once it is
+        # configured and actually running. Type-level facts stay on the type row
+        # so an unconfigured instance never inherits a discovery error.
+        "available": configured and status == "running",
+        "reason": (
+            error.get("message")
+            if isinstance(error, dict) and isinstance(error.get("message"), str)
+            else None
+        ),
+        "configured": configured,
         "active": bool(row["active"]),
-        "status": str(row["status"]),
+        "status": status,
         "discovery": {} if _stored_v2_descriptor(discovery) is not None else discovery,
         "metadata": _json_loads(row["type_metadata_json"]) or {},
         "schema": _json_loads(row["type_config_schema_json"]),
@@ -589,7 +621,7 @@ def _runtime_row(row: Any) -> dict[str, Any]:
         "defaults": _json_loads(row["type_defaults_json"]) or {},
         "capabilities": _json_loads(row["type_capabilities_json"]) or {},
         "config": _json_loads(row["config_json"]),
-        "error": _json_loads(row["error_json"]),
+        "error": error,
         "lastDiscoveredAt": str(row["type_last_discovered_at"]),
         "createdAt": str(row["created_at"]),
         "updatedAt": str(row["updated_at"]),

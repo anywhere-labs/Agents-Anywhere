@@ -6,7 +6,7 @@ from sqlalchemy import case
 
 from agent_server.infra.repositories.store_support import *
 from agent_server.infra.repositories.projects import _clean_workspace_path
-from agent_server.core.models import TimelineItem
+from agent_server.core.models import ConnectorSessionResolution, TimelineItem
 
 
 SESSION_CURSOR_VERSION = 1
@@ -154,6 +154,29 @@ def _runtime_identity(runtime: str, runtime_id: str | None) -> RuntimeIdentity:
         runtime_type=runtime,
         runtime_id=runtime_id or runtime,
     )
+
+
+def _binding_identity(
+    *,
+    explicit: Any,
+    runtime: str | None,
+    runtime_id: str | None,
+    source_runtime: str | None,
+    source_runtime_id: str | None,
+) -> RuntimeIdentity:
+    """Pick the runtime identity a connector notification resolves against.
+
+    Mirrors the historical order: explicit params, then the explicit session
+    row, then the timeline item's source runtime, then the codex default.
+    """
+
+    if runtime is not None:
+        return _runtime_identity(runtime, runtime_id)
+    if explicit is not None:
+        return _runtime_identity(str(explicit.runtime), str(explicit.runtime_id))
+    if source_runtime is not None and source_runtime != "platform":
+        return _runtime_identity(source_runtime, source_runtime_id)
+    return _runtime_identity("codex", None)
 
 
 def _session_sort_at(latest_item: Any) -> Any:
@@ -586,6 +609,113 @@ class SessionRepositoryMixin:
             raise KeyError(session_id)
         return str(explicit.id)
 
+
+    async def resolve_connector_session_binding(
+        self,
+        *,
+        connector_id: str,
+        session_id: str,
+        external_session_id: str | None = None,
+        runtime: str | None = None,
+        runtime_id: str | None = None,
+        source_runtime: str | None = None,
+        source_runtime_id: str | None = None,
+    ) -> ConnectorSessionResolution:
+        """Resolve one connector notification to its session in one connection.
+
+        The streaming ingest path used to make three separate pooled round trips
+        for this (runtime identity, canonical session, enabled check). The
+        policy is unchanged: a platform or taken-over explicit row wins, then an
+        external-session match, otherwise the explicit row.
+        """
+
+        async with self._engine.connect() as conn:
+            explicit = (
+                await conn.execute(
+                    select(
+                        sessions_t.c.id,
+                        sessions_t.c.runtime,
+                        sessions_t.c.runtime_id,
+                        sessions_t.c.origin,
+                        sessions_t.c.takeover,
+                    ).where(
+                        sessions_t.c.id == session_id,
+                        sessions_t.c.connector_id == connector_id,
+                    )
+                )
+            ).first()
+            identity = _binding_identity(
+                explicit=explicit,
+                runtime=runtime,
+                runtime_id=runtime_id,
+                source_runtime=source_runtime,
+                source_runtime_id=source_runtime_id,
+            )
+            resolved_runtime = str(identity.runtime_type)
+            resolved_runtime_id = str(identity.runtime_id)
+            explicit_matches = explicit is not None and (
+                str(explicit.runtime) == resolved_runtime
+                and str(explicit.runtime_id) == resolved_runtime_id
+            )
+            if explicit_matches and (
+                explicit.takeover == 1 or explicit.origin == "platform"
+            ):
+                return ConnectorSessionResolution(
+                    sessionId=str(explicit.id),
+                    runtime=resolved_runtime,
+                    runtimeId=resolved_runtime_id,
+                )
+
+            if external_session_id:
+                external_query = select(sessions_t.c.id).where(
+                    sessions_t.c.connector_id == connector_id,
+                    sessions_t.c.external_session_id == external_session_id,
+                    sessions_t.c.runtime == resolved_runtime,
+                    sessions_t.c.runtime_id == resolved_runtime_id,
+                )
+                row = (
+                    await conn.execute(
+                        external_query.order_by(
+                            sessions_t.c.takeover.desc(),
+                            sessions_t.c.created_at.asc(),
+                        ).limit(1)
+                    )
+                ).first()
+                if row is not None:
+                    return ConnectorSessionResolution(
+                        sessionId=str(row.id),
+                        runtime=resolved_runtime,
+                        runtimeId=resolved_runtime_id,
+                    )
+
+            if explicit_matches:
+                return ConnectorSessionResolution(
+                    sessionId=str(explicit.id),
+                    runtime=resolved_runtime,
+                    runtimeId=resolved_runtime_id,
+                )
+
+            raw = (
+                await conn.execute(
+                    select(
+                        sessions_t.c.connector_id,
+                        sessions_t.c.runtime,
+                        sessions_t.c.runtime_id,
+                    ).where(sessions_t.c.id == session_id)
+                )
+            ).first()
+            if raw is None:
+                return ConnectorSessionResolution(
+                    runtime=resolved_runtime,
+                    runtimeId=resolved_runtime_id,
+                )
+            return ConnectorSessionResolution(
+                runtime=resolved_runtime,
+                runtimeId=resolved_runtime_id,
+                boundConnectorId=str(raw.connector_id),
+                boundRuntime=str(raw.runtime),
+                boundRuntimeId=str(raw.runtime_id),
+            )
 
     async def list_session_inventory(self, *, user_id: str) -> list[SessionView]:
         """Return the owned session metadata used to group the entire workspace."""

@@ -9,20 +9,23 @@ from __future__ import annotations
 from typing import Any
 
 from agent_server.infra.connector_rpc import ConnectorRpcManager
-from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import (
     Terminal,
     TerminalBroker,
     TerminalRelayError,
 )
 from agent_server.services.connector_rpc import ConnectorUpstreamError
+from agent_server.services.repository_ports import ConnectorTerminalRepository
 from agent_server.services.terminal import terminal_connector_scope_id
 from agent_server.services.workspace import request_connector_bound
 
 
 class TerminalRelayService:
     def __init__(
-        self, store: Store, manager: ConnectorRpcManager, broker: TerminalBroker
+        self,
+        store: ConnectorTerminalRepository,
+        manager: ConnectorRpcManager,
+        broker: TerminalBroker,
     ) -> None:
         self._store = store
         self._manager = manager

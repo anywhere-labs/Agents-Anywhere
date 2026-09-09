@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -176,6 +176,9 @@ class RuntimeInstanceHost(RuntimeHostClient):
     base: RuntimeHostClient
     instance: RuntimeInstanceSpec
     source_key: RuntimeSourceKey | None = None
+    status_reporter: (
+        Callable[[str, str, Mapping[str, Any] | None], Awaitable[None]] | None
+    ) = None
 
     @property
     def connector_id(self) -> str:
@@ -354,6 +357,15 @@ class RuntimeInstanceHost(RuntimeHostClient):
             external_session_id=external_session_id,
             details=self.instance_metadata(details),
         )
+
+    async def runtime_health_update(
+        self,
+        status: str,
+        error: Mapping[str, Any] | None = None,
+    ) -> None:
+        if self.status_reporter is None:
+            return
+        await self.status_reporter(self.instance.runtime_id, status, error)
 
     async def attachment_download(
         self,

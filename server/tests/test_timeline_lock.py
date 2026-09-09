@@ -12,6 +12,7 @@ import pytest
 from agent_server.core.models import TimelineItemIn
 from agent_server.infra.db.migrations import upgrade_database
 from agent_server.infra.repositories.facade import Store
+from session_fixtures import create_session_with_project
 
 
 def _make_item(session_id: str, item_id: str, order: int) -> TimelineItemIn:
@@ -38,14 +39,13 @@ async def test_timeline_lock_serializes_concurrent_upserts(tmp_path):
     store = Store(db_path)
     try:
         # seed a connector + session through the store directly
-        connector, _, _ = await store.create_connector(name="dev", user_id="u1")
-        session = await store.create_session(
+        connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
+        session = await create_session_with_project(
+            store,
             connector_id=connector.id,
-            user_id="u1",
-            runtime="codex",
+            user_id="user_1",
             external_session_id="thr_lock",
             title="t",
-            cwd="/repo",
         )
 
         # fire N concurrent upserts; without the lock the read-modify-write

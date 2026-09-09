@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import contextmanager
 from typing import Any, cast
 
 import pytest
 from fakeredis import FakeAsyncRedis, FakeServer
+from loguru import logger
+from session_fixtures import create_session_with_project, ensure_user
 from sqlalchemy import event, select, update
 
 from agent_server.core.models import TimelineItemIn
@@ -51,19 +54,12 @@ def timeline_input(
     )
 
 
-async def create_buffer(tmp_path, *, presence=None):
+async def create_buffer(tmp_path, *, presence=None, **buffer_kwargs):
     db_path = tmp_path / "timeline-buffer.sqlite3"
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-    session = await store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
-    )
+    session = await create_session_with_project(store, connector_id=connector.id)
     coordinator = RedisCoordinator()
     broker = TimelineBroker(coordinator)
     buffer = TimelineWriteBuffer(
@@ -72,6 +68,7 @@ async def create_buffer(tmp_path, *, presence=None):
         coordinator,
         presence=presence,
         flush_interval_seconds=60,
+        **buffer_kwargs,
     )
     return store, broker, buffer, connector, session
 
@@ -135,10 +132,10 @@ async def test_session_status_writer_suppresses_noop_and_projects_live_presence(
     )
     payloads: list[dict[str, Any]] = []
 
-    async def record_publish(_session_id: str, payload: dict) -> None:
-        payloads.append(payload)
+    async def record_publish(_session_id: str, message: str) -> None:
+        payloads.append(json.loads(message))
 
-    broker.publish = record_publish  # type: ignore[method-assign]
+    broker.publish_message = record_publish  # type: ignore[method-assign]
     try:
         initial_sequence = await store.get_session_seq(session.id)
 
@@ -352,13 +349,13 @@ async def test_successful_live_publish_is_not_repeated_on_flush(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store, broker, buffer, _connector, session = await create_buffer(tmp_path)
-    original_publish = broker.publish
+    original_publish = broker.publish_message
     payloads: list[dict[str, Any]] = []
 
-    async def record_publish(_session_id: str, payload: dict) -> None:
-        payloads.append(payload)
+    async def record_publish(_session_id: str, message: str) -> None:
+        payloads.append(json.loads(message))
 
-    monkeypatch.setattr(broker, "publish", record_publish)
+    monkeypatch.setattr(broker, "publish_message", record_publish)
     try:
         accepted = await buffer.accept(
             session_id=session.id,
@@ -378,7 +375,7 @@ async def test_successful_live_publish_is_not_repeated_on_flush(
         stored = await store.timeline.read(session.id)
         assert [item.updatedSeq for item in stored] == [accepted.item.updatedSeq]
     finally:
-        monkeypatch.setattr(broker, "publish", original_publish)
+        monkeypatch.setattr(broker, "publish_message", original_publish)
         await buffer.close()
         await store.close()
 
@@ -391,28 +388,21 @@ async def test_failed_live_publish_is_repaired_before_next_revision(
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-    session = await store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
-    )
+    session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
     coordinator = RedisCoordinator(client=redis, prefix="test")
     broker = TimelineBroker(coordinator)
     payloads: list[dict[str, Any]] = []
     publish_attempts = 0
 
-    async def fail_first_two_publishes(_session_id: str, payload: dict) -> None:
+    async def fail_first_two_publishes(_session_id: str, message: str) -> None:
         nonlocal publish_attempts
         publish_attempts += 1
         if publish_attempts <= 2:
             raise RuntimeError("broker unavailable")
-        payloads.append(payload)
+        payloads.append(json.loads(message))
 
-    broker.publish = fail_first_two_publishes  # type: ignore[method-assign]
+    broker.publish_message = fail_first_two_publishes  # type: ignore[method-assign]
     buffer = TimelineWriteBuffer(
         store,
         broker,
@@ -480,14 +470,7 @@ async def test_distributed_read_barrier_flushes_another_instance_pending(
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-    session = await store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
-    )
+    session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
     first_coordinator = RedisCoordinator(client=redis, prefix="test")
     second_coordinator = RedisCoordinator(client=redis, prefix="test")
@@ -535,14 +518,7 @@ async def test_redis_revision_lease_avoids_per_upsert_database_allocation(
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-    session = await store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
-    )
+    session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
     coordinator = RedisCoordinator(client=redis, prefix="test")
     lease_calls: list[int] = []
@@ -592,14 +568,7 @@ async def test_redis_revision_lease_is_shared_by_server_instances(tmp_path) -> N
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-    session = await store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
-    )
+    session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
     coordinator = RedisCoordinator(client=redis, prefix="test")
     lease_calls: list[int] = []
@@ -641,6 +610,7 @@ async def test_unchanged_session_inventory_uses_one_batch_without_publication(
     db_path = tmp_path / "timeline-buffer-inventory-batch.sqlite3"
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
+    await ensure_user(store)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session_ids = [f"sess_inventory_{index}" for index in range(6)]
     for index, session_id in enumerate(session_ids):
@@ -650,16 +620,17 @@ async def test_unchanged_session_inventory_uses_one_batch_without_publication(
             runtime="codex",
             runtime_id="codex",
             external_session_id=f"thread_inventory_{index}",
+            cwd="/repo",
             source_state="visible",
         )
     coordinator = RedisCoordinator()
     broker = TimelineBroker(coordinator)
     payloads: list[dict[str, Any]] = []
 
-    async def record_publish(_session_id: str, payload: dict) -> None:
-        payloads.append(payload)
+    async def record_publish(_session_id: str, message: str) -> None:
+        payloads.append(json.loads(message))
 
-    broker.publish = record_publish  # type: ignore[method-assign]
+    broker.publish_message = record_publish  # type: ignore[method-assign]
     buffer = TimelineWriteBuffer(
         store,
         broker,
@@ -775,6 +746,7 @@ async def test_unchanged_session_inventory_chunks_maximum_payload_bind_count(
     db_path = tmp_path / "timeline-buffer-inventory-max-payload.sqlite3"
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
+    await ensure_user(store)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     sample_indexes = (0, 3_999, 4_000, 7_999, 8_000, 9_999)
     sample_ids = [f"sess_inventory_chunk_{index}" for index in sample_indexes]
@@ -785,6 +757,7 @@ async def test_unchanged_session_inventory_chunks_maximum_payload_bind_count(
             runtime="codex",
             runtime_id="codex",
             external_session_id=f"thread_inventory_chunk_{index}",
+            cwd="/repo",
             source_state="visible",
         )
     scan_token = "inventory-max-payload-token"
@@ -875,14 +848,7 @@ async def test_distributed_dedupe_refreshes_another_instance_pending_item(
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-    session = await store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
-    )
+    session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
     first_coordinator = RedisCoordinator(client=redis, prefix="test")
     second_coordinator = RedisCoordinator(client=redis, prefix="test")
@@ -951,14 +917,7 @@ async def test_distributed_accept_uses_redis_head_until_flush(tmp_path) -> None:
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-    session = await store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
-    )
+    session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
     coordinator = RedisCoordinator(client=redis, prefix="test")
     buffer = TimelineWriteBuffer(
@@ -1015,14 +974,7 @@ async def test_redis_loss_abandons_lease_without_reusing_live_sequence(
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-    session = await store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
-    )
+    session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
     first_coordinator = RedisCoordinator(client=redis, prefix="test")
     first_buffer = TimelineWriteBuffer(
@@ -1082,14 +1034,7 @@ async def test_redis_loss_then_durable_writer_skips_the_lost_lease(tmp_path) -> 
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-    session = await store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
-    )
+    session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
     first_coordinator = RedisCoordinator(client=redis, prefix="test")
     first_buffer = TimelineWriteBuffer(
@@ -1150,14 +1095,7 @@ async def test_durable_writer_floors_redis_head_inside_session_fence(tmp_path) -
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-    session = await store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
-    )
+    session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
     coordinator = RedisCoordinator(client=redis, prefix="test")
     buffer = TimelineWriteBuffer(
@@ -1209,13 +1147,8 @@ async def test_stale_durable_writer_is_ordered_before_replacement_lease(
     upgrade_database(sqlite_path=db_path)
     first_store = Store(db_path)
     connector, _, _ = await first_store.create_connector(name="dev", user_id="user_1")
-    session = await first_store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
+    session = await create_session_with_project(
+        first_store, connector_id=connector.id
     )
     second_store = Store(db_path)
     fake_server = FakeServer()
@@ -1238,13 +1171,13 @@ async def test_stale_durable_writer_is_ordered_before_replacement_lease(
     )
     second_broker = TimelineBroker(second_coordinator)
     published: list[dict[str, Any]] = []
-    original_second_publish = second_broker.publish
+    original_second_publish = second_broker.publish_message
 
-    async def record_second_publish(session_id: str, payload: dict) -> None:
-        published.append(payload)
-        await original_second_publish(session_id, payload)
+    async def record_second_publish(session_id: str, message: str) -> None:
+        published.append(json.loads(message))
+        await original_second_publish(session_id, message)
 
-    second_broker.publish = record_second_publish  # type: ignore[method-assign]
+    second_broker.publish_message = record_second_publish  # type: ignore[method-assign]
     second_buffer = TimelineWriteBuffer(
         second_store,
         second_broker,
@@ -1352,13 +1285,8 @@ async def test_stale_snapshot_cleanup_cannot_delete_new_owner_flags(tmp_path) ->
     upgrade_database(sqlite_path=db_path)
     first_store = Store(db_path)
     connector, _, _ = await first_store.create_connector(name="dev", user_id="user_1")
-    session = await first_store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
+    session = await create_session_with_project(
+        first_store, connector_id=connector.id
     )
     second_store = Store(db_path)
     fake_server = FakeServer()
@@ -1444,14 +1372,7 @@ async def test_distributed_accept_holds_fence_through_live_publish(tmp_path) -> 
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-    session = await store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
-    )
+    session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
     coordinator = RedisCoordinator(client=redis, prefix="test")
     broker = TimelineBroker(coordinator)
@@ -1460,8 +1381,8 @@ async def test_distributed_accept_holds_fence_through_live_publish(tmp_path) -> 
     second_publish_started = asyncio.Event()
     published_sequences: list[int] = []
 
-    async def blocking_publish(_session_id: str, payload: dict) -> None:
-        sequence = int(payload["nextSeq"])
+    async def blocking_publish(_session_id: str, message: str) -> None:
+        sequence = int(json.loads(message)["nextSeq"])
         if not first_publish_started.is_set():
             first_publish_started.set()
             await release_first_publish.wait()
@@ -1469,7 +1390,7 @@ async def test_distributed_accept_holds_fence_through_live_publish(tmp_path) -> 
             second_publish_started.set()
         published_sequences.append(sequence)
 
-    broker.publish = blocking_publish  # type: ignore[method-assign]
+    broker.publish_message = blocking_publish  # type: ignore[method-assign]
     buffer = TimelineWriteBuffer(
         store,
         broker,
@@ -1528,14 +1449,7 @@ async def test_redis_epoch_change_abandons_a_stale_restored_head(
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-    session = await store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
-    )
+    session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
     coordinator = RedisCoordinator(client=redis, prefix="test")
     epoch = "redis-run-a"
@@ -1604,14 +1518,7 @@ async def test_redis_epoch_change_during_allocation_fails_before_publish(
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-    session = await store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
-    )
+    session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
     coordinator = RedisCoordinator(client=redis, prefix="test")
     epoch = "redis-run-a"
@@ -1709,14 +1616,7 @@ async def test_redis_epoch_change_invalidates_stale_lane_dedupe(
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-    session = await store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
-    )
+    session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
     coordinator = RedisCoordinator(client=redis, prefix="test")
     epoch = "redis-run-a"
@@ -1763,14 +1663,7 @@ async def test_alias_upsert_fences_the_canonical_session(tmp_path) -> None:
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-    session = await store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
-    )
+    session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
     coordinator = RedisCoordinator(client=redis, prefix="test")
     buffer = TimelineWriteBuffer(
@@ -1825,23 +1718,16 @@ async def test_low_frequency_writer_publishes_before_next_timeline_revision(
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
-    session = await store.create_session(
-        connector_id=connector.id,
-        user_id="user_1",
-        runtime="codex",
-        external_session_id="thread_1",
-        title="Timeline",
-        cwd="/repo",
-    )
+    session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
     coordinator = RedisCoordinator(client=redis, prefix="test")
     broker = TimelineBroker(coordinator)
     payloads: list[dict[str, Any]] = []
 
-    async def record_publish(_session_id: str, payload: dict) -> None:
-        payloads.append(payload)
+    async def record_publish(_session_id: str, message: str) -> None:
+        payloads.append(json.loads(message))
 
-    broker.publish = record_publish  # type: ignore[method-assign]
+    broker.publish_message = record_publish  # type: ignore[method-assign]
     buffer = TimelineWriteBuffer(
         store,
         broker,
@@ -1880,4 +1766,120 @@ async def test_low_frequency_writer_publishes_before_next_timeline_revision(
     finally:
         await buffer.close()
         await redis.aclose()
+        await store.close()
+
+
+@contextmanager
+def captured_loguru():
+    """Collect loguru records so probe assertions do not need a log file."""
+
+    messages: list[str] = []
+    sink_id = logger.add(messages.append, level="INFO", format="{message}")
+    try:
+        yield messages
+    finally:
+        logger.remove(sink_id)
+
+
+@pytest.mark.anyio
+async def test_hotpath_probe_stays_silent_when_disabled(tmp_path) -> None:
+    store, _broker, buffer, _connector, session = await create_buffer(tmp_path)
+    try:
+        with captured_loguru() as messages:
+            await buffer.accept(
+                session_id=session.id,
+                item=timeline_input(
+                    session.id,
+                    text="delta",
+                    content_hash="sha256:delta",
+                    revision=1,
+                ),
+            )
+        assert [message for message in messages if "timeline hotpath" in message] == []
+    finally:
+        await buffer.close()
+        await store.close()
+
+
+@pytest.mark.anyio
+async def test_hotpath_probe_reports_payload_bytes_and_phases(tmp_path) -> None:
+    store, _broker, buffer, _connector, session = await create_buffer(
+        tmp_path,
+        profile_hotpath=True,
+        profile_min_ms=0.0,
+    )
+    try:
+        with captured_loguru() as messages:
+            await buffer.accept(
+                session_id=session.id,
+                item=timeline_input(
+                    session.id,
+                    text="delta",
+                    content_hash="sha256:delta",
+                    revision=1,
+                ),
+            )
+        hotpath = [message for message in messages if "timeline hotpath" in message]
+        assert len(hotpath) == 1
+        line = hotpath[0]
+        assert f"session_id={session.id}" in line
+        assert int(line.split("payload_bytes=")[1].split(" ")[0]) > 0
+        assert "total_ms=" in line
+        for phase in (
+            "lock=",
+            "existing=",
+            "reserve=",
+            "normalize=",
+            "stage=",
+            "publish=",
+            "mark=",
+        ):
+            assert phase in line
+    finally:
+        await buffer.close()
+        await store.close()
+
+
+@pytest.mark.anyio
+async def test_idle_lanes_are_evicted_but_active_lanes_are_not(tmp_path) -> None:
+    store, _broker, buffer, _connector, session = await create_buffer(
+        tmp_path,
+        lane_idle_seconds=0.0,
+    )
+    try:
+        await buffer.accept(
+            session_id=session.id,
+            item=timeline_input(
+                session.id,
+                text="first",
+                content_hash="sha256:first",
+                revision=1,
+            ),
+        )
+        assert session.id in buffer._lanes
+
+        lane = await buffer._lane(session.id)
+        async with lane.lock:
+            await buffer._evict_idle_lanes()
+            assert session.id in buffer._lanes
+
+        await buffer._evict_idle_lanes()
+        assert session.id not in buffer._lanes
+    finally:
+        await buffer.close()
+        await store.close()
+
+
+@pytest.mark.anyio
+async def test_lane_registry_stays_within_its_cap(tmp_path) -> None:
+    store, _broker, buffer, _connector, _session = await create_buffer(
+        tmp_path,
+        max_lanes=2,
+    )
+    try:
+        for index in range(6):
+            await buffer._lane(f"sess_cap_{index}")
+        assert len(buffer._lanes) <= 2
+    finally:
+        await buffer.close()
         await store.close()

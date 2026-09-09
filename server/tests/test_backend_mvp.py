@@ -172,6 +172,11 @@ def seed_runtime_capabilities(
 
 
 def _create_test_project(client, headers, connector_id, cwd="/repo") -> str:
+    """Return the connector workspace project, creating it once per workspace."""
+
+    for project in client.get("/projects", headers=headers).json()["projects"]:
+        if project["connectorId"] == connector_id and project["workspacePath"] == cwd:
+            return project["id"]
     response = client.post(
         "/projects",
         headers=headers,
@@ -500,7 +505,7 @@ def test_platform_session_create_without_external_session_is_rejected(tmp_path):
     response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "codex", "title": "New Codex session", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "title": "New Codex session", "cwd": "/repo"},
     )
     assert response.status_code == 422
     assert response.json()["detail"] == "new sessions must use /sessions/create-and-start"
@@ -522,6 +527,7 @@ def test_session_create_does_not_persist_external_session_model_selection(tmp_pa
         headers=headers,
         json={
             "connectorId": connector_id,
+            "projectId": _create_test_project(client, headers, connector_id),
             "runtime": "codex",
             "title": "Selected model",
             "cwd": "/repo",
@@ -553,6 +559,7 @@ def test_session_create_does_not_persist_external_session_permission_selection(t
         headers=headers,
         json={
             "connectorId": connector_id,
+            "projectId": _create_test_project(client, headers, connector_id),
             "runtime": "codex",
             "title": "Selected permission",
             "cwd": "/repo",
@@ -615,6 +622,7 @@ def test_session_create_and_start_preallocates_session_and_passes_selections(tmp
         headers=headers,
         json={
             "connectorId": connector_id,
+            "projectId": _create_test_project(client, headers, connector_id),
             "runtime": "codex",
             "title": "Start now",
             "cwd": "/repo",
@@ -765,6 +773,7 @@ def test_session_create_rejects_legacy_runtime_settings_model_fields(tmp_path):
         headers=headers,
         json={
             "connectorId": connector_id,
+            "projectId": _create_test_project(client, headers, connector_id),
             "runtime": "codex",
             "cwd": "/repo",
             "runtimeSettings": {
@@ -810,7 +819,7 @@ def test_claude_session_create_without_external_session_uses_create_and_start(tm
     response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "claude", "title": "New Claude session", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "claude", "title": "New Claude session", "cwd": "/repo"},
     )
 
     assert response.status_code == 422, response.text
@@ -833,7 +842,7 @@ def test_session_title_defaults_to_first_user_message(tmp_path):
     session_response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_title", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_title", "cwd": "/repo"},
     )
     session_id = session_response.json()["session"]["id"]
 
@@ -993,6 +1002,7 @@ def test_named_session_state_notification_refreshes_cache_and_pushes_runtime_id(
             session_id=named_session_id,
             runtime="codex",
             runtime_id="rti_work",
+            cwd="/repo",
             external_session_id=None,
         )
     )
@@ -1958,6 +1968,7 @@ def test_sessions_cursor_uses_timeline_and_revision_tiebreaks(tmp_path):
             headers=headers,
             json={
                 "connectorId": connector_id,
+                "projectId": _create_test_project(client, headers, connector_id),
                 "runtime": "codex",
                 "externalSessionId": f"thr_tiebreak_{index}",
                 "title": f"Tiebreak {index}",
@@ -2274,6 +2285,7 @@ def test_connector_ingest_publishes_dashboard_once_for_changed_session_batch(tmp
         headers=headers,
         json={
             "connectorId": connector_id,
+            "projectId": _create_test_project(client, headers, connector_id),
             "runtime": "codex",
             "externalSessionId": "thr_dashboard_batch_second",
             "title": "Second",
@@ -3531,7 +3543,7 @@ def test_sessions_sort_by_latest_timeline_item_not_session_update(tmp_path):
     second_response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_sort", "title": "Second", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_sort", "title": "Second", "cwd": "/repo"},
     )
     assert second_response.status_code == 200
     second_session_id = second_response.json()["session"]["id"]
@@ -3632,7 +3644,7 @@ def test_sessions_sort_by_latest_item_timestamp_not_highest_order_seq(tmp_path):
     second_response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_order", "title": "Second", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_order", "title": "Second", "cwd": "/repo"},
     )
     assert second_response.status_code == 200
     second_session_id = second_response.json()["session"]["id"]
@@ -3714,7 +3726,7 @@ def test_sessions_sort_by_last_activity_at(tmp_path):
     second_response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_activity", "title": "Second", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_activity", "title": "Second", "cwd": "/repo"},
     )
     assert second_response.status_code == 200
     second_session_id = second_response.json()["session"]["id"]
@@ -3756,7 +3768,7 @@ def test_sessions_sort_at_uses_newest_item_or_activity_timestamp(tmp_path):
     second_response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_stale_activity", "title": "Second", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_stale_activity", "title": "Second", "cwd": "/repo"},
     )
     assert second_response.status_code == 200
     second_session_id = second_response.json()["session"]["id"]
@@ -3838,6 +3850,7 @@ def test_complete_timeline_snapshot_recomputes_session_sort_at(tmp_path):
         headers=headers,
         json={
             "connectorId": connector_id,
+            "projectId": _create_test_project(client, headers, connector_id),
             "runtime": "codex",
             "externalSessionId": "thr_second_snapshot_sort",
             "title": "Second",
@@ -3938,7 +3951,7 @@ def test_empty_sessions_sort_by_session_timestamp(tmp_path):
     second_response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_empty", "title": "Second empty", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_empty", "title": "Second empty", "cwd": "/repo"},
     )
     assert second_response.status_code == 200
     second_session_id = second_response.json()["session"]["id"]
@@ -3954,7 +3967,7 @@ def test_session_state_does_not_move_until_timeline_output(tmp_path):
     second_response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_stable", "title": "Second", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_stable", "title": "Second", "cwd": "/repo"},
     )
     assert second_response.status_code == 200
     second_session_id = second_response.json()["session"]["id"]
@@ -4049,7 +4062,7 @@ def test_sessions_sort_at_ignores_sync_observed_timestamp(tmp_path):
     second_response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_sync_observed", "title": "Second", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_sync_observed", "title": "Second", "cwd": "/repo"},
     )
     assert second_response.status_code == 200
     second_session_id = second_response.json()["session"]["id"]
@@ -7450,8 +7463,16 @@ def test_connector_ingest_prefers_explicit_platform_session_over_external_match(
     connector_id, access_token, _, headers = create_connector_and_session(client)
 
     async def _seed_sessions() -> tuple[str, str]:
-        platform = await client.app.state.store.create_session(
+        store = client.app.state.store
+        platform_project = await store.create_project(
+            user_id=account_user_id(client),
             connector_id=connector_id,
+            name="Platform Claude",
+            workspace_path="/repo",
+        )
+        platform = await store.create_session(
+            connector_id=connector_id,
+            project_id=platform_project.id,
             user_id=account_user_id(client),
             runtime="claude",
             external_session_id=None,
@@ -10866,9 +10887,18 @@ def test_fs_and_shell_rpc_forward_windows_workspace_params(tmp_path):
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    windows_project = asyncio.run(
+        client.app.state.store.create_project(
+            user_id=account_user_id(client),
+            connector_id=connector_id,
+            name="Windows paths",
+            workspace_path=r"C:\Users\admin",
+        )
+    )
     session = asyncio.run(
         client.app.state.store.create_session(
             connector_id=connector_id,
+            project_id=windows_project.id,
             runtime="codex",
             external_session_id="thr_windows_paths",
             title="Windows paths",

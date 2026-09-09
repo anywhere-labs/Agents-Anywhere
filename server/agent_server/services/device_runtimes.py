@@ -69,6 +69,20 @@ class DeviceRuntimeOfflineError(DeviceRuntimeError):
     code = "connector_offline"
 
 
+class DeviceRuntimeNotConfiguredError(DeviceRuntimeError):
+    """The instance exists but has no saved configuration yet."""
+
+    status_code = 409
+    code = "runtime_not_configured"
+
+
+class DeviceRuntimeNotStartedError(DeviceRuntimeError):
+    """The instance is configured but the user has not started it."""
+
+    status_code = 409
+    code = "runtime_not_started"
+
+
 NAMED_INSTANCE_REQUIRED_FIELDS_KEY = "requiredForNamedInstance"
 
 
@@ -392,7 +406,21 @@ class DeviceRuntimeService:
             self._validate(config, schema)
             if not await self._manager.is_online(connector_id):
                 raise DeviceRuntimeOfflineError("connector is offline")
-            await self._request_validate(runtime, config)
+            try:
+                await self._request_validate(runtime, config)
+            except DeviceRuntimeError as exc:
+                error = (
+                    exc.detail
+                    if isinstance(exc.detail, dict)
+                    else {"code": exc.code, "message": exc.message}
+                )
+                await self._store.set_device_runtime_status(
+                    connector_id,
+                    runtime_id,
+                    "error",
+                    error=error,
+                )
+                raise
             runtime = DeviceRuntimeView.model_validate(
                 await self._store.set_device_runtime_config(
                     connector_id, runtime_id, config
@@ -400,6 +428,17 @@ class DeviceRuntimeService:
             )
             if runtime.active:
                 runtime = await self._restart_locked(runtime)
+            elif runtime.status != "stopped":
+                # A successful configuration without activation settles on the
+                # configured-but-not-started state instead of leaving a stale
+                # status such as error behind.
+                runtime = DeviceRuntimeView.model_validate(
+                    await self._store.set_device_runtime_status(
+                        connector_id,
+                        runtime_id,
+                        "stopped",
+                    )
+                )
             await self._publish(connector_id, "runtime.config")
             return runtime
 
@@ -415,15 +454,13 @@ class DeviceRuntimeService:
             runtime = await self._get_owned(connector_id, runtime_id, user_id=user_id)
             if active:
                 if not runtime.configured or runtime.config is None:
-                    raise DeviceRuntimeConflictError(
+                    raise DeviceRuntimeNotConfiguredError(
                         "runtime must be configured before activation"
-                    )
-                if not runtime.present:
-                    raise DeviceRuntimeConflictError(
-                        "runtime type is not currently present on the connector"
                     )
                 if not await self._manager.is_online(connector_id):
                     raise DeviceRuntimeOfflineError("connector is offline")
+                # Activation is the explicit start signal, so the connector
+                # performs the live availability check for the runtime type.
                 await self._store.set_device_runtime_active(
                     connector_id, runtime_id, True
                 )
@@ -446,14 +483,10 @@ class DeviceRuntimeService:
         async with self._runtime_lock(connector_id, runtime_id):
             runtime = await self._get_owned(connector_id, runtime_id, user_id=user_id)
             if not runtime.active:
-                raise DeviceRuntimeConflictError("runtime is not active")
+                raise DeviceRuntimeNotStartedError("runtime is not started")
             if not runtime.configured or runtime.config is None:
-                raise DeviceRuntimeConflictError(
+                raise DeviceRuntimeNotConfiguredError(
                     "runtime must be configured before use"
-                )
-            if not runtime.present:
-                raise DeviceRuntimeConflictError(
-                    "runtime type is not currently present on the connector"
                 )
             if not await self._manager.is_online(connector_id):
                 raise DeviceRuntimeOfflineError("connector is offline")

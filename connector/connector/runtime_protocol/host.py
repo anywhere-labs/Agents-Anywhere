@@ -20,7 +20,7 @@ class RuntimeHostClient(ABC):
     """Runtime -> Connector."""
 
     async def publish_runtime_notifications(
-        self, runtime: str, notifications: list[dict[str, Any]], *, runtime_id: str | None = None
+        self, runtime: str, notifications: list[dict[str, Any]], runtime_id: str | None = None
     ) -> None:
         """Await the existing Connector ingest path, without the fallback queue."""
         raise NotImplementedError("Synchronous notification ingestion is unavailable")
@@ -135,6 +135,20 @@ class RuntimeHostClient(ABC):
         details: Mapping[str, Any] | None = None,
     ) -> None:
         raise NotImplementedError
+
+    async def runtime_health_update(
+        self,
+        status: str,
+        error: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Report a provider-owned health change for this runtime instance.
+
+        The Connector routes this to the owning supervisor so runtime status
+        stays one state machine. Hosts that are not bound to an instance ignore
+        it.
+        """
+
+        return None
 
     async def attachment_download(
         self,
