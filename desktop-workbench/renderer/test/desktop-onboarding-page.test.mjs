@@ -28,8 +28,10 @@ const connector = {
   lastSeenAt: null, createdAt: "2026-09-09T00:00:00.000Z", updatedAt: "2026-09-09T00:00:00.000Z",
 }
 
-async function render(t, { source = "desktop", flowId = "" } = {}) {
+async function render(t, { source = "desktop", flowId = "", authFailed = false } = {}) {
   const completed = []
+  const reconnects = []
+  const local = { authFailed }
   window.localStorage.clear()
   const hash = `#/onboarding?source=${source}${flowId ? `&flowId=${flowId}` : ""}`
   window.history.replaceState({}, "", `/${hash}`)
@@ -38,7 +40,15 @@ async function render(t, { source = "desktop", flowId = "" } = {}) {
     platform: "darwin",
     versions: { chrome: "1", electron: "1", node: "1" },
     openExternal: async () => {},
-    device: { createAndConnect: async () => ({ connectorId: connector.id, serverUrl: "https://web.example.test" }) },
+    connector: { getState: async () => ({ authFailed: local.authFailed }) },
+    device: {
+      createAndConnect: async () => ({ connectorId: connector.id, serverUrl: "https://web.example.test", manualDisconnected: false }),
+      reconnectAndConnect: async () => {
+        reconnects.push("reconnect")
+        local.authFailed = false
+        return { connectorId: connector.id, serverUrl: "https://web.example.test", manualDisconnected: false }
+      },
+    },
     onboarding: { complete: async (value) => { completed.push(value); return { completedAt: "2026-09-09T00:00:00.000Z", source: value } } },
   }
   t.mock.method(authApi, "config", async () => ({ needsBootstrap: false, registrationOpen: true }))
@@ -55,7 +65,7 @@ async function render(t, { source = "desktop", flowId = "" } = {}) {
     }, h(AuthProvider, null, h(DesktopOnboardingPage))),
   ))
   t.after(async () => { await act(async () => root.unmount()); container.remove(); delete window.desktopWorkbench })
-  return { container, completed }
+  return { container, completed, reconnects }
 }
 
 async function until(check) {
@@ -110,4 +120,13 @@ test("a plugin flow records the plugin source", async (t) => {
   await act(async () => { button(container, "立刻体验").click(); await delay(10) })
   await until(() => completed.length === 1)
   assert.deepEqual(completed, ["dsh-plugin"])
+})
+
+test("a stale local credential asks for a reconnect instead of waiting forever", async (t) => {
+  const { container, reconnects } = await render(t, { authFailed: true })
+  await until(() => container.textContent.includes("本机连接凭据已失效"))
+  assert.equal(container.querySelector('[data-slide="welcome"]'), null)
+  await act(async () => { button(container, "重新连接").click(); await delay(10) })
+  await until(() => container.querySelector('[data-slide="welcome"]'))
+  assert.deepEqual(reconnects, ["reconnect"])
 })
