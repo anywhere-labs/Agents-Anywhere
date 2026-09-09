@@ -20,5 +20,18 @@
       "supportUrl": "https://github.com/anywhere-labs/Agents-Anywhere/issues",
       "privacyPolicyUrl": "https://privacy.agents-anywhere.com"
     }
+  },
+  "status": {
+    "uploaded": true,
+    "processing": "complete",
+    "exportCompliance": "completed; Apple operating system encryption only",
+    "appStoreBuildSelected": "8",
+    "appReview": "blocked before submission",
+    "blocker": "Apple rejects this build for App Store review because it was built with Xcode Beta. A new build using public GM Xcode and SDK is required.",
+    "screenshotsSaved": true,
+    "localizationsSaved": [
+      "en-US",
+      "zh-Hans"
+    ]
   }
 }
