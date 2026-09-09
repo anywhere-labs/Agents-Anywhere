@@ -4,6 +4,7 @@
     "description": "Exit the other app or stop its process, then check again.",
     "errorTitle": "Unable to check Connector status",
     "errorDescription": "Check the format and permissions of the local Connector record, then try again.",
+    "preparing": "Preparing the local Connector for the first time: downloading Python and dependencies. This can take a few minutes…",
     "quit": "Quit Desktop",
     "recheck": "Check again",
     "checking": "Checking…"

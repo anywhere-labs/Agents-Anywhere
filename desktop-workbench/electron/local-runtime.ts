@@ -9,7 +9,8 @@ export type RuntimeOwner = {
   connectorId?: string; serverUrl?: string; startedAt: string;
 };
 export type LocalState = Record<string, unknown> & { version: 2; connectorIds: string[]; runtime?: RuntimeOwner };
-export type OwnershipState = { status: "owned" | "conflict" | "error"; message?: string; owner?: RuntimeOwner };
+/** `preparing` means the first Connector environment install is still running. */
+export type OwnershipState = { status: "owned" | "conflict" | "preparing" | "error"; message?: string; owner?: RuntimeOwner };
 export const localRuntimePath = (home = userInfo().homedir): string => path.join(home, ".agents-anywhere", "connector-runtime.json");
 
 function object(value: unknown): value is Record<string, unknown> {

@@ -107,7 +107,12 @@ export class BackendState {
     const shellEnvironment = await readShellEnvironment().catch(() => ({} as NodeJS.ProcessEnv));
     if (this.closed) return;
     this.connector.setShellEnvironment(shellEnvironment);
-    await this.acquireOwnership().catch(() => undefined);
+    // A failed probe reaches the renderer only as `error`; the reason itself
+    // exists nowhere else, so keep it in the log instead of discarding it.
+    await this.acquireOwnership().catch((error) => this.appendLog({
+      level: "ERROR",
+      message: `Could not acquire Connector ownership: ${errorMessage(error)}`,
+    }));
     await this.recordInstallation().catch((error) => this.appendLog({
       level: "ERROR",
       message: `Could not record Desktop installation: ${errorMessage(error)}`,

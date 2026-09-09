@@ -73,3 +73,20 @@ test("a late startup snapshot cannot overwrite a newer ownership event", async (
   h.unmount()
   assert.equal(unsubscribed, true)
 })
+
+test("first-run provisioning shows progress instead of the failure dialog", () => {
+  let notify
+  const h = fixture(null, {
+    getState: () => new Promise(() => {}),
+    onState: listener => { notify = listener; return () => {} },
+  })
+  h.render()
+  h.mount()
+  notify({ status: "preparing" })
+  const loading = h.render()
+  assert.equal(loading.type, "LoadingState")
+  assert.equal(loading.props.label, "preparing")
+  assert.equal(h.elements.some(e => e.type === "AlertDialog"), false)
+  notify({ status: "owned" })
+  assert.equal(h.render(), "AUTH-AND-PROVISIONING")
+})

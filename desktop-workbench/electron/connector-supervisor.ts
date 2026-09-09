@@ -25,6 +25,15 @@ type PendingRequest = {
   timer: NodeJS.Timeout;
 };
 
+/**
+ * The first `uv run` on a machine without a project environment downloads
+ * Python and every dependency before the Connector can answer anything, which
+ * takes minutes on a cold cache. Normal RPCs stay fast, so only that first
+ * request gets the long deadline.
+ */
+const FIRST_RUN_TIMEOUT_MS = 15 * 60_000;
+const DEFAULT_RPC_TIMEOUT_MS = 30_000;
+
 type ConnectorSupervisorOptions = {
   onOwnership?: (state: OwnershipState) => void;
   configPath: string;
@@ -138,15 +147,16 @@ export class ConnectorSupervisor {
     fs.accessSync(this.options.dataPath, fs.constants.R_OK | fs.constants.W_OK);
     const runtimeState = await this.request("connector.acquireOwnership", undefined, {
       requiresConfig: false,
-      timeoutMs: 30_000,
+      timeoutMs: this.provisioningTimeoutMs(),
     });
     this.mergeRuntimeState(runtimeState);
     return this.emitState();
   }
 
   async acquireOwnership(): Promise<void> {
+    const timeoutMs = this.announceFirstRun();
     try {
-      await this.request("connector.acquireOwnership", undefined, { requiresConfig: false });
+      await this.request("connector.acquireOwnership", undefined, { requiresConfig: false, timeoutMs });
       this.options.onOwnership?.({ status: "owned" });
     } catch (error) {
       if (!(error instanceof ConnectorRpcError && error.ownershipConflict)) {
@@ -226,7 +236,10 @@ export class ConnectorSupervisor {
   async start(): Promise<ConnectorState> {
     this.keepRuntimeRunning = true;
     this.clearRestartTimer();
-    const result = await this.request("connector.start", undefined, { requiresConfig: true });
+    const result = await this.request("connector.start", undefined, {
+      requiresConfig: true,
+      timeoutMs: this.provisioningTimeoutMs(),
+    });
     this.mergeRuntimeState(result);
     return this.emitState();
   }
@@ -249,7 +262,10 @@ export class ConnectorSupervisor {
   async restart(): Promise<ConnectorState> {
     this.keepRuntimeRunning = true;
     this.clearRestartTimer();
-    const result = await this.request("connector.restart", undefined, { requiresConfig: true });
+    const result = await this.request("connector.restart", undefined, {
+      requiresConfig: true,
+      timeoutMs: this.provisioningTimeoutMs(),
+    });
     this.mergeRuntimeState(result);
     return this.emitState();
   }
@@ -556,6 +572,44 @@ export class ConnectorSupervisor {
       if (resolved) return resolved;
     }
     return "";
+  }
+
+  /**
+   * Where `uv run --project` keeps this project's environment: the packaged
+   * app redirects it under `userData`, development uses the repo's `.venv`.
+   */
+  private projectEnvironmentPath(): string {
+    const configured = (this.shellEnvironment.UV_PROJECT_ENVIRONMENT ?? process.env.UV_PROJECT_ENVIRONMENT)?.trim();
+    if (configured) return configured;
+    return this.options.packaged
+      ? path.join(this.options.dataPath, ".venv")
+      : path.join(this.options.connectorDir, ".venv");
+  }
+
+  /** A prebuilt connector binary runs directly and never syncs an environment. */
+  private needsFirstRunProvisioning(): boolean {
+    if (this.resolveDirectConnectorCli()) return false;
+    return !fs.existsSync(path.join(this.projectEnvironmentPath(), "pyvenv.cfg"));
+  }
+
+  private provisioningTimeoutMs(): number {
+    return this.needsFirstRunProvisioning() ? FIRST_RUN_TIMEOUT_MS : DEFAULT_RPC_TIMEOUT_MS;
+  }
+
+  /**
+   * The first probe waits on `uv` installing Python and every dependency. Tell
+   * the host that this is progress, not failure, so it can show it instead of
+   * an error dialog.
+   */
+  private announceFirstRun(): number {
+    const timeoutMs = this.provisioningTimeoutMs();
+    if (timeoutMs !== FIRST_RUN_TIMEOUT_MS) return timeoutMs;
+    this.options.onOwnership?.({ status: "preparing" });
+    this.log({
+      level: "INFO",
+      message: "First run: installing the Connector environment (Python and dependencies). This can take a few minutes.",
+    });
+    return timeoutMs;
   }
 
   /**

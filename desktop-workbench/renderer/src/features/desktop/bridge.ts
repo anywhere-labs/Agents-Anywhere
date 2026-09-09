@@ -1,4 +1,5 @@
-export type LocalOwnershipState = { status: "owned" | "conflict" | "error"; message?: string }
+/** `preparing` means the first Connector environment install is still running. */
+export type LocalOwnershipState = { status: "owned" | "conflict" | "preparing" | "error"; message?: string }
 import type { DesktopUpdateState } from "../../../../shared/desktop-updates"
 export type { DesktopUpdateState } from "../../../../shared/desktop-updates"
 

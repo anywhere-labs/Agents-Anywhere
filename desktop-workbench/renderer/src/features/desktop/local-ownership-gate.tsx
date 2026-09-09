@@ -27,6 +27,9 @@ export function LocalOwnershipGate({ children }: { children: ReactNode }) {
 
   if (state?.status === "owned") return children
   if (!state) return <LoadingState className="min-h-screen bg-background" />
+  // The first launch installs Python and every dependency before the Connector
+  // can answer; that is progress, not a failure to report.
+  if (state.status === "preparing") return <LoadingState className="min-h-screen bg-background" label={t("preparing")} />
 
   const recheck = async () => {
     const api = getDesktopWorkbenchBridge()?.ownership
