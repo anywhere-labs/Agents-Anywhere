@@ -68,6 +68,7 @@ import {
   runtimeTypeName,
   sessionRuntimeRequestIdentity,
 } from "@/features/dashboard/runtime-instances"
+import { runtimeIsSelectable } from "@/features/dashboard/runtime-status-presentation"
 import {
   availableNewSessionSelectionPreference,
   newSessionSelectionScope,
@@ -1070,7 +1071,7 @@ export function TaskComposer() {
 
 function activeRuntimes(runtimes: DeviceRuntimeView[] | undefined) {
   return (runtimes ?? [])
-    .filter((runtime) => runtime.configured && runtime.active && runtime.status === "running")
+    .filter((runtime) => runtimeIsSelectable(runtime))
     .sort((a, b) => runtimeInstanceName(a).localeCompare(runtimeInstanceName(b)))
 }
 

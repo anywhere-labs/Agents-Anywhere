@@ -13,3 +13,5 @@ export const DashboardSidebarControlsContext = React.createContext<DashboardSide
 export function useDashboardSidebarControls() {
   return React.useContext(DashboardSidebarControlsContext)
 }
+
+export const WorkspaceSidebarControlContext = React.createContext(false)

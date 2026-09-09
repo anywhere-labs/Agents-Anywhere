@@ -41,7 +41,6 @@ export type ProjectListController = {
     status?: ProjectSessionStatusFilter,
   ) => WorkspaceSessionView[]
   expandedProjectIds: string[]
-  loadingProjectSessionIds: string[]
   activeSessionId: string | null
   onExpandedChange: (projectId: string, open: boolean) => void
   onOpenSession: (sessionId: string) => void
@@ -71,7 +70,6 @@ export function ProjectList({
           project={project}
           sessions={controller.sessionsForProject(project.id, sessionStatus)}
           expanded={controller.expandedProjectIds.includes(project.id)}
-          loading={controller.loadingProjectSessionIds.includes(project.id)}
           activeSessionId={controller.activeSessionId}
           onExpandedChange={(open) => controller.onExpandedChange(project.id, open)}
           onOpenSession={controller.onOpenSession}

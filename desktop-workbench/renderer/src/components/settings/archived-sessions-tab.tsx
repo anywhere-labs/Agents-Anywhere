@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button"
 import { SettingsSection } from "@/components/settings/settings-section"
 import {
   Empty,
-  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
@@ -28,6 +27,7 @@ import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { ProjectView, SessionView } from "@/features/dashboard/types"
+import type { WorkspaceSessionView } from "@/components/workspace-context"
 
 const ALL_PROJECTS = "all"
 const UNKNOWN_PROJECT_GROUP = "unknown-project"
@@ -44,37 +44,35 @@ type ArchivedSessionGroup = {
   projectId: string | null
   name: string
   workspacePath: string | null
-  sessions: SessionView[]
+  sessions: WorkspaceSessionView[]
 }
 
 type ArchivedSessionsTabProps = {
   token: string
   projects: ProjectView[]
+  sessions: WorkspaceSessionView[]
+  loading: boolean
   onOpenSession: (sessionId: string) => void
   onSessionUpdated: (session: SessionView) => void
   onWorkspaceRefresh: () => void
 }
 
-function sessionTime(session: SessionView): string | null {
-  return session.archivedAt ?? session.sortAt ?? session.lastActivityAt ?? session.lastItemAt
+function sessionTime(session: WorkspaceSessionView): string | null {
+  return session.archivedAt ?? session.sortAt ?? session.lastActivityAt ?? session.lastItemAt ?? null
 }
 
-function sessionTimeValue(session: SessionView): number {
+function sessionTimeValue(session: WorkspaceSessionView): number {
   const value = sessionTime(session)
   if (!value) return 0
   const timestamp = Date.parse(value)
   return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
-function mergeSessions(current: SessionView[], incoming: SessionView[]): SessionView[] {
-  const merged = new Map(current.map((session) => [session.id, session]))
-  incoming.forEach((session) => merged.set(session.id, session))
-  return Array.from(merged.values()).sort((left, right) => sessionTimeValue(right) - sessionTimeValue(left))
-}
-
 export function ArchivedSessionsTab({
   token,
   projects,
+  sessions,
+  loading,
   onOpenSession,
   onSessionUpdated,
   onWorkspaceRefresh,
@@ -82,17 +80,7 @@ export function ArchivedSessionsTab({
   const t = useTranslations("pages.settings")
   const tActions = useTranslations("dashboard.actions")
   const locale = useLocale()
-  const requestIdRef = React.useRef(0)
-  const loadMoreRequestIdRef = React.useRef(0)
-  const [sessions, setSessions] = React.useState<SessionView[]>([])
   const [projectFilter, setProjectFilter] = React.useState(ALL_PROJECTS)
-  const projectFilterRef = React.useRef(projectFilter)
-  projectFilterRef.current = projectFilter
-  const [loading, setLoading] = React.useState(true)
-  const [loadingMore, setLoadingMore] = React.useState(false)
-  const [hasMore, setHasMore] = React.useState(false)
-  const [nextCursor, setNextCursor] = React.useState<string | null>(null)
-  const [error, setError] = React.useState<string | null>(null)
   const [unarchivingIds, setUnarchivingIds] = React.useState<string[]>([])
   const [unarchivingProjectId, setUnarchivingProjectId] = React.useState<string | null>(null)
 
@@ -106,42 +94,6 @@ export function ArchivedSessionsTab({
     }),
     [locale],
   )
-
-  const loadInitial = React.useCallback(async () => {
-    const requestId = ++requestIdRef.current
-    loadMoreRequestIdRef.current += 1
-    setLoadingMore(false)
-    if (!token) {
-      setSessions([])
-      setLoading(false)
-      return
-    }
-    setLoading(true)
-    setError(null)
-    try {
-      const projectId = projectIdFromFilter(projectFilter)
-      const response = projectId
-        ? await dashboardApi.listProjectSessions(token, projectId, { archived: true, limit: 100 })
-        : await dashboardApi.listSessions(token, { archived: true, limit: 100 })
-      if (requestId !== requestIdRef.current) return
-      setSessions(mergeSessions([], response.sessions))
-      setHasMore(response.hasMore)
-      setNextCursor(response.nextCursor)
-    } catch (err) {
-      if (requestId !== requestIdRef.current) return
-      setError(err instanceof Error ? err.message : t("archivedLoadFailed"))
-    } finally {
-      if (requestId === requestIdRef.current) setLoading(false)
-    }
-  }, [projectFilter, t, token])
-
-  React.useEffect(() => {
-    void loadInitial()
-    return () => {
-      requestIdRef.current += 1
-      loadMoreRequestIdRef.current += 1
-    }
-  }, [loadInitial])
 
   React.useEffect(() => {
     if (!projectFilter.startsWith(PROJECT_PREFIX)) return
@@ -161,9 +113,10 @@ export function ArchivedSessionsTab({
   const groups = React.useMemo<ArchivedSessionGroup[]>(() => {
     const projectById = new Map(projects.map((project) => [project.id, project]))
     const filteredSessions = sessions.filter((session) => {
+      if (!session.archived) return false
       if (projectFilter === ALL_PROJECTS) return true
       return session.projectId === selectedProjectId
-    })
+    }).sort((left, right) => sessionTimeValue(right) - sessionTimeValue(left))
     const grouped = new Map<string, ArchivedSessionGroup>()
 
     for (const session of filteredSessions) {
@@ -193,37 +146,6 @@ export function ArchivedSessionsTab({
     })
   }, [locale, projectFilter, projects, selectedProjectId, sessions, t])
 
-  const loadMore = async () => {
-    if (!token || !hasMore || !nextCursor || loadingMore) return
-    const requestId = ++loadMoreRequestIdRef.current
-    const filterAtRequestStart = projectFilter
-    setLoadingMore(true)
-    try {
-      const response = selectedProjectId
-        ? await dashboardApi.listProjectSessions(token, selectedProjectId, {
-            archived: true,
-            limit: 100,
-            cursor: nextCursor,
-          })
-        : await dashboardApi.listSessions(token, {
-            archived: true,
-            limit: 100,
-            cursor: nextCursor,
-          })
-      if (
-        requestId !== loadMoreRequestIdRef.current ||
-        projectFilterRef.current !== filterAtRequestStart
-      ) return
-      setSessions((current) => mergeSessions(current, response.sessions))
-      setHasMore(response.hasMore)
-      setNextCursor(response.nextCursor)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("archivedLoadFailed"))
-    } finally {
-      if (requestId === loadMoreRequestIdRef.current) setLoadingMore(false)
-    }
-  }
-
   const unarchiveSession = async (sessionId: string) => {
     if (!token || unarchivingIds.includes(sessionId)) return
     setUnarchivingIds((current) => [...current, sessionId])
@@ -235,7 +157,6 @@ export function ArchivedSessionsTab({
         return
       }
       onSessionUpdated(unarchivedSession)
-      setSessions((current) => current.filter((session) => session.id !== sessionId))
       onWorkspaceRefresh()
       toast.success(t("archivedUnarchiveSuccess"), {
         action: {
@@ -263,8 +184,6 @@ export function ArchivedSessionsTab({
         return
       }
       response.sessions.forEach(onSessionUpdated)
-      const restoredIds = new Set(response.sessions.map((session) => session.id))
-      setSessions((current) => current.filter((session) => !restoredIds.has(session.id)))
       onWorkspaceRefresh()
       toast.success(t("archivedUnarchiveAllSuccess"))
     } catch (err) {
@@ -275,23 +194,6 @@ export function ArchivedSessionsTab({
   }
 
   if (loading) return <LoadingState className="min-h-64" />
-
-  if (error) {
-    return (
-      <Empty className="min-h-64 border border-dashed">
-        <EmptyHeader>
-          <EmptyMedia variant="icon"><Archive /></EmptyMedia>
-          <EmptyTitle>{t("archivedLoadFailed")}</EmptyTitle>
-          <EmptyDescription>{error}</EmptyDescription>
-        </EmptyHeader>
-        <EmptyContent>
-          <Button type="button" variant="outline" onClick={() => void loadInitial()}>
-            {t("archivedRetry")}
-          </Button>
-        </EmptyContent>
-      </Empty>
-    )
-  }
 
   return (
     <div className="flex flex-col gap-5">
@@ -407,14 +309,6 @@ export function ArchivedSessionsTab({
         </div>
       )}
 
-      {hasMore ? (
-        <div className="flex justify-center">
-          <Button type="button" variant="outline" disabled={loadingMore} onClick={() => void loadMore()}>
-            {loadingMore ? <Spinner data-icon="inline-start" /> : null}
-            {loadingMore ? t("archivedLoadingMore") : t("archivedLoadMore")}
-          </Button>
-        </div>
-      ) : null}
     </div>
   )
 }

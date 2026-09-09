@@ -235,6 +235,10 @@ export class DashboardApi {
     return this.client.get<SessionListResponse>("/sessions", { token, query });
   }
 
+  listSessionInventory(token: string): Promise<Pick<SessionListResponse, "sessions" | "serverTime">> {
+    return this.client.get("/sessions/list", { token });
+  }
+
   archiveConnectorSessions(
     token: string,
     connectorId: string,

@@ -3,7 +3,7 @@ import type { ConnectorView } from "@/features/dashboard/types"
 import { isApiError } from "@/lib/api/errors"
 import { isTransientHttpStatus } from "@/lib/retry"
 
-// Owned by the app-level device pairing queue, so closing the pairing form does
+// Owned by the app-level Agent setup queue, so closing the pairing form does
 // not cancel the wait. Disposal is reserved for completion or app teardown.
 export function watchPairingConnector({
   token,

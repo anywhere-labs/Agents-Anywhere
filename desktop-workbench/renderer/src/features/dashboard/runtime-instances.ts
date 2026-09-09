@@ -19,11 +19,6 @@ export function runtimeTypeName(runtime: DeviceRuntimeView): string {
     ?? runtime.runtimeType
 }
 
-export function runtimeIsAvailable(runtime: DeviceRuntimeView): boolean {
-  if (typeof runtime.available === "boolean") return runtime.available
-  return runtime.present && runtime.discovery.available !== false
-}
-
 export function sessionRuntimeType(session: SessionRuntimeIdentity): string {
   return nonEmpty(session.runtimeType) ?? session.runtime
 }
@@ -51,7 +46,6 @@ export function sessionRuntimeRequestIdentity(
 }
 
 export function runtimeTypeFromLegacy(runtime: DeviceRuntimeView): RuntimeTypeView {
-  const available = runtimeIsAvailable(runtime)
   return {
     connectorId: runtime.connectorId,
     runtimeType: runtime.runtimeType,
@@ -59,8 +53,10 @@ export function runtimeTypeFromLegacy(runtime: DeviceRuntimeView): RuntimeTypeVi
     displayName: runtimeTypeName(runtime),
     description: null,
     present: runtime.present,
-    available,
-    reason: available ? null : "runtime_unavailable",
+    // A type synthesised from a known instance is a supported type: type-level
+    // availability never derives from instance state.
+    available: true,
+    reason: null,
     recommended: false,
     recommendationRank: null,
     discovery: runtime.discovery,
@@ -129,11 +125,12 @@ export function suggestedRuntimeInstanceName(
   runtimeType: RuntimeTypeView,
   runtimes: readonly DeviceRuntimeView[],
 ): string {
+  const defaultName = runtimeType.runtimeType === "dsh" ? "DSH" : runtimeType.displayName
   const names = new Set(runtimes.map((runtime) => runtimeInstanceName(runtime).toLocaleLowerCase()))
-  if (!names.has(runtimeType.displayName.toLocaleLowerCase())) return runtimeType.displayName
+  if (!names.has(defaultName.toLocaleLowerCase())) return defaultName
   let suffix = 2
-  while (names.has(`${runtimeType.displayName} ${suffix}`.toLocaleLowerCase())) suffix += 1
-  return `${runtimeType.displayName} ${suffix}`
+  while (names.has(`${defaultName} ${suffix}`.toLocaleLowerCase())) suffix += 1
+  return `${defaultName} ${suffix}`
 }
 
 export function runtimeCreationDefaults(

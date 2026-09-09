@@ -31,6 +31,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { MonacoCodeView, type MonacoCodeViewApi } from "@/components/monaco-code-view"
+import { filePreviewLocation, type FilePreviewLocation } from "@/lib/file-preview-location"
 import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
 import { dashboardApi } from "@/features/dashboard/api"
 import { loadStoredSession } from "@/features/auth/session"
@@ -75,6 +76,7 @@ export function FilePreviewPage() {
       root={root}
       initialPath={routePath}
       initialName={routeName}
+      initialLocation={filePreviewLocation(params.get("line"), params.get("column"))}
       previewToken={previewToken}
       sourceUrl={sourceUrl}
       sourceMediaType={sourceMediaType}
@@ -97,6 +99,7 @@ type FilePreviewSurfaceProps = {
   root: string
   initialPath: string
   initialName?: string
+  initialLocation?: FilePreviewLocation
   previewToken?: string
   sourceUrl?: string
   sourceMediaType?: string
@@ -168,6 +171,7 @@ export function FilePreviewSurface({
   root,
   initialPath,
   initialName = "",
+  initialLocation,
   previewToken = "",
   sourceUrl = "",
   sourceMediaType = "",
@@ -383,7 +387,8 @@ export function FilePreviewSurface({
 
   const handleEditorReady = React.useCallback((api: MonacoCodeViewApi) => {
     editorRef.current = api
-  }, [])
+    if (initialLocation && path === routePath) api.revealPosition(initialLocation)
+  }, [initialLocation, path, routePath])
 
   const handleEditorChange = React.useCallback(
     (value: string) => setDirty(value !== editorInitialContentRef.current),

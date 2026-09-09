@@ -226,6 +226,7 @@ function useRuntimePanelRenderer({
           connectorId={connectorId}
           root={root}
           variant={options?.mobileDrawer ? "mobile" : "desktop"}
+          onPopOut={options?.nativeWindow || options?.mobileDrawer ? undefined : () => setPanelMode("terminal", "floating")}
           onClose={() => setPanelMode("terminal", "closed")}
         />
       )

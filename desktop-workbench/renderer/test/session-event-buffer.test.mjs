@@ -58,3 +58,29 @@ test("changing sessions cancels the old timer and never commits stale queued eve
   t.mock.timers.tick(1000)
   assert.deepEqual(commits, [])
 })
+
+test("an authoritative snapshot discards superseded queued events without losing subsequent output", t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  const commits = []
+  const buffer = createSessionEventBuffer(events => commits.push(events))
+  buffer.push(event(10))
+  buffer.clear()
+  buffer.push(event(2)) // A replaced snapshot may restart the sequence.
+  t.mock.timers.tick(SESSION_EVENT_FLUSH_MS)
+  assert.deepEqual(commits.flat().map(event => event.sequence), [2])
+  buffer.dispose()
+})
+
+test("a live-read barrier drains older projections once before the authoritative result", t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  const order = []
+  const buffer = createSessionEventBuffer(events => order.push(...events.map(event => event.sequence)))
+  buffer.push(event(1))
+  buffer.push(event(2))
+  buffer.flush()
+  order.push("live-read")
+  buffer.push(event(3))
+  t.mock.timers.tick(SESSION_EVENT_FLUSH_MS)
+  assert.deepEqual(order, [2, "live-read", 3])
+  buffer.dispose()
+})

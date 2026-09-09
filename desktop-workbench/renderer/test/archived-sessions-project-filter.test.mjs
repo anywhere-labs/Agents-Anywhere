@@ -7,21 +7,15 @@ const source = readFileSync(
   "utf8",
 )
 
-test("project archive filtering loads the selected project's own pages", () => {
+// Web now shares one session inventory with every project view, so the archived
+// tab filters the sessions it is handed instead of paging a project on its own.
+test("project archive filtering reads the shared inventory instead of per-project pages", () => {
+  assert.match(source, /sessions: WorkspaceSessionView\[\]/)
   assert.match(source, /const projectId = projectIdFromFilter\(projectFilter\)/)
-  assert.match(
-    source,
-    /dashboardApi\.listProjectSessions\(token, projectId, \{ archived: true, limit: 100 \}\)/,
-  )
-  assert.match(
-    source,
-    /dashboardApi\.listProjectSessions\(token, selectedProjectId, \{[\s\S]*?cursor: nextCursor/,
-  )
+  assert.doesNotMatch(source, /listProjectSessions/)
 })
 
-test("changing the project filter fences in-flight archive pages", () => {
-  assert.match(source, /const loadMoreRequestIdRef = React\.useRef\(0\)/)
-  assert.match(source, /const projectFilterRef = React\.useRef\(projectFilter\)/)
-  assert.match(source, /requestId !== loadMoreRequestIdRef\.current/)
-  assert.match(source, /projectFilterRef\.current !== filterAtRequestStart/)
+test("the archived tab no longer fences in-flight project pages", () => {
+  assert.doesNotMatch(source, /loadMoreRequestIdRef/)
+  assert.doesNotMatch(source, /projectFilterRef/)
 })

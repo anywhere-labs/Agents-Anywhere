@@ -3,7 +3,6 @@
 import * as React from "react"
 import { CheckCheck } from "lucide-react"
 import { SessionFilterMenu } from "@/components/session-filter-menu"
-import { SessionPageTrigger } from "@/components/sidebar/session-page-trigger"
 import { SessionSidebarItem } from "@/components/sidebar/session-sidebar-item"
 import { SidebarLoadingItem } from "@/components/sidebar/sidebar-loading-item"
 import { SidebarSectionTrigger } from "@/components/sidebar/sidebar-section-trigger"
@@ -24,30 +23,24 @@ type RecentSessionsSectionProps = {
   sessions: WorkspaceSessionView[]
   label?: string
   isLoading: boolean
-  hasMoreSessions: boolean
-  isLoadingMoreSessions: boolean
   activeSessionId: string | null
   onMarkAllRead: () => void | Promise<void>
   onOpenSession: (sessionId: string) => void
   onToggleSessionPin: (sessionId: string) => void
   onToggleSessionArchive: (sessionId: string) => void
   onRenameSession: (sessionId: string, title: string) => Promise<boolean>
-  onLoadMoreSessions: () => void
 }
 
 export function RecentSessionsSection({
   sessions,
   label,
   isLoading,
-  hasMoreSessions,
-  isLoadingMoreSessions,
   activeSessionId,
   onMarkAllRead,
   onOpenSession,
   onToggleSessionPin,
   onToggleSessionArchive,
   onRenameSession,
-  onLoadMoreSessions,
 }: RecentSessionsSectionProps) {
   const t = useTranslations("dashboard")
   const [expanded, setExpanded] = React.useState(true)
@@ -91,13 +84,6 @@ export function RecentSessionsSection({
                   />
                 ))
               )}
-              {!isLoading && hasMoreSessions ? (
-                <SessionPageTrigger
-                  loading={isLoadingMoreSessions}
-                  label={t("status.loadingSessions")}
-                  onVisible={onLoadMoreSessions}
-                />
-              ) : null}
             </SidebarMenu>
           </SidebarGroupContent>
         </CollapsibleContent>

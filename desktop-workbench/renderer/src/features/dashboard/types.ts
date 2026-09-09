@@ -259,6 +259,8 @@ export type DashboardSnapshotMessage = {
   connectors: ConnectorView[];
   projects: ProjectView[];
   sessions: SessionView[];
+  /** Live runtime instances, so device pages do not need a second source of truth. */
+  runtimes?: DeviceRuntimeView[];
   sessionPages: {
     active: SessionPageInfo;
     archived: SessionPageInfo;

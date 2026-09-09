@@ -243,7 +243,7 @@ export function SessionSidebarItem({
               disabled={renaming}
               aria-label={tSession("renameTitle")}
             />
-            <DialogFooter className="gap-2 sm:gap-2">
+            <DialogFooter>
               <Button type="button" variant="outline" onClick={cancelRename} disabled={renaming}>
                 {tCommon("cancel")}
               </Button>

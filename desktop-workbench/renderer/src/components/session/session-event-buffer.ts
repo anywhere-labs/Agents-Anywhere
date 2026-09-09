@@ -33,24 +33,31 @@ export function createSessionEventBuffer(commit: (events: ProtocolEventEnvelope[
   let pending: ProtocolEventEnvelope[] = []
   let timer: ReturnType<typeof setTimeout> | undefined
   let disposed = false
+  const clear = () => {
+    if (timer !== undefined) clearTimeout(timer)
+    timer = undefined
+    pending = []
+  }
+  const flush = () => {
+    if (disposed || pending.length === 0) return
+    const events = pending
+    clear()
+    commit(coalesceSessionEvents(events))
+  }
   return {
     push(event: ProtocolEventEnvelope) {
       if (disposed) return
       pending.push(event)
       // A fixed window, not debounce: continuous output cannot postpone a flush.
-      timer ??= setTimeout(() => {
-        timer = undefined
-        if (disposed) return
-        const events = pending
-        pending = []
-        commit(coalesceSessionEvents(events))
-      }, SESSION_EVENT_FLUSH_MS)
+      timer ??= setTimeout(flush, SESSION_EVENT_FLUSH_MS)
     },
+    // Authoritative reads are barriers: drop superseded events for a full
+    // snapshot, or drain older events before applying a live capability read.
+    clear,
+    flush,
     dispose() {
       disposed = true
-      if (timer !== undefined) clearTimeout(timer)
-      timer = undefined
-      pending = []
+      clear()
     },
   }
 }

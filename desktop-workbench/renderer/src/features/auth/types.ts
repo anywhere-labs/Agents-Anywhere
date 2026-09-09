@@ -49,6 +49,9 @@ export type OAuthProviderConfigUpdate = OAuthProviderConfig & {
 
 export type AdminUser = {
   userId: string;
+  email: string | null;
+  displayName: string;
+  emailVerified: boolean;
   role: UserRole;
   disabled: boolean;
   avatar: string | null;

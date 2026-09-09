@@ -3,6 +3,7 @@
 import * as React from "react"
 
 import { Button } from "@/components/ui/button"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   Dialog,
   DialogContent,
@@ -27,6 +28,9 @@ export function RuntimeInstanceNameDialog({
   initialName = "",
   saving,
   submitDisabled = false,
+  secondaryAction,
+  notice,
+  errorMessage,
   onOpenChange,
   onSubmit,
 }: {
@@ -41,11 +45,16 @@ export function RuntimeInstanceNameDialog({
   initialName?: string
   saving: boolean
   submitDisabled?: boolean
+  secondaryAction?: { label: string; onSubmit: (name: string) => Promise<void> }
+  notice?: React.ReactNode
+  errorMessage?: string | null
   onOpenChange: (open: boolean) => void
   onSubmit: (name: string) => Promise<void>
 }) {
   const [draft, setDraft] = React.useState(initialName)
   const [submitted, setSubmitted] = React.useState(false)
+  const submitting = React.useRef(false)
+  const inputId = React.useId()
   const name = draft.trim()
   const invalid = submitted && !name
 
@@ -55,44 +64,54 @@ export function RuntimeInstanceNameDialog({
     setSubmitted(false)
   }, [initialName, open])
 
-  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
+  const submit = async (action: (name: string) => Promise<void>) => {
     setSubmitted(true)
-    if (!name || saving || submitDisabled) return
+    if (!name || saving || submitDisabled || submitting.current) return
+    submitting.current = true
     try {
-      await onSubmit(name)
+      await action(name)
     } catch {
       // The owner reports the request error and keeps the dialog open.
+    } finally {
+      submitting.current = false
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <form onSubmit={submit}>
-          <DialogHeader>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!saving) onOpenChange(nextOpen) }}>
+      <DialogContent showCloseButton={!saving}>
+        <form onSubmit={(event) => { event.preventDefault(); void submit(onSubmit) }}>
+          <DialogHeader className="pr-8">
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>{description}</DialogDescription>
           </DialogHeader>
           <FieldGroup className="py-5">
-            <Field data-invalid={invalid}>
-              <FieldLabel htmlFor="runtime-instance-name">{label}</FieldLabel>
+            <Field data-invalid={invalid} data-disabled={saving}>
+              <FieldLabel htmlFor={inputId}>{label}</FieldLabel>
               <Input
-                id="runtime-instance-name"
+                id={inputId}
                 value={draft}
                 onChange={(event) => setDraft(event.currentTarget.value)}
                 placeholder={placeholder}
                 maxLength={128}
                 aria-invalid={invalid}
+                disabled={saving}
                 autoFocus
               />
               {invalid ? <FieldError>{requiredMessage}</FieldError> : null}
             </Field>
+            {notice}
+            {errorMessage ? <Alert variant="destructive"><AlertDescription>{errorMessage}</AlertDescription></Alert> : null}
           </FieldGroup>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+            <Button type="button" variant={secondaryAction ? "ghost" : "outline"} className={secondaryAction ? "sm:mr-auto" : undefined} onClick={() => onOpenChange(false)} disabled={saving}>
               {cancelLabel}
             </Button>
+            {secondaryAction ? (
+              <Button type="button" variant="outline" disabled={saving || submitDisabled || !name} onClick={() => void submit(secondaryAction.onSubmit)}>
+                {secondaryAction.label}
+              </Button>
+            ) : null}
             <Button type="submit" disabled={saving || submitDisabled || !name}>
               {saving ? <Spinner data-icon="inline-start" /> : null}
               {submitLabel}

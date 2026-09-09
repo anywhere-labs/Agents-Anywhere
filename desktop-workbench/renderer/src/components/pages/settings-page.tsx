@@ -1378,7 +1378,7 @@ function AppearanceTab() {
 }
 
 export function SettingsPage() {
-  const { navigate, openSession, projects, refreshData, settingsTab, upsertSession } = useWorkspace()
+  const { navigate, openSession, projects, sessions, isLoading, refreshData, settingsTab, upsertSession } = useWorkspace()
   const { session, me: authMe, refreshMe } = useAuth()
   const t = useTranslations("pages.settings")
   const tCommon = useTranslations("common")
@@ -1527,6 +1527,8 @@ export function SettingsPage() {
           {tab === "appearance" && <AppearanceTab />}
           {tab === "archived-sessions" && (
             <ArchivedSessionsTab
+              sessions={sessions}
+              loading={isLoading}
               token={session?.accessToken ?? ""}
               projects={projects}
               onOpenSession={openSession}

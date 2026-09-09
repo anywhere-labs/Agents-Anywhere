@@ -59,6 +59,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
+import { RuntimeAddDialog } from "@/components/runtime-add-dialog"
 import { RuntimeConfigDialog } from "@/components/runtime-config-dialog"
 import { RuntimeInstanceNameDialog } from "@/components/runtime-instance-name-dialog"
 import {
@@ -69,14 +70,15 @@ import {
   addableRuntimeTypes,
   configuredRuntimeInstances,
   namedInstanceRequiredConfigFields,
-  reconfigurableRuntimeInstance,
-  runtimeConfigDraft,
-  runtimeCreationDefaults,
   runtimeInstanceName,
-  runtimeIsAvailable,
-  suggestedRuntimeInstanceName,
   runtimeTypeName,
 } from "@/features/dashboard/runtime-instances"
+import {
+  runtimeErrorCode,
+  runtimeErrorReason,
+  runtimeIsNotStarted,
+  runtimeStatusTone,
+} from "@/features/dashboard/runtime-status-presentation"
 
 const DEVICE_STATUS_LABEL_KEYS = {
   online: "online",
@@ -95,8 +97,6 @@ const RUNTIME_STATUS_LABEL_KEYS = {
   error: "runtimeStatus.error",
   unknown: "runtimeStatus.unknown",
 } as const satisfies Record<DeviceRuntimeStatus, string>
-
-const NEW_RUNTIME_SAVING_ID = "@new-runtime"
 
 type DeviceSession = {
   id: string
@@ -268,31 +268,46 @@ function mergeRealSessions(prev: DeviceSession[], updates: RealSessionView[]) {
 }
 
 function runtimeStatusDot(runtime: DeviceRuntimeView) {
-  if (runtime.status === "running") return "bg-emerald-500"
-  if (runtime.status === "error") return "bg-destructive"
-  if (runtime.status === "starting" || runtime.status === "stopping") return "bg-blue-500"
-  if (runtime.active) return "bg-amber-500"
+  const tone = runtimeStatusTone(runtime)
+  if (tone === "ok") return "bg-emerald-500"
+  if (tone === "progress") return "bg-blue-500"
+  if (tone === "warning") return "bg-amber-500"
+  if (tone === "error") return "bg-destructive"
   return "bg-muted-foreground/40"
 }
 
-function runtimeErrorMessage(error: Record<string, unknown>) {
-  if (typeof error.message === "string") return error.message
-  if (typeof error.code === "string") return error.code
-  return JSON.stringify(error)
+function runtimeErrorMessage(runtime: DeviceRuntimeView) {
+  return runtimeErrorReason(runtime) ?? ""
+}
+
+function runtimeListKey(runtimes: DeviceRuntimeView[]) {
+  return runtimes
+    .map((runtime) => [
+      runtime.runtimeId,
+      runtime.status,
+      runtime.active,
+      runtime.available,
+      runtime.updatedAt,
+      runtimeErrorCode(runtime) ?? "",
+    ].join(":"))
+    .sort()
+    .join("|")
 }
 
 export function DevicePage() {
   const t = useTranslations("dashboard.device")
   const tCommon = useTranslations("common")
-  const runtimeStatusLabel = (status: DeviceRuntimeStatus) => {
-    const key = RUNTIME_STATUS_LABEL_KEYS[status]
-    return key ? t(key) : status
+  const runtimeStatusLabel = (runtime: DeviceRuntimeView) => {
+    if (runtimeIsNotStarted(runtime)) return t("runtimeNotStarted")
+    const key = RUNTIME_STATUS_LABEL_KEYS[runtime.status]
+    return key ? t(key) : runtime.status
   }
   const {
     activeConnectorId,
     connectors,
     projects,
     sessions: allSessions,
+    runtimes: liveRuntimes,
     startProjectSession,
     openSession,
     goHome,
@@ -327,11 +342,6 @@ export function DevicePage() {
   const [runtimeActionId, setRuntimeActionId] = React.useState<string | null>(null)
   const [removeRuntime, setRemoveRuntime] = React.useState<DeviceRuntimeView | null>(null)
   const [createRuntimeType, setCreateRuntimeType] = React.useState<RuntimeTypeView | null>(null)
-  const [pendingRuntimeCreation, setPendingRuntimeCreation] = React.useState<{
-    runtimeType: RuntimeTypeView
-    name: string
-    initialConfig: Record<string, unknown>
-  } | null>(null)
   const [renameRuntime, setRenameRuntime] = React.useState<DeviceRuntimeView | null>(null)
   const [savingRuntimeName, setSavingRuntimeName] = React.useState(false)
   const [revokeOpen, setRevokeOpen] = React.useState(false)
@@ -363,7 +373,6 @@ export function DevicePage() {
       setConfigRuntime(null)
       setRemoveRuntime(null)
       setCreateRuntimeType(null)
-      setPendingRuntimeCreation(null)
       setRenameRuntime(null)
       setSelectMode(false)
       setSelectedSessionIds(new Set())
@@ -399,6 +408,17 @@ export function DevicePage() {
       cancelled = true
     }
   }, [activeConnectorId, authSession?.accessToken, t])
+
+  // The dashboard snapshot pushes runtime lifecycle, so a connector-side change
+  // (bridge lost, reconnect, reconciliation) lands without a manual refresh.
+  React.useEffect(() => {
+    if (!activeConnectorId) return
+    const scoped = liveRuntimes.filter((runtime) => runtime.connectorId === activeConnectorId)
+    // An empty push means the snapshot predates this device's runtimes; keep the
+    // locally loaded list instead of wiping it.
+    if (scoped.length === 0) return
+    setRuntimes((current) => (runtimeListKey(current) === runtimeListKey(scoped) ? current : scoped))
+  }, [activeConnectorId, liveRuntimes])
 
   const connectorProjects = projects.filter((project) => project.connectorId === activeConnectorId)
   const projectPageSize = isMobile ? MOBILE_PROJECT_PAGE_SIZE : DESKTOP_PROJECT_PAGE_SIZE
@@ -572,55 +592,6 @@ export function DevicePage() {
     }
   }
 
-  const stageRuntimeCreation = async (name: string) => {
-    if (!createRuntimeType) return
-    setPendingRuntimeCreation({
-      runtimeType: createRuntimeType,
-      name,
-      initialConfig: runtimeCreationDefaults(createRuntimeType),
-    })
-    setCreateRuntimeType(null)
-  }
-
-  const createAndStartRuntime = async (
-    pending: NonNullable<typeof pendingRuntimeCreation>,
-    config: Record<string, unknown>,
-  ) => {
-    if (!authSession?.accessToken) return
-    setSavingRuntimeId(NEW_RUNTIME_SAVING_ID)
-    try {
-      const created = await dashboardApi.createConnectorRuntime(
-        authSession.accessToken,
-        connector.id,
-        {
-          runtimeType: pending.runtimeType.runtimeType,
-          name: pending.name,
-          config,
-          active: true,
-        },
-      )
-      replaceRuntime(created)
-      toast.success(t("runtimeConfiguredAndStarted", { name: pending.name }))
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("createRuntimeFailed"))
-      throw error
-    } finally {
-      setSavingRuntimeId(null)
-    }
-  }
-
-  const addRuntime = (runtimeType: RuntimeTypeView) => {
-    const existing = reconfigurableRuntimeInstance(runtimeType, runtimes)
-    if (existing) {
-      setConfigRuntime({
-        ...existing,
-        config: runtimeConfigDraft(runtimeType, existing),
-      })
-      return
-    }
-    setCreateRuntimeType(runtimeType)
-  }
-
   const submitRuntimeRename = async (name: string) => {
     if (!authSession?.accessToken || !renameRuntime) return
     setSavingRuntimeName(true)
@@ -692,7 +663,11 @@ export function DevicePage() {
 
   const toggleRuntime = async (runtime: DeviceRuntimeView, active: boolean) => {
     if (!authSession?.accessToken) return
+    const previous = runtime
     setRuntimeActionId(runtime.runtimeId)
+    // The server waits for the connector, so show the transition immediately
+    // instead of jumping straight from stopped to running.
+    replaceRuntime({ ...runtime, status: active ? "starting" : "stopping", error: null })
     try {
       const response = await dashboardApi.setConnectorRuntimeActive(
         authSession.accessToken,
@@ -702,7 +677,17 @@ export function DevicePage() {
       )
       replaceRuntime(response)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("runtimeActionFailed"))
+      // A failed start still records the reason on the instance, so refresh the
+      // authoritative row before reporting anything to the user.
+      const authoritative = await loadConnectorRuntimeOverview(
+        authSession.accessToken,
+        connector.id,
+      )
+        .then((overview) => overview.runtimes.find((item) => item.runtimeId === runtime.runtimeId) ?? null)
+        .catch(() => null)
+      replaceRuntime(authoritative ?? previous)
+      const reason = authoritative ? runtimeErrorReason(authoritative) : null
+      toast.error(reason ?? (error instanceof Error ? error.message : t("runtimeActionFailed")))
     } finally {
       setRuntimeActionId(null)
     }
@@ -928,18 +913,24 @@ export function DevicePage() {
                             <div className="flex min-w-0 items-center gap-2">
                               <span className="truncate text-sm font-medium">{runtimeInstanceName(runtime)}</span>
                               <Badge variant="outline" className="shrink-0 font-normal">
-                                {runtimeStatusLabel(runtime.status)}
+                                {runtimeStatusLabel(runtime)}
                               </Badge>
                               {runtime.error ? (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
-                                    <Badge variant="destructive" className="shrink-0 gap-1">
+                                    <Badge
+                                      variant={runtimeStatusTone(runtime) === "warning" ? "outline" : "destructive"}
+                                      className={cn(
+                                        "shrink-0 gap-1",
+                                        runtimeStatusTone(runtime) === "warning" && "border-amber-500/60 text-amber-600",
+                                      )}
+                                    >
                                       <AlertCircle className="size-3" />
-                                      {t("runtimeIssue")}
+                                      {runtimeStatusTone(runtime) === "warning" ? t("runtimeNotReady") : t("runtimeIssue")}
                                     </Badge>
                                   </TooltipTrigger>
                                   <TooltipContent side="top" className="max-w-sm">
-                                    {runtimeErrorMessage(runtime.error)}
+                                    {runtimeErrorMessage(runtime)}
                                   </TooltipContent>
                                 </Tooltip>
                               ) : null}
@@ -972,7 +963,7 @@ export function DevicePage() {
                             <Switch
                               checked={runtime.active}
                               onCheckedChange={(active: boolean) => void toggleRuntime(runtime, active)}
-                              disabled={runtimeActionId === runtime.runtimeId || (!runtime.active && (connector.status !== "online" || !runtimeIsAvailable(runtime)))}
+                              disabled={runtimeActionId === runtime.runtimeId || (!runtime.active && connector.status !== "online")}
                               aria-label={runtime.active ? t("deactivateRuntime", { name: runtimeInstanceName(runtime) }) : t("activateRuntime", { name: runtimeInstanceName(runtime) })}
                             />
                             <Button
@@ -1003,23 +994,21 @@ export function DevicePage() {
                     <div className="flex flex-col gap-1">
                       {availableRuntimeTypes.map((runtimeType) => (
                         <div key={runtimeType.runtimeType} className="flex min-h-12 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/30">
-                          <span className={cn(
-                            "size-2 shrink-0 rounded-full",
-                            runtimeType.available ? "bg-muted-foreground/50" : "bg-amber-500",
-                          )} />
+                          {/* This list means "the connector supports this type", so it never carries a warning colour. */}
+                          <span className="size-2 shrink-0 rounded-full bg-muted-foreground/50" />
                           <div className="min-w-0 flex-1">
                             <div className="flex min-w-0 items-center gap-1">
                               <p className="truncate text-sm font-medium">{runtimeType.displayName}</p>
                             </div>
                             <p className="truncate text-xs text-muted-foreground">
-                              {runtimeType.description || runtimeType.reason || runtimeType.implementationType}
+                              {runtimeType.reason || runtimeType.description || runtimeType.implementationType}
                             </p>
                           </div>
                           <Button
                             type="button"
                             variant="outline"
                             size="sm"
-                            onClick={() => addRuntime(runtimeType)}
+                            onClick={() => setCreateRuntimeType(runtimeType)}
                           >
                             <Plus data-icon="inline-start" />
                             {t("addRuntime")}
@@ -1188,36 +1177,15 @@ export function DevicePage() {
         />
       ) : null}
 
-      {createRuntimeType ? (
-        <RuntimeInstanceNameDialog
-          open
-          title={t("createRuntimeTitle", { type: createRuntimeType.displayName })}
-          description={t("createRuntimeDescription", { type: createRuntimeType.displayName })}
-          label={t("runtimeName")}
-          requiredMessage={t("runtimeNameRequired")}
-          placeholder={t("runtimeNamePlaceholder")}
-          submitLabel={t("createRuntime")}
-          cancelLabel={tCommon("cancel")}
-          initialName={suggestedRuntimeInstanceName(createRuntimeType, runtimes)}
-          saving={false}
+      {createRuntimeType && authSession?.accessToken ? (
+        <RuntimeAddDialog
+          key={createRuntimeType.runtimeType}
+          runtimeType={createRuntimeType}
+          runtimes={runtimes}
+          token={authSession.accessToken}
+          connectorId={connector.id}
+          onRuntimeUpdated={replaceRuntime}
           onOpenChange={(open) => { if (!open) setCreateRuntimeType(null) }}
-          onSubmit={stageRuntimeCreation}
-        />
-      ) : null}
-
-      {pendingRuntimeCreation ? (
-        <RuntimeConfigDialog
-          runtimeName={pendingRuntimeCreation.name}
-          schema={pendingRuntimeCreation.runtimeType.schema}
-          uiSchema={pendingRuntimeCreation.runtimeType.uiSchema}
-          config={pendingRuntimeCreation.initialConfig}
-          defaults={pendingRuntimeCreation.runtimeType.defaults}
-          requiredFields={namedInstanceRequiredConfigFields(pendingRuntimeCreation.runtimeType)}
-          saving={savingRuntimeId === NEW_RUNTIME_SAVING_ID}
-          submitLabel={t("configureAndStart")}
-          open
-          onOpenChange={(open) => { if (!open) setPendingRuntimeCreation(null) }}
-          onSave={(config) => createAndStartRuntime(pendingRuntimeCreation, config)}
         />
       ) : null}
 

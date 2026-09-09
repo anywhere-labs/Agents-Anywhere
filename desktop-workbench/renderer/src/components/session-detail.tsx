@@ -51,6 +51,16 @@ import { createSessionEventBuffer } from "@/components/session/session-event-buf
 import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
 import {
+  acceptSessionEventId,
+  bufferedEventsAfterLiveCapabilityRead,
+  drainSessionEventBuffer,
+  mergeEffectiveCapabilities,
+  SessionEventSequenceCursor,
+  settleSessionEventRecovery,
+  sessionEventUsesDurableEventIdDedup,
+  stableStringify,
+} from "@/components/session/session-event-state"
+import {
   buildOptimisticUserMessage,
   isOptimisticTimelineItem,
   markOptimisticItemFailed,
@@ -360,7 +370,14 @@ export function SessionDetail({
   const timelineRef = React.useRef<HTMLDivElement | null>(null)
   const timelineContentRef = React.useRef<HTMLDivElement | null>(null)
   const composerContainerRef = React.useRef<HTMLDivElement | null>(null)
-  const nextSeqRef = React.useRef(0)
+  const eventSequenceCursorRef = React.useRef<SessionEventSequenceCursor | null>(null)
+  if (eventSequenceCursorRef.current === null) {
+    eventSequenceCursorRef.current = new SessionEventSequenceCursor(
+      sessionId,
+      initialOptimisticState?.nextSeq ?? 0,
+    )
+  }
+  const eventSequenceCursor = eventSequenceCursorRef.current
   const timelineFollowRef = React.useRef<ReturnType<typeof createTimelineScrollFollow> | null>(null)
   const initialScrollDoneRef = React.useRef(false)
   const loadingOlderRef = React.useRef(false)
@@ -370,7 +387,6 @@ export function SessionDetail({
   const pruneAfterScrollTimerRef = React.useRef<number | null>(null)
   const pruneAfterScrollCleanupRef = React.useRef<(() => void) | null>(null)
   const streamConnectedRef = React.useRef(false)
-  const processedEventIdsRef = React.useRef<Set<string>>(new Set())
   const catalogFetchKeyRef = React.useRef<string | null>(null)
   const selectionUpdateSeqRef = React.useRef(0)
   const selectionWritesRef = React.useRef(new Map<string, Promise<unknown>>())
@@ -822,14 +838,14 @@ export function SessionDetail({
       window.clearTimeout(initialScrollFallbackTimerRef.current)
       initialScrollFallbackTimerRef.current = null
     }
-    processedEventIdsRef.current = new Set()
     setSending(false)
     setInterrupting(false)
     setError(null)
     const optimisticState = getOptimisticSessionStateRef.current(sessionId)
+    eventSequenceCursor.switchTo(sessionId, optimisticState?.nextSeq ?? 0)
     if (optimisticState) {
       setState(remoteStateFromOptimisticState(optimisticState))
-      nextSeqRef.current = optimisticState.nextSeq
+      eventSequenceCursor.advance(sessionId, optimisticState.nextSeq)
       setLoading(false)
     } else {
       setLoading(true)
@@ -849,8 +865,11 @@ export function SessionDetail({
     let reconnectTimer: number | null = null
     let refetchPromise: Promise<void> | null = null
     let recoveryPromise: Promise<void> | null = null
+    let recoveryStarting = false
     let snapshotReady = false
+    let socketSubscribed = false
     let bufferedEvents: ProtocolEventEnvelope[] = []
+    let processedEventIds = new Set<string>()
     const renderBuffer = createSessionEventBuffer((events) => {
       if (cancelled) return
       setState((current) => events.reduce((next, event) =>
@@ -868,9 +887,17 @@ export function SessionDetail({
         .then((next) => {
           if (cancelled) return
           const merged = applyOptimisticItemsRef.current(next)
+          renderBuffer.clear()
           clearResolvedOptimisticMessagesRef.current(sessionId, merged.items)
-          nextSeqRef.current = Math.max(nextSeqRef.current, cursorSequence(next.eventCursor) || next.nextSeq)
-          setState((current) => current ? mergeSessionSnapshot(current, merged) : merged)
+          eventSequenceCursor.replaceFromSnapshot(
+            sessionId,
+            cursorSequence(next.eventCursor) || next.nextSeq,
+          )
+          processedEventIds = new Set()
+          setState((current) => ({
+            ...merged,
+            timelineResetVersion: nextTimelineResetVersion(current?.timelineResetVersion ?? 0, true),
+          }))
           onSessionUpdatedRef.current?.(next.session)
         })
         .catch(() => undefined)
@@ -883,67 +910,170 @@ export function SessionDetail({
     const applyEvent = (event: ProtocolEventEnvelope) => {
       if (cancelled || event.sessionId !== sessionId) return
       if (event.type === "keepalive") return
-      if (processedEventIdsRef.current.has(event.eventId)) return
-      if (event.sequence < nextSeqRef.current) return
-      processedEventIdsRef.current.add(event.eventId)
-      if (processedEventIdsRef.current.size > 1000) {
-        processedEventIdsRef.current = new Set(Array.from(processedEventIdsRef.current).slice(-500))
+      const usesDurableEventIdDedup = sessionEventUsesDurableEventIdDedup(event)
+      if (!eventSequenceCursor.accepts(sessionId, event.sequence)) return
+      if (!acceptSessionEventId(event, processedEventIds)) return
+      if (usesDurableEventIdDedup) {
+        if (processedEventIds.size > 1000) {
+          processedEventIds = new Set(Array.from(processedEventIds).slice(-500))
+        }
       }
       if (event.type === "session.refetch_required") {
-        void recoverEvents(nextSeqRef.current, "session.refetch_required")
+        void recoverEvents(
+          eventSequenceCursor.current(sessionId),
+          "session.refetch_required",
+        )
         return
       }
       if (!sessionEventCanUpdateState(event)) {
-        nextSeqRef.current = Math.max(nextSeqRef.current, event.sequence)
+        eventSequenceCursor.advance(sessionId, event.sequence)
         return
       }
       renderBuffer.push(event)
-      nextSeqRef.current = Math.max(nextSeqRef.current, event.sequence)
+      eventSequenceCursor.advance(sessionId, event.sequence)
     }
 
     const recoverEvents = async (afterSeq: number, reason: string) => {
-      if (recoveryPromise) return recoveryPromise
+      if (recoveryPromise || recoveryStarting) return recoveryPromise
+      recoveryStarting = true
+      // Events received before this recovery request causally precede its
+      // response. Apply them first so the recovered live projection wins at
+      // the same sequence; events received during the request remain queued.
+      // recoveryStarting also makes a buffered refetch_required join this
+      // recovery instead of recursively starting another one.
+      drainBufferedEvents({ allowWhileRecoveryStarting: true })
+      const recoveryAfterSeq = Math.max(
+        afterSeq,
+        eventSequenceCursor.current(sessionId),
+      )
       try {
-        recoveryPromise = dashboardApi.getSessionEvents(token, sessionId, `seq:${afterSeq}`)
-          .then((recovery) => {
+        const recoveryRequest = dashboardApi.getSessionEvents(token, sessionId, `seq:${recoveryAfterSeq}`)
+          .then(async (recovery) => {
             if (cancelled) return
             if (recovery.snapshotRequired) {
               return refetch(`${reason}:snapshot-required`)
             }
-            for (const event of recovery.events) applyEvent(event)
-            nextSeqRef.current = Math.max(
-              nextSeqRef.current,
+            const recoveredSession = recovery.events.reduce<SessionView | null>(
+              (latest, event) => {
+                if (event.type !== "session.meta.updated") return latest
+                return readPayloadValue<SessionView>(event.payload.session) ?? latest
+              },
+              null,
+            )
+            const shouldReadLiveCapabilities = recoveredSession?.connectorStatus === "online"
+            for (const event of recovery.events) {
+              if (event.type === "runtime.capability.updated" && shouldReadLiveCapabilities) {
+                continue
+              }
+              applyEvent(event)
+            }
+            eventSequenceCursor.advance(
+              sessionId,
               cursorSequence(recovery.nextCursor),
             )
+            if (shouldReadLiveCapabilities) {
+              // Split the queue before starting the live read. On success,
+              // only capability projections older than that boundary are
+              // superseded; updates arriving during the request stay queued.
+              const bufferedBeforeLiveRead = bufferedEvents
+              bufferedEvents = []
+              try {
+                const liveCapabilities = await dashboardApi.getSessionRuntimeCapabilities(
+                  token,
+                  sessionId,
+                )
+                if (cancelled) {
+                  bufferedEvents = bufferedEventsAfterLiveCapabilityRead(
+                    bufferedBeforeLiveRead,
+                    bufferedEvents,
+                    false,
+                  )
+                  return
+                }
+                bufferedEvents = bufferedEventsAfterLiveCapabilityRead(
+                  bufferedBeforeLiveRead,
+                  bufferedEvents,
+                  true,
+                )
+                renderBuffer.flush()
+                setState((current) => {
+                  if (!current) return current
+                  const nextCapabilities = mergeEffectiveCapabilities(
+                    current.effectiveCapabilities,
+                    liveCapabilities.capabilitySet,
+                  )
+                  return nextCapabilities === current.effectiveCapabilities
+                    ? current
+                    : {
+                        ...current,
+                        effectiveCapabilities: nextCapabilities,
+                        serverTime: liveCapabilities.serverTime,
+                      }
+                })
+              } catch {
+                bufferedEvents = bufferedEventsAfterLiveCapabilityRead(
+                  bufferedBeforeLiveRead,
+                  bufferedEvents,
+                  false,
+                )
+                // Keep the last live/snapshot value instead of replacing it
+                // with a potentially older persisted recovery projection.
+              }
+            }
           })
           .catch(() => refetch(`${reason}:recovery-failed`))
-          .finally(() => {
+        recoveryPromise = settleSessionEventRecovery(
+          recoveryRequest,
+          () => {
             recoveryPromise = null
-            drainBufferedEvents()
-          })
+            recoveryStarting = false
+          },
+          drainBufferedEvents,
+        )
         return recoveryPromise
       } catch {
         return undefined
+      } finally {
+        // Synchronous setup failures happen before settleSessionEventRecovery
+        // owns cleanup.
+        if (!recoveryPromise) {
+          recoveryStarting = false
+          drainBufferedEvents()
+        }
       }
     }
 
-    function drainBufferedEvents() {
-      const pending = bufferedEvents.sort((a, b) => a.sequence - b.sequence)
+    function drainBufferedEvents(
+      options: { allowWhileRecoveryStarting?: boolean } = {},
+    ) {
+      const pending = bufferedEvents
       bufferedEvents = []
-      for (let index = 0; index < pending.length; index += 1) {
-        if (recoveryPromise) {
-          bufferedEvents.push(...pending.slice(index))
-          return
-        }
-        const event = pending[index]
-        if (event) applyEvent(event)
+      const remaining = drainSessionEventBuffer(
+        pending,
+        applyEvent,
+        () => Boolean(
+          recoveryPromise || (
+            recoveryStarting && !options.allowWhileRecoveryStarting
+          ),
+        ),
+      )
+      if (remaining.length > 0) {
+        bufferedEvents = [...remaining, ...bufferedEvents]
       }
+    }
+
+    const recoverAfterSubscription = async (reason: string) => {
+      const pendingRecovery = recoveryPromise
+      if (pendingRecovery) await pendingRecovery
+      if (cancelled || !snapshotReady || !socketSubscribed) return
+      await recoverEvents(eventSequenceCursor.current(sessionId), reason)
     }
 
     const connect = async () => {
       try {
         const ticket = await dashboardApi.createWsTicket(token, createClientId("web"), sessionId)
         if (cancelled) return
+        socketSubscribed = false
         socket = new WebSocket(dashboardApi.sessionWebSocketUrl(sessionId, ticket.ticket))
         socket.onopen = () => {
           if (!cancelled) streamConnectedRef.current = true
@@ -952,7 +1082,17 @@ export function SessionDetail({
           if (cancelled || typeof message.data !== "string") return
           const event = parseProtocolEvent(message.data)
           if (!event) return
-          if (!snapshotReady || recoveryPromise) {
+          if (event.type === "session.subscribed") {
+            // The Server registers the broker subscription before emitting this
+            // event. Recover only after that point so a same-sequence live
+            // projection cannot fall between recovery and socket registration.
+            socketSubscribed = true
+            if (snapshotReady) {
+              void recoverAfterSubscription("websocket.subscribed")
+            }
+            return
+          }
+          if (!snapshotReady || recoveryPromise || recoveryStarting) {
             bufferedEvents.push(event)
             return
           }
@@ -960,11 +1100,11 @@ export function SessionDetail({
         }
         socket.onclose = () => {
           if (cancelled) return
+          socketSubscribed = false
           streamConnectedRef.current = false
           reconnectTimer = window.setTimeout(() => {
             reconnectTimer = null
             void connect()
-            void recoverEvents(nextSeqRef.current, "websocket.reconnect")
           }, 1200)
         }
       } catch {
@@ -987,20 +1127,28 @@ export function SessionDetail({
         const merged = applyOptimisticItemsRef.current(next)
         clearResolvedOptimisticMessagesRef.current(sessionId, merged.items)
         setState((current) => current ? mergeSessionSnapshot(current, merged) : merged)
-        nextSeqRef.current = Math.max(
-          nextSeqRef.current,
+        eventSequenceCursor.advance(
+          sessionId,
           cursorSequence(next.eventCursor) || next.nextSeq,
         )
         onSessionUpdatedRef.current?.(next.session)
         snapshotReady = true
-        drainBufferedEvents()
+        if (socketSubscribed) {
+          void recoverAfterSubscription("websocket.initial-subscription")
+        } else {
+          drainBufferedEvents()
+        }
       })
       .catch((err) => {
         if (!cancelled) {
           snapshotReady = true
           setError(err instanceof Error ? err.message : tSessionRef.current("loadFailed"))
           setLoading(false)
-          drainBufferedEvents()
+          if (socketSubscribed) {
+            void recoverAfterSubscription("websocket.initial-subscription")
+          } else {
+            drainBufferedEvents()
+          }
         }
       })
 
@@ -1037,7 +1185,7 @@ export function SessionDetail({
       text: messageText,
       attachments,
       items: state?.items ?? [],
-      nextSeq: state?.nextSeq ?? nextSeqRef.current,
+      nextSeq: state?.nextSeq ?? eventSequenceCursor.current(sessionId),
     })
     addOptimisticMessage({
       clientMessageId,
@@ -1507,7 +1655,7 @@ export function SessionDetail({
             ref={timelineContentRef}
             aria-busy={runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running"}
             className={cn(
-              "mx-auto flex w-full min-w-0 max-w-[calc(48rem+2rem)] flex-col gap-3 overflow-hidden px-4 pb-44 pt-20 md:pt-6",
+              "mx-auto flex w-full min-w-0 max-w-[calc(48rem+2rem)] flex-col gap-3 overflow-hidden px-4 pb-44 pt-20",
             )}
             style={{ paddingBottom: timelineBottomPadding }}
           >
@@ -1526,60 +1674,27 @@ export function SessionDetail({
             ) : null}
             {timelineGroups.map((group) => {
               const groupKey = timelineGroupKey(group)
-              const entry = group.kind === "reconnect" ? (
-                <ReconnectGroup
-                  group={group}
-                  open={timelineGroupOpenByKey[group.key] ?? false}
-                  onOpenChange={(open) => handleTimelineGroupOpenChange(group.key, open)}
-                />
-              ) : group.kind === "tool-run" ? (
-                <ToolRunGroup
-                  group={group}
-                  token={token}
-                  session={session}
-                  interactionByTarget={interactionByTarget}
-                  resolvingNoticeId={resolvingNoticeId}
-                  resolvingActionId={resolvingActionId}
-                  open={timelineGroupOpenByKey[group.key] ?? false}
-                  itemOpenById={timelineItemOpenById}
-                  onOpenChange={(open) => handleTimelineGroupOpenChange(group.key, open)}
-                  onItemOpenChange={handleTimelineItemOpenChange}
-                  onRespondInteraction={handleRespondInteraction}
-                />
-              ) : group.kind === "agent-calls" ? (
-                <AgentCallGroup
-                  group={group}
-                  token={token}
-                  session={session}
-                  interactionByTarget={interactionByTarget}
-                  resolvingNoticeId={resolvingNoticeId}
-                  resolvingActionId={resolvingActionId}
-                  open={timelineGroupOpenByKey[group.key] ?? false}
-                  itemOpenById={timelineItemOpenById}
-                  onOpenChange={(open) => handleTimelineGroupOpenChange(group.key, open)}
-                  onItemOpenChange={handleTimelineItemOpenChange}
-                  onRespondInteraction={handleRespondInteraction}
-                />
-              ) : (
-                <TimelineEntry
-                  token={token}
-                  session={session}
-                  item={group.item}
-                  interaction={interactionByTarget.get(group.item.id)}
-                  resolvingNoticeId={resolvingNoticeId}
-                  resolvingActionId={resolvingActionId}
-                  toolOpen={timelineItemOpenById[group.item.id] ?? false}
-                  onToolOpenChange={(open) => handleTimelineItemOpenChange(group.item.id, open)}
-                  onRespondInteraction={handleRespondInteraction}
-                />
-              )
               const turnAction = turnActionsByGroupKey.get(groupKey)
               const completedTurnReview = timelineGroupItems(group)
                 .map((item) => completedTurnReviewsByEndItemId.get(item.id))
                 .find((turn) => turn !== undefined)
               return (
                 <React.Fragment key={groupKey}>
-                  {entry}
+                  <TimelineGroupEntry
+                    group={group}
+                    token={token}
+                    session={session}
+                    interactionByTarget={interactionByTarget}
+                    resolvingNoticeId={resolvingNoticeId}
+                    resolvingActionId={resolvingActionId}
+                    groupOpen={group.kind === "single" ? false : timelineGroupOpenByKey[group.key] ?? false}
+                    itemOpenById={timelineItemOpenById}
+                    onGroupOpenChange={group.kind === "single"
+                      ? undefined
+                      : (open) => handleTimelineGroupOpenChange(group.key, open)}
+                    onItemOpenChange={handleTimelineItemOpenChange}
+                    onRespondInteraction={handleRespondInteraction}
+                  />
                   {completedTurnReview && onOpenReview ? (
                     <SessionReviewCard
                       key={completedTurnReview.review.key}
@@ -1854,33 +1969,33 @@ function BlockingInteractionStack({
   )
 }
 
-type TimelineSingleGroup = {
+export type TimelineSingleGroup = {
   kind: "single"
   item: TimelineItem
 }
 
-type TimelineToolRunGroup = {
+export type TimelineToolRunGroup = {
   kind: "tool-run"
   key: string
   items: TimelineItem[]
 }
 
-type TimelineReconnectGroup = {
+export type TimelineReconnectGroup = {
   kind: "reconnect"
   key: string
   items: TimelineItem[]
 }
 
-type TimelineAgentCallGroup = {
+export type TimelineAgentCallGroup = {
   kind: "agent-calls"
   key: string
   parentItemId: string
   items: TimelineItem[]
 }
 
-type TimelineGroup = TimelineSingleGroup | TimelineToolRunGroup | TimelineReconnectGroup | TimelineAgentCallGroup
+export type TimelineGroup = TimelineSingleGroup | TimelineToolRunGroup | TimelineReconnectGroup | TimelineAgentCallGroup
 
-function timelineGroupKey(group: TimelineGroup): string {
+export function timelineGroupKey(group: TimelineGroup): string {
   return group.kind === "single" ? group.item.id : group.key
 }
 
@@ -1932,7 +2047,7 @@ function buildTurnActionsByGroupKey(
   return actions
 }
 
-function groupTimelineItems(items: TimelineItem[], interactionTargetIds: Set<string>): TimelineGroup[] {
+export function groupTimelineItems(items: TimelineItem[], interactionTargetIds: Set<string>): TimelineGroup[] {
   const groups: TimelineGroup[] = []
   let pendingTools: TimelineItem[] = []
   let pendingReconnects: TimelineItem[] = []
@@ -2048,6 +2163,99 @@ function isToolRunBarItem(item: TimelineItem): boolean {
   return (item.content.kind ?? "artifact") !== "diff"
 }
 
+export function TimelineGroupEntry({
+  group,
+  token,
+  session,
+  interactionByTarget,
+  resolvingNoticeId,
+  resolvingActionId,
+  groupOpen,
+  itemOpenById,
+  readOnly = false,
+  attachmentUrl,
+  onGroupOpenChange,
+  onItemOpenChange,
+  onRespondInteraction,
+}: {
+  group: TimelineGroup
+  token: string
+  session: SessionView
+  interactionByTarget: ReadonlyMap<string | null, Notice>
+  resolvingNoticeId: string | null
+  resolvingActionId: string | null
+  groupOpen: boolean
+  itemOpenById: Record<string, boolean>
+  readOnly?: boolean
+  attachmentUrl?: (fileId: string) => string
+  onGroupOpenChange?: (open: boolean) => void
+  onItemOpenChange: (itemId: string, open: boolean) => void
+  onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
+}) {
+  if (group.kind === "reconnect") {
+    return (
+      <ReconnectGroup
+        group={group}
+        open={groupOpen}
+        onOpenChange={onGroupOpenChange}
+      />
+    )
+  }
+  if (group.kind === "tool-run") {
+    return (
+      <ToolRunGroup
+        group={group}
+        token={token}
+        session={session}
+        interactionByTarget={interactionByTarget}
+        resolvingNoticeId={resolvingNoticeId}
+        resolvingActionId={resolvingActionId}
+        open={groupOpen}
+        itemOpenById={itemOpenById}
+        readOnly={readOnly}
+        attachmentUrl={attachmentUrl}
+        onOpenChange={onGroupOpenChange}
+        onItemOpenChange={onItemOpenChange}
+        onRespondInteraction={onRespondInteraction}
+      />
+    )
+  }
+  if (group.kind === "agent-calls") {
+    return (
+      <AgentCallGroup
+        group={group}
+        token={token}
+        session={session}
+        interactionByTarget={interactionByTarget}
+        resolvingNoticeId={resolvingNoticeId}
+        resolvingActionId={resolvingActionId}
+        open={groupOpen}
+        itemOpenById={itemOpenById}
+        readOnly={readOnly}
+        attachmentUrl={attachmentUrl}
+        onOpenChange={onGroupOpenChange}
+        onItemOpenChange={onItemOpenChange}
+        onRespondInteraction={onRespondInteraction}
+      />
+    )
+  }
+  return (
+    <TimelineEntry
+      token={token}
+      session={session}
+      item={group.item}
+      interaction={interactionByTarget.get(group.item.id)}
+      resolvingNoticeId={resolvingNoticeId}
+      resolvingActionId={resolvingActionId}
+      toolOpen={itemOpenById[group.item.id] ?? false}
+      readOnly={readOnly}
+      attachmentUrl={attachmentUrl}
+      onToolOpenChange={(open) => onItemOpenChange(group.item.id, open)}
+      onRespondInteraction={onRespondInteraction}
+    />
+  )
+}
+
 function ReconnectGroup({
   group,
   open,
@@ -2055,7 +2263,7 @@ function ReconnectGroup({
 }: {
   group: TimelineReconnectGroup
   open: boolean
-  onOpenChange: (open: boolean) => void
+  onOpenChange?: (open: boolean) => void
 }) {
   const tSession = useTranslations("dashboard.session")
   const attempts = group.items
@@ -2105,6 +2313,8 @@ function ToolRunGroup({
   resolvingActionId,
   open,
   itemOpenById,
+  readOnly,
+  attachmentUrl,
   onOpenChange,
   onItemOpenChange,
   onRespondInteraction,
@@ -2112,12 +2322,14 @@ function ToolRunGroup({
   group: TimelineToolRunGroup
   token: string
   session: SessionView
-  interactionByTarget: Map<string | null, Notice>
+  interactionByTarget: ReadonlyMap<string | null, Notice>
   resolvingNoticeId: string | null
   resolvingActionId: string | null
   open: boolean
   itemOpenById: Record<string, boolean>
-  onOpenChange: (open: boolean) => void
+  readOnly: boolean
+  attachmentUrl?: (fileId: string) => string
+  onOpenChange?: (open: boolean) => void
   onItemOpenChange: (itemId: string, open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
 }) {
@@ -2152,6 +2364,8 @@ function ToolRunGroup({
                 resolvingNoticeId={resolvingNoticeId}
                 resolvingActionId={resolvingActionId}
                 toolOpen={itemOpenById[item.id] ?? false}
+                readOnly={readOnly}
+                attachmentUrl={attachmentUrl}
                 onToolOpenChange={(open) => onItemOpenChange(item.id, open)}
                 onRespondInteraction={onRespondInteraction}
               />
@@ -2172,6 +2386,8 @@ function AgentCallGroup({
   resolvingActionId,
   open,
   itemOpenById,
+  readOnly,
+  attachmentUrl,
   onOpenChange,
   onItemOpenChange,
   onRespondInteraction,
@@ -2179,12 +2395,14 @@ function AgentCallGroup({
   group: TimelineAgentCallGroup
   token: string
   session: SessionView
-  interactionByTarget: Map<string | null, Notice>
+  interactionByTarget: ReadonlyMap<string | null, Notice>
   resolvingNoticeId: string | null
   resolvingActionId: string | null
   open: boolean
   itemOpenById: Record<string, boolean>
-  onOpenChange: (open: boolean) => void
+  readOnly: boolean
+  attachmentUrl?: (fileId: string) => string
+  onOpenChange?: (open: boolean) => void
   onItemOpenChange: (itemId: string, open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
 }) {
@@ -2219,6 +2437,8 @@ function AgentCallGroup({
                 resolvingActionId={resolvingActionId}
                 nestedAgentCall
                 toolOpen={itemOpenById[item.id] ?? false}
+                readOnly={readOnly}
+                attachmentUrl={attachmentUrl}
                 onToolOpenChange={(open) => onItemOpenChange(item.id, open)}
                 onRespondInteraction={onRespondInteraction}
               />
@@ -2332,10 +2552,10 @@ function mergeSessionEvent(
     !runtimeStatesSemanticallyEqual(current.state ?? null, runtimeState)
       ? runtimeState
       : current.state
-  const nextEffectiveCapabilities =
-    capabilitySet && !capabilitySetsSemanticallyEqual(current.effectiveCapabilities, capabilitySet)
-      ? capabilitySet
-      : current.effectiveCapabilities
+  const nextEffectiveCapabilities = mergeEffectiveCapabilities(
+    current.effectiveCapabilities,
+    capabilitySet,
+  )
   const nextCatalogs = catalogUpdate && !catalogsSemanticallyEqual(current.catalogs[catalogUpdate.catalogType], catalogUpdate.catalog)
     ? {
         ...current.catalogs,
@@ -2486,45 +2706,6 @@ function runtimeStatesSemanticallyEqual(
     statusReason: right.statusReason,
     error: right.error,
   })
-}
-
-function capabilitySetsSemanticallyEqual(
-  left: ProtocolCapabilitySet | null,
-  right: ProtocolCapabilitySet,
-): boolean {
-  if (!left) return false
-  return stableStringify(capabilitySetSemanticValue(left)) === stableStringify(capabilitySetSemanticValue(right))
-}
-
-function capabilitySetSemanticValue(value: ProtocolCapabilitySet) {
-  return value.capabilities
-    .map((capability) => ({
-      allowed: capability.allowed,
-      available: capability.available,
-      capabilityId: capability.capabilityId,
-      parameters: capability.parameters,
-      runtime: capability.runtime,
-      scope: capability.scope,
-      sessionId: capability.sessionId,
-      supported: capability.supported,
-      unavailableReason: capability.unavailableReason,
-      version: capability.version,
-    }))
-    .sort((left, right) => stableStringify(left).localeCompare(stableStringify(right)))
-}
-
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableStringify(item)).join(",")}]`
-  }
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>
-    return `{${Object.keys(record)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
-      .join(",")}}`
-  }
-  return JSON.stringify(value)
 }
 
 function effectiveRuntimeStatus(

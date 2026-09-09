@@ -14,6 +14,7 @@ import { dashboardApi } from "@/features/dashboard/api"
 import type { TerminalView } from "@/features/dashboard/types"
 import { apiWebSocketUrl } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { ChevronExternal } from "./runtime-icons"
 
 type TerminalPanelBodyProps = {
   token?: string | null
@@ -21,6 +22,7 @@ type TerminalPanelBodyProps = {
   root?: string | null
   variant?: "desktop" | "mobile"
   onClose?: () => void
+  onPopOut?: () => void
 }
 
 export function TerminalPanelBody({
@@ -29,6 +31,7 @@ export function TerminalPanelBody({
   root,
   variant = "desktop",
   onClose,
+  onPopOut,
 }: TerminalPanelBodyProps) {
   const t = useTranslations("dashboard.panels.terminal")
   const effectiveRoot = root?.trim() || "."
@@ -352,6 +355,19 @@ export function TerminalPanelBody({
         {terminalTabs}
         <Separator orientation="vertical" className="aa-rt-sep" />
         <div className="aa-rt-acts">
+          {onPopOut ? (
+            <Button
+              className="aa-rt-iconbtn"
+              variant="ghost"
+              size="icon-sm"
+              type="button"
+              title={t("openWindow")}
+              aria-label={t("openWindow")}
+              onClick={onPopOut}
+            >
+              <ChevronExternal />
+            </Button>
+          ) : null}
           {onClose ? (
             <Button
               className="aa-rt-iconbtn"
