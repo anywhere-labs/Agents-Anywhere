@@ -8,12 +8,12 @@ import { isValidEmail } from "@/features/auth/account-profile"
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupButton } from "@/components/ui/input-group"
 import { AuthShell } from "./auth-shell"
 import { useAuth } from "./auth-context"
+import { PrivacyNotice } from "./privacy-notice"
 import { useTranslations } from "next-intl"
 
 export function LoginScreen() {
   const { navigate, login, loading, error, oauthEnabled, oauthProviderLabel, registrationOpen, startOAuth } = useAuth()
   const t = useTranslations("auth")
-  const tPrivacy = useTranslations("privacy")
   const [showPassword, setShowPassword] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -116,15 +116,7 @@ export function LoginScreen() {
           </div>
         ) : null}
 
-        <p className="text-center text-xs text-muted-foreground">
-          {t("login.privacyNotice")}{" "}
-          <a
-            href="/privacy"
-            className="font-medium text-foreground underline-offset-4 hover:underline"
-          >
-            {tPrivacy("title")}
-          </a>
-        </p>
+        <PrivacyNotice message={t("login.privacyNotice")} />
       </FieldGroup>
     </AuthShell>
   )

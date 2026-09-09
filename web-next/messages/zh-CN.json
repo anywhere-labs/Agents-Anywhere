@@ -1301,6 +1301,7 @@
       "confirmTitle": "确认密码",
       "createDescription": "为这个 OAuth 身份创建一个本地账号。",
       "createSubmit": "创建并登录",
+      "privacyNotice": "创建账号即表示你同意",
       "createTitle": "设置邮箱和昵称",
       "matchDescriptionPrefix": "OAuth 匹配到了本地账号",
       "matchTitle": "这是你的账号吗？",

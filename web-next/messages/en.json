@@ -1301,6 +1301,7 @@
       "confirmTitle": "Confirm your password",
       "createDescription": "Create a local account for this OAuth identity.",
       "createSubmit": "Create and sign in",
+      "privacyNotice": "By creating an account, you agree to the",
       "createTitle": "Set up your email and nickname",
       "matchDescriptionPrefix": "OAuth matched the local account",
       "matchTitle": "Is this your account?",

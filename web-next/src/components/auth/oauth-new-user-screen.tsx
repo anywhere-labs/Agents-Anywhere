@@ -11,6 +11,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/in
 import { Field, FieldGroup, FieldLabel as Label } from "@/components/ui/field"
 import { AuthShell } from "./auth-shell"
 import { useAuth } from "./auth-context"
+import { PrivacyNotice } from "./privacy-notice"
 import { useTranslations } from "next-intl"
 
 export function OAuthNewUserScreen() {
@@ -126,6 +127,8 @@ export function OAuthNewUserScreen() {
         <Button variant="outline" className="h-11 w-full" onClick={cancelOAuth}>
           {t("oauth.back")}
         </Button>
+
+        <PrivacyNotice message={t("oauth.privacyNotice")} />
       </FieldGroup>
     </AuthShell>
   )
