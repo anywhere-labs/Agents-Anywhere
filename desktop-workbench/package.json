@@ -117,7 +117,7 @@
           ]
         }
       ],
-      "x64ArchFiles": "Contents/Resources/uv/darwin-*/uv"
+      "x64ArchFiles": "{Contents/Resources/uv/darwin-*/uv,Contents/Resources/app.asar.unpacked/node_modules/{@img/sharp-darwin-*,@img/sharp-libvips-darwin-*,@next/swc-darwin-*,@swc/core-darwin-*,@parcel/watcher-darwin-*,@tailwindcss/oxide-darwin-*,lightningcss-darwin-*}/**}"
     },
     "linux": {
       "icon": "build/icon-mac-source.png",

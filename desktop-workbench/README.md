@@ -363,3 +363,8 @@ On macOS, `yarn dist` and `yarn dist:mac` build a universal DMG for Apple Silico
 and Intel by default, bundling uv for both architectures. Explicit `--arm64` or
 `--x64` builds remain available for diagnostics. Both commands use the same
 signing and notarization credential checks.
+
+Use `yarn dist:mac --skip-build` to retry packaging after a completed app build;
+it requires existing compiled output and both uv bundles. Run a full build after
+changing application source. Yarn installs both CPU variants of optional native
+dependencies for universal packaging.

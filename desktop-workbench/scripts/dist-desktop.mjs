@@ -74,10 +74,10 @@ function parseArguments(argv) {
   }
   const archFlags = flags.filter((value) => ARCH_FLAGS.has(value));
   const passthrough = flags.filter((value) => PASSTHROUGH_FLAGS.has(value));
-  const unknown = flags.filter((value) => !ARCH_FLAGS.has(value) && !PASSTHROUGH_FLAGS.has(value));
+  const unknown = flags.filter((value) => !ARCH_FLAGS.has(value) && !PASSTHROUGH_FLAGS.has(value) && value !== "--skip-build");
   if (unknown.length > 0) fail(`Unknown argument(s): ${unknown.join(" ")}`);
   if (archFlags.length > 1) fail(`Choose one architecture flag, received ${archFlags.join(" ")}`);
-  return { platform, archFlag: archFlags[0] ?? null, passthrough };
+  return { platform, archFlag: archFlags[0] ?? null, passthrough, skipBuild: flags.includes("--skip-build") };
 }
 
 function resolveTargets({ platform, archFlag }) {
@@ -138,7 +138,7 @@ function verifyMac({ signed, notarized, artifact }) {
 }
 
 async function main() {
-  const { platform, archFlag, passthrough } = parseArguments(process.argv.slice(2));
+  const { platform, archFlag, passthrough, skipBuild } = parseArguments(process.argv.slice(2));
   if (platform === "mac" && process.platform !== "darwin") {
     fail("dist:mac must run on macOS: signing and notarization need the Keychain and notarytool.");
   }
@@ -166,9 +166,16 @@ async function main() {
   }
   log(`uv targets: ${uvTargets.join(", ")}`);
 
+  if (skipBuild) {
+    for (const relative of ["dist/electron/main.js", "renderer/out/index.html", ...uvTargets.map((target) => `build/uv/${target}/${target.startsWith("win") ? "uv.exe" : "uv"}`)]) {
+      if (!existsSync(join(PROJECT_ROOT, relative))) fail(`--skip-build requires ${relative}; run a full dist first.`);
+    }
+    log("Reusing compiled app and uv bundles (--skip-build)");
+  } else {
+    yarn(["bundle:uv"], { ...cleanEnvironment, UV_BUNDLE_TARGETS: uvTargets.join(",") });
+    yarn(["build"], cleanEnvironment);
+  }
   rmSync(OUTPUT_DIR, { recursive: true, force: true });
-  yarn(["bundle:uv"], { ...cleanEnvironment, UV_BUNDLE_TARGETS: uvTargets.join(",") });
-  yarn(["build"], cleanEnvironment);
 
   const builderEnvironment = { ...credentials.environment };
   electronBuilder([
