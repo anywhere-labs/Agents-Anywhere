@@ -49,11 +49,14 @@ export class BackendState {
   private readonly connector: ConnectorSupervisor;
   private readonly devices: DesktopDeviceService;
   private ownership: OwnershipState = { status: "error", message: "正在检查本机 Connector…" };
+  /** The server this backend talks to. Main pushes changes after a sign-in. */
+  private server: { serverUrl: string; apiNamespace: string };
   private readonly logBatcher = new LogBatcher((batch) => this.emit("logs", batch));
   private closed = false;
   private initialized = false;
 
   constructor(private readonly init: BackendInit, fetcher: BackendFetcher) {
+    this.server = { serverUrl: init.defaultServerUrl, apiNamespace: init.apiNamespace };
     this.machineState = new MachineStateStore();
     this.settings = new DesktopSettingsStore(init.settingsPath, init.preferredLanguages);
     this.logs = new ConnectorLogStore(init.logsPath, () => this.settings.get());
@@ -82,8 +85,8 @@ export class BackendState {
       binding: this.binding,
       connector: this.connector,
       fetcher,
-      defaultServerUrl: () => init.defaultServerUrl,
-      apiNamespace: () => init.apiNamespace,
+      defaultServerUrl: () => this.server.serverUrl,
+      apiNamespace: () => this.server.apiNamespace,
       readLocalConnectorIds: () => this.machineState.readConnectorIds(),
     });
   }
@@ -131,6 +134,19 @@ export class BackendState {
 
   ownershipState(): OwnershipState {
     return this.ownership;
+  }
+
+  /**
+   * Signing in can select a different server than the one this backend started
+   * with, and the backend only sees the launch-time snapshot. Main pushes the
+   * current connection so provisioning never falls back to the old server.
+   */
+  setServerConnection(input: { serverUrl?: unknown; apiNamespace?: unknown }): { serverUrl: string; apiNamespace: string } {
+    const serverUrl = typeof input?.serverUrl === "string" ? input.serverUrl.trim() : "";
+    if (!/^https?:\/\/[^\s]+$/i.test(serverUrl)) throw new Error("The Desktop backend server URL is invalid.");
+    const apiNamespace = typeof input?.apiNamespace === "string" ? input.apiNamespace.trim() : "";
+    this.server = { serverUrl, apiNamespace };
+    return { ...this.server };
   }
 
   /** Acquires ownership and rethrows conflicts, for callers that must fail. */

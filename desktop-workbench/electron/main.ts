@@ -144,6 +144,22 @@ function apiNamespace(): string {
   return activeDesktopServer().apiNamespace;
 }
 
+/**
+ * The backend receives the server once at start. A sign-in can select another
+ * one, so push the current connection before anything provisions against it.
+ */
+async function syncBackendServerConnection(): Promise<void> {
+  if (!backend) return;
+  try {
+    await backend.request("/server", {
+      method: "POST",
+      body: JSON.stringify({ serverUrl: apiOrigin(), apiNamespace: apiNamespace() }),
+    });
+  } catch (error) {
+    appendMainLog({ level: "ERROR", message: `Could not update the Desktop backend server: ${errorMessage(error)}` });
+  }
+}
+
 function activeDesktopServer(): DesktopServerConnection {
   return serverStore?.get() ?? resolveDesktopServer(
     process.env.WORKBENCH_API_ORIGIN?.trim() || process.env.AGENTS_ANYWHERE_API?.trim() || config.cloud.serverUrl,
@@ -231,6 +247,8 @@ async function handleDesktopOAuthCallback(rawUrl: string): Promise<void> {
     if (pending.attempt !== desktopOAuthAttempt) return;
     if (!serverStore) throw new Error("Desktop server settings are not ready.");
     serverStore.save(pending.server);
+    // The renderer starts provisioning as soon as it sees this result.
+    await syncBackendServerConnection();
     publishDesktopOAuthResult({ status: "success", accessToken, server: pending.server });
   } catch (error) {
     if (pending.attempt !== desktopOAuthAttempt) return;

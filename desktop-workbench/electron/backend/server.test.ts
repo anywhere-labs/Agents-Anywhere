@@ -72,6 +72,14 @@ class FakeState {
   exportLogs(filePath: string): number {
     return filePath.length;
   }
+
+  setServerConnection(input: { serverUrl?: unknown; apiNamespace?: unknown }): { serverUrl: string; apiNamespace: string } {
+    const connection = { serverUrl: String(input?.serverUrl ?? ""), apiNamespace: String(input?.apiNamespace ?? "") };
+    this.serverConnection = connection;
+    return connection;
+  }
+
+  serverConnection: { serverUrl: string; apiNamespace: string } | null = null;
 }
 
 async function withServer(run: (base: string, token: string, state: FakeState) => Promise<void>): Promise<void> {
@@ -113,6 +121,19 @@ test("routes reach the backend state and unknown routes fail loudly", async () =
 
     const missing = await fetch(`${base}/nope`, { headers });
     assert.equal(missing.status, 400);
+  });
+});
+
+test("a sign-in can repoint the backend at another server", async () => {
+  await withServer(async (base, token, state) => {
+    const headers = { [BACKEND_TOKEN_HEADER]: token, "content-type": "application/json" };
+    const response = await fetch(`${base}/server`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ serverUrl: "http://192.168.112.26:5174", apiNamespace: "/api/v2" }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(state.serverConnection, { serverUrl: "http://192.168.112.26:5174", apiNamespace: "/api/v2" });
   });
 });
 
