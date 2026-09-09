@@ -179,6 +179,7 @@ async function main() {
 
   const builderEnvironment = { ...credentials.environment };
   electronBuilder([
+    ...(process.env.WORKBENCH_ELECTRON_DIST ? [`--config.electronDist=${resolve(process.env.WORKBENCH_ELECTRON_DIST)}`] : []),
     `--${platform}`,
     platform === "mac" ? "dmg" : "nsis",
     ...builderFlags,

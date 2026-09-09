@@ -368,3 +368,6 @@ Use `yarn dist:mac --skip-build` to retry packaging after a completed app build;
 it requires existing compiled output and both uv bundles. Run a full build after
 changing application source. Yarn installs both CPU variants of optional native
 dependencies for universal packaging.
+
+For an offline packaging retry, set `WORKBENCH_ELECTRON_DIST` to a directory
+containing the matching Electron ZIPs for both macOS architectures.
