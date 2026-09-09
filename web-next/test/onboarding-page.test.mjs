@@ -104,6 +104,7 @@ test('onboarding embeds one-click Agent configuration and can continue without c
   assert.ok(container.querySelector('[data-slide="complete"]'))
   assert.match(container.textContent, /You are\nall set\./)
   assert.equal([...container.querySelectorAll('a')].find(a => a.textContent.includes('下载桌面程序')).getAttribute('href'), 'https://github.com/anywhere-labs/Agents-Anywhere/releases')
+  assert.equal([...container.querySelectorAll('a')].find(a => a.textContent.includes('了解更多')).getAttribute('href'), 'https://agents-anywhere.com')
   assert.equal(document.querySelector('[role="dialog"]'), null)
   await click(container, '立刻体验')
   assert.equal(window.location.hash, '#/')
