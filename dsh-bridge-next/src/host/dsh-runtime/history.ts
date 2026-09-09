@@ -17,6 +17,19 @@ export function createProjection(externalId: string, platformId: string) {
   let turnStart = -1
   let nextOrder = 0
 
+  // The platform is the only reader of contentHash, so it is computed once per
+  // drain/snapshot instead of on every streaming chunk. Canonical hashing walks
+  // the whole content, and a streaming message produces far more chunks than
+  // flush windows.
+  const needsHash = new Set<string>()
+  function flushHashes(): void {
+    for (const id of needsHash) {
+      const item = items.get(id)
+      if (item) item.contentHash = contentHash(item)
+    }
+    needsHash.clear()
+  }
+
   function put(kind: string, key: string, event: SessionEvent, type: ItemType, status: ItemStatus,
     role: string | null, content: Data, _index = 0, anchor = Number(event.seq)): TimelineItem {
     const id = itemId(externalId, kind, key)
@@ -30,7 +43,7 @@ export function createProjection(externalId: string, platformId: string) {
       source: { runtime: 'dsh', sessionId: externalId, itemId: key, itemType: event.type,
         seq: previous?.source.seq ?? anchor, lastSeq: Number(event.seq), time: event.time },
     }
-    value.contentHash = contentHash(value)
+    needsHash.add(id)
     items.set(id, value)
     changed.set(id, value)
     removed.delete(id)
@@ -95,7 +108,7 @@ export function createProjection(externalId: string, platformId: string) {
         if (item.turnId !== turnId || item.status !== 'running') continue
         const closed = { ...item, status: status === 'done' ? 'interrupted' as const : status,
           revision: Number(event.seq) + 1, source: { ...item.source, lastSeq: Number(event.seq) } }
-        closed.contentHash = contentHash(closed)
+        needsHash.add(id)
         items.set(id, closed)
         changed.set(id, closed)
       }
@@ -174,7 +187,6 @@ export function createProjection(externalId: string, platformId: string) {
       const item = tool(data.subCallId, data.name, data.arguments, event)
       item.content.parentItemId = parentToolItem(externalId, String(data.parentCallId))
       item.content.rootCallId = String(data.rootCallId)
-      item.contentHash = contentHash(item)
       if (eventType === 'tool/code-dispatch') result(data.subCallId, data.content, data.isError === true, event)
     } else if (eventType === 'approval/asked' || eventType === 'approval/decided') {
       const key = String(data.id)
@@ -193,8 +205,12 @@ export function createProjection(externalId: string, platformId: string) {
     apply,
     get throughSeq() { return throughSeq },
     get dirty() { return changed.size > 0 || removed.size > 0 },
-    snapshot: () => [...items.values()].sort((a, b) => a.orderSeq - b.orderSeq || a.id.localeCompare(b.id)),
+    snapshot: () => {
+      flushHashes()
+      return [...items.values()].sort((a, b) => a.orderSeq - b.orderSeq || a.id.localeCompare(b.id))
+    },
     drain() {
+      flushHashes()
       const delta = { items: [...changed.values()], removed: [...removed] }
       changed.clear(); removed.clear()
       return delta
