@@ -2,13 +2,13 @@
 
 ## 选择入口
 
-从[根 README 下载表](../README.md#下载与入口)下载 2.0.0。macOS 使用同一个 Universal DMG；Windows 使用 x64 安装程序；Android 安装 APK。iOS 的源码在仓库中，本指南不提供尚未确认的商店链接。
+从[根 README 下载表](../README.md#下载与入口)下载 2.0.0。macOS 使用同一个 Universal DMG；Windows 使用 x64 安装程序；Android 安装 APK。iOS / iPadOS 可通过 [TestFlight](https://testflight.apple.com/join/GKGaut99) 安装测试版，以邀请页的可用状态为准。
 
 Desktop 是完整工作台，包含受管理的本机 Connector。Linux 和其他 headless 主机可只运行 Connector，通过 Web 或手机操作。
 
 ## 登录
 
-- **Cloud：** 选择“登录 Agents Anywhere Cloud”，按系统浏览器引导登录，然后返回应用。Cloud 账号开通方式见 README 社区说明。
+- **Cloud：** 选择“登录 Agents Anywhere Cloud”，按系统浏览器引导登录，然后返回应用。也可以直接打开 [web.agents-anywhere.com](https://web.agents-anywhere.com)，注册或登录，开始使用。服务部署在中国大陆，在中国大陆使用可获得最佳体验。
 - **自托管：** 展开连接自己的服务实例，填入服务地址。Connector 的 `--server-url` 使用 origin，例如 `https://aa.example.com`，不要加 `/api/v2`；客户端会按自己的地址配置规则处理 namespace。
 - **首次部署：** 从 Server 日志复制 setup token，在 Web 完成首位管理员设置。后续账号按实例的注册和管理员策略开通。
 

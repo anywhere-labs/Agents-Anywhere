@@ -1,0 +1,43 @@
+{
+  "repository": "https://github.com/Bensonwang-owl/AA-landingpage",
+  "commit": "90e1da55743462af76ec87e418fc8d126ecdcbd7",
+  "files": [
+    {
+      "file": "macbook.webp",
+      "source": "public/images/placeholder-01-desktop.webp",
+      "sha256": "3e3987b337c79052f1dc747b375808bb3d30e16f8c0e2496ba4cbec6e531ec4b"
+    },
+    {
+      "file": "iphone.webp",
+      "source": "public/images/placeholder-03-mobile.webp",
+      "sha256": "115326adbc29a3a41d5712eeb1b7cebc917a800dd0035553399b54d1858c6a8b"
+    },
+    {
+      "file": "ipad.webp",
+      "source": "public/images/placeholder-04-tablet.webp",
+      "sha256": "1b0f898f2f3c3407e92711e1ebd65f83167d4dc63286e73bc10a5ffe02717969"
+    },
+    {
+      "file": "android.webp",
+      "source": "public/images/placeholder-10-download-android.webp",
+      "sha256": "816b11487ab26d0873dcd849e8f0e11da9b2b7cddd4409912f8ed85cc863f5c7"
+    },
+    {
+      "file": "windows.webp",
+      "source": "public/images/placeholder-09-download-windows.webp",
+      "sha256": "cf442ab095e28feeed50d5f8c9be33af948e652235bbeb105763c5c817b0a0f2"
+    },
+    {
+      "file": "caveat.woff2",
+      "source": "public/fonts/caveat-latin.woff2",
+      "sha256": "7a0049db01fdd8fc7af7ef36675862a72a5c76d0cb45ae63c9f5b6f1b769dac7"
+    },
+    {
+      "file": "OFL-Caveat.txt",
+      "source": "public/fonts/OFL-Caveat.txt",
+      "sha256": "163a2b400e16916ad3196296c946c526d0efce6baf22a2164269ffc62fb9f671",
+      "sourceSha256": "1f9d81d094273d82f3898a1ee8b598a717d050ecbf5ff7bede105b704880157b",
+      "transformation": "Trailing whitespace normalized; license wording unchanged."
+    }
+  ]
+}
