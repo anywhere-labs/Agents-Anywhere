@@ -43,6 +43,7 @@ def dsh_config_schema() -> dict[str, Any]:
                 "minimum": 0,
                 "maximum": 10,
                 "default": DEFAULT_MAX_RESTART_ATTEMPTS,
+                "description": "Fast reconnect attempts before polling the local Bridge every 5 seconds.",
             },
             "restartBackoffMs": {
                 **positive_timeout,

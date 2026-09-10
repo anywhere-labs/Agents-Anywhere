@@ -32,6 +32,9 @@ from connector.runtimes.dsh.bridge.client import BridgeClient, BridgeRpcError
 from connector.runtimes.dsh.bridge.sync import SyncRelay
 
 
+BRIDGE_POLL_INTERVAL_SECONDS = 5.0
+
+
 class DshRuntime(AgentRuntime):
     """Protocol adapter; all DSH reads and timeline projection belong to the plugin."""
 
@@ -472,7 +475,7 @@ class DshRuntime(AgentRuntime):
                 "error",
                 {
                     "code": "runtime_unavailable",
-                    "message": "DSH 已断开，请重新启动 DSH 并启用手机连接插件。",
+                    "message": "DSH 已断开，正在等待本地 Bridge 恢复；请确认 DSH 和手机连接插件已启动。",
                     "retryable": True,
                 },
             )
@@ -481,16 +484,24 @@ class DshRuntime(AgentRuntime):
 
     async def _restart_loop(self) -> None:
         values = provider_config.normalized_config_values(dict(self.config.values))
-        for attempt in range(int(values["maxRestartAttempts"])):
+        fast_attempts = int(values["maxRestartAttempts"])
+        attempt = 0
+        while not self._stopping:
+            if self._client is not None and self._client.connected:
+                return
+            delay = BRIDGE_POLL_INTERVAL_SECONDS
+            if attempt < fast_attempts:
+                delay = min(int(values["restartBackoffMs"]) / 1000 * 2**attempt, delay)
+            await asyncio.sleep(delay)
             if self._stopping:
                 return
-            await asyncio.sleep(int(values["restartBackoffMs"]) / 1000 * 2**attempt)
             try:
+                # Re-read endpoint.json on every attempt: DSH can restart on a new port.
                 await self._ensure_client()
                 return
-            except (
-                Exception
-            ):  # A later user request can retry after this bounded recovery loop.
+            except Exception:
+                attempt = min(attempt + 1, fast_attempts)
+                # Stay quiet while offline; the exit handler already published health.
                 continue
 
 
