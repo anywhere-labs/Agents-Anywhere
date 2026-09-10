@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 
 from connector.logging import logger
@@ -132,35 +133,29 @@ def select_codex_runtime_binary(
     *,
     configured_path: str | None = None,
 ) -> CodexRuntimeBinarySelection:
-    if configured_path is not None:
-        return CodexRuntimeBinarySelection(
-            mode=mode,
-            source="configured",
-            codex_bin=configured_path,
-            login_shell=shell_path.shell,
-            login_shell_path=shell_path.path,
-            reason="configured by codexExecutablePath",
-        )
+    candidate = configured_path
+    source: CodexRuntimeBinarySource = "configured"
+    reason = "system Codex disabled by useSystemCodex"
+    if candidate is None and mode == "prefer_system":
+        candidate = find_executable_on_path("codex", environment.get("PATH"))
+        source = "system"
+        reason = "system codex binary was not found on PATH"
 
-    if mode == "sdk_bundled":
-        return CodexRuntimeBinarySelection(
-            mode=mode,
-            source="sdk_bundled",
-            codex_bin=None,
-            login_shell=shell_path.shell,
-            login_shell_path=shell_path.path,
-            reason="system Codex disabled by useSystemCodex",
-        )
-
-    system_codex = find_executable_on_path("codex", environment.get("PATH"))
-    if system_codex is not None:
-        return CodexRuntimeBinarySelection(
-            mode=mode,
-            source="system",
-            codex_bin=system_codex,
-            login_shell=shell_path.shell,
-            login_shell_path=shell_path.path,
-        )
+    if candidate is not None:
+        error = codex_version_error(candidate, environment)
+        if error is None:
+            return CodexRuntimeBinarySelection(
+                mode=mode,
+                source=source,
+                codex_bin=candidate,
+                login_shell=shell_path.shell,
+                login_shell_path=shell_path.path,
+                reason="configured by codexExecutablePath"
+                if source == "configured"
+                else None,
+            )
+        reason = f"{source} Codex version check failed: {error}"
+        logger.warning("{}; falling back to SDK Codex path={}", reason, candidate)
 
     return CodexRuntimeBinarySelection(
         mode=mode,
@@ -168,22 +163,47 @@ def select_codex_runtime_binary(
         codex_bin=None,
         login_shell=shell_path.shell,
         login_shell_path=shell_path.path,
-        reason="system codex binary was not found on login shell PATH",
+        reason=reason,
     )
+
+
+def codex_version_error(candidate: str, environment: Mapping[str, str]) -> str | None:
+    """Validate the executable with the same environment used by the SDK."""
+    try:
+        result = subprocess.run(
+            [candidate, "--version"],
+            env=dict(environment),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=5.0,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return str(exc) or exc.__class__.__name__
+    if result.returncode != 0:
+        return f"exited with code {result.returncode}"
+    if (
+        re.search(
+            r"(?m)^codex(?:-cli)? \d+\.\d+\.\d+(?:[-+][\w.-]+)?\s*$", result.stdout
+        )
+        is None
+    ):
+        return "missing or invalid Codex version output"
+    return None
 
 
 def find_executable_on_path(name: str, path_value: str | None) -> str | None:
     if path_value is None:
         return None
-
-    for raw_directory in path_value.split(os.pathsep):
-        if not raw_directory:
-            continue
-        candidate = Path(raw_directory).expanduser() / name
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return str(candidate)
-
-    return None
+    # shutil.which honors Windows PATHEXT, unlike looking for a bare npm shim.
+    search_path = os.pathsep.join(
+        os.path.expanduser(directory)
+        for directory in path_value.split(os.pathsep)
+        if directory
+    )
+    return shutil.which(name, path=search_path)
 
 
 def runtime_binary_metadata(

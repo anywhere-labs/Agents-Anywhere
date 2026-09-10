@@ -4,9 +4,9 @@ import { LocaleSwitcher } from "@/components/locale-switcher"
 
 export function AuthShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen flex-col bg-background">
+    <div className="flex h-dvh flex-col overflow-y-auto bg-background">
       {/* Top nav */}
-      <header className="flex items-center justify-between px-8 py-5">
+      <header className="flex shrink-0 items-center justify-between px-8 py-5">
         <span className="aa-wordmark hidden text-xl md:inline">Agents Anywhere</span>
         <nav className="flex items-center gap-4 text-sm text-muted-foreground">
           <a href="#" className="hidden transition-colors hover:text-foreground md:inline">GitHub</a>
@@ -15,7 +15,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
       </header>
 
       {/* Centered content */}
-      <main className="flex flex-1 items-center justify-center px-4 py-12">
+      <main className="flex flex-1 shrink-0 items-center justify-center px-4 py-12">
         <div className="w-full max-w-sm">
           {children}
         </div>

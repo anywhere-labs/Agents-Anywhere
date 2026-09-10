@@ -26,7 +26,7 @@ export function PrivacyPolicyScreen() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="h-dvh overflow-y-auto bg-background">
       <div className="mx-auto w-full max-w-3xl px-6 py-16 sm:py-24">
         <Button type="button" variant="ghost" size="sm" onClick={goBack}>
           <ArrowLeft data-icon="inline-start" />
