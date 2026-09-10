@@ -216,7 +216,7 @@ test('platform files stream into an official new session, mix with images and su
     adapter.release?.()
     const corrupt = { ...await stage(native.attachments, content, 'file_corrupt'), mediaType: 'application/pdf', sha256: '0'.repeat(64) }
     await assert.rejects(native.attachments.prepare([corrupt], fixture.ctx.attachments, new AbortController().signal,
-      { service: fixture.ctx.fileUploads, sessionId: id }), /content does not match/)
+      { service: fixture.ctx.fileUploads, sessionId: id }), /Unable to persist attachment/)
     const abort = new AbortController()
     abort.abort()
     await assert.rejects(native.attachments.prepare([corrupt], fixture.ctx.attachments, abort.signal,

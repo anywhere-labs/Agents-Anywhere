@@ -35,7 +35,7 @@ DSH 左侧边栏「设置」上方 → 手机连接 → 云端登录或连接自
 
 已安装 AA Desktop 时连接功能仍显示原占位页，桥接日志始终可用，管理权限不自动切换。手机连接复用已有 `/auth/mobile-login/qr`、`status`、`confirm` 接口；二维码包含手机扫描协议要求的临时登录凭据，使用当前账号的后端地址，不使用 DSH 地址或 OAuth Web 开发端口。无需新增 AA Server 接口。
 
-当前分支 `codex/dsh-features-with-sync-fix` 已恢复图片和模型/effort/权限、Agent 模式配置。Runtime 提供 DSH 一键配置、官方侧栏过滤、原生会话和历史读取、首次完整校准、归档同步、实时事件、文本和图片新建/续聊、中断及 `ask_user_question`。新建使用 AA 显式传入的模型和权限选择；已有会话可切换配置。支持 AA 向 DSH 发送 PNG/JPEG/WebP/GIF；普通文件和 DSH 原生图片反向上传仍未开放。
+插件基于 DSH `0.1.5-rc.1`，支持附件和模型/effort/权限、Agent 模式配置。Runtime 提供 DSH 一键配置、官方侧栏过滤、原生会话和历史读取、首次完整校准、归档同步、实时事件、文本、图片和普通文件新建/续聊、中断及 `ask_user_question`。新建使用 AA 显式传入的模型和权限选择；已有会话可切换配置。AA 发来的 PNG/JPEG/WebP/GIF 使用图片接口，普通文件通过本机暂存文件和官方 `fileUploads.uploadStream` 上传，RPC 只传文件元数据。平台发出的附件保留 AA 文件引用；不回传 DSH 本地产生的附件。首次会话清单成功提交到平台之前，runtime 保持初始化状态；同步中断时自动重试。
 
 实机日志定位到官方历史读取器拒绝一个序号不连续的会话，进而拖断整个同步流。当前通过 `ctx.sessionQuery` 读取，按会话隔离读取失败，保留 AA 已接收的历史，并允许后续刷新重试。图片及配置恢复后，包含坏历史的完整回传测试继续通过。桥接日志页、Python 启动互斥、ID 历史和 Desktop 安装信息职责调整保留；检查与实机状态见 [验证记录](./VERIFICATION.md)。
 

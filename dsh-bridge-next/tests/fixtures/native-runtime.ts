@@ -42,7 +42,7 @@ export async function nativeRuntime(home: string, beforeHost?: (ctx: Context) =>
     const user = session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: '读取当前目录' }] }), { surfaceOp: 'append' })
     session.append('session/title', { title: '官方原生会话', source: { kind: 'user' }, messageSeqs: [user.seq] })
     const callId = ToolCallId('native-bash')
-    session.append('assistant/message', { turn: 1, step: 1, message: createAssistantMessage({
+    session.append('assistant/message', { turn: 1, step: 1, stream: [], message: createAssistantMessage({
       source: { provider: 'test', model: 'test' },
       content: [{ type: 'reasoning', text: '先查看目录' }, { type: 'text', text: '我来读取。' }, { type: 'tool-call', id: callId, name: 'bash', arguments: '{"command":"pwd"}' }],
     }) }, { surfaceOp: 'append' })

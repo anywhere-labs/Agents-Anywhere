@@ -46,7 +46,6 @@ class SyncRelay:
         self.items: list[dict[str, Any]] = []
         self.item_bytes = 0
         self.item_ids: set[str] = set()
-        self.initialized = False
 
     def start(self) -> None:
         self.task = asyncio.create_task(self.run(), name="dsh-event-sync")
@@ -205,7 +204,6 @@ class SyncRelay:
             await self.host.publish_runtime_notifications("dsh", [notice])
             if method == "session.inventory.complete" and params.get("complete") is True:
                 await self.host.runtime_health_update("running")
-                self.initialized = True
         else:
             raise ValueError(f"Unsupported runtime notification: {method}")
 

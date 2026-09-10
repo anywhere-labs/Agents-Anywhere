@@ -173,6 +173,13 @@ export function createProjection(externalId: string, platformId: string) {
         pending.set(chunk.index, { block: value, seq: anchor, event })
         pendingDrafts.set(key, pending)
       }
+    } else if (event.type === 'assistant/attempt') {
+      const key = `${turnStart}:${steps.get(stepKey) ?? stepKey}`
+      for (const [index, value] of drafts.get(key) ?? []) {
+        const kind = value.block.type === 'tool-call' ? 'tool' : value.block.type === 'reasoning' ? 'reasoning' : 'message'
+        remove(itemId(externalId, kind, value.block.type === 'tool-call' ? value.block.id : `${key}:${index}`))
+      }
+      drafts.delete(key)
     } else if (event.type === 'assistant/message') {
       const key = `${turnStart}:${steps.get(stepKey) ?? stepKey}`
       const values = drafts.get(key)
@@ -219,7 +226,8 @@ export function createProjection(externalId: string, platformId: string) {
   }
   return {
     apply,
-    stream(turn: number, step: number, chunk: StreamChunk, time: number) {
+    stream(turn: number, step: number, chunk: StreamChunk, time: number, cursor: number) {
+      if (throughSeq > cursor) return // A baseline may already include the durable settlement.
       apply({ type: 'assistant/chunk', seq: throughSeq as SessionEvent['seq'], time,
         data: { turn, step, chunk } }, undefined, true)
     },

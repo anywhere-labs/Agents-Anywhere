@@ -58,7 +58,6 @@ async function fixture() {
   const native = await nativeRuntime(home, async ctx => {
     await mountAgents(ctx, adapter)
     // Real Connection RPC/Gateway; browser auth is never consulted by the local carrier.
-    new HostConnectionService(ctx, [], undefined as never)
     await ctx.plugin(UserQuestionService).await()
     await ctx.plugin(AskUserTool).await()
     await ctx.plugin(Remotes).await()

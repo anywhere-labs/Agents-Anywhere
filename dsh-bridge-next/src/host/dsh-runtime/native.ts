@@ -24,7 +24,7 @@ declare module '@deepseek-ai/cordis' {
   interface Events { 'llm/adapters-updated'(): void }
 }
 
-export type NativeChange = { type: 'stream', id: string, turn: number, step: number, chunk: StreamChunk, time: number }
+export type NativeChange = { type: 'stream', id: string, turn: number, step: number, chunk: StreamChunk, time: number, throughSeq: number }
   | { type: 'event', id: string, event: SessionEvent }
   | { type: 'session', id: string } | { type: 'status', id: string }
   | { type: 'refresh', id: string }
@@ -98,7 +98,7 @@ export class NativeRuntime {
         const attempt = attempts.get(agent.id)
         if (attempt?.attemptId !== frame.attemptId) return
         if (frame.type === 'chunk') this.emit({ type: 'stream', id: agent.id,
-          turn: attempt.turn, step: attempt.step, chunk: frame.chunk, time: frame.time })
+          turn: attempt.turn, step: attempt.step, chunk: frame.chunk, time: frame.time, throughSeq: Number(agent.session.seq) - 1 })
         else {
           attempts.delete(agent.id)
           if (frame.outcome.kind === 'abandoned') this.emit({ type: 'refresh', id: agent.id })

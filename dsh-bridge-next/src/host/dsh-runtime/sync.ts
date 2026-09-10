@@ -301,7 +301,7 @@ export class SyncFeed {
         if (!this.published.has(id)) return
         if (change.type === 'question') await this.notices(id)
         if (change.type === 'stream') {
-          this.projections.get(id)?.stream(change.turn, change.step, change.chunk, change.time)
+          this.projections.get(id)?.stream(change.turn, change.step, change.chunk, change.time, change.throughSeq)
           touched.add(id)
           return
         }
