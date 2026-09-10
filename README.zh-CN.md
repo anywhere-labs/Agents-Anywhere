@@ -142,13 +142,11 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 
 ## 交流与反馈
 
-欢迎加入社区，分享使用体验、反馈问题或参与开发。扫码加入微信群、飞书群、QQ 群，或通过 Discord 参与交流。自托管实例的账号由自己的管理员管理。
+欢迎加入社区，分享使用体验、反馈问题或参与开发。扫码加入微信群或 QQ 群参与交流。自托管实例的账号由自己的管理员管理。
 
-| 微信群 | 飞书群 | QQ 群 | Discord |
-| --- | --- | --- | --- |
-| <img src="docs/contact/wechat-beta.png" alt="微信群二维码" width="160"> | <img src="docs/contact/feishu-beta.jpeg" alt="飞书群二维码" width="160"> | <img src="docs/contact/qq-beta.jpeg" alt="QQ 群二维码" width="160"> | <img src="docs/contact/discord-beta.jpeg" alt="Discord 社区二维码" width="160"> |
-
-也欢迎通过 Discord 参与国际社区交流。
+| 微信群 | QQ 群 |
+| --- | --- |
+| <img src="docs/contact/wechat-beta.png" alt="微信群二维码" width="160"> | <img src="docs/contact/qq-beta.png" alt="QQ 群二维码" width="160"> |
 
 ## 开源许可
 

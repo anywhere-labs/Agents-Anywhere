@@ -142,13 +142,11 @@ Report problems in [Issues](https://github.com/anywhere-labs/Agents-Anywhere/iss
 
 ## Community and feedback
 
-Join the community to share your experience, report problems or contribute. Scan a code to join WeChat, Feishu or QQ, or join the conversation on Discord. Self-hosted accounts are managed by your own administrator.
+Join the community to share your experience, report problems or contribute. Scan a code to join WeChat or QQ. Self-hosted accounts are managed by your own administrator.
 
-| WeChat | Feishu | QQ | Discord |
-| --- | --- | --- | --- |
-| <img src="docs/contact/wechat-beta.png" alt="WeChat community QR code" width="160"> | <img src="docs/contact/feishu-beta.jpeg" alt="Feishu community QR code" width="160"> | <img src="docs/contact/qq-beta.jpeg" alt="QQ community QR code" width="160"> | <img src="docs/contact/discord-beta.jpeg" alt="Discord community QR code" width="160"> |
-
-Discord is also available for international community discussion.
+| WeChat | QQ |
+| --- | --- |
+| <img src="docs/contact/wechat-beta.png" alt="WeChat community QR code" width="160"> | <img src="docs/contact/qq-beta.png" alt="QQ community QR code" width="160"> |
 
 ## License
 
