@@ -79,7 +79,19 @@ class DshRuntime(AgentRuntime):
 
     async def start(self) -> None:
         self._stopping = False
-        await self._ensure_client()
+        try:
+            await self._ensure_client()
+        except (OSError, RuntimeError, ValueError):
+            with suppress(Exception):
+                await self.host.runtime_health_update(
+                    "starting",
+                    {
+                        "code": "runtime_unavailable",
+                        "message": "正在等待本地 DSH Bridge；请启动 DSH 并启用手机连接插件。",
+                        "retryable": True,
+                    },
+                )
+            self._schedule_restart()
 
     async def stop(self) -> None:
         self._stopping = True
@@ -479,7 +491,10 @@ class DshRuntime(AgentRuntime):
                     "retryable": True,
                 },
             )
-        if self._restart_task is None or self._restart_task.done():
+        self._schedule_restart()
+
+    def _schedule_restart(self) -> None:
+        if not self._stopping and (self._restart_task is None or self._restart_task.done()):
             self._restart_task = asyncio.create_task(self._restart_loop())
 
     async def _restart_loop(self) -> None:

@@ -140,9 +140,14 @@ class RuntimeRpcHandler:
                 parsed.config,
                 revision=parsed.config_revision,
             )
+            entry = self.agent_runtime_supervisor.entry(parsed.runtime_id)
             return self._scoped_result(
                 RuntimeScope(parsed.runtime_id, parsed.runtime_type),
-                {"runtimeId": parsed.runtime_id, "status": "running"},
+                {
+                    "runtimeId": parsed.runtime_id,
+                    "status": entry.status,
+                    **({"error": dict(entry.error)} if entry.error is not None else {}),
+                },
             )
         if method == "runtime.stop":
             parsed = RuntimeIdParams.parse(params)

@@ -15,7 +15,6 @@ from connector.runtime_protocol import (
     RuntimeResourceClaim,
     RuntimeSourceKey,
     RuntimeTypeDescriptor,
-    RuntimeUnavailableError,
 )
 from connector.runtime_protocol.filesystem import filesystem_resource_key
 from connector.runtime_protocol.host import RuntimeHostClient
@@ -180,14 +179,14 @@ class DshProvider(RuntimeProvider):
         normalized = provider_config.normalized_config_values(raw)
         result = await self._prober(normalized)
         self._remember(result)
-        if not result.available or not result.configured or result.endpoint is None:
-            raise RuntimeUnavailableError(result.reason or "DSH is unavailable")
+        # Offline is temporary, not an invalid configuration. The runtime owns
+        # reconnection and re-reads the local endpoint when the Bridge appears.
         schema_info = self._config_schema()
         if "defaultAgentPreset" not in normalized and "defaultAgentPreset" in schema_info.defaults:
             normalized["defaultAgentPreset"] = schema_info.defaults["defaultAgentPreset"]
         preset = normalized.get("defaultAgentPreset")
         catalog = (result.metadata or {}).get("agentPresetCatalog")
-        if preset is not None and isinstance(catalog, dict):
+        if result.available and preset is not None and isinstance(catalog, dict):
             if not any(row.get("id") == preset and row.get("enabled") is True for row in catalog.get("presets", []) if isinstance(row, dict)):
                 raise RuntimeInvalidRequestError("所选 DSH 模式已删除或不可用，请重新选择新会话默认模式。")
         self._last_values = normalized

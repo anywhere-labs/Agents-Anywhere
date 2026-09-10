@@ -306,6 +306,23 @@ class RuntimeSupervisor:
             resource_claims=claims,
             error=None,
         )
+        # A runtime may start its recovery worker before its service is online.
+        # Preserve health emitted during start instead of overwriting it with running.
+        startup_status: RuntimeLifecycleStatus = "running"
+        startup_error: Mapping[str, Any] | None = None
+        startup_complete = False
+
+        async def report_health(
+            runtime_id: str,
+            status: RuntimeLifecycleStatus,
+            error: Mapping[str, Any] | None = None,
+        ) -> None:
+            nonlocal startup_status, startup_error
+            if not startup_complete:
+                startup_status, startup_error = status, error
+                return
+            await self.report_status(runtime_id, status, error)
+
         native_runtime: AgentRuntime | None = None
         bound_runtime: RuntimeInstance | None = None
         try:
@@ -313,7 +330,7 @@ class RuntimeSupervisor:
                 base=self._host,
                 instance=instance,
                 source_key=_provider_source_key(entry.provider, config),
-                status_reporter=self.report_status,
+                status_reporter=report_health,
             )
             native_runtime = await entry.provider.create_runtime(config, scoped_host)
             bound_runtime = RuntimeInstance(
@@ -339,14 +356,15 @@ class RuntimeSupervisor:
             )
             raise
 
+        startup_complete = True
         await self._set_entry(
             instance.runtime_id,
             runtime=bound_runtime,
             config=config,
             requested_values=requested_values,
             resource_claims=claims,
-            status="running",
-            error=None,
+            status=startup_status,
+            error=startup_error,
         )
         return bound_runtime
 

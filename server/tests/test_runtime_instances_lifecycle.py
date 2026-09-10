@@ -20,6 +20,7 @@ class FakeRuntimeRpc:
     def __init__(self, discovery: dict[str, Any]) -> None:
         self.discovery = discovery
         self.online = True
+        self.start_result: dict[str, Any] = {"ok": True}
         self.requests: list[tuple[str, str, dict[str, Any]]] = []
         self.session_create_result: dict[str, Any] | None = None
 
@@ -34,6 +35,8 @@ class FakeRuntimeRpc:
         **_: Any,
     ) -> dict[str, Any]:
         self.requests.append((connector_id, method, params))
+        if method == "runtime.start":
+            return self.start_result
         if method == "runtime.discover":
             return self.discovery
         if method == "runtime.capabilities":
@@ -1037,3 +1040,29 @@ async def _insert_named_runtime(
                 updated_at=now,
             )
         )
+
+
+def test_active_runtime_preserves_waiting_status_until_bridge_recovers(tmp_path):
+    client, rpc, connector_id, headers = _make_client(
+        tmp_path, _v2_discovery(runtime_type="dsh"),
+    )
+    _discover_types(client, connector_id, headers)
+    rpc.start_result = {
+        "status": "starting",
+        "error": {"code": "runtime_unavailable", "message": "Waiting for Bridge", "retryable": True},
+    }
+    created = client.post(
+        f"/connectors/{connector_id}/runtimes", headers=headers,
+        json={"runtimeType": "dsh", "name": "DSH", "config": {"home": "/dsh"}, "active": True},
+    )
+    assert created.status_code == 201, created.text
+    waiting = created.json()
+    assert waiting["active"] is True
+    assert waiting["status"] == "starting"
+    assert waiting["error"]["retryable"] is True
+    recovered = asyncio.run(client.app.state.device_runtime_service.apply_status(
+        connector_id, waiting["runtimeId"], "running",
+    ))
+    assert recovered.status == "running"
+    assert recovered.active is True
+    assert recovered.error is None
