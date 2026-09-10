@@ -5,8 +5,8 @@ import io
 import json
 from typing import Any
 
-from connector import json_rpc
-from connector.json_rpc import JsonRpcError, JsonRpcStdioServer
+from connector.core import json_rpc
+from connector.core.json_rpc import JsonRpcError, JsonRpcStdioServer
 
 
 class MemoryWriter:

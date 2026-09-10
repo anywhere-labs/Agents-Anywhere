@@ -135,6 +135,26 @@
   }
 }
 
+@keyframes aa-attachment-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.aa-attachment-shimmer {
+  background-image: linear-gradient(
+    100deg,
+    color-mix(in oklch, var(--muted) 82%, transparent) 20%,
+    color-mix(in oklch, var(--foreground) 12%, var(--muted)) 40%,
+    color-mix(in oklch, var(--muted) 82%, transparent) 60%
+  );
+  background-size: 200% 100%;
+  animation: aa-attachment-shimmer 1.4s ease-in-out infinite;
+}
+
 @layer base {
 * {
   @apply border-border outline-ring/50;
@@ -145,6 +165,7 @@ html {
 }
 body {
   @apply size-full overflow-hidden overscroll-none bg-background text-foreground;
+  touch-action: manipulation;
 }
 }
 

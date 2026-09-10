@@ -5,6 +5,7 @@ import org.json.JSONObject
 data class RemoteSession(
     val id: String,
     val connectorId: String,
+    val projectId: String?,
     val connectorStatus: String,
     val runtime: String,
     val externalSessionId: String?,
@@ -13,125 +14,179 @@ data class RemoteSession(
     val status: String,
     val takeover: Boolean,
     val pinned: Boolean,
+    val pinnedAt: String?,
     val archived: Boolean,
+    val archivedAt: String?,
     val unread: Boolean,
+    val lastReadSeq: Int,
     val lastSyncedAt: String?,
     val sourceObservedAt: String?,
     val lastActivityAt: String?,
     val lastItemAt: String?,
+    val lastItemOrderSeq: Int?,
     val sortAt: String?,
     val updatedSeq: Int,
-    val runtimeSettings: Map<String, Any?>,
-    val runtimeSettingsOverride: Map<String, Any?>,
+    val runtimeId: String = runtime,
+    val runtimeType: String = runtime,
+    val runtimeName: String = runtimeType,
 )
 
-data class RemoteRuntimeConfigSchema(
-    val runtime: String,
-    val schemaVersion: Int,
-    val fields: List<RemoteRuntimeConfigField>,
-)
-
-data class RemoteRuntimeConfigField(
-    val key: String,
-    val label: String,
-    val type: String,
-    val description: String?,
-    val options: List<RemoteRuntimeConfigOption>,
-    val visibleWhen: Map<String, Any?>,
-    val allowSessionOverride: Boolean,
-    val hidden: Boolean,
-)
-
-data class RemoteRuntimeConfigOption(
-    val value: String,
-    val label: String,
-    val description: String?,
-    val efforts: List<RemoteRuntimeConfigOption>?,
-)
-
-data class RemoteRuntimeSettings(
-    val runtime: String,
-    val settings: Map<String, Any?>,
-    val runtimeSettingsOverride: Map<String, Any?>,
-    val schemaVersion: Int,
-    val schema: RemoteRuntimeConfigSchema?,
-)
-
-data class RemoteSessionState(
+data class RemoteSessionResponse(
     val session: RemoteSession,
+    val serverTime: String?,
+)
+
+data class RemoteSessionPage(
+    val sessions: List<RemoteSession>,
+    val hasMore: Boolean,
+    val nextCursor: String?,
+    val serverTime: String?,
+)
+
+data class RemoteSessionsMutationResponse(
+    val sessions: List<RemoteSession>,
+    val notFound: List<String>,
+    val serverTime: String?,
+)
+
+data class RemoteSessionCreateAndStartRequest(
+    val connectorId: String,
+    val projectId: String,
+    val runtime: String,
+    val title: String?,
+    val cwd: String?,
+    val content: String,
+    val selections: Map<String, String>,
+    val attachments: List<RemoteInlineAttachmentRef>,
+    val clientMessageId: String?,
+    val runtimeId: String = runtime,
+    val runtimeType: String = runtime,
+)
+
+data class RemoteInlineAttachmentRef(
+    val fileId: String,
+    val name: String,
+    val mediaType: String,
+    val size: Long,
+    val sha256: String,
+    val contentBase64: String,
+)
+
+data class RemoteSessionCreateResponse(
+    val session: RemoteSession,
+)
+
+data class RemoteSessionShareResponse(
+    val shareId: String,
+    val sharePath: String,
+    val shareUrl: String,
+    val scope: String,
+    val createdAt: String,
+)
+
+data class RemoteSessionTimelinePage(
+    val sessionId: String,
     val items: List<RemoteTimelineItem>,
-    val approvals: List<RemoteApproval>,
+    val nextSeq: Int,
+    val hasMore: Boolean,
+    val serverTime: String?,
+)
+
+data class RemoteSessionRuntimeStateResponse(
+    val state: RemoteSessionRuntimeState,
+    val serverTime: String?,
+)
+
+data class RemoteSessionRuntimeState(
+    val sessionId: String,
+    val runtime: String,
+    val externalSessionId: String?,
+    val status: String,
+    val selections: Map<String, String?>,
+    val statusReason: String?,
+    val error: Map<String, Any?>?,
+    val metadata: Map<String, Any?>,
+    val updatedSeq: Int,
+    val createdAt: String?,
+    val updatedAt: String? = null,
+    val runtimeId: String = runtime,
+    val runtimeType: String = runtime,
+    val runtimeName: String = runtimeType,
+)
+
+data class RemoteRuntimeNoticeListResponse(
+    val notices: List<RemoteRuntimeNotice>,
+    val serverTime: String?,
+)
+
+data class RemoteRuntimeNotice(
+    val noticeId: String,
+    val type: String,
+    val sessionId: String,
+    val source: Map<String, Any?>,
+    val title: String,
+    val message: String?,
+    val severity: String,
+    val status: String,
+    val interactionType: String?,
+    val blocking: RemoteRuntimeNoticeBlocking?,
+    val responseRequired: Boolean,
+    val actions: List<RemoteRuntimeNoticeAction>,
+    val context: Map<String, Any?>,
+    val metadata: Map<String, Any?>,
+    val expiresAt: String?,
+    val revision: Int,
+    val updatedSeq: Int,
+    val createdAt: String?,
+    val updatedAt: String? = null,
+    val resolvedAt: String?,
+)
+
+data class RemoteRuntimeNoticeBlocking(
+    val scope: String,
+    val targetId: String,
+)
+
+data class RemoteRuntimeNoticeAction(
+    val actionId: String,
+    val label: String,
+    val style: String,
+    val input: RemoteRuntimeNoticeActionInput,
+    val unknown: Map<String, Any?>,
+)
+
+data class RemoteRuntimeNoticeActionInput(
+    val required: Boolean,
+    val schema: Map<String, Any?>?,
+    val uiSchema: Map<String, Any?>?,
+)
+
+data class RemoteSessionSnapshot(
+    val session: RemoteSession,
+    val state: RemoteSessionRuntimeState?,
+    val timeline: RemoteSessionTimelineSnapshot,
+    val notices: List<RemoteRuntimeNotice>,
+    val effectiveCapabilities: RemoteRuntimeCapabilitySet,
+    val runtimeCapabilities: RemoteRuntimeCapabilitySet,
+    val catalogs: RemoteSessionRuntimeCatalogs,
+    val eventCursor: String,
+    val serverTime: String?,
+)
+
+data class RemoteSessionRuntimeCatalogs(
+    val model: RemoteRuntimeModelCatalog?,
+    val permission: RemoteRuntimePermissionCatalog?,
+)
+
+data class RemoteSessionTimelineSnapshot(
+    val items: List<RemoteTimelineItem>,
     val nextSeq: Int,
     val hasMore: Boolean,
 )
 
-/**
- * Parse a runtime config schema from the JSON body of a runtime-settings
- * response. Device/session runtime-settings endpoints return the *merged*
- * schema (device-reported modelOptions overlaid onto the base schema), which
- * is what clients should render instead of the global /agents/{runtime}/config-schema.
- */
-fun JSONObject.toRemoteRuntimeConfigSchema(): RemoteRuntimeConfigSchema {
-    val fields = optJSONArray("fields")
-    val fieldList = if (fields == null) {
-        emptyList()
-    } else {
-        (0 until fields.length()).mapNotNull { i ->
-            val f = fields.optJSONObject(i) ?: return@mapNotNull null
-            val options = f.optJSONArray("options")
-            val visibleWhen = f.optJSONObject("visibleWhen")
-            RemoteRuntimeConfigField(
-                key = f.optString("key", ""),
-                label = f.optString("label", ""),
-                type = f.optString("type", "string"),
-                description = f.optNullableString("description"),
-                options = if (options == null) {
-                    emptyList()
-                } else {
-                    (0 until options.length()).mapNotNull { j ->
-                        val o = options.optJSONObject(j) ?: return@mapNotNull null
-                        val efforts = o.optJSONArray("efforts")
-                        RemoteRuntimeConfigOption(
-                            value = o.opt("value")?.toString().orEmpty(),
-                            label = o.optString("label", ""),
-                            description = o.optNullableString("description"),
-                            efforts = if (efforts == null) {
-                                null
-                            } else {
-                                (0 until efforts.length()).mapNotNull { k ->
-                                    val e = efforts.optJSONObject(k) ?: return@mapNotNull null
-                                    RemoteRuntimeConfigOption(
-                                        value = e.opt("value")?.toString().orEmpty(),
-                                        label = e.optString("label", ""),
-                                        description = e.optNullableString("description"),
-                                        efforts = null,
-                                    )
-                                }
-                            },
-                        )
-                    }
-                },
-                visibleWhen = if (visibleWhen == null) {
-                    emptyMap()
-                } else {
-                    visibleWhen.keys().asSequence().associateWith { visibleWhen.opt(it) }
-                },
-                allowSessionOverride = f.optBoolean("allowSessionOverride", false),
-                hidden = f.optBoolean("hidden", false),
-            )
-        }
-    }
-    return RemoteRuntimeConfigSchema(
-        runtime = optString("runtime", ""),
-        schemaVersion = optInt("schemaVersion", 0),
-        fields = fieldList,
-    )
-}
-
 data class RemoteTimelineItem(
     val id: String,
     val sessionId: String,
-    val turnId: String?,
     val type: String,
     val status: String,
     val role: String?,
@@ -139,36 +194,53 @@ data class RemoteTimelineItem(
     val content: JSONObject,
     val source: JSONObject,
     val orderSeq: Int,
+    val revision: Int,
     val updatedSeq: Int,
     val createdAt: String,
-)
-
-data class RemoteApproval(
-    val id: String,
-    val sessionId: String,
-    val turnId: String?,
-    val status: String,
-    val kind: String,
-    val targetItemId: String?,
-    val title: String,
-    val description: String?,
-    val choices: List<String>,
-    val updatedSeq: Int,
-    val createdAt: String,
-)
-
-data class RemoteSessionEvent(
-    val sessionId: String,
-    val items: List<RemoteTimelineItem>,
-    val approvals: List<RemoteApproval>?,
-    val session: RemoteSession?,
-    val nextSeq: Int,
-    val refetch: Boolean,
+    val updatedAt: String?,
+    val contentHash: String = "",
 )
 
 data class RemoteRpcResponse(
     val ok: Boolean,
-    val turnId: String?,
+    val errorCode: String?,
+    val errorMessage: String?,
+)
+
+data class RemoteSessionSelectionPatchResponse(
+    val ok: Boolean,
+    val state: RemoteSessionRuntimeState?,
+    val connectorResult: Map<String, Any?>?,
+    val serverTime: String?,
+)
+
+data class RemoteSessionCommandListResponse(
+    val commands: List<RemoteSessionCommand>,
+    val serverTime: String?,
+)
+
+data class RemoteSessionCommand(
+    val id: String,
+    val title: String,
+    val description: String?,
+    val aliases: List<String>,
+    val category: String?,
+    val scope: String,
+    val enabled: Boolean,
+    val disabledReason: String?,
+    val acceptsArgs: Boolean,
+    val argsSchema: Map<String, Any?>?,
+    val metadata: Map<String, Any?>,
+)
+
+data class RemoteSessionCommandResponse(
+    val command: String,
+    val ok: Boolean,
+    val code: String?,
+    val message: String?,
+    val result: Any?,
+    val session: RemoteSession?,
+    val serverTime: String?,
 )
 
 data class RemoteUploadedAttachment(
@@ -176,4 +248,34 @@ data class RemoteUploadedAttachment(
     val name: String,
     val mediaType: String,
     val size: Long,
+    val sha256: String? = null,
 )
+
+data class RemoteAttachmentRef(
+    val fileId: String,
+)
+
+data class RemoteDownloadedAttachment(
+    val fileId: String,
+    val sessionId: String,
+    val path: String,
+    val name: String,
+    val size: Long,
+    val sha256: String,
+    val bytes: ByteArray,
+    val createdAt: String?,
+    val serverTime: String?,
+)
+
+enum class AttachmentTransferFailure {
+    InvalidBase64,
+    IncompleteUpload,
+    SizeMismatch,
+    Sha256Mismatch,
+}
+
+class AttachmentTransferException(
+    val failure: AttachmentTransferFailure,
+    val attachmentName: String? = null,
+    cause: Throwable? = null,
+) : IllegalStateException(failure.name, cause)

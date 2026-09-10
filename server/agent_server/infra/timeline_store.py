@@ -8,9 +8,9 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from agent_server.core.models import TimelineItem
 from agent_server.infra.db import timeline_items
 from agent_server.infra.db.engine import SQLITE_BACKEND
-from agent_server.core.models import TimelineItem
 
 
 def _json_dumps(value: Any) -> str:
@@ -39,17 +39,46 @@ class SqlTimelineStore:
 
     async def replace(self, session_id: str, items: list[TimelineItem]) -> None:
         async with self._engine.begin() as conn:
+            await self.replace_all(conn, session_id, items)
+
+    async def delete_items(
+        self,
+        conn: AsyncConnection,
+        session_id: str,
+        item_ids: set[str],
+    ) -> None:
+        """Delete the given stable IDs inside the caller's transaction."""
+
+        ids = list(item_ids)
+        for offset in range(0, len(ids), 500):
             await conn.execute(
-                delete(timeline_items).where(timeline_items.c.session_id == session_id)
+                delete(timeline_items).where(
+                    timeline_items.c.session_id == session_id,
+                    timeline_items.c.id.in_(ids[offset : offset + 500]),
+                )
             )
-            if items:
-                sorted_items = sorted(
-                    items, key=lambda value: (value.orderSeq, value.updatedSeq, value.id)
-                )
-                await conn.execute(
-                    insert(timeline_items),
-                    [self._row_values(item) for item in sorted_items],
-                )
+
+    async def replace_all(
+        self,
+        conn: AsyncConnection,
+        session_id: str,
+        items: list[TimelineItem],
+    ) -> None:
+        """Replace one complete timeline inside the caller's transaction."""
+
+        await conn.execute(
+            delete(timeline_items).where(timeline_items.c.session_id == session_id)
+        )
+        if not items:
+            return
+        sorted_items = sorted(
+            items,
+            key=lambda value: (value.orderSeq, value.updatedSeq, value.id),
+        )
+        await conn.execute(
+            insert(timeline_items),
+            [self._row_values(item) for item in sorted_items],
+        )
 
     async def latest_item(self, session_id: str) -> TimelineItem | None:
         async with self._engine.connect() as conn:
@@ -74,20 +103,43 @@ class SqlTimelineStore:
         + INSERT-all pattern that `replace()` does. The dialect-specific
         upsert keeps it to one row mutation.
         """
-        values = self._row_values(item)
+        await self.upsert_many(conn, [item])
+
+    async def upsert_many(
+        self,
+        conn: AsyncConnection,
+        items: list[TimelineItem],
+    ) -> None:
+        """Insert or update one Runtime timeline batch by stable IDs."""
+
+        if not items:
+            return
+        values = [self._row_values(item) for item in items]
         if self._backend == SQLITE_BACKEND:
-            stmt = sqlite_insert(timeline_items).values(**values)
-            update_cols = {k: stmt.excluded[k] for k in values if k not in ("session_id", "id")}
+            stmt = sqlite_insert(timeline_items)
+            update_cols = {
+                key: stmt.excluded[key]
+                for key in values[0]
+                if key not in ("session_id", "id")
+            }
             stmt = stmt.on_conflict_do_update(
-                index_elements=["session_id", "id"], set_=update_cols
+                index_elements=["session_id", "id"],
+                set_=update_cols,
+                where=stmt.excluded.updated_seq >= timeline_items.c.updated_seq,
             )
         else:
-            stmt = pg_insert(timeline_items).values(**values)
-            update_cols = {k: stmt.excluded[k] for k in values if k not in ("session_id", "id")}
+            stmt = pg_insert(timeline_items)
+            update_cols = {
+                key: stmt.excluded[key]
+                for key in values[0]
+                if key not in ("session_id", "id")
+            }
             stmt = stmt.on_conflict_do_update(
-                index_elements=["session_id", "id"], set_=update_cols
+                index_elements=["session_id", "id"],
+                set_=update_cols,
+                where=stmt.excluded.updated_seq >= timeline_items.c.updated_seq,
             )
-        await conn.execute(stmt)
+        await conn.execute(stmt, values)
 
     async def read_one(
         self, session_id: str, item_id: str
@@ -102,6 +154,32 @@ class SqlTimelineStore:
                 )
             ).mappings().first()
         return TimelineItem.model_validate_json(row["payload_json"]) if row is not None else None
+
+    async def read_many(
+        self,
+        session_id: str,
+        item_ids: set[str],
+    ) -> list[TimelineItem]:
+        """Read only the rows touched by one incremental Runtime sync."""
+
+        if not item_ids:
+            return []
+        rows = []
+        item_id_list = list(item_ids)
+        async with self._engine.connect() as conn:
+            for offset in range(0, len(item_id_list), 500):
+                chunk = item_id_list[offset : offset + 500]
+                rows.extend(
+                    (
+                        await conn.execute(
+                            timeline_items.select().where(
+                                timeline_items.c.session_id == session_id,
+                                timeline_items.c.id.in_(chunk),
+                            )
+                        )
+                    ).mappings().all()
+                )
+        return [TimelineItem.model_validate_json(row["payload_json"]) for row in rows]
 
     async def list_since(
         self, session_id: str, *, after_seq: int, limit: int
@@ -172,7 +250,6 @@ class SqlTimelineStore:
             "type": item.type,
             "status": item.status,
             "role": item.role,
-            "turn_id": item.turnId,
             "order_seq": item.orderSeq,
             "updated_seq": item.updatedSeq,
             "item_time": _item_time(item),

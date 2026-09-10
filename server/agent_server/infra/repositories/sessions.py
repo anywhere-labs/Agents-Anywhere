@@ -1,28 +1,274 @@
+# ruff: noqa: F403, F405, I001
+
 from __future__ import annotations
 
+from sqlalchemy import case
+
 from agent_server.infra.repositories.store_support import *
+from agent_server.infra.repositories.projects import _clean_workspace_path
+from agent_server.core.models import ConnectorSessionResolution, TimelineItem
+
+
+SESSION_CURSOR_VERSION = 1
+_SESSION_INVENTORY_UPDATE_CHUNK_SIZE = 4_000
+
+
+def _normalized_source_availability(value: Any) -> str:
+    if value == "visible":
+        return "available"
+    if value == "hidden":
+        return "unavailable"
+    if isinstance(value, str) and value in {
+        "available",
+        "archived",
+        "unavailable",
+        "deleted",
+        "missing",
+        "unknown",
+    }:
+        return value
+    return "unknown"
+
+
+def _source_archive_update(
+    previous_source_state: str | None,
+    source_state: str | None,
+    *,
+    archived: bool | int,
+    observed_at: str,
+) -> dict[str, Any]:
+    # Import a newly observed archive once. Repeated observations must not undo
+    # a later unarchive in AA. Missing/unavailable observations do not establish
+    # a new archive transition, and source recovery must not unarchive AA.
+    if (
+        source_state == "archived"
+        and previous_source_state in {None, "visible", "available"}
+        and not archived
+    ):
+        return {"archived": 1, "archived_at": observed_at, "dsh_archive_legacy": 0}
+    return {}
+
+
+def _latest_timeline_item_source() -> tuple[Any, Any]:
+    """Return the join source for the newest timeline row of each session.
+
+    The previous shape ranked every timeline row in the database with
+    ``row_number()`` before keeping ``rank = 1``. A session list cannot push a
+    session predicate into that projection, so every list read scanned and
+    sorted the whole ``timeline_items`` table. This shape looks the newest row
+    up per returned session instead, using the
+    ``idx_timeline_items_session_latest`` index for the correlated lookup and
+    the ``(session_id, id)`` primary key for the row itself.
+
+    A correlated subquery is used rather than ``LATERAL`` because SQLite (the
+    default test backend) does not implement ``LATERAL``. The subquery
+    correlates on ``sessions.id`` rather than on the aliased join target:
+    correlating on the alias makes the subquery depend on the table it is
+    joined to, so the planner cannot drive the join from the session rows and
+    degrades into a scan of the whole timeline table.
+    """
+
+    latest = timeline_items_t.alias("latest_timeline_item")
+    newest_item_id = (
+        select(timeline_items_t.c.id)
+        .where(timeline_items_t.c.session_id == sessions_t.c.id)
+        .order_by(
+            func.coalesce(timeline_items_t.c.item_time, "").desc(),
+            timeline_items_t.c.order_seq.desc(),
+            timeline_items_t.c.updated_seq.desc(),
+        )
+        .limit(1)
+        .scalar_subquery()
+    )
+    return latest, (latest.c.session_id == sessions_t.c.id) & (
+        latest.c.id == newest_item_id
+    )
+
+
+def _session_cursor_values(row: Any) -> tuple[int, str, int, int, str]:
+    latest_item_order_seq = row["latest_item_order_seq"]
+    return (
+        int(row["pinned"] or 0),
+        str(row["session_sort_at"] or ""),
+        -1 if latest_item_order_seq is None else int(latest_item_order_seq),
+        int(row["updated_seq"] or 0),
+        str(row["id"]),
+    )
+
+
+def _encode_session_cursor(row: Any) -> str:
+    pinned, sort_at, order_seq, updated_seq, session_id = _session_cursor_values(row)
+    payload = json.dumps(
+        {
+            "v": SESSION_CURSOR_VERSION,
+            "p": pinned,
+            "s": sort_at,
+            "o": order_seq,
+            "u": updated_seq,
+            "i": session_id,
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_session_cursor(cursor: str) -> tuple[int, str, int, int, str]:
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(cursor + padding))
+        values = (
+            payload["p"],
+            payload["s"],
+            payload["o"],
+            payload["u"],
+            payload["i"],
+        )
+        if payload.get("v") != SESSION_CURSOR_VERSION:
+            raise ValueError
+        if type(values[0]) is not int or values[0] not in (0, 1):
+            raise ValueError
+        if not isinstance(values[1], str):
+            raise ValueError
+        if type(values[2]) is not int or type(values[3]) is not int:
+            raise ValueError
+        if not isinstance(values[4], str) or not values[4]:
+            raise ValueError
+        return values
+    except (binascii.Error, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid session cursor") from exc
 
 
 def _normalize_session_origin(value: str | None) -> str:
     return "platform" if value == "platform" else "connector_import"
 
 
+def _selection_map(
+    model_selection_id: str | None,
+    permission_selection_id: str | None,
+) -> dict[str, str]:
+    selections: dict[str, str] = {}
+    if model_selection_id:
+        selections["model"] = model_selection_id
+    if permission_selection_id:
+        selections["permission"] = permission_selection_id
+    return selections
+
+
+def _runtime_identity(runtime: str, runtime_id: str | None) -> RuntimeIdentity:
+    return RuntimeIdentity.create(
+        runtime_type=runtime,
+        runtime_id=runtime_id or runtime,
+    )
+
+
+def _binding_identity(
+    *,
+    explicit: Any,
+    runtime: str | None,
+    runtime_id: str | None,
+    source_runtime: str | None,
+    source_runtime_id: str | None,
+) -> RuntimeIdentity:
+    """Pick the runtime identity a connector notification resolves against.
+
+    Mirrors the historical order: explicit params, then the explicit session
+    row, then the timeline item's source runtime, then the codex default.
+    """
+
+    if runtime is not None:
+        return _runtime_identity(runtime, runtime_id)
+    if explicit is not None:
+        return _runtime_identity(str(explicit.runtime), str(explicit.runtime_id))
+    if source_runtime is not None and source_runtime != "platform":
+        return _runtime_identity(source_runtime, source_runtime_id)
+    return _runtime_identity("codex", None)
+
+
+def _session_sort_at(latest_item: Any) -> Any:
+    latest_item_time = func.nullif(latest_item.c.item_time, "")
+    last_activity_at = func.nullif(sessions_t.c.last_activity_at, "")
+    latest_activity_at = case(
+        (latest_item_time.is_(None), last_activity_at),
+        (last_activity_at.is_(None), latest_item_time),
+        (latest_item_time >= last_activity_at, latest_item_time),
+        else_=last_activity_at,
+    )
+    return func.coalesce(
+        latest_activity_at,
+        sessions_t.c.sort_at,
+        sessions_t.c.created_at,
+    )
+
+
+def _session_view_query(latest_item: tuple[Any, Any] | None = None) -> Any:
+    if latest_item is None:
+        latest_item = _latest_timeline_item_source()
+    latest_source, latest_join = latest_item
+    session_sort_at = _session_sort_at(latest_source).label("session_sort_at")
+    return select(
+        sessions_t,
+        connectors_t.c.status.label("connector_status"),
+        device_runtimes_t.c.name.label("runtime_name"),
+        connector_runtime_types_t.c.display_name.label("runtime_type_display_name"),
+        latest_source.c.item_time.label("latest_item_time"),
+        latest_source.c.order_seq.label("latest_item_order_seq"),
+        latest_source.c.updated_seq.label("latest_item_updated_seq"),
+        latest_source.c.payload_json.label("latest_item_payload_json"),
+        session_sort_at,
+    ).select_from(
+        sessions_t.join(
+            connectors_t,
+            connectors_t.c.id == sessions_t.c.connector_id,
+        )
+        .outerjoin(
+            device_runtimes_t,
+            (device_runtimes_t.c.connector_id == sessions_t.c.connector_id)
+            & (device_runtimes_t.c.runtime_id == sessions_t.c.runtime_id),
+        )
+        .outerjoin(
+            connector_runtime_types_t,
+            (connector_runtime_types_t.c.connector_id == sessions_t.c.connector_id)
+            & (connector_runtime_types_t.c.runtime_type == sessions_t.c.runtime),
+        )
+        .outerjoin(latest_source, latest_join)
+    )
+
+
 class SessionRepositoryMixin:
+    async def get_session_runtime(self, session_id: str) -> str | None:
+        async with self._engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    select(sessions_t.c.runtime).where(sessions_t.c.id == session_id)
+                )
+            ).first()
+        return None if row is None else str(row.runtime)
+
     async def create_session(
         self,
         *,
         connector_id: str,
+        project_id: str | None = None,
         user_id: str | None = None,
         runtime: str,
+        runtime_id: str | None = None,
         external_session_id: str | None,
         title: str | None,
         cwd: str | None,
-        runtime_settings_override: dict[str, Any] | None = None,
+        model_selection_id: str | None = None,
+        permission_selection_id: str | None = None,
+        selections: dict[str, str | None] | None = None,
+        takeover: bool = False,
     ) -> SessionView:
+        identity = _runtime_identity(runtime, runtime_id)
         session_id = f"sess_{secrets.token_urlsafe(10)}"
         now = utc_now()
         async with self._engine.begin() as conn:
-            connector_q = select(connectors_t.c.status).where(
+            connector_q = select(
+                connectors_t.c.status,
+                connectors_t.c.user_id,
+                connectors_t.c.device_os,
+            ).where(
                 connectors_t.c.id == connector_id, connectors_t.c.revoked == 0
             )
             if user_id is not None:
@@ -30,29 +276,51 @@ class SessionRepositoryMixin:
             connector = (await conn.execute(connector_q)).first()
             if connector is None:
                 raise KeyError(connector_id)
-            if runtime_settings_override is None and runtime in {"codex", "claude"}:
-                runtime_settings_override = await self.get_durable_initial_runtime_settings_for_connector_agent(
-                    connector_id,
-                    runtime,
-                    user_id=user_id,
+            if not project_id:
+                raise ValueError("project_id is required for every session")
+            project_q = select(
+                projects_t.c.connector_id,
+                projects_t.c.user_id,
+                projects_t.c.workspace_path,
+                projects_t.c.workspace_key,
+            ).where(projects_t.c.id == project_id)
+            if user_id is not None:
+                project_q = project_q.where(projects_t.c.user_id == user_id)
+            project = (await conn.execute(project_q)).first()
+            if project is None:
+                raise KeyError(project_id)
+            if project.connector_id != connector_id:
+                raise ValueError("project connector and workspace must match the session")
+            if cwd is None:
+                cwd = project.workspace_path
+            else:
+                cleaned_cwd, cwd_key = _clean_workspace_path(
+                    cwd,
+                    connector.device_os,
                 )
+                if cwd_key != project.workspace_key:
+                    raise ValueError(
+                        "project connector and workspace must match the session"
+                    )
+                cwd = project.workspace_path or cleaned_cwd
             await conn.execute(
                 insert(sessions_t).values(
                     id=session_id,
                     connector_id=connector_id,
-                    runtime=runtime,
+                    project_id=project_id,
+                    runtime=str(identity.runtime_type),
+                    runtime_id=str(identity.runtime_id),
                     origin="platform",
-                    runtime_settings_override=(
-                        _json_dumps(runtime_settings_override)
-                        if runtime_settings_override is not None
-                        else None
-                    ),
+                    model_selection_id=model_selection_id,
+                    permission_selection_id=permission_selection_id,
                     external_session_id=external_session_id,
                     title=title,
                     cwd=cwd,
                     status="idle",
-                    takeover=0,
+                    takeover=int(takeover),
+                    sort_at=now,
                     seq=0,
+                    seq_allocated_high=0,
                     updated_seq=0,
                     created_at=now,
                     updated_at=now,
@@ -60,13 +328,13 @@ class SessionRepositoryMixin:
             )
         return await self.get_session(session_id)
 
-
     async def upsert_connector_session(
         self,
         *,
         connector_id: str,
         session_id: str,
         runtime: str,
+        runtime_id: str | None = None,
         external_session_id: str | None,
         title: str | None = None,
         cwd: str | None = None,
@@ -74,20 +342,14 @@ class SessionRepositoryMixin:
         last_synced_at: str | None = None,
         source_observed_at: str | None = None,
         last_activity_at: str | None = None,
-        runtime_settings_override: dict[str, Any] | None = None,
+        model_selection_id: str | None = None,
+        permission_selection_id: str | None = None,
         origin: str = "connector_import",
+        source_state: str | None = None,
     ) -> SessionView:
-        has_runtime_settings_override = runtime_settings_override is not None
-        now = utc_now()
-        normalized_origin = _normalize_session_origin(origin)
-        async with self._engine.begin() as conn:
-            connector = (
-                await conn.execute(
-                    select(connectors_t.c.status).where(connectors_t.c.id == connector_id)
-                )
-            ).first()
-            if connector is None:
-                raise KeyError(connector_id)
+        identity = _runtime_identity(runtime, runtime_id)
+        canonical_session_id = session_id
+        async with self._engine.connect() as conn:
             existing = (
                 await conn.execute(
                     select(sessions_t.c.id).where(sessions_t.c.id == session_id)
@@ -99,43 +361,116 @@ class SessionRepositoryMixin:
                         select(sessions_t.c.id)
                         .where(
                             sessions_t.c.connector_id == connector_id,
+                            sessions_t.c.runtime_id == str(identity.runtime_id),
                             sessions_t.c.external_session_id == external_session_id,
                         )
-                        .order_by(sessions_t.c.takeover.desc(), sessions_t.c.created_at.asc())
+                        .order_by(
+                            sessions_t.c.takeover.desc(),
+                            sessions_t.c.created_at.asc(),
+                        )
                         .limit(1)
                     )
                 ).first()
-                if existing is not None:
-                    session_id = existing.id
+            if existing is not None:
+                canonical_session_id = str(existing.id)
+        return await self._upsert_connector_session_canonical(
+            connector_id=connector_id,
+            session_id=canonical_session_id,
+            runtime=runtime,
+            runtime_id=runtime_id,
+            external_session_id=external_session_id,
+            title=title,
+            cwd=cwd,
+            status=status,
+            last_synced_at=last_synced_at,
+            source_observed_at=source_observed_at,
+            last_activity_at=last_activity_at,
+            model_selection_id=model_selection_id,
+            permission_selection_id=permission_selection_id,
+            origin=origin,
+            source_state=source_state,
+        )
+
+    @session_revision_fenced
+    async def _upsert_connector_session_canonical(
+        self,
+        *,
+        connector_id: str,
+        session_id: str,
+        runtime: str,
+        runtime_id: str | None = None,
+        external_session_id: str | None,
+        title: str | None = None,
+        cwd: str | None = None,
+        status: str | None = None,
+        last_synced_at: str | None = None,
+        source_observed_at: str | None = None,
+        last_activity_at: str | None = None,
+        model_selection_id: str | None = None,
+        permission_selection_id: str | None = None,
+        origin: str = "connector_import",
+        source_state: str | None = None,
+    ) -> SessionView:
+        identity = _runtime_identity(runtime, runtime_id)
+        runtime = str(identity.runtime_type)
+        runtime_id = str(identity.runtime_id)
+        has_model_selection_id = model_selection_id is not None
+        has_permission_selection_id = permission_selection_id is not None
+        now = utc_now()
+        normalized_origin = _normalize_session_origin(origin)
+        async with self._engine.begin() as conn:
+            connector = (
+                await conn.execute(
+                    select(
+                        connectors_t.c.status,
+                        connectors_t.c.user_id,
+                        connectors_t.c.device_os,
+                    ).where(connectors_t.c.id == connector_id)
+                )
+            ).first()
+            if connector is None:
+                raise KeyError(connector_id)
+            existing = (
+                await conn.execute(
+                    select(sessions_t.c.id).where(sessions_t.c.id == session_id)
+                )
+            ).first()
             if existing is None:
-                if runtime_settings_override is None and runtime in {"codex", "claude"}:
-                    runtime_settings_override = await self.get_durable_initial_runtime_settings_for_connector_agent(
-                        connector_id,
-                        runtime,
-                    )
+                project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                    conn,
+                    connector_id=connector_id,
+                    workspace_path=cwd,
+                    now=now,
+                )
                 await conn.execute(
                     insert(sessions_t).values(
                         id=session_id,
                         connector_id=connector_id,
+                        project_id=project_id,
                         runtime=runtime,
+                        runtime_id=runtime_id,
                         origin=normalized_origin,
-                        runtime_settings_override=(
-                            _json_dumps(runtime_settings_override)
-                            if runtime_settings_override is not None
-                            else None
-                        ),
+                        model_selection_id=model_selection_id,
+                        permission_selection_id=permission_selection_id,
                         external_session_id=external_session_id,
                         title=title,
-                        cwd=cwd,
+                        cwd=normalized_cwd,
                         status=status or "idle",
                         takeover=0,
                         last_synced_at=last_synced_at,
                         source_observed_at=source_observed_at,
                         last_activity_at=last_activity_at,
+                        sort_at=last_activity_at or now,
+                        source_state=source_state or "visible",
+                        source_state_at=now if source_state is not None else None,
                         seq=1,
+                        seq_allocated_high=1,
                         updated_seq=1,
                         created_at=now,
                         updated_at=now,
+                        **_source_archive_update(
+                            None, source_state, archived=False, observed_at=now
+                        ),
                     )
                 )
             else:
@@ -144,25 +479,40 @@ class SessionRepositoryMixin:
                         select(
                             sessions_t.c.connector_id,
                             sessions_t.c.runtime,
+                            sessions_t.c.runtime_id,
                             sessions_t.c.external_session_id,
                             sessions_t.c.title,
                             sessions_t.c.cwd,
+                            sessions_t.c.project_id,
                             sessions_t.c.status,
+                            sessions_t.c.model_selection_id,
+                            sessions_t.c.permission_selection_id,
+                            sessions_t.c.source_state,
+                            sessions_t.c.archived,
+                            sessions_t.c.dsh_archive_legacy,
                         ).where(sessions_t.c.id == session_id)
                     )
                 ).first()
                 if current is None:
                     raise KeyError(session_id)
-                values: dict[str, Any] = {
-                    "connector_id": connector_id,
-                    "runtime": runtime,
-                }
+                if current.connector_id != connector_id:
+                    raise ValueError("session connector binding is immutable")
+                if current.runtime != runtime or current.runtime_id != runtime_id:
+                    raise ValueError("session runtime identity is immutable")
+                values: dict[str, Any] = {}
                 if external_session_id is not None:
                     values["external_session_id"] = external_session_id
                 if title is not None:
                     values["title"] = title
-                if cwd is not None:
-                    values["cwd"] = cwd
+                if cwd is not None or current.project_id is None:
+                    project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                        conn,
+                        connector_id=connector_id,
+                        workspace_path=cwd or current.cwd,
+                        now=now,
+                    )
+                    values["project_id"] = project_id
+                    values["cwd"] = normalized_cwd
                 if status is not None:
                     values["status"] = status
                 if last_synced_at is not None:
@@ -171,21 +521,35 @@ class SessionRepositoryMixin:
                     values["source_observed_at"] = source_observed_at
                 if last_activity_at is not None:
                     values["last_activity_at"] = last_activity_at
-                if has_runtime_settings_override:
-                    values["runtime_settings_override"] = (
-                        _json_dumps(runtime_settings_override)
-                        if runtime_settings_override is not None
-                        else None
+                if has_model_selection_id:
+                    values["model_selection_id"] = model_selection_id
+                if has_permission_selection_id:
+                    values["permission_selection_id"] = permission_selection_id
+                if source_state is not None:
+                    values["source_state"] = source_state
+                    values["source_state_at"] = now
+                    values["source_scan_token"] = None
+                    values.update(
+                        _source_archive_update(
+                            current.source_state,
+                            source_state,
+                            archived=current.archived,
+                            observed_at=now,
+                        )
                     )
                 semantic_changed = any(
                     field in values and values[field] != getattr(current, field)
                     for field in (
-                        "connector_id",
-                        "runtime",
                         "external_session_id",
                         "title",
                         "cwd",
+                        "project_id",
                         "status",
+                        "model_selection_id",
+                        "permission_selection_id",
+                        "source_state",
+                        "archived",
+                        "dsh_archive_legacy",
                     )
                 )
                 if semantic_changed:
@@ -202,68 +566,647 @@ class SessionRepositoryMixin:
         connector_id: str,
         session_id: str,
         external_session_id: str | None = None,
+        runtime: str | None = None,
+        runtime_id: str | None = None,
     ) -> str:
+        identity = _runtime_identity(runtime, runtime_id) if runtime is not None else None
         async with self._engine.connect() as conn:
+            explicit_query = select(
+                sessions_t.c.id,
+                sessions_t.c.origin,
+                sessions_t.c.takeover,
+            ).where(
+                sessions_t.c.id == session_id,
+                sessions_t.c.connector_id == connector_id,
+            )
+            if identity is not None:
+                explicit_query = explicit_query.where(
+                    sessions_t.c.runtime == str(identity.runtime_type),
+                    sessions_t.c.runtime_id == str(identity.runtime_id),
+                )
+            explicit = (await conn.execute(explicit_query)).first()
+            if explicit is not None and (
+                explicit.takeover == 1 or explicit.origin == "platform"
+            ):
+                return str(explicit.id)
             if external_session_id:
+                external_query = select(sessions_t.c.id).where(
+                    sessions_t.c.connector_id == connector_id,
+                    sessions_t.c.external_session_id == external_session_id,
+                )
+                if identity is not None:
+                    external_query = external_query.where(
+                        sessions_t.c.runtime == str(identity.runtime_type),
+                        sessions_t.c.runtime_id == str(identity.runtime_id),
+                    )
                 row = (
                     await conn.execute(
-                        select(sessions_t.c.id)
-                        .where(
-                            sessions_t.c.connector_id == connector_id,
-                            sessions_t.c.external_session_id == external_session_id,
-                        )
+                        external_query
                         .order_by(sessions_t.c.takeover.desc(), sessions_t.c.created_at.asc())
                         .limit(1)
                     )
                 ).first()
                 if row is not None:
                     return str(row.id)
-            row = (
+        if explicit is None:
+            raise KeyError(session_id)
+        return str(explicit.id)
+
+
+    async def resolve_connector_session_binding(
+        self,
+        *,
+        connector_id: str,
+        session_id: str,
+        external_session_id: str | None = None,
+        runtime: str | None = None,
+        runtime_id: str | None = None,
+        source_runtime: str | None = None,
+        source_runtime_id: str | None = None,
+    ) -> ConnectorSessionResolution:
+        """Resolve one connector notification to its session in one connection.
+
+        The streaming ingest path used to make three separate pooled round trips
+        for this (runtime identity, canonical session, enabled check). The
+        policy is unchanged: a platform or taken-over explicit row wins, then an
+        external-session match, otherwise the explicit row.
+        """
+
+        async with self._engine.connect() as conn:
+            explicit = (
                 await conn.execute(
-                    select(sessions_t.c.id).where(
+                    select(
+                        sessions_t.c.id,
+                        sessions_t.c.runtime,
+                        sessions_t.c.runtime_id,
+                        sessions_t.c.origin,
+                        sessions_t.c.takeover,
+                    ).where(
                         sessions_t.c.id == session_id,
                         sessions_t.c.connector_id == connector_id,
                     )
                 )
             ).first()
-        if row is None:
-            raise KeyError(session_id)
-        return str(row.id)
+            identity = _binding_identity(
+                explicit=explicit,
+                runtime=runtime,
+                runtime_id=runtime_id,
+                source_runtime=source_runtime,
+                source_runtime_id=source_runtime_id,
+            )
+            resolved_runtime = str(identity.runtime_type)
+            resolved_runtime_id = str(identity.runtime_id)
+            explicit_matches = explicit is not None and (
+                str(explicit.runtime) == resolved_runtime
+                and str(explicit.runtime_id) == resolved_runtime_id
+            )
+            if explicit_matches and (
+                explicit.takeover == 1 or explicit.origin == "platform"
+            ):
+                return ConnectorSessionResolution(
+                    sessionId=str(explicit.id),
+                    runtime=resolved_runtime,
+                    runtimeId=resolved_runtime_id,
+                )
 
+            if external_session_id:
+                external_query = select(sessions_t.c.id).where(
+                    sessions_t.c.connector_id == connector_id,
+                    sessions_t.c.external_session_id == external_session_id,
+                    sessions_t.c.runtime == resolved_runtime,
+                    sessions_t.c.runtime_id == resolved_runtime_id,
+                )
+                row = (
+                    await conn.execute(
+                        external_query.order_by(
+                            sessions_t.c.takeover.desc(),
+                            sessions_t.c.created_at.asc(),
+                        ).limit(1)
+                    )
+                ).first()
+                if row is not None:
+                    return ConnectorSessionResolution(
+                        sessionId=str(row.id),
+                        runtime=resolved_runtime,
+                        runtimeId=resolved_runtime_id,
+                    )
 
-    async def list_sessions(self, *, user_id: str | None = None) -> list[SessionView]:
+            if explicit_matches:
+                return ConnectorSessionResolution(
+                    sessionId=str(explicit.id),
+                    runtime=resolved_runtime,
+                    runtimeId=resolved_runtime_id,
+                )
+
+            raw = (
+                await conn.execute(
+                    select(
+                        sessions_t.c.connector_id,
+                        sessions_t.c.runtime,
+                        sessions_t.c.runtime_id,
+                    ).where(sessions_t.c.id == session_id)
+                )
+            ).first()
+            if raw is None:
+                return ConnectorSessionResolution(
+                    runtime=resolved_runtime,
+                    runtimeId=resolved_runtime_id,
+                )
+            return ConnectorSessionResolution(
+                runtime=resolved_runtime,
+                runtimeId=resolved_runtime_id,
+                boundConnectorId=str(raw.connector_id),
+                boundRuntime=str(raw.runtime),
+                boundRuntimeId=str(raw.runtime_id),
+            )
+
+    async def list_session_inventory(self, *, user_id: str) -> list[SessionView]:
+        """Return the owned session metadata used to group the entire workspace."""
+        latest_item = _latest_timeline_item_source()
+        latest_source = latest_item[0]
         query = (
-            select(sessions_t, connectors_t.c.status.label("connector_status"))
-            .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
-            .where(connectors_t.c.revoked == 0)
-            .order_by(sessions_t.c.created_at.desc())
+            _session_view_query(latest_item)
+            .where(connectors_t.c.revoked == 0, connectors_t.c.user_id == user_id)
+            .order_by(
+                sessions_t.c.pinned.desc(),
+                _session_sort_at(latest_source).desc(),
+                func.coalesce(latest_source.c.order_seq, -1).desc(),
+                sessions_t.c.updated_seq.desc(),
+                sessions_t.c.id.desc(),
+            )
+        )
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [await self._session_from_row(row) for row in rows]
+
+    async def list_sessions_page(
+        self,
+        *,
+        archived: bool,
+        limit: int = 100,
+        cursor: str | None = None,
+        user_id: str | None = None,
+        project_id: str | None = None,
+    ) -> tuple[list[SessionView], bool, str | None]:
+        latest_item = _latest_timeline_item_source()
+        latest_source = latest_item[0]
+        latest_order_seq = func.coalesce(
+            latest_source.c.order_seq,
+            -1,
+        )
+        sort_at = _session_sort_at(latest_source)
+        query = (
+            _session_view_query(latest_item)
+            .where(
+                connectors_t.c.revoked == 0,
+                sessions_t.c.archived == int(archived),
+            )
+            .order_by(
+                sessions_t.c.pinned.desc(),
+                sort_at.desc(),
+                latest_order_seq.desc(),
+                sessions_t.c.updated_seq.desc(),
+                sessions_t.c.id.desc(),
+            )
+            .limit(limit + 1)
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
+        if project_id is not None:
+            query = query.where(sessions_t.c.project_id == project_id)
+        if cursor:
+            pinned, cursor_sort_at, order_seq, updated_seq, session_id = (
+                _decode_session_cursor(cursor)
+            )
+            query = query.where(
+                or_(
+                    sessions_t.c.pinned < pinned,
+                    and_(sessions_t.c.pinned == pinned, sort_at < cursor_sort_at),
+                    and_(
+                        sessions_t.c.pinned == pinned,
+                        sort_at == cursor_sort_at,
+                        latest_order_seq < order_seq,
+                    ),
+                    and_(
+                        sessions_t.c.pinned == pinned,
+                        sort_at == cursor_sort_at,
+                        latest_order_seq == order_seq,
+                        sessions_t.c.updated_seq < updated_seq,
+                    ),
+                    and_(
+                        sessions_t.c.pinned == pinned,
+                        sort_at == cursor_sort_at,
+                        latest_order_seq == order_seq,
+                        sessions_t.c.updated_seq == updated_seq,
+                        sessions_t.c.id < session_id,
+                    ),
+                )
+            )
         async with self._engine.connect() as conn:
             rows = (await conn.execute(query)).mappings().all()
-        sessions = [await self._session_from_row(row) for row in rows]
-        return sorted(
-            sessions,
-            key=lambda session: (session.sortAt or "", session.lastItemOrderSeq or -1, session.updatedSeq),
-            reverse=True,
+        page_rows = rows[:limit]
+        sessions = [await self._session_from_row(row) for row in page_rows]
+        has_more = len(rows) > limit
+        next_cursor = _encode_session_cursor(page_rows[-1]) if has_more and page_rows else None
+        return sessions, has_more, next_cursor
+
+    async def list_sessions(
+        self,
+        *,
+        archived: bool = False,
+        limit: int = 100,
+        cursor: str | None = None,
+        user_id: str | None = None,
+        project_id: str | None = None,
+    ) -> list[SessionView]:
+        sessions, _, _ = await self.list_sessions_page(
+            archived=archived,
+            limit=limit,
+            cursor=cursor,
+            user_id=user_id,
+            project_id=project_id,
         )
+        return sessions
+
+    async def begin_session_inventory(
+        self,
+        connector_id: str,
+        runtime: str,
+        runtime_id: str,
+        scan_token: str,
+    ) -> None:
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                update(sessions_t)
+                .where(
+                    sessions_t.c.connector_id == connector_id,
+                    sessions_t.c.runtime == runtime,
+                    sessions_t.c.runtime_id == runtime_id,
+                )
+                .values(source_scan_token=scan_token)
+            )
+
+    async def complete_session_inventory(
+        self,
+        connector_id: str,
+        runtime: str,
+        runtime_id: str,
+        scan_token: str,
+        entries: list[dict[str, Any]],
+        *,
+        complete: bool,
+    ) -> list[str]:
+        now = utc_now()
+        changed: list[str] = []
+        async with self._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    select(
+                        sessions_t.c.id,
+                        sessions_t.c.external_session_id,
+                        sessions_t.c.source_state,
+                        sessions_t.c.source_scan_token,
+                        sessions_t.c.archived,
+                        sessions_t.c.dsh_archive_legacy,
+                    ).where(
+                        sessions_t.c.connector_id == connector_id,
+                        sessions_t.c.runtime == runtime,
+                        sessions_t.c.runtime_id == runtime_id,
+                    )
+                )
+            ).mappings().all()
+
+        by_id = {str(row["id"]): row for row in rows}
+        by_external_id = {
+            str(row["external_session_id"]): row
+            for row in rows
+            if row["external_session_id"] is not None
+        }
+        observed_ids: set[str] = set()
+        unchanged_observations: dict[str, dict[str, Any]] = {}
+        for entry in entries:
+            row = by_id.get(str(entry["session_id"]))
+            external_session_id = entry.get("external_session_id")
+            if row is None and external_session_id is not None:
+                row = by_external_id.get(external_session_id)
+            if row is None or row["source_scan_token"] != scan_token:
+                continue
+            session_id = str(row["id"])
+            observed_ids.add(session_id)
+            source_state = str(entry["source_state"])
+            if row["source_state"] != source_state:
+                if await self._complete_session_inventory_observation(
+                    session_id=session_id,
+                    scan_token=scan_token,
+                    entry=entry,
+                    now=now,
+                ):
+                    changed.append(session_id)
+            else:
+                unchanged_observations[session_id] = entry
+
+        await self._complete_unchanged_session_inventory_observations(
+            observations=unchanged_observations,
+            scan_token=scan_token,
+            now=now,
+        )
+
+        remaining_rows = [
+            row
+            for row in rows
+            if row["source_scan_token"] == scan_token
+            and str(row["id"]) not in observed_ids
+        ]
+        if complete:
+            unchanged_missing_ids: list[str] = []
+            for row in remaining_rows:
+                session_id = str(row["id"])
+                if row["source_state"] == "missing":
+                    unchanged_missing_ids.append(session_id)
+                elif await self._complete_session_inventory_missing(
+                    session_id=session_id,
+                    scan_token=scan_token,
+                    now=now,
+                ):
+                    changed.append(session_id)
+            if unchanged_missing_ids:
+                async with self._engine.begin() as conn:
+                    await conn.execute(
+                        update(sessions_t)
+                        .where(
+                            sessions_t.c.id.in_(unchanged_missing_ids),
+                            sessions_t.c.source_scan_token == scan_token,
+                        )
+                        .values(
+                            source_state_at=now,
+                            source_state_reason=(
+                                "not returned by complete inventory"
+                            ),
+                            source_observation_origin="inventory",
+                            source_scan_token=None,
+                        )
+                    )
+        elif remaining_rows:
+            async with self._engine.begin() as conn:
+                await conn.execute(
+                    update(sessions_t)
+                    .where(
+                        sessions_t.c.id.in_(
+                            [str(row["id"]) for row in remaining_rows]
+                        ),
+                        sessions_t.c.source_scan_token == scan_token,
+                    )
+                    .values(source_scan_token=None)
+                )
+        return changed
+
+    async def _complete_unchanged_session_inventory_observations(
+        self,
+        *,
+        observations: dict[str, dict[str, Any]],
+        scan_token: str,
+        now: str,
+    ) -> None:
+        """Batch diagnostic observation fields that do not advance revision."""
+
+        if not observations:
+            return
+        observation_items = list(observations.items())
+        async with self._engine.begin() as conn:
+            # Each row contributes up to five bind parameters across the two
+            # CASE mappings and the IN predicate.  asyncpg rejects statements
+            # with more than 32,767 arguments, so keep ample fixed-parameter
+            # and future-query headroom below that driver limit.
+            for start in range(
+                0,
+                len(observation_items),
+                _SESSION_INVENTORY_UPDATE_CHUNK_SIZE,
+            ):
+                chunk = dict(
+                    observation_items[
+                        start : start + _SESSION_INVENTORY_UPDATE_CHUNK_SIZE
+                    ]
+                )
+                observed_at_by_id = {
+                    session_id: entry.get("observed_at") or now
+                    for session_id, entry in chunk.items()
+                }
+                reason_by_id = {
+                    session_id: entry.get("reason")
+                    for session_id, entry in chunk.items()
+                }
+                await conn.execute(
+                    update(sessions_t)
+                    .where(
+                        sessions_t.c.id.in_(chunk),
+                        sessions_t.c.source_scan_token == scan_token,
+                    )
+                    .values(
+                        source_state_at=case(
+                            observed_at_by_id,
+                            value=sessions_t.c.id,
+                            else_=sessions_t.c.source_state_at,
+                        ),
+                        source_state_reason=case(
+                            reason_by_id,
+                            value=sessions_t.c.id,
+                            else_=sessions_t.c.source_state_reason,
+                        ),
+                        source_observation_origin="inventory",
+                        source_scan_token=None,
+                    )
+                )
+
+    async def _complete_session_inventory_observation(
+        self,
+        *,
+        session_id: str,
+        scan_token: str,
+        entry: dict[str, Any],
+        now: str,
+    ) -> bool:
+        async with self.session_revision_fence(session_id):
+            async with self._engine.begin() as conn:
+                row = (
+                    await conn.execute(
+                        select(
+                            sessions_t.c.source_state,
+                            sessions_t.c.source_scan_token,
+                            sessions_t.c.archived,
+                            sessions_t.c.dsh_archive_legacy,
+                        )
+                        .where(sessions_t.c.id == session_id)
+                        .with_for_update()
+                    )
+                ).first()
+                if row is None or row.source_scan_token != scan_token:
+                    return False
+                source_state = str(entry["source_state"])
+                values: dict[str, Any] = {
+                    "source_state": source_state,
+                    "source_state_at": entry.get("observed_at") or now,
+                    "source_state_reason": entry.get("reason"),
+                    "source_observation_origin": "inventory",
+                    "source_scan_token": None,
+                }
+                values.update(
+                    _source_archive_update(
+                        row.source_state,
+                        source_state,
+                        archived=row.archived,
+                        observed_at=entry.get("observed_at") or now,
+                    )
+                )
+                changed = row.source_state != source_state
+                if changed:
+                    await self._bump_session(conn, session_id)
+                await conn.execute(
+                    update(sessions_t)
+                    .where(
+                        sessions_t.c.id == session_id,
+                        sessions_t.c.source_scan_token == scan_token,
+                    )
+                    .values(**values)
+                )
+            if changed:
+                session = await self.get_session(session_id)
+                await self.publish_session_revision_result(
+                    session_id,
+                    operation="complete_session_inventory",
+                    result=session,
+                )
+            return changed
+
+    async def _complete_session_inventory_missing(
+        self,
+        *,
+        session_id: str,
+        scan_token: str,
+        now: str,
+    ) -> bool:
+        async with self.session_revision_fence(session_id):
+            async with self._engine.begin() as conn:
+                row = (
+                    await conn.execute(
+                        select(
+                            sessions_t.c.source_state,
+                            sessions_t.c.source_scan_token,
+                        )
+                        .where(sessions_t.c.id == session_id)
+                        .with_for_update()
+                    )
+                ).first()
+                if row is None or row.source_scan_token != scan_token:
+                    return False
+                changed = row.source_state != "missing"
+                if changed:
+                    await self._bump_session(conn, session_id)
+                await conn.execute(
+                    update(sessions_t)
+                    .where(
+                        sessions_t.c.id == session_id,
+                        sessions_t.c.source_scan_token == scan_token,
+                    )
+                    .values(
+                        source_state="missing",
+                        source_state_at=now,
+                        source_state_reason="not returned by complete inventory",
+                        source_observation_origin="inventory",
+                        source_scan_token=None,
+                    )
+                )
+            if changed:
+                session = await self.get_session(session_id)
+                await self.publish_session_revision_result(
+                    session_id,
+                    operation="complete_session_inventory",
+                    result=session,
+                )
+            return changed
+
+    @session_revision_fenced
+    async def update_session_source_state(
+        self,
+        session_id: str,
+        *,
+        availability: str,
+        reason: str | None,
+        observed_at: str | None,
+        observation_origin: str,
+    ) -> SessionView:
+        effective_observed_at = observed_at or utc_now()
+        async with self._engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    select(
+                        sessions_t.c.source_state,
+                        sessions_t.c.source_state_at,
+                        sessions_t.c.source_state_reason,
+                        sessions_t.c.source_observation_origin,
+                        sessions_t.c.runtime,
+                        sessions_t.c.archived,
+                        sessions_t.c.dsh_archive_legacy,
+                    ).where(sessions_t.c.id == session_id)
+                )
+            ).first()
+            if row is None:
+                raise KeyError(session_id)
+            if row.source_state_at is not None and effective_observed_at < row.source_state_at:
+                pass
+            else:
+                changed = (
+                    row.source_state != availability
+                    or row.source_state_reason != reason
+                    or row.source_observation_origin != observation_origin
+                )
+                if changed:
+                    await self._bump_session(conn, session_id)
+                values: dict[str, Any] = {
+                    "source_state": availability,
+                    "source_state_at": effective_observed_at,
+                    "source_state_reason": reason,
+                    "source_observation_origin": observation_origin,
+                    "source_scan_token": None,
+                }
+                values.update(
+                    _source_archive_update(
+                        row.source_state,
+                        availability,
+                        archived=row.archived,
+                        observed_at=effective_observed_at,
+                    )
+                )
+                await conn.execute(
+                    update(sessions_t)
+                    .where(sessions_t.c.id == session_id)
+                    .values(**values)
+                )
+        return await self.get_session(session_id)
 
 
     async def list_running_sessions_for_connector_agent(
         self,
         *,
         connector_id: str,
-        runtime: str,
+        runtime_id: str,
         user_id: str | None = None,
     ) -> list[SessionView]:
         query = (
-            select(sessions_t, connectors_t.c.status.label("connector_status"))
-            .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+            _session_view_query()
             .where(
                 sessions_t.c.connector_id == connector_id,
-                sessions_t.c.runtime == runtime,
-                sessions_t.c.status.in_(("running", "waiting_approval")),
+                sessions_t.c.runtime_id == runtime_id,
+                sessions_t.c.status.in_(
+                    (
+                        "waiting",
+                        "pending",
+                        "running",
+                        "stopping",
+                        "waiting_approval",
+                        "error",
+                        "blocked",
+                    )
+                ),
                 connectors_t.c.revoked == 0,
             )
             .order_by(sessions_t.c.updated_at.asc())
@@ -274,11 +1217,26 @@ class SessionRepositoryMixin:
             rows = (await conn.execute(query)).mappings().all()
         return [await self._session_from_row(row) for row in rows]
 
+    async def list_sessions_for_connector(
+        self,
+        connector_id: str,
+    ) -> list[SessionView]:
+        query = (
+            _session_view_query()
+            .where(
+                sessions_t.c.connector_id == connector_id,
+                connectors_t.c.revoked == 0,
+            )
+            .order_by(sessions_t.c.created_at.desc())
+        )
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [await self._session_from_row(row) for row in rows]
+
 
     async def get_session(self, session_id: str, *, user_id: str | None = None) -> SessionView:
         query = (
-            select(sessions_t, connectors_t.c.status.label("connector_status"))
-            .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+            _session_view_query()
             .where(sessions_t.c.id == session_id, connectors_t.c.revoked == 0)
         )
         if user_id is not None:
@@ -288,6 +1246,61 @@ class SessionRepositoryMixin:
         if row is None:
             raise KeyError(session_id)
         return await self._session_from_row(row)
+
+
+    async def get_session_runtime_state(
+        self,
+        session_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> SessionRuntimeState:
+        query = (
+            select(
+                sessions_t.c.id,
+                sessions_t.c.runtime,
+                sessions_t.c.runtime_id,
+                sessions_t.c.external_session_id,
+                sessions_t.c.status,
+                sessions_t.c.updated_seq,
+                sessions_t.c.created_at,
+                sessions_t.c.updated_at,
+            )
+            .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+            .where(sessions_t.c.id == session_id, connectors_t.c.revoked == 0)
+        )
+        if user_id is not None:
+            query = query.where(connectors_t.c.user_id == user_id)
+        async with self._engine.connect() as conn:
+            row = (await conn.execute(query)).mappings().first()
+        if row is None:
+            raise KeyError(session_id)
+        return SessionRuntimeState(
+            sessionId=row["id"],
+            runtime=row["runtime"],
+            runtimeId=row["runtime_id"],
+            externalSessionId=row["external_session_id"],
+            status=row["status"],
+            selections={},
+            updatedSeq=int(row["updated_seq"] or 0),
+            createdAt=row["created_at"],
+            updatedAt=row["updated_at"],
+        )
+
+
+    async def upsert_session_runtime_state(
+        self,
+        *,
+        session_id: str,
+        runtime: str,
+        runtime_id: str | None = None,
+        external_session_id: str | None = None,
+        status: str | None = None,
+        selections: dict[str, str | None] | None = None,
+        status_reason: str | None = None,
+        error: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> SessionRuntimeState:
+        return await self.get_session_runtime_state(session_id)
 
 
     async def session_owned_by_connector(self, session_id: str, connector_id: str) -> bool:
@@ -318,6 +1331,7 @@ class SessionRepositoryMixin:
         return int(row.seq)
 
 
+    @session_revision_fenced
     async def set_takeover(self, session_id: str, takeover: bool) -> SessionView:
         async with self._engine.begin() as conn:
             await self._bump_session(conn, session_id)
@@ -368,6 +1382,7 @@ class SessionRepositoryMixin:
                 .values(
                     archived=int(bool(archived)),
                     archived_at=now if archived else None,
+                    dsh_archive_legacy=0,
                     updated_at=now,
                 )
             )
@@ -413,6 +1428,7 @@ class SessionRepositoryMixin:
                     .values(
                         archived=int(bool(archived)),
                         archived_at=now if archived else None,
+                        dsh_archive_legacy=0,
                         updated_at=now,
                     )
                 )
@@ -420,8 +1436,7 @@ class SessionRepositoryMixin:
         sessions: list[SessionView] = []
         if owned_ids:
             view_query = (
-                select(sessions_t, connectors_t.c.status.label("connector_status"))
-                .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+                _session_view_query()
                 .where(sessions_t.c.id.in_(owned_ids))
             )
             async with self._engine.connect() as conn:
@@ -483,6 +1498,7 @@ class SessionRepositoryMixin:
                     .values(
                         archived=int(bool(archived)),
                         archived_at=now if archived else None,
+                        dsh_archive_legacy=0,
                         updated_at=now,
                     )
                 )
@@ -491,8 +1507,7 @@ class SessionRepositoryMixin:
             return []
 
         view_query = (
-            select(sessions_t, connectors_t.c.status.label("connector_status"))
-            .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+            _session_view_query()
             .where(sessions_t.c.id.in_(target_ids))
         )
         async with self._engine.connect() as conn:
@@ -584,8 +1599,7 @@ class SessionRepositoryMixin:
         sessions: list[SessionView] = []
         if owned_ids:
             view_query = (
-                select(sessions_t, connectors_t.c.status.label("connector_status"))
-                .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+                _session_view_query()
                 .where(sessions_t.c.id.in_(owned_ids))
             )
             async with self._engine.connect() as conn:
@@ -596,29 +1610,82 @@ class SessionRepositoryMixin:
         not_found = [sid for sid in ordered if sid not in owned_ids]
         return sessions, not_found
 
+    async def list_owned_session_ids(
+        self,
+        session_ids: list[str],
+        *,
+        user_id: str | None = None,
+    ) -> list[str]:
+        """Return requested session IDs visible to one user in input order."""
 
-    async def set_session_status(self, session_id: str, status: str) -> SessionView:
-        async with self._engine.begin() as conn:
-            row = (
-                await conn.execute(
-                    select(sessions_t.c.status).where(sessions_t.c.id == session_id)
+        ordered = list(dict.fromkeys(session_ids))
+        if not ordered:
+            return []
+        statement = (
+            select(sessions_t.c.id)
+            .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+            .where(
+                sessions_t.c.id.in_(ordered),
+                connectors_t.c.revoked == 0,
+            )
+        )
+        if user_id is not None:
+            statement = statement.where(connectors_t.c.user_id == user_id)
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(statement)).all()
+        owned_ids = {str(row.id) for row in rows}
+        return [session_id for session_id in ordered if session_id in owned_ids]
+
+
+    async def set_session_status(
+        self,
+        session_id: str,
+        status: str,
+        *,
+        expected_status: str | None = None,
+        mark_read_on_change: bool = False,
+    ) -> SessionView:
+        async with self.session_revision_fence(session_id):
+            changed = False
+            async with self._engine.begin() as conn:
+                statement = select(sessions_t.c.status).where(
+                    sessions_t.c.id == session_id
                 )
-            ).first()
-            if row is None:
-                raise KeyError(session_id)
-            if row.status != status:
-                await self._bump_session(conn, session_id)
-                await conn.execute(
-                    update(sessions_t).where(sessions_t.c.id == session_id).values(status=status)
+                if expected_status is not None:
+                    statement = statement.with_for_update()
+                row = (await conn.execute(statement)).first()
+                if row is None:
+                    raise KeyError(session_id)
+                if expected_status is not None and row.status != expected_status:
+                    raise ValueError("session status changed")
+                if row.status != status:
+                    await self._bump_session(
+                        conn,
+                        session_id,
+                        mark_read=mark_read_on_change,
+                    )
+                    update_statement = update(sessions_t).where(
+                        sessions_t.c.id == session_id
+                    )
+                    if expected_status is not None:
+                        update_statement = update_statement.where(
+                            sessions_t.c.status == expected_status
+                        )
+                    result = await conn.execute(update_statement.values(status=status))
+                    if result.rowcount != 1:
+                        raise ValueError("session status changed")
+                    changed = True
+            session = await self.get_session(session_id)
+            if changed:
+                await self.publish_session_revision_result(
+                    session_id,
+                    operation="set_session_status",
+                    result=session,
                 )
-        return await self.get_session(session_id)
+            return session
 
 
-    async def refresh_session_status_from_timeline(self, session_id: str) -> SessionView:
-        status = await self.derive_session_status(session_id)
-        return await self.set_session_status(session_id, status)
-
-
+    @session_revision_fenced
     async def update_session_snapshot(
         self,
         *,
@@ -630,14 +1697,14 @@ class SessionRepositoryMixin:
         last_synced_at: str | None = None,
         source_observed_at: str | None = None,
         last_activity_at: str | None = None,
+        mark_read_on_change: bool = False,
+        source_state: str | None = None,
     ) -> SessionView:
         values: dict[str, Any] = {}
         if status is not None:
             values["status"] = status
         if title is not None:
             values["title"] = title
-        if cwd is not None:
-            values["cwd"] = cwd
         if external_session_id is not None:
             values["external_session_id"] = external_session_id
         if last_synced_at is not None:
@@ -646,28 +1713,63 @@ class SessionRepositoryMixin:
             values["source_observed_at"] = source_observed_at
         if last_activity_at is not None:
             values["last_activity_at"] = last_activity_at
+        if source_state is not None:
+            values["source_state"] = source_state
+            values["source_state_at"] = utc_now()
+            values["source_scan_token"] = None
         async with self._engine.begin() as conn:
             row = (
                 await conn.execute(
                     select(
+                        sessions_t.c.connector_id,
+                        sessions_t.c.project_id,
                         sessions_t.c.status,
                         sessions_t.c.title,
                         sessions_t.c.cwd,
                         sessions_t.c.external_session_id,
                         sessions_t.c.last_activity_at,
+                        sessions_t.c.source_state,
+                        sessions_t.c.runtime,
+                        sessions_t.c.archived,
+                        sessions_t.c.dsh_archive_legacy,
                     ).where(sessions_t.c.id == session_id)
                 )
             ).first()
             if row is None:
                 raise KeyError(session_id)
+            if cwd is not None or row.project_id is None:
+                project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                    conn,
+                    connector_id=row.connector_id,
+                    workspace_path=cwd if cwd is not None else row.cwd,
+                )
+                values["project_id"] = project_id
+                values["cwd"] = normalized_cwd
+            if source_state is not None:
+                values.update(
+                    _source_archive_update(
+                        row.source_state,
+                        source_state,
+                        archived=row.archived,
+                        observed_at=values["source_state_at"],
+                    )
+                )
             semantic_fields = {
                 "status",
                 "title",
                 "cwd",
+                "project_id",
                 "external_session_id",
+                "source_state",
+                "archived",
+                "dsh_archive_legacy",
             }
             if any(field in values and values[field] != getattr(row, field) for field in semantic_fields):
-                await self._bump_session(conn, session_id)
+                await self._bump_session(
+                    conn,
+                    session_id,
+                    mark_read=mark_read_on_change,
+                )
             if values:
                 await conn.execute(
                     update(sessions_t).where(sessions_t.c.id == session_id).values(**values)
@@ -712,20 +1814,14 @@ class SessionRepositoryMixin:
 
     async def _session_from_row(self, row: Any) -> SessionView:
         session_id = row["id"]
-        latest = await self.timeline.latest_item(session_id)
-        runtime = row["runtime"]
-        override = _json_loads(row["runtime_settings_override"])
-        runtime_override = override if isinstance(override, dict) else {}
-        runtime_settings: dict[str, Any] | None = None
-        try:
-            runtime_settings = await self.get_effective_runtime_settings(session_id)
-        except (KeyError, ValueError):
-            runtime_settings = None
-        runtime_override_view = (
-            runtime_settings
-            if runtime == "codex" and runtime_override and runtime_settings is not None
-            else runtime_override
+        latest_payload = row.get("latest_item_payload_json")
+        latest = (
+            TimelineItem.model_validate_json(latest_payload)
+            if latest_payload
+            else None
         )
+        runtime = row["runtime"]
+        runtime_id = row["runtime_id"]
         title = row["title"]
         if not (isinstance(title, str) and title.strip()):
             derived = await self._derive_title_from_first_user_message(session_id)
@@ -733,14 +1829,21 @@ class SessionRepositoryMixin:
                 title = derived
                 await self._lock_in_derived_title(session_id, derived)
         last_item_at = (latest.updatedAt or latest.completedAt or latest.createdAt) if latest else None
-        sort_at = row["last_activity_at"] or last_item_at or row["created_at"]
+        sort_at = row.get("session_sort_at") or last_item_at or row["last_activity_at"] or row["created_at"]
         last_read_seq = int(row["last_read_seq"] or 0)
+        latest_turn_end_seq = int(row["latest_turn_end_seq"] or 0)
         updated_seq = int(row["updated_seq"] or 0)
+        aa_archived = bool(row["archived"])
+        source_availability = _normalized_source_availability(row["source_state"])
         return SessionView(
             id=session_id,
             connectorId=row["connector_id"],
+            projectId=row["project_id"],
             connectorStatus=row["connector_status"],
             runtime=runtime,
+            runtimeId=runtime_id,
+            runtimeName=row.get("runtime_name"),
+            runtimeTypeDisplayName=row.get("runtime_type_display_name"),
             externalSessionId=row["external_session_id"],
             title=title,
             cwd=row["cwd"],
@@ -748,10 +1851,17 @@ class SessionRepositoryMixin:
             takeover=bool(row["takeover"]),
             pinned=bool(row["pinned"]),
             pinnedAt=row["pinned_at"],
-            archived=bool(row["archived"]),
+            archived=aa_archived,
             archivedAt=row["archived_at"],
-            unread=updated_seq > last_read_seq,
+            userArchived=aa_archived,
+            sourceAvailability=source_availability,
+            sourceAvailabilityReason=row["source_state_reason"],
+            sourceAvailabilityUpdatedAt=row["source_state_at"],
+            sourceObservationOrigin=row["source_observation_origin"],
+            archiveSource="user" if aa_archived else None,
+            unread=latest_turn_end_seq > last_read_seq,
             lastReadSeq=last_read_seq,
+            latestTurnEndSeq=latest_turn_end_seq,
             lastSyncedAt=row["last_synced_at"],
             sourceObservedAt=row["source_observed_at"],
             lastActivityAt=row["last_activity_at"],
@@ -759,6 +1869,4 @@ class SessionRepositoryMixin:
             lastItemOrderSeq=latest.orderSeq if latest else None,
             sortAt=sort_at,
             updatedSeq=updated_seq,
-            runtimeSettings=runtime_settings,
-            runtimeSettingsOverride=runtime_override_view or None,
         )

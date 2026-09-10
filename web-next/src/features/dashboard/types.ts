@@ -1,45 +1,33 @@
 import type { AuthMe } from "@/features/auth";
+import type {
+  ProtocolCapability,
+  ProtocolCapabilitySet,
+  ProtocolCapabilitiesResponse,
+} from "@/generated/protocol/v1/capabilities-response";
+import type { ProtocolModelCatalog } from "@/generated/protocol/v1/model-catalog-response";
+import type { ProtocolPermissionCatalog } from "@/generated/protocol/v1/permission-catalog-response";
+import type { ProtocolSessionSnapshotResponse } from "@/generated/protocol/v1/session-snapshot-response";
+import type { ProtocolWsTicketResponse } from "@/generated/protocol/v1/ws-ticket-response";
+
+export type {
+  ProtocolEventEnvelope,
+  ProtocolEventRecoveryResponse,
+} from "@/generated/protocol/v1/event-recovery-response";
+export type {
+  ProtocolModelCatalog,
+  ProtocolModelCatalogResponse,
+  ProtocolModelItem,
+  ProtocolReasoningItem,
+} from "@/generated/protocol/v1/model-catalog-response";
+export type {
+  ProtocolPermissionCatalog,
+  ProtocolPermissionCatalogResponse,
+  ProtocolPermissionItem,
+} from "@/generated/protocol/v1/permission-catalog-response";
+
+export type { ProtocolCapability, ProtocolCapabilitySet, ProtocolCapabilitiesResponse };
 
 export type ConnectorStatus = "offline" | "online";
-
-export type RuntimeCheckEntry = {
-  source: string;
-  path: string;
-  status: "ok" | "failed" | "missing";
-  reason?: string;
-  stage?: string;
-  version?: string;
-};
-
-export type RuntimeReport = {
-  history?: "ok" | "ok_empty" | "unavailable";
-  execution?: "ok" | "unavailable";
-  selected?: { source: string; path: string; version?: string };
-  checked?: RuntimeCheckEntry[];
-  error?: { code: string; message: string };
-  projectsDir?: string;
-  historyCheck?: Record<string, unknown>;
-  transport?: string;
-  displayName?: string;
-  authStatus?: "ok" | "required" | "unknown";
-  authMethods?: Array<{ id: string; name: string }>;
-  authHint?: string;
-  modelOptions?: Array<{ value: string; label: string }>;
-  modeOptions?: Array<{ value: string; label: string }>;
-  configOptions?: unknown[];
-};
-
-export type AttachedAgent = {
-  report: RuntimeReport;
-  attachedAt: string;
-};
-
-export type DeviceAgentsState = {
-  version: number;
-  lastDiscoveredAt: string | null;
-  attached: Record<string, AttachedAgent>;
-  disabled: string[];
-};
 
 export type ConnectorView = {
   id: string;
@@ -48,22 +36,107 @@ export type ConnectorView = {
   deviceOs?: "macos" | "windows" | "linux" | null;
   status: ConnectorStatus;
   lastSeenAt: string | null;
-  runtimeCapabilities: DeviceAgentsState;
   createdAt: string;
   updatedAt: string;
 };
 
+export type DeviceRuntimeStatus =
+  | "stopped"
+  | "discovering"
+  | "available"
+  | "unavailable"
+  | "validating"
+  | "starting"
+  | "running"
+  | "stopping"
+  | "error"
+  | "unknown";
+
+export type DeviceRuntimeView = {
+  connectorId: string;
+  runtimeId: string;
+  runtimeType: string;
+  name?: string;
+  displayName: string;
+  typeDisplayName?: string;
+  present: boolean;
+  available?: boolean;
+  configured: boolean;
+  active: boolean;
+  status: DeviceRuntimeStatus;
+  discovery: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  schema: Record<string, unknown> | null;
+  uiSchema: Record<string, unknown>;
+  defaults?: Record<string, unknown>;
+  capabilities?: Record<string, boolean>;
+  config: Record<string, unknown> | null;
+  error: Record<string, unknown> | null;
+  lastDiscoveredAt: string;
+  createdAt?: string;
+  updatedAt: string;
+};
+
+export type RuntimeInstancePolicy = "single" | "multiple";
+
+export type RuntimeTypeView = {
+  connectorId: string;
+  runtimeType: string;
+  implementationType: string;
+  displayName: string;
+  description: string | null;
+  present: boolean;
+  available: boolean;
+  reason: string | null;
+  recommended: boolean;
+  recommendationRank: number | null;
+  discovery: Record<string, unknown>;
+  schema: Record<string, unknown> | null;
+  uiSchema: Record<string, unknown>;
+  defaults: Record<string, unknown>;
+  capabilities: Record<string, boolean>;
+  metadata: Record<string, unknown>;
+  instancePolicy: RuntimeInstancePolicy;
+  maxInstances: number | null;
+  lastDiscoveredAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RuntimeTypeListResponse = {
+  connectorId: string;
+  runtimeTypes: RuntimeTypeView[];
+  serverTime: string;
+};
+
+export type DeviceRuntimeListResponse = {
+  connectorId: string;
+  runtimes: DeviceRuntimeView[];
+  serverTime: string;
+};
+
 export type SessionStatusValue =
   | "idle"
+  | "waiting"
+  | "pending"
   | "running"
+  | "stopping"
   | "waiting_approval"
-  | "error";
+  | "error"
+  | "blocked";
+
+export type RuntimeStatusValue = SessionStatusValue | "error" | "disconnected";
 
 export type SessionView = {
   id: string;
   connectorId: string;
+  projectId?: string | null;
   connectorStatus: ConnectorStatus;
   runtime: string;
+  runtimeId?: string;
+  runtimeType?: string;
+  runtimeName?: string | null;
+  runtimeTypeDisplayName?: string | null;
   externalSessionId: string | null;
   title: string | null;
   cwd: string | null;
@@ -73,8 +146,15 @@ export type SessionView = {
   pinnedAt: string | null;
   archived: boolean;
   archivedAt: string | null;
+  userArchived?: boolean;
+  sourceAvailability?: "available" | "archived" | "unavailable" | "deleted" | "missing" | "unknown";
+  sourceAvailabilityReason?: string | null;
+  sourceAvailabilityUpdatedAt?: string | null;
+  sourceObservationOrigin?: "event" | "inventory" | "operation" | null;
+  archiveSource?: "user" | "runtime" | "both" | null;
   unread: boolean;
   lastReadSeq: number;
+  latestTurnEndSeq: number;
   lastSyncedAt: string | null;
   sourceObservedAt: string | null;
   lastActivityAt: string | null;
@@ -94,22 +174,6 @@ export type ConnectorListResponse = {
 
 export type ConnectorResponse = {
   connector: ConnectorView;
-  serverTime: string;
-};
-
-export type ConnectorRuntimeCapabilitiesResponse = {
-  connectorId: string;
-  runtimeCapabilities: DeviceAgentsState;
-  serverTime: string;
-};
-
-export type ConnectorRuntimeScanResponse = {
-  connectorId: string;
-  runtimeCapabilities: DeviceAgentsState;
-  scanned: {
-    runtime?: string;
-    report?: RuntimeReport;
-  };
   serverTime: string;
 };
 
@@ -150,6 +214,56 @@ export type PairingPollResponse = {
 
 export type SessionListResponse = {
   sessions: SessionView[];
+  hasMore: boolean;
+  nextCursor: string | null;
+  serverTime: string;
+};
+
+export type SessionPageInfo = {
+  hasMore: boolean;
+  nextCursor: string | null;
+};
+
+export type SessionCommandResponse = {
+  command: string;
+  ok: boolean;
+  code: string | null;
+  message: string | null;
+  result: unknown;
+  session: SessionView | null;
+  serverTime: string;
+};
+
+export type RuntimeCommand = {
+  id: string;
+  title: string;
+  description: string | null;
+  aliases: string[];
+  category: string | null;
+  scope: "runtime" | "session" | "turn" | string;
+  enabled: boolean;
+  disabledReason: string | null;
+  acceptsArgs: boolean;
+  argsSchema: Record<string, unknown> | null;
+  metadata: Record<string, unknown>;
+};
+
+export type SessionCommandListResponse = {
+  commands: RuntimeCommand[];
+  serverTime: string;
+};
+
+export type DashboardSnapshotMessage = {
+  type: "dashboard.snapshot";
+  connectors: ConnectorView[];
+  projects: ProjectView[];
+  sessions: SessionView[];
+  /** Live runtime instances, so device pages do not need a second source of truth. */
+  runtimes?: DeviceRuntimeView[];
+  sessionPages: {
+    active: SessionPageInfo;
+    archived: SessionPageInfo;
+  };
   serverTime: string;
 };
 
@@ -166,18 +280,85 @@ export type SessionResponse = {
   serverTime: string;
 };
 
+export type ProjectView = {
+  id: string;
+  userId: string;
+  connectorId: string;
+  name: string;
+  workspacePath: string;
+  manuallyCreated?: boolean;
+  sidebarSessionCounts?: { active: number; archived: number };
+  pinned: boolean;
+  pinnedAt: string | null;
+  activeSessionCount: number;
+  lastActivityAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProjectListResponse = {
+  projects: ProjectView[];
+  serverTime: string;
+};
+
+export type ProjectResponse = {
+  project: ProjectView;
+  serverTime: string;
+};
+
+export type ProjectCreateRequest = {
+  name: string;
+  connectorId: string;
+  workspacePath: string;
+  manuallyCreated?: boolean;
+};
+
+export type ProjectCreateResponse = ProjectResponse & {
+  attachedSessions: number;
+};
+
+export type ProjectPatchRequest = {
+  name?: string;
+  pinned?: boolean;
+};
+
+export type ProjectDeleteResponse = {
+  projectId: string;
+  detachedSessions: number;
+  serverTime: string;
+};
+
+export type ProjectSessionListResponse = SessionListResponse;
+
 export type SessionCreateRequest = {
   connectorId: string;
+  projectId: string;
   runtime: string;
+  runtimeId?: string;
+  externalSessionId?: string | null;
   title?: string;
   cwd?: string;
-  approvalPolicy?: string;
-  sandbox?: string;
+  selections?: Record<string, string | null>;
+};
+
+export type SessionCreateAndStartRequest = {
+  connectorId: string;
+  projectId: string;
+  runtime: string;
+  runtimeId?: string;
+  title?: string;
+  cwd?: string;
+  content: string;
+  selections?: Record<string, string | null>;
+  runtimeOptions?: Record<string, unknown>;
+  attachments?: InlineAttachmentRef[];
+  clientMessageId?: string | null;
 };
 
 export type SessionCreateResponse = {
   session: SessionView;
   connectorResult: unknown;
+  attachments?: AttachmentRef[];
 };
 
 export type TakeoverResponse = {
@@ -186,11 +367,10 @@ export type TakeoverResponse = {
 };
 
 export type TimelineType =
-  | "turn.start"
-  | "turn.end"
   | "message"
   | "tool"
   | "artifact"
+  | "marker"
   | "system";
 
 export type TimelineStatus =
@@ -204,10 +384,38 @@ export type TimelineStatus =
 
 export type TimelineRole = "user" | "assistant" | "system" | "tool";
 
+export type AgentCallAction =
+  | "invoke"
+  | "spawn"
+  | "send_input"
+  | "resume"
+  | "wait"
+  | "close"
+  | "unknown";
+
+export type AgentCallTimelineContent = {
+  kind: "agent_call";
+  action: AgentCallAction;
+  title?: string;
+  description?: string;
+  agentType?: string;
+  prompt?: string;
+  runInBackground?: boolean;
+  parentItemId?: string;
+  agentId?: string;
+  callerId?: string;
+  targetIds?: string[];
+  model?: string;
+  reasoningEffort?: string;
+  agents?: Record<string, { status?: string; message?: string | null }>;
+  usage?: { durationMs?: number; tokens?: number; toolCalls?: number };
+  input?: unknown;
+  output?: unknown;
+};
+
 export type TimelineItem = {
   id: string;
   sessionId: string;
-  turnId: string | null;
   type: TimelineType;
   status: TimelineStatus;
   role: TimelineRole | null;
@@ -220,6 +428,36 @@ export type TimelineItem = {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+};
+
+export type SessionShareScope = "message" | "session";
+
+export type SessionShareCreateRequest = {
+  scope: SessionShareScope;
+  itemIds: string[];
+};
+
+export type SessionShareCreateResponse = {
+  shareId: string;
+  sharePath: string;
+  shareUrl: string;
+  scope: SessionShareScope;
+  createdAt: string;
+};
+
+export type PublicSessionShareResponse = {
+  shareId: string;
+  scope: SessionShareScope;
+  session: {
+    id: string;
+    title: string | null;
+    runtime: string;
+    runtimeName: string | null;
+    cwd: string | null;
+  };
+  items: TimelineItem[];
+  createdAt: string;
+  serverTime: string;
 };
 
 export type ApprovalStatus =
@@ -241,7 +479,6 @@ export type ApprovalKind =
 export type Approval = {
   id: string;
   sessionId: string;
-  turnId: string | null;
   status: ApprovalStatus;
   kind: ApprovalKind;
   targetItemId: string | null;
@@ -260,10 +497,90 @@ export type ApprovalResolveStatus =
   | "approved_for_session"
   | "rejected";
 
-export type SessionStateResponse = {
-  session: SessionView;
+export type ProtocolCapabilityScope = ProtocolCapability["scope"];
+
+export type NoticeStatus =
+  | "open"
+  | "responding"
+  | "response_accepted"
+  | "resolving"
+  | "resolved"
+  | "closed"
+  | "expired"
+  | "cancelled"
+  | "failed";
+
+export type NoticeActionStyle = "primary" | "secondary" | "danger";
+
+export type NoticeAction = {
+  actionId: string;
+  label: string;
+  style: NoticeActionStyle;
+  input: {
+    required: boolean;
+    schema?: Record<string, unknown> | null;
+    uiSchema?: Record<string, unknown> | null;
+  };
+};
+
+export type Notice = {
+  noticeId: string;
+  type: "notification" | "interaction";
+  sessionId: string;
+  source: Record<string, unknown>;
+  title: string;
+  message?: string | null;
+  severity: "info" | "success" | "warning" | "error";
+  status: NoticeStatus;
+  interactionType?: "approval" | "execution_error" | "confirmation" | "input_request" | "unknown" | null;
+  blocking?: { scope: "session"; targetId: string } | null;
+  responseRequired: boolean;
+  actions: NoticeAction[];
+  context: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  expiresAt?: string | null;
+  revision: number;
+  updatedSeq: number;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string | null;
+};
+
+export type SessionTimelineSnapshot = {
   items: TimelineItem[];
-  approvals: Approval[];
+  nextSeq: number;
+  hasMore: boolean;
+};
+
+export type SessionTimelineResponse = SessionTimelineSnapshot & {
+  sessionId: string;
+  serverTime: string;
+};
+
+export type SessionSnapshotResponse = Pick<
+  ProtocolSessionSnapshotResponse,
+  "eventCursor" | "serverTime"
+> & {
+  session: SessionView;
+  state?: SessionRuntimeState | null;
+  timeline: SessionTimelineSnapshot;
+  notices: Notice[];
+  effectiveCapabilities: ProtocolCapabilitySet;
+  runtimeCapabilities: ProtocolCapabilitySet;
+  catalogs: {
+    model?: ProtocolModelCatalog;
+    permission?: ProtocolPermissionCatalog;
+    [key: string]: unknown;
+  };
+};
+
+export type WsTicketResponse = ProtocolWsTicketResponse;
+
+export type SessionLocalTimelineState = {
+  session: SessionView;
+  state?: SessionRuntimeState | null;
+  items: TimelineItem[];
+  notices?: Notice[];
   nextSeq: number;
   hasMore: boolean;
   serverTime: string;
@@ -287,6 +604,8 @@ export type FsListResult = {
   path: string;
   entries: FsEntry[];
   truncated?: boolean;
+  targetPath?: string | null;
+  targetType?: string | null;
 };
 
 export type FsReadTextResult = {
@@ -337,6 +656,10 @@ export type FsWriteResult = {
 export type RpcResponse<T> = {
   ok: boolean;
   result: T;
+  error?: {
+    code?: string;
+    message?: string;
+  };
 };
 
 export type TerminalView = {
@@ -398,12 +721,42 @@ export type AttachmentRef = {
   sha256?: string;
 };
 
+export type InlineAttachmentRef = AttachmentRef & {
+  name: string;
+  contentBase64: string;
+};
+
 export type MessageSendOptions = {
   attachments?: AttachmentRef[];
   clientMessageId?: string;
-  mode?: string;
-  model?: string;
-  effort?: string;
+};
+
+export type SessionRuntimeState = {
+  sessionId: string;
+  runtime: string;
+  runtimeId?: string;
+  runtimeType?: string;
+  externalSessionId?: string | null;
+  status: RuntimeStatusValue;
+  selections: Record<string, string | null>;
+  statusReason?: string | null;
+  error?: Record<string, unknown> | null;
+  metadata: Record<string, unknown>;
+  updatedSeq: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SessionRuntimeStateResponse = {
+  state: SessionRuntimeState;
+  serverTime: string;
+};
+
+export type SessionSelectionPatchResponse = {
+  ok: boolean;
+  state?: SessionRuntimeState | null;
+  connectorResult?: Record<string, unknown> | null;
+  serverTime: string;
 };
 
 export type UploadedAttachment = {
@@ -423,105 +776,16 @@ export type AttachmentUploadResponse = {
   serverTime: string;
 };
 
-export type RuntimeConfigOption = {
-  value: string | boolean;
-  label: string;
-  description?: string | null;
-  efforts?: RuntimeConfigOption[] | null;
-};
-
-export type RuntimeConfigField = {
-  key: string;
-  label: string;
-  type: "string" | "enum" | "boolean" | "object";
-  description?: string | null;
-  options?: RuntimeConfigOption[] | null;
-  runtimeOptionsSource?: string | null;
-  visibleWhen?: Record<string, unknown> | null;
-  allowSessionOverride: boolean;
-  hidden: boolean;
-  fields?: RuntimeConfigField[] | null;
-};
-
-export type RuntimeConfigSchema = {
-  runtime: string;
-  schemaVersion: number;
-  fields: RuntimeConfigField[];
-};
-
-export type RuntimeConfigSchemaResponse = {
-  runtime: string;
-  schema: RuntimeConfigSchema;
-  serverTime: string;
-};
-
-export type RuntimeSettingsResponse = {
-  connectorId?: string | null;
-  sessionId?: string | null;
-  runtime: string;
-  settings?: Record<string, unknown>;
-  runtimeSettings?: Record<string, unknown>;
-  runtimeSettingsOverride?: Record<string, unknown> | null;
-  effectiveRunMode?: "chat" | "terminal" | null;
-  defaultRunModeConfigured?: boolean;
-  /** Effective schema, may include ACP-discovered model options. */
-  schema?: RuntimeConfigSchema | null;
-  schemaVersion?: number;
-  serverTime: string;
-};
-
-export type ConnectorAgentAuthenticateResponse = {
-  connectorId: string;
-  runtime: string;
-  authStatus: "ok" | "required" | "unknown" | string;
-  methodId?: string | null;
-  authMethods?: Array<{ id: string; name: string }> | null;
-  authHint?: string | null;
-  modelOptions?: Array<{ value: string; label: string }> | null;
-  modeOptions?: Array<{ value: string; label: string }> | null;
-  runtimeCapabilities: DeviceAgentsState;
-  message?: string | null;
-  serverTime: string;
-};
-
-export type AgentCatalogEntry = {
-  runtime: string;
-  key: string;
-  displayLabel: string;
-  description?: string | null;
-  isDefault: boolean;
-  sortOrder: number;
-  efforts: AgentCatalogEntry[];
-};
-
-export type AgentCatalogResponse = {
-  runtime: string;
-  entries: AgentCatalogEntry[];
-  serverTime: string;
-};
-
-export type UserAgentDefaultRuntime = {
-  runtime: string;
-  enabled: boolean;
-  settings: Record<string, unknown>;
-  models: AgentCatalogEntry[];
-};
-
-export type UserAgentDefaultsResponse = {
-  runtimes: Record<string, UserAgentDefaultRuntime>;
-  serverTime: string;
-};
-
 export type DashboardSegment = "light" | "medium" | "heavy";
 
 export type AdminDashboardIntensitySettings = {
-  basis: "turns";
+  basis: "messages";
   lightMax: number;
   mediumMax: number;
 };
 
 export type AdminDashboardHistogramSettings = {
-  turns: number[];
+  messages: number[];
   sessions: number[];
 };
 
@@ -543,9 +807,9 @@ export type AdminDashboardSummary = {
   activeUsers: number;
   wau: number;
   mau: number;
-  totalTurns: number;
+  totalMessages: number;
   activeSessions: number;
-  avgTurnsPerActiveUser: number;
+  avgMessagesPerActiveUser: number;
   avgActiveSessionsPerActiveUser: number;
   totalDevices: number;
   avgDevicesPerUser: number;
@@ -584,7 +848,7 @@ export type AdminDashboardOverviewResponse = {
   };
   summary: AdminDashboardSummary;
   series: AdminDashboardSeriesPoint[];
-  turnHistogram: AdminDashboardHistogramBucket[];
+  messageHistogram: AdminDashboardHistogramBucket[];
   sessionHistogram: AdminDashboardHistogramBucket[];
   userSegments: AdminDashboardUserSegmentItem[];
   deviceBreakdown: AdminDashboardBreakdownItem[];

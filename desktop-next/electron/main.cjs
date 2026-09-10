@@ -121,17 +121,39 @@ function userDataPath(name) {
 
 function sharedConnectorConfigPath() {
   if (process.env.AGENT_CONNECTOR_CONFIG) return process.env.AGENT_CONNECTOR_CONFIG;
-  return path.join(app.getPath("home"), ".agent-server", "connector.json");
+  if (process.env.AGENT_CONNECTOR_DATA_DIR) return path.join(process.env.AGENT_CONNECTOR_DATA_DIR, "connector.json");
+  return path.join(migrateLegacyConnectorDataDir(), "connector.json");
+}
+
+function migrateLegacyConnectorDataDir() {
+  const home = app.getPath("home");
+  const legacyDir = path.join(home, ".agent-server");
+  const canonicalDir = path.join(home, ".agents-anywhere");
+  if (!fs.existsSync(legacyDir)) return canonicalDir;
+  fs.mkdirSync(canonicalDir, { recursive: true, mode: 0o700 });
+  for (const name of fs.readdirSync(legacyDir)) {
+    const source = path.join(legacyDir, name);
+    if (["connector-state.sqlite3", "connector-state.sqlite3-shm", "connector-state.sqlite3-wal"].includes(name)) {
+      fs.rmSync(source, { force: true });
+      continue;
+    }
+    let target = path.join(canonicalDir, name);
+    for (let index = 1; fs.existsSync(target); index += 1) {
+      target = path.join(canonicalDir, `${name}.legacy-${index}`);
+    }
+    fs.renameSync(source, target);
+  }
+  fs.rmdirSync(legacyDir);
+  return canonicalDir;
 }
 
 function sharedConnectorRuntimePath() {
-  const configPath = state.configPath || sharedConnectorConfigPath();
-  return path.join(path.dirname(configPath), "connector-runtime.json");
+  return path.join(os.userInfo().homedir, ".agents-anywhere", "connector-runtime.json");
 }
 
-function defaultConnectorStateDbPath() {
+function defaultConnectorStatePath() {
   const configPath = state.configPath || sharedConnectorConfigPath();
-  return path.join(path.dirname(configPath), "connector-state.sqlite3");
+  return path.join(path.dirname(configPath), "connector-state.json");
 }
 
 function readJson(filePath, fallback) {
@@ -677,7 +699,7 @@ async function clearConnectorCredentials() {
       time: new Date().toISOString(),
     });
   }
-  for (const file of [state.configPath, state.runtimePath || sharedConnectorRuntimePath()]) {
+  for (const file of [state.configPath]) {
     if (!file) continue;
     try {
       fs.rmSync(file, { force: true });
@@ -704,11 +726,11 @@ async function clearConnectorCredentials() {
   return publicState();
 }
 
-function connectorStateDbPaths() {
-  const paths = new Set([defaultConnectorStateDbPath()]);
+function connectorStatePaths() {
+  const paths = new Set([defaultConnectorStatePath()]);
   try {
     const config = readJson(state.configPath, {});
-    if (typeof config.stateDbPath === "string" && config.stateDbPath.trim()) paths.add(config.stateDbPath.trim());
+    if (typeof config.statePath === "string" && config.statePath.trim()) paths.add(config.statePath.trim());
   } catch {
     // Ignore unreadable config while resetting.
   }
@@ -725,8 +747,7 @@ async function factoryReset() {
   const userDataDir = app.getPath("userData");
   const paths = [
     state.configPath,
-    state.runtimePath || sharedConnectorRuntimePath(),
-    ...connectorStateDbPaths(),
+    ...connectorStatePaths(),
     state.settingsPath,
     state.logPath,
     path.join(userDataDir, "Local Storage"),
@@ -854,7 +875,7 @@ function startRpcProcess(options = {}) {
   }
   rpcProcess = spawn(uvPath, args, {
     cwd: state.connectorDir,
-    env: connectorEnv(),
+    env: { ...connectorEnv(), AA_CONNECTOR_OWNER_KIND: "desktop-next" },
     detached: process.platform !== "win32",
     windowsHide: true,
     stdio: ["pipe", "pipe", "pipe"],

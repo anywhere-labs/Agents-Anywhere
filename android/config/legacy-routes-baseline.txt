@@ -1,0 +1,2 @@
+# category|rule|source path|occurrence count
+# Android v2 migration debt is zero. Any detected legacy route must fail the gate.

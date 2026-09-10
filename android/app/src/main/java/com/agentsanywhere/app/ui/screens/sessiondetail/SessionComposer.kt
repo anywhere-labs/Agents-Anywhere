@@ -54,24 +54,26 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import kotlinx.coroutines.delay
 
 @Composable
 internal fun ComposerVeil(
-    darkMode: Boolean,
     modifier: Modifier = Modifier,
+    height: Dp = 184.dp,
 ) {
-    val base = if (darkMode) Color(0xFF09090B) else Color(0xFFFDFCFB)
+    val base = LocalAAColors.current.canvas
     Box(
         modifier = modifier
             .fillMaxWidth()
             .imePadding()
-            .height(184.dp)
+            .height(height)
             .background(
                 Brush.verticalGradient(
                     0f to base.copy(alpha = 0f),
@@ -90,7 +92,9 @@ internal fun MessageComposer(
     takeoverEnabled: Boolean,
     takeoverBusy: Boolean,
     inputEnabled: Boolean,
+    attachmentsEnabled: Boolean,
     canSend: Boolean,
+    sending: Boolean,
     showInterrupt: Boolean,
     interrupting: Boolean,
     placeholder: String,
@@ -100,14 +104,16 @@ internal fun MessageComposer(
     onPickFile: () -> Unit,
     onOpenCamera: () -> Unit,
     onRemoveAttachment: (PendingAttachment) -> Unit,
+    onRetryAttachment: (PendingAttachment) -> Unit,
     onPreviewAttachment: (PendingAttachment) -> Unit,
     onReadOnlyClick: () -> Unit,
     onSend: () -> Unit,
     onInterrupt: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val surface = if (darkMode) Color(0xF218181B) else Color(0xF2FFFFFF)
-    val border = if (darkMode) Color(0xFF27272A) else Color(0xFFEFEDE9)
+    val colors = LocalAAColors.current
+    val surface = if (darkMode) colors.raisedSurface else Color(0xF2FFFFFF)
+    val border = if (darkMode) colors.border else Color(0xFFEFEDE9)
     val muted = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF8A8984)
     val input = if (inputEnabled) {
         if (darkMode) Color(0xFFEDEDEF) else Color(0xFF252622)
@@ -129,7 +135,6 @@ internal fun MessageComposer(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .imePadding()
             .padding(start = 14.dp, end = 14.dp, bottom = 24.dp),
     ) {
         Column(
@@ -149,6 +154,7 @@ internal fun MessageComposer(
                     attachments = attachments,
                     darkMode = darkMode,
                     onRemoveAttachment = onRemoveAttachment,
+                    onRetryAttachment = onRetryAttachment,
                     onPreviewAttachment = onPreviewAttachment,
                 )
             }
@@ -191,12 +197,13 @@ internal fun MessageComposer(
                 darkMode = darkMode,
                 takeoverEnabled = takeoverEnabled,
                 takeoverBusy = takeoverBusy,
-                inputEnabled = inputEnabled,
+                attachmentsEnabled = attachmentsEnabled,
                 canSend = canSend,
+                sending = sending,
                 showInterrupt = showInterrupt,
                 interrupting = interrupting,
                 onToggleTakeover = onToggleTakeover,
-                onOpenAttachMenu = { if (inputEnabled) showAttachMenu = true },
+                onOpenAttachMenu = { if (attachmentsEnabled) showAttachMenu = true },
                 onSend = onSend,
                 onInterrupt = onInterrupt,
             )
@@ -246,6 +253,7 @@ private fun PendingAttachmentStrip(
     attachments: List<PendingAttachment>,
     darkMode: Boolean,
     onRemoveAttachment: (PendingAttachment) -> Unit,
+    onRetryAttachment: (PendingAttachment) -> Unit,
     onPreviewAttachment: (PendingAttachment) -> Unit,
 ) {
     val scrollState = rememberScrollState()
@@ -262,6 +270,7 @@ private fun PendingAttachmentStrip(
                 attachment = attachment,
                 darkMode = darkMode,
                 onRemove = { onRemoveAttachment(attachment) },
+                onRetry = { onRetryAttachment(attachment) },
                 onPreview = { onPreviewAttachment(attachment) },
             )
         }
@@ -273,12 +282,14 @@ private fun PendingAttachmentCard(
     attachment: PendingAttachment,
     darkMode: Boolean,
     onRemove: () -> Unit,
+    onRetry: () -> Unit,
     onPreview: () -> Unit,
 ) {
     if (attachment.isImage) {
         PendingImageAttachmentCard(
             attachment = attachment,
             onRemove = onRemove,
+            onRetry = onRetry,
             onPreview = onPreview,
         )
     } else {
@@ -286,6 +297,7 @@ private fun PendingAttachmentCard(
             attachment = attachment,
             darkMode = darkMode,
             onRemove = onRemove,
+            onRetry = onRetry,
         )
     }
 }
@@ -294,6 +306,7 @@ private fun PendingAttachmentCard(
 private fun PendingImageAttachmentCard(
     attachment: PendingAttachment,
     onRemove: () -> Unit,
+    onRetry: () -> Unit,
     onPreview: () -> Unit,
 ) {
     Box(
@@ -301,7 +314,7 @@ private fun PendingImageAttachmentCard(
             .width(116.dp)
             .height(92.dp)
             .clip(RoundedCornerShape(20.dp))
-            .background(Color(0xFF18181B))
+            .background(LocalAAColors.current.raisedSurface)
             .noRippleClickable(onClick = onPreview),
     ) {
         PendingAttachmentImage(
@@ -312,6 +325,7 @@ private fun PendingImageAttachmentCard(
         AttachmentUploadOverlay(
             state = attachment.uploadState,
             onRemove = onRemove,
+            onRetry = onRetry,
             modifier = Modifier.fillMaxSize(),
         )
     }
@@ -322,6 +336,7 @@ private fun PendingFileAttachmentCard(
     attachment: PendingAttachment,
     darkMode: Boolean,
     onRemove: () -> Unit,
+    onRetry: () -> Unit,
 ) {
     val surface = if (darkMode) Color(0xFF27272A) else Color(0xFFF1F0ED)
     val text = if (darkMode) Color(0xFFF4F4F5) else Color(0xFF242522)
@@ -345,7 +360,7 @@ private fun PendingFileAttachmentCard(
                 modifier = Modifier
                     .size(44.dp)
                     .clip(RoundedCornerShape(14.dp))
-                .background(if (darkMode) Color(0xFF18181B) else Color.White.copy(alpha = 0.86f)),
+                .background(if (darkMode) LocalAAColors.current.subtle else Color.White.copy(alpha = 0.86f)),
                 contentAlignment = Alignment.Center,
             ) {
                 Image(
@@ -375,6 +390,7 @@ private fun PendingFileAttachmentCard(
         AttachmentUploadOverlay(
             state = attachment.uploadState,
             onRemove = onRemove,
+            onRetry = onRetry,
             modifier = Modifier.fillMaxSize(),
         )
     }
@@ -384,6 +400,7 @@ private fun PendingFileAttachmentCard(
 private fun AttachmentUploadOverlay(
     state: AttachmentUploadState,
     onRemove: () -> Unit,
+    onRetry: () -> Unit,
     modifier: Modifier,
 ) {
     when (state) {
@@ -397,8 +414,36 @@ private fun AttachmentUploadOverlay(
                 strokeWidth = 5.dp,
             )
         }
-        AttachmentUploadState.Uploaded,
-        AttachmentUploadState.Failed -> Box(modifier = modifier) {
+        AttachmentUploadState.Uploaded -> Box(modifier = modifier) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xD9262628))
+                    .border(1.dp, Color(0x22FFFFFF), CircleShape)
+                    .noRippleClickable(onClick = onRemove),
+                contentAlignment = Alignment.Center,
+            ) {
+                XGlyph(Color.White, sizeDp = 22)
+            }
+        }
+        AttachmentUploadState.Failed -> Box(
+            modifier = modifier.background(Color.Black.copy(alpha = 0.48f)),
+        ) {
+            Text(
+                text = stringResource(R.string.common_retry),
+                color = Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xCC27272A))
+                    .noRippleClickable(onClick = onRetry)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            )
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -421,8 +466,9 @@ private fun ComposerActions(
     darkMode: Boolean,
     takeoverEnabled: Boolean,
     takeoverBusy: Boolean,
-    inputEnabled: Boolean,
+    attachmentsEnabled: Boolean,
     canSend: Boolean,
+    sending: Boolean,
     showInterrupt: Boolean,
     interrupting: Boolean,
     onToggleTakeover: () -> Unit,
@@ -430,7 +476,7 @@ private fun ComposerActions(
     onSend: () -> Unit,
     onInterrupt: () -> Unit,
 ) {
-    val surface = if (darkMode) Color(0xFF18181B) else Color.White
+    val surface = if (darkMode) LocalAAColors.current.raisedSurface else Color.White
     val border = if (darkMode) Color(0xFF27272A) else Color.Transparent
     val icon = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF2D2E2B)
     val label = when {
@@ -439,17 +485,16 @@ private fun ComposerActions(
         darkMode -> Color(0xFFA1A1AA)
         else -> Color(0xFF3A3935)
     }
-    val canPressSend = canSend || (showInterrupt && !interrupting)
-    val sendSurface = when {
-        showInterrupt && darkMode -> Color.White
-        showInterrupt -> Color(0xFF09090B)
+    val primaryActionEnabled = if (showInterrupt) !interrupting else canSend
+    val primaryActionBusy = sending || interrupting
+    val primaryActionSurface = when {
+        showInterrupt -> Color(0xFFEF4444)
         canSend && darkMode -> Color(0xFFFAFAFA)
         canSend -> Color(0xFF2B2B2B)
         darkMode -> Color(0xFF3F3F46)
         else -> Color(0xFFE2E0DC)
     }
-    val sendIcon = when {
-        showInterrupt && darkMode -> Color(0xFF09090B)
+    val primaryActionIcon = when {
         showInterrupt -> Color.White
         canSend && darkMode -> Color(0xFF09090B)
         canSend -> Color.White
@@ -489,7 +534,9 @@ private fun ComposerActions(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
-                modifier = plusModifier.then(if (inputEnabled) Modifier.noRippleClickable(onClick = onOpenAttachMenu) else Modifier),
+                modifier = plusModifier.then(
+                    if (attachmentsEnabled) Modifier.noRippleClickable(onClick = onOpenAttachMenu) else Modifier,
+                ),
                 contentAlignment = Alignment.Center,
             ) {
                 PlusMiniGlyph(icon)
@@ -515,31 +562,31 @@ private fun ComposerActions(
             modifier = Modifier
                 .size(34.dp)
                 .clip(CircleShape)
-                .background(sendSurface)
+                .background(primaryActionSurface)
                 .then(
-                    if (canPressSend) {
-                        Modifier.noRippleClickable(onClick = if (showInterrupt) onInterrupt else onSend)
+                    if (primaryActionEnabled) {
+                        Modifier.noRippleClickable(
+                            onClick = if (showInterrupt) onInterrupt else onSend,
+                        )
                     } else {
                         Modifier
                     },
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            if (showInterrupt && interrupting) {
-                CircularProgressIndicator(
-                    color = sendIcon,
+            when {
+                primaryActionBusy -> CircularProgressIndicator(
+                    color = primaryActionIcon,
                     strokeWidth = 2.dp,
                     modifier = Modifier.size(17.dp),
                 )
-            } else if (showInterrupt) {
-                Box(
+                showInterrupt -> Box(
                     modifier = Modifier
                         .size(10.dp)
                         .clip(RoundedCornerShape(2.dp))
-                        .background(sendIcon),
+                        .background(primaryActionIcon),
                 )
-            } else {
-                ArrowUpGlyph(sendIcon)
+                else -> ArrowUpGlyph(primaryActionIcon)
             }
         }
     }

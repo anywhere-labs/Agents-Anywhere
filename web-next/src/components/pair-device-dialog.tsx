@@ -1,16 +1,23 @@
 "use client"
 
 import * as React from "react"
-import { Copy, Check, Loader2, CheckCircle2, ArrowLeft, ExternalLink, MonitorUp, Terminal, KeyRound } from "lucide-react"
-import { toast } from "sonner"
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog"
+  ArrowLeft,
+  Check,
+  Copy,
+  ExternalLink,
+  Hash,
+  KeyRound,
+  MonitorUp,
+  Loader2,
+  Terminal,
+  type LucideIcon,
+} from "lucide-react"
+import { useTranslations } from "next-intl"
+import { toast } from "sonner"
+
+import { useAuth } from "@/components/auth/auth-context"
+import { useAgentSetupPairing, type AgentSetupConnector } from "@/components/agent-setup-provider"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,45 +29,62 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
-import { cn } from "@/lib/utils"
-import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
+import { preparePairingCredential, type PairingCredential } from "@/features/dashboard/pairing-credential"
 import type { ConnectorCreateResponse, ConnectorRevokeResponse } from "@/features/dashboard/types"
-import { useTranslations } from "next-intl"
+import { copyText } from "@/lib/clipboard"
+import { cn } from "@/lib/utils"
 
-// ── Readable name generator ────────────────────────────────
 const ADJECTIVES = [
   "amber", "azure", "brisk", "calm", "clear", "clever", "copper", "crisp", "deft", "eager",
-  "fair", "fleet", "fresh", "gentle", "gilt", "golden", "hale", "happy", "honest", "jade",
-  "keen", "light", "lively", "lucky", "lunar", "lush", "mellow", "mild", "nimble", "neat",
-  "noble", "opal", "pearl", "pine", "plucky", "quiet", "rapid", "ready", "rose", "ruby",
-  "sage", "silver", "smart", "solar", "spry", "steady", "swift", "teal", "tidy", "umber",
-  "vivid", "warm", "witty", "zesty", "bright", "cosmic", "dapper", "ember", "frosty", "glossy",
-  "hearty", "ivory", "jolly", "lucid", "misty", "modern", "plush", "polite", "proud", "quick",
-  "rustic", "sunny", "tidal", "velvet", "verdant", "violet", "wavy", "wise", "young", "zen",
+  "fair", "fleet", "fresh", "gentle", "golden", "happy", "honest", "jade", "keen", "lively",
+  "lucky", "lunar", "mellow", "nimble", "noble", "opal", "quiet", "rapid", "silver", "smart",
+  "solar", "steady", "swift", "tidy", "vivid", "warm", "witty", "zesty", "bright", "cosmic",
 ]
 const NOUNS = [
-  "acorn", "anchor", "ash", "badger", "bamboo", "beacon", "birch", "brook", "canopy", "cedar",
-  "cliff", "clover", "cobalt", "comet", "condor", "cove", "creek", "daisy", "delta", "falcon",
-  "fern", "finch", "fjord", "forest", "garden", "glade", "grove", "harbor", "heron", "hill",
-  "island", "juniper", "lagoon", "lantern", "laurel", "linden", "lotus", "magpie", "maple", "marble",
-  "marsh", "meadow", "meteor", "mesa", "moss", "nebula", "orchid", "otter", "pebble", "phoenix",
-  "prairie", "quartz", "raven", "reef", "ridge", "river", "rocket", "sequoia", "shore", "sparrow",
-  "spruce", "summit", "thistle", "tulip", "valley", "violet", "willow", "zephyr", "aurora", "breeze",
-  "canyon", "drift", "ember", "granite", "hazel", "iris", "kernel", "oasis", "orbit", "ripple",
+  "acorn", "anchor", "badger", "bamboo", "beacon", "birch", "brook", "cedar", "clover", "comet",
+  "condor", "cove", "falcon", "finch", "fjord", "forest", "garden", "grove", "harbor", "heron",
+  "island", "juniper", "lagoon", "lantern", "maple", "meadow", "meteor", "nebula", "otter", "phoenix",
+  "quartz", "raven", "ridge", "river", "rocket", "sequoia", "sparrow", "summit", "willow", "zephyr",
 ]
-const GITHUB_RELEASES_URL = "https://github.com/anywhere-labs/Agents-Anywhere/releases"
-const COMMAND_WARNING_ACCEPTED_KEY = "agents-anywhere.pairDevice.commandWarningAccepted.v1"
-const COMMAND_WARNING_WAIT_SECONDS = 5
+
+const DESKTOP_DOWNLOAD_URL = "https://github.com/anywhere-labs/Agents-Anywhere/releases/latest"
+
+type CliMethod = "command" | "pair-code"
+type Step =
+  | "connection-method"
+  | "desktop-install"
+  | "cli-confirm"
+  | "name"
+  | "cli-method"
+  | "command"
+  | "pair-code"
+
+interface Props {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onConnectorCreated?: () => void
+  /** Transitional compatibility for callers still passing a rotated CLI credential. */
+  setupCredential?: ConnectorCreateResponse | ConnectorRevokeResponse | null
+  title?: string
+}
 
 function randomName(): string {
-  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]
+  const adjective = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]
   const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)]
-  return `${adj}-${noun}`
+  return `${adjective}-${noun}`
 }
 
 function resolvePairingServerUrl(): string {
@@ -79,7 +103,7 @@ function pairServerAddress(serverUrl: string): string {
     const url = new URL(serverUrl)
     if (url.protocol === "https:") return url.host
   } catch {
-    return serverUrl
+    // Keep the configured value visible when it cannot be parsed as a URL.
   }
   return serverUrl
 }
@@ -89,95 +113,57 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`
 }
 
-function desktopConnectorUrl(serverUrl: string, connectorId: string, connectorToken: string): string {
-  const params = new URLSearchParams({
-    serverUrl,
-    connectorId,
-    connectorToken,
-  })
-  return `agents-anywhere://start?${params.toString()}`
-}
-
-function encodeUtf8Base64(value: string): string {
-  const bytes = new TextEncoder().encode(value)
-  let binary = ""
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary)
-}
-
-function connectorCredentialsPayload(serverUrl: string, connectorId: string, connectorToken: string): string {
-  return encodeUtf8Base64(
-    JSON.stringify({
-      type: "agents-anywhere.connector-credentials",
-      version: 1,
-      serverUrl,
-      connectorId,
-      connectorToken,
-    }),
-  )
-}
-
-function readCommandWarningAccepted(): boolean {
-  if (typeof window === "undefined") return false
-  try {
-    return window.localStorage.getItem(COMMAND_WARNING_ACCEPTED_KEY) === "1"
-  } catch {
-    return false
-  }
-}
-
-function writeCommandWarningAccepted() {
-  try {
-    window.localStorage.setItem(COMMAND_WARNING_ACCEPTED_KEY, "1")
-  } catch {
-    // The in-memory state is enough when storage is unavailable.
-  }
-}
-
-// ── Types ──────────────────────────────────────────────────
-type Step = "name" | "method" | "desktop-method" | "desktop-local" | "desktop-paircode" | "desktop-credentials" | "command-warning" | "command" | "success"
-
-interface Props {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onConnectorCreated?: () => void
-  setupCredential?: ConnectorCreateResponse | ConnectorRevokeResponse | null
-  title?: string
-}
-
-// ── Inline code block ──────────────────────────────────────
-function CodeBlock({ code, copyLabel }: { code: string; copyLabel?: string }) {
+function CodeBlock({ code, copyLabel }: { code: string; copyLabel: string }) {
   const t = useTranslations("dashboard.pairDevice")
+  const tCommon = useTranslations("common")
   const [copied, setCopied] = React.useState(false)
-  const copy = () => {
-    navigator.clipboard.writeText(code).catch(() => {})
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+  const [copying, setCopying] = React.useState(false)
+  const containerRef = React.useRef<HTMLDivElement>(null)
+  const resetTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  React.useEffect(() => () => {
+    if (resetTimerRef.current !== null) clearTimeout(resetTimerRef.current)
+  }, [])
+
+  const copy = async () => {
+    if (copying) return
+    if (resetTimerRef.current !== null) clearTimeout(resetTimerRef.current)
+    setCopied(false)
+    setCopying(true)
+    try {
+      await copyText(code, containerRef.current ?? undefined)
+      setCopied(true)
+      resetTimerRef.current = setTimeout(() => setCopied(false), 2000)
+    } catch {
+      toast.error(t("errors.copyFailed"))
+    } finally {
+      setCopying(false)
+    }
   }
+
   return (
-    <div className="grid rounded-lg border border-border bg-muted/40" style={{ gridTemplateColumns: "1fr auto" }}>
+    <div ref={containerRef} className="grid rounded-lg border border-border bg-muted/40" style={{ gridTemplateColumns: "1fr auto" }}>
       <ScrollArea className="min-w-0">
         <div className="px-4 py-3">
-        <code className="block whitespace-nowrap code-mono text-xs text-foreground">{code}</code>
+          <code className="block whitespace-pre code-mono text-xs text-foreground">{code}</code>
         </div>
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
-      {/* copy button: outside scroll area, always visible, same vertical padding */}
       <Button
         type="button"
         variant="ghost"
         size="icon"
         onClick={copy}
-        aria-label={copyLabel ?? t("copyCommand")}
+        disabled={copying}
+        aria-label={copied ? tCommon("copied") : copyLabel}
         className="m-2 self-center text-muted-foreground"
       >
-        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        {copying ? <Loader2 className="animate-spin" /> : copied ? <Check /> : <Copy />}
       </Button>
     </div>
   )
 }
 
-// ── Polling indicator ──────────────────────────────────────
 function PollingIndicator({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -187,122 +173,184 @@ function PollingIndicator({ label }: { label: string }) {
   )
 }
 
-// ── Main component ─────────────────────────────────────────
-export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setupCredential = null, title }: Props) {
+function ChoiceCard({
+  icon: Icon,
+  title,
+  description,
+  onClick,
+}: {
+  icon: LucideIcon
+  title: string
+  description: string
+  onClick: () => void
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      onClick={onClick}
+      className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
+    >
+      <span className="flex min-w-0 items-center gap-2 font-medium">
+        <Icon className="size-4" />
+        {title}
+      </span>
+      <span className="min-w-0 break-words text-sm text-muted-foreground">{description}</span>
+    </Button>
+  )
+}
+
+export function PairDeviceDialog({
+  open,
+  onOpenChange,
+  onConnectorCreated,
+  setupCredential = null,
+  title,
+}: Props) {
   const { session } = useAuth()
+  const { requestAgentSetup, waitForConnector, readyConnectorIds } = useAgentSetupPairing()
   const t = useTranslations("dashboard.pairDevice")
   const tCommon = useTranslations("common")
-  const [step, setStep] = React.useState<Step>(() => (setupCredential ? "method" : "name"))
+  const [step, setStep] = React.useState<Step>(setupCredential ? "cli-method" : "connection-method")
   const [name, setName] = React.useState(() => setupCredential?.connector.name ?? randomName())
-  const [connectorId, setConnectorId] = React.useState<string | null>(() => setupCredential?.connector.id ?? null)
-  const [token, setToken] = React.useState<string | null>(() => setupCredential?.connectorToken ?? null)
+  const [credential, setCredential] = React.useState<PairingCredential | null>(setupCredential)
   const [pairCode, setPairCode] = React.useState("")
   const [creating, setCreating] = React.useState(false)
   const [claiming, setClaiming] = React.useState(false)
-  const [polling, setPolling] = React.useState(false)
+  const [waitingOnline, setWaitingOnline] = React.useState(false)
+  const [createdThisFlow, setCreatedThisFlow] = React.useState(false)
   const [exitGuardOpen, setExitGuardOpen] = React.useState(false)
-  const [credentialsBackStep, setCredentialsBackStep] = React.useState<"method" | "desktop-method">("desktop-method")
-  const [commandWarningAccepted, setCommandWarningAccepted] = React.useState(readCommandWarningAccepted)
-  const [commandCountdown, setCommandCountdown] = React.useState(COMMAND_WARNING_WAIT_SECONDS)
-  const pollingRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const commandCountdownRef = React.useRef<number | null>(null)
+  const pairingVersionRef = React.useRef(0)
   const suppressCloseGuardRef = React.useRef(false)
   const serverUrl = React.useMemo(resolvePairingServerUrl, [])
+  const connectorId = credential?.connector.id ?? null
+  const connectorToken = credential?.connectorToken ?? null
 
-  const shouldConfirmExit =
-    connectorId !== null &&
-    step !== "success" &&
-    (step === "command" || step === "desktop-local" || step === "desktop-paircode" || step === "desktop-credentials") &&
-    (polling || claiming || pairCode.length > 0)
+  const shouldConfirmExit = connectorId !== null && createdThisFlow
 
-  React.useEffect(() => {
-    if (!open) return
-    if (setupCredential) {
-      setStep("method")
-      setName(setupCredential.connector.name)
-      setConnectorId(setupCredential.connector.id)
-      setToken(setupCredential.connectorToken)
-    }
-  }, [open, setupCredential])
-
-  const stopPolling = () => {
-    if (pollingRef.current) clearTimeout(pollingRef.current)
-    pollingRef.current = null
-    setPolling(false)
-  }
-
-  const startConnectorPolling = React.useCallback((cid: string) => {
-    if (!session?.accessToken) return
-    setPolling(true)
-    const tick = async () => {
-      try {
-        const { connector } = await dashboardApi.getConnector(session.accessToken, cid)
-        if (connector.status === "online") {
-          stopPolling()
-          setStep("success")
-        } else {
-          pollingRef.current = setTimeout(tick, 2000)
-        }
-      } catch {
-        pollingRef.current = setTimeout(tick, 3000)
-      }
-    }
-    pollingRef.current = setTimeout(tick, 1500)
-  }, [session?.accessToken])
-
-  React.useEffect(() => {
-    return () => stopPolling()
+  const stopWaiting = React.useCallback(() => {
+    pairingVersionRef.current += 1
+    setWaitingOnline(false)
   }, [])
 
-  React.useEffect(() => {
-    if (step !== "command-warning") {
-      if (commandCountdownRef.current) window.clearInterval(commandCountdownRef.current)
-      commandCountdownRef.current = null
-      return
-    }
-    if (commandWarningAccepted) {
-      setCommandCountdown(0)
-      return
-    }
-    setCommandCountdown(COMMAND_WARNING_WAIT_SECONDS)
-    commandCountdownRef.current = window.setInterval(() => {
-      setCommandCountdown((current) => {
-        if (current <= 1) {
-          if (commandCountdownRef.current) window.clearInterval(commandCountdownRef.current)
-          commandCountdownRef.current = null
-          return 0
-        }
-        return current - 1
-      })
-    }, 1000)
-    return () => {
-      if (commandCountdownRef.current) window.clearInterval(commandCountdownRef.current)
-      commandCountdownRef.current = null
-    }
-  }, [commandWarningAccepted, step])
-
-  const reset = () => {
-    stopPolling()
-    setStep("name")
+  const reset = React.useCallback(() => {
+    stopWaiting()
+    setStep(setupCredential ? "cli-method" : "connection-method")
     setName(setupCredential?.connector.name ?? randomName())
-    setConnectorId(setupCredential?.connector.id ?? null)
-    setToken(setupCredential?.connectorToken ?? null)
+    setCredential(setupCredential)
     setPairCode("")
     setCreating(false)
     setClaiming(false)
-    setPolling(false)
-    setCredentialsBackStep("desktop-method")
-    setCommandCountdown(COMMAND_WARNING_WAIT_SECONDS)
+    setCreatedThisFlow(false)
+  }, [setupCredential, stopWaiting])
+
+  React.useEffect(() => {
+    if (!open || !setupCredential) return
+    setStep("cli-method")
+    setName(setupCredential.connector.name)
+    setCredential(setupCredential)
+  }, [open, setupCredential])
+
+  React.useEffect(() => () => { pairingVersionRef.current += 1 }, [])
+
+  const closePairing = React.useCallback(() => {
+    setExitGuardOpen(false)
+    reset()
+    onOpenChange(false)
+  }, [onOpenChange, reset])
+
+  const completePairing = React.useCallback((pairedConnector?: AgentSetupConnector) => {
+    if (pairedConnector) requestAgentSetup(pairedConnector)
+    onConnectorCreated?.()
+    closePairing()
+  }, [closePairing, onConnectorCreated, requestAgentSetup])
+
+  const startConnectorWaiting = (connector: AgentSetupConnector) => {
+    stopWaiting()
+    setWaitingOnline(true)
+    waitForConnector(connector)
   }
 
-  const handleOpenChange = (next: boolean) => {
-    if (!next && suppressCloseGuardRef.current) return
-    if (!next && shouldConfirmExit) {
+  React.useEffect(() => {
+    if (!open || !waitingOnline || !connectorId || !readyConnectorIds.includes(connectorId)) return
+    closePairing()
+  }, [closePairing, connectorId, open, readyConnectorIds, waitingOnline])
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && (creating || claiming)) return
+    if (!nextOpen && suppressCloseGuardRef.current) return
+    if (!nextOpen && shouldConfirmExit) {
       setExitGuardOpen(true)
       return
     }
-    if (!next) reset()
-    onOpenChange(next)
+    if (!nextOpen) reset()
+    onOpenChange(nextOpen)
+  }
+
+  const goBack = () => {
+    if (creating || claiming) return
+    stopWaiting()
+    if (step === "command" || step === "pair-code") {
+      setStep("cli-method")
+    } else if (step === "cli-method") {
+      setStep("name")
+    } else {
+      setStep("connection-method")
+    }
+  }
+
+  const routeToCliMethod = (method: CliMethod) => {
+    if (!connectorId || !connectorToken) {
+      setStep("name")
+      return
+    }
+    setStep(method)
+    if (method === "command") startConnectorWaiting({ id: connectorId, name })
+  }
+
+  const handleCreate = async () => {
+    if (!name.trim() || !session?.accessToken || creating) return
+    const version = pairingVersionRef.current
+    setCreating(true)
+    try {
+      const result = await preparePairingCredential(session.accessToken, name, credential)
+      if (version !== pairingVersionRef.current) return
+      setCredential(result)
+      setName(result.connector.name)
+      if (!credential) setCreatedThisFlow(true)
+      setStep("cli-method")
+    } catch (error) {
+      if (version !== pairingVersionRef.current) return
+      toast.error(error instanceof Error ? error.message : t("errors.createFailed"))
+    } finally {
+      if (version === pairingVersionRef.current) setCreating(false)
+    }
+  }
+
+  const handleClaim = async () => {
+    if (pairCode.length < 6 || !session?.accessToken || !connectorId || !connectorToken) return
+    const version = pairingVersionRef.current
+    setClaiming(true)
+    try {
+      await dashboardApi.claimPairing(session.accessToken, {
+        code: pairCode,
+        name: name.trim(),
+        serverUrl,
+        connectorId,
+        connectorToken,
+      })
+      if (version !== pairingVersionRef.current) return
+      completePairing({ id: connectorId, name: name.trim() })
+    } catch (error) {
+      if (version !== pairingVersionRef.current) return
+      toast.error(error instanceof Error ? error.message : t("errors.claimFailed"))
+    } finally {
+      if (version === pairingVersionRef.current) setClaiming(false)
+    }
+  }
+
+  const handleForceClose = () => {
+    closePairing()
   }
 
   const continuePairing = () => {
@@ -313,474 +361,276 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     }, 0)
   }
 
-  const handleCreate = async () => {
-    if (!name.trim() || !session?.accessToken) return
-    setCreating(true)
-    try {
-      const result = await dashboardApi.createConnector(session.accessToken, name.trim())
-      setConnectorId(result.connector.id)
-      setToken(result.connectorToken)
-      setName(result.connector.name)
-      setStep("method")
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("errors.createFailed"))
-    } finally {
-      setCreating(false)
-    }
-  }
-
-  const enterCommandStep = () => {
-    if (!connectorId) return
-    setStep("command")
-    startConnectorPolling(connectorId)
-  }
-
-  const handleSelectDesktop = () => {
-    if (!connectorId) return
-    stopPolling()
-    setStep("desktop-method")
-  }
-
-  const handleSelectLocalDesktop = () => {
-    if (!connectorId) return
-    stopPolling()
-    setStep("desktop-local")
-  }
-
-  const handleSelectPairCode = () => {
-    stopPolling()
-    setStep("desktop-paircode")
-  }
-
-  const handleSelectDesktopCredentials = (backStep: "method" | "desktop-method" = "desktop-method") => {
-    if (!connectorId) return
-    setCredentialsBackStep(backStep)
-    setStep("desktop-credentials")
-    startConnectorPolling(connectorId)
-  }
-
-  const handleSelectCommand = () => {
-    if (!connectorId) return
-    stopPolling()
-    setCommandCountdown(commandWarningAccepted ? 0 : COMMAND_WARNING_WAIT_SECONDS)
-    setStep("command-warning")
-  }
-
-  const handleAcceptCommandWarning = () => {
-    writeCommandWarningAccepted()
-    setCommandWarningAccepted(true)
-    enterCommandStep()
-  }
-
-  const handleUseDesktopFromCommandWarning = () => {
-    handleSelectDesktop()
-  }
-
-  const handleClaim = async () => {
-    const code = pairCode
-    if (code.length < 6 || !session?.accessToken || !connectorId || !token) return
-    setClaiming(true)
-    try {
-      const result = await dashboardApi.claimPairing(session.accessToken, {
-        code,
-        name: name.trim(),
-        serverUrl,
-        connectorId,
-        connectorToken: token,
-      })
-      if (result.connector?.id) setConnectorId(result.connector.id)
-      onConnectorCreated?.()
-      setStep("success")
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("errors.claimFailed"))
-    } finally {
-      setClaiming(false)
-    }
-  }
-
-  const handleForceClose = async () => {
-    setExitGuardOpen(false)
-    stopPolling()
-    // Don't auto-delete; user must do it manually (as instructed)
-    reset()
-    onOpenChange(false)
-  }
-
-  const handleSuccessClose = () => {
-    reset()
-    onOpenChange(false)
-    onConnectorCreated?.()
-  }
-
   const pairServer = pairServerAddress(serverUrl)
-  const tokenCommand = connectorId && token
+  const pairCommand = `uvx anywhere-cli pair ${shellQuote(pairServer)}`
+  const tokenCommand = connectorId && connectorToken
     ? [
       "uvx anywhere-cli start",
       `--server-url ${shellQuote(serverUrl)}`,
       `--connector-id ${shellQuote(connectorId)}`,
-      `--connector-token ${shellQuote(token)}`,
+      `--connector-token ${shellQuote(connectorToken)}`,
     ].join(" ")
     : ""
-  const desktopLaunchUrl = connectorId && token ? desktopConnectorUrl(serverUrl, connectorId, token) : ""
-  const desktopCredentials = connectorId && token ? connectorCredentialsPayload(serverUrl, connectorId, token) : ""
-
-  const openDesktopConnector = () => {
-    if (!desktopLaunchUrl || !connectorId) return
-    startConnectorPolling(connectorId)
-    window.location.href = desktopLaunchUrl
-  }
 
   return (
     <>
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
+          <div
+            key={step}
+            className="grid min-w-0 gap-4 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-4 motion-safe:duration-200"
+          >
+            {step === "connection-method" ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{title ?? t("connectionTitle")}</DialogTitle>
+                  <DialogDescription>{t("connectionDescription")}</DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-3 py-2">
+                  <ChoiceCard
+                    icon={MonitorUp}
+                    title={t("desktopTitle")}
+                    description={t("desktopDescription")}
+                    onClick={() => setStep("desktop-install")}
+                  />
+                  <ChoiceCard
+                    icon={Terminal}
+                    title={t("cliTitle")}
+                    description={t("cliDescription")}
+                    onClick={() => setStep("cli-confirm")}
+                  />
+                </div>
+              </>
+            ) : null}
 
-          {/* ── Step: Name ── */}
-          {step === "name" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{t("nameTitle")}</DialogTitle>
-                <DialogDescription>
-                  {t("nameDescription")}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex flex-col gap-2 py-2">
-                <Label htmlFor="device-name">{t("nameLabel")}</Label>
-                <Input
-                  id="device-name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder={t("namePlaceholder")}
-                  className="code-mono"
-                  onKeyDown={(e) => e.key === "Enter" && handleCreate()}
-                  autoFocus
-                />
-              </div>
-              <DialogFooter>
-                <Button onClick={handleCreate} disabled={!name.trim() || creating} className="w-full">
-                  {creating && <Loader2 className="mr-2 size-4 animate-spin" />}
-                  {t("createDevice")}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-
-          {/* ── Step: Method ── */}
-          {step === "method" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{title ?? t("methodTitle")}</DialogTitle>
-                <DialogDescription>
-                  {t("methodDescription", { name })}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex flex-col gap-3 py-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleSelectDesktop}
-                  className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
-                >
-                  <span className="flex min-w-0 items-center gap-2 font-medium">
-                    <MonitorUp className="size-4" />
-                    {t("desktopTitle")}
-                  </span>
-                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("desktopDescription")}</span>
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleSelectCommand}
-                  className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
-                >
-                  <span className="flex min-w-0 items-center gap-2 font-medium">
-                    <Terminal className="size-4" />
-                    {t("commandTitle")}
-                  </span>
-                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("commandDescription")}</span>
-                </Button>
-              </div>
-            </>
-          )}
-
-          {/* ── Step: Command warning ── */}
-          {step === "command-warning" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{t("commandWarningTitle")}</DialogTitle>
-                <DialogDescription>{t("commandWarningDescription")}</DialogDescription>
-              </DialogHeader>
-              <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
-                {t("commandWarningFallback")}
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={handleAcceptCommandWarning} disabled={commandCountdown > 0}>
-                  {commandCountdown > 0 ? t("commandWarningCommandCountdown", { seconds: commandCountdown }) : t("commandWarningConfirm")}
-                </Button>
-                <Button onClick={handleUseDesktopFromCommandWarning}>
-                  <MonitorUp className="size-4" />
-                  {t("commandWarningDesktop")}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-
-          {/* ── Step: Desktop method ── */}
-          {step === "desktop-method" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{t("desktopMethodTitle")}</DialogTitle>
-                <DialogDescription>
-                  {t("desktopMethodDescription", { name })}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex flex-col gap-3 py-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleSelectLocalDesktop}
-                  className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
-                >
-                  <span className="flex min-w-0 items-center gap-2 font-medium">
-                    <MonitorUp className="size-4" />
-                    {t("desktopLocalTitle")}
-                  </span>
-                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("desktopLocalDescription")}</span>
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleSelectPairCode}
-                  className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
-                >
-                  <span className="min-w-0 font-medium">{t("pairCodeTitle")}</span>
-                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("pairCodeDescription")}</span>
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => handleSelectDesktopCredentials("desktop-method")}
-                  className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
-                >
-                  <span className="flex min-w-0 items-center gap-2 font-medium">
-                    <KeyRound className="size-4" />
-                    {t("credentialsTitle")}
-                  </span>
-                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("credentialsDescription")}</span>
-                </Button>
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => { stopPolling(); setStep("method") }}
-                  className="gap-1.5"
-                >
-                  <ArrowLeft className="size-3.5" />
-                  {tCommon("back")}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-
-          {/* ── Step: Local desktop ── */}
-          {step === "desktop-local" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{t("desktopLocalStepTitle")}</DialogTitle>
-                <DialogDescription>
-                  {t("desktopLocalStepDescription", { name })}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex flex-col gap-3 py-2">
-                <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
-                  <p>{t("desktopInstallHint")}</p>
-                  <Button type="button" variant="link" className="mt-2 h-auto p-0" asChild>
-                    <a href={GITHUB_RELEASES_URL} target="_blank" rel="noreferrer">
-                      {t("githubReleases")}
-                      <ExternalLink className="size-3.5" />
-                    </a>
+            {step === "desktop-install" ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{t("desktopInstallTitle")}</DialogTitle>
+                  <DialogDescription>{t("desktopInstallDescription")}</DialogDescription>
+                </DialogHeader>
+                <ol className="grid gap-3 py-2 text-sm">
+                  <li className="rounded-lg border bg-muted/30 p-4">
+                    <div className="flex flex-col gap-1">
+                      <p className="font-medium">{t("desktopDownloadTitle")}</p>
+                      <p className="text-muted-foreground">{t("desktopInstallStepDownload")}</p>
+                    </div>
+                  </li>
+                  <li className="rounded-lg border bg-muted/30 p-4">
+                    <div className="flex flex-col gap-1">
+                      <p className="font-medium">{t("desktopLoginTitle")}</p>
+                      <p className="text-muted-foreground">{t("desktopInstallStepLogin")}</p>
+                    </div>
+                  </li>
+                  <li className="rounded-lg border bg-muted/30 p-4">
+                    <div className="flex flex-col gap-1">
+                      <p className="font-medium">{t("desktopOnlineTitle")}</p>
+                      <p className="text-muted-foreground">{t("desktopInstallStepOnline")}</p>
+                    </div>
+                  </li>
+                </ol>
+                <DialogFooter className="sm:justify-between">
+                  <Button type="button" variant="ghost" size="sm" onClick={goBack} className="gap-1.5">
+                    <ArrowLeft data-icon="inline-start" />
+                    {tCommon("back")}
                   </Button>
-                </div>
-                <Button
-                  type="button"
-                  onClick={openDesktopConnector}
-                  disabled={!desktopLaunchUrl}
-                  className="w-full justify-start"
-                >
-                  <MonitorUp className="size-4" />
-                  {t("desktopStarted")}
-                </Button>
-                {polling ? <PollingIndicator label={t("waitingOnline")} /> : null}
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => { stopPolling(); setStep("desktop-method") }}
-                  className="gap-1.5"
-                >
-                  <ArrowLeft className="size-3.5" />
-                  {tCommon("back")}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Button type="button" variant="outline" asChild>
+                      <a href={DESKTOP_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer">
+                        {t("githubReleases")}
+                        <ExternalLink data-icon="inline-end" />
+                      </a>
+                    </Button>
+                    <Button type="button" onClick={() => completePairing()}>{tCommon("done")}</Button>
+                  </div>
+                </DialogFooter>
+              </>
+            ) : null}
 
-          {/* ── Step: Pair code ── */}
-          {step === "desktop-paircode" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{t("codeStepTitle")}</DialogTitle>
-                <DialogDescription>
-                  {t("codeStepDescription", { name })}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex flex-col gap-4 py-2">
-                <div className="rounded-lg border bg-muted/30 p-4 text-sm">
-                  <div className="font-medium">{t("serverAddress")}</div>
-                  <div className="mt-2 break-all font-mono text-xs text-muted-foreground">{pairServer}</div>
-                  <p className="mt-2 text-muted-foreground">{t("serverAddressHint")}</p>
+            {step === "cli-confirm" ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{t("commandWarningTitle")}</DialogTitle>
+                  <DialogDescription>{t("commandWarningDescription")}</DialogDescription>
+                </DialogHeader>
+                <p className="text-sm text-muted-foreground">{t("commandWarningFallback")}</p>
+                <DialogFooter className="sm:justify-between">
+                  <Button type="button" variant="ghost" size="sm" onClick={goBack}>
+                    <ArrowLeft data-icon="inline-start" />
+                    {tCommon("back")}
+                  </Button>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Button type="button" variant="outline" onClick={() => setStep("desktop-install")}>
+                      {t("commandWarningDesktop")}
+                    </Button>
+                    <Button type="button" onClick={() => setStep("name")}>
+                      {t("commandWarningConfirm")}
+                    </Button>
+                  </div>
+                </DialogFooter>
+              </>
+            ) : null}
+
+            {step === "cli-method" ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{t("methodTitle")}</DialogTitle>
+                  <DialogDescription>{t("methodDescription", { name })}</DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-3 py-2">
+                  <ChoiceCard
+                    icon={Hash}
+                    title={t("pairCodeTitle")}
+                    description={t("pairCodeDescription")}
+                    onClick={() => routeToCliMethod("pair-code")}
+                  />
+                  <ChoiceCard
+                    icon={KeyRound}
+                    title={t("tokenTitle")}
+                    description={t("tokenDescription")}
+                    onClick={() => routeToCliMethod("command")}
+                  />
                 </div>
-                <div className="flex flex-col gap-2">
-                  <Label>{t("codeLabel")}</Label>
-                  <InputOTP
-                    maxLength={6}
-                    value={pairCode}
-                    onChange={(value) => setPairCode(value.replace(/\D/g, "").slice(0, 6))}
-                    disabled={polling}
-                    inputMode="numeric"
-                    aria-label={t("codeLabel")}
-                    containerClassName={cn("w-full justify-between", polling && "opacity-40")}
+                <DialogFooter>
+                  <Button type="button" variant="ghost" size="sm" onClick={goBack} className="gap-1.5">
+                    <ArrowLeft data-icon="inline-start" />
+                    {tCommon("back")}
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : null}
+
+            {step === "name" ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{t("nameTitle")}</DialogTitle>
+                  <DialogDescription>{t("nameDescription")}</DialogDescription>
+                </DialogHeader>
+                <FieldGroup className="py-2">
+                  <Field data-disabled={creating} className="gap-2">
+                    <FieldLabel htmlFor="device-name">{t("nameLabel")}</FieldLabel>
+                    <Input
+                      id="device-name"
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                      placeholder={t("namePlaceholder")}
+                      className="code-mono"
+                      disabled={creating}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && !event.nativeEvent.isComposing) void handleCreate()
+                      }}
+                      autoFocus
+                    />
+                  </Field>
+                </FieldGroup>
+                <DialogFooter className="sm:justify-between">
+                  <Button type="button" variant="ghost" size="sm" onClick={goBack} disabled={creating}>
+                    <ArrowLeft data-icon="inline-start" />
+                    {tCommon("back")}
+                  </Button>
+                  <Button type="button" onClick={() => void handleCreate()} disabled={!name.trim() || creating}>
+                    {creating ? <Loader2 data-icon="inline-start" className="animate-spin" /> : null}
+                    {tCommon("continue")}
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : null}
+
+            {step === "command" ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{t("commandStepTitle")}</DialogTitle>
+                  <DialogDescription>{t("commandStepDescription", { name })}</DialogDescription>
+                </DialogHeader>
+                <div className="flex flex-col gap-3 py-2">
+                  <CodeBlock code={tokenCommand} copyLabel={t("copyCommand")} />
+                  <p className="pt-2 text-sm text-muted-foreground">{t("linuxSessionWarning")}</p>
+                  <CodeBlock code={`screen -S anywhere\n${tokenCommand}`} copyLabel={t("copyCommand")} />
+                  <p className="pt-2 text-sm text-muted-foreground">{t("linuxDetachHint")}</p>
+                  <CodeBlock code="screen -r anywhere" copyLabel={t("copyCommand")} />
+                  {waitingOnline ? <PollingIndicator label={t("waitingOnline")} /> : null}
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="ghost" size="sm" onClick={goBack} className="gap-1.5">
+                    <ArrowLeft data-icon="inline-start" />
+                    {tCommon("back")}
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : null}
+
+            {step === "pair-code" ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{t("codeStepTitle")}</DialogTitle>
+                  <DialogDescription>{t("codeStepDescription", { name })}</DialogDescription>
+                </DialogHeader>
+                <div className="flex flex-col gap-4 py-2">
+                  <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+                    <div className="font-medium">{t("pairCommand")}</div>
+                    <div className="mt-3">
+                      <CodeBlock code={pairCommand} copyLabel={t("copyCommand")} />
+                    </div>
+                    <p className="mt-3 text-muted-foreground">{t("pairCommandHint")}</p>
+                  </div>
+                  <FieldGroup>
+                    <Field data-disabled={claiming} className="gap-2">
+                      <FieldLabel htmlFor="device-pair-code">{t("codeLabel")}</FieldLabel>
+                      <InputOTP
+                        id="device-pair-code"
+                        maxLength={6}
+                        value={pairCode}
+                        onChange={(value) => setPairCode(value.replace(/\D/g, "").slice(0, 6))}
+                        disabled={claiming}
+                        inputMode="numeric"
+                        aria-label={t("codeLabel")}
+                        containerClassName={cn("w-full justify-between", claiming && "opacity-40")}
+                      >
+                        <InputOTPGroup className="w-full">
+                          {Array.from({ length: 6 }).map((_, index) => (
+                            <InputOTPSlot key={index} index={index} className="h-12 flex-1 text-xl" />
+                          ))}
+                        </InputOTPGroup>
+                      </InputOTP>
+                    </Field>
+                  </FieldGroup>
+                  {claiming ? <PollingIndicator label={t("confirming")} /> : null}
+                </div>
+                <DialogFooter className="sm:justify-between">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={goBack}
+                    className="gap-1.5"
+                    disabled={claiming}
                   >
-                    <InputOTPGroup className="w-full">
-                      {Array.from({ length: 6 }).map((_, i) => (
-                        <InputOTPSlot key={i} index={i} className="h-12 flex-1 text-xl" />
-                      ))}
-                    </InputOTPGroup>
-                  </InputOTP>
-                </div>
-                {polling && <PollingIndicator label={t("confirming")} />}
-              </div>
-              <DialogFooter className="gap-2 sm:gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => { stopPolling(); setStep("desktop-method") }}
-                  className="gap-1.5"
-                  disabled={polling}
-                >
-                  <ArrowLeft className="size-3.5" />
-                  {tCommon("back")}
-                </Button>
-                <Button
-                  onClick={handleClaim}
-                  disabled={pairCode.length < 6 || claiming || polling}
-                  className="flex-1"
-                >
-                  {claiming && <Loader2 className="mr-2 size-4 animate-spin" />}
-                  {t("claim")}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-
-          {/* ── Step: Command ── */}
-          {step === "command" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{t("commandStepTitle")}</DialogTitle>
-                <DialogDescription>
-                  {t("commandStepDescription", { name })}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex flex-col gap-3 py-2">
-                <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
-                  {t("commandSkillReminder")}
-                </div>
-                <CodeBlock code={tokenCommand} />
-                <PollingIndicator label={t("waitingOnline")} />
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => { stopPolling(); setStep("method") }}
-                  className="gap-1.5"
-                >
-                  <ArrowLeft className="size-3.5" />
-                  {tCommon("back")}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-
-          {/* ── Step: Copy credentials ── */}
-          {step === "desktop-credentials" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{t("credentialsStepTitle")}</DialogTitle>
-                <DialogDescription>
-                  {t("credentialsStepDescription", { name })}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex flex-col gap-3 py-2">
-                <CodeBlock code={desktopCredentials} copyLabel={t("copyCredentials")} />
-                <PollingIndicator label={t("waitingOnline")} />
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => { stopPolling(); setStep(credentialsBackStep) }}
-                  className="gap-1.5"
-                >
-                  <ArrowLeft className="size-3.5" />
-                  {tCommon("back")}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-
-          {/* ── Step: Success ── */}
-          {step === "success" && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <CheckCircle2 className="size-5 text-emerald-500" />
-                  {t("successTitle")}
-                </DialogTitle>
-                <DialogDescription>
-                  {t("successDescription", { name })}
-                </DialogDescription>
-              </DialogHeader>
-              <DialogFooter>
-                <Button onClick={handleSuccessClose} className="w-full">{tCommon("done")}</Button>
-              </DialogFooter>
-            </>
-          )}
-
+                    <ArrowLeft data-icon="inline-start" />
+                    {tCommon("back")}
+                  </Button>
+                  <Button type="button" onClick={() => void handleClaim()} disabled={pairCode.length < 6 || claiming}>
+                    {claiming ? <Loader2 data-icon="inline-start" className="animate-spin" /> : null}
+                    {t("claim")}
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : null}
+          </div>
         </DialogContent>
       </Dialog>
 
-      {/* Exit guard */}
       <AlertDialog open={exitGuardOpen} onOpenChange={setExitGuardOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t("exitTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("exitDescription", { name })}
-            </AlertDialogDescription>
+            <AlertDialogDescription>{t(waitingOnline ? "exitWaitingDescription" : "exitDescription", { name })}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={continuePairing}>{t("continuePairing")}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleForceClose}>
-              {t("closeAnyway")}
-            </AlertDialogAction>
+            <AlertDialogAction onClick={handleForceClose}>{t("closeAnyway")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
     </>
   )
 }

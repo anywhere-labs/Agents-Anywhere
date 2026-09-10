@@ -1,6 +1,9 @@
 # Docker
 
-Docker files for Agents Anywhere.
+Docker deployment for the Agents Anywhere v2 mainline. For existing databases,
+read [Upgrading](../docs/upgrading.md) before running Compose. The current
+schema revision is `v2_35`; historical migration notes below explain individual
+changes, not the latest target revision.
 
 The current Web console lives in `web-next/`. Production Docker builds export it
 as static files and the FastAPI backend serves those files and API/WebSocket
@@ -10,7 +13,7 @@ paths from the same origin.
 
 Run from the repository root.
 
-Development container:
+Development container (requires reachable PostgreSQL and Redis services):
 
 ```bash
 docker build -f docker/Dockerfile.dev -t agents-anywhere:dev . \
@@ -18,6 +21,8 @@ docker build -f docker/Dockerfile.dev -t agents-anywhere:dev . \
     --name agents-anywhere-dev \
     -p 5174:5174 \
     -v agents-anywhere-dev-data:/data \
+    -e AGENT_SERVER_DB_URL=postgresql+asyncpg://agents:password@host.docker.internal:5432/agents_anywhere \
+    -e AGENT_SERVER_REDIS_URL=redis://host.docker.internal:6379/0 \
     agents-anywhere:dev
 ```
 
@@ -43,6 +48,8 @@ docker build -f docker/Dockerfile.dev -t agents-anywhere:dev .
 docker run --rm -it \
   -p 5174:5174 \
   -v agents-anywhere-data:/data \
+  -e AGENT_SERVER_DB_URL=postgresql+asyncpg://agents:password@host.docker.internal:5432/agents_anywhere \
+  -e AGENT_SERVER_REDIS_URL=redis://host.docker.internal:6379/0 \
   agents-anywhere:dev
 ```
 
@@ -51,14 +58,15 @@ Inside the container:
 - backend listens on `127.0.0.1:8000`
 - Next dev listens on `0.0.0.0:5174`
 - Next rewrites API/WebSocket traffic to the backend
-- SQLite data is stored at `/data/agent-server.sqlite3`
+- PostgreSQL is required and configured with `AGENT_SERVER_DB_URL`
+- local uploads and attachments can be stored under `/data`
 
 ## Production Images
 
 `docker/Dockerfile` builds the `web-next` static export in an intermediate
 stage and copies it into the final `server` image.
 
-Build and run a SQLite-backed service manually:
+Build and run the PostgreSQL-backed service manually:
 
 ```bash
 docker build -f docker/Dockerfile --target server -t agents-anywhere-server:latest .
@@ -68,13 +76,13 @@ docker run -d \
   -p 5174:8000 \
   -v agents-anywhere-data:/data \
   -e AGENT_SERVER_SECRET=change-me-before-production \
+  -e AGENT_SERVER_DB_URL=postgresql+asyncpg://agents:password@host.docker.internal:5432/agents_anywhere \
+  -e AGENT_SERVER_REDIS_URL=redis://host.docker.internal:6379/0 \
   agents-anywhere-server:latest
 ```
 
-Persistent server data under `/data`:
-
-- SQLite database: `/data/agent-server.sqlite3`
-- uploaded files / attachments: `/data/agent-server.files/`
+Database state is stored by PostgreSQL. Uploaded files and attachments use
+`/data/agent-server.files/` unless S3-compatible storage is configured.
 
 Set `AGENT_SERVER_FILES_BACKEND=s3` and the matching
 `AGENT_SERVER_FILES_S3_*` variables to store uploaded files in S3-compatible
@@ -105,12 +113,19 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 The compose file uses:
 
 - `postgres-next` service for PostgreSQL 17
+- `redis-next` service for cross-instance coordination, Pub/Sub, and the live Timeline sequencer/write buffer
+- `migrate-next` one-shot service that upgrades the database before server startup
 - `server-next` service for the FastAPI backend and statically exported Web UI
 - `agents-anywhere-pg-next` volume for PostgreSQL data
+- `agents-anywhere-redis-next` volume mounted at `/data` for Redis AOF data
 - `agents-anywhere-files-next` volume mounted at `/data` for uploads / attachments
 - public Web port `${AGENTS_ANYWHERE_WEB_PORT:-5174}`
 - static `web-next` files served by FastAPI from the same origin as the API
 - optional `AGENT_SERVER_PUBLIC_ORIGIN=https://agents.example.com` for OAuth redirect URLs behind a reverse proxy
+- PostgreSQL migration serialization through a session advisory lock
+- Redis memory capped by `REDIS_MAXMEMORY` (default `256mb`) with `noeviction`
+- Redis AOF persistence with `appendfsync everysec`; RDB snapshots remain disabled
+- Timeline revision leases configurable through `AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE` (default `4096`)
 
 Publish the Web console on a different host port:
 
@@ -123,6 +138,55 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 
 Use a non-default `AGENT_SERVER_SECRET` and database password outside local
 development. Put HTTPS in front of the Web service for production.
+
+PostgreSQL remains the durable source of truth after Timeline writes flush. Redis
+also carries accepted-but-unflushed Timeline upserts and the live sequence head,
+in addition to invalidations, short-lived WebSocket tickets, and distributed
+locks. The sequence head uses ranges leased durably from PostgreSQL, so Redis
+state loss may leave a sequence gap but does not reuse allocated values.
+
+Because pending Timeline and sequencer keys have no TTL, Redis uses AOF
+`everysec`, a persistent `/data` volume, and `noeviction`. A failure before the
+latest AOF sync can still lose an unflushed upsert; consistency-sensitive/manual
+reads fence and flush pending Timeline writes to PostgreSQL first.
+
+The Redis ACL used by `server-next` must allow `INFO server` in addition to the
+normal data commands. The current Timeline path reads the Redis `run_id` with
+`INFO server` for every high-frequency upsert and rechecks it after allocating a
+revision for an accepted change. Validate both the ACL and this command rate
+against the production Redis service before rollout.
+
+`appendfsync everysec` leaves the latest not-yet-fsynced Redis commands exposed
+to loss if Redis or its host fails. If `AGENT_SERVER_REDIS_URL` is omitted, the
+single-process fallback instead keeps accepted-but-unflushed Timeline payloads
+only in process memory; a process crash loses everything accepted since the last
+flush (normally up to the configured flush interval). In both cases, the durable
+PostgreSQL allocation watermark prevents revision reuse but cannot recover a
+lost payload, so the local fallback is for development rather than a durable or
+multi-instance deployment.
+
+### v2.24 rollout and rollback
+
+`v2.23` (or older) and `v2.24` Server writers must never run against the same database at
+the same time. Use a stop-migrate-start deployment: stop every old Server and
+external writer, take a backup and run the migration, then start only `v2.24`
+writers. The `migrate-next` dependency orders the new Compose services, but it
+does not fence an old container, another Compose project, or an external Server
+that is still running.
+
+On PostgreSQL, `v2.24` widens the session and Timeline sequence columns from
+`int4` to `int8`. Depending on PostgreSQL version, table size, indexes, and
+available resources, these `ALTER TABLE` operations can take strong locks and
+may rewrite table or index storage. Rehearse the migration on a production-sized
+copy, measure lock and runtime behavior, and reserve a maintenance window before
+running it in production.
+
+A downgrade must also run with all writers stopped. It refuses when any session
+has an unconsumed revision lease (`seq_allocated_high <> seq`) or when a sequence
+value no longer fits signed 32-bit storage. Because normal `v2.24` traffic can
+leave an active lease ahead of the durable sequence immediately, treat the
+schema migration as forward-only unless the downgrade checks have been verified
+before restarting writers.
 
 The first startup on an empty database logs a bootstrap token in the
 `server-next` logs. Use it in the Web UI to create the first admin user.

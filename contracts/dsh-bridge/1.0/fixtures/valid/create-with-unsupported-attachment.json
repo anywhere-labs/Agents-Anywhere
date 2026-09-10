@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": "create-attachment",
+  "method": "session.createAndStart",
+  "params": {
+    "sessionId": "sess_platform_1",
+    "content": "describe this",
+    "attachments": [{ "fileId": "file_1" }],
+    "clientMessageId": "client-message-attachment"
+  }
+}

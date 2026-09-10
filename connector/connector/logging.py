@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -8,6 +9,18 @@ from loguru import logger as logger
 
 
 RpcLogNotifier = Callable[[str, Any], Awaitable[None]]
+DEFAULT_LOG_FORMAT = (
+    "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+    "<level>{level: <8}</level> | "
+    "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+    "<level>{message}</level>"
+)
+
+
+def configure_connector_logging(*, debug: bool = False) -> None:
+    level = "DEBUG" if debug else "INFO"
+    logger.remove()
+    logger.add(sys.stderr, level=level, format=DEFAULT_LOG_FORMAT)
 
 
 class RpcLogSink:
@@ -16,7 +29,12 @@ class RpcLogSink:
         self._tasks: set[asyncio.Task[None]] = set()
         self._sink_id: int | None = None
 
-    def install(self, *, level: str = "TRACE", remove_default_sink: bool = False) -> RpcLogSink:
+    def install(
+        self,
+        *,
+        level: str = "INFO",
+        remove_default_sink: bool = False,
+    ) -> RpcLogSink:
         if remove_default_sink:
             logger.remove()
         self._sink_id = logger.add(self._write, level=level, format="{message}")
@@ -46,5 +64,13 @@ class RpcLogSink:
         task.add_done_callback(self._tasks.discard)
 
 
-def install_rpc_log_sink(notifier: RpcLogNotifier, *, level: str = "TRACE", remove_default_sink: bool = False) -> RpcLogSink:
-    return RpcLogSink(notifier).install(level=level, remove_default_sink=remove_default_sink)
+def install_rpc_log_sink(
+    notifier: RpcLogNotifier,
+    *,
+    level: str = "INFO",
+    remove_default_sink: bool = False,
+) -> RpcLogSink:
+    return RpcLogSink(notifier).install(
+        level=level,
+        remove_default_sink=remove_default_sink,
+    )

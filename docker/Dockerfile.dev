@@ -9,7 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     PYTHONPATH=/app/server \
-    AGENT_SERVER_DB=/data/agent-server.sqlite3 \
+    AGENT_SERVER_DB_BACKEND=postgres \
     AGENTS_ANYWHERE_API=http://127.0.0.1:8000
 
 WORKDIR /app
@@ -41,4 +41,4 @@ VOLUME ["/data"]
 
 EXPOSE 5174
 ENTRYPOINT ["tini", "--"]
-CMD ["sh", "-c", "cd /app/server && uv run --no-sync uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000 & cd /app/web-next && yarn dev --hostname 0.0.0.0 --port 5174"]
+CMD ["sh", "-c", "cd /app/server && uv run --no-sync python -m agent_server.infra.db.migrations upgrade && uv run --no-sync uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000 & cd /app/web-next && yarn dev --hostname 0.0.0.0 --port 5174"]

@@ -1,0 +1,15 @@
+node_modules
+lib
+bundled-connector
+*.tgz
+.DS_Store
+*.log
+src/**/*.d.ts
+
+# Python cache
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/

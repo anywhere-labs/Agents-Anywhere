@@ -2,41 +2,186 @@ package com.agentsanywhere.app.api
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
+import java.util.Base64
 
 class SessionsApi(
     private val client: ApiClient = ApiClient(),
 ) {
-    fun listSessions(
+    fun listProjects(
         serverUrl: String,
         authorizationToken: String,
-    ): List<RemoteSession> {
-        return client.getJson(
+    ): RemoteProjectListResponse {
+        val response = client.getJson(
             serverUrl = serverUrl,
-            path = "/sessions",
+            path = "/projects",
+            authorizationToken = authorizationToken,
+        )
+        return RemoteProjectListResponse(
+            projects = response.optJSONArray("projects").toObjectList { toRemoteProject() },
+            serverTime = response.optNullableString("serverTime"),
+        )
+    }
+
+    fun createProject(
+        serverUrl: String,
+        authorizationToken: String,
+        name: String,
+        connectorId: String,
+        workspacePath: String,
+        manuallyCreated: Boolean = true,
+    ): RemoteProjectCreateResponse {
+        val body = JSONObject()
+            .put("name", name)
+            .put("connectorId", connectorId)
+            .put("workspacePath", workspacePath)
+            .put("manuallyCreated", manuallyCreated)
+        val response = client.postJson(
+            serverUrl = serverUrl,
+            path = "/projects",
+            body = body,
+            authorizationToken = authorizationToken,
+        )
+        return RemoteProjectCreateResponse(
+            project = response.getJSONObject("project").toRemoteProject(),
+            attachedSessions = response.optInt("attachedSessions", 0),
+            serverTime = response.optNullableString("serverTime"),
+        )
+    }
+
+    fun updateProject(
+        serverUrl: String,
+        authorizationToken: String,
+        projectId: String,
+        name: String? = null,
+        pinned: Boolean? = null,
+    ): RemoteProjectResponse {
+        val body = JSONObject().apply {
+            name?.let { put("name", it) }
+            pinned?.let { put("pinned", it) }
+        }
+        val response = client.patchJson(
+            serverUrl = serverUrl,
+            path = "/projects/${projectId.urlEncode()}",
+            body = body,
+            authorizationToken = authorizationToken,
+        )
+        return RemoteProjectResponse(
+            project = response.getJSONObject("project").toRemoteProject(),
+            serverTime = response.optNullableString("serverTime"),
+        )
+    }
+
+    fun listProjectSessions(
+        serverUrl: String,
+        authorizationToken: String,
+        projectId: String,
+        archived: Boolean = false,
+        limit: Int = 100,
+        cursor: String? = null,
+    ): RemoteSessionPage {
+        val query = buildString {
+            append("/projects/${projectId.urlEncode()}/sessions?archived=$archived&limit=$limit")
+            cursor?.let { append("&cursor=${it.urlEncode()}") }
+        }
+        val response = client.getJson(
+            serverUrl = serverUrl,
+            path = query,
+            authorizationToken = authorizationToken,
+        )
+        return RemoteSessionPage(
+            sessions = response.optJSONArray("sessions").toObjectList { toRemoteSession() },
+            hasMore = response.optBoolean("hasMore", false),
+            nextCursor = response.optNullableString("nextCursor"),
+            serverTime = response.optNullableString("serverTime"),
+        )
+    }
+
+    fun archiveAllProjectSessions(
+        serverUrl: String,
+        authorizationToken: String,
+        projectId: String,
+        archived: Boolean,
+        scope: String,
+    ): List<RemoteSession> {
+        val body = JSONObject()
+            .put("archived", archived)
+            .put("scope", scope)
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/projects/${projectId.urlEncode()}/sessions/archive-all",
+            body = body,
             authorizationToken = authorizationToken,
         ).optJSONArray("sessions").toObjectList { toRemoteSession() }
     }
 
-    fun createSession(
+    fun listSessions(
         serverUrl: String,
         authorizationToken: String,
-        connectorId: String,
-        runtime: String,
-        title: String?,
-        cwd: String?,
-    ): RemoteSession {
+        archived: Boolean,
+        limit: Int = 100,
+        cursor: String? = null,
+    ): RemoteSessionPage {
+        val query = buildString {
+            append("/sessions?archived=$archived&limit=$limit")
+            cursor?.let { append("&cursor=${it.urlEncode()}") }
+        }
+        val response = client.getJson(
+            serverUrl = serverUrl,
+            path = query,
+            authorizationToken = authorizationToken,
+        )
+        return RemoteSessionPage(
+            sessions = response.optJSONArray("sessions").toObjectList { toRemoteSession() },
+            hasMore = response.optBoolean("hasMore", false),
+            nextCursor = response.optNullableString("nextCursor"),
+            serverTime = response.optNullableString("serverTime"),
+        )
+    }
+
+    fun createAndStartSession(
+        serverUrl: String,
+        authorizationToken: String,
+        request: RemoteSessionCreateAndStartRequest,
+    ): RemoteSessionCreateResponse {
         val body = JSONObject().apply {
-            put("connectorId", connectorId)
-            put("runtime", runtime)
-            title?.takeIf { it.isNotBlank() }?.let { put("title", it) }
-            cwd?.takeIf { it.isNotBlank() }?.let { put("cwd", it) }
+            put("connectorId", request.connectorId)
+            put("projectId", request.projectId)
+            put("runtime", request.runtimeType)
+            request.runtimeId.takeIf { it.isNotBlank() && it != request.runtimeType }?.let {
+                put("runtimeId", it)
+            }
+            put("content", request.content)
+            request.title?.takeIf(String::isNotBlank)?.let { put("title", it) }
+            request.cwd?.takeIf(String::isNotBlank)?.let { put("cwd", it) }
+            request.selections.filterValues(String::isNotBlank).takeIf { it.isNotEmpty() }?.let {
+                put("selections", JSONObject(it))
+            }
+            request.attachments.takeIf { it.isNotEmpty() }?.let { attachments ->
+                put(
+                    "attachments",
+                    JSONArray(
+                        attachments.map { attachment ->
+                            JSONObject()
+                                .put("fileId", attachment.fileId)
+                                .put("name", attachment.name)
+                                .put("mediaType", attachment.mediaType)
+                                .put("size", attachment.size)
+                                .put("sha256", attachment.sha256)
+                                .put("contentBase64", attachment.contentBase64)
+                        },
+                    ),
+                )
+            }
+            request.clientMessageId?.takeIf(String::isNotBlank)?.let { put("clientMessageId", it) }
         }
         return client.postJson(
             serverUrl = serverUrl,
-            path = "/sessions",
+            path = "/sessions/create-and-start",
             body = body,
             authorizationToken = authorizationToken,
-        ).getJSONObject("session").toRemoteSession()
+            readTimeoutSeconds = CREATE_AND_START_READ_TIMEOUT_SECONDS,
+        ).toRemoteSessionCreateResponse()
     }
 
     fun patchSession(
@@ -46,7 +191,7 @@ class SessionsApi(
         title: String? = null,
         pinned: Boolean? = null,
         archived: Boolean? = null,
-    ): RemoteSession {
+    ): RemoteSessionResponse {
         val body = JSONObject().apply {
             title?.let { put("title", it) }
             pinned?.let { put("pinned", it) }
@@ -54,28 +199,91 @@ class SessionsApi(
         }
         return client.patchJson(
             serverUrl = serverUrl,
-            path = "/sessions/${sessionId.urlEncode()}",
+            path = "/sessions/${sessionId.urlEncode()}/meta",
             body = body,
             authorizationToken = authorizationToken,
-        ).getJSONObject("session").toRemoteSession()
+        ).toRemoteSessionResponse()
     }
 
-    fun bulkArchiveSessions(
+    fun getSessionMeta(
         serverUrl: String,
         authorizationToken: String,
-        ids: List<String>,
-        archived: Boolean,
-    ): List<RemoteSession> {
+        sessionId: String,
+    ): RemoteSessionResponse {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/meta",
+            authorizationToken = authorizationToken,
+        ).toRemoteSessionResponse()
+    }
+
+    fun createSessionShare(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+        scope: String,
+        itemIds: List<String>,
+    ): RemoteSessionShareResponse {
         val body = JSONObject().apply {
-            put("ids", JSONArray(ids))
-            put("archived", archived)
+            put("scope", scope)
+            put("itemIds", JSONArray(itemIds))
         }
         return client.postJson(
             serverUrl = serverUrl,
-            path = "/sessions/bulk-archive",
+            path = "/sessions/${sessionId.urlEncode()}/shares",
             body = body,
             authorizationToken = authorizationToken,
-        ).optJSONArray("sessions").toObjectList { toRemoteSession() }
+        ).toRemoteSessionShareResponse()
+    }
+
+    fun archiveSessions(
+        serverUrl: String,
+        authorizationToken: String,
+        ids: List<String>,
+    ): RemoteSessionsMutationResponse {
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/sessions/archive",
+            body = JSONArray(ids),
+            authorizationToken = authorizationToken,
+        ).toRemoteSessionsMutationResponse()
+    }
+
+    fun unarchiveSessions(
+        serverUrl: String,
+        authorizationToken: String,
+        ids: List<String>,
+    ): RemoteSessionsMutationResponse {
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/sessions/unarchive",
+            body = JSONArray(ids),
+            authorizationToken = authorizationToken,
+        ).toRemoteSessionsMutationResponse()
+    }
+
+    fun markSessionsRead(
+        serverUrl: String,
+        authorizationToken: String,
+        ids: List<String>,
+    ): RemoteSessionsMutationResponse {
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/sessions/read",
+            body = JSONArray(ids),
+            authorizationToken = authorizationToken,
+        ).toRemoteSessionsMutationResponse()
+    }
+
+    fun markSessionRead(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+    ): RemoteSessionResponse {
+        val response = markSessionsRead(serverUrl, authorizationToken, listOf(sessionId))
+        val session = response.sessions.firstOrNull { it.id == sessionId }
+            ?: throw IllegalStateException("Session read response did not include this session.")
+        return RemoteSessionResponse(session = session, serverTime = response.serverTime)
     }
 
     fun archiveAllDeviceSessions(
@@ -97,85 +305,165 @@ class SessionsApi(
         ).optJSONArray("sessions").toObjectList { toRemoteSession() }
     }
 
-    fun getRuntimeConfigSchema(
-        serverUrl: String,
-        authorizationToken: String,
-        runtime: String,
-    ): RemoteRuntimeConfigSchema {
-        return client.getJson(
-            serverUrl = serverUrl,
-            path = "/agents/${runtime.urlEncode()}/config-schema",
-            authorizationToken = authorizationToken,
-        ).getJSONObject("schema").toRemoteRuntimeConfigSchema()
-    }
-
-    fun getSessionRuntimeSettings(
+    fun getSessionTimelineHistory(
         serverUrl: String,
         authorizationToken: String,
         sessionId: String,
-    ): RemoteRuntimeSettings {
+        beforeOrderSeq: Int,
+        limit: Int = 100,
+    ): RemoteSessionTimelinePage {
         return client.getJson(
             serverUrl = serverUrl,
-            path = "/sessions/${sessionId.urlEncode()}/runtime-settings",
+            path = "/sessions/${sessionId.urlEncode()}/timeline" +
+                "?mode=history&beforeOrderSeq=$beforeOrderSeq&limit=$limit",
             authorizationToken = authorizationToken,
-        ).toRemoteRuntimeSettings()
+        ).toRemoteSessionTimelinePage()
     }
 
-    fun patchSessionRuntimeSettings(
-        serverUrl: String,
-        authorizationToken: String,
-        sessionId: String,
-        settings: Map<String, Any?>,
-    ): RemoteRuntimeSettings {
-        val body = JSONObject().put("settings", settings.toJsonObject())
-        return client.patchJson(
-            serverUrl = serverUrl,
-            path = "/sessions/${sessionId.urlEncode()}/runtime-settings",
-            body = body,
-            authorizationToken = authorizationToken,
-        ).toRemoteRuntimeSettings()
-    }
-
-    fun getSessionState(
+    fun getSessionTimelineChanges(
         serverUrl: String,
         authorizationToken: String,
         sessionId: String,
         afterSeq: Int = 0,
-        beforeOrderSeq: Int? = null,
-        mode: String = "since",
-        limit: Int = 500,
-    ): RemoteSessionState {
-        val query = buildList {
-            add("mode=${mode.urlEncode()}")
-            add("limit=$limit")
-            when (mode) {
-                "before" -> beforeOrderSeq?.let { add("beforeOrderSeq=$it") }
-                "latest" -> Unit
-                else -> add("afterSeq=$afterSeq")
-            }
-        }.joinToString("&")
+        limit: Int = 100,
+    ): RemoteSessionTimelinePage {
         return client.getJson(
             serverUrl = serverUrl,
-            path = "/sessions/${sessionId.urlEncode()}/state?$query",
+            path = "/sessions/${sessionId.urlEncode()}/timeline" +
+                "?mode=changes&afterSeq=$afterSeq&limit=$limit",
             authorizationToken = authorizationToken,
-        ).toRemoteSessionState()
+        ).toRemoteSessionTimelinePage()
     }
 
-    fun streamSessionEvents(
+    fun getSessionSnapshot(
         serverUrl: String,
         authorizationToken: String,
         sessionId: String,
-        onOpen: () -> Unit = {},
-        onEvent: (RemoteSessionEvent) -> Unit,
-    ) {
-        client.streamSse(
+        limit: Int = 100,
+    ): RemoteSessionSnapshot {
+        return client.getJson(
             serverUrl = serverUrl,
-            path = "/sessions/${sessionId.urlEncode()}/events?token=${authorizationToken.urlEncode()}",
+            path = "/sessions/${sessionId.urlEncode()}/snapshot?limit=$limit",
             authorizationToken = authorizationToken,
-            onOpen = onOpen,
-        ) { event ->
-            onEvent(event.toRemoteSessionEvent())
+        ).toRemoteSessionSnapshot()
+    }
+
+    fun getSessionRuntimeState(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+    ): RemoteSessionRuntimeStateResponse {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/runtime/state",
+            authorizationToken = authorizationToken,
+        ).toRemoteSessionRuntimeStateResponse()
+    }
+
+    fun getSessionRuntimeCapabilities(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+    ): RemoteRuntimeCapabilities {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/runtime/capabilities",
+            authorizationToken = authorizationToken,
+        ).toRemoteRuntimeCapabilities()
+    }
+
+    fun getSessionRuntimeNotices(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+    ): RemoteRuntimeNoticeListResponse {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/runtime/notices",
+            authorizationToken = authorizationToken,
+        ).toRemoteRuntimeNoticeListResponse()
+    }
+
+    fun getSessionRuntimeModelCatalog(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+    ): RemoteRuntimeModelCatalogResponse {
+        val response = client.getJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/runtime/catalogs/model",
+            authorizationToken = authorizationToken,
+        )
+        return RemoteRuntimeModelCatalogResponse(
+            catalog = response.getJSONObject("catalog").toRemoteRuntimeModelCatalog(),
+            serverTime = response.optNullableString("serverTime"),
+        )
+    }
+
+    fun getSessionRuntimePermissionCatalog(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+    ): RemoteRuntimePermissionCatalogResponse {
+        val response = client.getJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/runtime/catalogs/permission",
+            authorizationToken = authorizationToken,
+        )
+        return RemoteRuntimePermissionCatalogResponse(
+            catalog = response.getJSONObject("catalog").toRemoteRuntimePermissionCatalog(),
+            serverTime = response.optNullableString("serverTime"),
+        )
+    }
+
+    fun patchSessionRuntimeSelections(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+        selections: Map<String, String?>,
+    ): RemoteSessionSelectionPatchResponse {
+        val selectionBody = JSONObject().apply {
+            selections.forEach { (scope, selectionId) ->
+                put(scope, selectionId ?: JSONObject.NULL)
+            }
         }
+        return client.patchJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/runtime/selections",
+            body = JSONObject().put("selections", selectionBody),
+            authorizationToken = authorizationToken,
+        ).toRemoteSessionSelectionPatchResponse()
+    }
+
+    fun getSessionRuntimeCommands(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+    ): RemoteSessionCommandListResponse {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/runtime/commands",
+            authorizationToken = authorizationToken,
+        ).toRemoteSessionCommandListResponse()
+    }
+
+    fun executeSessionRuntimeCommand(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+        command: String,
+        args: List<String> = emptyList(),
+        raw: String? = null,
+    ): RemoteSessionCommandResponse {
+        val body = JSONObject().put("command", command)
+        if (args.isNotEmpty()) body.put("args", JSONArray(args))
+        raw?.takeIf(String::isNotBlank)?.let { body.put("raw", it) }
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/runtime/commands",
+            body = body,
+            authorizationToken = authorizationToken,
+        ).toRemoteSessionCommandResponse()
     }
 
     fun sendSessionMessage(
@@ -184,7 +472,7 @@ class SessionsApi(
         sessionId: String,
         content: String,
         clientMessageId: String,
-        attachments: List<RemoteUploadedAttachment> = emptyList(),
+        attachments: List<RemoteAttachmentRef> = emptyList(),
     ): RemoteRpcResponse {
         val body = JSONObject()
             .put("content", content)
@@ -197,7 +485,32 @@ class SessionsApi(
         }
         return client.postJson(
             serverUrl = serverUrl,
-            path = "/sessions/${sessionId.urlEncode()}/messages",
+            path = "/sessions/${sessionId.urlEncode()}/runtime/messages",
+            body = body,
+            authorizationToken = authorizationToken,
+        ).toRemoteRpcResponse()
+    }
+
+    fun steerSession(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+        content: String,
+        clientMessageId: String,
+        attachments: List<RemoteAttachmentRef> = emptyList(),
+    ): RemoteRpcResponse {
+        val body = JSONObject()
+            .put("content", content)
+            .put("clientMessageId", clientMessageId)
+        if (attachments.isNotEmpty()) {
+            body.put(
+                "attachments",
+                JSONArray(attachments.map { JSONObject().put("fileId", it.fileId) }),
+            )
+        }
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/runtime/steer",
             body = body,
             authorizationToken = authorizationToken,
         ).toRemoteRpcResponse()
@@ -222,7 +535,56 @@ class SessionsApi(
         sessionId: String,
         fileId: String,
     ): String {
-        return "${serverUrl.trimEnd('/')}/sessions/${sessionId.urlEncode()}/attachments/${fileId.urlEncode()}/open"
+        return apiUrl(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/attachments/${fileId.urlEncode()}/open",
+        )
+    }
+
+    fun downloadSessionAttachment(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+        fileId: String,
+    ): RemoteDownloadedAttachment {
+        val response = client.getJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/attachments/${fileId.urlEncode()}",
+            authorizationToken = authorizationToken,
+        )
+        val contentBase64 = response.optString("contentBase64", "")
+        val expectedSize = response.optLong("size", -1L)
+        if (expectedSize !in 0..MAX_ATTACHMENT_DOWNLOAD_BYTES ||
+            contentBase64.length > MAX_ATTACHMENT_DOWNLOAD_BASE64_CHARS
+        ) {
+            throw AttachmentTransferException(AttachmentTransferFailure.SizeMismatch)
+        }
+        val bytes = try {
+            Base64.getDecoder().decode(contentBase64)
+        } catch (error: IllegalArgumentException) {
+            throw AttachmentTransferException(AttachmentTransferFailure.InvalidBase64, cause = error)
+        }
+        if (bytes.size.toLong() != expectedSize) {
+            throw AttachmentTransferException(AttachmentTransferFailure.SizeMismatch)
+        }
+        val expectedSha256 = response.optString("sha256", "").lowercase()
+        val actualSha256 = MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { byte -> "%02x".format(byte) }
+        if (expectedSha256.length != 64 || actualSha256 != expectedSha256) {
+            throw AttachmentTransferException(AttachmentTransferFailure.Sha256Mismatch)
+        }
+        return RemoteDownloadedAttachment(
+            fileId = response.optString("fileId", fileId),
+            sessionId = response.optString("sessionId", sessionId),
+            path = response.optString("path", ""),
+            name = response.optString("name", fileId).ifBlank { fileId },
+            size = expectedSize,
+            sha256 = expectedSha256,
+            bytes = bytes,
+            createdAt = response.optNullableString("createdAt"),
+            serverTime = response.optNullableString("serverTime"),
+        )
     }
 
     fun interruptSession(
@@ -232,7 +594,7 @@ class SessionsApi(
     ): RemoteRpcResponse {
         return client.postJson(
             serverUrl = serverUrl,
-            path = "/sessions/${sessionId.urlEncode()}/interrupt",
+            path = "/sessions/${sessionId.urlEncode()}/runtime/interrupt",
             body = JSONObject(),
             authorizationToken = authorizationToken,
         ).toRemoteRpcResponse()
@@ -263,96 +625,359 @@ class SessionsApi(
         ).getJSONObject("session").toRemoteSession()
     }
 
-    fun resolveApproval(
+    fun respondRuntimeNotice(
         serverUrl: String,
         authorizationToken: String,
-        approvalId: String,
-        status: String,
+        sessionId: String,
+        noticeId: String,
+        actionId: String,
+        input: Map<String, Any?>? = null,
     ): RemoteRpcResponse {
+        val body = JSONObject().put("actionId", actionId)
+        input?.let { body.put("input", JSONObject(it)) }
         return client.postJson(
             serverUrl = serverUrl,
-            path = "/approvals/${approvalId.urlEncode()}/resolve",
-            body = JSONObject().put("status", status),
+            path = "/sessions/${sessionId.urlEncode()}/runtime/notices/${noticeId.urlEncode()}/respond",
+            body = body,
             authorizationToken = authorizationToken,
         ).toRemoteRpcResponse()
     }
 
+    internal fun parseSession(value: JSONObject): RemoteSession = value.toRemoteSession()
+
+    internal fun parseProject(value: JSONObject): RemoteProject = value.toRemoteProject()
+
+    internal fun parseSessionEvent(value: JSONObject): RemoteSessionEventEnvelope {
+        val payload = value.optJSONObject("payload") ?: JSONObject()
+        val catalogType = payload.optNullableString("catalogType")
+        val catalog = payload.optJSONObject("catalog")
+        return RemoteSessionEventEnvelope(
+            protocolVersion = value.optString("protocolVersion", ""),
+            eventId = value.getString("eventId"),
+            sequence = value.getLong("sequence"),
+            cursor = value.getString("cursor"),
+            type = value.getString("type"),
+            sessionId = value.getString("sessionId"),
+            emittedAt = value.optNullableString("emittedAt"),
+            payload = RemoteSessionEventPayload(
+                session = payload.optJSONObject("session")?.toRemoteSession(),
+                item = payload.optJSONObject("item")?.toRemoteTimelineItem(),
+                items = payload.optJSONArray("items").toObjectList { toRemoteTimelineItem() },
+                state = payload.optJSONObject("state")?.toRemoteSessionRuntimeState(),
+                notice = payload.optJSONObject("notice")?.toRemoteRuntimeNotice(),
+                notices = payload.optJSONArray("notices").toObjectList { toRemoteRuntimeNotice() },
+                capabilitySet = payload.optJSONObject("capabilitySet")?.toRemoteRuntimeCapabilitySet(),
+                catalogType = catalogType,
+                modelCatalog = catalog?.takeIf { catalogType == "model" }?.toRemoteRuntimeModelCatalog(),
+                permissionCatalog = catalog?.takeIf { catalogType == "permission" }
+                    ?.toRemoteRuntimePermissionCatalog(),
+                eventCursor = payload.optNullableString("eventCursor"),
+            ),
+        )
+    }
+
     private fun JSONObject.toRemoteSession(): RemoteSession {
+        val runtime = optNullableString("runtime")
+            ?: optNullableString("runtimeType")
+            ?: "codex"
+        val runtimeType = optNullableString("runtimeType") ?: runtime
+        val runtimeId = optNullableString("runtimeId") ?: runtime
+        val runtimeName = optNullableString("runtimeName")
+            ?: optNullableString("runtimeDisplayName")
+            ?: optNullableString("displayName")
+            ?: optNullableString("name")
+            ?: runtimeId
         return RemoteSession(
             id = getString("id"),
             connectorId = getString("connectorId"),
+            projectId = optNullableString("projectId"),
             connectorStatus = optString("connectorStatus", "offline"),
-            runtime = optString("runtime", "codex"),
+            runtime = runtimeType,
             externalSessionId = optNullableString("externalSessionId"),
             title = optNullableString("title"),
             cwd = optNullableString("cwd"),
             status = optString("status", "idle"),
             takeover = optBoolean("takeover", false),
             pinned = optBoolean("pinned", false),
+            pinnedAt = optNullableString("pinnedAt"),
             archived = optBoolean("archived", false),
+            archivedAt = optNullableString("archivedAt"),
             unread = optBoolean("unread", false),
+            lastReadSeq = optInt("lastReadSeq", 0),
             lastSyncedAt = optNullableString("lastSyncedAt"),
             sourceObservedAt = optNullableString("sourceObservedAt"),
             lastActivityAt = optNullableString("lastActivityAt"),
             lastItemAt = optNullableString("lastItemAt"),
+            lastItemOrderSeq = optNullableInt("lastItemOrderSeq"),
             sortAt = optNullableString("sortAt"),
             updatedSeq = optInt("updatedSeq", 0),
-            runtimeSettings = optJSONObject("runtimeSettings").toMap(),
-            runtimeSettingsOverride = optJSONObject("runtimeSettingsOverride").toMap(),
+            runtimeId = runtimeId,
+            runtimeType = runtimeType,
+            runtimeName = runtimeName,
         )
     }
 
-    private fun JSONObject.toRemoteSessionState(): RemoteSessionState {
-        return RemoteSessionState(
+    private fun JSONObject.toRemoteProject(): RemoteProject {
+        return RemoteProject(
+            id = getString("id"),
+            userId = getString("userId"),
+            connectorId = getString("connectorId"),
+            name = getString("name"),
+            workspacePath = getString("workspacePath"),
+            pinned = optBoolean("pinned", false),
+            pinnedAt = optNullableString("pinnedAt"),
+            manuallyCreated = optBoolean("manuallyCreated", false),
+            sidebarSessionCounts = optJSONObject("sidebarSessionCounts")?.let {
+                com.agentsanywhere.app.model.ProjectSessionCounts(it.optInt("active", 0), it.optInt("archived", 0))
+            },
+            activeSessionCount = optInt("activeSessionCount", 0),
+            lastActivityAt = optNullableString("lastActivityAt"),
+            createdAt = optString("createdAt", ""),
+            updatedAt = optString("updatedAt", ""),
+        )
+    }
+
+    private fun JSONObject.toRemoteSessionResponse(): RemoteSessionResponse {
+        return RemoteSessionResponse(
             session = getJSONObject("session").toRemoteSession(),
+            serverTime = optNullableString("serverTime"),
+        )
+    }
+
+    private fun JSONObject.toRemoteSessionCreateResponse(): RemoteSessionCreateResponse {
+        return RemoteSessionCreateResponse(
+            session = getJSONObject("session").toRemoteSession(),
+        )
+    }
+
+    private fun JSONObject.toRemoteSessionShareResponse(): RemoteSessionShareResponse {
+        return RemoteSessionShareResponse(
+            shareId = getString("shareId"),
+            sharePath = getString("sharePath"),
+            shareUrl = getString("shareUrl"),
+            scope = getString("scope"),
+            createdAt = getString("createdAt"),
+        )
+    }
+
+    private fun JSONObject.toRemoteSessionsMutationResponse(): RemoteSessionsMutationResponse {
+        return RemoteSessionsMutationResponse(
+            sessions = optJSONArray("sessions").toObjectList { toRemoteSession() },
+            notFound = optJSONArray("notFound").toStringList(),
+            serverTime = optNullableString("serverTime"),
+        )
+    }
+
+    private fun JSONObject.toRemoteSessionTimelinePage(): RemoteSessionTimelinePage {
+        return RemoteSessionTimelinePage(
+            sessionId = optString("sessionId", ""),
             items = optJSONArray("items").toObjectList { toRemoteTimelineItem() },
-            approvals = optJSONArray("approvals").toObjectList { toRemoteApproval() },
             nextSeq = optInt("nextSeq", 0),
             hasMore = optBoolean("hasMore", false),
+            serverTime = optNullableString("serverTime"),
         )
     }
 
-    private fun JSONObject.toRemoteRuntimeConfigSchema(): RemoteRuntimeConfigSchema {
-        return RemoteRuntimeConfigSchema(
-            runtime = optString("runtime", ""),
-            schemaVersion = optInt("schemaVersion", 0),
-            fields = optJSONArray("fields").toObjectList { toRemoteRuntimeConfigField() },
+    private fun JSONObject.toRemoteSessionSnapshot(): RemoteSessionSnapshot {
+        val timeline = optJSONObject("timeline") ?: JSONObject()
+        val catalogs = optJSONObject("catalogs")
+        val session = getJSONObject("session").toRemoteSession()
+        return RemoteSessionSnapshot(
+            session = session,
+            state = optJSONObject("state")?.toRemoteSessionRuntimeState(),
+            timeline = RemoteSessionTimelineSnapshot(
+                items = timeline.optJSONArray("items").toObjectList { toRemoteTimelineItem() },
+                nextSeq = timeline.optInt("nextSeq", 0),
+                hasMore = timeline.optBoolean("hasMore", false),
+            ),
+            notices = optJSONArray("notices").toObjectList { toRemoteRuntimeNotice() },
+            effectiveCapabilities = optJSONObject("effectiveCapabilities").toRemoteRuntimeCapabilitySet(),
+            runtimeCapabilities = optJSONObject("runtimeCapabilities").toRemoteRuntimeCapabilitySet(),
+            catalogs = RemoteSessionRuntimeCatalogs(
+                model = catalogs?.optJSONObject("model")?.toRemoteRuntimeModelCatalog(session.runtimeId),
+                permission = catalogs?.optJSONObject("permission")
+                    ?.toRemoteRuntimePermissionCatalog(session.runtimeId),
+            ),
+            eventCursor = optString("eventCursor", "seq:0"),
+            serverTime = optNullableString("serverTime"),
         )
     }
 
-    private fun JSONObject.toRemoteRuntimeConfigField(): RemoteRuntimeConfigField {
-        return RemoteRuntimeConfigField(
-            key = optString("key", ""),
-            label = optString("label", ""),
-            type = optString("type", "string"),
-            description = optNullableString("description"),
-            options = optJSONArray("options").toObjectList { toRemoteRuntimeConfigOption() },
-            visibleWhen = optJSONObject("visibleWhen").toMap(),
-            allowSessionOverride = optBoolean("allowSessionOverride", false),
-            hidden = optBoolean("hidden", false),
+    private fun JSONObject.toRemoteSessionRuntimeStateResponse(): RemoteSessionRuntimeStateResponse {
+        return RemoteSessionRuntimeStateResponse(
+            state = getJSONObject("state").toRemoteSessionRuntimeState(),
+            serverTime = optNullableString("serverTime"),
         )
     }
 
-    private fun JSONObject.toRemoteRuntimeConfigOption(): RemoteRuntimeConfigOption {
-        return RemoteRuntimeConfigOption(
-            value = opt("value")?.toString().orEmpty(),
-            label = optString("label", ""),
-            description = optNullableString("description"),
-            efforts = if (has("efforts") && !isNull("efforts")) {
-                optJSONArray("efforts").toObjectList { toRemoteRuntimeConfigOption() }
-            } else {
-                null
+    private fun JSONObject.toRemoteSessionRuntimeState(): RemoteSessionRuntimeState {
+        val runtime = optNullableString("runtime")
+            ?: optNullableString("runtimeType")
+            ?: ""
+        val runtimeType = optNullableString("runtimeType") ?: runtime
+        val runtimeId = optNullableString("runtimeId") ?: runtime
+        val runtimeName = optNullableString("runtimeName")
+            ?: optNullableString("runtimeDisplayName")
+            ?: optNullableString("displayName")
+            ?: optNullableString("name")
+            ?: runtimeId
+        return RemoteSessionRuntimeState(
+            sessionId = optString("sessionId", ""),
+            runtime = runtimeType,
+            externalSessionId = optNullableString("externalSessionId"),
+            status = optString("status", "unknown").ifBlank { "unknown" },
+            selections = optJSONObject("selections").toMap().mapValues { (_, value) -> value as? String },
+            statusReason = optNullableString("statusReason"),
+            error = optJSONObject("error")?.toMap(),
+            metadata = optJSONObject("metadata").toMap(),
+            updatedSeq = optInt("updatedSeq", 0),
+            createdAt = optNullableString("createdAt"),
+            updatedAt = optNullableString("updatedAt"),
+            runtimeId = runtimeId,
+            runtimeType = runtimeType,
+            runtimeName = runtimeName,
+        )
+    }
+
+    private fun JSONObject.toRemoteRuntimeCapabilities(): RemoteRuntimeCapabilities {
+        return RemoteRuntimeCapabilities(
+            connectorId = optString("connectorId", ""),
+            capabilitySet = optJSONObject("capabilitySet").toRemoteRuntimeCapabilitySet(),
+            serverTime = optNullableString("serverTime"),
+        )
+    }
+
+    private fun JSONObject?.toRemoteRuntimeCapabilitySet(): RemoteRuntimeCapabilitySet {
+        return RemoteRuntimeCapabilitySet(
+            revision = this?.optLong("revision", 0L) ?: 0L,
+            capabilities = this?.optJSONArray("capabilities")
+                .toObjectList { toRemoteRuntimeCapability() },
+        )
+    }
+
+    private fun JSONObject.toRemoteRuntimeCapability(): RemoteRuntimeCapability {
+        return RemoteRuntimeCapability(
+            capabilityId = optString("capabilityId", ""),
+            version = optString("version", "1").ifBlank { "1" },
+            scope = optString("scope", "runtime").ifBlank { "runtime" },
+            runtime = optNullableString("runtime"),
+            sessionId = optNullableString("sessionId"),
+            supported = optBoolean("supported", true),
+            available = optBoolean("available", true),
+            allowed = optBoolean("allowed", true),
+            unavailableReason = optNullableString("unavailableReason"),
+            parameters = optJSONObject("parameters").toMap(),
+            runtimeId = optNullableString("runtimeId"),
+            runtimeType = optNullableString("runtimeType") ?: optNullableString("runtime"),
+        )
+    }
+
+    private fun JSONObject.toRemoteRuntimeModelCatalog(
+        fallbackRuntimeId: String? = null,
+    ): RemoteRuntimeModelCatalog {
+        return parseRemoteRuntimeModelCatalog(fallbackRuntimeId)
+    }
+
+    private fun JSONObject.toRemoteRuntimePermissionCatalog(
+        fallbackRuntimeId: String? = null,
+    ): RemoteRuntimePermissionCatalog {
+        return parseRemoteRuntimePermissionCatalog(fallbackRuntimeId)
+    }
+
+    private fun JSONObject.toRemoteRuntimeNoticeListResponse(): RemoteRuntimeNoticeListResponse {
+        return RemoteRuntimeNoticeListResponse(
+            notices = optJSONArray("notices").toObjectList { toRemoteRuntimeNotice() },
+            serverTime = optNullableString("serverTime"),
+        )
+    }
+
+    private fun JSONObject.toRemoteRuntimeNotice(): RemoteRuntimeNotice {
+        return RemoteRuntimeNotice(
+            noticeId = optString("noticeId", ""),
+            type = optString("type", "unknown"),
+            sessionId = optString("sessionId", ""),
+            source = optJSONObject("source").toMap(),
+            title = optString("title", ""),
+            message = optNullableString("message"),
+            severity = optString("severity", "info"),
+            status = optString("status", "open"),
+            interactionType = optNullableString("interactionType"),
+            blocking = optJSONObject("blocking")?.let {
+                RemoteRuntimeNoticeBlocking(
+                    scope = it.optString("scope", ""),
+                    targetId = it.optString("targetId", ""),
+                )
             },
+            responseRequired = optBoolean("responseRequired", false),
+            actions = optJSONArray("actions").toObjectList { toRemoteRuntimeNoticeAction() },
+            context = optJSONObject("context").toMap(),
+            metadata = optJSONObject("metadata").toMap(),
+            expiresAt = optNullableString("expiresAt"),
+            revision = optInt("revision", 1),
+            updatedSeq = optInt("updatedSeq", 0),
+            createdAt = optNullableString("createdAt"),
+            updatedAt = optNullableString("updatedAt"),
+            resolvedAt = optNullableString("resolvedAt"),
         )
     }
 
-    private fun JSONObject.toRemoteRuntimeSettings(): RemoteRuntimeSettings {
-        return RemoteRuntimeSettings(
-            runtime = optString("runtime", ""),
-            settings = (optJSONObject("runtimeSettings") ?: optJSONObject("settings")).toMap(),
-            runtimeSettingsOverride = optJSONObject("runtimeSettingsOverride").toMap(),
-            schemaVersion = optInt("schemaVersion", 0),
-            schema = optJSONObject("schema")?.toRemoteRuntimeConfigSchema(),
+    private fun JSONObject.toRemoteRuntimeNoticeAction(): RemoteRuntimeNoticeAction {
+        val input = optJSONObject("input") ?: JSONObject()
+        val knownKeys = setOf("actionId", "label", "style", "input")
+        return RemoteRuntimeNoticeAction(
+            actionId = optString("actionId", ""),
+            label = optString("label", ""),
+            style = optString("style", "secondary"),
+            input = RemoteRuntimeNoticeActionInput(
+                required = input.optBoolean("required", false),
+                schema = input.optJSONObject("schema")?.toMap(),
+                uiSchema = input.optJSONObject("uiSchema")?.toMap(),
+            ),
+            unknown = toMap().filterKeys { it !in knownKeys },
+        )
+    }
+
+    private fun JSONObject.toRemoteSessionSelectionPatchResponse(): RemoteSessionSelectionPatchResponse {
+        return RemoteSessionSelectionPatchResponse(
+            ok = optBoolean("ok", false),
+            state = optJSONObject("state")?.toRemoteSessionRuntimeState(),
+            connectorResult = optJSONObject("connectorResult")?.toMap(),
+            serverTime = optNullableString("serverTime"),
+        )
+    }
+
+    private fun JSONObject.toRemoteSessionCommandListResponse(): RemoteSessionCommandListResponse {
+        return RemoteSessionCommandListResponse(
+            commands = optJSONArray("commands").toObjectList { toRemoteSessionCommand() },
+            serverTime = optNullableString("serverTime"),
+        )
+    }
+
+    private fun JSONObject.toRemoteSessionCommand(): RemoteSessionCommand {
+        return RemoteSessionCommand(
+            id = optString("id", ""),
+            title = optString("title", ""),
+            description = optNullableString("description"),
+            aliases = optJSONArray("aliases").toStringList(),
+            category = optNullableString("category"),
+            scope = optString("scope", "session"),
+            enabled = optBoolean("enabled", true),
+            disabledReason = optNullableString("disabledReason"),
+            acceptsArgs = optBoolean("acceptsArgs", false),
+            argsSchema = optJSONObject("argsSchema")?.toMap(),
+            metadata = optJSONObject("metadata").toMap(),
+        )
+    }
+
+    private fun JSONObject.toRemoteSessionCommandResponse(): RemoteSessionCommandResponse {
+        return RemoteSessionCommandResponse(
+            command = optString("command", ""),
+            ok = optBoolean("ok", true),
+            code = optNullableString("code"),
+            message = optNullableString("message"),
+            result = opt("result").takeUnless { it == JSONObject.NULL },
+            session = optJSONObject("session")?.toRemoteSession(),
+            serverTime = optNullableString("serverTime"),
         )
     }
 
@@ -361,7 +986,6 @@ class SessionsApi(
         return RemoteTimelineItem(
             id = getString("id"),
             sessionId = optString("sessionId", ""),
-            turnId = optNullableString("turnId"),
             type = optString("type", "message"),
             status = optString("status", "done"),
             role = optNullableString("role"),
@@ -372,47 +996,20 @@ class SessionsApi(
             content = content,
             source = optJSONObject("source") ?: JSONObject(),
             orderSeq = optInt("orderSeq", 0),
+            revision = optInt("revision", 1),
             updatedSeq = optInt("updatedSeq", 0),
             createdAt = optString("createdAt", ""),
-        )
-    }
-
-    private fun JSONObject.toRemoteApproval(): RemoteApproval {
-        return RemoteApproval(
-            id = getString("id"),
-            sessionId = optString("sessionId", ""),
-            turnId = optNullableString("turnId"),
-            status = optString("status", "pending"),
-            kind = optString("kind", "unknown"),
-            targetItemId = optNullableString("targetItemId"),
-            title = optString("title", "Permission request"),
-            description = optNullableString("description"),
-            choices = optJSONArray("choices").toStringList(),
-            updatedSeq = optInt("updatedSeq", 0),
-            createdAt = optString("createdAt", ""),
-        )
-    }
-
-    private fun JSONObject.toRemoteSessionEvent(): RemoteSessionEvent {
-        return RemoteSessionEvent(
-            sessionId = optString("sessionId", ""),
-            items = optJSONArray("items").toObjectList { toRemoteTimelineItem() },
-            approvals = if (has("approvals")) {
-                optJSONArray("approvals").toObjectList { toRemoteApproval() }
-            } else {
-                null
-            },
-            session = optJSONObject("session")?.toRemoteSession(),
-            nextSeq = optInt("nextSeq", 0),
-            refetch = optBoolean("refetch", false),
+            updatedAt = optNullableString("updatedAt"),
+            contentHash = optString("contentHash", ""),
         )
     }
 
     private fun JSONObject.toRemoteRpcResponse(): RemoteRpcResponse {
-        val result = optJSONObject("result")
+        val error = optJSONObject("error")
         return RemoteRpcResponse(
             ok = optBoolean("ok", false),
-            turnId = result?.optNullableString("turnId"),
+            errorCode = error?.optNullableString("code"),
+            errorMessage = error?.optNullableString("message"),
         )
     }
 
@@ -422,7 +1019,14 @@ class SessionsApi(
             name = optString("name", "attachment"),
             mediaType = optString("mediaType", ""),
             size = optLong("size", 0L),
+            sha256 = optNullableString("sha256"),
         )
+    }
+
+    private companion object {
+        const val CREATE_AND_START_READ_TIMEOUT_SECONDS = 75L
+        const val MAX_ATTACHMENT_DOWNLOAD_BYTES = 25L * 1024L * 1024L
+        const val MAX_ATTACHMENT_DOWNLOAD_BASE64_CHARS = 34_952_536
     }
 
 }

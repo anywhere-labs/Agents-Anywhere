@@ -40,7 +40,7 @@ export type ConnectorConfig = {
   reconnectSeconds?: number
   syncExistingOnConnect?: boolean
   syncIntervalSeconds?: number
-  stateDbPath?: string | null
+  statePath?: string | null
 }
 
 export type ConnectorLog = {

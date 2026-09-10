@@ -1,0 +1,4 @@
+interface:
+  display_name: "Python Engineering Guidelines"
+  short_description: "Write explicit, typed, readable Python engineering code."
+  default_prompt: "Use this skill to review or write Python code with explicit types, clear function boundaries, limited dynamic behavior, documented side effects, and maintainable module structure."

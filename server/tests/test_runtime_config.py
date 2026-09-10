@@ -1,1381 +1,838 @@
 from __future__ import annotations
 
 import asyncio
-import json
-from copy import deepcopy
 from typing import Any
 
-from fastapi.testclient import TestClient
-from sqlalchemy import delete, select, update
+from runtime_fixtures import describe_inventory, seed_runtime_inventory
+
+from conftest import ApiV2TestClient as TestClient
 
 from agent_server.app import create_app
-from agent_server.core.runtime_config import (
-    DEFAULT_RUNTIME_CONFIG_SCHEMAS,
-    is_rollback_safe_codex_schema,
-    runtime_schema_key,
-    validate_runtime_schema,
-)
-from agent_server.infra.db import (
-    agent_efforts as agent_efforts_t,
-    agent_models as agent_models_t,
-    device_agent_settings as device_agent_settings_t,
-    instance_settings as instance_settings_t,
-    sessions as sessions_t,
-    user_agent_defaults as user_agent_defaults_t,
-)
-
-
-def make_client(tmp_path):
-    return TestClient(create_app(tmp_path / "test.sqlite3"))
-
+from agent_server.infra.connector_rpc import ConnectorRpcError
+from agent_server.services.connector_ingest import ConnectorIngestService
+from agent_server.services.connector_notifications import ConnectorNotificationService
+from agent_server.services.device_runtimes import DeviceRuntimeService
 
 ADMIN_USER = "user1"
 ADMIN_PASSWORD = "secret"
 
 
-def auth_headers(
-    client: TestClient,
-    user_id: str = ADMIN_USER,
-    password: str = ADMIN_PASSWORD,
-) -> dict[str, str]:
-    login = client.post("/auth/login", json={"userId": user_id, "password": password})
-    if login.status_code == 200:
-        return {"Authorization": f"Bearer {login.json()['accessToken']}"}
-    cfg = client.get("/auth/config").json()
-    body: dict[str, Any] = {"userId": user_id, "password": password}
-    if cfg["needsBootstrap"]:
-        body["setupToken"] = client.app.state.setup_token.peek()
-    register = client.post("/auth/register", json=body)
-    assert register.status_code == 200, register.text
-    return {"Authorization": f"Bearer {register.json()['accessToken']}"}
+class FakeRpc:
+    def __init__(self, inventory: dict[str, Any]) -> None:
+        self.inventory = inventory
+        self.online = True
+        self.requests: list[tuple[str, str, dict[str, Any]]] = []
+        self.errors: dict[str, ConnectorRpcError] = {}
+
+    async def is_online(self, _connector_id: str) -> bool:
+        return self.online
+
+    async def request(
+        self,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+        **_: Any,
+    ) -> dict[str, Any]:
+        self.requests.append((connector_id, method, params))
+        error = self.errors.get(method)
+        if error is not None:
+            raise error
+        if method == "runtime.discover":
+            return describe_inventory(self.inventory).model_dump(mode="json")
+        if method == "runtime.modelCatalog":
+            return {
+                "catalog": {
+                    "runtime": params["runtime"],
+                    "revision": 1,
+                    "models": [
+                        {
+                            "id": "gpt-test",
+                            "displayName": "GPT Test",
+                            "selectionId": "sel_model_test",
+                            "reasoningItems": [],
+                        }
+                    ],
+                }
+            }
+        if method == "runtime.permissionCatalog":
+            return {
+                "catalog": {
+                    "runtime": params["runtime"],
+                    "revision": 2,
+                    "permissions": [
+                        {
+                            "id": "ask",
+                            "displayName": "Ask when requested",
+                            "selectionId": "sel_permission_ask",
+                        }
+                    ],
+                }
+            }
+        if method == "runtime.capabilities":
+            return {
+                "capabilitySet": {
+                    "revision": 3,
+                    "capabilities": [
+                        {
+                            "capabilityId": "runtime.config",
+                            "version": "1",
+                            "scope": "runtime",
+                            "runtime": params["runtime"],
+                            "supported": True,
+                            "available": True,
+                            "allowed": True,
+                            "unavailableReason": None,
+                            "parameters": {},
+                        }
+                    ],
+                }
+            }
+        if method == "runtime.commands":
+            return {
+                "commands": [
+                    {
+                        "id": "runtime-status",
+                        "title": "Runtime status",
+                        "scope": "runtime",
+                    }
+                ]
+            }
+        return {"ok": True}
+
+    async def request_bound(
+        self,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+        **kwargs: Any,
+    ) -> tuple[dict[str, Any], str]:
+        return (
+            await self.request(connector_id, method, params, **kwargs),
+            "fake-connection",
+        )
+
+    async def is_connection_id_current(
+        self,
+        _connector_id: str,
+        connection_id: str,
+    ) -> bool:
+        return connection_id == "fake-connection" and self.online
 
 
-def create_connector_and_session(client: TestClient):
-    headers = auth_headers(client)
-    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
-    assert connector_response.status_code == 200, connector_response.text
-    connector_body = connector_response.json()
-    connector_id = connector_body["connector"]["id"]
-    connector_token = connector_body["connectorToken"]
-    auth_response = client.post(
-        "/connector/auth",
-        headers={"Authorization": f"Connector {connector_id}:{connector_token}"},
+def _auth_headers(client: TestClient) -> dict[str, str]:
+    config = client.get("/auth/config").json()
+    payload: dict[str, Any] = {
+        "email": f"{ADMIN_USER}@example.com",
+        "displayName": ADMIN_USER,
+        "password": ADMIN_PASSWORD,
+    }
+    if config["needsBootstrap"]:
+        payload["setupToken"] = client.app.state.setup_token.peek()
+    response = client.post("/auth/register", json=payload)
+    assert response.status_code == 200, response.text
+    return {"Authorization": f"Bearer {response.json()['accessToken']}"}
+
+
+def _inventory(*, status: str = "stopped") -> dict[str, Any]:
+    return {
+        "runtimes": [
+            {
+                "runtimeId": "codex",
+                "runtimeType": "codex",
+                "displayName": "Codex",
+                "discovery": {
+                    "executablePath": "/opt/homebrew/bin/codex",
+                    "version": "1.2.3",
+                },
+                "schema": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {
+                        "executablePath": {
+                            "type": "string",
+                            "minLength": 1,
+                            "default": "/opt/homebrew/bin/codex",
+                        },
+                        "environment": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "anyOf": [{"type": "string"}, {"type": "null"}]
+                            },
+                            "default": {},
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+                "uiSchema": {
+                    "executablePath": {"component": "path"},
+                    "environment": {"component": "keyValue"},
+                },
+                "defaults": {"environment": {}},
+                "status": status,
+                "configured": True,
+                "capabilities": {"modelCatalog": True},
+                "metadata": {"sdk": {"available": True}},
+            }
+        ]
+    }
+
+
+def _make_client(tmp_path) -> tuple[TestClient, FakeRpc, str, dict[str, str]]:
+    app = create_app(tmp_path / "test.sqlite3")
+    client = TestClient(app)
+    headers = _auth_headers(client)
+    created = client.post("/connectors", headers=headers, json={"name": "dev"})
+    assert created.status_code == 200, created.text
+    connector_id = created.json()["connector"]["id"]
+    rpc = FakeRpc(_inventory())
+    app.state.rpc = rpc
+    app.state.device_runtime_service = DeviceRuntimeService(app.state.store, rpc)
+    asyncio.run(
+        seed_runtime_inventory(app.state.store, connector_id, rpc.inventory)
     )
-    assert auth_response.status_code == 200, auth_response.text
-    access_token = auth_response.json()["accessToken"]
+    return client, rpc, connector_id, headers
+
+
+def _runtime_url(connector_id: str) -> str:
+    return f"/connectors/{connector_id}/runtimes/codex"
+
+
+def _create_project(client: TestClient, connector_id: str, headers: dict[str, str]) -> str:
+    response = client.post(
+        "/projects",
+        headers=headers,
+        json={"connectorId": connector_id, "name": "repo", "workspacePath": "/repo"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["project"]["id"]
+
+
+def _assert_runtime_start_config_revision(
+    params: dict[str, Any],
+    config: dict[str, Any],
+) -> None:
+    assert params["runtimeId"] == "codex"
+    assert params["config"] == config
+    assert isinstance(params["configRevision"], int)
+    assert params["configRevision"] > 0
+
+
+def test_inventory_exposes_runtime_owned_dynamic_schema(tmp_path):
+    client, _, connector_id, headers = _make_client(tmp_path)
+
+    response = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
+
+    assert response.status_code == 200, response.text
+    runtime = response.json()["runtimes"][0]
+    # Connector inventory reports provider readiness (`configured: true`), but
+    # Server-owned runtime config has not been saved yet.
+    assert runtime["configured"] is False
+    assert runtime["active"] is False
+    assert runtime["schema"]["properties"]["executablePath"]["default"] == (
+        "/opt/homebrew/bin/codex"
+    )
+    assert runtime["uiSchema"]["environment"]["component"] == "keyValue"
+
+
+def test_runtime_lifecycle_discovery_status_is_accepted(tmp_path):
+    client, _, connector_id, headers = _make_client(tmp_path)
+
+    asyncio.run(
+        client.app.state.device_runtime_service.apply_status(
+            connector_id,
+            "codex",
+            "discovering",
+        )
+    )
+
+    response = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["runtimes"][0]["status"] == "discovering"
+
+
+def test_pre_inventory_runtime_status_does_not_disconnect_connector(tmp_path):
+    app = create_app(tmp_path / "test.sqlite3")
+    client = TestClient(app)
+    headers = _auth_headers(client)
+    created = client.post("/connectors", headers=headers, json={"name": "dev"})
+    assert created.status_code == 200, created.text
+    connector_id = created.json()["connector"]["id"]
+    ingest = ConnectorIngestService(
+        app.state.store,
+        ConnectorNotificationService(app.state.store, None),
+        app.state.timeline_broker,
+        app.state.device_runtime_service,
+        app.state.rpc,
+        app.state.session_runtime_state_cache,
+    )
+
+    asyncio.run(
+        ingest.handle_notification_message(
+            connector_id=connector_id,
+            method="runtime.statusChanged",
+            params={"runtimeId": "codex", "status": "discovering"},
+        )
+    )
+
+    response = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["runtimes"] == []
+
+
+def test_empty_config_is_configured_and_validated_by_connector(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+
+    response = client.put(
+        f"{_runtime_url(connector_id)}/config",
+        headers=headers,
+        json={"config": {}},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["configured"] is True
+    assert response.json()["config"] == {}
+    assert [request[1] for request in rpc.requests] == ["runtime.validateConfig"]
+
+
+def test_custom_executable_path_is_not_constrained_to_discovered_default(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    config = {
+        "executablePath": "/custom/bin/codex",
+        "environment": {"HTTP_PROXY": "http://127.0.0.1:7890", "OLD_VAR": None},
+    }
+
+    response = client.put(
+        f"{_runtime_url(connector_id)}/config",
+        headers=headers,
+        json={"config": config},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["config"] == config
+    params = rpc.requests[-1][2]
+    assert params == {"runtime": "codex", "runtimeId": "codex", "name": "Codex", "config": config, "configRevision": params["configRevision"]}
+
+
+def test_model_gateway_key_round_trips_without_redaction(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    gateway_schema = {
+        "type": "object",
+        "required": ["baseUrl", "apiKey"],
+        "properties": {
+            "baseUrl": {"type": "string", "minLength": 1},
+            "apiKey": {"type": "string", "minLength": 1},
+        },
+        "additionalProperties": False,
+    }
+    rpc.inventory["runtimes"][0]["schema"]["properties"]["modelGateway"] = (
+        gateway_schema
+    )
+    asyncio.run(
+        client.app.state.device_runtime_service.ingest_runtime_types(
+            connector_id,
+            describe_inventory(rpc.inventory),
+        )
+    )
+    config = {
+        "modelGateway": {
+            "baseUrl": "https://gateway.example/v1",
+            "apiKey": "gateway-secret",
+        }
+    }
+
+    saved = client.put(
+        f"{_runtime_url(connector_id)}/config",
+        headers=headers,
+        json={"config": config},
+    )
+    loaded = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
+
+    assert saved.status_code == 200, saved.text
+    assert loaded.status_code == 200, loaded.text
+    assert saved.json()["config"] == config
+    assert loaded.json()["runtimes"][0]["config"] == config
+    params = rpc.requests[-1][2]
+    assert params["runtime"] == params["runtimeId"] == "codex"
+    assert params["config"] == config
+    assert params["name"] == "Codex"
+    assert isinstance(params["configRevision"], int)
+
+
+def test_server_rejects_invalid_config_before_connector_rpc(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+
+    response = client.put(
+        f"{_runtime_url(connector_id)}/config",
+        headers=headers,
+        json={"config": {"unknown": True}},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "invalid_runtime_config"
+    assert rpc.requests == []
+
+
+def test_connector_validation_failure_does_not_persist_config(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    rpc.errors["runtime.validateConfig"] = ConnectorRpcError(
+        "invalid_config",
+        "executable is not runnable",
+    )
+
+    response = client.put(
+        f"{_runtime_url(connector_id)}/config",
+        headers=headers,
+        json={"config": {}},
+    )
+
+    assert response.status_code == 422, response.text
+    listed = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
+    assert listed.json()["runtimes"][0]["configured"] is False
+
+
+def test_activation_and_deactivation_drive_connector_lifecycle(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    active_url = f"{_runtime_url(connector_id)}/active"
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
+    rpc.requests.clear()
+
+    activated = client.put(active_url, headers=headers, json={"active": True})
+    deactivated = client.put(active_url, headers=headers, json={"active": False})
+
+    assert activated.status_code == 200, activated.text
+    assert activated.json()["active"] is True
+    assert activated.json()["status"] == "running"
+    assert deactivated.status_code == 200, deactivated.text
+    assert deactivated.json()["active"] is False
+    assert deactivated.json()["status"] == "stopped"
+    assert [request[1] for request in rpc.requests] == ["runtime.start", "runtime.stop"]
+    _assert_runtime_start_config_revision(rpc.requests[0][2], {})
+
+
+def test_removed_agent_catalog_route_does_not_start_runtime(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    active_url = f"{_runtime_url(connector_id)}/active"
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
+    assert (
+        client.put(active_url, headers=headers, json={"active": True}).status_code
+        == 200
+    )
+    asyncio.run(
+        client.app.state.store.set_device_runtime_status(
+            connector_id,
+            "codex",
+            "stopped",
+        )
+    )
+    rpc.requests.clear()
+
+    response = client.get(
+        f"/agents/codex/model-catalog?connectorId={connector_id}",
+        headers=headers,
+    )
+
+    assert response.status_code == 410, response.text
+    assert response.json()["detail"]["code"] == "agent_catalog_route_removed"
+    assert rpc.requests == []
+
+
+def test_connector_runtime_scoped_reads_start_active_runtime_before_rpc(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    active_url = f"{_runtime_url(connector_id)}/active"
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
+    assert (
+        client.put(active_url, headers=headers, json={"active": True}).status_code
+        == 200
+    )
+    asyncio.run(
+        client.app.state.store.set_device_runtime_status(
+            connector_id,
+            "codex",
+            "stopped",
+        )
+    )
+    rpc.requests.clear()
+
+    capabilities = client.get(
+        f"{_runtime_url(connector_id)}/capabilities",
+        headers=headers,
+    )
+    model_catalog = client.get(
+        f"{_runtime_url(connector_id)}/catalogs/model",
+        headers=headers,
+    )
+    permission_catalog = client.get(
+        f"{_runtime_url(connector_id)}/catalogs/permission",
+        headers=headers,
+    )
+    commands = client.get(
+        f"{_runtime_url(connector_id)}/commands",
+        headers=headers,
+    )
+
+    assert capabilities.status_code == 200, capabilities.text
+    assert (
+        capabilities.json()["capabilitySet"]["capabilities"][0]["capabilityId"]
+        == "runtime.config"
+    )
+    assert model_catalog.status_code == 200, model_catalog.text
+    assert (
+        model_catalog.json()["catalog"]["models"][0]["selectionId"] == "sel_model_test"
+    )
+    assert permission_catalog.status_code == 200, permission_catalog.text
+    assert (
+        permission_catalog.json()["catalog"]["permissions"][0]["selectionId"]
+        == "sel_permission_ask"
+    )
+    assert commands.status_code == 200, commands.text
+    assert commands.json()["commands"][0]["id"] == "runtime-status"
+    assert [request[1] for request in rpc.requests] == [
+        "runtime.start",
+        "runtime.capabilities",
+        "runtime.modelCatalog",
+        "runtime.permissionCatalog",
+        "runtime.commands",
+    ]
+    assert rpc.requests[1][2] == {"runtime": "codex", "runtimeId": "codex"}
+    assert rpc.requests[2][2] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "limit": 200,
+    }
+    assert rpc.requests[3][2] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "limit": 200,
+    }
+    assert rpc.requests[4][2] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "limit": 100,
+    }
+
+
+def test_session_sync_starts_active_runtime_before_sync_rpc(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    project_id = _create_project(client, connector_id, headers)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    active_url = f"{_runtime_url(connector_id)}/active"
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
+    assert (
+        client.put(active_url, headers=headers, json={"active": True}).status_code
+        == 200
+    )
     session_response = client.post(
         "/sessions",
         headers=headers,
         json={
             "connectorId": connector_id,
+            "projectId": project_id,
             "runtime": "codex",
-            "externalSessionId": f"thr_{connector_id}_demo",
-            "title": "Demo",
+            "externalSessionId": "thr_existing",
+            "title": "Existing",
             "cwd": "/repo",
         },
     )
     assert session_response.status_code == 200, session_response.text
     session_id = session_response.json()["session"]["id"]
-    return connector_id, access_token, session_id, headers
-
-
-class FakeRpc:
-    def __init__(self) -> None:
-        self.requests: list[tuple[str, str, dict[str, Any]]] = []
-
-    def is_online(self, connector_id: str) -> bool:
-        return True
-
-    async def request(self, connector_id: str, method: str, params: dict[str, Any], **_: Any) -> dict[str, Any]:
-        self.requests.append((connector_id, method, params))
-        return {"ok": True}
-
-
-def legacy_codex_models() -> list[dict[str, Any]]:
-    efforts = [
-        {"key": "low", "displayLabel": "Low", "sortOrder": 1},
-        {"key": "medium", "displayLabel": "Medium", "sortOrder": 2},
-        {"key": "high", "displayLabel": "High", "sortOrder": 3},
-        {"key": "xhigh", "displayLabel": "Extra high", "sortOrder": 4},
-    ]
-    return [
-        {
-            "key": key,
-            "displayLabel": label,
-            "sortOrder": index,
-            "efforts": deepcopy(efforts),
-        }
-        for index, (key, label) in enumerate(
-            (
-                ("gpt-5.5", "GPT-5.5"),
-                ("gpt-5.4", "GPT-5.4"),
-                ("gpt-5.4-mini", "GPT-5.4 Mini"),
-                ("gpt-5.3-codex", "GPT-5.3 Codex"),
-                ("gpt-5.2", "GPT-5.2"),
-            ),
-            start=1,
-        )
-    ]
-
-
-def test_runtime_config_schema_is_seeded_and_readable(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-
-    response = client.get("/agents/claude/config-schema", headers=headers)
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["runtime"] == "claude"
-    assert body["schema"]["runtime"] == "claude"
-    fields = {field["key"]: field for field in body["schema"]["fields"]}
-    assert "runMode" not in fields
-    assert fields["permissionMode"]["allowSessionOverride"] is True
-
-
-def test_codex_v4_schema_is_virtual_over_rollback_safe_durable_schema(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-    key = runtime_schema_key("codex")
-
-    async def raw_schema() -> str:
-        async with client.app.state.store.engine.connect() as conn:
-            return (
-                await conn.execute(
-                    select(instance_settings_t.c.value).where(instance_settings_t.c.key == key)
-                )
-            ).scalar_one()
-
-    durable_before = asyncio.run(raw_schema())
-    durable = json.loads(durable_before)
-    assert durable["schemaVersion"] == 3
-    assert "gpt-5.6" not in durable_before
-    assert '"max"' not in durable_before
-    assert '"ultra"' not in durable_before
-    assert "isDefault" not in durable_before
-
-    response = client.get("/agents/codex/config-schema", headers=headers)
-    assert response.status_code == 200, response.text
-    projected = response.json()["schema"]
-    assert projected["schemaVersion"] == 4
-    model_field = next(field for field in projected["fields"] if field["key"] == "model")
-    assert model_field["options"][0]["value"] == "gpt-5.6-sol"
-
-    # A read must not materialize v4/GPT-5.6 into the database.
-    assert asyncio.run(raw_schema()) == durable_before
-
-
-def test_runtime_schema_converges_exact_v4_and_heals_empty_but_preserves_custom(tmp_path):
-    client = make_client(tmp_path)
-    store = client.app.state.store
-    key = runtime_schema_key("codex")
-
-    async def read_raw() -> str:
-        async with store.engine.connect() as conn:
-            return (
-                await conn.execute(
-                    select(instance_settings_t.c.value).where(instance_settings_t.c.key == key)
-                )
-            ).scalar_one()
-
-    async def exercise() -> tuple[str, str, str, str]:
-        current = DEFAULT_RUNTIME_CONFIG_SCHEMAS["codex"].model_dump(exclude_none=True)
-        await store.set_runtime_config_schema("codex", current)
-        await store.seed_runtime_config_schemas()
-        converged = await read_raw()
-
-        # Empty same-version payloads are interrupted built-in seed shapes,
-        # and are safe to repair. A non-empty edited schema is operator data.
-        await store.instance_settings.set(
-            key,
-            json.dumps({"runtime": "codex", "schemaVersion": 4, "fields": []}),
-        )
-        await store.seed_runtime_config_schemas()
-        healed = await read_raw()
-
-        custom = deepcopy(current)
-        next(field for field in custom["fields"] if field["key"] == "model")["label"] = "Private model"
-        await store.set_runtime_config_schema("codex", custom)
-        before_custom_reseed = await read_raw()
-        await store.seed_runtime_config_schemas()
-        after_custom_reseed = await read_raw()
-
-        custom_constraints = deepcopy(current)
-        model_options = next(
-            field for field in custom_constraints["fields"] if field["key"] == "model"
-        )["options"]
-        model_options[0]["isDefault"] = False
-        model_options[1]["isDefault"] = True
-        model_options[0]["efforts"] = []
-        await store.set_runtime_config_schema("codex", custom_constraints)
-        before_constraint_reseed = await read_raw()
-        await store.seed_runtime_config_schemas()
-        after_constraint_reseed = await read_raw()
-        return (
-            converged,
-            healed,
-            before_custom_reseed,
-            after_custom_reseed,
-            before_constraint_reseed,
-            after_constraint_reseed,
-        )
-
-    converged, healed, custom_before, custom_after, constraints_before, constraints_after = asyncio.run(exercise())
-    assert is_rollback_safe_codex_schema(
-        validate_runtime_schema("codex", json.loads(converged))
-    )
-    assert is_rollback_safe_codex_schema(
-        validate_runtime_schema("codex", json.loads(healed))
-    )
-    assert "isDefault" not in converged
-    assert "isDefault" not in healed
-    assert custom_after == custom_before
-    assert constraints_after == constraints_before
-
-
-def test_user_defaults_empty_patch_preserves_raw_snapshot_and_explicit_empty_is_global(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-    initial = client.patch(
-        "/agents/defaults",
-        headers=headers,
-        json={
-            "runtimes": {
-                "codex": {
-                    "models": [
-                        {
-                            "key": "private-model",
-                            "displayLabel": "Private model",
-                            "sortOrder": 1,
-                            "efforts": [
-                                {"key": "private-effort", "displayLabel": "Private effort", "sortOrder": 1}
-                            ],
-                        }
-                    ]
-                }
-            }
-        },
-    )
-    assert initial.status_code == 200, initial.text
-
-    async def raw_models() -> str:
-        async with client.app.state.store.engine.connect() as conn:
-            return (
-                await conn.execute(
-                    select(user_agent_defaults_t.c.models_json).where(
-                        user_agent_defaults_t.c.user_id == ADMIN_USER,
-                        user_agent_defaults_t.c.runtime == "codex",
-                    )
-                )
-            ).scalar_one()
-
-    before_empty_patch = asyncio.run(raw_models())
-    no_op = client.patch("/agents/defaults", headers=headers, json={"runtimes": {"codex": {}}})
-    assert no_op.status_code == 200, no_op.text
-    assert asyncio.run(raw_models()) == before_empty_patch
-
-    clear = client.patch(
-        "/agents/defaults",
-        headers=headers,
-        json={"runtimes": {"codex": {"models": []}}},
-    )
-    assert clear.status_code == 200, clear.text
-    assert asyncio.run(raw_models()) == "[]"
-    # `[]` is explicit global catalog selection, not a malformed snapshot.
-    assert clear.json()["runtimes"]["codex"]["models"][0]["key"] == "gpt-5.6-sol"
-
-
-def test_malformed_persisted_models_are_observable_and_never_rewritten(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-    seeded = client.patch(
-        "/agents/defaults",
-        headers=headers,
-        json={
-            "runtimes": {
-                "codex": {
-                    "models": [
-                        {
-                            "key": "private-model",
-                            "displayLabel": "Private model",
-                            "sortOrder": 1,
-                            "efforts": [],
-                        }
-                    ]
-                }
-            }
-        },
-    )
-    assert seeded.status_code == 200, seeded.text
-    connector_id, _, session_id, _ = create_connector_and_session(client)
-
-    corrupt = "{not-json"
-
-    async def corrupt_and_read() -> str:
-        async with client.app.state.store.engine.begin() as conn:
-            await conn.execute(
-                update(user_agent_defaults_t)
-                .where(
-                    user_agent_defaults_t.c.user_id == ADMIN_USER,
-                    user_agent_defaults_t.c.runtime == "codex",
-                )
-                .values(models_json=corrupt)
-            )
-        async with client.app.state.store.engine.connect() as conn:
-            return (
-                await conn.execute(
-                    select(user_agent_defaults_t.c.models_json).where(
-                        user_agent_defaults_t.c.user_id == ADMIN_USER,
-                        user_agent_defaults_t.c.runtime == "codex",
-                    )
-                )
-            ).scalar_one()
-
-    assert asyncio.run(corrupt_and_read()) == corrupt
-    assert client.get("/agents/defaults", headers=headers).status_code == 500
-    assert client.get("/agents/codex/models", headers=headers).status_code == 500
-    assert client.get("/agents/codex/efforts", headers=headers).status_code == 500
-    assert client.patch(
-        "/agents/defaults",
-        headers=headers,
-        json={"runtimes": {"codex": {"models": []}}},
-    ).status_code == 500
-    assert client.patch(
-        f"/connectors/{connector_id}/agents/codex/settings",
-        headers=headers,
-        json={"settings": {"effort": "medium"}},
-    ).status_code == 500
-    assert client.patch(
-        f"/sessions/{session_id}/runtime-settings",
-        headers=headers,
-        json={"settings": {"effort": "medium"}},
-    ).status_code == 500
-
-    client.app.state.rpc = FakeRpc()
-    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
-    send = client.post(
-        f"/sessions/{session_id}/messages",
-        headers=headers,
-        json={"content": "hi"},
-    )
-    assert send.status_code == 500, send.text
-    assert send.json()["detail"] == "invalid persisted runtime settings"
-
-    async def read_raw() -> str:
-        async with client.app.state.store.engine.connect() as conn:
-            return (
-                await conn.execute(
-                    select(user_agent_defaults_t.c.models_json).where(
-                        user_agent_defaults_t.c.user_id == ADMIN_USER,
-                        user_agent_defaults_t.c.runtime == "codex",
-                    )
-                )
-            ).scalar_one()
-
-    assert asyncio.run(read_raw()) == corrupt
-
-
-def test_user_agent_defaults_customize_schema_and_new_connectors(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-
-    defaults = client.get("/agents/defaults", headers=headers)
-    assert defaults.status_code == 200, defaults.text
-    assert defaults.json()["runtimes"]["codex"]["enabled"] is True
-    assert defaults.json()["runtimes"]["codex"]["settings"]["model"] == "gpt-5.6-sol"
-    assert defaults.json()["runtimes"]["codex"]["settings"]["effort"] == "medium"
-    assert "runMode" not in defaults.json()["runtimes"]["claude"]["settings"]
-
-    updated = client.patch(
-        "/agents/defaults",
-        headers=headers,
-        json={
-            "runtimes": {
-                "codex": {
-                    "models": [
-                        {
-                            "key": "gpt-custom",
-                            "displayLabel": "GPT Custom",
-                            "sortOrder": 1,
-                            "efforts": [
-                                {
-                                    "key": "custom-effort",
-                                    "displayLabel": "Custom Effort",
-                                    "sortOrder": 1,
-                                }
-                            ],
-                        }
-                    ],
-                },
-                "claude": {
-                    "models": [
-                        {
-                            "key": "claude-custom",
-                            "displayLabel": "Claude Custom",
-                            "sortOrder": 1,
-                            "efforts": [
-                                {
-                                    "key": "high",
-                                    "displayLabel": "High",
-                                    "sortOrder": 1,
-                                }
-                            ],
-                        }
-                    ],
-                },
-            }
-        },
-    )
-    assert updated.status_code == 200, updated.text
-    body = updated.json()["runtimes"]
-    assert body["codex"]["enabled"] is True
-    assert body["codex"]["settings"]["permissionMode"] == "ask"
-    assert body["codex"]["models"][0]["key"] == "gpt-custom"
-    assert body["codex"]["models"][0]["efforts"][0]["key"] == "custom-effort"
-
-    schema = client.get("/agents/codex/config-schema", headers=headers)
-    assert schema.status_code == 200, schema.text
-    fields = {field["key"]: field for field in schema.json()["schema"]["fields"]}
-    assert fields["model"]["options"][0]["value"] == "gpt-custom"
-    assert fields["model"]["options"][0]["label"] == "GPT Custom"
-    assert fields["model"]["options"][0]["efforts"][0]["value"] == "custom-effort"
-    assert fields["model"]["options"][0]["efforts"][0]["label"] == "Custom Effort"
-
-    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
-    assert connector_response.status_code == 200, connector_response.text
-    connector_id = connector_response.json()["connector"]["id"]
-
-    codex_settings = client.get(
-        f"/connectors/{connector_id}/agents/codex/settings",
-        headers=headers,
-    )
-    assert codex_settings.status_code == 200, codex_settings.text
-    assert codex_settings.json()["settings"]["permissionMode"] == "ask"
-    assert codex_settings.json()["settings"]["model"] == "gpt-custom"
-    assert codex_settings.json()["settings"]["effort"] == "custom-effort"
-
-    claude_settings = client.get(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-    )
-    assert claude_settings.status_code == 200, claude_settings.text
-    assert "runMode" not in claude_settings.json()["settings"]
-    assert claude_settings.json()["settings"]["permissionMode"] == "acceptEdits"
-
-
-def test_user_agent_defaults_ignore_default_flags(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-
-    response = client.patch(
-        "/agents/defaults",
-        headers=headers,
-        json={
-            "runtimes": {
-                "codex": {
-                    "models": [
-                        {
-                            "key": "gpt-first",
-                            "displayLabel": "GPT First",
-                            "isDefault": False,
-                            "sortOrder": 1,
-                            "efforts": [
-                                {
-                                    "key": "lowish",
-                                    "displayLabel": "Lowish",
-                                    "isDefault": False,
-                                    "sortOrder": 1,
-                                },
-                                {
-                                    "key": "highish",
-                                    "displayLabel": "Highish",
-                                    "isDefault": True,
-                                    "sortOrder": 2,
-                                },
-                            ],
-                        },
-                        {
-                            "key": "gpt-second",
-                            "displayLabel": "GPT Second",
-                            "isDefault": True,
-                            "sortOrder": 2,
-                            "efforts": [],
-                        },
-                    ],
-                },
-            },
-        },
-    )
-
-    assert response.status_code == 200, response.text
-    models = response.json()["runtimes"]["codex"]["models"]
-    assert [(entry["key"], entry["isDefault"]) for entry in models] == [
-        ("gpt-first", True),
-        ("gpt-second", False),
-    ]
-    assert [(entry["key"], entry["isDefault"]) for entry in models[0]["efforts"]] == [
-        ("lowish", True),
-        ("highish", False),
-    ]
-
-
-def test_codex_catalog_upgrade_inherits_only_legacy_builtin_snapshots(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-    legacy_update = client.patch(
-        "/agents/defaults",
-        headers=headers,
-        json={"runtimes": {"codex": {"models": legacy_codex_models()}}},
-    )
-    assert legacy_update.status_code == 200, legacy_update.text
-
     asyncio.run(
-        client.app.state.store.create_user(
-            user_id="user2",
-            password="secret2",
-        )
-    )
-    custom_headers = auth_headers(client, user_id="user2", password="secret2")
-    custom_models = legacy_codex_models()
-    custom_models[0]["description"] = "Private deployment"
-    custom_update = client.patch(
-        "/agents/defaults",
-        headers=custom_headers,
-        json={"runtimes": {"codex": {"models": custom_models}}},
-    )
-    assert custom_update.status_code == 200, custom_update.text
-    custom_before = custom_update.json()["runtimes"]["codex"]["models"]
-
-    explicit_connector = client.post(
-        "/connectors",
-        headers=headers,
-        json={"name": "explicit"},
-    ).json()["connector"]["id"]
-    explicit = client.patch(
-        f"/connectors/{explicit_connector}/agents/codex/settings",
-        headers=headers,
-        json={"settings": {"model": "gpt-5.5", "effort": "xhigh"}},
-    )
-    assert explicit.status_code == 200, explicit.text
-
-    null_connector = client.post(
-        "/connectors",
-        headers=headers,
-        json={"name": "null-defaults"},
-    ).json()["connector"]["id"]
-    cleared = client.patch(
-        f"/connectors/{null_connector}/agents/codex/settings",
-        headers=headers,
-        json={"settings": {"model": None, "effort": None}},
-    )
-    assert cleared.status_code == 200, cleared.text
-
-    async def cleared_schema_version() -> int:
-        async with client.app.state.store.engine.connect() as conn:
-            return (
-                await conn.execute(
-                    select(device_agent_settings_t.c.schema_version).where(
-                        device_agent_settings_t.c.connector_id == null_connector,
-                        device_agent_settings_t.c.runtime == "codex",
-                    )
-                )
-            ).scalar_one()
-
-    assert asyncio.run(cleared_schema_version()) == 3
-
-    async def downgrade_and_reseed() -> None:
-        legacy_schema = deepcopy(DEFAULT_RUNTIME_CONFIG_SCHEMAS["codex"]).model_dump(
-            exclude_none=True
-        )
-        legacy_schema["schemaVersion"] = 3
-        for field in legacy_schema["fields"]:
-            if field["key"] == "model":
-                field["options"] = [
-                    option
-                    for option in field["options"]
-                    if not str(option["value"]).startswith("gpt-5.6-")
-                ]
-            elif field["key"] == "effort":
-                field["options"] = [
-                    option
-                    for option in field["options"]
-                    if option["value"] not in {"max", "ultra"}
-                ]
-            for option in field.get("options") or []:
-                option["isDefault"] = False
-        await client.app.state.store.set_runtime_config_schema("codex", legacy_schema)
-
-        async with client.app.state.store.engine.begin() as conn:
-            await conn.execute(
-                delete(agent_models_t).where(
-                    agent_models_t.c.runtime == "codex",
-                    agent_models_t.c.key.in_(
-                        {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
-                    ),
-                )
-            )
-            await conn.execute(
-                delete(agent_efforts_t).where(
-                    agent_efforts_t.c.runtime == "codex",
-                    agent_efforts_t.c.key.in_({"max", "ultra"}),
-                )
-            )
-            await conn.execute(
-                update(agent_models_t)
-                .where(agent_models_t.c.runtime == "codex")
-                .values(is_default=0)
-            )
-            await conn.execute(
-                update(agent_efforts_t)
-                .where(agent_efforts_t.c.runtime == "codex")
-                .values(is_default=0)
-            )
-            for sort_order, key in enumerate(
-                ("gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2"),
-                start=1,
-            ):
-                await conn.execute(
-                    update(agent_models_t)
-                    .where(agent_models_t.c.runtime == "codex", agent_models_t.c.key == key)
-                    .values(is_default=1 if key == "gpt-5.5" else 0, sort_order=sort_order)
-                )
-            await conn.execute(
-                update(agent_efforts_t)
-                .where(
-                    agent_efforts_t.c.runtime == "codex",
-                    agent_efforts_t.c.key == "xhigh",
-                )
-                .values(is_default=1)
-            )
-
-        await client.app.state.store.seed_agent_catalog()
-        await client.app.state.store.seed_runtime_config_schemas()
-        await client.app.state.store.seed_agent_catalog()
-        await client.app.state.store.seed_runtime_config_schemas()
-
-    asyncio.run(downgrade_and_reseed())
-
-    async def persisted_models(user_id: str) -> list[dict[str, Any]]:
-        async with client.app.state.store.engine.connect() as conn:
-            raw = (
-                await conn.execute(
-                    select(user_agent_defaults_t.c.models_json).where(
-                        user_agent_defaults_t.c.user_id == user_id,
-                        user_agent_defaults_t.c.runtime == "codex",
-                    )
-                )
-            ).scalar_one()
-        return json.loads(raw)
-
-    persisted_legacy_snapshot = asyncio.run(persisted_models("user1"))
-    assert [model["key"] for model in persisted_legacy_snapshot] == [
-        "gpt-5.5",
-        "gpt-5.4",
-        "gpt-5.4-mini",
-        "gpt-5.3-codex",
-        "gpt-5.2",
-    ]
-
-    upgraded = client.get("/agents/defaults", headers=headers).json()["runtimes"]["codex"]
-    assert [model["key"] for model in upgraded["models"]][:4] == [
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
-        "gpt-5.6-luna",
-        "gpt-5.5",
-    ]
-    assert [model["key"] for model in upgraded["models"] if model["isDefault"]] == [
-        "gpt-5.6-sol"
-    ]
-    assert [
-        effort["key"]
-        for effort in upgraded["models"][0]["efforts"]
-        if effort["isDefault"]
-    ] == ["medium"]
-
-    custom_after = client.get("/agents/defaults", headers=custom_headers).json()["runtimes"][
-        "codex"
-    ]["models"]
-    assert custom_after == custom_before
-
-    explicit_after = client.get(
-        f"/connectors/{explicit_connector}/agents/codex/settings",
-        headers=headers,
-    ).json()["settings"]
-    assert explicit_after["model"] == "gpt-5.5"
-    assert explicit_after["effort"] == "xhigh"
-
-    null_after = client.get(
-        f"/connectors/{null_connector}/agents/codex/settings",
-        headers=headers,
-    ).json()["settings"]
-    assert null_after["model"] == "gpt-5.6-sol"
-    assert null_after["effort"] == "medium"
-
-    schema = client.get("/agents/codex/config-schema", headers=headers).json()["schema"]
-    assert schema["schemaVersion"] == 4
-
-    models = asyncio.run(client.app.state.store.list_agent_models("codex"))
-    efforts = asyncio.run(client.app.state.store.list_agent_efforts("codex"))
-    # Durable rows intentionally remain readable by a base-main rollback;
-    # the v4/GPT-5.6 catalog above is an in-memory projection.
-    assert [model.key for model in models if model.isDefault] == ["gpt-5.5"]
-    assert [effort.key for effort in efforts if effort.isDefault] == ["xhigh"]
-
-
-def test_first_discovery_respects_user_agent_default_enabled(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-    disabled = client.patch("/agents/defaults", headers=headers, json={"runtimes": {"codex": {}}})
-    assert disabled.status_code == 200, disabled.text
-    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
-    connector_id = connector_response.json()["connector"]["id"]
-
-    state = asyncio.run(
-        client.app.state.store.apply_discovery(
+        client.app.state.store.set_device_runtime_status(
             connector_id,
-                {
-                    "runtimes": {
-                        "codex": {
-                            "history": "ok",
-                            "execution": "ok",
-                            "selected": {"source": "cli", "path": "/usr/bin/codex"},
-                        },
-                        "claude": {
-                            "history": "ok",
-                            "execution": "ok",
-                            "selected": {"source": "cli", "path": "/usr/bin/claude"},
-                        },
-                    }
-                },
-            )
+            "codex",
+            "stopped",
+        )
     )
+    rpc.requests.clear()
 
-    assert "claude" in state["attached"]
-    assert "codex" in state["attached"]
-    assert "codex" not in state["disabled"]
-
-
-def test_device_agent_settings_patch_and_read(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-
-    initial = client.get(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-    )
-    assert initial.status_code == 200, initial.text
-    assert "runMode" not in initial.json()["settings"]
-    assert "defaultRunModeConfigured" not in initial.json()
-
-    model_only = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={"settings": {"model": "claude-sonnet-4-6"}},
-    )
-    assert model_only.status_code == 200, model_only.text
-    assert "defaultRunModeConfigured" not in model_only.json()
-
-    invalid = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={"settings": {"runMode": "terminal"}},
-    )
-    assert invalid.status_code == 422
-
-    response = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={
-            "settings": {
-                "permissionMode": "plan",
-                "model": "claude-sonnet-4-6",
-                "effort": "high",
-            }
-        },
-    )
+    response = client.post(f"/sessions/{session_id}/sync", headers=headers)
 
     assert response.status_code == 200, response.text
-    settings = response.json()["settings"]
-    assert "runMode" not in settings
-    assert settings["permissionMode"] == "plan"
-    assert settings["model"] == "claude-sonnet-4-6"
-    assert settings["effort"] == "high"
-    assert "defaultRunModeConfigured" not in response.json()
-
-    read_back = client.get(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-    )
-    assert read_back.status_code == 200
-    assert read_back.json()["settings"] == settings
-    assert "defaultRunModeConfigured" not in read_back.json()
-
-
-def test_session_runtime_settings_rejects_claude_run_mode(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
-    connector_id = connector_response.json()["connector"]["id"]
-    session = asyncio.run(
-        client.app.state.store.upsert_connector_session(
-            connector_id=connector_id,
-            session_id="sess_claude_run_mode_flag",
-            runtime="claude",
-            external_session_id="uuid-claude-run-mode-flag",
-            title="Claude",
-            cwd="/repo",
-            status="idle",
-        )
-    )
-
-    initial = client.get(f"/sessions/{session.id}/runtime-settings", headers=headers)
-    assert initial.status_code == 200, initial.text
-    assert "runMode" not in initial.json()["runtimeSettings"]
-    assert "defaultRunModeConfigured" not in initial.json()
-
-    rejected = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={"settings": {"runMode": "terminal"}},
-    )
-    assert rejected.status_code == 422
-
-    after = client.get(f"/sessions/{session.id}/runtime-settings", headers=headers)
-    assert after.status_code == 200, after.text
-    assert "runMode" not in after.json()["runtimeSettings"]
-    assert "defaultRunModeConfigured" not in after.json()
-
-
-def test_claude_effort_options_are_constrained_by_model(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-
-    opus = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={"settings": {"model": "claude-opus-4-7[1m]", "effort": "xhigh"}},
-    )
-    assert opus.status_code == 200, opus.text
-    assert opus.json()["settings"]["effort"] == "xhigh"
-
-    sonnet_bad = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={"settings": {"model": "claude-sonnet-4-6", "effort": "xhigh"}},
-    )
-    assert sonnet_bad.status_code == 422
-
-    haiku = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={"settings": {"model": "claude-haiku-4-5"}},
-    )
-    assert haiku.status_code == 200, haiku.text
-    assert haiku.json()["settings"]["model"] == "claude-haiku-4-5"
-    assert haiku.json()["settings"]["effort"] is None
-
-    haiku_bad = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={"settings": {"effort": "low"}},
-    )
-    assert haiku_bad.status_code == 422
-
-
-def test_codex_effort_options_are_constrained_by_model(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, session_id, headers = create_connector_and_session(client)
-
-    schema_response = client.get("/agents/codex/config-schema", headers=headers)
-    assert schema_response.status_code == 200, schema_response.text
-    schema = schema_response.json()["schema"]
-    assert schema["schemaVersion"] == 4
-    fields = {field["key"]: field for field in schema["fields"]}
-    models = {option["value"]: option for option in fields["model"]["options"]}
-    assert list(models)[:4] == [
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
-        "gpt-5.6-luna",
-        "gpt-5.5",
+    assert [request[1] for request in rpc.requests] == [
+        "runtime.start",
+        "session.sync",
     ]
-    assert [item["value"] for item in models["gpt-5.6-sol"]["efforts"]] == [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max",
-        "ultra",
-    ]
-    assert [item["value"] for item in models["gpt-5.6-terra"]["efforts"]] == [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max",
-        "ultra",
-    ]
-    assert [item["value"] for item in models["gpt-5.6-luna"]["efforts"]] == [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max",
-    ]
-    assert [item["value"] for item in models["gpt-5.5"]["efforts"]] == [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-    ]
+    assert rpc.requests[-1][2]["externalSessionId"] == "thr_existing"
 
-    accepted = (
-        ("gpt-5.6-sol", "ultra"),
-        ("gpt-5.6-terra", "ultra"),
-        ("gpt-5.6-luna", "max"),
-        ("gpt-5.5", "xhigh"),
+
+def test_session_runtime_catalog_reads_start_active_runtime_before_rpc(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    project_id = _create_project(client, connector_id, headers)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    active_url = f"{_runtime_url(connector_id)}/active"
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
     )
-    for model, effort in accepted:
-        response = client.patch(
-            f"/connectors/{connector_id}/agents/codex/settings",
-            headers=headers,
-            json={"settings": {"model": model, "effort": effort}},
-        )
-        assert response.status_code == 200, response.text
-
-    rejected = (
-        ("gpt-5.6-luna", "ultra"),
-        ("gpt-5.5", "max"),
+    assert (
+        client.put(active_url, headers=headers, json={"active": True}).status_code
+        == 200
     )
-    for model, effort in rejected:
-        response = client.patch(
-            f"/connectors/{connector_id}/agents/codex/settings",
-            headers=headers,
-            json={"settings": {"model": model, "effort": effort}},
-        )
-        assert response.status_code == 422
-
-    session_ok = client.patch(
-        f"/sessions/{session_id}/runtime-settings",
-        headers=headers,
-        json={"settings": {"model": "gpt-5.6-sol", "effort": "medium"}},
-    )
-    assert session_ok.status_code == 200, session_ok.text
-    session_bad = client.patch(
-        f"/sessions/{session_id}/runtime-settings",
-        headers=headers,
-        json={"settings": {"model": "gpt-5.6-luna", "effort": "ultra"}},
-    )
-    assert session_bad.status_code == 422
-
-
-def test_codex_sol_medium_defaults_are_sent_to_connector(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, session_id, headers = create_connector_and_session(client)
-
-    device_settings = client.get(
-        f"/connectors/{connector_id}/agents/codex/settings",
-        headers=headers,
-    )
-    assert device_settings.status_code == 200, device_settings.text
-    assert device_settings.json()["settings"]["model"] == "gpt-5.6-sol"
-    assert device_settings.json()["settings"]["effort"] == "medium"
-
-    fake_rpc = FakeRpc()
-    client.app.state.rpc = fake_rpc
-    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
-    sent = client.post(
-        f"/sessions/{session_id}/messages",
-        headers=headers,
-        json={"content": "use the product defaults"},
-    )
-    assert sent.status_code == 200, sent.text
-    connector_id_sent, method, params = fake_rpc.requests[-1]
-    assert connector_id_sent == connector_id
-    assert method == "turn.start"
-    assert params["model"] == "gpt-5.6-sol"
-    assert params["effort"] == "medium"
-
-
-def test_automatic_codex_defaults_are_durable_but_projected_as_sol_medium(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-
-    # Materialize the user-default row through an automatic catalog update.
-    # It must not write the current server's model/effort as a durable choice.
-    defaults = client.patch(
-        "/agents/defaults",
-        headers=headers,
-        json={"runtimes": {"codex": {"models": []}}},
-    )
-    assert defaults.status_code == 200, defaults.text
-    assert defaults.json()["runtimes"]["codex"]["settings"] == {
-        "permissionMode": "ask",
-        "model": "gpt-5.6-sol",
-        "effort": "medium",
-    }
-
-    connector = client.post("/connectors", headers=headers, json={"name": "dev"})
-    assert connector.status_code == 200, connector.text
-    connector_id = connector.json()["connector"]["id"]
-
-    # A non-model settings patch still inherits the model and effort.
-    permission = client.patch(
-        f"/connectors/{connector_id}/agents/codex/settings",
-        headers=headers,
-        json={"settings": {"permissionMode": "auto"}},
-    )
-    assert permission.status_code == 200, permission.text
-    assert permission.json()["settings"] == {
-        "permissionMode": "auto",
-        "model": "gpt-5.6-sol",
-        "effort": "medium",
-    }
-
-    automatic = client.post(
+    session_response = client.post(
         "/sessions",
         headers=headers,
         json={
             "connectorId": connector_id,
+            "projectId": project_id,
             "runtime": "codex",
-            "externalSessionId": "thr_automatic_defaults",
-            "title": "Automatic defaults",
+            "externalSessionId": "thr_existing",
+            "title": "Existing",
             "cwd": "/repo",
         },
     )
-    assert automatic.status_code == 200, automatic.text
-    assert automatic.json()["session"]["runtimeSettings"]["model"] == "gpt-5.6-sol"
-    assert automatic.json()["session"]["runtimeSettings"]["effort"] == "medium"
+    assert session_response.status_code == 200, session_response.text
+    session_id = session_response.json()["session"]["id"]
+    asyncio.run(
+        client.app.state.store.set_device_runtime_status(
+            connector_id,
+            "codex",
+            "stopped",
+        )
+    )
+    rpc.requests.clear()
 
-    async def raw_automatic() -> tuple[str, dict[str, Any], str]:
-        async with client.app.state.store.engine.connect() as conn:
-            user_defaults = (
-                await conn.execute(
-                    select(user_agent_defaults_t.c.settings_json).where(
-                        user_agent_defaults_t.c.user_id == ADMIN_USER,
-                        user_agent_defaults_t.c.runtime == "codex",
-                    )
-                )
-            ).scalar_one()
-            device = (
-                await conn.execute(
-                    select(
-                        device_agent_settings_t.c.settings_json,
-                        device_agent_settings_t.c.schema_version,
-                    ).where(
-                        device_agent_settings_t.c.connector_id == connector_id,
-                        device_agent_settings_t.c.runtime == "codex",
-                    )
-                )
-            ).mappings().one()
-            session = (
-                await conn.execute(
-                    select(sessions_t.c.runtime_settings_override).where(
-                        sessions_t.c.id == automatic.json()["session"]["id"]
-                    )
-                )
-            ).scalar_one()
-        return user_defaults, dict(device), session
+    model_catalog = client.get(
+        f"/sessions/{session_id}/runtime/catalogs/model",
+        headers=headers,
+    )
+    permission_catalog = client.get(
+        f"/sessions/{session_id}/runtime/catalogs/permission",
+        headers=headers,
+    )
 
-    durable_defaults, durable_device, durable_session = asyncio.run(raw_automatic())
-    assert json.loads(durable_defaults)["model"] is None
-    assert json.loads(durable_defaults)["effort"] is None
-    assert json.loads(durable_device["settings_json"]) == {
-        "permissionMode": "auto",
-        "model": None,
-        "effort": None,
+    assert model_catalog.status_code == 200, model_catalog.text
+    assert model_catalog.json()["catalog"]["models"][0]["selectionId"] == (
+        "sel_model_test"
+    )
+    assert permission_catalog.status_code == 200, permission_catalog.text
+    assert permission_catalog.json()["catalog"]["permissions"][0]["selectionId"] == (
+        "sel_permission_ask"
+    )
+    assert [request[1] for request in rpc.requests] == [
+        "runtime.start",
+        "runtime.modelCatalog",
+        "runtime.permissionCatalog",
+    ]
+    assert rpc.requests[1][2] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "limit": 200,
     }
-    assert durable_device["schema_version"] == 3
-    assert json.loads(durable_session) == {
-        "permissionMode": "auto",
-        "model": None,
-        "effort": None,
+    assert rpc.requests[2][2] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "limit": 200,
     }
-    assert all("gpt-5.6" not in raw for raw in (durable_defaults, durable_device["settings_json"], durable_session))
 
-    # An explicit selection equal to the current default is still a user
-    # choice and therefore must not be collapsed to nullable inheritance.
-    explicit = client.patch(
-        f"/connectors/{connector_id}/agents/codex/settings",
-        headers=headers,
-        json={"settings": {"model": "gpt-5.6-sol", "effort": "medium"}},
+
+def test_editing_active_config_restarts_runtime(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    active_url = f"{_runtime_url(connector_id)}/active"
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
     )
-    assert explicit.status_code == 200, explicit.text
-
-    async def raw_explicit() -> tuple[dict[str, Any], str]:
-        async with client.app.state.store.engine.connect() as conn:
-            device = (
-                await conn.execute(
-                    select(
-                        device_agent_settings_t.c.settings_json,
-                        device_agent_settings_t.c.schema_version,
-                    ).where(
-                        device_agent_settings_t.c.connector_id == connector_id,
-                        device_agent_settings_t.c.runtime == "codex",
-                    )
-                )
-            ).mappings().one()
-        return dict(device), device["settings_json"]
-
-    explicit_device, explicit_device_json = asyncio.run(raw_explicit())
-    assert json.loads(explicit_device_json)["model"] == "gpt-5.6-sol"
-    assert json.loads(explicit_device_json)["effort"] == "medium"
-    assert explicit_device["schema_version"] == 4
-
-
-def test_custom_model_efforts_drive_runtime_settings_validation(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-    defaults = client.patch(
-        "/agents/defaults",
-        headers=headers,
-        json={
-            "runtimes": {
-                "codex": {
-                    "models": [
-                        {
-                            "key": "gpt-third-party",
-                            "displayLabel": "GPT Third Party",
-                            "sortOrder": 1,
-                            "efforts": [
-                                {
-                                    "key": "balanced",
-                                    "displayLabel": "Balanced",
-                                    "sortOrder": 1,
-                                }
-                            ],
-                        },
-                        {
-                            "key": "gpt-other",
-                            "displayLabel": "GPT Other",
-                            "sortOrder": 2,
-                            "efforts": [
-                                {
-                                    "key": "other-effort",
-                                    "displayLabel": "Other Effort",
-                                    "sortOrder": 1,
-                                }
-                            ],
-                        }
-                    ],
-                }
-            }
-        },
+    assert (
+        client.put(active_url, headers=headers, json={"active": True}).status_code
+        == 200
     )
-    assert defaults.status_code == 200, defaults.text
+    rpc.requests.clear()
 
-    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
-    connector_id = connector_response.json()["connector"]["id"]
-
-    ok = client.patch(
-        f"/connectors/{connector_id}/agents/codex/settings",
+    response = client.put(
+        config_url,
         headers=headers,
-        json={"settings": {"model": "gpt-third-party", "effort": "balanced"}},
-    )
-    assert ok.status_code == 200, ok.text
-    assert ok.json()["settings"]["model"] == "gpt-third-party"
-    assert ok.json()["settings"]["effort"] == "balanced"
-
-    wrong_model_effort = client.patch(
-        f"/connectors/{connector_id}/agents/codex/settings",
-        headers=headers,
-        json={"settings": {"effort": "other-effort"}},
-    )
-    assert wrong_model_effort.status_code == 422
-
-    bad = client.patch(
-        f"/connectors/{connector_id}/agents/codex/settings",
-        headers=headers,
-        json={"settings": {"effort": "high"}},
-    )
-    assert bad.status_code == 422
-
-
-def test_session_runtime_settings_override_respects_schema(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, session_id, headers = create_connector_and_session(client)
-
-    response = client.patch(
-        f"/sessions/{session_id}/runtime-settings",
-        headers=headers,
-        json={"settings": {"permissionMode": "fullAccess"}},
+        json={"config": {"executablePath": "/new/codex"}},
     )
 
     assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["runtimeSettingsOverride"] == {
-        "permissionMode": "fullAccess",
-        "model": "gpt-5.6-sol",
-        "effort": "medium",
-    }
-    assert body["runtimeSettings"]["permissionMode"] == "fullAccess"
-
-    bad = client.patch(
-        f"/sessions/{session_id}/runtime-settings",
-        headers=headers,
-        json={"settings": {"runMode": "terminal"}},
+    assert response.json()["status"] == "running"
+    assert [request[1] for request in rpc.requests] == [
+        "runtime.validateConfig",
+        "runtime.stop",
+        "runtime.start",
+    ]
+    _assert_runtime_start_config_revision(
+        rpc.requests[-1][2],
+        {"executablePath": "/new/codex"},
     )
-    assert bad.status_code == 422
 
-    raw_codex_config = client.patch(
-        f"/sessions/{session_id}/runtime-settings",
-        headers=headers,
-        json={"settings": {"approvalPolicy": "never"}},
+
+def test_start_failure_remains_configured_active_and_visible_as_error(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
     )
-    assert raw_codex_config.status_code == 422
+    rpc.errors["runtime.start"] = ConnectorRpcError("start_failed", "runtime exited")
+
+    response = client.put(
+        f"{_runtime_url(connector_id)}/active",
+        headers=headers,
+        json={"active": True},
+    )
+
+    assert response.status_code == 502, response.text
+    listed = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
+    runtime = listed.json()["runtimes"][0]
+    assert runtime["configured"] is True
+    assert runtime["active"] is True
+    assert runtime["status"] == "error"
+    assert runtime["error"]["code"] == "start_failed"
 
 
-def test_session_claude_effort_patch_uses_effective_model(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
-    connector_id = connector_response.json()["connector"]["id"]
-
+def test_reconcile_active_forwards_persisted_config_after_schema_upgrade(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    store = client.app.state.store
+    runtime_service = client.app.state.device_runtime_service
+    upgraded_inventory = _inventory()
+    upgraded_inventory["runtimes"][0]["schema"]["properties"] = {}
+    upgraded_inventory["runtimes"][0]["uiSchema"] = {}
+    asyncio.run(runtime_service.ingest_runtime_types(connector_id, describe_inventory(upgraded_inventory)))
     asyncio.run(
-        client.app.state.store.patch_device_agent_settings(
+        store.set_device_runtime_config(
             connector_id,
-            "claude",
-            {"model": "claude-opus-4-7[1m]"},
+            "codex",
+            {"executablePath": "/legacy/codex"},
         )
     )
+    asyncio.run(store.set_device_runtime_active(connector_id, "codex", True))
+    rpc.requests.clear()
+
+    asyncio.run(runtime_service.reconcile_active(connector_id))
+
+    runtime = client.get(
+        f"/connectors/{connector_id}/runtimes", headers=headers
+    ).json()["runtimes"][0]
+    assert runtime["status"] == "running"
+    assert [request[1] for request in rpc.requests] == ["runtime.start"]
+    _assert_runtime_start_config_revision(
+        rpc.requests[0][2],
+        {"executablePath": "/legacy/codex"},
+    )
+
+
+def test_inventory_refresh_preserves_active_runtime_error(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    store = client.app.state.store
+    runtime_service = client.app.state.device_runtime_service
+    asyncio.run(store.set_device_runtime_config(connector_id, "codex", {}))
+    asyncio.run(store.set_device_runtime_active(connector_id, "codex", True))
+    asyncio.run(
+        store.set_device_runtime_status(
+            connector_id,
+            "codex",
+            "error",
+            error={"code": "start_failed", "message": "runtime exited"},
+        )
+    )
+
+    asyncio.run(runtime_service.apply_status(connector_id, "codex", "available"))
+    asyncio.run(runtime_service.ingest_runtime_types(connector_id, describe_inventory(rpc.inventory)))
+
+    runtime = client.get(
+        f"/connectors/{connector_id}/runtimes", headers=headers
+    ).json()["runtimes"][0]
+    assert runtime["status"] == "error"
+    assert runtime["error"] == {
+        "code": "start_failed",
+        "message": "runtime exited",
+    }
+
+
+def test_delete_running_config_stops_then_returns_to_unconfigured(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
+    assert (
+        client.put(
+            f"{_runtime_url(connector_id)}/active",
+            headers=headers,
+            json={"active": True},
+        ).status_code
+        == 200
+    )
+    rpc.requests.clear()
     session = asyncio.run(
         client.app.state.store.upsert_connector_session(
             connector_id=connector_id,
-            session_id="sess_claude_effort",
-            runtime="claude",
-            external_session_id="uuid-claude-effort",
-            title="Claude",
+            session_id="sess_legacy_deleted",
+            runtime="codex",
+            external_session_id="legacy-deleted",
             cwd="/repo",
-            status="idle",
         )
     )
 
-    effort = client.patch(
-        f"/sessions/{session.id}/runtime-settings",
-        headers=headers,
-        json={"settings": {"effort": "xhigh"}},
-    )
-    assert effort.status_code == 200, effort.text
-    assert effort.json()["runtimeSettingsOverride"] == {
-        "permissionMode": "acceptEdits",
-        "model": "claude-opus-4-7[1m]",
-        "effort": "xhigh",
-    }
-    assert effort.json()["runtimeSettings"]["model"] == "claude-opus-4-7[1m]"
-    assert effort.json()["runtimeSettings"]["effort"] == "xhigh"
+    response = client.delete(config_url, headers=headers)
 
-    sonnet = client.patch(
-        f"/sessions/{session.id}/runtime-settings",
-        headers=headers,
-        json={"settings": {"model": "claude-sonnet-4-6"}},
+    assert response.status_code == 200, response.text
+    assert response.json()["configured"] is False
+    assert response.json()["active"] is False
+    assert response.json()["status"] == "stopped"
+    assert [request[1] for request in rpc.requests] == ["runtime.stop"]
+    assert (
+        client.get(f"/sessions/{session.id}/meta", headers=headers).status_code == 404
     )
-    assert sonnet.status_code == 200, sonnet.text
-    assert sonnet.json()["runtimeSettingsOverride"] == {
-        "permissionMode": "acceptEdits",
-        "model": "claude-sonnet-4-6"
-    }
-    assert sonnet.json()["runtimeSettings"]["model"] == "claude-sonnet-4-6"
-    assert sonnet.json()["runtimeSettings"]["effort"] is None
-
-    asyncio.run(
-        client.app.state.store.patch_device_agent_settings(
-            connector_id,
-            "claude",
-            {"model": "claude-haiku-4-5"},
-        )
-    )
-    haiku_session = asyncio.run(
-        client.app.state.store.upsert_connector_session(
-            connector_id=connector_id,
-            session_id="sess_claude_haiku_effort",
-            runtime="claude",
-            external_session_id="uuid-claude-haiku-effort",
-            title="Claude Haiku",
-            cwd="/repo",
-            status="idle",
-        )
-    )
-    haiku_bad = client.patch(
-        f"/sessions/{haiku_session.id}/runtime-settings",
-        headers=headers,
-        json={"settings": {"effort": "low"}},
-    )
-    assert haiku_bad.status_code == 422
 
 
-def test_effective_runtime_settings_priority_and_effort_constraints(tmp_path):
-    client = make_client(tmp_path)
-    headers = auth_headers(client)
-    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
-    connector_id = connector_response.json()["connector"]["id"]
+def test_deactivation_settles_sessions_without_persisted_notices(tmp_path):
+    client, _, connector_id, headers = _make_client(tmp_path)
+    project_id = _create_project(client, connector_id, headers)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    active_url = f"{_runtime_url(connector_id)}/active"
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
+    assert (
+        client.put(active_url, headers=headers, json={"active": True}).status_code
+        == 200
+    )
 
+    store = client.app.state.store
     session = asyncio.run(
-        client.app.state.store.upsert_connector_session(
+        store.create_session(
             connector_id=connector_id,
-            session_id="sess_claude_cfg",
-            runtime="claude",
-            external_session_id="uuid-claude-cfg",
-            title="Claude",
+            project_id=project_id,
+            runtime="codex",
+            external_session_id="thread_1",
+            title="blocked",
             cwd="/repo",
-            status="idle",
         )
     )
+    asyncio.run(store.set_session_status(session.id, "blocked"))
 
-    override = client.patch(
-        f"/sessions/{session.id}/runtime-settings",
+    response = client.put(active_url, headers=headers, json={"active": False})
+
+    assert response.status_code == 200, response.text
+    assert asyncio.run(store.get_session(session.id)).status == "idle"
+
+
+def test_explicit_discovery_stops_runtime_that_server_has_not_activated(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    asyncio.run(client.app.state.device_runtime_service.apply_status(
+        connector_id, "codex", "running"
+    ))
+
+    response = client.post(
+        f"/connectors/{connector_id}/runtimes/discover",
         headers=headers,
-        json={
-            "settings": {
-                "permissionMode": "default",
-                "model": "claude-sonnet-4-6",
-            }
-        },
-    )
-    assert override.status_code == 200, override.text
-
-    state = client.get(f"/sessions/{session.id}/runtime-settings", headers=headers)
-    assert state.status_code == 200
-    body = state.json()
-    assert "effectiveRunMode" not in body
-    assert "runMode" not in body["runtimeSettings"]
-    assert body["runtimeSettings"]["permissionMode"] == "default"
-    assert body["runtimeSettings"]["model"] == "claude-sonnet-4-6"
-    assert body["runtimeSettings"]["effort"] is None
-
-
-def test_changing_claude_settings_does_not_interrupt_running_sessions(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, access_token, _, headers = create_connector_and_session(client)
-    fake_rpc = FakeRpc()
-    client.app.state.rpc = fake_rpc
-
-    async def seed() -> str:
-        session = await client.app.state.store.upsert_connector_session(
-            connector_id=connector_id,
-            session_id="sess_claude_running",
-            runtime="claude",
-            external_session_id="uuid-claude-running",
-            title="Claude",
-            cwd="/repo",
-            status="running",
-        )
-        await client.app.state.store.set_connector_status(connector_id, "online")
-        await client.app.state.store.start_active_run(
-            session_id=session.id,
-            runtime="claude",
-            external_session_id="uuid-claude-running",
-            turn_id="turn_running_1",
-        )
-        return session.id
-
-    session_id = asyncio.run(seed())
-
-    response = client.patch(
-        f"/connectors/{connector_id}/agents/claude/settings",
-        headers=headers,
-        json={"settings": {"model": "claude-opus-4-7[1m]", "effort": "xhigh"}},
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["settings"]["model"] == "claude-opus-4-7[1m]"
-    assert response.json()["settings"]["effort"] == "xhigh"
-    assert fake_rpc.requests == []
+    assert response.json()["runtimes"][0]["status"] == "stopped"
+    assert [request[1] for request in rpc.requests] == [
+        "runtime.discover",
+        "runtime.stop",
+    ]
+    assert rpc.requests[0][2] == {}

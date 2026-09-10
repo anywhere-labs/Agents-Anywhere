@@ -1,33 +1,26 @@
 "use client"
 
 import * as React from "react"
-import { Download, FolderOpen, Loader2, PanelLeft, SquareTerminal } from "lucide-react"
+import { Download, Loader2, PanelRight } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Input } from "@/components/ui/input"
-import { useSidebar } from "@/components/ui/sidebar"
-import { useDashboardSidebarControls } from "@/components/demo"
-import { useWorkspace, type PanelId } from "@/components/workspace-context"
+import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
+import { useWorkspace } from "@/components/workspace-context"
 import type { SessionMemorySnapshot } from "@/components/session-detail"
-import { runtimeLabel } from "@/components/session/session-utils"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 import type { SessionView as SessionViewModel } from "@/lib/demo-api"
-
-type PanelIcon = React.ComponentType<React.SVGProps<SVGSVGElement>>
-
-const PANEL_META: Record<PanelId, { titleKey: "panelFiles" | "panelShell"; icon: PanelIcon }> = {
-  files: { titleKey: "panelFiles", icon: FolderOpen },
-  terminal: { titleKey: "panelShell", icon: SquareTerminal },
-}
+import { runtimeLabel } from "@/components/session/session-utils"
+import { sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 
 const HEADER_BLUR_LAYERS = buildBlurGradientLayers({
   height: 56,
   layerCount: 9,
-  maxBlur: 12,
+  maxBlur: 10,
   minBlur: 0,
   overlap: 8,
   gamma: 1.85,
@@ -45,6 +38,8 @@ type SessionViewHeaderProps = {
   onExportMemoryTimeline?: () => void
   onExportRemoteTimeline?: () => void
   exporting?: boolean
+  toolsOpen?: boolean
+  onToggleTools?: () => void
 }
 
 export function SessionViewHeader({
@@ -54,12 +49,11 @@ export function SessionViewHeader({
   onExportMemoryTimeline,
   onExportRemoteTimeline,
   exporting,
+  toolsOpen,
+  onToggleTools,
 }: SessionViewHeaderProps) {
-  const { isMobile, toggleSidebar } = useSidebar()
   const { renameSession } = useWorkspace()
-  const sidebarControls = useDashboardSidebarControls()
   const tSession = useTranslations("dashboard.session")
-  const tActions = useTranslations("dashboard.actions")
   const [editingTitle, setEditingTitle] = React.useState(false)
   const [titleDraft, setTitleDraft] = React.useState(session.title ?? "")
   const [renaming, setRenaming] = React.useState(false)
@@ -67,14 +61,6 @@ export function SessionViewHeader({
   React.useEffect(() => {
     if (!editingTitle) setTitleDraft(session.title ?? "")
   }, [editingTitle, session.title])
-
-  const toggleDashboardSidebar = React.useCallback(() => {
-    if (isMobile) {
-      toggleSidebar()
-      return
-    }
-    sidebarControls?.toggleSidebar()
-  }, [isMobile, sidebarControls, toggleSidebar])
 
   const cancelRename = React.useCallback(() => {
     setTitleDraft(session.title ?? "")
@@ -108,17 +94,8 @@ export function SessionViewHeader({
       {HEADER_BLUR_LAYERS.map((layer) => (
         <div key={layer.key} className={layer.className} style={layer.style} />
       ))}
-      <div className="pointer-events-auto relative flex h-14 items-center gap-2 px-2">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          type="button"
-          aria-label={sidebarControls?.open === false ? tActions("expand") : tActions("collapse")}
-          onClick={toggleDashboardSidebar}
-          className="shrink-0 text-muted-foreground hover:text-foreground"
-        >
-          <PanelLeft className="size-4" />
-        </Button>
+      <div className="pointer-events-auto relative flex h-14 items-center gap-3 px-3">
+        <DashboardSidebarToggle />
         {editingTitle ? (
           <Input
             autoFocus
@@ -162,8 +139,13 @@ export function SessionViewHeader({
           exporting={exporting}
         />
         <div className="ml-auto flex items-center gap-1">
-          <TogglePanelButton id="files" icon={PANEL_META.files.icon} />
-          <TogglePanelButton id="terminal" icon={PANEL_META.terminal.icon} />
+          {!toolsOpen ? (
+            <Button variant="ghost" size="icon-sm" type="button"
+              aria-label={tSession("tools.toggle")} title={tSession("tools.toggle")}
+              data-slot="session-tool-sidebar-toggle" onClick={onToggleTools}>
+              <PanelRight />
+            </Button>
+          ) : null}
         </div>
       </div>
     </header>
@@ -229,35 +211,42 @@ function SessionMetaBadge({
   exporting?: boolean
 }) {
   const t = useTranslations("dashboard.session")
-  const label = `${connectorName ?? session.connectorId}/${runtimeLabel(session.runtime)}`
+  const displayRuntimeType = session.runtimeTypeDisplayName?.trim()
+    || runtimeLabel(sessionRuntimeType(session))
+  const displayRuntime = session.runtimeName?.trim() || displayRuntimeType
+  const runtimeContext = displayRuntime === displayRuntimeType
+    ? displayRuntime
+    : `${displayRuntime} · ${displayRuntimeType}`
+  const label = `${connectorName ?? session.connectorId}/${runtimeContext}`
   const timelineSummary = memorySnapshot
     ? t("timelineSummary", { count: memorySnapshot.items.length, seq: memorySnapshot.nextSeq })
     : t("memoryLoading")
-  const approvalsSummary = memorySnapshot
-    ? t("approvalsPending", { count: memorySnapshot.pendingApprovalCount })
+  const interactionsSummary = memorySnapshot
+    ? t("interactionsPending", { count: memorySnapshot.pendingInteractionCount })
     : t("memoryLoading")
   const rows = [
     [t("device"), connectorName ?? session.connectorId],
-    [t("runtime"), runtimeLabel(session.runtime)],
-    [t("status"), `${memorySnapshot?.session.status ?? session.status} · ${session.connectorStatus}`],
+    [t("runtime"), displayRuntime],
+    [t("runtimeType"), displayRuntimeType],
+    [t("status"), `${memorySnapshot?.state?.status ?? memorySnapshot?.session.status ?? session.status} · ${session.connectorStatus}`],
     [t("workspace"), memorySnapshot?.session.cwd ?? session.cwd ?? t("none")],
     [t("sessionId"), session.id],
     [t("externalId"), memorySnapshot?.session.externalSessionId ?? t("none")],
     [t("timeline"), timelineSummary],
-    [t("approvals"), approvalsSummary],
+    [t("interactions"), interactionsSummary],
   ] as const
 
   return (
     <HoverCard openDelay={120} closeDelay={80}>
       <HoverCardTrigger asChild>
-        <Badge variant="secondary" className="shrink-0 cursor-default gap-1.5 font-normal">
+        <Badge variant="secondary" className="max-w-[45%] shrink-0 cursor-default gap-1.5 font-normal">
           <span
             className={cn(
               "size-1.5 rounded-full",
               session.connectorStatus === "online" ? "bg-emerald-500" : "bg-muted-foreground/40",
             )}
           />
-          {label}
+          <span className="truncate">{label}</span>
         </Badge>
       </HoverCardTrigger>
       <HoverCardContent align="end" sideOffset={10} className="w-[420px] rounded-xl p-4">
@@ -296,24 +285,5 @@ function SessionMetaBadge({
         </div>
       </HoverCardContent>
     </HoverCard>
-  )
-}
-
-function TogglePanelButton({ id, icon: Icon }: { id: PanelId; icon: PanelIcon }) {
-  const { panels, setPanelMode } = useWorkspace()
-  const t = useTranslations("dashboard.session")
-  const active = panels[id] !== "closed"
-  return (
-    <button
-      type="button"
-      aria-label={t(PANEL_META[id].titleKey)}
-      onClick={() => setPanelMode(id, active ? "closed" : "docked")}
-      className={cn(
-        "rounded-md p-2 transition-colors hover:bg-accent hover:text-foreground",
-        active ? "text-foreground" : "text-muted-foreground",
-      )}
-    >
-      <Icon className="size-4" />
-    </button>
   )
 }

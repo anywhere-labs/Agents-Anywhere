@@ -1,0 +1,1 @@
+"""Claude timeline projection helpers."""

@@ -1,8 +1,23 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
+
+val officialServerUrl = "https://web.agents-anywhere.com"
+val localSettings = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.isFile }?.inputStream()?.use { load(it) }
+}
+val debugServerUrl = providers.gradleProperty("agentsAnywhere.serverUrl")
+    .orElse(localSettings.getProperty("agentsAnywhere.serverUrl", officialServerUrl))
+    .get()
+
+fun String.asBuildConfigString(): String = "\"" + replace("\\", "\\\\")
+    .replace("\"", "\\\"")
+    .replace("\n", "\\n")
+    .replace("\r", "\\r") + "\""
 
 android {
     namespace = "com.agentsanywhere.app"
@@ -12,8 +27,10 @@ android {
         applicationId = "com.agentsanywhere.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.1.7.2"
+        versionCode = 7
+        versionName = "2.0.0"
+        buildConfigField("String", "OFFICIAL_SERVER_URL", officialServerUrl.asBuildConfigString())
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -21,6 +38,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("String", "OFFICIAL_SERVER_URL", debugServerUrl.asBuildConfigString())
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -41,6 +61,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 }
@@ -71,6 +92,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.webkit)
     implementation(libs.lucide.icons)
     implementation(libs.mlkit.barcode.scanning)
     implementation(libs.okhttp)
@@ -81,5 +103,16 @@ dependencies {
     implementation(libs.termux.terminal.view)
     coreLibraryDesugaring(libs.desugar.jdk.libs)
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.espresso.core)
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
+}
+
+tasks.named("check") {
+    dependsOn(rootProject.tasks.named("checkLegacyRoutes"))
 }

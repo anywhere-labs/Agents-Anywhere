@@ -1,0 +1,13 @@
+{
+  "$id": "https://agents-anywhere.dev/contracts/runtime-control/2.0/schemas/runtime-discover-request.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Runtime discovery takes an empty parameter object.",
+  "properties": {},
+  "title": "RuntimeDiscoverRequest",
+  "type": "object",
+  "x-direction": "ingress",
+  "x-rpc-method": "runtime.discover",
+  "x-rpc-part": "params",
+  "x-runtime-control-version": "2.0"
+}

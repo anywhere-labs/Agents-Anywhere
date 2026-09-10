@@ -1,0 +1,326 @@
+package com.agentsanywhere.app.ui.screens.home
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.sessions.NewSessionPathEntry
+import com.agentsanywhere.app.ui.designsystem.BackGlyph
+import com.agentsanywhere.app.ui.designsystem.LocalAAColors
+import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.composables.icons.lucide.Check
+import com.composables.icons.lucide.ChevronDown
+import com.composables.icons.lucide.ChevronLeft
+import com.composables.icons.lucide.ChevronRight
+import com.composables.icons.lucide.Folder
+import com.composables.icons.lucide.Lucide
+
+@Composable
+internal fun ChoosePathSection(
+    currentPath: String,
+    currentPathLabel: String,
+    parentPath: String?,
+    entries: List<NewSessionPathEntry>,
+    loading: Boolean,
+    error: String?,
+    darkMode: Boolean,
+    canUseCurrent: Boolean,
+    modifier: Modifier,
+    onBack: (() -> Unit)?,
+    onParent: () -> Unit,
+    onUseCurrent: (() -> Unit)? = null,
+    onOpenEntry: (NewSessionPathEntry) -> Unit,
+    title: String? = null,
+    enabled: Boolean = true,
+    onRetry: (() -> Unit)? = null,
+    collapsible: Boolean = false,
+    directoryBorderColor: Color? = null,
+) {
+    var expanded by rememberSaveable { mutableStateOf(true) }
+    val listExpanded = expanded
+    val listState = rememberLazyListState()
+    val haptic = LocalHapticFeedback.current
+    val openParent = {
+        expanded = true
+        onParent()
+    }
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(32.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = title ?: stringResource(R.string.new_session_choose_path),
+                color = LocalAAColors.current.ink,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.ExtraBold,
+                lineHeight = 21.sp,
+            )
+            if (onBack != null) SmallPill(darkMode = darkMode, onClick = onBack, enabled = enabled) {
+                BackGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555))
+                Text(
+                    text = stringResource(R.string.common_back),
+                    color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                )
+            }
+        }
+        CurrentDirectoryBar(
+            currentPath = currentPathLabel,
+            darkMode = darkMode,
+            borderColor = directoryBorderColor,
+            canGoParent = parentPath != null && enabled && !loading,
+            canUseCurrent = canUseCurrent && enabled && !loading && error == null,
+            onParent = openParent,
+            onUseCurrent = onUseCurrent?.let { selectCurrent ->
+                {
+                    selectCurrent()
+                    expanded = false
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                }
+            },
+            enabled = enabled,
+            listExpanded = listExpanded,
+            onToggleList = if (collapsible) ({
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                expanded = !expanded
+            }) else null,
+            onOpenList = if (!collapsible && !expanded) ({
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                expanded = true
+            }) else null,
+        )
+        if (listExpanded || loading || error != null) Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+        ) {
+            LazyColumn(modifier = Modifier.fillMaxSize(), state = listState) {
+                when {
+                    loading -> item {
+                        PathMessage(stringResource(R.string.new_session_loading_directory), darkMode)
+                    }
+                    error != null -> item {
+                        Column {
+                            PathMessage(error, darkMode)
+                            onRetry?.let { retry ->
+                                Text(
+                                    text = stringResource(R.string.common_retry),
+                                    color = LocalAAColors.current.inkSoft,
+                                    modifier = Modifier.clickable(enabled = enabled, onClick = retry).padding(vertical = 12.dp),
+                                )
+                            }
+                        }
+                    }
+                    else -> {
+                        if (parentPath != null) {
+                            item(key = "$currentPath/..") {
+                                PathRow(name = "..", icon = Lucide.Folder, darkMode = darkMode, enabled = enabled, onClick = openParent)
+                            }
+                        }
+                        if (entries.isEmpty()) {
+                            item { PathMessage(stringResource(R.string.new_session_empty_directory), darkMode) }
+                        }
+                        items(entries, key = { it.path }) { entry ->
+                            PathRow(
+                                name = entry.name,
+                                icon = Lucide.Folder,
+                                darkMode = darkMode,
+                                enabled = enabled,
+                                onClick = {
+                                    expanded = true
+                                    onOpenEntry(entry)
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CurrentDirectoryBar(
+    currentPath: String,
+    darkMode: Boolean,
+    borderColor: Color?,
+    canGoParent: Boolean,
+    canUseCurrent: Boolean,
+    onParent: () -> Unit,
+    onUseCurrent: (() -> Unit)?,
+    enabled: Boolean,
+    listExpanded: Boolean,
+    onToggleList: (() -> Unit)?,
+    onOpenList: (() -> Unit)?,
+) {
+    val outlineColor = borderColor ?: if (darkMode) Color(0xFF27272A) else Color(0xFFE8E8E8)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(if (darkMode) LocalAAColors.current.raisedSurface else Color(0xFFF7F7F7))
+            .border(1.dp, outlineColor, RoundedCornerShape(18.dp))
+            .then(if (onOpenList != null) Modifier.noRippleClickable(enabled = enabled, onClick = onOpenList) else Modifier)
+            .padding(start = 13.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(
+            imageVector = Lucide.Folder,
+            contentDescription = null,
+            tint = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
+            modifier = Modifier.size(20.dp),
+        )
+        Text(
+            text = currentPath,
+            modifier = Modifier.weight(1f),
+            color = LocalAAColors.current.ink,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.ExtraBold,
+            lineHeight = 20.sp,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.MiddleEllipsis,
+        )
+        if (canGoParent) {
+            CircleMiniButton(darkMode = darkMode, onClick = onParent) {
+                Icon(
+                    imageVector = Lucide.ChevronLeft,
+                    contentDescription = stringResource(R.string.common_back),
+                    tint = LocalAAColors.current.ink,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+        }
+        if (onToggleList != null) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .noRippleClickable(enabled = enabled, onClick = onToggleList),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (listExpanded) Lucide.ChevronDown else Lucide.ChevronRight,
+                    contentDescription = stringResource(
+                        if (listExpanded) R.string.new_session_collapse_directory else R.string.new_session_expand_directory,
+                    ),
+                    tint = LocalAAColors.current.inkSoft,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        } else if (onUseCurrent != null) CircleMiniButton(
+            darkMode = darkMode,
+            enabled = canUseCurrent,
+            onClick = onUseCurrent,
+        ) {
+            val checkColor = when {
+                !canUseCurrent -> if (darkMode) Color(0xFF52525B) else Color(0xFFBDBDBD)
+                darkMode -> Color(0xFFA1A1AA)
+                else -> Color(0xFF555555)
+            }
+            Icon(
+                imageVector = Lucide.Check,
+                contentDescription = stringResource(R.string.common_done),
+                tint = checkColor,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PathRow(
+    name: String,
+    icon: ImageVector,
+    darkMode: Boolean,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(58.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .noRippleClickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777),
+            modifier = Modifier.size(20.dp),
+        )
+        Text(
+            text = name,
+            color = LocalAAColors.current.ink,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            lineHeight = 20.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = Lucide.ChevronRight,
+            contentDescription = null,
+            tint = if (darkMode) Color(0xFF71717A) else Color(0xFFA8A6A0),
+            modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
+@Composable
+internal fun PathMessage(message: String, darkMode: Boolean) {
+    Text(
+        text = message,
+        color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777),
+        fontSize = 14.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(top = 18.dp, start = 4.dp),
+    )
+}

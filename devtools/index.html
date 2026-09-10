@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agents Anywhere Dev Control</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #0b0c0e;
+        color: #f4f4f5;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; background: #0b0c0e; }
+      main { width: min(760px, calc(100% - 32px)); margin: 64px auto; }
+      header { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+      h1 { margin: 0; font-size: 24px; font-weight: 650; letter-spacing: 0; }
+      .endpoint { color: #8f949d; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .web-entry { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 64px; margin-bottom: 24px; border: 1px solid #343840; border-radius: 9px; background: #111317; color: #f4f4f5; padding: 0 18px; text-decoration: none; }
+      .web-entry:hover { border-color: #656b75; background: #181a1f; }
+      .web-entry-label { font-weight: 600; }
+      .web-entry-url { color: #aeb3bc; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .oauth-entry { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 16px; min-height: 76px; margin-bottom: 24px; border-radius: 9px; background: #181a1f; padding: 12px 14px 12px 18px; }
+      .oauth-entry-copy { min-width: 72px; }
+      .oauth-entry-url { display: block; margin-top: 6px; color: #f4f4f5; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+      .oauth-entry-help { display: block; margin-top: 5px; color: #8f949d; font-size: 12px; }
+      section { border-top: 1px solid #292c31; }
+      .service { display: grid; grid-template-columns: 1fr auto; align-items: center; min-height: 72px; border-bottom: 1px solid #292c31; }
+      .service-name { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+      .service-detail { margin: 6px 0 0 18px; color: #8f949d; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: #62666e; box-shadow: 0 0 0 3px #17191d; }
+      .dot.online { background: #22c993; }
+      .dot.offline { background: #ef5b63; }
+      .state { color: #969ba4; font-size: 13px; }
+      button { min-height: 38px; border: 1px solid #383c43; border-radius: 7px; background: #181a1f; color: #f4f4f5; padding: 0 14px; font: inherit; font-size: 14px; cursor: pointer; }
+      button:hover { background: #22252b; border-color: #50555e; }
+      button:disabled { cursor: wait; opacity: .55; }
+      .primary { background: #f1f2f3; color: #111317; border-color: #f1f2f3; }
+      .primary:hover { background: #dfe1e4; border-color: #dfe1e4; }
+      .controls { padding: 24px 0; }
+      label { display: block; margin-bottom: 9px; color: #b8bbc1; font-size: 13px; }
+      textarea { display: block; width: 100%; min-height: 112px; resize: vertical; border: 1px solid #343840; border-radius: 7px; background: #111317; color: #e9eaec; padding: 12px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; outline: none; }
+      textarea:focus { border-color: #6f7680; }
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+      .owner-notice { margin-top: 18px; border-left: 2px solid #e0a43a; padding: 11px 0 11px 14px; color: #f1c878; font-size: 13px; line-height: 1.5; }
+      .message { min-height: 44px; margin-top: 18px; border-left: 2px solid #3b3f46; padding: 11px 0 11px 14px; color: #a8acb4; font-size: 13px; line-height: 1.5; }
+      .message.error { border-color: #ef5b63; color: #ff9da3; }
+      .message.success { border-color: #22c993; color: #7be0bd; }
+      @media (max-width: 560px) {
+        main { margin: 32px auto; }
+        header { align-items: start; flex-direction: column; }
+        .web-entry { align-items: start; flex-direction: column; padding: 15px 18px; }
+        .oauth-entry { grid-template-columns: 1fr; }
+        .oauth-entry-copy { width: 100%; }
+        .actions button { flex: 1 1 100%; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Agents Anywhere Dev Control</h1>
+        <div class="endpoint">127.0.0.1:8765</div>
+      </header>
+
+      <a class="web-entry" id="web-entry" href="http://127.0.0.1:5174" target="_blank" rel="noopener noreferrer">
+        <span class="web-entry-label">进入本地 Web</span>
+        <span class="web-entry-url" id="web-entry-url">http://127.0.0.1:5174 ↗</span>
+      </a>
+
+      <div class="oauth-entry">
+        <div>
+          <span class="web-entry-label">Android OAuth 登录地址</span>
+          <code class="oauth-entry-url" id="android-oauth-url">正在检测局域网地址…</code>
+          <span class="oauth-entry-help">填写到 Android 的 self-host 登录页面；这不是后端 API 地址。</span>
+        </div>
+        <button type="button" class="oauth-entry-copy" id="copy-android-oauth" disabled>复制</button>
+      </div>
+
+      <section aria-label="服务状态">
+        <div class="service">
+          <div class="service-name"><span class="dot" data-dot="server"></span>Server · 8000</div>
+          <div class="state" data-state="server">检查中</div>
+        </div>
+        <div class="service">
+          <div class="service-name"><span class="dot" data-dot="web"></span>Web · 5174</div>
+          <div class="state" data-state="web">检查中</div>
+        </div>
+        <div class="service">
+          <div>
+            <div class="service-name"><span class="dot" data-dot="desktop"></span>Desktop · 5184</div>
+            <div class="service-detail" id="desktop-backend">后端 http://127.0.0.1:8000/api/v2</div>
+          </div>
+          <div class="state" data-state="desktop">检查中</div>
+        </div>
+        <div class="service">
+          <div class="service-name"><span class="dot" data-dot="connector"></span>Connector</div>
+          <div class="state" data-state="connector">检查中</div>
+        </div>
+        <div class="service">
+          <div class="service-name"><span class="dot" data-dot="postgres"></span>PostgreSQL · 55432</div>
+          <div class="state" data-state="postgres">检查中</div>
+        </div>
+        <div class="service">
+          <div class="service-name"><span class="dot" data-dot="redis"></span>Redis · 56379</div>
+          <div class="state" data-state="redis">检查中</div>
+        </div>
+      </section>
+
+      <div class="owner-notice" id="owner-notice" hidden>
+        local-up.sh 正在前台管理 Server、Web 和基础设施；请回到启动它的终端使用 Ctrl-C，再由 Dev Control 重启。
+      </div>
+
+      <div class="controls">
+        <label for="credential">Connector 凭据（首次启动时粘贴）</label>
+        <textarea id="credential" autocomplete="off" spellcheck="false" placeholder="粘贴从 Agents Anywhere 复制的 Connector 凭据；重启已有 Connector 时可留空"></textarea>
+        <div class="actions">
+          <button type="button" data-target="server">↻ 重启后端</button>
+          <button type="button" data-target="desktop">↻ 启动 / 重启 Desktop</button>
+          <button type="button" class="primary" data-target="connector">↻ 启动 / 重启 Connector</button>
+          <button type="button" id="clear-desktop-installation">清除 Desktop 安装记录</button>
+        </div>
+        <div class="message" id="message" aria-live="polite">就绪</div>
+      </div>
+    </main>
+
+    <script>
+      const buttons = [...document.querySelectorAll("button[data-target]")];
+      const credential = document.querySelector("#credential");
+      const message = document.querySelector("#message");
+      const webEntry = document.querySelector("#web-entry");
+      const webEntryUrl = document.querySelector("#web-entry-url");
+      const desktopBackend = document.querySelector("#desktop-backend");
+      const androidOauthUrl = document.querySelector("#android-oauth-url");
+      const copyAndroidOauth = document.querySelector("#copy-android-oauth");
+      const ownerNotice = document.querySelector("#owner-notice");
+      const clearDesktopInstallation = document.querySelector("#clear-desktop-installation");
+      let localUpOwned = false;
+
+      function renderStatus(status) {
+        localUpOwned = Boolean(status.localUp);
+        ownerNotice.hidden = !localUpOwned;
+        buttons.forEach((button) => {
+          button.disabled = localUpOwned;
+          button.title = localUpOwned ? "请先在 local-up.sh 终端使用 Ctrl-C" : "";
+        });
+        if (status.webUrl) {
+          webEntry.href = status.webUrl;
+          webEntryUrl.textContent = `${status.webUrl} ↗`;
+        }
+        if (status.desktopBackendUrl) {
+          desktopBackend.textContent = `后端 ${status.desktopBackendUrl}`;
+        }
+        if (status.androidOauthLoginUrl) {
+          androidOauthUrl.textContent = status.androidOauthLoginUrl;
+          copyAndroidOauth.disabled = false;
+          copyAndroidOauth.dataset.url = status.androidOauthLoginUrl;
+        } else {
+          androidOauthUrl.textContent = "未检测到局域网 IPv4 地址";
+          copyAndroidOauth.disabled = true;
+          delete copyAndroidOauth.dataset.url;
+        }
+        for (const name of ["server", "web", "desktop", "connector", "postgres", "redis"]) {
+          const online = Boolean(status[name]);
+          const dot = document.querySelector(`[data-dot="${name}"]`);
+          const label = document.querySelector(`[data-state="${name}"]`);
+          dot.className = `dot ${online ? "online" : "offline"}`;
+          label.textContent = online ? "运行中" : "已停止";
+        }
+      }
+
+      async function refreshStatus() {
+        try {
+          const response = await fetch("/api/status", { cache: "no-store" });
+          renderStatus(await response.json());
+        } catch {
+          for (const name of ["server", "web", "desktop", "connector", "postgres", "redis"]) {
+            document.querySelector(`[data-dot="${name}"]`).className = "dot offline";
+            document.querySelector(`[data-state="${name}"]`).textContent = "不可达";
+          }
+        }
+      }
+
+      async function restart(target) {
+        if (localUpOwned) {
+          message.className = "message error";
+          message.textContent = "local-up.sh 正在前台运行，请先在该终端使用 Ctrl-C。";
+          return;
+        }
+        buttons.forEach((button) => { button.disabled = true; });
+        message.className = "message";
+        const progressMessages = {
+          server: "正在重启后端…",
+          desktop: `正在启动 Desktop；后端固定为 ${desktopBackend.textContent.replace("后端 ", "")}…`,
+          connector: "正在启动 Connector…",
+        };
+        message.textContent = progressMessages[target] || "正在重启服务…";
+        try {
+          const response = await fetch("/api/restart", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              target,
+              credential: target === "connector" ? credential.value.trim() || null : null,
+            }),
+          });
+          const result = await response.json();
+          if (!response.ok || !result.ok) throw new Error(result.error || "重启失败");
+          renderStatus(result.status);
+          credential.value = "";
+          message.className = "message success";
+          message.textContent = "重启完成";
+        } catch (error) {
+          message.className = "message error";
+          message.textContent = error instanceof Error ? error.message : "重启失败";
+        } finally {
+          buttons.forEach((button) => { button.disabled = localUpOwned; });
+        }
+      }
+
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => restart(button.dataset.target));
+      });
+      clearDesktopInstallation.addEventListener("click", async () => {
+        clearDesktopInstallation.disabled = true;
+        message.className = "message";
+        message.textContent = "正在清除 Desktop 安装记录…";
+        try {
+          const response = await fetch("/api/desktop/clear-installation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          });
+          const result = await response.json();
+          if (!response.ok || !result.ok) throw new Error(result.error || "清除失败");
+          message.className = "message success";
+          message.textContent = "已清除 Desktop 安装记录，设备 ID 和运行记录已保留。退出 Desktop 后重新打开插件即可测试；Desktop 下次启动会重新登记。";
+        } catch (error) {
+          message.className = "message error";
+          message.textContent = error instanceof Error ? error.message : "清除失败";
+        } finally {
+          clearDesktopInstallation.disabled = false;
+        }
+      });
+      copyAndroidOauth.addEventListener("click", async () => {
+        const url = copyAndroidOauth.dataset.url;
+        if (!url) return;
+        try {
+          await navigator.clipboard.writeText(url);
+          copyAndroidOauth.textContent = "已复制";
+          setTimeout(() => { copyAndroidOauth.textContent = "复制"; }, 1200);
+        } catch {
+          message.className = "message error";
+          message.textContent = "复制失败，请手动选择地址";
+        }
+      });
+      refreshStatus();
+      setInterval(refreshStatus, 3000);
+    </script>
+  </body>
+</html>

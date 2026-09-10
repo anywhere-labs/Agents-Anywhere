@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents-anywhere.dev/contracts/dsh-bridge/1.0/session-state.schema.json",
+  "type": "object",
+  "required": ["sessionId", "externalSessionId", "runtime", "status", "selections"],
+  "properties": {
+    "sessionId": { "type": "string", "minLength": 1 },
+    "externalSessionId": { "type": "string", "minLength": 1 },
+    "runtime": { "const": "dsh" },
+    "status": { "enum": ["idle", "pending", "running", "stopping", "waiting_approval", "blocked", "error", "disconnected"] },
+    "selections": { "type": "object", "additionalProperties": { "type": ["string", "null"] } },
+    "statusReason": { "type": "string" },
+    "error": { "type": "object" },
+    "metadata": { "type": "object" }
+  },
+  "additionalProperties": true
+}

@@ -1,42 +1,20 @@
 package com.agentsanywhere.app.ui.screens.home
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -47,24 +25,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
@@ -75,85 +42,352 @@ import com.agentsanywhere.app.feature.files.isWindowsDeviceOs
 import com.agentsanywhere.app.feature.files.normalizeRemotePath
 import com.agentsanywhere.app.feature.files.remoteFileRequest
 import com.agentsanywhere.app.feature.files.remoteParentPath
-import com.agentsanywhere.app.feature.sessions.NewSessionAgent
+import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.sessions.NewSessionDirectory
+import com.agentsanywhere.app.feature.sessions.NewSessionDraft
+import com.agentsanywhere.app.feature.sessions.NewSessionModelCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionPathEntry
+import com.agentsanywhere.app.feature.sessions.NewSessionPermissionCatalog
+import com.agentsanywhere.app.feature.sessions.NewSessionPreferenceStore
+import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeCapabilities
+import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeSelectionState
 import com.agentsanywhere.app.feature.sessions.SessionsState
-import com.agentsanywhere.app.feature.sessions.newSessionAgents
-import com.agentsanywhere.app.feature.sessions.workspaceOptionsFor
-import com.agentsanywhere.app.model.AgentDevice
+import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
+import com.agentsanywhere.app.feature.sessions.availableProjectName
+import com.agentsanywhere.app.feature.sessions.activeNewSessionRuntimes
+import com.agentsanywhere.app.feature.sessions.workspaceProject
+import com.agentsanywhere.app.feature.sessions.workspaceProjectName
+import com.agentsanywhere.app.feature.sessions.workspacePathKey
+import com.agentsanywhere.app.api.ApiException
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeout
 import com.agentsanywhere.app.navigation.AppDestination
-import com.agentsanywhere.app.ui.designsystem.BackGlyph
-import com.agentsanywhere.app.ui.designsystem.CheckGlyph
-import com.agentsanywhere.app.ui.designsystem.CloseGlyph
-import com.agentsanywhere.app.ui.designsystem.DownGlyph
-import com.agentsanywhere.app.ui.designsystem.ForwardGlyph
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
-import com.agentsanywhere.app.ui.designsystem.SearchGlyph
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
-import com.composables.icons.lucide.Bot
-import com.composables.icons.lucide.ChevronDown
-import com.composables.icons.lucide.ChevronRight
-import com.composables.icons.lucide.ChevronUp
-import com.composables.icons.lucide.Folder
-import com.composables.icons.lucide.Lucide
-import com.composables.icons.lucide.Monitor
-import com.composables.icons.lucide.Pencil
-import kotlinx.coroutines.delay
+import com.agentsanywhere.app.ui.designsystem.runtimePermissionLocalizer
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 @Composable
 fun NewSessionScreen(
     navigate: (AppDestination) -> Unit,
     sessionsState: SessionsState,
-    onCreateSession: suspend (String, String, String, String) -> Result<AgentSession>,
+    projectSessionsById: Map<String, List<AgentSession>>,
+    serverUrl: String,
+    userId: String,
+    sidebarViewMode: String = HomeSidebarViewMode.Project,
+    onLoadProjects: suspend () -> Result<List<AgentProject>> = { Result.success(sessionsState.projects) },
     onListDirectory: suspend (String, String, String) -> Result<NewSessionDirectory>,
-    onOpenSession: (AgentSession) -> Unit,
+    onListRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
+    onLoadRuntimeCapabilities: suspend (String, String) -> Result<NewSessionRuntimeCapabilities>,
+    onLoadModelCatalog: suspend (String, String) -> Result<NewSessionModelCatalog>,
+    onLoadPermissionCatalog: suspend (String, String) -> Result<NewSessionPermissionCatalog>,
+    onPrepareSession: (NewSessionDraft) -> Unit,
+    onRefreshDevices: () -> Unit,
+    devicesRefreshing: Boolean,
+    initialProjectId: String? = null,
+    projectOnly: Boolean = false,
+    onCreateProject: suspend (String, String, String) -> Result<AgentProject> = { _, _, _ ->
+        Result.failure(IllegalStateException("Project creation is not connected."))
+    },
 ) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val context = LocalContext.current
-    val defaultTitle = stringResource(R.string.new_session_title)
+    val preferenceStore = remember(context, serverUrl, userId) { NewSessionPreferenceStore(context, serverUrl, userId) }
+    val initialPreference = remember(preferenceStore) { preferenceStore.read() }
+    var preference by remember(preferenceStore) { mutableStateOf(initialPreference) }
+    val defaultTitle = stringResource(if (projectOnly) R.string.new_session_create_project else R.string.new_session_title)
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
-    val devices = remember(sessionsState.devices) {
-        sessionsState.devices.filter { it.online && it.attachedRuntimes.isNotEmpty() }
+    val onlineDevices = remember(sessionsState.devices) {
+        sessionsState.devices.filter { it.online }
+    }
+    val inventory = rememberNewSessionRuntimeInventory(
+        connectorIds = if (projectOnly) emptyList() else onlineDevices.map { it.id },
+        onLoad = onListRuntimes,
+        loadError = stringResource(R.string.new_session_runtime_load_failed),
+    )
+    LaunchedEffect(Unit) {
+        if (!projectOnly) onRefreshDevices()
+    }
+    var localProject by remember { mutableStateOf<AgentProject?>(null) }
+    val projects = remember(sessionsState.projects, localProject) {
+        val local = localProject
+        if (local == null || sessionsState.projects.any { it.id == local.id }) {
+            sessionsState.projects
+        } else {
+            sessionsState.projects + local
+        }
+    }
+    val workspaceSessions = remember(projectSessionsById, sessionsState.sessions, sessionsState.archivedSessions) {
+        projectSessionsById.values.flatten() + sessionsState.sessions + sessionsState.archivedSessions
     }
     var title by rememberSaveable { mutableStateOf(defaultTitle) }
     var editingTitle by rememberSaveable { mutableStateOf(false) }
-    var selectedDeviceId by rememberSaveable { mutableStateOf<String?>(null) }
-    var selectedRuntime by rememberSaveable { mutableStateOf<String?>(null) }
-    var selectedWorkspacePath by rememberSaveable { mutableStateOf("~") }
+    var selectedProjectId by rememberSaveable(initialProjectId) { mutableStateOf(initialProjectId) }
+    var pendingInitialProjectId by rememberSaveable(initialProjectId) { mutableStateOf(initialProjectId) }
+    var selectedDeviceId by rememberSaveable {
+        mutableStateOf(
+            sessionsState.projects.firstOrNull { it.id == initialProjectId }?.connectorId
+                ?: initialPreference?.connectorId?.takeIf { id -> onlineDevices.any { it.id == id } }
+                ?: onlineDevices.firstOrNull()?.id,
+        )
+    }
+    var runtimeSelection by remember {
+        mutableStateOf(
+            NewSessionRuntimeSelectionState(
+                connectorId = initialPreference?.connectorId,
+                selectedRuntimeId = initialPreference?.runtimeId,
+                selectionHints = initialPreference?.selections.orEmpty(),
+            ),
+        )
+    }
+    var selectedWorkspacePath by rememberSaveable { mutableStateOf("") }
     var homePath by rememberSaveable { mutableStateOf<String?>(null) }
     var choosePath by rememberSaveable { mutableStateOf(false) }
     var currentPath by rememberSaveable { mutableStateOf("~") }
     var pathEntries by remember { mutableStateOf<List<NewSessionPathEntry>>(emptyList()) }
     var pathLoading by remember { mutableStateOf(false) }
     var pathError by remember { mutableStateOf<String?>(null) }
-    var createError by remember { mutableStateOf<String?>(null) }
-    var creating by remember { mutableStateOf(false) }
-    var sheet by remember { mutableStateOf<NewSessionSheet?>(null) }
-    var workspaceListExpanded by rememberSaveable { mutableStateOf(true) }
+    var expandedConfiguration by remember { mutableStateOf<NewSessionConfigurationKey?>(null) }
+    val workspaceListState = rememberLazyListState()
+    var creatingProject by rememberSaveable { mutableStateOf(projectOnly) }
+    val devices = if (creatingProject) onlineDevices else onlineDevices.filter { device ->
+        device.id !in inventory.errors && activeNewSessionRuntimes(inventory.results[device.id]?.runtimes.orEmpty()).isNotEmpty()
+    }
+    var projectName by rememberSaveable { mutableStateOf("") }
+    var projectCreating by remember { mutableStateOf(false) }
+    var projectCreateError by remember { mutableStateOf<String?>(null) }
+    var nameEdited by rememberSaveable { mutableStateOf(false) }
+    var workspaceConflict by remember { mutableStateOf<AgentProject?>(null) }
+    var previousDeviceId by rememberSaveable { mutableStateOf<String?>(null) }
+    var previousProjectId by rememberSaveable { mutableStateOf<String?>(null) }
+    var previousPath by rememberSaveable { mutableStateOf("") }
+    var previousRuntimeSelection by remember { mutableStateOf<NewSessionRuntimeSelectionState?>(null) }
+    var retryDirectoryPath by rememberSaveable { mutableStateOf("~") }
+    var directoryRequestId by remember { mutableStateOf(0L) }
+    val selectedProject = projects.firstOrNull { it.id == selectedProjectId && (selectedDeviceId == null || it.connectorId == selectedDeviceId) }
 
-    BackHandler { navigate(AppDestination.Sessions) }
+    fun persistSelection(key: NewSessionConfigurationKey) {
+        val connectorId = runtimeSelection.connectorId?.takeIf { it == selectedDeviceId } ?: return
+        val runtimeId = runtimeSelection.selectedRuntime?.id ?: return
+        preference = when (key) {
+            NewSessionConfigurationKey.Device, NewSessionConfigurationKey.Agent ->
+                preferenceStore.saveTarget(connectorId, runtimeId)
+            NewSessionConfigurationKey.Model, NewSessionConfigurationKey.Effort ->
+                runtimeSelection.selectedModelSelectionId?.takeIf { runtimeSelection.modelCatalog.fresh }?.let {
+                    preferenceStore.saveModel(connectorId, runtimeId, it)
+                }
+            NewSessionConfigurationKey.Permission ->
+                runtimeSelection.selectedPermissionSelectionId?.takeIf { runtimeSelection.permissionCatalog.fresh }?.let {
+                    preferenceStore.savePermission(connectorId, runtimeId, it)
+                }
+        } ?: preference
+    }
 
-    LaunchedEffect(devices) {
-        if (devices.none { it.id == selectedDeviceId }) {
-            selectedDeviceId = devices.firstOrNull()?.id
+    fun selectDevice(id: String?, persist: Boolean = false) {
+        if (selectedDeviceId != id) {
+            selectedDeviceId = id
+            selectedProjectId = null
+            selectedWorkspacePath = ""
+            currentPath = ""
+            homePath = null
+            directoryRequestId++
+            pathEntries = emptyList()
+            pathLoading = false
+            projectCreateError = null
+            choosePath = false
+        }
+        if (id != null) {
+            val next = runtimeSelection.beginRuntimeInventory(id)
+            runtimeSelection = inventory.results[id]?.let {
+                next.replaceRuntimeInventory(it, preference?.runtimeId?.takeIf { preference?.connectorId == id })
+            } ?: next
+            if (persist) persistSelection(NewSessionConfigurationKey.Device)
         }
     }
 
-    val selectedDevice = devices.firstOrNull { it.id == selectedDeviceId }
+    fun cancelProjectCreation() {
+        if (projectCreating) return
+        focusManager.clearFocus()
+        keyboard?.hide()
+        if (projectOnly) {
+            navigate(AppDestination.Sessions)
+            return
+        }
+        selectedDeviceId = previousDeviceId
+        selectedProjectId = previousProjectId
+        selectedWorkspacePath = previousPath
+        currentPath = previousPath
+        previousRuntimeSelection?.let { runtimeSelection = it }
+        expandedConfiguration = null
+        creatingProject = false
+        projectCreateError = null
+        workspaceConflict = null
+    }
+
+    BackHandler {
+        when {
+            choosePath -> choosePath = false
+            creatingProject -> {
+                cancelProjectCreation()
+            }
+            else -> navigate(AppDestination.Sessions)
+        }
+    }
+
+    LaunchedEffect(projects, sessionsState.hasLoaded) {
+        val requested = pendingInitialProjectId?.let { id -> projects.firstOrNull { it.id == id } }
+        val current = projects.firstOrNull { it.id == selectedProjectId }
+        val next = requested ?: current
+        if (requested != null) selectedDeviceId = requested.connectorId
+        if (next?.id != selectedProjectId) {
+            selectedProjectId = next?.id
+            if (next == null && !creatingProject) {
+                selectedWorkspacePath = homePath.orEmpty()
+                currentPath = selectedWorkspacePath
+            }
+        }
+        if (requested != null || sessionsState.hasLoaded) {
+            pendingInitialProjectId = null
+        }
+    }
+
+    LaunchedEffect(selectedProject?.id, selectedProject?.connectorId, selectedProject?.workspacePath, creatingProject) {
+        if (!creatingProject && selectedProject != null) {
+            selectedDeviceId = selectedProject.connectorId
+            selectedWorkspacePath = selectedProject.workspacePath
+            currentPath = selectedProject.workspacePath
+        }
+    }
+
+    LaunchedEffect(devices, onlineDevices, sessionsState.hasLoaded, inventory.hasLoaded, creatingProject, selectedProject?.id, preference?.connectorId) {
+        val projectTarget = projects.firstOrNull { it.id == selectedProjectId }
+        if (!creatingProject && projectTarget != null) {
+            selectedDeviceId = projectTarget.connectorId
+        } else {
+            val preferred = preference?.connectorId?.takeIf { id -> devices.any { it.id == id } }
+            val current = selectedDeviceId?.takeIf { id -> devices.any { it.id == id } }
+            val next = (if (creatingProject) current ?: preferred else preferred ?: current)
+                ?: devices.firstOrNull()?.id
+                // A connected device can load its directories while Agent availability is still unknown.
+                ?: selectedDeviceId?.takeIf { id -> onlineDevices.any { it.id == id } }
+                ?: preference?.connectorId?.takeIf { id -> onlineDevices.any { it.id == id } }
+                ?: onlineDevices.firstOrNull()?.id
+            if (next != selectedDeviceId && (next != null || (sessionsState.hasLoaded && inventory.hasLoaded))) {
+                selectDevice(next)
+            }
+        }
+    }
+
+    val selectedDevice = onlineDevices.firstOrNull { it.id == selectedDeviceId }
     val selectedDeviceOs = selectedDevice?.deviceOs
     val isWindowsDevice = isWindowsDeviceOs(selectedDeviceOs)
-    val agents = remember(selectedDevice) { selectedDevice?.newSessionAgents().orEmpty() }
+    val selectedRuntime = runtimeSelection.selectedRuntime
+    val hasAvailableSelectedRuntime = selectedDevice != null && selectedDevice.id !in inventory.errors &&
+        runtimeSelection.connectorId == selectedDevice.id &&
+        !runtimeSelection.runtimesLoading && runtimeSelection.runtimesErrorMessage == null &&
+        activeNewSessionRuntimes(inventory.results[selectedDevice.id]?.runtimes.orEmpty()).any { it.id == selectedRuntime?.id }
+    val setupState = if (creatingProject) null else newSessionSetupState(
+        sessions = sessionsState,
+        inventory = inventory,
+        projectConnectorId = selectedProject?.connectorId,
+        selectedConnectorId = selectedDeviceId,
+        hasSelectedRuntime = hasAvailableSelectedRuntime,
+    )
+    val checkingDevices = setupState?.reason == NewSessionSetupReason.CheckingDevices
+    val checkingAgents = setupState?.reason == NewSessionSetupReason.CheckingAgents
+    val setupPageState = setupState?.takeUnless { checkingDevices || checkingAgents }
+    LaunchedEffect(setupPageState?.reason) {
+        if (setupPageState != null) {
+            editingTitle = false
+            choosePath = false
+            expandedConfiguration = null
+            focusManager.clearFocus()
+            keyboard?.hide()
+        }
+    }
 
-    LaunchedEffect(agents) {
-        if (agents.none { it.runtime == selectedRuntime }) {
-            selectedRuntime = agents.firstOrNull()?.runtime
+    suspend fun loadRuntimeDetails() {
+        val connectorId = runtimeSelection.connectorId ?: return
+        val runtimeId = runtimeSelection.selectedRuntimeId ?: return
+        runtimeSelection = runtimeSelection.beginRuntimeDetails()
+        val requestKey = runtimeSelection.requestKey ?: return
+        val capabilities = onLoadRuntimeCapabilities(connectorId, runtimeId).getOrElse {
+            if (it is CancellationException) throw it
+            runtimeSelection = runtimeSelection.failCapabilities(
+                requestKey,
+                context.getString(R.string.new_session_capabilities_failed),
+            )
+            return
+        }
+        runtimeSelection = runtimeSelection.applyCapabilities(requestKey, capabilities)
+        if (runtimeSelection.requestKey != requestKey) return
+
+        coroutineScope {
+            val modelRequest = if (runtimeSelection.canUseModelCatalog) {
+                async { onLoadModelCatalog(connectorId, runtimeId) }
+            } else {
+                null
+            }
+            val permissionRequest = if (runtimeSelection.canUsePermissionCatalog) {
+                async { onLoadPermissionCatalog(connectorId, runtimeId) }
+            } else {
+                null
+            }
+            modelRequest?.await()
+                ?.onSuccess { catalog ->
+                    runtimeSelection = runtimeSelection.applyModelCatalog(requestKey, catalog)
+                }
+                ?.onFailure {
+                    runtimeSelection = runtimeSelection.failModelCatalog(
+                        requestKey,
+                        context.getString(R.string.new_session_model_catalog_failed),
+                    )
+                }
+            permissionRequest?.await()
+                ?.onSuccess { catalog ->
+                    runtimeSelection = runtimeSelection.applyPermissionCatalog(requestKey, catalog)
+                }
+                ?.onFailure {
+                    runtimeSelection = runtimeSelection.failPermissionCatalog(
+                        requestKey,
+                        context.getString(R.string.new_session_permission_catalog_failed),
+                    )
+                }
+        }
+    }
+
+    LaunchedEffect(selectedDevice?.id, inventory.results[selectedDevice?.id], inventory.errors[selectedDevice?.id], preference?.connectorId, preference?.runtimeId, creatingProject) {
+        if (creatingProject) return@LaunchedEffect
+        val connectorId = selectedDevice?.id
+        if (connectorId == null) {
+            runtimeSelection = NewSessionRuntimeSelectionState(
+                generation = runtimeSelection.generation,
+                selectionHints = runtimeSelection.selectionHints,
+            )
+        } else {
+            val next = runtimeSelection.beginRuntimeInventory(connectorId)
+            runtimeSelection = inventory.results[connectorId]?.let {
+                next.replaceRuntimeInventory(it, preference?.runtimeId?.takeIf { preference?.connectorId == connectorId })
+            } ?: next
+            inventory.errors[connectorId]?.let {
+                runtimeSelection = runtimeSelection.failRuntimeInventory(connectorId, it)
+            }
+        }
+    }
+
+    LaunchedEffect(selectedDevice?.id, runtimeSelection.connectorId, selectedRuntime?.id, selectedRuntime?.type, creatingProject, setupState?.reason) {
+        if (!creatingProject && setupState == null && selectedDevice != null && selectedRuntime != null && runtimeSelection.connectorId == selectedDevice.id) {
+            loadRuntimeDetails()
         }
     }
 
@@ -168,10 +402,18 @@ fun NewSessionScreen(
             deviceOs = device.deviceOs,
             fallbackRoot = fallbackRoot,
         )
+        val requestId = ++directoryRequestId
+        retryDirectoryPath = targetPath
         pathLoading = true
         pathError = null
-        onListDirectory(device.id, request.root, request.path)
+        val result = try {
+            withTimeout(8_000) { onListDirectory(device.id, request.root, request.path) }
+        } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
+            Result.failure(IllegalStateException(context.getString(R.string.new_session_load_directory_failed), error))
+        }
+        result
             .onSuccess { directory ->
+                if (requestId != directoryRequestId || selectedDeviceId != device.id) return@onSuccess
                 val nextPath = canonicalRemoteDirectoryPath(
                     request = request,
                     returnedPath = directory.path,
@@ -181,30 +423,60 @@ fun NewSessionScreen(
                 pathEntries = directory.entries.map { entry ->
                     entry.copy(path = normalizeRemotePath(entry.path))
                 }
-                if (request.root == "~" && homePath == null && nextPath.isNotBlank()) {
-                    homePath = nextPath
-                }
                 if (select && isSelectableRemoteDirectory(nextPath, device.deviceOs)) {
                     selectedWorkspacePath = nextPath
                 }
             }
             .onFailure { error ->
+                if (error is CancellationException) throw error
+                if (requestId != directoryRequestId || selectedDeviceId != device.id) return@onFailure
                 pathEntries = emptyList()
                 pathError = error.message ?: context.getString(R.string.new_session_load_directory_failed)
             }
-        pathLoading = false
+        if (requestId == directoryRequestId && selectedDeviceId == device.id) pathLoading = false
     }
 
-    LaunchedEffect(selectedDevice?.id) {
-        if (selectedDevice == null) {
-            homePath = null
-            pathEntries = emptyList()
+    LaunchedEffect(selectedDevice?.id, creatingProject) {
+        val deviceId = selectedDevice?.id
+        val startPath = currentPath.ifBlank { homePath ?: "~" }
+        homePath = null
+        directoryRequestId++
+        pathEntries = emptyList()
+        pathLoading = false
+        if (deviceId == null) return@LaunchedEffect
+        if (creatingProject) {
+            // The embedded browser's current directory is the project target.
+            loadDirectory(startPath, fallbackRoot = selectedWorkspacePath, select = true)
             return@LaunchedEffect
         }
-        homePath = null
-        currentPath = "~"
-        selectedWorkspacePath = "~"
-        loadDirectory(targetPath = ".", fallbackRoot = "~", select = true)
+        val result = try {
+            withTimeout(8_000) { onListDirectory(deviceId, "~", ".") }
+        } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
+            Result.failure(error)
+        }
+        if (selectedDeviceId != deviceId) return@LaunchedEffect
+        val resolved = result.getOrNull()?.path?.takeIf(String::isNotBlank) ?: "~"
+        homePath = resolved
+    }
+
+    LaunchedEffect(homePath, selectedDevice?.id, hasAvailableSelectedRuntime, creatingProject, choosePath) {
+        val deviceId = selectedDevice?.id ?: return@LaunchedEffect
+        val resolved = homePath ?: return@LaunchedEffect
+        // Do not lock onto a home-directory project before an available Agent determines the device.
+        if (!creatingProject && !choosePath && hasAvailableSelectedRuntime && selectedWorkspacePath.isBlank()) {
+            val project = workspaceProject(projects, deviceId, resolved, selectedDeviceOs)
+            selectedProjectId = project?.id
+            selectedWorkspacePath = project?.workspacePath ?: resolved
+            currentPath = selectedWorkspacePath
+        }
+    }
+
+    LaunchedEffect(selectedWorkspacePath, selectedDeviceId, projects, creatingProject) {
+        if (!creatingProject || nameEdited) return@LaunchedEffect
+        val existing = workspaceProject(projects, selectedDeviceId.orEmpty(), selectedWorkspacePath, selectedDeviceOs)
+        projectName = if (selectedWorkspacePath.isBlank()) "" else availableProjectName(
+            existing?.name ?: workspaceProjectName(selectedWorkspacePath), projects, existing?.id,
+        )
     }
 
     LaunchedEffect(editingTitle) {
@@ -214,24 +486,158 @@ fun NewSessionScreen(
         }
     }
 
-    val workspaceSessions = remember(sessionsState.sessions, sessionsState.archivedSessions) {
-        sessionsState.sessions + sessionsState.archivedSessions
-    }
-    val workspaces = remember(workspaceSessions, selectedDevice?.id, homePath) {
-        workspaceOptionsFor(workspaceSessions, selectedDevice?.id, homePath)
-    }
-    val selectedWorkspace = workspaces.firstOrNull { it.path == selectedWorkspacePath }
-    val selectedWorkspaceTitle = selectedWorkspace?.title?.localizedWorkspaceTitle()
-        ?: pathTitle(selectedWorkspacePath, stringResource(R.string.new_session_home_directory))
-    val selectedWorkspaceDetail = selectedWorkspace?.detail ?: selectedWorkspacePath
     val canUseCurrentPath = isSelectableRemoteDirectory(currentPath, selectedDeviceOs)
     val effectiveWorkspacePath = if (choosePath) currentPath else selectedWorkspacePath
-    val selectedAgent = agents.firstOrNull { it.runtime == selectedRuntime }
-    val canStart = selectedDevice != null &&
-        selectedAgent != null &&
-        effectiveWorkspacePath.isNotBlank() &&
-        !creating &&
-        (!choosePath || (!pathLoading && canUseCurrentPath))
+    val workspaceReady = if (choosePath) {
+        canUseCurrentPath && !pathLoading && pathError == null
+    } else {
+        effectiveWorkspacePath.isNotBlank()
+    }
+    val catalogsLoading = selectedRuntime != null && (
+        !runtimeSelection.capabilities.loaded ||
+            runtimeSelection.capabilities.loading ||
+            runtimeSelection.modelCatalog.loading ||
+            runtimeSelection.permissionCatalog.loading
+        )
+    val loadingLabel = stringResource(R.string.new_session_catalog_loading)
+    val unavailableLabel = stringResource(R.string.new_session_catalog_unavailable)
+    val selectedModel = runtimeSelection.selectedModel
+    val selectedReasoning = runtimeSelection.selectedReasoning
+    val selectedPermission = runtimeSelection.selectedPermission
+    val modelOptions = runtimeSelection.modelCatalog.data?.models.orEmpty()
+    val reasoningOptions = selectedModel?.reasoningItems.orEmpty()
+    val permissionOptions = runtimeSelection.permissionCatalog.data?.permissions.orEmpty()
+    val permissionLocalizer = runtimePermissionLocalizer()
+    val permissionRuntime = runtimeSelection.permissionCatalog.data?.runtime ?: selectedRuntime?.type
+    val localizedPermissions = permissionOptions.associate { permission ->
+        permission.id to permissionLocalizer.localize(
+            runtime = permissionRuntime,
+            permissionId = permission.id,
+            label = permission.displayName,
+            description = permission.description,
+            metadata = permission.metadata,
+        )
+    }
+    val showModelConfiguration = selectedRuntime != null && (
+        catalogsLoading || runtimeSelection.canUseModelCatalog || runtimeSelection.modelCatalog.data != null
+        )
+    val showPermissionConfiguration = selectedRuntime != null && (
+        catalogsLoading || runtimeSelection.canUsePermissionCatalog || runtimeSelection.permissionCatalog.data != null
+        )
+    val configurationFields = buildList {
+        add(
+            NewSessionConfigurationField(
+                key = NewSessionConfigurationKey.Device,
+                label = stringResource(R.string.new_session_device),
+                value = selectedDevice?.name ?: stringResource(R.string.new_session_no_device),
+                selectedId = selectedDevice?.id,
+                options = devices.map { device ->
+                    NewSessionConfigurationOption(id = device.id, label = device.name)
+                },
+                enabled = devices.isNotEmpty() && !projectCreating,
+                loading = checkingDevices,
+            ),
+        )
+        if (!projectOnly) add(
+            NewSessionConfigurationField(
+                key = NewSessionConfigurationKey.Agent,
+                label = stringResource(R.string.new_session_agent),
+                value = selectedRuntime?.labels?.primary ?: stringResource(R.string.new_session_no_agent),
+                selectedId = selectedRuntime?.id,
+                options = runtimeSelection.runtimes.map { runtime ->
+                    NewSessionConfigurationOption(
+                        id = runtime.id,
+                        label = runtime.labels.primary,
+                    )
+                },
+                enabled = !creatingProject && selectedDevice != null && runtimeSelection.runtimes.isNotEmpty(),
+                loading = checkingDevices || checkingAgents || (selectedDevice != null && runtimeSelection.runtimesLoading),
+            ),
+        )
+        if (!projectOnly && showModelConfiguration) {
+            add(
+                NewSessionConfigurationField(
+                    key = NewSessionConfigurationKey.Model,
+                    label = stringResource(R.string.new_session_model),
+                    value = if (catalogsLoading) loadingLabel else selectedModel?.displayName ?: unavailableLabel,
+                    selectedId = selectedModel?.id,
+                    options = modelOptions.map { model ->
+                        val enabled = model.enabled && (
+                            model.selectionId?.isNotBlank() == true ||
+                                model.reasoningItems.any { it.enabled && it.selectionId.isNotBlank() }
+                            )
+                        NewSessionConfigurationOption(
+                            id = model.id,
+                            label = model.displayName,
+                            enabled = enabled,
+                        )
+                    },
+                    enabled = !creatingProject && runtimeSelection.modelCatalog.fresh,
+                    loading = catalogsLoading,
+                ),
+            )
+            add(
+                NewSessionConfigurationField(
+                    key = NewSessionConfigurationKey.Effort,
+                    label = stringResource(R.string.new_session_reasoning),
+                    value = when {
+                        catalogsLoading -> loadingLabel
+                        selectedReasoning != null -> selectedReasoning.displayName
+                        reasoningOptions.isEmpty() -> stringResource(R.string.session_runtime_effort_default)
+                        else -> unavailableLabel
+                    },
+                    selectedId = selectedReasoning?.id,
+                    options = reasoningOptions.map { effort ->
+                        NewSessionConfigurationOption(
+                            id = effort.id,
+                            label = effort.displayName,
+                            description = if (effort.enabled) effort.description else effort.disabledReason,
+                            enabled = effort.enabled && effort.id.isNotBlank() && effort.selectionId.isNotBlank(),
+                        )
+                    },
+                    enabled = !creatingProject && runtimeSelection.modelCatalog.fresh && reasoningOptions.isNotEmpty(),
+                    loading = catalogsLoading,
+                ),
+            )
+        }
+        if (!projectOnly && showPermissionConfiguration) {
+            add(
+                NewSessionConfigurationField(
+                    key = NewSessionConfigurationKey.Permission,
+                    label = stringResource(R.string.session_runtime_permission_mode),
+                    value = if (catalogsLoading) {
+                        loadingLabel
+                    } else {
+                        selectedPermission?.let { permission ->
+                            localizedPermissions[permission.id]?.label ?: permission.displayName
+                        } ?: unavailableLabel
+                    },
+                    selectedId = selectedPermission?.id,
+                    options = permissionOptions.map { permission ->
+                        val localized = localizedPermissions[permission.id]
+                        NewSessionConfigurationOption(
+                            id = permission.id,
+                            label = localized?.label ?: permission.displayName,
+                            description = if (permission.enabled) {
+                                localized?.description ?: permission.description
+                            } else {
+                                permission.disabledReason
+                            },
+                            enabled = permission.enabled && permission.id.isNotBlank() && permission.selectionId.isNotBlank(),
+                        )
+                    },
+                    enabled = !creatingProject && runtimeSelection.permissionCatalog.fresh,
+                    loading = catalogsLoading,
+                ),
+            )
+        }
+    }
+    val canStart = setupState == null && selectedDevice != null &&
+        runtimeSelection.connectorId == selectedDevice.id &&
+        selectedRuntime != null &&
+        runtimeSelection.readyForCreate &&
+        workspaceReady &&
+        !creatingProject
 
     fun submitTitle() {
         title = title.trim().ifBlank { defaultTitle }
@@ -241,29 +647,234 @@ fun NewSessionScreen(
 
     fun startSession() {
         val device = selectedDevice ?: return
-        val agent = selectedAgent ?: return
+        val runtime = selectedRuntime ?: return
         if (!canStart) return
-        scope.launch {
-            creating = true
-            createError = null
-            onCreateSession(title, device.id, agent.runtime, effectiveWorkspacePath)
-                .onSuccess { session ->
-                    creating = false
-                    onOpenSession(session)
-                }
-                .onFailure { error ->
-                    creating = false
-                    createError = error.message ?: context.getString(R.string.new_session_create_failed)
-                }
+        val project = if (choosePath) {
+            workspaceProject(projects, device.id, effectiveWorkspacePath, device.deviceOs)
+        } else {
+            selectedProject
         }
+        preferenceStore.save(
+            connectorId = device.id,
+            runtimeId = runtime.id,
+            selections = runtimeSelection.selections,
+        )
+        onPrepareSession(
+            NewSessionDraft(
+                connectorId = device.id,
+                projectId = project?.id.orEmpty(),
+                runtime = runtime.type,
+                title = title.trim().takeIf(String::isNotBlank),
+                cwd = effectiveWorkspacePath.trim().takeIf(String::isNotBlank),
+                deviceName = device.name,
+                runtimeLabel = runtime.labels.primary,
+                knownSessionIds = (sessionsState.sessions + sessionsState.archivedSessions)
+                    .mapTo(mutableSetOf()) { it.id },
+                runtimeId = runtime.id,
+                runtimeType = runtime.type,
+                runtimeName = runtime.name,
+                selections = runtimeSelection.selections,
+                attachmentsEnabled = runtimeSelection.canUseAttachments,
+            ),
+        )
+    }
+
+    fun beginProjectCreation() {
+        focusManager.clearFocus()
+        keyboard?.hide()
+        editingTitle = false
+        previousDeviceId = selectedDeviceId
+        previousProjectId = selectedProjectId
+        previousPath = selectedWorkspacePath
+        previousRuntimeSelection = runtimeSelection
+        currentPath = homePath ?: "~"
+        directoryRequestId++
+        pathEntries = emptyList()
+        pathError = null
+        selectedWorkspacePath = ""
+        nameEdited = false
+        projectName = ""
+        projectCreateError = null
+        projectCreating = false
+        choosePath = false
+        creatingProject = true
+        expandedConfiguration = null
+        val preferredDeviceId = selectedDeviceId
+            ?.takeIf { id -> onlineDevices.any { it.id == id } }
+            ?: preference?.connectorId?.takeIf { id -> onlineDevices.any { it.id == id } }
+            ?: onlineDevices.firstOrNull()?.id
+        selectedDeviceId = preferredDeviceId
+    }
+
+    fun createProject(confirmRename: Boolean = false) {
+        val device = selectedDevice ?: return
+        val inputPath = selectedWorkspacePath.trim()
+        val inputName = projectName.trim()
+        val useDirectoryName = !nameEdited
+        if (projectCreating || inputPath.isBlank() || inputName.isBlank()) return
+        focusManager.clearFocus()
+        keyboard?.hide()
+        projectCreating = true
+        projectCreateError = null
+        scope.launch {
+            var attemptedName = inputName
+            var existingProjectId: String? = null
+            try {
+                val path = if (inputPath.startsWith("~")) {
+                    onListDirectory(device.id, inputPath, ".").getOrThrow().path.also {
+                        require(it.isNotBlank() && !it.startsWith("~")) {
+                            context.getString(R.string.workspace_resolve_failed)
+                        }
+                    }
+                } else inputPath
+                // Refresh before checking the workspace so another client's project is not silently renamed.
+                val latest = onLoadProjects().getOrThrow()
+                val existing = workspaceProject(latest, device.id, path, device.deviceOs)
+                existingProjectId = existing?.id
+                attemptedName = availableProjectName(
+                    if (useDirectoryName) existing?.name ?: workspaceProjectName(path) else inputName,
+                    latest, existingProjectId,
+                )
+                selectedWorkspacePath = path
+                projectName = attemptedName
+                if (!confirmRename && existing != null && existing.name != attemptedName) {
+                    workspaceConflict = existing
+                    return@launch
+                }
+                val project = onCreateProject(attemptedName, device.id, path).getOrThrow()
+                localProject = project
+                selectDevice(project.connectorId, persist = true)
+                selectedProjectId = project.id
+                selectedDeviceId = project.connectorId
+                selectedWorkspacePath = project.workspacePath
+                currentPath = project.workspacePath
+                expandedConfiguration = null
+                if (projectOnly) navigate(AppDestination.Sessions) else creatingProject = false
+                choosePath = false
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (error is ApiException && error.errorCode == "project_name_conflict") {
+                    val latest = onLoadProjects().getOrDefault(projects)
+                    projectName = availableProjectName(attemptedName, latest, existingProjectId, setOf(attemptedName))
+                    nameEdited = true
+                    projectCreateError = context.getString(R.string.project_name_adjusted)
+                } else {
+                    projectCreateError = error.message ?: context.getString(R.string.new_session_project_create_failed)
+                }
+            } finally { projectCreating = false }
+        }
+    }
+
+    workspaceConflict?.let { project ->
+        AlertDialog(
+            onDismissRequest = { workspaceConflict = null },
+            title = { Text(stringResource(R.string.project_workspace_conflict_title)) },
+            text = { Text(stringResource(R.string.project_workspace_conflict_message, project.name, projectName)) },
+            confirmButton = { TextButton(onClick = { workspaceConflict = null; createProject(confirmRename = true) }) { Text(stringResource(R.string.project_rename_existing)) } },
+            dismissButton = { TextButton(onClick = { workspaceConflict = null }) { Text(stringResource(R.string.common_cancel)) } },
+        )
+    }
+
+    if (creatingProject) {
+        val parent = remoteParentPath(currentPath, selectedDeviceOs, allowWindowsDriveOverview = isWindowsDevice)
+        val currentPathLabel = displayRemotePath(
+            root = selectedWorkspacePath,
+            rawPath = currentPath,
+            deviceOs = selectedDeviceOs,
+            windowsDriveOverviewLabel = stringResource(R.string.files_windows_drives),
+        )
+        val directorySelected = selectedWorkspacePath.isNotBlank() &&
+            workspacePathKey(selectedWorkspacePath, selectedDeviceOs) == workspacePathKey(currentPath, selectedDeviceOs)
+        val directoryReady = selectedDevice != null && canUseCurrentPath && !pathLoading && pathError == null
+        fun browseDirectory(path: String) {
+            if (projectCreating) return
+            focusManager.clearFocus()
+            keyboard?.hide()
+            selectedWorkspacePath = ""
+            projectCreateError = null
+            scope.launch { loadDirectory(path, fallbackRoot = currentPath, select = true) }
+        }
+        NewProjectScreen(
+            deviceField = configurationFields.first { it.key == NewSessionConfigurationKey.Device },
+            deviceMenuExpanded = expandedConfiguration == NewSessionConfigurationKey.Device,
+            onToggleDevice = {
+                focusManager.clearFocus()
+                expandedConfiguration = if (expandedConfiguration == NewSessionConfigurationKey.Device) null else NewSessionConfigurationKey.Device
+            },
+            onDismissDevice = { expandedConfiguration = null },
+            onSelectDevice = { selectDevice(it) },
+            name = projectName,
+            onNameChange = {
+                nameEdited = true
+                projectName = it
+                projectCreateError = null
+            },
+            creating = projectCreating,
+            canCreate = projectName.isNotBlank() && directoryReady && directorySelected && !projectCreating,
+            error = projectCreateError,
+            onBack = ::cancelProjectCreation,
+            onCreate = { createProject() },
+        ) {
+            ChoosePathSection(
+                title = stringResource(R.string.new_session_project_directory),
+                currentPath = currentPath,
+                currentPathLabel = currentPathLabel,
+                parentPath = parent,
+                entries = pathEntries,
+                loading = pathLoading,
+                error = pathError,
+                darkMode = darkMode,
+                canUseCurrent = directoryReady,
+                collapsible = true,
+                directoryBorderColor = Color(0xFFE7E6E2).takeUnless { darkMode },
+                enabled = selectedDevice != null && !projectCreating,
+                modifier = Modifier.weight(1f),
+                onBack = null,
+                onParent = { parent?.let(::browseDirectory) },
+                onOpenEntry = { browseDirectory(it.path) },
+                onRetry = { browseDirectory(retryDirectoryPath) },
+            )
+        }
+        return
+    }
+
+    if (setupPageState != null) {
+        ScreenScaffold {
+            Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars)) {
+                NewSessionHeader(
+                    title = defaultTitle,
+                    editable = false,
+                    editing = false,
+                    darkMode = darkMode,
+                    focusRequester = focusRequester,
+                    onTitleChange = {},
+                    onSubmitTitle = {},
+                    onClose = { navigate(AppDestination.Sessions) },
+                    onEditToggle = {},
+                )
+                NewSessionSetupPanel(
+                    state = setupPageState,
+                    refreshing = devicesRefreshing || inventory.pendingInitial.isNotEmpty(),
+                    onOpenDevices = { navigate(AppDestination.Devices) },
+                    onRetry = {
+                        onRefreshDevices()
+                        inventory.refresh()
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        return
     }
 
     ScreenScaffold {
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().imePadding(),
         ) {
             NewSessionHeader(
                 title = title,
+                editable = !projectOnly,
                 editing = editingTitle,
                 darkMode = darkMode,
                 focusRequester = focusRequester,
@@ -281,29 +892,35 @@ fun NewSessionScreen(
                     .padding(start = 18.dp, top = 12.dp, end = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(58.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    RuntimeSelectPill(
-                        label = stringResource(R.string.new_session_device),
-                        value = selectedDevice?.name ?: stringResource(R.string.new_session_no_device),
-                        icon = Lucide.Monitor,
-                        darkMode = darkMode,
-                        modifier = Modifier.weight(1f),
-                        onClick = { sheet = NewSessionSheet.Device },
-                    )
-                    RuntimeSelectPill(
-                        label = stringResource(R.string.new_session_agent),
-                        value = selectedAgent?.label ?: stringResource(R.string.new_session_no_agent),
-                        icon = Lucide.Bot,
-                        darkMode = darkMode,
-                        modifier = Modifier.weight(1f),
-                        onClick = { sheet = NewSessionSheet.Agent },
-                    )
-                }
+                NewSessionConfigurationCard(
+                    fields = configurationFields,
+                    modifier = if (darkMode) Modifier else Modifier.border(1.dp, Color(0xFFE7E6E2), RoundedCornerShape(18.dp)),
+                    expanded = expandedConfiguration,
+                    onToggle = { key ->
+                        expandedConfiguration = if (expandedConfiguration == key) null else key
+                    },
+                    onDismiss = { expandedConfiguration = null },
+                    onSelect = { key, id ->
+                        when (key) {
+                            NewSessionConfigurationKey.Device -> {
+                                selectDevice(id, persist = !creatingProject)
+                            }
+                            NewSessionConfigurationKey.Agent -> {
+                                runtimeSelection = runtimeSelection.selectRuntime(id)
+                            }
+                            NewSessionConfigurationKey.Model -> {
+                                runtimeSelection = runtimeSelection.selectModel(id)
+                            }
+                            NewSessionConfigurationKey.Effort -> {
+                                runtimeSelection = runtimeSelection.selectReasoning(id)
+                            }
+                            NewSessionConfigurationKey.Permission -> {
+                                runtimeSelection = runtimeSelection.selectPermission(id)
+                            }
+                        }
+                        if (key != NewSessionConfigurationKey.Device) persistSelection(key)
+                    },
+                )
 
                 if (choosePath) {
                     val parent = remoteParentPath(
@@ -326,6 +943,7 @@ fun NewSessionScreen(
                         error = pathError,
                         darkMode = darkMode,
                         canUseCurrent = canUseCurrentPath,
+                        directoryBorderColor = Color(0xFFE7E6E2).takeUnless { darkMode },
                         modifier = Modifier.weight(1f),
                         onBack = { choosePath = false },
                         onParent = {
@@ -341,8 +959,8 @@ fun NewSessionScreen(
                         onUseCurrent = {
                             if (canUseCurrentPath) {
                                 selectedWorkspacePath = currentPath
-                                choosePath = false
-                                workspaceListExpanded = false
+                                projectCreateError = null
+                                if (!creatingProject) selectedProjectId = workspaceProject(projects, selectedDeviceId.orEmpty(), currentPath, selectedDeviceOs)?.id
                             }
                         },
                         onOpenEntry = { entry ->
@@ -356,956 +974,114 @@ fun NewSessionScreen(
                     )
                 } else {
                     WorkspaceSection(
-                        selectedTitle = selectedWorkspaceTitle,
-                        selectedDetail = selectedWorkspaceDetail,
-                        workspaces = workspaces,
-                        expanded = workspaceListExpanded,
-                        darkMode = darkMode,
+                        path = selectedWorkspacePath,
+                        connectorId = selectedDeviceId,
+                        deviceOs = selectedDeviceOs,
+                        homePath = homePath,
+                        projectMode = sidebarViewMode == HomeSidebarViewMode.Project,
+                        projects = projects,
+                        sessions = workspaceSessions,
+                        listState = workspaceListState,
+                        canCreateProject = onlineDevices.isNotEmpty(),
                         modifier = Modifier.weight(1f),
-                        onChoosePath = {
+                        onCreate = ::beginProjectCreation,
+                        onBrowse = {
+                            val home = homePath?.takeIf(String::isNotBlank) ?: "~"
                             choosePath = true
-                            val startPath = if (isWindowsDevice) "" else selectedWorkspacePath
                             scope.launch {
                                 loadDirectory(
-                                    targetPath = startPath,
-                                    fallbackRoot = selectedWorkspacePath,
+                                    targetPath = if (home == "~") "." else home,
+                                    fallbackRoot = home,
                                 )
                             }
                         },
-                        onToggleExpanded = { workspaceListExpanded = !workspaceListExpanded },
-                        onSelectWorkspace = {
-                            selectedWorkspacePath = it.path
-                            workspaceListExpanded = false
+                        onSelect = { choice ->
+                            selectedProjectId = choice.projectId
+                            selectedWorkspacePath = choice.path
+                            currentPath = choice.path
                         },
                     )
                 }
             }
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(start = 18.dp, end = 18.dp, bottom = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                val error = createError ?: if (devices.isEmpty()) {
-                    stringResource(R.string.new_session_no_online_agent)
-                } else {
-                    null
+            if (!creatingProject) Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .padding(start = 18.dp, end = 18.dp, bottom = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                val runtimeError = when {
+                    checkingDevices || checkingAgents || inventory.loading -> null
+                    onlineDevices.isEmpty() -> stringResource(R.string.new_session_no_online_agent)
+                    devices.isEmpty() -> inventory.errors.values.firstOrNull()
+                        ?: stringResource(R.string.new_session_no_attached_agents)
+                    runtimeSelection.runtimesErrorMessage != null -> runtimeSelection.runtimesErrorMessage
+                    !runtimeSelection.runtimesLoading && runtimeSelection.runtimes.isEmpty() ->
+                        stringResource(R.string.new_session_no_attached_agents)
+                    selectedRuntime?.present == false -> stringResource(R.string.device_runtime_not_present)
+                    selectedRuntime?.configured == false -> stringResource(R.string.device_runtime_not_configured)
+                    selectedRuntime?.active == false -> stringResource(R.string.new_session_runtime_inactive)
+                    selectedRuntime?.detailMessage != null -> selectedRuntime.detailMessage
+                    runtimeSelection.capabilities.errorMessage != null ->
+                        stringResource(R.string.new_session_capabilities_failed)
+                    runtimeSelection.modelCatalog.errorMessage != null ->
+                        stringResource(R.string.new_session_model_catalog_failed)
+                    runtimeSelection.permissionCatalog.errorMessage != null ->
+                        stringResource(R.string.new_session_permission_catalog_failed)
+                    runtimeSelection.modelCatalog.stale || runtimeSelection.permissionCatalog.stale ->
+                        stringResource(R.string.new_session_catalog_stale)
+                    else -> null
                 }
+                val error = runtimeError
                 error?.let {
-                    Text(
-                        text = it,
-                        color = colors.errorText,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        lineHeight = 17.sp,
-                        modifier = Modifier.padding(horizontal = 4.dp),
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            text = it,
+                            color = colors.errorText,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            lineHeight = 17.sp,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (onlineDevices.isNotEmpty()) {
+                            Text(
+                                text = stringResource(R.string.common_retry),
+                                color = colors.primaryAction,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.noRippleClickable {
+                                    scope.launch {
+                                        if (selectedDevice == null || runtimeSelection.runtimesErrorMessage != null ||
+                                            runtimeSelection.runtimes.isEmpty()
+                                        ) {
+                                            inventory.refresh()
+                                        } else if (
+                                            runtimeSelection.capabilities.errorMessage != null ||
+                                            runtimeSelection.modelCatalog.errorMessage != null ||
+                                            runtimeSelection.permissionCatalog.errorMessage != null ||
+                                            runtimeSelection.modelCatalog.stale ||
+                                            runtimeSelection.permissionCatalog.stale
+                                        ) {
+                                            loadRuntimeDetails()
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                    }
                 }
                 StartChatButton(
-                    label = if (creating) stringResource(R.string.new_session_starting) else stringResource(R.string.new_session_start_chat),
+                    label = stringResource(R.string.new_session_start_chat),
                     enabled = canStart,
                     onClick = ::startSession,
                 )
-            }
-        }
-    }
-
-    when (sheet) {
-        NewSessionSheet.Device -> DevicePickerSheet(
-            devices = devices,
-            selectedDeviceId = selectedDevice?.id,
-            darkMode = darkMode,
-            onDismiss = { sheet = null },
-            onSelect = {
-                selectedDeviceId = it.id
-                sheet = null
-            },
-        )
-        NewSessionSheet.Agent -> AgentPickerSheet(
-            agents = agents,
-            selectedRuntime = selectedRuntime,
-            darkMode = darkMode,
-            onDismiss = { sheet = null },
-            onSelect = {
-                selectedRuntime = it.runtime
-                sheet = null
-            },
-        )
-        null -> Unit
-    }
-}
-
-@Composable
-private fun NewSessionHeader(
-    title: String,
-    editing: Boolean,
-    darkMode: Boolean,
-    focusRequester: FocusRequester,
-    onTitleChange: (String) -> Unit,
-    onSubmitTitle: () -> Unit,
-    onClose: () -> Unit,
-    onEditToggle: () -> Unit,
-) {
-    val colors = LocalAAColors.current
-    val iconColor = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777)
-    var titleField by remember { mutableStateOf(title.textFieldValueAtEnd()) }
-
-    LaunchedEffect(editing) {
-        if (editing) {
-            titleField = title.textFieldValueAtEnd()
-        }
-    }
-
-    LaunchedEffect(title, editing) {
-        if (!editing && titleField.text != title) {
-            titleField = title.textFieldValueAtEnd()
-        }
-    }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(58.dp)
-            .padding(horizontal = 18.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        HeaderCircleButton(darkMode = darkMode, onClick = onClose) {
-            CloseGlyph(color = iconColor, sizeDp = 17)
-        }
-        if (editing) {
-            Column(
-                modifier = Modifier.width(210.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-                BasicTextField(
-                    value = titleField,
-                    onValueChange = {
-                        titleField = it
-                        onTitleChange(it.text)
-                    },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(focusRequester),
-                    textStyle = TextStyle(
-                        color = colors.ink,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        fontFamily = FontFamily.SansSerif,
-                        textAlign = TextAlign.Center,
-                    ),
-                    cursorBrush = SolidColor(colors.ink),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { onSubmitTitle() }),
-                    decorationBox = { inner ->
-                        Box(contentAlignment = Alignment.Center) {
-                            inner()
-                        }
-                    },
-                )
-                Box(
-                    modifier = Modifier
-                        .width(142.dp)
-                        .height(1.5.dp)
-                        .clip(CircleShape)
-                        .background(if (darkMode) Color(0xFF71717A) else Color(0xFFBDBDBD)),
-                )
-            }
-        } else {
-            Text(
-                text = title,
-                color = colors.ink,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.ExtraBold,
-                lineHeight = 24.sp,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 16.dp),
-            )
-        }
-        HeaderCircleButton(darkMode = darkMode, onClick = onEditToggle) {
-            if (editing) {
-                CheckGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF333333))
-            } else {
-                Icon(
-                    imageVector = Lucide.Pencil,
-                    contentDescription = null,
-                    tint = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun HeaderCircleButton(
-    darkMode: Boolean,
-    onClick: () -> Unit,
-    content: @Composable () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .background(if (darkMode) Color(0xFF18181B) else Color.White)
-            .border(1.dp, if (darkMode) Color(0xFF27272A) else Color(0xFFE8E8E8), CircleShape)
-            .noRippleClickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        content()
-    }
-}
-
-@Composable
-private fun RuntimeSelectPill(
-    label: String,
-    value: String,
-    icon: ImageVector,
-    darkMode: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    val border = if (darkMode) Color(0xFF27272A) else Color(0xFFECECEC)
-    val surface = if (darkMode) Color(0xFF18181B) else Color(0xFFFBFBFB)
-    val titleColor = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF2B2B2B)
-    val labelColor = if (darkMode) Color(0xFF71717A) else Color(0xFFAAAAAA)
-    val iconColor = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777)
-
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(58.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(surface)
-            .border(1.dp, border, RoundedCornerShape(18.dp))
-            .noRippleClickable(onClick = onClick)
-            .padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(9.dp),
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = iconColor,
-            modifier = Modifier.size(18.dp),
-        )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = label,
-                color = labelColor,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                lineHeight = 14.sp,
-                maxLines = 1,
-            )
-            Text(
-                text = value,
-                color = titleColor,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                lineHeight = 20.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        DownGlyph(color = if (darkMode) Color(0xFF71717A) else Color(0xFFAAAAAA))
-    }
-}
-
-@Composable
-private fun WorkspaceSection(
-    selectedTitle: String,
-    selectedDetail: String,
-    workspaces: List<com.agentsanywhere.app.feature.sessions.NewSessionWorkspace>,
-    expanded: Boolean,
-    darkMode: Boolean,
-    modifier: Modifier,
-    onChoosePath: () -> Unit,
-    onToggleExpanded: () -> Unit,
-    onSelectWorkspace: (com.agentsanywhere.app.feature.sessions.NewSessionWorkspace) -> Unit,
-) {
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(32.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = stringResource(R.string.new_session_workspace),
-                color = LocalAAColors.current.ink,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.ExtraBold,
-                lineHeight = 21.sp,
-            )
-            SmallPill(darkMode = darkMode, onClick = onChoosePath) {
-                SearchGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555))
-                Text(
-                    text = stringResource(R.string.new_session_choose_path),
-                    color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 1,
-                )
-            }
-        }
-        WorkspaceTrigger(
-            title = selectedTitle,
-            detail = selectedDetail,
-            expanded = expanded,
-            darkMode = darkMode,
-            onToggleExpanded = onToggleExpanded,
-        )
-        if (expanded) {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-            ) {
-                items(workspaces, key = { it.path }) { workspace ->
-                    WorkspaceRow(
-                        title = workspace.title,
-                        detail = workspace.detail,
-                        darkMode = darkMode,
-                        onClick = { onSelectWorkspace(workspace) },
-                    )
                 }
-            }
         }
     }
-}
 
-@Composable
-private fun WorkspaceTrigger(
-    title: String,
-    detail: String,
-    expanded: Boolean,
-    darkMode: Boolean,
-    onToggleExpanded: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(56.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(if (darkMode) Color(0xFF18181B) else Color(0xFFF7F7F7))
-            .border(1.dp, if (darkMode) Color(0xFF27272A) else Color(0xFFE8E8E8), RoundedCornerShape(18.dp))
-            .padding(horizontal = 13.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Icon(
-            imageVector = Lucide.Folder,
-            contentDescription = null,
-            tint = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
-            modifier = Modifier.size(20.dp),
-        )
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(
-                text = title,
-                color = LocalAAColors.current.ink,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.ExtraBold,
-                lineHeight = 20.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = detail,
-                color = if (darkMode) Color(0xFF71717A) else Color(0xFF8A8A8A),
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                lineHeight = 16.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .background(if (darkMode) Color.White.copy(alpha = 0.04f) else Color.Black.copy(alpha = 0.04f))
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onToggleExpanded,
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = if (expanded) Lucide.ChevronUp else Lucide.ChevronDown,
-                contentDescription = null,
-                tint = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
-                modifier = Modifier.size(18.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun WorkspaceRow(
-    title: String,
-    detail: String,
-    darkMode: Boolean,
-    onClick: () -> Unit,
-) {
-    val feedbackScope = rememberCoroutineScope()
-    val interactionSource = remember { MutableInteractionSource() }
-    val pressed by interactionSource.collectIsPressedAsState()
-    var flash by remember { mutableStateOf(false) }
-    val active = pressed || flash
-    val rowShape = RoundedCornerShape(16.dp)
-    val pressedSurface = if (darkMode) Color(0xFF18181B) else Color(0xFFEDEBE6)
-    val shadowColor = if (darkMode) Color(0x77000000) else Color(0x30000000)
-    val elevation by animateDpAsState(
-        targetValue = if (active) 14.dp else 0.dp,
-        label = "new-session-workspace-row-elevation",
-    )
-    val surfaceAlpha by animateFloatAsState(
-        targetValue = if (active) 1f else 0f,
-        label = "new-session-workspace-row-surface-alpha",
-    )
-    val titleColor = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF4A4A4A)
-    val detailColor = if (darkMode) Color(0xFF71717A) else Color(0xFF888888)
-    val iconColor = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777)
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(58.dp)
-            .shadow(
-                elevation = elevation,
-                shape = rowShape,
-                clip = false,
-                ambientColor = shadowColor,
-                spotColor = shadowColor,
-            )
-            .clip(rowShape)
-            .background(pressedSurface.copy(alpha = surfaceAlpha))
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-            ) {
-                flash = true
-                feedbackScope.launch {
-                    delay(160)
-                    onClick()
-                    flash = false
-                }
-            }
-            .padding(horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Icon(
-            imageVector = Lucide.Folder,
-            contentDescription = null,
-            tint = iconColor,
-            modifier = Modifier.size(20.dp),
-        )
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(
-                text = title,
-                color = titleColor,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                lineHeight = 20.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = detail,
-                color = detailColor,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                lineHeight = 16.sp,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.StartEllipsis,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ChoosePathSection(
-    currentPath: String,
-    currentPathLabel: String,
-    parentPath: String?,
-    entries: List<NewSessionPathEntry>,
-    loading: Boolean,
-    error: String?,
-    darkMode: Boolean,
-    canUseCurrent: Boolean,
-    modifier: Modifier,
-    onBack: () -> Unit,
-    onParent: () -> Unit,
-    onUseCurrent: () -> Unit,
-    onOpenEntry: (NewSessionPathEntry) -> Unit,
-) {
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(32.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = stringResource(R.string.new_session_choose_path),
-                color = LocalAAColors.current.ink,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.ExtraBold,
-                lineHeight = 21.sp,
-            )
-            SmallPill(darkMode = darkMode, onClick = onBack) {
-                BackGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555))
-                Text(
-                    text = stringResource(R.string.common_back),
-                    color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 1,
-                )
-            }
-        }
-        CurrentDirectoryBar(
-            currentPath = currentPathLabel,
-            darkMode = darkMode,
-            canGoParent = parentPath != null,
-            canUseCurrent = canUseCurrent,
-            onParent = onParent,
-            onUseCurrent = onUseCurrent,
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-        ) {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                when {
-                    loading -> item {
-                        PathMessage(stringResource(R.string.new_session_loading_directory), darkMode)
-                    }
-                    error != null -> item {
-                        PathMessage(error, darkMode)
-                    }
-                    else -> {
-                        if (parentPath != null) {
-                            item(key = "$currentPath/..") {
-                                PathRow(name = "..", icon = Lucide.Folder, darkMode = darkMode, onClick = onParent)
-                            }
-                        }
-                        if (entries.isEmpty()) {
-                            item { PathMessage(stringResource(R.string.new_session_empty_directory), darkMode) }
-                        }
-                        items(entries, key = { it.path }) { entry ->
-                            PathRow(name = entry.name, icon = Lucide.Folder, darkMode = darkMode, onClick = { onOpenEntry(entry) })
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CurrentDirectoryBar(
-    currentPath: String,
-    darkMode: Boolean,
-    canGoParent: Boolean,
-    canUseCurrent: Boolean,
-    onParent: () -> Unit,
-    onUseCurrent: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(56.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(if (darkMode) Color(0xFF18181B) else Color(0xFFF7F7F7))
-            .border(1.dp, if (darkMode) Color(0xFF27272A) else Color(0xFFE8E8E8), RoundedCornerShape(18.dp))
-            .padding(start = 13.dp, end = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Icon(
-            imageVector = Lucide.Folder,
-            contentDescription = null,
-            tint = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
-            modifier = Modifier.size(20.dp),
-        )
-        Text(
-            text = currentPath,
-            modifier = Modifier.weight(1f),
-            color = LocalAAColors.current.ink,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.ExtraBold,
-            lineHeight = 20.sp,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.MiddleEllipsis,
-        )
-        if (canGoParent) {
-            CircleMiniButton(darkMode = darkMode, onClick = onParent) {
-                BackGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777))
-            }
-        }
-        CircleMiniButton(
-            darkMode = darkMode,
-            selected = !darkMode && canUseCurrent,
-            enabled = canUseCurrent,
-            onClick = onUseCurrent,
-        ) {
-            val checkColor = when {
-                !canUseCurrent -> if (darkMode) Color(0xFF52525B) else Color(0xFFBDBDBD)
-                darkMode -> Color(0xFFA1A1AA)
-                else -> Color(0xFF16A34A)
-            }
-            CheckGlyph(color = checkColor)
-        }
-    }
-}
-
-@Composable
-private fun PathRow(
-    name: String,
-    icon: ImageVector,
-    darkMode: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(58.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .noRippleClickable(onClick = onClick)
-            .padding(horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777),
-            modifier = Modifier.size(20.dp),
-        )
-        Text(
-            text = name,
-            color = LocalAAColors.current.ink,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.SemiBold,
-            lineHeight = 20.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        Icon(
-            imageVector = Lucide.ChevronRight,
-            contentDescription = null,
-            tint = if (darkMode) Color(0xFF71717A) else Color(0xFFA8A6A0),
-            modifier = Modifier.size(20.dp),
-        )
-    }
-}
-
-@Composable
-private fun PathMessage(message: String, darkMode: Boolean) {
-    Text(
-        text = message,
-        color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777),
-        fontSize = 14.sp,
-        fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(top = 18.dp, start = 4.dp),
-    )
-}
-
-@Composable
-private fun SmallPill(
-    darkMode: Boolean,
-    onClick: () -> Unit,
-    content: @Composable RowScope.() -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .height(30.dp)
-            .clip(CircleShape)
-            .background(if (darkMode) Color(0xFF18181B) else Color(0xFFFBFBFB))
-            .border(1.dp, if (darkMode) Color(0xFF27272A) else Color(0xFFECECEC), CircleShape)
-            .noRippleClickable(onClick = onClick)
-            .padding(horizontal = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-        content = content,
-    )
-}
-
-@Composable
-private fun CircleMiniButton(
-    darkMode: Boolean,
-    selected: Boolean = false,
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-    content: @Composable () -> Unit,
-) {
-    val background = when {
-        selected -> Color(0xFFEFFBF4)
-        darkMode -> Color(0xFF18181B)
-        else -> Color.White
-    }
-    val border = when {
-        selected -> Color(0xFFBAE7C8)
-        darkMode -> Color(0xFF27272A)
-        else -> Color(0xFFE8E8E8)
-    }
-    Box(
-        modifier = Modifier
-            .size(36.dp)
-            .clip(CircleShape)
-            .background(background)
-            .border(1.dp, border, CircleShape)
-            .noRippleClickable {
-                if (enabled) onClick()
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        content()
-    }
-}
-
-@Composable
-private fun StartChatButton(
-    label: String,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    val colors = LocalAAColors.current
-    val alpha = if (enabled) 1f else 0.45f
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(54.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(colors.primaryAction.copy(alpha = alpha))
-            .noRippleClickable {
-                if (enabled) onClick()
-            },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
-    ) {
-        Text(
-            text = label,
-            color = colors.onPrimaryAction,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
-            lineHeight = 20.sp,
-        )
-        Spacer(Modifier.width(8.dp))
-        ForwardGlyph(color = colors.onPrimaryAction)
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun DevicePickerSheet(
-    devices: List<AgentDevice>,
-    selectedDeviceId: String?,
-    darkMode: Boolean,
-    onDismiss: () -> Unit,
-    onSelect: (AgentDevice) -> Unit,
-) {
-    PickerSheet(title = stringResource(R.string.new_session_choose_device), darkMode = darkMode, onDismiss = onDismiss) {
-        if (devices.isEmpty()) {
-            SheetEmptyText(stringResource(R.string.new_session_no_online_agents), darkMode)
-        } else {
-            LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
-                items(devices, key = { it.id }) { device ->
-                    SheetChoiceRow(
-                        title = device.name,
-                        subtitle = device.subtitle,
-                        selected = device.id == selectedDeviceId,
-                        darkMode = darkMode,
-                        icon = Lucide.Monitor,
-                        onClick = { onSelect(device) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AgentPickerSheet(
-    agents: List<NewSessionAgent>,
-    selectedRuntime: String?,
-    darkMode: Boolean,
-    onDismiss: () -> Unit,
-    onSelect: (NewSessionAgent) -> Unit,
-) {
-    PickerSheet(title = stringResource(R.string.new_session_choose_agent), darkMode = darkMode, onDismiss = onDismiss) {
-        if (agents.isEmpty()) {
-            SheetEmptyText(stringResource(R.string.new_session_no_attached_agents), darkMode)
-        } else {
-            LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
-                items(agents, key = { it.runtime }) { agent ->
-                    SheetChoiceRow(
-                        title = agent.label,
-                        subtitle = agent.runtime,
-                        selected = agent.runtime == selectedRuntime,
-                        darkMode = darkMode,
-                        icon = Lucide.Bot,
-                        onClick = { onSelect(agent) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun PickerSheet(
-    title: String,
-    darkMode: Boolean,
-    onDismiss: () -> Unit,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        containerColor = if (darkMode) Color(0xFF18181B) else Color.White,
-        contentColor = LocalAAColors.current.ink,
-        scrimColor = if (darkMode) Color(0x66000000) else Color(0x30000000),
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .padding(top = 11.dp, bottom = 10.dp)
-                    .width(42.dp)
-                    .height(4.dp)
-                    .clip(CircleShape)
-                    .background(if (darkMode) Color(0xFF3F3F46) else Color(0xFFD8D8D8)),
-            )
-        },
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(start = 22.dp, end = 22.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                text = title,
-                color = LocalAAColors.current.ink,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.ExtraBold,
-                lineHeight = 24.sp,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-            content()
-        }
-    }
-}
-
-@Composable
-private fun SheetChoiceRow(
-    title: String,
-    subtitle: String,
-    selected: Boolean,
-    darkMode: Boolean,
-    icon: ImageVector,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(56.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .noRippleClickable(onClick = onClick)
-            .padding(horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777),
-            modifier = Modifier.size(20.dp),
-        )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                color = LocalAAColors.current.ink,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = subtitle,
-                color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (selected) {
-            CheckGlyph(color = Color(0xFF22C55E))
-        }
-    }
-}
-
-@Composable
-private fun SheetEmptyText(message: String, darkMode: Boolean) {
-    Text(
-        text = message,
-        color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777),
-        fontSize = 14.sp,
-        fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(horizontal = 4.dp, vertical = 16.dp),
-    )
-}
-
-private enum class NewSessionSheet {
-    Device,
-    Agent,
-}
-
-private fun pathTitle(path: String, homeDirectory: String): String {
-    val clean = path.trim().trimEnd('/').ifBlank { path }
-    if (clean == "~") return homeDirectory
-    return clean.substringAfterLast('/').ifBlank { clean }
-}
-
-private fun String.textFieldValueAtEnd(): TextFieldValue {
-    return TextFieldValue(text = this, selection = TextRange(length))
-}
-
-@Composable
-private fun String.localizedWorkspaceTitle(): String {
-    return if (this == "Home directory") stringResource(R.string.new_session_home_directory) else this
 }

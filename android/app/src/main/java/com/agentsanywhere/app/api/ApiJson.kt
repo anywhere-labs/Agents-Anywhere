@@ -8,6 +8,16 @@ internal fun JSONObject.optNullableString(name: String): String? {
     return optString(name).takeIf { it.isNotBlank() }
 }
 
+internal fun JSONObject.optNullableInt(name: String): Int? {
+    if (!has(name) || isNull(name)) return null
+    return optInt(name)
+}
+
+internal fun JSONObject.optNullableBoolean(name: String): Boolean? {
+    if (!has(name) || isNull(name)) return null
+    return opt(name) as? Boolean
+}
+
 internal fun JSONObject?.toMap(): Map<String, Any?> {
     if (this == null) return emptyMap()
     return keys().asSequence().associateWith { key ->

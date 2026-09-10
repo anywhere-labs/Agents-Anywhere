@@ -3,18 +3,20 @@ package com.agentsanywhere.app.feature.auth
 import android.content.Context
 import com.agentsanywhere.app.api.AuthResponse
 import com.agentsanywhere.app.api.MobileLoginExchangeResponse
+import com.agentsanywhere.app.api.normalizeServerOrigin
 
-class AuthSessionStore(context: Context) {
+class AuthSessionStore(context: Context) : AuthSessionReader {
     private val preferences = context.applicationContext.getSharedPreferences(
         "agents_anywhere_auth",
         Context.MODE_PRIVATE,
     )
 
-    fun readServerUrl(): String {
-        return preferences.getString(KEY_SERVER_URL, "").orEmpty()
+    override fun readServerUrl(): String {
+        val stored = preferences.getString(KEY_SERVER_URL, "").orEmpty()
+        return normalizeServerOrigin(stored).orEmpty()
     }
 
-    fun readAccessToken(): String {
+    override fun readAccessToken(): String {
         return preferences.getString(KEY_ACCESS_TOKEN, "").orEmpty()
     }
 
@@ -32,13 +34,13 @@ class AuthSessionStore(context: Context) {
 
     fun saveServerUrl(serverUrl: String) {
         preferences.edit()
-            .putString(KEY_SERVER_URL, serverUrl)
+            .putString(KEY_SERVER_URL, serverUrl.asServerOrigin())
             .apply()
     }
 
     fun saveAuthSession(serverUrl: String, auth: AuthResponse) {
         preferences.edit()
-            .putString(KEY_SERVER_URL, serverUrl)
+            .putString(KEY_SERVER_URL, serverUrl.asServerOrigin())
             .putString(KEY_ACCESS_TOKEN, auth.accessToken)
             .putString(KEY_TOKEN_TYPE, auth.tokenType)
             .putString(KEY_USER_ID, auth.userId)
@@ -48,7 +50,7 @@ class AuthSessionStore(context: Context) {
 
     fun saveMobileAuthSession(serverUrl: String, exchange: MobileLoginExchangeResponse) {
         preferences.edit()
-            .putString(KEY_SERVER_URL, serverUrl)
+            .putString(KEY_SERVER_URL, serverUrl.asServerOrigin())
             .putString(KEY_ACCESS_TOKEN, exchange.auth.accessToken)
             .putString(KEY_TOKEN_TYPE, exchange.auth.tokenType)
             .putString(KEY_USER_ID, exchange.auth.userId)
@@ -65,7 +67,7 @@ class AuthSessionStore(context: Context) {
 
     @Synchronized
     fun clearAuthSessionIfTokenMatches(accessToken: String): Boolean {
-        if (accessToken.isBlank() || readAccessToken() != accessToken) return false
+        if (!shouldClearAuthSession(readAccessToken(), accessToken)) return false
         clearAuthSessionKeepingServerUrl()
         return true
     }
@@ -78,6 +80,12 @@ class AuthSessionStore(context: Context) {
             .apply()
     }
 
+    private fun String.asServerOrigin(): String {
+        return requireNotNull(normalizeServerOrigin(this)) {
+            "Server URL must be an HTTP(S) origin."
+        }
+    }
+
     companion object {
         private const val KEY_SERVER_URL = "server_url"
         private const val KEY_ACCESS_TOKEN = "access_token"
@@ -87,4 +95,14 @@ class AuthSessionStore(context: Context) {
         private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_REFRESH_EXPIRES_AT = "refresh_expires_at"
     }
+}
+
+interface AuthSessionReader {
+    fun readServerUrl(): String
+
+    fun readAccessToken(): String
+}
+
+internal fun shouldClearAuthSession(currentAccessToken: String, unauthorizedAccessToken: String): Boolean {
+    return unauthorizedAccessToken.isNotBlank() && currentAccessToken == unauthorizedAccessToken
 }

@@ -1,210 +1,393 @@
 from __future__ import annotations
 
-from agent_server.infra.repositories.store_support import *
+import hashlib
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
+
+from sqlalchemy import case, func, select, text, update
+from sqlalchemy.ext.asyncio import AsyncConnection
+
+from agent_server.core.models import SessionView, TimelineItem, TimelineItemIn
+from agent_server.core.protocol import PROTOCOL_MAX_REVISION
+from agent_server.core.timeline import (
+    TimelineBatchWriteResult,
+    TimelineItemWriteResult,
+    latest_timeline_items_by_id,
+    next_timeline_item_revision,
+    timeline_item_from_runtime_input,
+    timeline_item_from_snapshot,
+    timeline_item_state_is_unchanged,
+    timeline_snapshot_is_unchanged,
+)
+from agent_server.core.utc import utc_now
+from agent_server.infra.db import sessions as sessions_t
+from agent_server.infra.db import timeline_items as timeline_items_t
+from agent_server.infra.db.engine import SQLITE_BACKEND
+from agent_server.infra.repositories.store_support import session_revision_fenced
 
 
 class TimelineRepositoryMixin:
-    async def get_open_turn_id(self, session_id: str) -> str | None:
-        """Return the most recently started turn that hasn't yet ended, or None.
+    async def reserve_timeline_sequence(
+        self,
+        *,
+        session_id: str,
+        mark_read_on_change: bool = False,
+    ) -> int:
+        """Reserve one session revision without writing a timeline row.
 
-        Used by /interrupt to tell the connector which turn to abort — codex
-        runtimes require both a thread id and a turn id on `turn/interrupt`.
+        The realtime ingest path uses this small atomic update before it pushes an
+        item.  The comparatively expensive timeline row write can then be
+        coalesced without changing the sequence already observed by clients.
         """
-        items = await self.timeline.read(session_id)
-        ended = {item.turnId for item in items if item.type == "turn.end" and item.turnId}
-        open_starts = [
-            item
-            for item in items
-            if item.type == "turn.start" and item.turnId and item.turnId not in ended
-        ]
-        if not open_starts:
-            return None
-        latest = max(open_starts, key=lambda item: item.orderSeq)
-        return latest.turnId
 
-
-    async def derive_session_status(self, session_id: str) -> str:
-        items = await self.timeline.read(session_id)
-        started_turns = {item.turnId for item in items if item.type == "turn.start" and item.turnId}
-        ended_turns = {item.turnId for item in items if item.type == "turn.end" and item.turnId}
-        open_turns = {
-            item.turnId
-            for item in items
-            if item.type == "turn.start" and item.turnId and item.turnId not in ended_turns
-        }
-        pending_approvals = await self.list_pending_approvals(session_id)
-        if any(
-            approval.turnId is None
-            or approval.turnId in open_turns
-            or (approval.turnId not in started_turns and approval.turnId not in ended_turns)
-            for approval in pending_approvals
-        ):
-            return "waiting_approval"
-        if not open_turns:
-            latest_turn_end = max(
-                (item for item in items if item.type == "turn.end"),
-                key=lambda item: item.orderSeq,
-                default=None,
+        async with self._timeline_lock(session_id), self._engine.begin() as conn:
+            return await self._bump_session(
+                conn,
+                session_id,
+                mark_read=mark_read_on_change,
             )
-            return "error" if latest_turn_end is not None and latest_turn_end.status == "failed" else "idle"
-        return "running"
 
+    async def lease_session_revision_range(
+        self,
+        *,
+        session_id: str,
+        count: int,
+    ) -> tuple[int, int]:
+        """Durably lease revisions for a low-latency Redis live counter.
 
-    async def replace_timeline(
+        Leasing advances only the internal allocation high-water mark. The
+        public ``sessions.seq`` cursor advances later, in the same transaction
+        that materializes the buffered timeline projection.
+        """
+
+        if count <= 0:
+            raise ValueError("session revision lease count must be positive")
+        async with self._timeline_lock(session_id), self._engine.begin() as conn:
+            allocated_floor = case(
+                (
+                    sessions_t.c.seq_allocated_high < sessions_t.c.seq,
+                    sessions_t.c.seq,
+                ),
+                else_=sessions_t.c.seq_allocated_high,
+            )
+            leased_high = allocated_floor + count
+            row = (
+                await conn.execute(
+                    update(sessions_t)
+                    .where(
+                        sessions_t.c.id == session_id,
+                        allocated_floor <= PROTOCOL_MAX_REVISION - count,
+                    )
+                    .values(seq_allocated_high=leased_high)
+                    .returning(sessions_t.c.seq_allocated_high)
+                )
+            ).first()
+            if row is None:
+                exists = (
+                    await conn.execute(
+                        select(sessions_t.c.id).where(sessions_t.c.id == session_id)
+                    )
+                ).first()
+                if exists is None:
+                    raise KeyError(session_id)
+                raise OverflowError("session revision lease exceeds protocol limit")
+        end = int(row.seq_allocated_high)
+        return end - count + 1, end
+
+    async def get_max_timeline_order_seq(self, session_id: str) -> int:
+        async with self._timeline_lock(session_id), self._engine.connect() as conn:
+            return await self._max_timeline_order_seq(conn, session_id)
+
+    async def persist_buffered_timeline_items(
+        self,
+        *,
+        session_id: str,
+        items: list[TimelineItem],
+        source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
+    ) -> TimelineBatchWriteResult:
+        """Persist pre-sequenced realtime items without allocating new revisions.
+
+        A complete snapshot is a reset fence.  Buffered items accepted before
+        that fence must not be able to reintroduce rows removed by the snapshot.
+        Older delayed writes are also ignored when a newer value for the same ID
+        is already durable (for example after two server instances race to
+        flush the same shared buffer).
+        """
+
+        incoming_by_id = {
+            item.id: item for item in sorted(items, key=lambda value: value.updatedSeq)
+        }
+        async with self._timeline_lock(session_id):
+            current_items = await self.timeline.read_many(
+                session_id,
+                set(incoming_by_id),
+            )
+            current_by_id = {item.id: item for item in current_items}
+            async with self._engine.begin() as conn:
+                row = (
+                    await conn.execute(
+                        select(
+                            sessions_t.c.timeline_reset_seq,
+                            sessions_t.c.seq,
+                            sessions_t.c.last_read_seq,
+                            sessions_t.c.latest_turn_end_seq,
+                        ).where(sessions_t.c.id == session_id)
+                    )
+                ).first()
+                if row is None:
+                    raise KeyError(session_id)
+                timeline_reset_seq = int(row.timeline_reset_seq or 0)
+                persistable_items = [
+                    item
+                    for item in incoming_by_id.values()
+                    if item.updatedSeq > timeline_reset_seq
+                    and (
+                        (existing := current_by_id.get(item.id)) is None
+                        or item.updatedSeq >= existing.updatedSeq
+                    )
+                ]
+                changed_items = [
+                    item
+                    for item in persistable_items
+                    if (
+                        (existing := current_by_id.get(item.id)) is None
+                        or item.updatedSeq > existing.updatedSeq
+                        or (
+                            item.updatedSeq == existing.updatedSeq
+                            and item.model_dump() != existing.model_dump()
+                        )
+                    )
+                ]
+                await update_source_observed_at(
+                    conn,
+                    session_id=session_id,
+                    source_observed_at=source_observed_at,
+                )
+                await self.timeline.upsert_many(conn, changed_items)
+                accepted_watermark = max(
+                    [int(row.seq)]
+                    + [item.updatedSeq for item in incoming_by_id.values()]
+                )
+                if accepted_watermark > int(row.seq):
+                    session_values: dict[str, Any] = {
+                        "seq": accepted_watermark,
+                        "updated_seq": accepted_watermark,
+                        "updated_at": utc_now(),
+                    }
+                    if mark_read_on_change and int(row.latest_turn_end_seq or 0) <= int(
+                        row.last_read_seq or 0
+                    ):
+                        session_values["last_read_seq"] = accepted_watermark
+                    await conn.execute(
+                        update(sessions_t)
+                        .where(sessions_t.c.id == session_id)
+                        .values(**session_values)
+                    )
+        return TimelineBatchWriteResult(
+            items=tuple(persistable_items),
+            changed=bool(changed_items),
+        )
+
+    @session_revision_fenced
+    async def sync_timeline_items(
         self,
         *,
         session_id: str,
         items: list[TimelineItemIn],
         source_observed_at: str | None = None,
-    ) -> list[TimelineItem]:
+        mark_read_on_change: bool = False,
+    ) -> TimelineBatchWriteResult:
+        """Apply a Runtime-owned incremental timeline batch by stable item ID.
+
+        Side effects:
+        - updates source observation time when supplied
+        - inserts or updates only IDs present in this batch
+        - reserves one consecutive session revision per changed item
+        """
+
+        incoming_by_id = latest_timeline_items_by_id(items)
         async with self._timeline_lock(session_id):
-            current = {existing.id: existing for existing in await self.timeline.read(session_id)}
-            candidate_by_id: dict[str, TimelineItem | TimelineItemIn] = {}
-            incoming_ids: set[str] = set()
-            now = utc_now()
-            for item in items:
-                incoming_ids.add(item.id)
-                existing = current.get(item.id)
-                if existing is not None and _should_keep_existing_timeline_item(existing, item):
-                    candidate_by_id[item.id] = existing
-                    continue
-                candidate_by_id[item.id] = item
-            for item_id, existing in current.items():
-                if item_id not in incoming_ids:
-                    candidate_by_id[item_id] = existing
-            candidate = [
+            current_items = await self.timeline.read_many(
+                session_id,
+                set(incoming_by_id),
+            )
+            current_by_id = {item.id: item for item in current_items}
+            changed_inputs = [
                 item
-                if isinstance(item, TimelineItem)
-                else _timeline_item_from_input(item, updated_seq=0, now=now)
-                for item in candidate_by_id.values()
+                for item_id, item in incoming_by_id.items()
+                if (existing := current_by_id.get(item_id)) is None
+                or not timeline_item_state_is_unchanged(existing, item)
             ]
-            deduped_ids = {item.id for item in _dedupe_legacy_history_items(candidate)}
-            normalized_by_id: dict[str, TimelineItem] = {}
-            max_order_seq = max((existing.orderSeq for existing in current.values()), default=0)
+            if not changed_inputs:
+                await self._update_source_observed_at(
+                    session_id=session_id,
+                    source_observed_at=source_observed_at,
+                )
+                return TimelineBatchWriteResult(items=(), changed=False)
+
+            now = utc_now()
+            changed_items: list[TimelineItem] = []
             async with self._engine.begin() as conn:
-                if source_observed_at is not None:
-                    await conn.execute(
-                        update(sessions_t)
-                        .where(sessions_t.c.id == session_id)
-                        .values(source_observed_at=source_observed_at)
-                    )
-                for item_id, item in candidate_by_id.items():
-                    if item_id not in deduped_ids:
-                        continue
-                    if isinstance(item, TimelineItem):
-                        normalized_by_id[item_id] = item
-                        continue
-                    updated_seq = await self._bump_session(conn, session_id)
-                    existing = current.get(item_id)
+                await update_source_observed_at(
+                    conn,
+                    session_id=session_id,
+                    source_observed_at=source_observed_at,
+                )
+                max_order_seq = await self._max_timeline_order_seq(conn, session_id)
+                first_updated_seq = await self._reserve_session_revisions(
+                    conn,
+                    session_id,
+                    count=len(changed_inputs),
+                    mark_read=mark_read_on_change,
+                )
+                for index, item in enumerate(changed_inputs):
+                    existing = current_by_id.get(item.id)
                     if existing is not None:
                         order_seq = existing.orderSeq
                     elif item.orderSeq > max_order_seq:
                         order_seq = item.orderSeq
                     else:
-                        max_order_seq += 1
-                        order_seq = max_order_seq
+                        order_seq = max_order_seq + 1
                     max_order_seq = max(max_order_seq, order_seq)
-                    normalized_by_id[item_id] = _timeline_item_from_input(
+                    normalized = timeline_item_from_runtime_input(
                         item,
-                        updated_seq=updated_seq,
+                        updated_seq=first_updated_seq + index,
                         now=now,
+                        existing=existing,
                         order_seq=order_seq,
+                        revision=next_timeline_item_revision(item, existing),
                     )
-            normalized = list(normalized_by_id.values())
-            await self.timeline.replace(session_id, normalized)
-        await self.refresh_session_status_from_timeline(session_id)
-        return normalized
+                    changed_items.append(normalized)
+                await self.timeline.upsert_many(conn, changed_items)
+        return TimelineBatchWriteResult(
+            items=tuple(changed_items),
+            changed=True,
+        )
 
+    @session_revision_fenced
     async def replace_timeline_snapshot(
         self,
         *,
         session_id: str,
         items: list[TimelineItemIn],
         source_observed_at: str | None = None,
-    ) -> list[TimelineItem]:
+        mark_read_on_change: bool = False,
+    ) -> TimelineBatchWriteResult:
+        """Replace a timeline from a complete Runtime-owned snapshot."""
+
+        incoming_by_id = latest_timeline_items_by_id(items)
         async with self._timeline_lock(session_id):
+            current_items = await self.timeline.read(session_id)
+            current_by_id = {item.id: item for item in current_items}
+            if timeline_snapshot_is_unchanged(current_by_id, incoming_by_id):
+                await self._update_source_observed_at(
+                    session_id=session_id,
+                    source_observed_at=source_observed_at,
+                )
+                return TimelineBatchWriteResult(
+                    items=tuple(current_items),
+                    changed=False,
+                )
+
             now = utc_now()
             async with self._engine.begin() as conn:
-                if source_observed_at is not None:
-                    await conn.execute(
-                        update(sessions_t)
-                        .where(sessions_t.c.id == session_id)
-                        .values(source_observed_at=source_observed_at)
-                    )
-                updated_seq = await self._bump_session(conn, session_id)
+                await update_source_observed_at(
+                    conn,
+                    session_id=session_id,
+                    source_observed_at=source_observed_at,
+                )
+                updated_seq = await self._bump_session(
+                    conn,
+                    session_id,
+                    mark_read=mark_read_on_change,
+                )
+                await conn.execute(
+                    update(sessions_t)
+                    .where(sessions_t.c.id == session_id)
+                    .values(timeline_reset_seq=updated_seq)
+                )
                 normalized = [
-                    _timeline_item_from_input(item, updated_seq=updated_seq, now=now)
-                    for item in items
+                    timeline_item_from_snapshot(
+                        item=item,
+                        existing=current_by_id.get(item.id),
+                        updated_seq=updated_seq,
+                        now=now,
+                    )
+                    for item in incoming_by_id.values()
                 ]
-            await self.timeline.replace(session_id, normalized)
-        await self.refresh_session_status_from_timeline(session_id)
-        return normalized
+                # ``timeline_item_from_snapshot`` returns the stored row itself
+                # for unchanged items, so only rebuilt rows need a write.
+                # Rewriting the whole session (delete-all + insert-all) turned
+                # every reconnect into a full table rewrite and left the table
+                # heavily bloated.
+                await self.timeline.upsert_many(
+                    conn,
+                    [
+                        item
+                        for item in normalized
+                        if current_by_id.get(item.id) is not item
+                    ],
+                )
+                await self.timeline.delete_items(
+                    conn,
+                    session_id,
+                    set(current_by_id) - set(incoming_by_id),
+                )
+        return TimelineBatchWriteResult(
+            items=tuple(normalized),
+            changed=True,
+        )
 
-
+    @session_revision_fenced
     async def upsert_timeline_item(
         self,
         *,
         session_id: str,
         item: TimelineItemIn,
         source_observed_at: str | None = None,
-    ) -> TimelineItem:
-        """Single-row upsert. Hot path for streaming Codex deltas.
+        mark_read_on_change: bool = False,
+    ) -> TimelineItemWriteResult:
+        """Apply one Runtime-owned item by stable ID without scanning history."""
 
-        Old code did `read all items → mutate in memory → DELETE all + INSERT
-        all` per delta — O(N) DB I/O per call. This version fetches just the
-        one row by composite PK and writes only that row when content
-        actually changed. Status/seq are bumped via the engine in the same
-        transaction.
-
-        The legacy dedupe pass (`_dedupe_legacy_history_items`) is intentionally
-        skipped here — it exists to filter imported-history duplicates which
-        only appear in `replace_timeline` (sync) batches; live streaming items
-        never collide with it.
-        """
         async with self._timeline_lock(session_id):
             now = utc_now()
             existing = await self.timeline.read_one(session_id, item.id)
-            unchanged = existing is not None and _timeline_item_unchanged(existing, item)
-            needs_order_rebase = False
-            if existing is not None:
-                async with self._engine.connect() as conn:
-                    needs_order_rebase = await self._timeline_item_needs_turn_order_rebase(
-                        conn,
-                        session_id,
-                        item,
-                        existing,
-                    )
-            if unchanged and not needs_order_rebase and source_observed_at is None:
-                # No-op fast path: no DB write, no seq bump, no status refresh.
-                return existing
+            unchanged = existing is not None and timeline_item_state_is_unchanged(
+                existing, item
+            )
+            if unchanged and source_observed_at is None:
+                return TimelineItemWriteResult(item=existing, changed=False)
             async with self._engine.begin() as conn:
-                if source_observed_at is not None:
-                    await conn.execute(
-                        update(sessions_t)
-                        .where(sessions_t.c.id == session_id)
-                        .values(source_observed_at=source_observed_at)
-                    )
-                if unchanged and not needs_order_rebase:
+                await update_source_observed_at(
+                    conn,
+                    session_id=session_id,
+                    source_observed_at=source_observed_at,
+                )
+                if unchanged:
                     result = existing
                 else:
-                    updated_seq = await self._bump_session(conn, session_id)
+                    updated_seq = await self._bump_session(
+                        conn,
+                        session_id,
+                        mark_read=mark_read_on_change,
+                    )
                     order_seq = await self._live_order_seq_for_upsert(
                         conn,
                         session_id,
-                        item,
                         existing,
-                        rebase_existing=needs_order_rebase,
                     )
-                    result = _timeline_item_from_input(
+                    result = timeline_item_from_runtime_input(
                         item,
                         updated_seq=updated_seq,
                         now=now,
+                        existing=existing,
                         order_seq=order_seq,
+                        revision=next_timeline_item_revision(item, existing),
                     )
                     await self.timeline.upsert_one(conn, result)
-        await self.refresh_session_status_from_timeline(session_id)
-        return result
-
+        return TimelineItemWriteResult(item=result, changed=not unchanged)
 
     async def list_timeline_since(
         self,
@@ -213,8 +396,24 @@ class TimelineRepositoryMixin:
         after_seq: int,
         limit: int,
     ) -> tuple[list[TimelineItem], bool]:
-        return await self.timeline.list_since(session_id, after_seq=after_seq, limit=limit)
+        return await self.timeline.list_since(
+            session_id,
+            after_seq=after_seq,
+            limit=limit,
+        )
 
+    async def get_timeline_reset_seq(self, session_id: str) -> int:
+        async with self._engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    select(sessions_t.c.timeline_reset_seq).where(
+                        sessions_t.c.id == session_id
+                    )
+                )
+            ).first()
+        if row is None:
+            raise KeyError(session_id)
+        return int(row.timeline_reset_seq or 0)
 
     async def list_timeline_latest(
         self,
@@ -223,7 +422,6 @@ class TimelineRepositoryMixin:
         limit: int,
     ) -> tuple[list[TimelineItem], bool]:
         return await self.timeline.list_latest(session_id, limit=limit)
-
 
     async def list_timeline_before_order_seq(
         self,
@@ -238,32 +436,134 @@ class TimelineRepositoryMixin:
             limit=limit,
         )
 
+    @session_revision_fenced
+    async def record_session_turn_end(
+        self,
+        *,
+        session_id: str,
+        source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
+    ) -> SessionView:
+        async with self._timeline_lock(session_id):
+            async with self._engine.begin() as conn:
+                await update_source_observed_at(
+                    conn,
+                    session_id=session_id,
+                    source_observed_at=source_observed_at,
+                )
+                updated_seq = await self._bump_session(
+                    conn,
+                    session_id,
+                    mark_read=mark_read_on_change,
+                )
+                await conn.execute(
+                    update(sessions_t)
+                    .where(sessions_t.c.id == session_id)
+                    .values(latest_turn_end_seq=updated_seq)
+                )
+        return await self.get_session(session_id)
 
     @asynccontextmanager
     async def timeline_writer_lock(self, session_id: str) -> AsyncIterator[None]:
         async with self._timeline_lock(session_id):
             yield
 
+    async def _update_source_observed_at(
+        self,
+        *,
+        session_id: str,
+        source_observed_at: str | None,
+    ) -> None:
+        if source_observed_at is None:
+            return
+        async with self._engine.begin() as conn:
+            await update_source_observed_at(
+                conn,
+                session_id=session_id,
+                source_observed_at=source_observed_at,
+            )
 
-    async def _bump_session(self, conn: AsyncConnection, session_id: str) -> int:
-        now = utc_now()
+    async def _bump_session(
+        self,
+        conn: AsyncConnection,
+        session_id: str,
+        *,
+        mark_read: bool = False,
+    ) -> int:
+        return await self._reserve_session_revisions(
+            conn,
+            session_id,
+            count=1,
+            mark_read=mark_read,
+        )
+
+    async def _reserve_session_revisions(
+        self,
+        conn: AsyncConnection,
+        session_id: str,
+        *,
+        count: int,
+        mark_read: bool = False,
+    ) -> int:
+        """Reserve a consecutive revision range with one session update."""
+
+        if count <= 0:
+            raise ValueError("timeline revision count must be positive")
+        current = (
+            await conn.execute(
+                select(
+                    sessions_t.c.seq,
+                    sessions_t.c.seq_allocated_high,
+                )
+                .where(sessions_t.c.id == session_id)
+                .with_for_update()
+            )
+        ).first()
+        if current is None:
+            raise KeyError(session_id)
+        current_seq = int(current.seq)
+        expected_high = int(current.seq_allocated_high)
+        allocated_floor = max(current_seq, expected_high)
+        if allocated_floor > PROTOCOL_MAX_REVISION - count:
+            raise OverflowError("session revision exceeds the protocol limit")
+
+        # Retire the active Redis lease only after this transaction owns the
+        # session row. If the Redis lock is replaced before sealing, the guard
+        # fails and this transaction cannot publish a stale durable revision.
+        # If replacement happens after sealing, the next allocator must wait on
+        # this row before it can lease a higher range.
+        await self.seal_session_revision_range(session_id, allocated_floor)
+        next_seq = allocated_floor + count
+        values: dict[str, Any] = {
+            "seq": next_seq,
+            "updated_seq": next_seq,
+            "updated_at": utc_now(),
+            "seq_allocated_high": next_seq,
+        }
+        if mark_read:
+            values["last_read_seq"] = case(
+                (
+                    sessions_t.c.latest_turn_end_seq <= sessions_t.c.last_read_seq,
+                    next_seq,
+                ),
+                else_=sessions_t.c.last_read_seq,
+            )
         row = (
             await conn.execute(
-                select(sessions_t.c.seq).where(sessions_t.c.id == session_id)
+                update(sessions_t)
+                .where(
+                    sessions_t.c.id == session_id,
+                    sessions_t.c.seq_allocated_high == expected_high,
+                )
+                .values(**values)
+                .returning(sessions_t.c.seq)
             )
         ).first()
         if row is None:
-            raise KeyError(session_id)
-        next_seq = int(row.seq) + 1
-        await conn.execute(
-            update(sessions_t)
-            .where(sessions_t.c.id == session_id)
-            .values(seq=next_seq, updated_seq=next_seq, updated_at=now)
-        )
-        return next_seq
+            raise RuntimeError("session revision allocation fence changed")
+        return int(row.seq) - count + 1
 
-
-    async def _next_live_order_seq(
+    async def _max_timeline_order_seq(
         self,
         conn: AsyncConnection,
         session_id: str,
@@ -275,87 +575,60 @@ class TimelineRepositoryMixin:
                 )
             )
         ).first()
-        max_order_seq = int(row[0] or 0) if row is not None else 0
-        return max_order_seq + 1
-
+        return int(row[0] or 0) if row is not None else 0
 
     async def _live_order_seq_for_upsert(
         self,
         conn: AsyncConnection,
         session_id: str,
-        item: TimelineItemIn,
         existing: TimelineItem | None,
-        *,
-        rebase_existing: bool,
     ) -> int:
-        if existing is not None and not rebase_existing:
+        if existing is not None:
             return existing.orderSeq
-        return await self._next_live_order_seq(conn, session_id)
-
-
-    async def _timeline_item_needs_turn_order_rebase(
-        self,
-        conn: AsyncConnection,
-        session_id: str,
-        item: TimelineItemIn,
-        existing: TimelineItem,
-    ) -> bool:
-        if not item.turnId or item.type == "turn.start":
-            return False
-        turn_start_order_seq = await self._turn_start_order_seq(conn, session_id, item.turnId)
-        return turn_start_order_seq is not None and existing.orderSeq <= turn_start_order_seq
-
-
-    async def _turn_start_order_seq(
-        self,
-        conn: AsyncConnection,
-        session_id: str,
-        turn_id: str,
-    ) -> int | None:
-        row = (
-            await conn.execute(
-                select(timeline_items_t.c.order_seq)
-                .where(
-                    timeline_items_t.c.session_id == session_id,
-                    timeline_items_t.c.turn_id == turn_id,
-                    timeline_items_t.c.type == "turn.start",
-                )
-                .order_by(timeline_items_t.c.order_seq.asc())
-                .limit(1)
-            )
-        ).first()
-        return int(row[0]) if row is not None else None
-
+        return await self._max_timeline_order_seq(conn, session_id) + 1
 
     @asynccontextmanager
     async def _timeline_lock(self, session_id: str) -> AsyncIterator[None]:
-        """Serialize concurrent writers for a single session's timeline.
+        """Serialize concurrent writers for one session timeline."""
 
-        - SQLite: in-process asyncio.Lock keyed by session_id. Sufficient for
-          single-worker deployments (which is the open-source default).
-        - Postgres: pg_advisory_lock keyed off a hash of session_id, held on a
-          dedicated connection for the duration of the critical section. This
-          is process-safe and machine-safe, so it works across uvicorn workers.
-        """
         if self.backend == SQLITE_BACKEND:
-            async with self._timeline_locks_guard:
-                lock = self._timeline_locks.get(session_id)
-                if lock is None:
-                    lock = asyncio.Lock()
-                    self._timeline_locks[session_id] = lock
+            lock = await self.timeline_lock(session_id)
             async with lock:
                 yield
             return
 
-        lock_key = _session_lock_key(session_id)
+        lock_key = session_timeline_lock_key(session_id)
         async with self._engine.connect() as conn:
             await conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": lock_key})
             try:
                 yield
             finally:
-                # If the connection died, PG already released the lock for us;
-                # unlock is best-effort.
                 try:
-                    await conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": lock_key})
-                except Exception:  # noqa: BLE001 — broad on purpose for cleanup
+                    await conn.execute(
+                        text("SELECT pg_advisory_unlock(:k)"),
+                        {"k": lock_key},
+                    )
+                except Exception:  # noqa: BLE001, S110
                     pass
+
+
+async def update_source_observed_at(
+    conn: AsyncConnection,
+    *,
+    session_id: str,
+    source_observed_at: str | None,
+) -> None:
+    if source_observed_at is None:
+        return
+    await conn.execute(
+        update(sessions_t)
+        .where(sessions_t.c.id == session_id)
+        .values(source_observed_at=source_observed_at)
+    )
+
+
+def session_timeline_lock_key(session_id: str) -> int:
+    """Hash a session ID into a signed 64-bit PostgreSQL advisory lock key."""
+
+    digest = hashlib.sha256(session_id.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)

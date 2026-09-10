@@ -1,0 +1,519 @@
+from __future__ import annotations
+
+import base64
+import http.client
+import json
+import stat
+import threading
+from pathlib import Path
+from typing import Iterator
+
+import pytest
+
+from devtools import control
+from devtools.control import (
+    DevControlError,
+    decode_connector_credential,
+    save_connector_credential,
+)
+
+
+@pytest.fixture
+def control_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[tuple[str, list[tuple[str, str | None]]]]:
+    calls: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        control,
+        "perform_restart",
+        lambda target, credential=None: calls.append((target, credential)),
+    )
+    monkeypatch.setattr(
+        control,
+        "status_payload",
+        lambda: {
+            "server": True,
+            "web": True,
+            "desktop": True,
+            "connector": True,
+            "legacy": False,
+        },
+    )
+    server = control.ThreadingHTTPServer(("127.0.0.1", 0), control.DevControlHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"127.0.0.1:{server.server_port}", calls
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def _credential(**overrides: object) -> str:
+    payload = {
+        "type": "agents-anywhere.connector-credentials",
+        "version": 1,
+        "serverUrl": "http://127.0.0.1:8000",
+        "connectorId": "conn_test",
+        "connectorToken": "token_test",
+        **overrides,
+    }
+    return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+
+
+def test_decode_connector_credential() -> None:
+    assert decode_connector_credential(_credential()) == {
+        "serverUrl": "http://127.0.0.1:8000",
+        "connectorId": "conn_test",
+        "connectorToken": "token_test",
+    }
+
+
+@pytest.mark.parametrize(
+    "credential",
+    (
+        "not-base64",
+        _credential(type="other"),
+        _credential(version=2),
+        _credential(serverUrl="file:///tmp/server"),
+        _credential(connectorToken=""),
+    ),
+)
+def test_reject_invalid_connector_credential(credential: str) -> None:
+    with pytest.raises(DevControlError):
+        decode_connector_credential(credential)
+
+
+def test_save_connector_credential_with_private_permissions(tmp_path: Path) -> None:
+    config_path = tmp_path / "connector.json"
+    save_connector_credential(_credential(), config_path)
+
+    assert json.loads(config_path.read_text()) == {
+        "serverUrl": "http://127.0.0.1:8000",
+        "connectorId": "conn_test",
+        "connectorToken": "token_test",
+    }
+    assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
+
+
+def test_run_preserves_multiline_command_failure_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "local-test-secret"
+    output = (
+        "migration started\n"
+        f"AGENT_SERVER_SECRET={secret}\n"
+        "postgresql://agents:password@127.0.0.1/database\n"
+        "specific database failure\n"
+        "command failed"
+    )
+    monkeypatch.setattr(
+        control.subprocess,
+        "run",
+        lambda *_args, **_kwargs: control.subprocess.CompletedProcess(
+            ["migration"],
+            1,
+            output,
+        ),
+    )
+
+    with pytest.raises(DevControlError) as error:
+        control._run(["migration"], env={"AGENT_SERVER_SECRET": secret})
+
+    message = str(error.value)
+    assert message.startswith("migration exited with status 1:\n")
+    assert "migration started" in message
+    assert "specific database failure" in message
+    assert "command failed" in message
+    assert secret not in message
+    assert "agents:password" not in message
+    assert message.count("<redacted>") == 2
+
+
+def test_run_failure_without_output_does_not_echo_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "command-line-secret"
+    monkeypatch.setattr(
+        control.subprocess,
+        "run",
+        lambda *_args, **_kwargs: control.subprocess.CompletedProcess(
+            ["/usr/local/bin/tool", "--token", secret],
+            9,
+            "",
+        ),
+    )
+
+    with pytest.raises(DevControlError) as error:
+        control._run(["/usr/local/bin/tool", "--token", secret])
+
+    assert str(error.value) == "tool exited with status 9"
+    assert secret not in str(error.value)
+
+
+def test_run_check_false_returns_nonzero_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = control.subprocess.CompletedProcess(["probe"], 3, "not available")
+    monkeypatch.setattr(control.subprocess, "run", lambda *_args, **_kwargs: expected)
+
+    assert control._run(["probe"], check=False) is expected
+
+
+def test_local_up_running_only_accepts_a_matching_foreground_process(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pid_file = tmp_path / "local-up.pid"
+    pid_file.write_text("123\n", encoding="utf-8")
+    monkeypatch.setattr(control, "LOCAL_UP_PID_FILE", pid_file)
+    monkeypatch.setattr(control, "_process_command", lambda _pid: "bash ./local-up.sh")
+    monkeypatch.setattr(control, "_process_cwd", lambda _pid: control.ROOT)
+
+    assert control.local_up_running() is True
+
+
+def test_local_up_running_removes_a_stale_pid_marker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pid_file = tmp_path / "local-up.pid"
+    pid_file.write_text("123\n", encoding="utf-8")
+    monkeypatch.setattr(control, "LOCAL_UP_PID_FILE", pid_file)
+    monkeypatch.setattr(control, "_process_command", lambda _pid: "python other.py")
+    monkeypatch.setattr(control, "_process_cwd", lambda _pid: control.ROOT)
+
+    assert control.local_up_running() is False
+    assert not pid_file.exists()
+
+
+def test_dev_control_refuses_to_manage_foreground_local_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(control, "local_up_running", lambda: True)
+
+    with pytest.raises(DevControlError, match="local-up.sh owns the foreground stack"):
+        control._ensure_stack_not_owned_by_local_up("stopping local services")
+
+
+def test_cli_reports_expected_error_without_outer_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        control,
+        "main",
+        lambda: (_ for _ in ()).throw(DevControlError("first line\nsecond line")),
+    )
+
+    with pytest.raises(SystemExit) as error:
+        control.run_cli()
+
+    assert error.value.code == 1
+    assert capsys.readouterr().err == "Error: first line\nsecond line\n"
+
+
+def test_control_api_restarts_connector_without_echoing_credential(
+    control_server: tuple[str, list[tuple[str, str | None]]],
+) -> None:
+    address, calls = control_server
+    credential = _credential()
+    connection = http.client.HTTPConnection(address)
+    connection.request(
+        "POST",
+        "/api/restart",
+        body=json.dumps({"target": "connector", "credential": credential}),
+        headers={"Content-Type": "application/json", "Origin": f"http://{address}"},
+    )
+    response = connection.getresponse()
+    payload = json.loads(response.read())
+    connection.close()
+
+    assert response.status == 200
+    assert payload["ok"] is True
+    assert credential not in json.dumps(payload)
+    assert calls == [("connector", credential)]
+
+
+def test_control_api_rejects_non_local_host(
+    control_server: tuple[str, list[tuple[str, str | None]]],
+) -> None:
+    address, calls = control_server
+    connection = http.client.HTTPConnection(address)
+    connection.putrequest("GET", "/api/status", skip_host=True)
+    connection.putheader("Host", "example.com")
+    connection.endheaders()
+    response = connection.getresponse()
+    response.read()
+    connection.close()
+
+    assert response.status == 403
+    assert calls == []
+
+
+def test_status_payload_exposes_android_oauth_login_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(control, "discover_lan_ipv4", lambda: "192.168.1.42")
+    monkeypatch.setattr(control, "screen_sessions", set)
+    monkeypatch.setattr(control, "_health_ok", lambda: True)
+    monkeypatch.setattr(control, "port_open", lambda _port: True)
+    monkeypatch.setattr(control, "connector_process_running", lambda: False)
+    monkeypatch.setattr(control, "desktop_process_running", lambda: True)
+    monkeypatch.setattr(control, "local_up_running", lambda: False)
+
+    payload = control.status_payload()
+
+    assert payload["androidOauthLoginUrl"] == "http://192.168.1.42:5174"
+    assert payload["serverUrl"] == "http://127.0.0.1:8000"
+    assert payload["localUp"] is False
+    assert payload["desktop"] is True
+    assert payload["desktopBackendUrl"] == "http://127.0.0.1:8000/api/v2"
+
+
+def test_discover_lan_ipv4_uses_macos_default_interface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Darwin:
+        sysname = "Darwin"
+
+    def fake_run(command: list[str], **_kwargs: object) -> object:
+        if command[:3] == ["route", "-n", "get"]:
+            return type("Result", (), {"returncode": 0, "stdout": "interface: en1\n"})()
+        if command[:2] == ["ipconfig", "getifaddr"]:
+            return type("Result", (), {"returncode": 0, "stdout": "172.16.200.98\n"})()
+        raise AssertionError(command)
+
+    monkeypatch.setattr(control.os, "uname", lambda: Darwin())
+    monkeypatch.setattr(control, "_run", fake_run)
+
+    assert control.discover_lan_ipv4() == "172.16.200.98"
+
+
+def test_control_page_explains_android_oauth_login_address() -> None:
+    page = control.HTML_FILE.read_text(encoding="utf-8")
+
+    assert "Android OAuth 登录地址" in page
+    assert "这不是后端 API 地址" in page
+
+
+def test_control_page_exposes_desktop_restart_and_local_backend() -> None:
+    page = control.HTML_FILE.read_text(encoding="utf-8")
+
+    assert 'data-target="desktop"' in page
+    assert "Desktop · 5184" in page
+    assert "http://127.0.0.1:8000/api/v2" in page
+
+
+def test_start_desktop_pins_local_backend_and_renderer_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(control, "_health_ok", lambda: True)
+    monkeypatch.setattr(control, "port_open", lambda _port: False)
+    monkeypatch.setattr(control, "_desktop_process_pids", set)
+    monkeypatch.setattr(
+        control,
+        "_desktop_runtime_command",
+        lambda: ["corepack", "yarn", "dev"],
+    )
+    monkeypatch.setattr(control, "_wait_until", lambda *_args, **_kwargs: None)
+
+    def capture_start_screen(
+        name: str,
+        *,
+        cwd: Path,
+        command: list[str],
+        log_name: str,
+    ) -> None:
+        captured.update(
+            name=name,
+            cwd=cwd,
+            command=command,
+            log_name=log_name,
+        )
+
+    monkeypatch.setattr(control, "start_screen", capture_start_screen)
+
+    control.start_desktop()
+
+    assert captured["name"] == control.DESKTOP_SESSION
+    assert captured["cwd"] == control.DESKTOP_DIR
+    assert captured["log_name"] == "desktop.log"
+    assert captured["command"] == [
+        "env",
+        "WORKBENCH_API_ORIGIN=http://127.0.0.1:8000",
+        "AGENTS_ANYWHERE_API=http://127.0.0.1:8000",
+        "WORKBENCH_API_NAMESPACE=/api/v2",
+        "AGENTS_ANYWHERE_API_NAMESPACE=/api/v2",
+        "WORKBENCH_OAUTH_WEB_ORIGIN=http://127.0.0.1:5174",
+        "WORKBENCH_WEB_PORT=5184",
+        "corepack",
+        "yarn",
+        "dev",
+    ]
+
+
+def test_perform_restart_dispatches_desktop(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        control,
+        "restart_desktop",
+        lambda: calls.append("desktop"),
+    )
+
+    control.perform_restart("desktop")
+
+    assert calls == ["desktop"]
+
+
+def test_server_environment_allows_desktop_renderer_origin() -> None:
+    origins = control._server_environment()["AGENT_SERVER_CORS_ORIGINS"].split(",")
+
+    assert "http://127.0.0.1:5184" in origins
+    assert "http://localhost:5184" in origins
+
+
+def test_ensure_split_layout_recovers_orphaned_legacy_processes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = {control.SERVER_PORT: True, control.WEB_PORT: True}
+    calls: list[str] = []
+
+    monkeypatch.setattr(control, "screen_sessions", set)
+    monkeypatch.setattr(control, "port_open", lambda port: state[port])
+    monkeypatch.setattr(control, "_health_ok", lambda: state[control.SERVER_PORT])
+
+    def stop_server() -> None:
+        if state[control.SERVER_PORT]:
+            calls.append("stop-server")
+        state[control.SERVER_PORT] = False
+
+    def stop_web() -> None:
+        if state[control.WEB_PORT]:
+            calls.append("stop-web")
+        state[control.WEB_PORT] = False
+
+    def start_server() -> None:
+        calls.append("start-server")
+        state[control.SERVER_PORT] = True
+
+    def start_web() -> None:
+        calls.append("start-web")
+        state[control.WEB_PORT] = True
+
+    monkeypatch.setattr(control, "_stop_server_processes", stop_server)
+    monkeypatch.setattr(control, "_stop_web_processes", stop_web)
+    monkeypatch.setattr(control, "ensure_infrastructure", lambda: calls.append("infra"))
+    monkeypatch.setattr(control, "run_migrations", lambda: calls.append("migrate"))
+    monkeypatch.setattr(control, "start_server", start_server)
+    monkeypatch.setattr(control, "start_web", start_web)
+
+    assert control.ensure_split_layout() is True
+    assert calls == [
+        "stop-server",
+        "stop-web",
+        "infra",
+        "migrate",
+        "start-server",
+        "start-web",
+    ]
+
+
+def test_stop_port_processes_refuses_foreign_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(control, "port_open", lambda _port: True)
+    monkeypatch.setattr(control, "_listener_pids", lambda _port: {123})
+    monkeypatch.setattr(control, "_process_is_owned", lambda *_args, **_kwargs: False)
+
+    with pytest.raises(DevControlError, match="outside this checkout"):
+        control._stop_port_processes(
+            name="Server",
+            port=control.SERVER_PORT,
+            cwd=control.ROOT / "server",
+            command_markers=("uvicorn",),
+        )
+
+
+def test_stop_connector_cleans_orphaned_owned_process_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process_state = {100, 101}
+    terminated: list[tuple[set[int], str]] = []
+
+    monkeypatch.setattr(control, "stop_screen", lambda _name: None)
+    monkeypatch.setattr(control, "_connector_process_pids", lambda: set(process_state))
+    monkeypatch.setattr(
+        control,
+        "_process_cwd",
+        lambda pid: control.ROOT / "connector" if pid == 101 else None,
+    )
+    monkeypatch.setattr(
+        control,
+        "_process_command",
+        lambda pid: "python -m connector.cli start" if pid == 101 else "login",
+    )
+    monkeypatch.setattr(control, "_process_group_ids", lambda pids: {500} if pids else set())
+
+    def terminate(pids: set[int], *, name: str) -> None:
+        terminated.append((pids, name))
+        process_state.clear()
+
+    monkeypatch.setattr(control, "_terminate_process_groups", terminate)
+
+    control.stop_connector()
+
+    assert terminated == [({101}, "Connector")]
+
+
+def test_stop_desktop_cleans_orphaned_owned_process_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process_state = {200, 201}
+    terminated: list[tuple[set[int], str]] = []
+
+    monkeypatch.setattr(control, "stop_screen", lambda _name: None)
+    monkeypatch.setattr(control, "_desktop_process_pids", lambda: set(process_state))
+    monkeypatch.setattr(control, "port_open", lambda _port: False)
+
+    def terminate(pids: set[int], *, name: str) -> None:
+        terminated.append((pids, name))
+        process_state.clear()
+
+    monkeypatch.setattr(control, "_terminate_process_groups", terminate)
+
+    control.stop_desktop()
+
+    assert terminated == [({200, 201}, "Desktop")]
+
+
+def test_clear_desktop_endpoint_updates_shared_runtime_file(
+    control_server: tuple[str, list[tuple[str, str | None]]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(control._connector_runtime(), "system_home", lambda: tmp_path)
+    runtime_file = tmp_path / ".agents-anywhere" / "connector-runtime.json"
+    runtime_file.parent.mkdir()
+    runtime_file.write_text(json.dumps({
+        "version": 2, "legacyMachineMigrated": True,
+        "desktop": {"appPath": "/test/Desktop"}, "connectorIds": ["conn_test"],
+    }))
+    host, calls = control_server
+    connection = http.client.HTTPConnection(host)
+    try:
+        connection.request("POST", "/api/desktop/clear-installation", body="{}", headers={
+            "Content-Type": "application/json", "Origin": f"http://{host}",
+        })
+        response = connection.getresponse()
+        assert response.status == 200
+        assert json.loads(response.read()) == {"ok": True}
+    finally:
+        connection.close()
+    assert json.loads(runtime_file.read_text()) == {
+        "version": 2, "legacyMachineMigrated": True, "connectorIds": ["conn_test"],
+    }
+    assert calls == []

@@ -1,0 +1,18 @@
+{
+  "permissions": [
+    {
+      "default": true,
+      "description": null,
+      "displayName": "Full access",
+      "id": "fullAccess",
+      "metadata": {
+        "vendorPolicy": {
+          "audit": true
+        }
+      },
+      "selectionId": "sel_permission_example"
+    }
+  ],
+  "revision": 4,
+  "runtime": "codex"
+}

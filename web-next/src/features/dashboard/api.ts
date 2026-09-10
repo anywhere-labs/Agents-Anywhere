@@ -1,6 +1,6 @@
-import { ApiClient, apiClient } from "@/lib/api";
+import { ApiClient, apiClient, apiPath } from "@/lib/api";
+import { shouldAuthorizeDownloadUrl } from "@/lib/api/download-auth";
 import type {
-  AgentCatalogResponse,
   AdminDashboardOverviewResponse,
   AdminDashboardSettings,
   AdminDashboardSettingsUpdate,
@@ -9,14 +9,12 @@ import type {
   BulkArchiveResponse,
   ArchiveAllScope,
   AttachmentUploadResponse,
-  ApprovalResolveStatus,
   ConnectorCreateResponse,
   ConnectorListResponse,
   ConnectorResponse,
   ConnectorRevokeResponse,
-  ConnectorAgentAuthenticateResponse,
-  ConnectorRuntimeCapabilitiesResponse,
-  ConnectorRuntimeScanResponse,
+  DeviceRuntimeListResponse,
+  DeviceRuntimeView,
   FsListResult,
   FsPreviewSessionResponse,
   FsPreviewTokenCreateResponse,
@@ -27,29 +25,52 @@ import type {
   PairingClaimResponse,
   PairingPollResponse,
   PairingStartResponse,
+  ProtocolEventRecoveryResponse,
+  ProtocolCapabilitiesResponse,
+  ProtocolModelCatalogResponse,
+  ProtocolPermissionCatalogResponse,
+  PublicSessionShareResponse,
+  ProjectCreateRequest,
+  ProjectCreateResponse,
+  ProjectDeleteResponse,
+  ProjectListResponse,
+  ProjectPatchRequest,
+  ProjectResponse,
+  ProjectSessionListResponse,
   RpcResponse,
-  RuntimeConfigSchemaResponse,
-  RuntimeSettingsResponse,
+  RuntimeTypeListResponse,
+  SessionCommandListResponse,
+  SessionCreateAndStartRequest,
   SessionCreateRequest,
   SessionCreateResponse,
+  SessionCommandResponse,
   SessionListResponse,
   SessionPatchRequest,
   SessionResponse,
-  SessionStateResponse,
+  SessionRuntimeStateResponse,
+  SessionShareCreateRequest,
+  SessionShareCreateResponse,
+  SessionSelectionPatchResponse,
+  SessionSnapshotResponse,
+  SessionTimelineResponse,
   TakeoverResponse,
   TerminalCreateRequest,
   TerminalListResult,
   TerminalListResponse,
   TerminalResponse,
   TerminalSnapshotResult,
-  UserAgentDefaultsResponse
+  WsTicketResponse,
 } from "@/features/dashboard/types";
 
 export type SessionStateQuery = {
   afterSeq?: number;
   beforeOrderSeq?: number;
-  mode?: "since" | "latest" | "before";
+  mode?: "changes" | "latest" | "history";
   limit?: number;
+};
+
+export type SessionSnapshotRequestOptions = {
+  reason?: string;
 };
 
 export class DashboardApi {
@@ -154,8 +175,68 @@ export class DashboardApi {
     return this.client.post<PairingPollResponse>("/pairing/poll", { pairingId }, { auth: false });
   }
 
-  listSessions(token: string): Promise<SessionListResponse> {
-    return this.client.get<SessionListResponse>("/sessions", { token });
+  listProjects(token: string): Promise<ProjectListResponse> {
+    return this.client.get<ProjectListResponse>("/projects", { token });
+  }
+
+  createProject(
+    token: string,
+    body: ProjectCreateRequest,
+  ): Promise<ProjectCreateResponse> {
+    return this.client.post<ProjectCreateResponse>("/projects", body, { token });
+  }
+
+  updateProject(
+    token: string,
+    projectId: string,
+    body: ProjectPatchRequest,
+  ): Promise<ProjectResponse> {
+    return this.client.patch<ProjectResponse>(
+      `/projects/${encodeURIComponent(projectId)}`,
+      body,
+      { token },
+    );
+  }
+
+  deleteProject(token: string, projectId: string): Promise<ProjectDeleteResponse> {
+    return this.client.delete<ProjectDeleteResponse>(
+      `/projects/${encodeURIComponent(projectId)}`,
+      { token },
+    );
+  }
+
+  listProjectSessions(
+    token: string,
+    projectId: string,
+    query: { archived?: boolean; limit?: number; cursor?: string | null } = {},
+  ): Promise<ProjectSessionListResponse> {
+    return this.client.get<ProjectSessionListResponse>(
+      `/projects/${encodeURIComponent(projectId)}/sessions`,
+      { token, query },
+    );
+  }
+
+  archiveProjectSessions(
+    token: string,
+    projectId: string,
+    body: { archived: boolean; scope?: ArchiveAllScope },
+  ): Promise<ArchiveAllResponse> {
+    return this.client.post<ArchiveAllResponse>(
+      `/projects/${encodeURIComponent(projectId)}/sessions/archive-all`,
+      body,
+      { token },
+    );
+  }
+
+  listSessions(
+    token: string,
+    query: { archived: boolean; limit?: number; cursor?: string | null },
+  ): Promise<SessionListResponse> {
+    return this.client.get<SessionListResponse>("/sessions", { token, query });
+  }
+
+  listSessionInventory(token: string): Promise<Pick<SessionListResponse, "sessions" | "serverTime">> {
+    return this.client.get("/sessions/list", { token });
   }
 
   archiveConnectorSessions(
@@ -177,20 +258,27 @@ export class DashboardApi {
     return this.client.post<SessionCreateResponse>("/sessions", body, { token });
   }
 
+  createAndStartSession(
+    token: string,
+    body: SessionCreateAndStartRequest,
+  ): Promise<SessionCreateResponse> {
+    return this.client.post<SessionCreateResponse>("/sessions/create-and-start", body, { token });
+  }
+
   patchSession(
     token: string,
     sessionId: string,
     body: SessionPatchRequest,
   ): Promise<SessionResponse> {
     return this.client.patch<SessionResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}`,
+      `/sessions/${encodeURIComponent(sessionId)}/meta`,
       body,
       { token },
     );
   }
 
   bulkMarkSessionsRead(token: string, ids: string[]): Promise<BulkArchiveResponse> {
-    return this.client.post<BulkArchiveResponse>("/sessions/bulk-read", { ids }, { token });
+    return this.client.post<BulkArchiveResponse>("/sessions/read", ids, { token });
   }
 
   bulkArchiveSessions(
@@ -198,64 +286,153 @@ export class DashboardApi {
     ids: string[],
     archived: boolean,
   ): Promise<BulkArchiveResponse> {
+    const path = archived ? "/sessions/archive" : "/sessions/unarchive";
     return this.client.post<BulkArchiveResponse>(
-      "/sessions/bulk-archive",
-      { ids, archived },
+      path,
+      ids,
       { token },
     );
   }
 
   markSessionRead(token: string, sessionId: string): Promise<SessionResponse> {
-    return this.client.post<SessionResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/read`,
-      {},
-      { token },
-    );
+    return this.client
+      .post<BulkArchiveResponse>("/sessions/read", [sessionId], { token })
+      .then((response) => {
+        const session = response.sessions.find((item) => item.id === sessionId);
+        if (!session) throw new Error("session read response did not include session");
+        return { session, serverTime: response.serverTime };
+      });
   }
 
-  getSessionState(
+  getSessionTimeline(
     token: string,
     sessionId: string,
     afterSeqOrQuery: number | SessionStateQuery = 0,
     limit = 500,
-  ): Promise<SessionStateResponse> {
+  ): Promise<SessionTimelineResponse> {
     const query =
       typeof afterSeqOrQuery === "number"
-        ? { afterSeq: afterSeqOrQuery, limit }
+        ? { mode: "changes", afterSeq: afterSeqOrQuery, limit }
         : { ...afterSeqOrQuery, limit: afterSeqOrQuery.limit ?? limit };
-    return this.client.get<SessionStateResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/state`,
+    return this.client.get<SessionTimelineResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/timeline`,
       { token, query },
     );
   }
 
-  getLatestSessionState(
+  getLatestSessionTimeline(
     token: string,
     sessionId: string,
     limit = 100,
-  ): Promise<SessionStateResponse> {
-    return this.getSessionState(token, sessionId, { mode: "latest", limit });
+  ): Promise<SessionTimelineResponse> {
+    return this.getSessionTimeline(token, sessionId, { mode: "latest", limit });
   }
 
-  getSessionStateBefore(
+  getSessionTimelineBefore(
     token: string,
     sessionId: string,
     beforeOrderSeq: number,
     limit = 100,
-  ): Promise<SessionStateResponse> {
-    return this.getSessionState(token, sessionId, {
-      mode: "before",
+  ): Promise<SessionTimelineResponse> {
+    return this.getSessionTimeline(token, sessionId, {
+      mode: "history",
       beforeOrderSeq,
       limit,
     });
   }
 
-  sessionEventsUrl(token: string, sessionId: string): string {
-    return `/sessions/${encodeURIComponent(sessionId)}/events?token=${encodeURIComponent(token)}`;
+  getSessionSnapshot(
+    token: string,
+    sessionId: string,
+    limit = 100,
+    options: SessionSnapshotRequestOptions = {},
+  ): Promise<SessionSnapshotResponse> {
+    const reason = options.reason ?? "unspecified";
+    console.info("[AgentsAnywhere] session snapshot request", {
+      sessionId,
+      limit,
+      reason,
+      requestedAt: new Date().toISOString(),
+      stack: new Error().stack,
+    });
+    return this.client.get<SessionSnapshotResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/snapshot`,
+      { token, query: { limit } },
+    );
   }
 
-  dashboardEventsUrl(token: string): string {
-    return `/sessions/events/dashboard?token=${encodeURIComponent(token)}`;
+  createSessionShare(
+    token: string,
+    sessionId: string,
+    body: SessionShareCreateRequest,
+  ): Promise<SessionShareCreateResponse> {
+    return this.client.post<SessionShareCreateResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/shares`,
+      body,
+      { token },
+    );
+  }
+
+  getPublicSessionShare(shareId: string): Promise<PublicSessionShareResponse> {
+    return this.client.get<PublicSessionShareResponse>(
+      `/public/shares/${encodeURIComponent(shareId)}`,
+      { auth: false },
+    );
+  }
+
+  syncSession(token: string, sessionId: string): Promise<RpcResponse<Record<string, unknown>>> {
+    return this.client.post<RpcResponse<Record<string, unknown>>>(
+      `/sessions/${encodeURIComponent(sessionId)}/sync`,
+      {},
+      { token },
+    );
+  }
+
+  getSessionEvents(
+    token: string,
+    sessionId: string,
+    after: string,
+  ): Promise<ProtocolEventRecoveryResponse> {
+    return this.client.get<ProtocolEventRecoveryResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/events`,
+      { token, query: { after } },
+    );
+  }
+
+  createWsTicket(
+    token: string,
+    clientId: string,
+    sessionId: string,
+  ): Promise<WsTicketResponse> {
+    return this.client.post<WsTicketResponse>(
+      "/ws-ticket",
+      { clientId, scope: { sessionId } },
+      { token },
+    );
+  }
+
+  createDashboardWsTicket(token: string, clientId: string): Promise<WsTicketResponse> {
+    return this.client.post<WsTicketResponse>(
+      "/ws-ticket",
+      { clientId, scope: { dashboard: true } },
+      { token },
+    );
+  }
+
+  sessionWebSocketUrl(sessionId: string, ticket: string): string {
+    const path = `${apiPath(`/sessions/${encodeURIComponent(sessionId)}/ws`)}?ticket=${encodeURIComponent(ticket)}`;
+    if (typeof window === "undefined") return path;
+    const url = new URL(path, window.location.origin);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    return url.toString();
+  }
+
+  dashboardWebSocketUrl(ticket: string): string {
+    const path = `${apiPath("/dashboard/ws")}?ticket=${encodeURIComponent(ticket)}`;
+    if (typeof window === "undefined") return path;
+    const url = new URL(path, window.location.origin);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    return url.toString();
   }
 
   connectorFsList(
@@ -349,7 +526,7 @@ export class DashboardApi {
 
   async downloadBlob(token: string | null, url: string): Promise<Blob> {
     const headers: HeadersInit = {};
-    if (token) headers.authorization = `Bearer ${token}`;
+    if (token && shouldAuthorizeDownloadUrl(url)) headers.authorization = `Bearer ${token}`;
     const response = await fetch(url, {
       headers,
     });
@@ -425,10 +602,11 @@ export class DashboardApi {
     token: string,
     connectorId: string,
     terminalId: string,
+    signal?: AbortSignal,
   ): Promise<RpcResponse<unknown>> {
     return this.client.delete<RpcResponse<unknown>>(
       `/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminalId)}`,
-      { token },
+      { token, signal },
     );
   }
 
@@ -441,6 +619,19 @@ export class DashboardApi {
     return this.client.patch<RpcResponse<TerminalResponse["terminal"]>>(
       `/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminalId)}`,
       { label },
+      { token },
+    );
+  }
+
+  connectorTerminalSetPersistenceV2(
+    token: string,
+    connectorId: string,
+    terminalId: string,
+    persistent: boolean,
+  ): Promise<RpcResponse<TerminalResponse["terminal"]>> {
+    return this.client.patch<RpcResponse<TerminalResponse["terminal"]>>(
+      `/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminalId)}/persistence`,
+      { persistent },
       { token },
     );
   }
@@ -515,20 +706,51 @@ export class DashboardApi {
 
   interruptSession(token: string, sessionId: string): Promise<RpcResponse<unknown>> {
     return this.client.post<RpcResponse<unknown>>(
-      `/sessions/${encodeURIComponent(sessionId)}/interrupt`,
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/interrupt`,
       {},
       { token },
     );
   }
 
-  resolveApproval(
+  getSessionCommands(
     token: string,
-    approvalId: string,
-    status: ApprovalResolveStatus,
+    sessionId: string,
+    options: { query?: string; limit?: number } = {},
+  ): Promise<SessionCommandListResponse> {
+    void options;
+    return this.client.get<SessionCommandListResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/commands`,
+      { token },
+    );
+  }
+
+  sendSessionCommand(
+    token: string,
+    sessionId: string,
+    command: string,
+    options: { args?: string[]; raw?: string } = {},
+  ): Promise<SessionCommandResponse> {
+    return this.client.post<SessionCommandResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/commands`,
+      {
+        command,
+        ...(options.args && options.args.length > 0 ? { args: options.args } : {}),
+        ...(options.raw ? { raw: options.raw } : {}),
+      },
+      { token },
+    );
+  }
+
+  respondInteraction(
+    token: string,
+    sessionId: string,
+    noticeId: string,
+    actionId: string,
+    input?: Record<string, unknown> | null,
   ): Promise<RpcResponse<unknown>> {
     return this.client.post<RpcResponse<unknown>>(
-      `/approvals/${encodeURIComponent(approvalId)}/resolve`,
-      { status },
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/notices/${encodeURIComponent(noticeId)}/respond`,
+      { actionId, ...(input ? { input } : {}) },
       { token },
     );
   }
@@ -539,17 +761,66 @@ export class DashboardApi {
     content: string,
     options: MessageSendOptions = {},
   ): Promise<RpcResponse<unknown>> {
-    const { attachments, clientMessageId, mode, model, effort } = options;
+    const { attachments, clientMessageId } = options;
     return this.client.post<RpcResponse<unknown>>(
-      `/sessions/${encodeURIComponent(sessionId)}/messages`,
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/messages`,
       {
         content,
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
         ...(clientMessageId ? { clientMessageId } : {}),
-        ...(mode ? { mode } : {}),
-        ...(model ? { model } : {}),
-        ...(effort ? { effort } : {}),
       },
+      { token },
+    );
+  }
+
+  getSessionRuntimeState(
+    token: string,
+    sessionId: string,
+  ): Promise<SessionRuntimeStateResponse> {
+    return this.client.get<SessionRuntimeStateResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/state`,
+      { token },
+    );
+  }
+
+  getSessionRuntimeCapabilities(
+    token: string,
+    sessionId: string,
+  ): Promise<ProtocolCapabilitiesResponse> {
+    return this.client.get<ProtocolCapabilitiesResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/capabilities`,
+      { token },
+    );
+  }
+
+  updateSessionSelections(
+    token: string,
+    sessionId: string,
+    selections: Record<string, string | null>,
+  ): Promise<SessionSelectionPatchResponse> {
+    return this.client.patch<SessionSelectionPatchResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/selections`,
+      { selections },
+      { token },
+    );
+  }
+
+  getSessionModelCatalog(
+    token: string,
+    sessionId: string,
+  ): Promise<ProtocolModelCatalogResponse> {
+    return this.client.get<ProtocolModelCatalogResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/catalogs/model`,
+      { token },
+    );
+  }
+
+  getSessionPermissionCatalog(
+    token: string,
+    sessionId: string,
+  ): Promise<ProtocolPermissionCatalogResponse> {
+    return this.client.get<ProtocolPermissionCatalogResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/catalogs/permission`,
       { token },
     );
   }
@@ -568,145 +839,148 @@ export class DashboardApi {
     );
   }
 
-  getRuntimeConfigSchema(
-    token: string,
-    runtime: string,
-  ): Promise<RuntimeConfigSchemaResponse> {
-    return this.client.get<RuntimeConfigSchemaResponse>(
-      `/agents/${encodeURIComponent(runtime)}/config-schema`,
-      { token },
-    );
-  }
-
-  listAgentModes(token: string, runtime: string): Promise<AgentCatalogResponse> {
-    return this.client.get<AgentCatalogResponse>(
-      `/agents/${encodeURIComponent(runtime)}/modes`,
-      { token },
-    );
-  }
-
-  listAgentModels(token: string, runtime: string): Promise<AgentCatalogResponse> {
-    return this.client.get<AgentCatalogResponse>(
-      `/agents/${encodeURIComponent(runtime)}/models`,
-      { token },
-    );
-  }
-
-  listAgentEfforts(token: string, runtime: string): Promise<AgentCatalogResponse> {
-    return this.client.get<AgentCatalogResponse>(
-      `/agents/${encodeURIComponent(runtime)}/efforts`,
-      { token },
-    );
-  }
-
-  getAgentDefaults(token: string): Promise<UserAgentDefaultsResponse> {
-    return this.client.get<UserAgentDefaultsResponse>("/agents/defaults", { token });
-  }
-
-  updateAgentDefaults(
-    token: string,
-    runtimes: Record<string, { models?: Array<{
-      key: string;
-      displayLabel: string;
-      description?: string | null;
-      sortOrder?: number;
-      efforts?: Array<{
-        key: string;
-        displayLabel: string;
-        description?: string | null;
-        sortOrder?: number;
-      }>;
-    }> }>,
-  ): Promise<UserAgentDefaultsResponse> {
-    return this.client.patch<UserAgentDefaultsResponse>(
-      "/agents/defaults",
-      { runtimes },
-      { token },
-    );
-  }
-
-  getConnectorAgentSettings(
+  getConnectorRuntimeCapabilities(
     token: string,
     connectorId: string,
-    runtime: string,
-  ): Promise<RuntimeSettingsResponse> {
-    return this.client.get<RuntimeSettingsResponse>(
-      `/connectors/${encodeURIComponent(connectorId)}/agents/${encodeURIComponent(runtime)}/settings`,
+    runtimeId: string,
+  ): Promise<ProtocolCapabilitiesResponse> {
+    return this.client.get<ProtocolCapabilitiesResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/capabilities`,
       { token },
     );
   }
 
-  patchConnectorAgentSettings(
+  getConnectorRuntimeModelCatalog(
     token: string,
     connectorId: string,
-    runtime: string,
-    settings: Record<string, unknown>,
-  ): Promise<RuntimeSettingsResponse> {
-    return this.client.patch<RuntimeSettingsResponse>(
-      `/connectors/${encodeURIComponent(connectorId)}/agents/${encodeURIComponent(runtime)}/settings`,
-      { settings },
+    runtimeId: string,
+  ): Promise<ProtocolModelCatalogResponse> {
+    return this.client.get<ProtocolModelCatalogResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/catalogs/model`,
       { token },
     );
   }
 
-  deleteConnectorRuntime(
+  getConnectorRuntimePermissionCatalog(
     token: string,
     connectorId: string,
-    runtime: string,
-  ): Promise<ConnectorRuntimeCapabilitiesResponse> {
-    return this.client.delete<ConnectorRuntimeCapabilitiesResponse>(
-      `/connectors/${encodeURIComponent(connectorId)}/runtime-capabilities/${encodeURIComponent(runtime)}`,
+    runtimeId: string,
+  ): Promise<ProtocolPermissionCatalogResponse> {
+    return this.client.get<ProtocolPermissionCatalogResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/catalogs/permission`,
       { token },
     );
   }
 
-  scanConnectorRuntime(
+  getConnectorRuntimes(
     token: string,
     connectorId: string,
-    runtime: string,
-    path?: string | null,
-  ): Promise<ConnectorRuntimeScanResponse> {
-    return this.client.post<ConnectorRuntimeScanResponse>(
-      `/connectors/${encodeURIComponent(connectorId)}/runtime-capabilities/scan`,
-      { runtime, ...(path && path.trim() ? { path: path.trim() } : {}) },
+  ): Promise<DeviceRuntimeListResponse> {
+    return this.client.get<DeviceRuntimeListResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes`,
       { token },
     );
   }
 
-  authenticateConnectorAgent(
+  getConnectorRuntimeTypes(
     token: string,
     connectorId: string,
-    runtime: string,
-    methodId?: string | null,
-  ): Promise<ConnectorAgentAuthenticateResponse> {
-    return this.client.post<ConnectorAgentAuthenticateResponse>(
-      `/connectors/${encodeURIComponent(connectorId)}/agents/${encodeURIComponent(runtime)}/authenticate`,
-      methodId ? { methodId } : {},
+  ): Promise<RuntimeTypeListResponse> {
+    return this.client.get<RuntimeTypeListResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtime-types`,
       { token },
     );
   }
 
-  getSessionRuntimeSettings(
+  discoverConnectorRuntimeTypes(
     token: string,
-    sessionId: string,
-  ): Promise<RuntimeSettingsResponse> {
-    return this.client.get<RuntimeSettingsResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/runtime-settings`,
+    connectorId: string,
+  ): Promise<RuntimeTypeListResponse> {
+    return this.client.post<RuntimeTypeListResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtime-types/discover`,
+      {},
       { token },
     );
   }
 
-  patchSessionRuntimeSettings(
+  discoverConnectorRuntimes(
     token: string,
-    sessionId: string,
-    settings: Record<string, unknown>,
-  ): Promise<RuntimeSettingsResponse> {
-    return this.client.patch<RuntimeSettingsResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/runtime-settings`,
-      { settings },
+    connectorId: string,
+  ): Promise<DeviceRuntimeListResponse> {
+    return this.client.post<DeviceRuntimeListResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/discover`,
+      {},
       { token },
     );
   }
+
+  createConnectorRuntime(
+    token: string,
+    connectorId: string,
+    payload: {
+      runtimeType: string;
+      name: string;
+      config: Record<string, unknown>;
+      active?: boolean;
+    },
+  ): Promise<DeviceRuntimeView> {
+    return this.client.post<DeviceRuntimeView>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes`,
+      payload,
+      { token },
+    );
+  }
+
+  renameConnectorRuntime(
+    token: string,
+    connectorId: string,
+    runtimeId: string,
+    name: string,
+  ): Promise<DeviceRuntimeView> {
+    return this.client.patch<DeviceRuntimeView>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}`,
+      { name },
+      { token },
+    );
+  }
+
+  putConnectorRuntimeConfig(
+    token: string,
+    connectorId: string,
+    runtimeId: string,
+    config: Record<string, unknown>,
+  ): Promise<DeviceRuntimeView> {
+    return this.client.put<DeviceRuntimeView>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/config`,
+      { config },
+      { token },
+    );
+  }
+
+  setConnectorRuntimeActive(
+    token: string,
+    connectorId: string,
+    runtimeId: string,
+    active: boolean,
+  ): Promise<DeviceRuntimeView> {
+    return this.client.put<DeviceRuntimeView>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/active`,
+      { active },
+      { token },
+    );
+  }
+
+  deleteConnectorRuntimeConfig(
+    token: string,
+    connectorId: string,
+    runtimeId: string,
+  ): Promise<DeviceRuntimeView> {
+    return this.client.delete<DeviceRuntimeView>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/config`,
+      { token },
+    );
+  }
+
 }
 
 export const dashboardApi = new DashboardApi();

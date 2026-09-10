@@ -5,16 +5,17 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi.testclient import TestClient
+from conftest import ApiV2TestClient as TestClient, make_test_client
 from sqlalchemy import insert
 
 from agent_server.app import create_app
+from runtime_fixtures import seed_runtime_inventory
 from agent_server.core.models import TimelineItemIn
 from agent_server.infra.db import dashboard_daily_metrics as dashboard_daily_metrics_t
 
 
 def make_client(tmp_path) -> TestClient:
-    return TestClient(create_app(tmp_path / "test.sqlite3"))
+    return make_test_client(tmp_path / "test.sqlite3")
 
 
 def bearer(token: str) -> dict[str, str]:
@@ -23,7 +24,7 @@ def bearer(token: str) -> dict[str, str]:
 
 def register_admin(client: TestClient) -> dict[str, str]:
     cfg = client.get("/auth/config").json()
-    body: dict[str, Any] = {"userId": "admin", "password": "secret"}
+    body: dict[str, Any] = {"email": "admin@example.com", "displayName": "Admin", "password": "secret"}
     if cfg["needsBootstrap"]:
         body["setupToken"] = client.app.state.setup_token.peek()
     response = client.post("/auth/register", json=body)
@@ -35,10 +36,10 @@ def create_member(client: TestClient, admin_headers: dict[str, str], user_id: st
     response = client.post(
         "/admin/users",
         headers=admin_headers,
-        json={"userId": user_id, "password": "secret", "role": "member"},
+        json={"email": f"{user_id}@example.com", "displayName": user_id, "password": "secret", "role": "member"},
     )
     assert response.status_code == 201, response.text
-    login = client.post("/auth/login", json={"userId": user_id, "password": "secret"})
+    login = client.post("/auth/login", json={"email": f"{user_id}@example.com", "password": "secret"})
     assert login.status_code == 200, login.text
     return bearer(login.json()["accessToken"])
 
@@ -49,6 +50,14 @@ def create_connector(client: TestClient, headers: dict[str, str], name: str) -> 
     return response.json()["connector"]["id"]
 
 
+async def configure_runtime(store: Any, connector_id: str, runtime: str) -> None:
+    await seed_runtime_inventory(store, connector_id, {"runtimes": [{
+        "runtimeId": runtime, "runtimeType": runtime, "displayName": runtime.title(),
+        "schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    }]})
+    await store.set_device_runtime_config(connector_id, runtime, {})
+
+
 async def seed_dashboard_activity(client: TestClient) -> dict[str, str]:
     store = client.app.state.store
     admin_headers = register_admin(client)
@@ -57,8 +66,8 @@ async def seed_dashboard_activity(client: TestClient) -> dict[str, str]:
     bob_connector = create_connector(client, bob_headers, "bob-win")
     await store.set_connector_status(admin_connector, "offline", device_os="macos")
     await store.set_connector_status(bob_connector, "offline", device_os="windows")
-    await store.attach_runtime(admin_connector, "codex", {"selected": {"source": "path", "path": "/bin/codex"}})
-    await store.attach_runtime(bob_connector, "claude", {"selected": {"source": "path", "path": "/bin/claude"}})
+    await configure_runtime(store, admin_connector, "codex")
+    await configure_runtime(store, bob_connector, "claude")
     admin_session = await store.upsert_connector_session(
         connector_id=admin_connector,
         session_id="sess_admin_codex",
@@ -75,60 +84,27 @@ async def seed_dashboard_activity(client: TestClient) -> dict[str, str]:
         runtime="claude",
         external_session_id="thr_bob",
         title="Bob Claude",
-        cwd="/repo",
+        cwd="C:/repo",
         status="idle",
         origin="platform",
     )
     await store.upsert_timeline_item(
         session_id=admin_session.id,
-        item=_turn_start(admin_session.id, "turn_admin_1", 1, "codex"),
+        item=_platform_user_message(admin_session.id, 1, "codex", "cm_admin_1"),
     )
     await store.upsert_timeline_item(
         session_id=admin_session.id,
-        item=_platform_user_message(admin_session.id, "turn_admin_1", 2, "codex", "cm_admin_1"),
-    )
-    await store.upsert_timeline_item(
-        session_id=admin_session.id,
-        item=_turn_start(admin_session.id, "turn_admin_2", 3, "codex"),
-    )
-    await store.upsert_timeline_item(
-        session_id=admin_session.id,
-        item=_platform_user_message(admin_session.id, "turn_admin_2", 4, "codex", "cm_admin_2"),
+        item=_platform_user_message(admin_session.id, 2, "codex", "cm_admin_2"),
     )
     await store.upsert_timeline_item(
         session_id=bob_session.id,
-        item=_turn_start(bob_session.id, "turn_bob_1", 1, "claude"),
-    )
-    await store.upsert_timeline_item(
-        session_id=bob_session.id,
-        item=_platform_user_message(bob_session.id, "turn_bob_1", 2, "claude", "cm_bob_1"),
+        item=_platform_user_message(bob_session.id, 1, "claude", "cm_bob_1"),
     )
     return admin_headers
 
 
-def _turn_start(session_id: str, turn_id: str, order_seq: int, runtime: str) -> TimelineItemIn:
-    return TimelineItemIn(
-        id=f"tl_{turn_id}",
-        sessionId=session_id,
-        turnId=turn_id,
-        type="turn.start",
-        status="running",
-        content={},
-        source={
-            "runtime": runtime,
-            "turnId": turn_id,
-            "event": "turn/started",
-            "derivedKey": "turn-start",
-        },
-        orderSeq=order_seq,
-        revision=1,
-        contentHash=f"sha256:{turn_id}",
-    )
-
-
 def _platform_user_message(
     session_id: str,
-    turn_id: str,
     order_seq: int,
     runtime: str,
     client_message_id: str,
@@ -136,14 +112,12 @@ def _platform_user_message(
     return TimelineItemIn(
         id=f"tl_msg_{client_message_id}",
         sessionId=session_id,
-        turnId=turn_id,
         type="message",
         status="done",
         role="user",
         content={"text": "Run it", "format": "markdown"},
         source={
             "runtime": runtime,
-            "turnId": turn_id,
             "event": "item/completed",
             "clientMessageId": client_message_id,
         },
@@ -153,23 +127,21 @@ def _platform_user_message(
     )
 
 
-def _history_user_message(session_id: str, turn_id: str, order_seq: int, runtime: str) -> TimelineItemIn:
+def _history_user_message(session_id: str, message_id: str, order_seq: int, runtime: str) -> TimelineItemIn:
     return TimelineItemIn(
-        id=f"tl_history_msg_{turn_id}",
+        id=f"tl_history_msg_{message_id}",
         sessionId=session_id,
-        turnId=turn_id,
         type="message",
         status="done",
         role="user",
         content={"text": "Local history", "format": "markdown"},
         source={
             "runtime": runtime,
-            "turnId": turn_id,
             "event": "history/response_item",
         },
         orderSeq=order_seq,
         revision=1,
-        contentHash=f"sha256:history:{turn_id}",
+        contentHash=f"sha256:history:{message_id}",
     )
 
 
@@ -194,9 +166,9 @@ def test_admin_dashboard_overview_builds_daily_snapshot(tmp_path):
     assert body["summary"]["newUsers"] == 2
     assert body["summary"]["dau"] == 2
     assert body["summary"]["activeUsers"] == 2
-    assert body["summary"]["totalTurns"] == 3
+    assert body["summary"]["totalMessages"] == 3
     assert body["summary"]["activeSessions"] == 2
-    assert body["summary"]["avgTurnsPerActiveUser"] == 1.5
+    assert body["summary"]["avgMessagesPerActiveUser"] == 1.5
     assert body["summary"]["avgActiveSessionsPerActiveUser"] == 1.0
     assert body["summary"]["totalDevices"] == 2
     assert body["deviceBreakdown"] == [
@@ -208,15 +180,17 @@ def test_admin_dashboard_overview_builds_daily_snapshot(tmp_path):
     assert {item["key"]: item["value"] for item in body["agentBreakdown"]} == {
         "codex": 1.0,
         "claude": 1.0,
+        "dsh": 0.0,
     }
     assert {item["key"]: item["value"] for item in body["sessionAgentBreakdown"]} == {
         "codex": 1.0,
         "claude": 1.0,
+        "dsh": 0.0,
     }
-    assert body["settings"]["intensity"] == {"basis": "turns", "lightMax": 1, "mediumMax": 2}
-    assert body["settings"]["histogramBins"]["turns"] == [0, 1]
+    assert body["settings"]["intensity"] == {"basis": "messages", "lightMax": 1, "mediumMax": 2}
+    assert body["settings"]["histogramBins"]["messages"] == [0, 1]
     assert body["settings"]["histogramBins"]["sessions"] == [0, 1]
-    assert body["turnHistogram"] == [
+    assert body["messageHistogram"] == [
         {"key": "0-1", "label": "0-1", "count": 1, "min": 0, "max": 1},
         {"key": "2+", "label": "2+", "count": 1, "min": 2, "max": None},
     ]
@@ -238,7 +212,7 @@ def test_admin_dashboard_ignores_connector_history_for_usage_metrics(tmp_path):
 
     async def seed_history_import() -> None:
         await store.set_connector_status(connector_id, "offline", device_os="macos")
-        await store.attach_runtime(connector_id, "codex", {"selected": {"source": "path", "path": "/bin/codex"}})
+        await configure_runtime(store, connector_id, "codex")
         imported = await store.upsert_connector_session(
             connector_id=connector_id,
             session_id="sess_imported_codex",
@@ -250,11 +224,7 @@ def test_admin_dashboard_ignores_connector_history_for_usage_metrics(tmp_path):
         )
         await store.upsert_timeline_item(
             session_id=imported.id,
-            item=_turn_start(imported.id, "turn_history_1", 1, "codex"),
-        )
-        await store.upsert_timeline_item(
-            session_id=imported.id,
-            item=_history_user_message(imported.id, "turn_history_1", 2, "codex"),
+            item=_history_user_message(imported.id, "history_1", 1, "codex"),
         )
         async with store.engine.begin() as conn:
             await conn.execute(
@@ -270,7 +240,7 @@ def test_admin_dashboard_ignores_connector_history_for_usage_metrics(tmp_path):
                     },
                     {
                         "date": current,
-                        "metric_key": "usage.turns",
+                        "metric_key": "usage.messages",
                         "dimension_key": "",
                         "dimension_value": "",
                         "value": 99,
@@ -299,16 +269,61 @@ def test_admin_dashboard_ignores_connector_history_for_usage_metrics(tmp_path):
     body = response.json()
     assert body["summary"]["dau"] == 1
     assert body["summary"]["activeUsers"] == 0
-    assert body["summary"]["totalTurns"] == 0
+    assert body["summary"]["totalMessages"] == 0
     assert body["summary"]["activeSessions"] == 0
     assert {item["key"]: item["value"] for item in body["sessionAgentBreakdown"]} == {
         "codex": 0.0,
         "claude": 0.0,
+        "dsh": 0.0,
     }
     assert {item["key"]: item["value"] for item in body["agentBreakdown"]} == {
         "codex": 1.0,
         "claude": 0.0,
+        "dsh": 0.0,
     }
+
+
+def test_admin_dashboard_counts_dsh_separately(tmp_path):
+    client = make_client(tmp_path)
+    store = client.app.state.store
+    headers = register_admin(client)
+    connector_id = create_connector(client, headers, "admin-dsh")
+    current = today()
+
+    async def seed() -> None:
+        await store.set_connector_status(connector_id, "offline", device_os="linux")
+        await configure_runtime(store, connector_id, "dsh")
+        session = await store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id="sess_admin_dsh",
+            runtime="dsh",
+            external_session_id="dsh-native-session",
+            title="Admin DSH",
+            cwd="/repo",
+            status="idle",
+            origin="platform",
+        )
+        await store.upsert_timeline_item(
+            session_id=session.id,
+            item=_platform_user_message(session.id, 1, "dsh", "cm_dsh_1"),
+        )
+
+    asyncio.run(seed())
+    response = client.get(
+        "/admin/dashboard/overview",
+        headers=headers,
+        params={"from": current, "to": current},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert {item["key"]: item["value"] for item in body["agentBreakdown"]} == {
+        "codex": 0.0,
+        "claude": 0.0,
+        "dsh": 1.0,
+    }
+    assert {
+        item["key"]: item["value"] for item in body["sessionAgentBreakdown"]
+    } == {"codex": 0.0, "claude": 0.0, "dsh": 1.0}
 
 
 def test_admin_dashboard_settings_drive_segments(tmp_path):
@@ -319,7 +334,7 @@ def test_admin_dashboard_settings_drive_segments(tmp_path):
     settings = client.patch(
         "/admin/dashboard/settings",
         headers=admin_headers,
-        json={"intensity": {"basis": "turns", "lightMax": 0, "mediumMax": 1}},
+        json={"intensity": {"basis": "messages", "lightMax": 0, "mediumMax": 1}},
     )
     assert settings.status_code == 200, settings.text
     refreshed = client.post(f"/admin/dashboard/snapshots/{current}", headers=admin_headers)

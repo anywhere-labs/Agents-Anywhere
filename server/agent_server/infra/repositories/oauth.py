@@ -1,10 +1,7 @@
 from __future__ import annotations
 
+from agent_server.core.oauth_clients import first_party_oauth_client
 from agent_server.infra.repositories.store_support import *
-
-
-FIRST_PARTY_OAUTH_CLIENT_ID = "agents-anywhere-mobile"
-FIRST_PARTY_OAUTH_REDIRECT_URI = "agents-anywhere://oauth/callback"
 
 
 class OAuthRepositoryMixin:
@@ -66,12 +63,13 @@ class OAuthRepositoryMixin:
         code_challenge_method: str,
     ) -> str:
         redirect_uri = _normalize_redirect_uri(redirect_uri)
-        if client_id == FIRST_PARTY_OAUTH_CLIENT_ID:
-            allowed_redirects = [FIRST_PARTY_OAUTH_REDIRECT_URI]
+        first_party_client = first_party_oauth_client(client_id)
+        if first_party_client is not None:
+            allowed = first_party_client.allows_redirect(redirect_uri)
         else:
             client = await self.get_oauth_client(client_id)
-            allowed_redirects = client.redirectUris
-        if redirect_uri not in allowed_redirects:
+            allowed = redirect_uri in client.redirectUris
+        if not allowed:
             raise ValueError("redirect uri is not registered")
         if code_challenge_method != "S256":
             raise ValueError("code challenge method must be S256")
@@ -83,18 +81,18 @@ class OAuthRepositoryMixin:
         now = now_dt.isoformat().replace("+00:00", "Z")
         expires_at = (now_dt + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
         async with self._engine.begin() as conn:
-            if client_id == FIRST_PARTY_OAUTH_CLIENT_ID:
+            if first_party_client is not None:
                 existing_client = (
                     await conn.execute(
-                        select(oauth_clients_t.c.id).where(oauth_clients_t.c.id == FIRST_PARTY_OAUTH_CLIENT_ID)
+                        select(oauth_clients_t.c.id).where(oauth_clients_t.c.id == first_party_client.client_id)
                     )
                 ).first()
                 if existing_client is None:
                     await conn.execute(
                         insert(oauth_clients_t).values(
-                            id=FIRST_PARTY_OAUTH_CLIENT_ID,
-                            name="Agents Anywhere Mobile",
-                            redirect_uris_json=_json_dumps([FIRST_PARTY_OAUTH_REDIRECT_URI]),
+                            id=first_party_client.client_id,
+                            name=first_party_client.name,
+                            redirect_uris_json=_json_dumps([first_party_client.redirect_uri]),
                             created_at=now,
                             updated_at=now,
                         )
@@ -145,11 +143,16 @@ class OAuthRepositoryMixin:
                 raise ValueError("unsupported code challenge method")
             if _pkce_challenge(code_verifier) != row["code_challenge"]:
                 raise ValueError("invalid code verifier")
-            await conn.execute(
+            consumed = await conn.execute(
                 update(oauth_authorization_codes_t)
-                .where(oauth_authorization_codes_t.c.code_hash == code_hash)
+                .where(
+                    oauth_authorization_codes_t.c.code_hash == code_hash,
+                    oauth_authorization_codes_t.c.consumed_at.is_(None),
+                )
                 .values(consumed_at=now)
             )
+            if consumed.rowcount != 1:
+                raise ValueError("invalid authorization code")
             user_id = row["user_id"]
             scope = row["scope"]
         return await self.get_user(user_id), scope

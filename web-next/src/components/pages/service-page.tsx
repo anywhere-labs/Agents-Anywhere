@@ -3,7 +3,6 @@
 import * as React from "react"
 import {
   Check,
-  ChevronLeft,
   Copy,
   ExternalLink,
   Globe,
@@ -16,6 +15,8 @@ import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth/auth-context"
+import { PageHeader } from "@/components/pages/page-header"
+import { ServiceEmailCard } from "@/components/pages/service-email-card"
 import { LoadingState } from "@/components/loading-state"
 import { Button } from "@/components/ui/button"
 import {
@@ -51,6 +52,7 @@ import type {
   ServiceInfo,
 } from "@/features/auth/types"
 import { cn } from "@/lib/utils"
+import { copyText } from "@/lib/clipboard"
 
 type OAuthTemplateKey = "custom" | "github" | "gitlab" | "google"
 
@@ -61,10 +63,19 @@ type OAuthTemplate = {
   apply: (baseUrl: string) => Partial<OAuthProviderConfigUpdate>
 }
 
-type CopyKey = "endpoint" | "database" | "webCallback" | "callback" | "mobileClient"
+type CopyKey =
+  | "endpoint"
+  | "database"
+  | "webCallback"
+  | "mobileCallback"
+  | "mobileClient"
+  | "desktopCallback"
+  | "desktopClient"
 
 const MOBILE_CLIENT_ID = "agents-anywhere-mobile"
 const MOBILE_CALLBACK = "agents-anywhere://oauth/callback"
+const DESKTOP_CLIENT_ID = "agents-anywhere-desktop"
+const DESKTOP_CALLBACK = "agents-anywhere-desktop://oauth/callback"
 
 function formatUptime(seconds: number) {
   if (seconds < 60) return `${seconds}s`
@@ -238,11 +249,16 @@ export function ServicePage() {
 
   React.useEffect(() => load(), [load])
 
-  const copy = React.useCallback((key: CopyKey, value: string) => {
-    void navigator.clipboard.writeText(value)
-    setCopied(key)
-    window.setTimeout(() => setCopied(null), 1200)
-  }, [])
+  const copy = React.useCallback(async (key: CopyKey, value: string) => {
+    setCopied(null)
+    try {
+      await copyText(value)
+      setCopied(key)
+      window.setTimeout(() => setCopied(null), 1200)
+    } catch {
+      toast.error(tCommon("copyFailed"))
+    }
+  }, [tCommon])
 
   const updateOAuthDraft = React.useCallback((patch: Partial<OAuthProviderConfigUpdate>) => {
     setOauthDraft((current) => ({ ...current, ...patch }))
@@ -328,30 +344,14 @@ export function ServicePage() {
   const publicUrl = browserPublicUrl(serviceInfo.endpoint)
 
   return (
-    <ScrollArea className="h-full bg-background">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-8 pb-16 pt-8">
-        <div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate("home")}
-            className="mb-6 -ml-2 gap-1.5 text-muted-foreground"
-          >
-            <ChevronLeft />
-            {tCommon("back")}
+    <ScrollArea className="@container/page h-full w-full bg-background">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-8 pb-16 pt-14 @min-[68rem]/page:pt-8">
+        <PageHeader title={t("title")} description={t("description")} onBack={() => navigate("home")}>
+          <Button type="button" variant="outline" onClick={() => load()} disabled={loading}>
+            <RefreshCw data-icon="inline-start" />
+            {t("refresh")}
           </Button>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <h1 className="text-2xl font-semibold">{t("title")}</h1>
-              <p className="mt-1 text-sm text-muted-foreground">{t("description")}</p>
-            </div>
-            <Button type="button" variant="outline" onClick={() => load()} disabled={loading}>
-              <RefreshCw data-icon="inline-start" />
-              {t("refresh")}
-            </Button>
-          </div>
-        </div>
+        </PageHeader>
 
         <ServerCard
           info={serviceInfo}
@@ -386,6 +386,8 @@ export function ServicePage() {
             </FieldGroup>
           </CardContent>
         </Card>
+
+        <ServiceEmailCard settings={settings.email} token={session?.accessToken ?? ""} isAdmin={isAdmin} onSaved={setSettings} />
 
         <OAuthProviderCard
           draft={oauthDraft}
@@ -509,8 +511,14 @@ function InfoRow({
   return (
     <div className={cn("flex items-center gap-4 px-5 py-3", !last && "border-b border-border")}>
       <div className="w-32 shrink-0 text-sm text-muted-foreground">{label}</div>
-      <div className="min-w-0 flex-1 text-sm">{value}</div>
-      {action}
+      <div className={cn("relative min-w-0 flex-1 text-sm", action && "pr-10")}>
+        <div className="no-scrollbar min-w-0 overflow-x-auto overflow-y-hidden whitespace-nowrap">{value}</div>
+        {action ? (
+          <div className="absolute inset-y-0 right-0 flex items-center bg-card pl-2 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-10 before:bg-gradient-to-r before:from-transparent before:to-card">
+            {action}
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }
@@ -592,7 +600,7 @@ function OAuthProviderCard({
             <Switch
               checked={draft.enabled}
               disabled={disabled}
-              onCheckedChange={(value) => onDraftChange({ enabled: value })}
+              onCheckedChange={(value: boolean) => onDraftChange({ enabled: value })}
             />
           </Field>
 
@@ -606,7 +614,7 @@ function OAuthProviderCard({
                 variant="outline"
                 spacing={0}
                 value={template}
-                onValueChange={(value) => {
+                onValueChange={(value: string) => {
                   if (value) onTemplateChange(value as OAuthTemplateKey)
                 }}
                 className="flex-wrap"
@@ -824,7 +832,7 @@ function FirstPartyClientsCard({
           value={<span className="rounded-full bg-muted px-2 py-0.5 text-xs">{t("locked")}</span>}
         />
         <InfoRow
-          label={t("clientId")}
+          label={t("mobileClientId")}
           value={<code className="code-mono text-sm">{MOBILE_CLIENT_ID}</code>}
           action={
             <CopyButton
@@ -846,13 +854,35 @@ function FirstPartyClientsCard({
           }
         />
         <InfoRow
-          label={t("nativeCallback")}
+          label={t("mobileCallback")}
           value={<code className="code-mono text-sm">{MOBILE_CALLBACK}</code>}
           action={
             <CopyButton
-              copied={copied === "callback"}
+              copied={copied === "mobileCallback"}
               label={tCommon("copy")}
-              onClick={() => onCopy("callback", MOBILE_CALLBACK)}
+              onClick={() => onCopy("mobileCallback", MOBILE_CALLBACK)}
+            />
+          }
+        />
+        <InfoRow
+          label={t("desktopClientId")}
+          value={<code className="code-mono text-sm">{DESKTOP_CLIENT_ID}</code>}
+          action={
+            <CopyButton
+              copied={copied === "desktopClient"}
+              label={tCommon("copy")}
+              onClick={() => onCopy("desktopClient", DESKTOP_CLIENT_ID)}
+            />
+          }
+        />
+        <InfoRow
+          label={t("desktopCallback")}
+          value={<code className="code-mono text-sm">{DESKTOP_CALLBACK}</code>}
+          action={
+            <CopyButton
+              copied={copied === "desktopCallback"}
+              label={tCommon("copy")}
+              onClick={() => onCopy("desktopCallback", DESKTOP_CALLBACK)}
             />
           }
           last

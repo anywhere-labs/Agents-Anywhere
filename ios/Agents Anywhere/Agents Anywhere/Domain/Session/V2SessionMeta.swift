@@ -1,0 +1,184 @@
+import Foundation
+
+nonisolated enum V2ConnectorPresence: String, Codable, Hashable {
+    case online
+    case offline
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        self = Self(rawValue: value) ?? .unknown
+    }
+}
+
+nonisolated struct V2SessionMeta: Codable, Identifiable, Hashable {
+    let id: V2SessionID
+    let connectorId: V2ConnectorID
+    var projectId: String? = nil
+    let runtime: V2RuntimeID
+    var runtimeId: V2RuntimeID? = nil
+    var runtimeType: String? = nil
+    var runtimeName: String? = nil
+    var runtimeTypeDisplayName: String? = nil
+    let externalSessionId: String?
+    let title: String?
+    let cwd: String?
+    var status: V2RuntimeStatus
+    let takeover: Bool
+    let connectorStatus: V2ConnectorPresence
+    let pinned: Bool
+    let pinnedAt: String?
+    let archived: Bool
+    let archivedAt: String?
+    let userArchived: Bool
+    let sourceAvailability: String
+    let sourceAvailabilityReason: String?
+    let sourceAvailabilityUpdatedAt: String?
+    let sourceObservationOrigin: String?
+    let archiveSource: String?
+    var unread: Bool
+    var lastReadSeq: Int
+    let latestTurnEndSeq: Int
+    let lastSyncedAt: String?
+    let sourceObservedAt: String?
+    let lastActivityAt: String?
+    let lastItemAt: String?
+    let lastItemOrderSeq: Int?
+    let sortAt: String?
+    let updatedSeq: Int
+    var createdAt: String? = nil
+
+    var effectiveRuntimeId: V2RuntimeID { runtimeId ?? runtime }
+}
+
+struct V2SessionListResponse: Decodable, Hashable {
+    let sessions: [V2SessionMeta]
+    var hasMore: Bool
+    var nextCursor: String?
+    let serverTime: String
+}
+
+struct V2SessionInventoryResponse: Decodable, Hashable {
+    let sessions: [V2SessionMeta]
+    let serverTime: String
+}
+
+struct V2SessionMetaResponse: Decodable, Hashable {
+    let session: V2SessionMeta
+    let serverTime: String
+}
+
+struct V2SessionMetaPatchRequest: Encodable, Hashable {
+    let title: String?
+    let pinned: Bool?
+    let archived: Bool?
+}
+
+struct V2SessionCreateRequest: Encodable, Hashable {
+    let connectorId: V2ConnectorID
+    let projectId: String
+    let runtime: V2RuntimeID
+    var runtimeId: V2RuntimeID? = nil
+    let externalSessionId: String?
+    let title: String?
+    let cwd: String?
+    let selections: [V2RuntimeSelectionScope: V2SelectionID]?
+
+    enum CodingKeys: String, CodingKey {
+        case connectorId
+        case projectId
+        case runtime
+        case runtimeId
+        case externalSessionId
+        case title
+        case cwd
+        case selections
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(connectorId, forKey: .connectorId)
+        try container.encode(projectId, forKey: .projectId)
+        try container.encode(runtime, forKey: .runtime)
+        try container.encodeIfPresent(runtimeId, forKey: .runtimeId)
+        try container.encodeIfPresent(externalSessionId, forKey: .externalSessionId)
+        try container.encodeIfPresent(title, forKey: .title)
+        try container.encodeIfPresent(cwd, forKey: .cwd)
+        let rawSelections = selections?.reduce(into: [String: V2SelectionID]()) { result, entry in
+            result[entry.key.rawValue] = entry.value
+        }
+        try container.encodeIfPresent(rawSelections, forKey: .selections)
+    }
+}
+
+struct V2InlineAttachment: Encodable, Hashable {
+    let fileId: V2AttachmentID
+    let name: String
+    let mediaType: String
+    let size: Int?
+    let sha256: String?
+    let contentBase64: String
+}
+
+struct V2SessionCreateAndStartRequest: Encodable, Hashable {
+    let connectorId: V2ConnectorID
+    let projectId: String
+    let runtime: V2RuntimeID
+    var runtimeId: V2RuntimeID? = nil
+    let title: String?
+    let cwd: String?
+    let content: String
+    let selections: [V2RuntimeSelectionScope: V2SelectionID]
+    var runtimeOptions: [String: JSONValue] = [:]
+    let attachments: [V2InlineAttachment]
+    let clientMessageId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case connectorId
+        case projectId
+        case runtime
+        case runtimeId
+        case title
+        case cwd
+        case content
+        case selections
+        case runtimeOptions
+        case attachments
+        case clientMessageId
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(connectorId, forKey: .connectorId)
+        try container.encode(projectId, forKey: .projectId)
+        try container.encode(runtime, forKey: .runtime)
+        try container.encodeIfPresent(runtimeId, forKey: .runtimeId)
+        try container.encodeIfPresent(title, forKey: .title)
+        try container.encodeIfPresent(cwd, forKey: .cwd)
+        try container.encode(content, forKey: .content)
+        let rawSelections = selections.reduce(into: [String: V2SelectionID]()) { result, entry in
+            result[entry.key.rawValue] = entry.value
+        }
+        try container.encode(rawSelections, forKey: .selections)
+        try container.encode(runtimeOptions, forKey: .runtimeOptions)
+        try container.encode(attachments, forKey: .attachments)
+        try container.encodeIfPresent(clientMessageId, forKey: .clientMessageId)
+    }
+}
+
+struct V2SessionCreateResponse: Decodable, Hashable {
+    let session: V2SessionMeta
+    var attachments: [V2CreatedAttachment]? = nil
+    let connectorResult: JSONValue?
+    let serverTime: String?
+}
+
+struct V2SessionBulkActionResponse: Decodable, Hashable {
+    let sessions: [V2SessionMeta]
+    let notFound: [V2SessionID]
+    let serverTime: String
+}
+
+struct V2SessionTakeoverResponse: Decodable, Hashable {
+    let session: V2SessionMeta
+}

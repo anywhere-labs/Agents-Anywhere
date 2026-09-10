@@ -40,4 +40,8 @@ enum AppTheme {
     static func groupedFill(_ scheme: ColorScheme) -> Color {
         scheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.04)
     }
+
+    static func sidebarSelectionFill(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color.white.opacity(0.20) : Color.black.opacity(0.10)
+    }
 }

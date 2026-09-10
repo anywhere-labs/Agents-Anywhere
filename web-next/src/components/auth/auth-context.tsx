@@ -10,6 +10,7 @@ import {
 } from "@/features/auth/session"
 import type { AuthMe, OAuthFinalizePayload, StoredSession } from "@/features/auth/types"
 import { useTranslations } from "next-intl"
+import { authFlowHash, clearAuthFlow, rememberAuthFlow, takeAuthFlow } from "@/features/auth/continuation"
 
 export type AuthScreen =
   | "bootstrap"
@@ -19,13 +20,17 @@ export type AuthScreen =
   | "oauth-new-user"
   | "oauth-link-existing"
   | "mobile-oauth"
+  | "desktop-oauth"
+  | "plugin-oauth"
+  | "onboarding"
   | "preview"
   | "app"
 
 export type OAuthPending = {
   status: "authenticated" | "needs_password" | "needs_registration"
   pendingToken: string
-  userId: string
+  email: string
+  displayName: string
 }
 
 type AuthState = {
@@ -39,12 +44,14 @@ type AuthState = {
   oauthEnabled: boolean
   oauthProviderLabel: string | null
   oauthPending: OAuthPending | null
+  emailVerificationRequired: boolean
+  refreshConfig: () => Promise<void>
   registrationOpen: boolean
   navigate: (screen: AuthScreen) => void
-  login: (input: { userId: string; password: string }) => Promise<void>
-  register: (input: { userId: string; password: string; setupToken?: string }) => Promise<void>
+  login: (input: { email: string; password: string }) => Promise<void>
+  register: (input: { email: string; displayName: string; password: string; code?: string; setupToken?: string }) => Promise<void>
   startOAuth: () => Promise<void>
-  finalizeOAuth: (input: { userId?: string; password?: string; setPassword?: boolean }) => Promise<void>
+  finalizeOAuth: (input: { email?: string; displayName?: string; code?: string; password?: string; setPassword?: boolean }) => Promise<void>
   cancelOAuth: () => void
   refreshMe: () => Promise<AuthMe | null>
   signOut: () => void
@@ -67,6 +74,9 @@ function hashToScreen(hash: string): AuthScreen {
     "oauth/new": "oauth-new-user",
     "oauth/link": "oauth-link-existing",
     "mobile-oauth": "mobile-oauth",
+    "desktop-oauth": "desktop-oauth",
+    "plugin-oauth": "plugin-oauth",
+    onboarding: "onboarding",
     preview: "preview",
   }
   if (exactMap[path]) return exactMap[path]
@@ -76,10 +86,12 @@ function hashToScreen(hash: string): AuthScreen {
     path === "" ||
     path === "app" ||
     path.startsWith("session/") ||
+    path.startsWith("new-session/") ||
     path.startsWith("settings") ||
     path === "dashboard" ||
     path === "team" ||
     path === "service" ||
+    path === "mobile-connections" ||
     path.startsWith("device")
 
   if (isAppRoute) return "app"
@@ -96,6 +108,9 @@ function screenToHash(s: AuthScreen): string {
     "oauth-new-user": "#/oauth/new",
     "oauth-link-existing": "#/oauth/link",
     "mobile-oauth": "#/mobile-oauth",
+    "desktop-oauth": "#/desktop-oauth",
+    "plugin-oauth": "#/plugin-oauth",
+    onboarding: "#/onboarding",
     preview: "#/preview",
     app: "#/",
   }
@@ -111,7 +126,8 @@ function readOAuthPendingFromUrl(): OAuthPending | null {
   return {
     status,
     pendingToken,
-    userId: params.get("oauth_user") ?? "",
+    email: params.get("oauth_email") ?? "",
+    displayName: params.get("oauth_display_name") ?? "",
   }
 }
 
@@ -125,11 +141,15 @@ function clearOAuthQueryParams() {
     url.searchParams.has("oauth_pending") ||
     url.searchParams.has("oauth_status") ||
     url.searchParams.has("oauth_user") ||
+    url.searchParams.has("oauth_email") ||
+    url.searchParams.has("oauth_display_name") ||
     url.searchParams.has("oauth_error")
   if (!hadOAuthParams) return
   url.searchParams.delete("oauth_pending")
   url.searchParams.delete("oauth_status")
   url.searchParams.delete("oauth_user")
+  url.searchParams.delete("oauth_email")
+  url.searchParams.delete("oauth_display_name")
   url.searchParams.delete("oauth_error")
   window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`)
 }
@@ -145,6 +165,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [oauthEnabled, setOauthEnabled] = React.useState(false)
   const [oauthProviderLabel, setOauthProviderLabel] = React.useState<string | null>(null)
   const [oauthPending, setOauthPending] = React.useState<OAuthPending | null>(null)
+  const [emailVerificationRequired, setEmailVerificationRequired] = React.useState(false)
+  const refreshConfig = React.useCallback(async () => {
+    const config = await authApi.config()
+    setEmailVerificationRequired(config.emailVerificationRequired)
+    setRegistrationOpen(config.registrationOpen)
+    setOauthEnabled(config.oauthEnabled)
+    setOauthProviderLabel(config.oauthProviderLabel)
+  }, [])
   const [registrationOpen, setRegistrationOpen] = React.useState(false)
 
   // On mount: set screen from the current hash, then listen for changes.
@@ -166,6 +194,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setOauthEnabled(config.oauthEnabled)
           setOauthProviderLabel(config.oauthProviderLabel)
           setRegistrationOpen(config.registrationOpen)
+          setEmailVerificationRequired(config.emailVerificationRequired)
         }
         if (config.needsBootstrap && !cancelled) {
           setScreenState("bootstrap")
@@ -201,7 +230,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return
         setSession(null)
         setMe(null)
-        setScreenState("login")
+        setScreenState(authFlowHash(window.location.hash) ? hashToScreen(window.location.hash) : "login")
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -217,6 +246,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const navigate = React.useCallback((s: AuthScreen) => {
+    if (s === "login" || s === "register" || s === "oauth-new-user" || s === "oauth-link-existing") {
+      rememberAuthFlow(window.location.hash, window.sessionStorage)
+    }
     window.location.hash = screenToHash(s)
     if (s === "login") setOauthPending(null)
     setScreenState(s)
@@ -230,9 +262,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setMe(currentUser)
     setError(null)
     setOauthPending(null)
-    const postAuthScreen = hashToScreen(window.location.hash)
-    if (postAuthScreen === "mobile-oauth") {
-      setScreenState("mobile-oauth")
+    const continuation = takeAuthFlow(window.location.hash, window.sessionStorage)
+    if (continuation) {
+      window.location.hash = continuation
+      setScreenState(hashToScreen(continuation))
       return
     }
     window.location.hash = "#/"
@@ -266,7 +299,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [finishAuth, oauthPending, t])
 
   const login = React.useCallback(
-    async (input: { userId: string; password: string }) => {
+    async (input: { email: string; password: string }) => {
       setLoading(true)
       setError(null)
       try {
@@ -282,7 +315,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   )
 
   const register = React.useCallback(
-    async (input: { userId: string; password: string; setupToken?: string }) => {
+    async (input: { email: string; displayName: string; password: string; code?: string; setupToken?: string }) => {
       setLoading(true)
       setError(null)
       try {
@@ -311,14 +344,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [t])
 
   const finalizeOAuth = React.useCallback(
-    async (input: { userId?: string; password?: string; setPassword?: boolean }) => {
+    async (input: { email?: string; displayName?: string; code?: string; password?: string; setPassword?: boolean }) => {
       if (!oauthPending) return
       setLoading(true)
       setError(null)
       try {
         const payload: OAuthFinalizePayload = {
           pendingToken: oauthPending.pendingToken,
-          userId: input.userId?.trim().toLowerCase() || undefined,
+          email: input.email?.trim().toLowerCase() || undefined,
+          displayName: input.displayName?.trim() || undefined,
+          code: input.code || undefined,
           password: input.password || undefined,
           setPassword: Boolean(input.setPassword),
         }
@@ -337,6 +372,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const cancelOAuth = React.useCallback(() => {
     setOauthPending(null)
     setError(null)
+    rememberAuthFlow(window.location.hash, window.sessionStorage)
     window.location.hash = "#/login"
     setScreenState("login")
   }, [])
@@ -352,6 +388,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [session?.accessToken])
 
   const signOut = React.useCallback(() => {
+    clearAuthFlow(window.sessionStorage)
     clearStoredSession()
     setSession(null)
     setMe(null)
@@ -374,6 +411,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         oauthProviderLabel,
         oauthPending,
         registrationOpen,
+        emailVerificationRequired,
+        refreshConfig,
         navigate,
 
         login,

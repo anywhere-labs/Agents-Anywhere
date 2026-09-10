@@ -11,8 +11,8 @@ from sqlalchemy import and_, delete, func, insert, select
 
 from agent_server.core.models import (
     DashboardBreakdownItem,
-    DashboardHistogramSettings,
     DashboardHistogramBucket,
+    DashboardHistogramSettings,
     DashboardIntensitySettings,
     DashboardOverviewResponse,
     DashboardRange,
@@ -26,20 +26,36 @@ from agent_server.core.models import (
 from agent_server.core.utc import utc_now
 from agent_server.infra.db import (
     connectors as connectors_t,
+)
+from agent_server.infra.db import (
     dashboard_daily_metrics as dashboard_daily_metrics_t,
+)
+from agent_server.infra.db import (
     dashboard_settings as dashboard_settings_t,
+)
+from agent_server.infra.db import (
     dashboard_user_daily_facts as dashboard_user_daily_facts_t,
+)
+from agent_server.infra.db import (
+    device_runtimes as device_runtimes_t,
+)
+from agent_server.infra.db import (
     platform_user_activity as platform_user_activity_t,
+)
+from agent_server.infra.db import (
     sessions as sessions_t,
+)
+from agent_server.infra.db import (
     timeline_items as timeline_items_t,
+)
+from agent_server.infra.db import (
     users as users_t,
 )
 from agent_server.infra.repositories.store_support import _json_loads
-from agent_server.infra.repositories.facade import Store
-
+from agent_server.services.repository_ports import AdminDashboardRepository
 
 DASHBOARD_SETTINGS_KEY = "settings"
-DASHBOARD_SNAPSHOT_VERSION = 4
+DASHBOARD_SNAPSHOT_VERSION = 5
 SNAPSHOT_REFRESH_SECONDS = 300
 METRIC_KEYS = {
     "totalUsers": "users.total",
@@ -48,9 +64,9 @@ METRIC_KEYS = {
     "activeUsers": "users.active_session_users",
     "wau": "users.wau",
     "mau": "users.mau",
-    "totalTurns": "usage.turns",
+    "totalMessages": "usage.messages",
     "activeSessions": "usage.active_sessions",
-    "avgTurnsPerActiveUser": "usage.avg_turns_per_active_user",
+    "avgMessagesPerActiveUser": "usage.avg_messages_per_active_user",
     "avgActiveSessionsPerActiveUser": "usage.avg_active_sessions_per_active_user",
     "totalDevices": "devices.total",
     "avgDevicesPerUser": "devices.avg_per_user",
@@ -58,6 +74,7 @@ METRIC_KEYS = {
 AGENT_LABELS = {
     "codex": "Codex",
     "claude": "Claude Code",
+    "dsh": "DeepSeek Harness",
 }
 DEVICE_LABELS = {
     "macos": "macOS",
@@ -75,7 +92,7 @@ SEGMENT_LABELS = {
 @dataclass
 class UserDailyFact:
     user_id: str
-    turns: int = 0
+    messages: int = 0
     active_sessions: set[str] = field(default_factory=set)
     created_sessions: int = 0
     last_activity_at: str | None = None
@@ -86,6 +103,7 @@ class UserDailyFact:
     unknown_devices: int = 0
     codex_agents: int = 0
     claude_agents: int = 0
+    dsh_agents: int = 0
 
 
 @dataclass
@@ -97,7 +115,7 @@ class DeviceSnapshot:
 
 
 class AdminDashboardService:
-    def __init__(self, store: Store) -> None:
+    def __init__(self, store: AdminDashboardRepository) -> None:
         self._store = store
 
     async def get_settings(self) -> DashboardSettingsView:
@@ -184,9 +202,9 @@ class AdminDashboardService:
         summary = _summary_from_series(series[-1] if series else None)
         range_facts = list(facts.values())
         effective_settings = settings if customized_settings else _settings_for_facts(range_facts)
-        turn_histogram = _histogram(
-            [int(row["turns"] or 0) for row in range_facts],
-            effective_settings.histogramBins.turns,
+        message_histogram = _histogram(
+            [int(row["messages"] or 0) for row in range_facts],
+            effective_settings.histogramBins.messages,
         )
         session_histogram = _histogram(
             [int(row["active_sessions"] or 0) for row in range_facts],
@@ -202,7 +220,7 @@ class AdminDashboardService:
             ),
             summary=summary,
             series=series,
-            turnHistogram=turn_histogram,
+            messageHistogram=message_histogram,
             sessionHistogram=session_histogram,
             userSegments=user_segments,
             deviceBreakdown=_breakdown(latest_metrics, "devices.by_os", DEVICE_LABELS),
@@ -267,10 +285,10 @@ class AdminDashboardService:
             start_utc=_period_start_utc(target_date, timezone, days=30),
             end_utc=end_utc,
         )
-        total_turns = sum(fact.turns for fact in facts.values())
+        total_messages = sum(fact.messages for fact in facts.values())
         active_sessions = len({sid for fact in facts.values() for sid in fact.active_sessions})
         session_agent_counts = await self._active_session_agent_counts(start_utc=start_utc, end_utc=end_utc)
-        avg_turns = _ratio(total_turns, dau)
+        avg_messages = _ratio(total_messages, dau)
         avg_sessions = _ratio(sum(len(f.active_sessions) for f in facts.values()), dau)
         avg_devices = _ratio(device_snapshot.total_devices, total_users)
         computed_at = utc_now()
@@ -282,9 +300,9 @@ class AdminDashboardService:
             _metric(target_date, "users.active_session_users", active_users, computed_at),
             _metric(target_date, "users.wau", wau, computed_at),
             _metric(target_date, "users.mau", mau, computed_at),
-            _metric(target_date, "usage.turns", total_turns, computed_at),
+            _metric(target_date, "usage.messages", total_messages, computed_at),
             _metric(target_date, "usage.active_sessions", active_sessions, computed_at),
-            _metric(target_date, "usage.avg_turns_per_active_user", avg_turns, computed_at),
+            _metric(target_date, "usage.avg_messages_per_active_user", avg_messages, computed_at),
             _metric(target_date, "usage.avg_active_sessions_per_active_user", avg_sessions, computed_at),
             _metric(target_date, "devices.total", device_snapshot.total_devices, computed_at),
             _metric(target_date, "devices.avg_per_user", avg_devices, computed_at),
@@ -300,7 +318,7 @@ class AdminDashboardService:
                     dimension_value=key,
                 )
             )
-        for key in ("codex", "claude"):
+        for key in ("codex", "claude", "dsh"):
             metrics.append(
                 _metric(
                     target_date,
@@ -332,11 +350,11 @@ class AdminDashboardService:
                     dimension_value=item.segment,
                 )
             )
-        for bucket in _histogram([fact.turns for fact in facts.values()], effective_settings.histogramBins.turns):
+        for bucket in _histogram([fact.messages for fact in facts.values()], effective_settings.histogramBins.messages):
             metrics.append(
                 _metric(
                     target_date,
-                    "usage.turn_histogram",
+                    "usage.message_histogram",
                     bucket.count,
                     computed_at,
                     dimension_key="bucket",
@@ -362,7 +380,7 @@ class AdminDashboardService:
             {
                 "date": target_date.isoformat(),
                 "user_id": fact.user_id,
-                "turns": fact.turns,
+                "messages": fact.messages,
                 "active_sessions": len(fact.active_sessions),
                 "created_sessions": fact.created_sessions,
                 "devices": fact.devices,
@@ -372,6 +390,7 @@ class AdminDashboardService:
                 "unknown_devices": fact.unknown_devices,
                 "codex_agents": fact.codex_agents,
                 "claude_agents": fact.claude_agents,
+                "dsh_agents": fact.dsh_agents,
                 "last_activity_at": fact.last_activity_at,
                 "computed_at": computed_at,
             }
@@ -467,14 +486,14 @@ class AdminDashboardService:
                 user_id,
                 {
                     "user_id": user_id,
-                    "turns": 0,
+                    "messages": 0,
                     "active_sessions": 0,
                     "created_sessions": 0,
                     "active_days": 0,
                     "last_activity_at": None,
                 },
             )
-            item["turns"] += int(row["turns"] or 0)
+            item["messages"] += int(row["messages"] or 0)
             item["active_sessions"] += int(row["active_sessions"] or 0)
             item["created_sessions"] += int(row["created_sessions"] or 0)
             item["active_days"] += 1
@@ -492,6 +511,18 @@ class AdminDashboardService:
 
     async def _load_device_snapshot(self) -> DeviceSnapshot:
         connectors = await self._store.list_connectors()
+        async with self._store.engine.connect() as conn:
+            runtime_rows = (
+                await conn.execute(
+                    select(
+                        device_runtimes_t.c.connector_id,
+                        device_runtimes_t.c.runtime_type,
+                    ).where(device_runtimes_t.c.config_json.is_not(None))
+                )
+            ).all()
+        runtimes_by_connector: dict[str, set[str]] = defaultdict(set)
+        for connector_id, runtime_type in runtime_rows:
+            runtimes_by_connector[str(connector_id)].add(str(runtime_type))
         by_os: Counter[str] = Counter()
         by_user: dict[str, dict[str, int]] = defaultdict(
             lambda: {
@@ -502,6 +533,7 @@ class AdminDashboardService:
                 "unknown_devices": 0,
                 "codex_agents": 0,
                 "claude_agents": 0,
+                "dsh_agents": 0,
             }
         )
         agent_counts: Counter[str] = Counter()
@@ -511,9 +543,8 @@ class AdminDashboardService:
             item = by_user[connector.userId]
             item["devices"] += 1
             item[f"{os_key}_devices"] += 1
-            attached = connector.runtimeCapabilities.attached
-            for agent in ("codex", "claude"):
-                if agent in attached:
+            for agent in ("codex", "claude", "dsh"):
+                if agent in runtimes_by_connector.get(connector.id, set()):
                     item[f"{agent}_agents"] += 1
                     agent_counts[agent] += 1
         return DeviceSnapshot(
@@ -583,13 +614,11 @@ class AdminDashboardService:
                     .group_by(timeline_items_t.c.session_id, connectors_t.c.user_id)
                 )
             ).mappings().all()
-            turn_rows = (
+            message_rows = (
                 await conn.execute(
                     select(
                         connectors_t.c.user_id,
-                        func.count(
-                            func.distinct(func.coalesce(timeline_items_t.c.turn_id, timeline_items_t.c.id))
-                        ).label("turns"),
+                        func.count(func.distinct(timeline_items_t.c.id)).label("messages"),
                         func.max(timeline_items_t.c.item_time).label("last_activity_at"),
                     )
                     .join(sessions_t, sessions_t.c.id == timeline_items_t.c.session_id)
@@ -615,9 +644,9 @@ class AdminDashboardService:
             fact = fact_for(row["user_id"])
             fact.active_sessions.add(row["session_id"])
             fact.last_activity_at = _max_iso(fact.last_activity_at, row["last_activity_at"])
-        for row in turn_rows:
+        for row in message_rows:
             fact = fact_for(row["user_id"])
-            fact.turns = int(row["turns"] or 0)
+            fact.messages = int(row["messages"] or 0)
             fact.last_activity_at = _max_iso(fact.last_activity_at, row["last_activity_at"])
         return facts
 
@@ -645,7 +674,7 @@ class AdminDashboardService:
             ).mappings().all()
         for row in [*session_rows, *timeline_rows]:
             runtime = row["runtime"]
-            if runtime in {"codex", "claude"}:
+            if runtime in {"codex", "claude", "dsh"}:
                 active[row["id"]] = runtime
         return Counter(active.values())
 
@@ -762,7 +791,7 @@ def _metric(
 
 def _fact_row(fact: UserDailyFact) -> dict[str, Any]:
     return {
-        "turns": fact.turns,
+        "messages": fact.messages,
         "active_sessions": len(fact.active_sessions),
     }
 
@@ -772,11 +801,11 @@ def _normalized_settings(settings: DashboardSettingsView) -> DashboardSettingsVi
     medium_max = max(light_max, settings.intensity.mediumMax)
     return DashboardSettingsView(
         intensity=settings.intensity.model_copy(
-            update={"basis": "turns", "lightMax": light_max, "mediumMax": medium_max}
+            update={"basis": "messages", "lightMax": light_max, "mediumMax": medium_max}
         ),
         histogramBins=settings.histogramBins.model_copy(
             update={
-                "turns": _normalized_bins(settings.histogramBins.turns),
+                "messages": _normalized_bins(settings.histogramBins.messages),
                 "sessions": _normalized_bins(settings.histogramBins.sessions),
             }
         ),
@@ -789,14 +818,14 @@ def _normalized_bins(values: list[int]) -> list[int]:
 
 
 def _settings_for_facts(facts: list[dict[str, Any]]) -> DashboardSettingsView:
-    turns = [max(0, int(row.get("turns") or 0)) for row in facts]
+    messages = [max(0, int(row.get("messages") or 0)) for row in facts]
     sessions = [max(0, int(row.get("active_sessions") or 0)) for row in facts]
-    light_max, medium_max = _auto_intensity_bounds(turns)
+    light_max, medium_max = _auto_intensity_bounds(messages)
     return _normalized_settings(
         DashboardSettingsView(
             intensity=DashboardIntensitySettings(lightMax=light_max, mediumMax=medium_max),
             histogramBins=DashboardHistogramSettings(
-                turns=_auto_bins(turns),
+                messages=_auto_bins(messages),
                 sessions=_auto_bins(sessions),
             ),
         )
@@ -836,10 +865,10 @@ def _percentile_lower(values: list[int], percentile: float) -> int:
     return values[index]
 
 
-def _segment_for_turns(turns: int, settings: DashboardSettingsView) -> str:
-    if turns <= settings.intensity.lightMax:
+def _segment_for_messages(messages: int, settings: DashboardSettingsView) -> str:
+    if messages <= settings.intensity.lightMax:
         return "light"
-    if turns <= settings.intensity.mediumMax:
+    if messages <= settings.intensity.mediumMax:
         return "medium"
     return "heavy"
 
@@ -850,10 +879,10 @@ def _segment_counts(
 ) -> list[DashboardUserSegmentItem]:
     counts = Counter({"light": 0, "medium": 0, "heavy": 0})
     for row in facts:
-        turns = int(row.get("turns") or 0)
-        if turns <= 0:
+        messages = int(row.get("messages") or 0)
+        if messages <= 0:
             continue
-        counts[_segment_for_turns(turns, settings)] += 1
+        counts[_segment_for_messages(messages, settings)] += 1
     return [
         DashboardUserSegmentItem(segment="light", label=SEGMENT_LABELS["light"], count=counts["light"]),
         DashboardUserSegmentItem(segment="medium", label=SEGMENT_LABELS["medium"], count=counts["medium"]),
@@ -924,9 +953,9 @@ def _series_point(
         activeUsers=int(values["activeUsers"]),
         wau=int(values["wau"]),
         mau=int(values["mau"]),
-        totalTurns=int(values["totalTurns"]),
+        totalMessages=int(values["totalMessages"]),
         activeSessions=int(values["activeSessions"]),
-        avgTurnsPerActiveUser=round(float(values["avgTurnsPerActiveUser"]), 2),
+        avgMessagesPerActiveUser=round(float(values["avgMessagesPerActiveUser"]), 2),
         avgActiveSessionsPerActiveUser=round(float(values["avgActiveSessionsPerActiveUser"]), 2),
         totalDevices=int(values["totalDevices"]),
         avgDevicesPerUser=round(float(values["avgDevicesPerUser"]), 2),

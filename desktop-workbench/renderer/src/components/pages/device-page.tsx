@@ -1,0 +1,1315 @@
+"use client"
+
+import * as React from "react"
+import {
+  Settings,
+  Trash2,
+  Plus,
+  RefreshCw,
+  Loader2,
+  KeyRound,
+  ChevronRight,
+  FolderOpen,
+  CheckCircle2,
+  Circle,
+  AlertCircle,
+  Archive,
+  Pencil,
+} from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Separator } from "@/components/ui/separator"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Badge } from "@/components/ui/badge"
+import { Switch } from "@/components/ui/switch"
+import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
+import { LoadingState } from "@/components/loading-state"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { cn } from "@/lib/utils"
+import type {
+  DeviceRuntimeStatus,
+  DeviceRuntimeView,
+  ProjectView,
+  RuntimeTypeView,
+  SessionView as RealSessionView,
+} from "@/features/dashboard/types"
+import { useWorkspace } from "@/components/workspace-context"
+import { useAuth } from "@/components/auth/auth-context"
+import { dashboardApi } from "@/features/dashboard/api"
+import { PairDeviceDialog } from "@/components/pair-device-dialog"
+import type { ConnectorRevokeResponse } from "@/features/dashboard/types"
+import { useIsMobile } from "@/hooks/use-mobile"
+import { useTranslations } from "next-intl"
+import { toast } from "sonner"
+import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
+import { RuntimeAddDialog } from "@/components/runtime-add-dialog"
+import { RuntimeConfigDialog } from "@/components/runtime-config-dialog"
+import { RuntimeInstanceNameDialog } from "@/components/runtime-instance-name-dialog"
+import {
+  discoverConnectorRuntimeOverview,
+  loadConnectorRuntimeOverview,
+} from "@/features/dashboard/runtime-discovery"
+import {
+  addableRuntimeTypes,
+  configuredRuntimeInstances,
+  namedInstanceRequiredConfigFields,
+  runtimeInstanceName,
+  runtimeTypeName,
+} from "@/features/dashboard/runtime-instances"
+import {
+  runtimeErrorCode,
+  runtimeErrorReason,
+  runtimeIsNotStarted,
+  runtimeStatusTone,
+} from "@/features/dashboard/runtime-status-presentation"
+
+const DEVICE_STATUS_LABEL_KEYS = {
+  online: "online",
+  offline: "offline",
+} as const
+
+const RUNTIME_STATUS_LABEL_KEYS = {
+  stopped: "runtimeStatus.stopped",
+  discovering: "runtimeStatus.discovering",
+  available: "runtimeStatus.available",
+  unavailable: "runtimeStatus.unavailable",
+  validating: "runtimeStatus.validating",
+  starting: "runtimeStatus.starting",
+  running: "runtimeStatus.running",
+  stopping: "runtimeStatus.stopping",
+  error: "runtimeStatus.error",
+  unknown: "runtimeStatus.unknown",
+} as const satisfies Record<DeviceRuntimeStatus, string>
+
+type DeviceSession = {
+  id: string
+  connectorId: string
+  connectorStatus: "online" | "offline"
+  runtime: string
+  title?: string | null
+  cwd?: string | null
+  status: "idle" | "waiting" | "pending" | "running" | "stopping" | "waiting_approval" | "error" | "blocked"
+  takeover: boolean
+  pinned: boolean
+  archived: boolean
+  unread: boolean
+  lastReadSeq: number
+  updatedSeq: number
+  effectiveRunMode?: "chat" | "terminal" | null
+  runtimeSettings?: Record<string, unknown> | null
+  updatedAt?: string | null
+  sortAt?: string | null
+  lastActivityAt?: string | null
+  lastItemAt?: string | null
+}
+
+// ── ProjectCard ────────────────────────────────────────────────
+
+function ProjectCard({
+  project,
+  onNewSession,
+}: {
+  project: ProjectView
+  onNewSession: () => void
+}) {
+  const t = useTranslations("dashboard.device")
+  return (
+    <div className="group grid grid-cols-[1fr_auto] items-stretch rounded-lg border border-border bg-card transition-colors hover:bg-accent/40">
+      <div className="flex min-w-0 items-center gap-3 px-4 py-3">
+        <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">{project.name}</p>
+          <p className="truncate text-xs text-muted-foreground" title={project.workspacePath}>
+            {project.workspacePath}
+          </p>
+        </div>
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        onClick={onNewSession}
+        aria-label={t("newSession")}
+        className="m-2 self-center"
+      >
+        <Plus />
+      </Button>
+    </div>
+  )
+}
+
+// ── Session row ────────────────────────────────────────────────
+
+type SessionTabId = "active" | "archived" | "all"
+const SESSION_TABS: { value: SessionTabId; labelKey: "active" | "archived" | "all" }[] = [
+  { value: "active", labelKey: "active" },
+  { value: "archived", labelKey: "archived" },
+  { value: "all", labelKey: "all" },
+]
+
+function SessionRow({
+  session,
+  selected,
+  selectMode,
+  onClick,
+  onSelectChange,
+}: {
+  session: DeviceSession
+  selected: boolean
+  selectMode: boolean
+  onClick: () => void
+  onSelectChange: (checked: boolean) => void
+}) {
+  const t = useTranslations("dashboard.device")
+  return (
+    <div className="flex w-full items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-accent/40">
+      {selectMode ? (
+        <Checkbox
+          checked={selected}
+          onCheckedChange={(checked: boolean | "indeterminate") => onSelectChange(checked === true)}
+          aria-label={t("selectSession", { title: session.title ?? t("untitled") })}
+        />
+      ) : null}
+      <span
+        className={cn(
+          "size-1.5 shrink-0 rounded-full border",
+          session.status === "running"
+            ? "border-emerald-500 bg-emerald-500"
+            : session.status === "waiting_approval" || session.status === "blocked"
+              ? "border-amber-400/70"
+              : session.status === "error"
+                ? "border-destructive bg-destructive"
+              : session.status === "waiting" || session.status === "pending" || session.status === "stopping"
+                ? "border-blue-400/70"
+                : "border-muted-foreground/40",
+        )}
+      />
+      <button
+        type="button"
+        onClick={selectMode ? () => onSelectChange(!selected) : onClick}
+        className="min-w-0 flex-1 truncate text-left text-sm"
+      >
+        {session.title ?? t("untitled")}
+      </button>
+      <span className="shrink-0 text-xs text-muted-foreground">{formatSessionTime(session)}</span>
+    </div>
+  )
+}
+
+// ── DevicePage ─────────────────────────────────────────────────
+
+const DESKTOP_PROJECT_PAGE_SIZE = 6
+const MOBILE_PROJECT_PAGE_SIZE = 4
+
+function sessionActivityAt(session: DeviceSession) {
+  return session.sortAt ?? session.lastActivityAt ?? session.lastItemAt ?? session.updatedAt ?? null
+}
+
+function formatSessionTime(session: DeviceSession) {
+  const value = sessionActivityAt(session)
+  if (!value) return ""
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(value))
+  } catch {
+    return value
+  }
+}
+
+function mergeRealSession(prev: DeviceSession | undefined, session: RealSessionView): DeviceSession {
+  return {
+    id: session.id,
+    connectorId: session.connectorId,
+    connectorStatus: session.connectorStatus,
+    runtime: prev?.runtime ?? session.runtime,
+    title: session.title,
+    cwd: session.cwd,
+    status: session.status,
+    takeover: session.takeover,
+    pinned: session.pinned,
+    archived: session.archived,
+    unread: session.unread,
+    lastReadSeq: session.lastReadSeq,
+    updatedSeq: session.updatedSeq,
+    effectiveRunMode: session.effectiveRunMode,
+    runtimeSettings: session.runtimeSettings ?? null,
+    updatedAt: prev?.updatedAt ?? session.sortAt ?? session.lastActivityAt ?? session.lastItemAt,
+    sortAt: session.sortAt,
+    lastActivityAt: session.lastActivityAt,
+    lastItemAt: session.lastItemAt,
+  }
+}
+
+function mergeRealSessions(prev: DeviceSession[], updates: RealSessionView[]) {
+  const current = new Map(prev.map((session) => [session.id, session]))
+  const updated = new Map(updates.map((session) => [session.id, mergeRealSession(current.get(session.id), session)]))
+  return prev.map((session) => updated.get(session.id) ?? session)
+}
+
+function runtimeStatusDot(runtime: DeviceRuntimeView) {
+  const tone = runtimeStatusTone(runtime)
+  if (tone === "ok") return "bg-emerald-500"
+  if (tone === "progress") return "bg-blue-500"
+  if (tone === "warning") return "bg-amber-500"
+  if (tone === "error") return "bg-destructive"
+  return "bg-muted-foreground/40"
+}
+
+function runtimeErrorMessage(runtime: DeviceRuntimeView) {
+  return runtimeErrorReason(runtime) ?? ""
+}
+
+function runtimeListKey(runtimes: DeviceRuntimeView[]) {
+  return runtimes
+    .map((runtime) => [
+      runtime.runtimeId,
+      runtime.status,
+      runtime.active,
+      runtime.available,
+      runtime.updatedAt,
+      runtimeErrorCode(runtime) ?? "",
+    ].join(":"))
+    .sort()
+    .join("|")
+}
+
+export function DevicePage() {
+  const t = useTranslations("dashboard.device")
+  const tCommon = useTranslations("common")
+  const runtimeStatusLabel = (runtime: DeviceRuntimeView) => {
+    if (runtimeIsNotStarted(runtime)) return t("runtimeNotStarted")
+    const key = RUNTIME_STATUS_LABEL_KEYS[runtime.status]
+    return key ? t(key) : runtime.status
+  }
+  const {
+    activeConnectorId,
+    connectors,
+    projects,
+    sessions: allSessions,
+    runtimes: liveRuntimes,
+    startProjectSession,
+    openSession,
+    goHome,
+    refreshData,
+  } = useWorkspace()
+  const { session: authSession } = useAuth()
+  const {
+    busy: desktopActionBusy,
+    connectionStatus: desktopConnectionStatus,
+    state: desktopConnectorState,
+    isLocalConnector,
+    reconnect: reconnectLocalDesktop,
+    disconnect: disconnectLocalDesktop,
+    start: startLocalDesktop,
+    updateLocalName,
+    explainRemoteReconnect,
+  } = useDesktopConnector()
+  const isMobile = useIsMobile()
+
+  const [connector, setConnector] = React.useState<(typeof connectors)[number] | null>(null)
+  const [runtimes, setRuntimes] = React.useState<DeviceRuntimeView[]>([])
+  const [runtimeTypes, setRuntimeTypes] = React.useState<RuntimeTypeView[]>([])
+  const [runtimesLoading, setRuntimesLoading] = React.useState(false)
+  const [discoveringRuntimes, setDiscoveringRuntimes] = React.useState(false)
+  const [sessions, setSessions] = React.useState<DeviceSession[]>([])
+  const [loading, setLoading] = React.useState(true)
+
+  const [showAllProjects, setShowAllProjects] = React.useState(false)
+  const [sessionTab, setSessionTab] = React.useState<SessionTabId>("active")
+  const [configRuntime, setConfigRuntime] = React.useState<DeviceRuntimeView | null>(null)
+  const [savingRuntimeId, setSavingRuntimeId] = React.useState<string | null>(null)
+  const [runtimeActionId, setRuntimeActionId] = React.useState<string | null>(null)
+  const [removeRuntime, setRemoveRuntime] = React.useState<DeviceRuntimeView | null>(null)
+  const [createRuntimeType, setCreateRuntimeType] = React.useState<RuntimeTypeView | null>(null)
+  const [renameRuntime, setRenameRuntime] = React.useState<DeviceRuntimeView | null>(null)
+  const [savingRuntimeName, setSavingRuntimeName] = React.useState(false)
+  const [revokeOpen, setRevokeOpen] = React.useState(false)
+  const [deleteOpen, setDeleteOpen] = React.useState(false)
+  const [setupCredential, setSetupCredential] = React.useState<ConnectorRevokeResponse | null>(null)
+  const [setupOpen, setSetupOpen] = React.useState(false)
+  const [tokenActionBusy, setTokenActionBusy] = React.useState(false)
+  const [editingName, setEditingName] = React.useState(false)
+  const [nameDraft, setNameDraft] = React.useState("")
+  const [selectMode, setSelectMode] = React.useState(false)
+  const [selectedSessionIds, setSelectedSessionIds] = React.useState<Set<string>>(() => new Set())
+  const [bulkBusy, setBulkBusy] = React.useState(false)
+  const [archiveAllOpen, setArchiveAllOpen] = React.useState(false)
+  const previousConnectorIdRef = React.useRef<string | null>(null)
+
+  React.useEffect(() => {
+    if (!activeConnectorId) {
+      previousConnectorIdRef.current = null
+      return
+    }
+    const connectorChanged = previousConnectorIdRef.current !== activeConnectorId
+    previousConnectorIdRef.current = activeConnectorId
+    if (connectorChanged) {
+      setLoading(true)
+      setShowAllProjects(false)
+      setSessionTab("active")
+      setRuntimes([])
+      setRuntimeTypes([])
+      setConfigRuntime(null)
+      setRemoveRuntime(null)
+      setCreateRuntimeType(null)
+      setRenameRuntime(null)
+      setSelectMode(false)
+      setSelectedSessionIds(new Set())
+    }
+
+    const currentConnector = connectors.find((item) => item.id === activeConnectorId) ?? null
+    const connectorSessions = allSessions.filter((item) => item.connectorId === activeConnectorId)
+    setConnector(currentConnector)
+    setNameDraft(currentConnector?.name ?? "")
+    setEditingName(false)
+    setSessions(connectorSessions)
+    setLoading(false)
+  }, [activeConnectorId, connectors, allSessions])
+
+  React.useEffect(() => {
+    if (!authSession?.accessToken || !activeConnectorId) return
+    let cancelled = false
+    setRuntimesLoading(true)
+    loadConnectorRuntimeOverview(authSession.accessToken, activeConnectorId)
+      .then((overview) => {
+        if (!cancelled) {
+          setRuntimes(overview.runtimes)
+          setRuntimeTypes(overview.runtimeTypes)
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) toast.error(error instanceof Error ? error.message : t("loadRuntimesFailed"))
+      })
+      .finally(() => {
+        if (!cancelled) setRuntimesLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeConnectorId, authSession?.accessToken, t])
+
+  // The dashboard snapshot pushes runtime lifecycle, so a connector-side change
+  // (bridge lost, reconnect, reconciliation) lands without a manual refresh.
+  React.useEffect(() => {
+    if (!activeConnectorId) return
+    const scoped = liveRuntimes.filter((runtime) => runtime.connectorId === activeConnectorId)
+    // An empty push means the snapshot predates this device's runtimes; keep the
+    // locally loaded list instead of wiping it.
+    if (scoped.length === 0) return
+    setRuntimes((current) => (runtimeListKey(current) === runtimeListKey(scoped) ? current : scoped))
+  }, [activeConnectorId, liveRuntimes])
+
+  const connectorProjects = projects.filter((project) => project.connectorId === activeConnectorId)
+  const projectPageSize = isMobile ? MOBILE_PROJECT_PAGE_SIZE : DESKTOP_PROJECT_PAGE_SIZE
+  const visibleProjects = showAllProjects ? connectorProjects : connectorProjects.slice(0, projectPageSize)
+  const hiddenProjectCount = connectorProjects.length - projectPageSize
+
+  const filteredSessions = sessions.filter((s) => {
+    if (sessionTab === "active") return !s.archived
+    if (sessionTab === "archived") return s.archived
+    return true
+  })
+  const targetArchiveSelected = sessionTab !== "archived" || Array.from(selectedSessionIds).some((id) => !sessions.find((s) => s.id === id)?.archived)
+  const targetArchiveAll = sessionTab !== "archived"
+  const allVisibleSelected = filteredSessions.length > 0 && filteredSessions.every((session) => selectedSessionIds.has(session.id))
+  const configuredRuntimes = configuredRuntimeInstances(runtimes)
+  const availableRuntimeTypes = addableRuntimeTypes(runtimeTypes, runtimes)
+
+  if (loading || !connector) {
+    return (
+      <LoadingState className="h-full" />
+    )
+  }
+
+  const isDesktopConnector = connector.connectorKind === "desktop" || isLocalConnector(connector.id)
+  const isLocalDesktop = isDesktopConnector && isLocalConnector(connector.id)
+  const localDesktopNeedsReconnect = Boolean(
+    isLocalDesktop && (desktopConnectorState?.authFailed || desktopConnectorState?.manualDisconnected),
+  )
+  const localDesktopIsConnecting = Boolean(
+    isLocalDesktop &&
+    connector.status === "offline" &&
+    !localDesktopNeedsReconnect &&
+    (desktopActionBusy || desktopConnectorState?.running || desktopConnectionStatus === "connecting"),
+  )
+  const connectorActionBusy = tokenActionBusy || desktopActionBusy
+
+  const handleRevoke = async () => {
+    if (!authSession?.accessToken) return
+    setTokenActionBusy(true)
+    try {
+      const result = await dashboardApi.revokeConnector(authSession.accessToken, connector.id)
+      setConnector((prev) => (prev ? { ...prev, status: "offline" } : prev))
+      setRevokeOpen(false)
+      if (connector.status === "offline") {
+        setSetupCredential(result)
+        setSetupOpen(true)
+      }
+      refreshData()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("setupFailed"))
+    } finally {
+      setTokenActionBusy(false)
+    }
+  }
+
+  const handleDesktopDisconnect = async () => {
+    if (!authSession?.accessToken) return
+    if (isLocalConnector(connector.id)) {
+      if (await disconnectLocalDesktop()) {
+        setConnector((previous) => previous ? { ...previous, status: "offline" } : previous)
+        setRevokeOpen(false)
+      }
+      return
+    }
+
+    setTokenActionBusy(true)
+    try {
+      await dashboardApi.revokeConnector(authSession.accessToken, connector.id)
+      setConnector((previous) => previous ? { ...previous, status: "offline" } : previous)
+      setRevokeOpen(false)
+      refreshData()
+      toast.success(t("disconnectSucceeded"))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("disconnectFailed"))
+    } finally {
+      setTokenActionBusy(false)
+    }
+  }
+
+  const handleDesktopReconnect = async () => {
+    if (isLocalDesktop) {
+      await reconnectLocalDesktop()
+      return
+    }
+    explainRemoteReconnect(connector.name)
+  }
+
+  const handleDesktopStart = async () => {
+    if (!isLocalDesktop) return
+    await startLocalDesktop()
+  }
+
+  const desktopActionLabel = (() => {
+    if (localDesktopIsConnecting) return t("desktopConnecting")
+    if (connector.status === "offline") return t("connect")
+    return isDesktopConnector ? t("disconnect") : t("revoke")
+  })()
+
+  const submitName = async () => {
+    if (!authSession?.accessToken) return
+    const nextName = nameDraft.trim()
+    if (!nextName || nextName === connector.name) {
+      setNameDraft(connector.name)
+      setEditingName(false)
+      return
+    }
+
+    try {
+      const result = await dashboardApi.updateConnector(authSession.accessToken, connector.id, { name: nextName })
+      if (isLocalConnector(connector.id)) {
+        await updateLocalName(result.connector.name)
+      }
+      setConnector(result.connector)
+      setNameDraft(result.connector.name)
+      setEditingName(false)
+      refreshData()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("renameFailed"))
+      setNameDraft(connector.name)
+      setEditingName(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!authSession?.accessToken) return
+    await dashboardApi.deleteConnector(authSession.accessToken, connector.id)
+    setDeleteOpen(false)
+    refreshData()
+    goHome()
+  }
+
+  const replaceRuntime = (runtime: DeviceRuntimeView) => {
+    setRuntimes((current) => current.some((item) => item.runtimeId === runtime.runtimeId)
+      ? current.map((item) => item.runtimeId === runtime.runtimeId ? runtime : item)
+      : [...current, runtime])
+  }
+
+  const discoverRuntimes = async () => {
+    if (!authSession?.accessToken) return
+    setDiscoveringRuntimes(true)
+    try {
+      const overview = await discoverConnectorRuntimeOverview(
+        authSession.accessToken,
+        connector.id,
+      )
+      setRuntimes(overview.runtimes)
+      setRuntimeTypes(overview.runtimeTypes)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("discoverRuntimesFailed"))
+    } finally {
+      setDiscoveringRuntimes(false)
+    }
+  }
+
+  const openRuntimeConfig = async (runtime: DeviceRuntimeView) => {
+    if (runtime.runtimeType !== "dsh" || !authSession?.accessToken || connector.status !== "online") {
+      setConfigRuntime(runtime)
+      return
+    }
+    setDiscoveringRuntimes(true)
+    try {
+      const overview = await discoverConnectorRuntimeOverview(authSession.accessToken, connector.id)
+      setRuntimes(overview.runtimes)
+      setRuntimeTypes(overview.runtimeTypes)
+      setConfigRuntime(overview.runtimes.find((item) => item.runtimeId === runtime.runtimeId) ?? runtime)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("discoverRuntimesFailed"))
+      setConfigRuntime(runtime)
+    } finally {
+      setDiscoveringRuntimes(false)
+    }
+  }
+
+  const submitRuntimeRename = async (name: string) => {
+    if (!authSession?.accessToken || !renameRuntime) return
+    setSavingRuntimeName(true)
+    try {
+      const renamed = await dashboardApi.renameConnectorRuntime(
+        authSession.accessToken,
+        connector.id,
+        renameRuntime.runtimeId,
+        name,
+      )
+      replaceRuntime(renamed)
+      setRenameRuntime(null)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("renameRuntimeFailed"))
+      throw error
+    } finally {
+      setSavingRuntimeName(false)
+    }
+  }
+
+  const saveRuntimeConfig = async (runtime: DeviceRuntimeView, config: Record<string, unknown>) => {
+    if (!authSession?.accessToken) return
+    setSavingRuntimeId(runtime.runtimeId)
+    try {
+      const response = await dashboardApi.putConnectorRuntimeConfig(
+        authSession.accessToken,
+        connector.id,
+        runtime.runtimeId,
+        config,
+      )
+      replaceRuntime(response)
+      toast.success(t("runtimeConfigSaved", { name: runtimeInstanceName(runtime) }))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("saveRuntimeConfigFailed")
+      toast.error(message)
+      throw error
+    } finally {
+      setSavingRuntimeId(null)
+    }
+  }
+
+  const configureAndStartRuntime = async (runtime: DeviceRuntimeView, config: Record<string, unknown>) => {
+    if (!authSession?.accessToken) return
+    setSavingRuntimeId(runtime.runtimeId)
+    try {
+      const saved = await dashboardApi.putConnectorRuntimeConfig(
+        authSession.accessToken,
+        connector.id,
+        runtime.runtimeId,
+        config,
+      )
+      replaceRuntime(saved)
+      const started = await dashboardApi.setConnectorRuntimeActive(
+        authSession.accessToken,
+        connector.id,
+        runtime.runtimeId,
+        true,
+      )
+      replaceRuntime(started)
+      toast.success(t("runtimeConfiguredAndStarted", { name: runtimeInstanceName(runtime) }))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("configureAndStartRuntimeFailed")
+      toast.error(message)
+      throw error
+    } finally {
+      setSavingRuntimeId(null)
+    }
+  }
+
+  const toggleRuntime = async (runtime: DeviceRuntimeView, active: boolean) => {
+    if (!authSession?.accessToken) return
+    const previous = runtime
+    setRuntimeActionId(runtime.runtimeId)
+    // The server waits for the connector, so show the transition immediately
+    // instead of jumping straight from stopped to running.
+    replaceRuntime({ ...runtime, status: active ? "starting" : "stopping", error: null })
+    try {
+      const response = await dashboardApi.setConnectorRuntimeActive(
+        authSession.accessToken,
+        connector.id,
+        runtime.runtimeId,
+        active,
+      )
+      replaceRuntime(response)
+    } catch (error) {
+      // A failed start still records the reason on the instance, so refresh the
+      // authoritative row before reporting anything to the user.
+      const authoritative = await loadConnectorRuntimeOverview(
+        authSession.accessToken,
+        connector.id,
+      )
+        .then((overview) => overview.runtimes.find((item) => item.runtimeId === runtime.runtimeId) ?? null)
+        .catch(() => null)
+      replaceRuntime(authoritative ?? previous)
+      const reason = authoritative ? runtimeErrorReason(authoritative) : null
+      toast.error(reason ?? (error instanceof Error ? error.message : t("runtimeActionFailed")))
+    } finally {
+      setRuntimeActionId(null)
+    }
+  }
+
+  const deleteRuntimeConfig = async () => {
+    if (!authSession?.accessToken || !removeRuntime) return
+    setRuntimeActionId(removeRuntime.runtimeId)
+    try {
+      const response = await dashboardApi.deleteConnectorRuntimeConfig(
+        authSession.accessToken,
+        connector.id,
+        removeRuntime.runtimeId,
+      )
+      replaceRuntime(response)
+      setRemoveRuntime(null)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("deleteRuntimeConfigFailed"))
+    } finally {
+      setRuntimeActionId(null)
+    }
+  }
+
+  const toggleSessionSelection = (id: string, checked: boolean) => {
+    setSelectedSessionIds((prev) => {
+      const next = new Set(prev)
+      if (checked) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
+
+  const toggleAllVisible = (checked: boolean) => {
+    setSelectedSessionIds((prev) => {
+      const next = new Set(prev)
+      for (const session of filteredSessions) {
+        if (checked) next.add(session.id)
+        else next.delete(session.id)
+      }
+      return next
+    })
+  }
+
+  const closeSelectMode = () => {
+    setSelectMode(false)
+    setSelectedSessionIds(new Set())
+  }
+
+  const bulkArchiveSelected = async () => {
+    if (!authSession?.accessToken || selectedSessionIds.size === 0) return
+    setBulkBusy(true)
+    try {
+      const response = await dashboardApi.bulkArchiveSessions(authSession.accessToken, Array.from(selectedSessionIds), targetArchiveSelected)
+      setSessions((prev) => mergeRealSessions(prev, response.sessions))
+      closeSelectMode()
+      refreshData()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("bulkArchiveFailed"))
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
+  const archiveAll = async () => {
+    if (!authSession?.accessToken) return
+    setBulkBusy(true)
+    try {
+      const response = await dashboardApi.archiveConnectorSessions(authSession.accessToken, connector.id, {
+        archived: targetArchiveAll,
+        scope: sessionTab,
+      })
+      setSessions((prev) => mergeRealSessions(prev, response.sessions))
+      setArchiveAllOpen(false)
+      closeSelectMode()
+      refreshData()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("bulkArchiveFailed"))
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
+  return (
+    <ScrollArea className="h-full min-h-0 w-full">
+      <div className="mx-auto w-full max-w-3xl px-6 py-8">
+
+        {/* Header */}
+        <div className="flex items-center gap-3">
+          <DashboardSidebarToggle className="-ml-2" />
+          <div className="flex min-w-0 items-baseline">
+            {editingName ? (
+              <Input
+                value={nameDraft}
+                onChange={(event) => setNameDraft(event.currentTarget.value)}
+                onBlur={() => void submitName()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void submitName()
+                  if (event.key === "Escape") {
+                    setNameDraft(connector.name)
+                    setEditingName(false)
+                  }
+                }}
+                className="h-9 max-w-xs rounded-lg px-2 text-2xl font-semibold tracking-tight"
+                aria-label={t("deviceName")}
+                autoFocus
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setNameDraft(connector.name)
+                  setEditingName(true)
+                }}
+                className="min-w-0 truncate text-left text-2xl font-semibold tracking-tight underline-offset-4 hover:underline"
+                title={t("clickToRename")}
+              >
+                {connector.name}
+              </button>
+            )}
+            {isLocalDesktop ? (
+              <span className="shrink-0 text-2xl font-semibold tracking-tight">
+                {tCommon("localDeviceSuffix")}
+              </span>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5 text-sm">
+            {connector.status === "online" ? (
+              <CheckCircle2 className="size-4 text-emerald-500" />
+            ) : (
+              <Circle className="size-4 text-muted-foreground/40" />
+            )}
+            <span
+              className={cn(
+                "font-medium",
+                "max-sm:sr-only",
+                connector.status === "online" ? "text-emerald-500" : "text-muted-foreground",
+              )}
+            >
+              {t(DEVICE_STATUS_LABEL_KEYS[connector.status])}
+            </span>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="max-sm:size-8 max-sm:px-0"
+              onClick={() => {
+                if (isDesktopConnector) {
+                  if (!isLocalDesktop && connector.status === "offline") {
+                    void handleDesktopReconnect()
+                  } else if (isLocalDesktop && localDesktopNeedsReconnect) {
+                    void handleDesktopReconnect()
+                  } else if (isLocalDesktop && connector.status === "offline") {
+                    void handleDesktopStart()
+                  } else {
+                    setRevokeOpen(true)
+                  }
+                  return
+                }
+                if (connector.status === "offline") {
+                  void handleRevoke()
+                } else {
+                  setRevokeOpen(true)
+                }
+              }}
+              disabled={connectorActionBusy || localDesktopIsConnecting}
+              aria-label={connectorActionBusy ? t("preparing") : desktopActionLabel}
+            >
+              {localDesktopIsConnecting ? <Loader2 className="animate-spin" /> : <KeyRound />}
+              <span className="max-sm:sr-only">
+                {connectorActionBusy ? t("preparing") : desktopActionLabel}
+              </span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 text-muted-foreground hover:text-destructive"
+              onClick={() => setDeleteOpen(true)}
+              aria-label={t("deleteDevice")}
+            >
+              <Trash2 />
+            </Button>
+          </div>
+        </div>
+
+        <Separator className="my-6" />
+
+        {/* Runtime lifecycle */}
+        <section className="mb-8">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+              {t("agentRuntimes")}
+            </h2>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void discoverRuntimes()}
+              disabled={connector.status !== "online"}
+            >
+              <RefreshCw className={cn(discoveringRuntimes && "animate-spin")} />
+              {discoveringRuntimes ? t("discoveringRuntimes") : t("refreshRuntimes")}
+            </Button>
+          </div>
+
+          {runtimesLoading ? <LoadingState className="min-h-24" /> : (
+            <TooltipProvider>
+              <div className="flex flex-col gap-5">
+                <div>
+                  <h3 className="mb-2 text-sm font-medium">{t("configuredRuntimes")}</h3>
+                  {configuredRuntimes.length === 0 ? (
+                    <p className="px-2 py-3 text-sm text-muted-foreground">{t("noConfiguredRuntimes")}</p>
+                  ) : (
+                    <div className="flex flex-col gap-1">
+                      {configuredRuntimes.map((runtime) => (
+                        <div key={runtime.runtimeId} className="flex min-h-12 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/30">
+                          {runtimeActionId === runtime.runtimeId ? (
+                            <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                          ) : (
+                            <span className={cn("size-2 shrink-0 rounded-full", runtimeStatusDot(runtime))} />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span className="truncate text-sm font-medium">{runtimeInstanceName(runtime)}</span>
+                              <Badge variant="outline" className="shrink-0 font-normal">
+                                {runtimeStatusLabel(runtime)}
+                              </Badge>
+                              {runtime.error ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge
+                                      variant={runtimeStatusTone(runtime) === "warning" ? "outline" : "destructive"}
+                                      className={cn(
+                                        "shrink-0 gap-1",
+                                        runtimeStatusTone(runtime) === "warning" && "border-amber-500/60 text-amber-600",
+                                      )}
+                                    >
+                                      <AlertCircle className="size-3" />
+                                      {runtimeStatusTone(runtime) === "warning" ? t("runtimeNotReady") : t("runtimeIssue")}
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-sm">
+                                    {runtimeErrorMessage(runtime)}
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : null}
+                            </div>
+                            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                              {runtimeTypeName(runtime)}
+                              {!runtime.present ? ` · ${t("runtimeNotReported")}` : ""}
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setRenameRuntime(runtime)}
+                              aria-label={t("renameRuntime", { name: runtimeInstanceName(runtime) })}
+                            >
+                              <Pencil />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => void openRuntimeConfig(runtime)}
+                              disabled={discoveringRuntimes}
+                              aria-label={t("configureRuntime", { name: runtimeInstanceName(runtime) })}
+                            >
+                              <Settings />
+                            </Button>
+                            <Switch
+                              checked={runtime.active}
+                              onCheckedChange={(active: boolean) => void toggleRuntime(runtime, active)}
+                              disabled={runtimeActionId === runtime.runtimeId || (!runtime.active && connector.status !== "online")}
+                              aria-label={runtime.active ? t("deactivateRuntime", { name: runtimeInstanceName(runtime) }) : t("activateRuntime", { name: runtimeInstanceName(runtime) })}
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="text-muted-foreground hover:text-destructive"
+                              onClick={() => setRemoveRuntime(runtime)}
+                              disabled={runtimeActionId === runtime.runtimeId}
+                              aria-label={t("deleteRuntimeConfig", { name: runtimeInstanceName(runtime) })}
+                            >
+                              <Trash2 />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <Separator />
+
+                <div>
+                  <h3 className="mb-2 text-sm font-medium">{t("availableRuntimeTypes")}</h3>
+                  {availableRuntimeTypes.length === 0 ? (
+                    <p className="px-2 py-3 text-sm text-muted-foreground">{t("noRuntimeTypes")}</p>
+                  ) : (
+                    <div className="flex flex-col gap-1">
+                      {availableRuntimeTypes.map((runtimeType) => (
+                        <div key={runtimeType.runtimeType} className="flex min-h-12 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/30">
+                          {/* This list means "the connector supports this type", so it never carries a warning colour. */}
+                          <span className="size-2 shrink-0 rounded-full bg-muted-foreground/50" />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 items-center gap-1">
+                              <p className="truncate text-sm font-medium">{runtimeType.displayName}</p>
+                            </div>
+                            <p className="truncate text-xs text-muted-foreground">
+                              {runtimeType.reason || runtimeType.description || runtimeType.implementationType}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setCreateRuntimeType(runtimeType)}
+                          >
+                            <Plus data-icon="inline-start" />
+                            {t("addRuntime")}
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </TooltipProvider>
+          )}
+        </section>
+
+        {/* Projects */}
+        <section className="mb-8">
+          <div className="mb-3 flex items-center">
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+              {t("projects")}
+            </h2>
+          </div>
+
+          {connectorProjects.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("noProjects")}</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {visibleProjects.map((project) => (
+                  <ProjectCard
+                    key={project.id}
+                    project={project}
+                    onNewSession={() => startProjectSession(project.id)}
+                  />
+                ))}
+              </div>
+
+              {hiddenProjectCount > 0 && (
+                <button
+                  type="button"
+                  aria-expanded={showAllProjects}
+                  onClick={() => setShowAllProjects((current) => !current)}
+                  className="mt-3 flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <span className="mx-0.5 text-foreground">
+                    {showAllProjects ? t("showLess") : t("showAllMore", { count: hiddenProjectCount })}
+                  </span>
+                  <ChevronRight className={cn("size-3.5", showAllProjects && "-rotate-90")} />
+                </button>
+              )}
+            </>
+          )}
+        </section>
+
+        {/* Sessions */}
+        <section>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+              {t("sessions")}
+            </h2>
+            <div className="flex items-center gap-2">
+              {selectMode ? (
+                <Button type="button" variant="ghost" size="sm" onClick={closeSelectMode} disabled={bulkBusy}>
+                  {tCommon("cancel")}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setSelectMode(true)
+                  }}
+                  disabled={filteredSessions.length === 0}
+                >
+                  {t("select")}
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setArchiveAllOpen(true)}
+                disabled={filteredSessions.length === 0 || bulkBusy}
+              >
+                <Archive />
+                {targetArchiveAll ? t("archiveAll") : t("unarchiveAll")}
+              </Button>
+            </div>
+          </div>
+
+          <ToggleGroup
+            type="single"
+            value={sessionTab}
+            onValueChange={(value: string) => {
+              if (value) setSessionTab(value as SessionTabId)
+            }}
+            size="sm"
+            className="mb-3"
+          >
+            {SESSION_TABS.map((tab) => (
+              <ToggleGroupItem
+                key={tab.value}
+                value={tab.value}
+              >
+                {t(tab.labelKey)}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+
+          {selectMode ? (
+            <div className="mb-3 flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 text-sm">
+              <Checkbox
+                checked={allVisibleSelected}
+                onCheckedChange={(checked: boolean | "indeterminate") => toggleAllVisible(checked === true)}
+                aria-label={t("selectAllVisible")}
+              />
+              <span className="flex-1 text-muted-foreground">
+                {t("selectedCount", { count: selectedSessionIds.size })}
+              </span>
+              <Button
+                size="sm"
+                onClick={() => void bulkArchiveSelected()}
+                disabled={selectedSessionIds.size === 0 || bulkBusy}
+              >
+                {bulkBusy ? t("working") : targetArchiveSelected ? t("archiveSelected") : t("unarchiveSelected")}
+              </Button>
+            </div>
+          ) : null}
+
+          {filteredSessions.length === 0 ? (
+            <p className="py-4 text-center text-sm text-muted-foreground">{t("noSessions")}</p>
+          ) : (
+            <div className="flex flex-col">
+              {filteredSessions.map((s) => (
+                <SessionRow
+                  key={s.id}
+                  session={s}
+                  selected={selectedSessionIds.has(s.id)}
+                  selectMode={selectMode}
+                  onClick={() => openSession(s.id)}
+                  onSelectChange={(checked) => toggleSessionSelection(s.id, checked)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
+      {configRuntime ? (
+        <RuntimeConfigDialog
+          runtimeName={runtimeInstanceName(configRuntime)}
+          schema={configRuntime.schema}
+          uiSchema={configRuntime.uiSchema}
+          config={configRuntime.config}
+          defaults={configRuntime.defaults}
+          requiredFields={configRuntime.runtimeId === configRuntime.runtimeType
+            ? []
+            : namedInstanceRequiredConfigFields(configRuntime)}
+          saving={savingRuntimeId === configRuntime.runtimeId}
+          submitLabel={!configRuntime.configured ? t("configureAndStart") : undefined}
+          open
+          onOpenChange={(open) => { if (!open) setConfigRuntime(null) }}
+          onSave={(config) => configRuntime.configured
+            ? saveRuntimeConfig(configRuntime, config)
+            : configureAndStartRuntime(configRuntime, config)}
+        />
+      ) : null}
+
+      {createRuntimeType && authSession?.accessToken ? (
+        <RuntimeAddDialog
+          key={createRuntimeType.runtimeType}
+          runtimeType={createRuntimeType}
+          runtimes={runtimes}
+          token={authSession.accessToken}
+          connectorId={connector.id}
+          onRuntimeUpdated={replaceRuntime}
+          onOpenChange={(open) => { if (!open) setCreateRuntimeType(null) }}
+        />
+      ) : null}
+
+      {renameRuntime ? (
+        <RuntimeInstanceNameDialog
+          open
+          title={t("renameRuntimeTitle")}
+          description={t("renameRuntimeDescription", { type: runtimeTypeName(renameRuntime) })}
+          label={t("runtimeName")}
+          requiredMessage={t("runtimeNameRequired")}
+          placeholder={t("runtimeNamePlaceholder")}
+          submitLabel={t("saveRuntimeName")}
+          cancelLabel={tCommon("cancel")}
+          initialName={runtimeInstanceName(renameRuntime)}
+          saving={savingRuntimeName}
+          onOpenChange={(open) => { if (!open) setRenameRuntime(null) }}
+          onSubmit={submitRuntimeRename}
+        />
+      ) : null}
+
+      <PairDeviceDialog
+        open={setupOpen}
+        onOpenChange={setSetupOpen}
+        setupCredential={setupCredential}
+        title={t("setUpDevice")}
+        onConnectorCreated={() => {
+          refreshData()
+        }}
+      />
+
+      {/* Revoke confirm */}
+      <AlertDialog open={revokeOpen} onOpenChange={setRevokeOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t(isDesktopConnector ? "disconnectTitle" : "revokeTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                isDesktopConnector
+                  ? isLocalDesktop
+                    ? "localDisconnectDescription"
+                    : "remoteDisconnectDescription"
+                  : "revokeDescription",
+                { name: connector.name },
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void (isDesktopConnector ? handleDesktopDisconnect() : handleRevoke())}
+              disabled={connectorActionBusy}
+            >
+              {connectorActionBusy
+                ? t(isDesktopConnector ? "disconnecting" : "revoking")
+                : t(isDesktopConnector ? "disconnect" : "revoke")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete confirm */}
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("deleteTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("deleteDescription", { name: connector.name })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleDelete}
+            >
+              {t("delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={removeRuntime !== null} onOpenChange={(open: boolean) => {
+        if (!open) setRemoveRuntime(null)
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("deleteRuntimeConfigTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("deleteRuntimeConfigDescription", {
+                name: removeRuntime ? runtimeInstanceName(removeRuntime) : "",
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void deleteRuntimeConfig()}
+              disabled={Boolean(removeRuntime && runtimeActionId === removeRuntime.runtimeId)}
+            >
+              {t("deleteRuntimeConfigAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={archiveAllOpen} onOpenChange={setArchiveAllOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{targetArchiveAll ? t("archiveAllTitle") : t("unarchiveAllTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {targetArchiveAll
+                ? t("archiveAllDescription", { name: connector.name })
+                : t("unarchiveAllDescription", { name: connector.name })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void archiveAll()} disabled={bulkBusy}>
+              {bulkBusy ? t("working") : targetArchiveAll ? t("archiveAll") : t("unarchiveAll")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </ScrollArea>
+  )
+}

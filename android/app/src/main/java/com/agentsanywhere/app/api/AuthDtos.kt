@@ -6,6 +6,9 @@ data class AuthResponse(
     val accessToken: String,
     val tokenType: String,
     val serverTime: String,
+    val email: String? = null,
+    val displayName: String = "",
+    val emailVerified: Boolean = false,
 )
 
 data class AuthMeResponse(
@@ -14,7 +17,13 @@ data class AuthMeResponse(
     val disabled: Boolean,
     val avatar: String?,
     val serverTime: String,
-)
+    val email: String? = null,
+    val displayName: String = "",
+    val emailVerified: Boolean = false,
+) {
+    val accountLabel: String
+        get() = displayName.ifBlank { email.orEmpty() }
+}
 
 data class AuthConfigResponse(
     val needsBootstrap: Boolean,
@@ -24,16 +33,15 @@ data class AuthConfigResponse(
     val oauthProviderLabel: String?,
     val setupTokenExpiresAt: String?,
     val serverTime: String,
+    val emailVerificationRequired: Boolean = false,
 )
 
-data class OAuthStartResponse(
-    val authorizeUrl: String,
-    val serverTime: String,
-)
-
-data class OAuthFinalizeResponse(
-    val auth: AuthResponse,
-    val serverTime: String,
+data class OAuthTokenResponse(
+    val accessToken: String,
+    val tokenType: String,
+    val expiresIn: Int,
+    val scope: String,
+    val refreshToken: String?,
 )
 
 data class MobileLoginStatusResponse(
@@ -51,4 +59,9 @@ data class MobileLoginExchangeResponse(
     val refreshToken: String,
     val expiresAt: String,
     val serverTime: String,
+)
+
+data class EmailCodeResponse(
+    val expiresIn: Int,
+    val retryAfter: Int,
 )

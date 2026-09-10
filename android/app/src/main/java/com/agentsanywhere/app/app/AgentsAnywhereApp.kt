@@ -3,26 +3,20 @@ package com.agentsanywhere.app.app
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Network
 import android.net.Uri
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Surface
+import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.Lifecycle
@@ -32,71 +26,72 @@ import com.agentsanywhere.app.api.ApiClient
 import com.agentsanywhere.app.api.AuthApi
 import com.agentsanywhere.app.api.DevicesApi
 import com.agentsanywhere.app.api.FilesApi
+import com.agentsanywhere.app.api.RealtimeApi
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.TerminalApi
 import com.agentsanywhere.app.feature.auth.AuthController
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
-import com.agentsanywhere.app.feature.auth.OAuthCallbackResult
-import com.agentsanywhere.app.feature.auth.OAuthFlowState
-import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
-import com.agentsanywhere.app.feature.devices.DeviceAgentScanResult
+import com.agentsanywhere.app.feature.auth.WebLoginState
+import com.agentsanywhere.app.feature.auth.WebLoginViewModel
+import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.feature.devices.DevicesController
+import com.agentsanywhere.app.feature.devices.DevicePairingMonitor
 import com.agentsanywhere.app.feature.files.FilesController
+import com.agentsanywhere.app.feature.realtime.DashboardRealtimeController
+import com.agentsanywhere.app.feature.realtime.RealtimeClientIdStore
+import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
 import com.agentsanywhere.app.feature.sessions.SessionsController
 import com.agentsanywhere.app.feature.sessions.SessionsState
-import com.agentsanywhere.app.feature.sessions.NewSessionDirectory
+import com.agentsanywhere.app.feature.sessions.NewSessionCreateOutcome
+import com.agentsanywhere.app.feature.sessions.NewSessionDraft
+import com.agentsanywhere.app.feature.sessions.NewSessionPreferenceStore
+import com.agentsanywhere.app.feature.sessions.projectHasActiveSessions
+import com.agentsanywhere.app.feature.sessions.ProjectSessionLoadKey
+import com.agentsanywhere.app.feature.sessions.ProjectSessionStatusFilter
+import com.agentsanywhere.app.feature.sessions.beginSessionRequest
+import com.agentsanywhere.app.feature.sessions.mergedWithRefresh
+import com.agentsanywhere.app.feature.sessions.replacedByDashboardSnapshot
 import com.agentsanywhere.app.feature.sessions.withDeletedDevice
-import com.agentsanywhere.app.feature.sessions.withDeletedDeviceAgent
-import com.agentsanywhere.app.feature.sessions.withDeviceAgents
 import com.agentsanywhere.app.feature.sessions.withPatchedDevice
+import com.agentsanywhere.app.feature.sessions.withPatchedProject
 import com.agentsanywhere.app.feature.sessions.withPatchedSession
 import com.agentsanywhere.app.feature.sessions.withPatchedSessions
+import com.agentsanywhere.app.feature.sessions.withMissingSessionsRemoved
+import com.agentsanywhere.app.feature.sessions.withAppendedSessionPage
+import com.agentsanywhere.app.feature.sessions.withSessionPageLoading
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
-import com.agentsanywhere.app.feature.sessiondetail.RuntimeSettingsState
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalPool
 import com.agentsanywhere.app.feature.terminal.TerminalController
 import com.agentsanywhere.app.model.MobileLoginQrPayload
-import com.agentsanywhere.app.feature.auth.OAuthPendingStatus
-import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
+import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereTheme
 import com.agentsanywhere.app.ui.designsystem.AALanguageMode
-import com.agentsanywhere.app.ui.designsystem.LocalAAColors
-import com.agentsanywhere.app.ui.screens.auth.CreateAccountScreen
-import com.agentsanywhere.app.ui.screens.auth.LoginMethodsScreen
-import com.agentsanywhere.app.ui.screens.auth.OAuthCreateAccountScreen
-import com.agentsanywhere.app.ui.screens.auth.OAuthLinkExistingAccountScreen
-import com.agentsanywhere.app.ui.screens.auth.OAuthRegistrationClosedErrorScreen
-import com.agentsanywhere.app.ui.screens.auth.OAuthRegistrationClosedScreen
-import com.agentsanywhere.app.ui.screens.auth.OAuthSetupScreen
-import com.agentsanywhere.app.ui.screens.auth.PasswordLoginScreen
-import com.agentsanywhere.app.ui.screens.auth.QrLoginScreen
-import com.agentsanywhere.app.ui.screens.auth.QrWaitingScreen
-import com.agentsanywhere.app.ui.screens.auth.ServerSetupScreen
-import com.agentsanywhere.app.ui.screens.devices.DeviceDetailScreen
-import com.agentsanywhere.app.ui.screens.devices.DevicesScreen
-import com.agentsanywhere.app.ui.screens.devices.PairNewDeviceSheetHost
-import com.agentsanywhere.app.ui.screens.files.FilesScreen
-import com.agentsanywhere.app.ui.screens.sessiondetail.SessionComposerDraftStore
-import com.agentsanywhere.app.ui.screens.sessiondetail.SessionDetailScreen
 import com.agentsanywhere.app.ui.screens.home.HomeTab
-import com.agentsanywhere.app.ui.screens.home.HomeScreen
-import com.agentsanywhere.app.ui.screens.home.NewSessionScreen
-import com.agentsanywhere.app.ui.screens.terminal.TerminalScreen
+import com.agentsanywhere.app.ui.screens.update.AppUpdatePromptDialog
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import android.os.SystemClock
+import java.util.concurrent.atomic.AtomicBoolean
+import java.io.File
 
 @Composable
 fun AgentsAnywhereApp(
     appearanceMode: String = "system",
     languageMode: String = AALanguageMode.System,
+    sidebarViewMode: String = com.agentsanywhere.app.ui.screens.home.HomeSidebarViewMode.Project,
     onAppearanceModeChange: (String) -> Unit = {},
     onLanguageModeChange: (String) -> Unit = {},
+    onSidebarViewModeChange: (String) -> Unit = {},
     oauthCallbackUri: Uri? = null,
     onOAuthCallbackConsumed: () -> Unit = {},
+    webLoginViewModel: WebLoginViewModel,
+    appUpdateViewModel: AppUpdateViewModel,
+    onInstallUpdate: (File) -> Unit = {},
 ) {
     val context = LocalContext.current
     val sessionStore = remember(context) { AuthSessionStore(context) }
@@ -110,11 +105,14 @@ fun AgentsAnywhereApp(
         )
     }
     var pendingMobileLoginQr by remember { mutableStateOf<MobileLoginQrPayload?>(null) }
-    var oauthFlow by remember { mutableStateOf<OAuthFlowState?>(null) }
-    var oauthErrorMessage by remember { mutableStateOf<String?>(null) }
     var selectedSessionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var initialNewSessionProjectId by rememberSaveable { mutableStateOf<String?>(null) }
+    var preparedSessionDraft by rememberSaveable(stateSaver = NewSessionDraftSaver) {
+        mutableStateOf<NewSessionDraft?>(null)
+    }
     var selectedDeviceId by rememberSaveable { mutableStateOf<String?>(null) }
     var deviceDetailReturnDestinationName by rememberSaveable { mutableStateOf(AppDestination.Devices.name) }
+    var deviceSetupReturnDestinationName by rememberSaveable { mutableStateOf(AppDestination.Devices.name) }
     var selectedHomeTabName by rememberSaveable { mutableStateOf(HomeTab.Active.name) }
     val unauthorizedTokens = remember { Channel<String>(capacity = Channel.UNLIMITED) }
     val apiClient = remember(unauthorizedTokens) {
@@ -122,6 +120,8 @@ fun AgentsAnywhereApp(
             unauthorizedTokens.trySend(accessToken)
         })
     }
+    val realtimeApi = remember(apiClient) { RealtimeApi(client = apiClient) }
+    val realtimeClientId = remember(context) { RealtimeClientIdStore(context).readOrCreate() }
     val authController = remember(context, sessionStore, apiClient) {
         AuthController(
             api = AuthApi(apiClient),
@@ -140,7 +140,6 @@ fun AgentsAnywhereApp(
         DevicesController(
             devicesApi = DevicesApi(apiClient),
             sessionStore = sessionStore,
-            sessionsApi = SessionsApi(apiClient),
         )
     }
     val sessionDetailController = remember(context, sessionStore, apiClient) {
@@ -164,8 +163,21 @@ fun AgentsAnywhereApp(
     val remoteTerminalPool = remember(terminalController) {
         RemoteTerminalPool(terminalController)
     }
+    val dashboardRealtimeController = remember(realtimeApi, sessionStore, realtimeClientId) {
+        DashboardRealtimeController(realtimeApi, sessionStore, realtimeClientId)
+    }
+    val sessionRealtimeController = remember(realtimeApi, sessionStore, realtimeClientId) {
+        SessionRealtimeController(realtimeApi, sessionStore, realtimeClientId)
+    }
     val currentDestination = AppDestination.valueOf(destinationName)
     val hasAuthSession = sessionStore.hasAuthSession()
+    val updateServerUrl = sessionStore.readServerUrl()
+    val updatesAllowed = hasAuthSession && updateServerUrl.isNotBlank() && currentDestination !in setOf(
+        AppDestination.LoginMethods, AppDestination.ServerSetup, AppDestination.QrLogin, AppDestination.QrWaiting,
+    )
+    LaunchedEffect(updatesAllowed, updateServerUrl) {
+        appUpdateViewModel.syncSession(updatesAllowed)
+    }
     var sessionsState by remember(sessionsController) {
         mutableStateOf(
             if (hasAuthSession) {
@@ -175,9 +187,58 @@ fun AgentsAnywhereApp(
             },
         )
     }
+    val nextOrderExpiry = sessionsState.sessions.map { it.optimisticTopUntil }.filter { it > 0L }.minOrNull()
+    LaunchedEffect(nextOrderExpiry) {
+        if (nextOrderExpiry != null) {
+            kotlinx.coroutines.delay((nextOrderExpiry - System.currentTimeMillis()).coerceAtLeast(1L))
+            val now = System.currentTimeMillis()
+            sessionsState = sessionsState.copy(sessions = sessionsState.sessions.map {
+                if (it.optimisticTopUntil <= now) it.copy(optimisticTopUntil = 0L) else it
+            }.sortedWith(com.agentsanywhere.app.feature.sessions.sessionListComparator(now)))
+        }
+    }
     var isRefreshingSessions by remember { mutableStateOf(false) }
+    var projectSessionsById by remember { mutableStateOf<Map<String, List<AgentSession>>>(emptyMap()) }
+    var loadingProjectRequests by remember { mutableStateOf<Set<ProjectSessionLoadKey>>(emptySet()) }
+    var projectSessionErrors by remember { mutableStateOf<Map<ProjectSessionLoadKey, String>>(emptyMap()) }
+    var projectSessionsLoadedAt by remember { mutableStateOf<Map<ProjectSessionLoadKey, Long>>(emptyMap()) }
+    val projectLoadSlots = remember { Semaphore(3) }
+    var projectsRequestVersion by remember { mutableStateOf(0L) }
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
+    var appVisible by remember(lifecycleOwner) {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> appVisible = true
+                Lifecycle.Event.ON_STOP -> appVisible = false
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        appVisible = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    DisposableEffect(context, dashboardRealtimeController, sessionRealtimeController) {
+        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        val networkWasLost = AtomicBoolean(false)
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                if (networkWasLost.getAndSet(false)) {
+                    dashboardRealtimeController.requestImmediateReconnect()
+                    sessionRealtimeController.requestImmediateReconnect()
+                }
+            }
+
+            override fun onLost(network: Network) {
+                networkWasLost.set(true)
+            }
+        }
+        connectivity.registerDefaultNetworkCallback(callback)
+        onDispose { connectivity.unregisterNetworkCallback(callback) }
+    }
     fun clearSessionAndReturnToLogin(expectedToken: String? = null) {
         val didClearSession = if (expectedToken == null) {
             authController.signOut()
@@ -187,14 +248,20 @@ fun AgentsAnywhereApp(
         }
         if (!didClearSession) return
 
+        appUpdateViewModel.syncSession(false)
         remoteTerminalPool.disposeLocal()
         sessionsState = SessionsState()
         isRefreshingSessions = false
+        projectSessionsById = emptyMap()
+        loadingProjectRequests = emptySet()
+        projectSessionErrors = emptyMap()
+        projectSessionsLoadedAt = emptyMap()
         selectedSessionId = null
+        initialNewSessionProjectId = null
+        preparedSessionDraft = null
         selectedDeviceId = null
         pendingMobileLoginQr = null
-        oauthFlow = null
-        oauthErrorMessage = null
+        webLoginViewModel.resetForSignedOutEntry()
         destinationName = AppDestination.LoginMethods.name
     }
 
@@ -234,6 +301,8 @@ fun AgentsAnywhereApp(
     }
 
     suspend fun refreshSessions(showInitialLoading: Boolean, showRefreshIndicator: Boolean) {
+        val request = sessionsState.beginSessionRequest()
+        sessionsState = request.state
         if (showRefreshIndicator) {
             isRefreshingSessions = true
         } else if (showInitialLoading && !sessionsState.hasLoaded && sessionsState.sessions.isEmpty() && sessionsState.devices.isEmpty()) {
@@ -243,7 +312,8 @@ fun AgentsAnywhereApp(
         try {
             sessionsController.loadSessions()
                 .onSuccess { loadedState ->
-                    sessionsState = loadedState
+                    projectsRequestVersion++
+                    sessionsState = sessionsState.mergedWithRefresh(loadedState, request.generation)
                 }
                 .onFailure { error ->
                     val hasAnyCachedData = sessionsState.sessions.isNotEmpty() || sessionsState.devices.isNotEmpty()
@@ -264,78 +334,160 @@ fun AgentsAnywhereApp(
             }
         }
     }
+    fun loadMoreSessions(archived: Boolean) {
+        val hasMore = if (archived) sessionsState.archivedHasMore else sessionsState.activeHasMore
+        val cursor = if (archived) sessionsState.archivedNextCursor else sessionsState.activeNextCursor
+        val loading = if (archived) sessionsState.isLoadingMoreArchived else sessionsState.isLoadingMoreActive
+        if (!hasMore || cursor == null || loading) return
+        sessionsState = sessionsState.withSessionPageLoading(archived, true)
+        scope.launch {
+            sessionsController.loadMoreSessions(
+                archived = archived,
+                cursor = cursor,
+                devices = sessionsState.devices,
+            ).onSuccess { page ->
+                sessionsState = sessionsState.withAppendedSessionPage(page)
+            }.onFailure {
+                sessionsState = sessionsState.withSessionPageLoading(archived, false)
+            }
+        }
+    }
+
+    suspend fun reloadProjects(): Result<List<AgentProject>> {
+        val token = sessionStore.readAccessToken()
+        val version = ++projectsRequestVersion
+        return sessionsController.loadProjects().onSuccess { projects ->
+            if (sessionStore.readAccessToken() == token && projectsRequestVersion == version) {
+                sessionsState = sessionsState.copy(projects = projects)
+            }
+        }
+    }
+
+    fun loadProjectSessions(projectId: String, status: ProjectSessionStatusFilter = ProjectSessionStatusFilter.Active) {
+        if (projectId.isBlank()) return
+        val token = sessionStore.readAccessToken()
+        status.archiveStates.forEach { archived ->
+            val key = ProjectSessionLoadKey(projectId, archived)
+            if (key in loadingProjectRequests) return@forEach
+            val loadedAt = projectSessionsLoadedAt[key]
+            if (loadedAt != null && SystemClock.elapsedRealtime() - loadedAt < 30_000L) return@forEach
+            loadingProjectRequests = loadingProjectRequests + key
+            projectSessionErrors = projectSessionErrors - key
+            scope.launch {
+                try {
+                    projectLoadSlots.withPermit {
+                        if (sessionStore.readAccessToken() != token || sessionsState.projects.none { it.id == projectId }) return@withPermit
+                        sessionsController.loadProjectSessions(projectId, sessionsState.devices, archived)
+                            .onSuccess { sessions ->
+                                if (sessionStore.readAccessToken() == token && sessionsState.projects.any { it.id == projectId }) {
+                                    val retained = projectSessionsById[projectId].orEmpty().filter { it.archived != archived }
+                                    projectSessionsById = projectSessionsById + (projectId to (retained + sessions).associateBy { it.id }.values.toList())
+                                    projectSessionsLoadedAt = projectSessionsLoadedAt + (key to SystemClock.elapsedRealtime())
+                                }
+                            }.onFailure { error ->
+                                if (error is kotlinx.coroutines.CancellationException) throw error
+                                if (sessionStore.readAccessToken() == token) {
+                                    projectSessionErrors = projectSessionErrors + (key to (error.message ?: "Could not load project sessions."))
+                                }
+                            }
+                    }
+                } finally {
+                    if (sessionStore.readAccessToken() == token) {
+                        loadingProjectRequests = loadingProjectRequests - key
+                    }
+                }
+            }
+        }
+    }
+
     val navigate: (AppDestination) -> Unit = { destination ->
         if (destination == AppDestination.QrLogin) {
             pendingMobileLoginQr = null
         }
         if (destination == AppDestination.LoginMethods) {
-            oauthFlow = null
-            oauthErrorMessage = null
+            webLoginViewModel.returnToHostChoice()
+        }
+        if (
+            destination == AppDestination.ServerSetup &&
+            destinationName == AppDestination.LoginMethods.name
+        ) {
+            webLoginViewModel.returnToHostChoice()
+        }
+        if (destination != AppDestination.SessionDetail) {
+            preparedSessionDraft = null
+        }
+        if (destination == AppDestination.NewSession || destination == AppDestination.NewProject) {
+            initialNewSessionProjectId = null
+        }
+        if (
+            destination == AppDestination.DeviceSetup &&
+            destinationName != AppDestination.DeviceSetup.name
+        ) {
+            deviceSetupReturnDestinationName = destinationName
         }
         destinationName = destination.name
     }
 
-    LaunchedEffect(hasAuthSession, sessionsController) {
+    val realtimeServerUrl = sessionStore.readServerUrl()
+    val realtimeAccessToken = sessionStore.readAccessToken()
+    val devicePairingMonitor = remember(realtimeServerUrl, realtimeAccessToken) { DevicePairingMonitor() }
+    val devicePairingStates by devicePairingMonitor.states.collectAsState()
+    LaunchedEffect(devicePairingMonitor, appVisible, hasAuthSession) {
+        if (!hasAuthSession || !appVisible) return@LaunchedEffect
+        devicePairingMonitor.observe(
+            loadDevice = devicesController::getDevice,
+            onOnline = { device ->
+                if (sessionStore.readServerUrl() == realtimeServerUrl && sessionStore.readAccessToken() == realtimeAccessToken) {
+                    sessionsState = sessionsState.withPatchedDevice(device)
+                    scope.launch { refreshSessions(showInitialLoading = false, showRefreshIndicator = false) }
+                }
+            },
+        )
+    }
+    LaunchedEffect(
+        hasAuthSession,
+        appVisible,
+        realtimeServerUrl,
+        realtimeAccessToken,
+        dashboardRealtimeController,
+    ) {
         if (!hasAuthSession) {
             sessionsState = SessionsState()
             return@LaunchedEffect
         }
-
-        while (true) {
-            refreshSessions(
-                showInitialLoading = true,
-                showRefreshIndicator = false,
-            )
-            delay(5_000)
-        }
+        if (!appVisible) return@LaunchedEffect
+        dashboardRealtimeController.start(
+            scope = this,
+            onSnapshot = { snapshot ->
+                scope.launch {
+                    if (sessionStore.readServerUrl() != realtimeServerUrl ||
+                        sessionStore.readAccessToken() != realtimeAccessToken
+                    ) return@launch
+                    projectsRequestVersion++
+                    sessionsState = sessionsState.replacedByDashboardSnapshot(
+                        sessionsController.dashboardSnapshotState(snapshot),
+                    )
+                }
+            },
+            onInitialFailure = {
+                scope.launch {
+                    if (sessionStore.readServerUrl() != realtimeServerUrl ||
+                        sessionStore.readAccessToken() != realtimeAccessToken
+                    ) return@launch
+                    if (!sessionsState.hasLoaded) {
+                        refreshSessions(showInitialLoading = true, showRefreshIndicator = false)
+                    }
+                }
+            },
+        ).join()
     }
 
     LaunchedEffect(oauthCallbackUri) {
         val uri = oauthCallbackUri ?: return@LaunchedEffect
-        when (val result = authController.parseOAuthCallback(uri)) {
-            is OAuthCallbackResult.Pending -> {
-                val serverUrl = authController.savedServerUrl()
-                oauthErrorMessage = null
-                oauthFlow = OAuthFlowState(serverUrl = serverUrl, pending = result.pending)
-                when (result.pending.status) {
-                    OAuthPendingStatus.Authenticated -> {
-                        authController.finalizeAuthenticatedOAuth(
-                            serverUrl = serverUrl,
-                            pendingToken = result.pending.pendingToken,
-                        ).onSuccess {
-                            oauthFlow = null
-                            destinationName = AppDestination.Sessions.name
-                        }.onFailure { error ->
-                            oauthFlow = null
-                            oauthErrorMessage = error.message ?: "OAuth sign-in failed."
-                            destinationName = AppDestination.OAuthSetup.name
-                        }
-                    }
-                    OAuthPendingStatus.NeedsPassword -> {
-                        destinationName = AppDestination.OAuthLinkExisting.name
-                    }
-                    OAuthPendingStatus.NeedsRegistration -> {
-                        authController.authConfig(serverUrl)
-                            .onSuccess { config ->
-                                destinationName = if (config.oauthRegistrationOpen) {
-                                    AppDestination.OAuthCreateAccount.name
-                                } else {
-                                    AppDestination.OAuthRegistrationClosed.name
-                                }
-                            }
-                            .onFailure { error ->
-                                oauthErrorMessage = error.message ?: "Could not check auth configuration."
-                                destinationName = AppDestination.OAuthSetup.name
-                            }
-                    }
-                }
-            }
-            is OAuthCallbackResult.Error -> {
-                oauthFlow = null
-                oauthErrorMessage = result.message
-                destinationName = AppDestination.OAuthSetup.name
-            }
-            null -> Unit
+        if (currentDestination == AppDestination.ServerSetup &&
+            webLoginViewModel.state is WebLoginState.WebLogin
+        ) {
+            webLoginViewModel.handleCallback(uri.toString())
         }
         onOAuthCallbackConsumed()
     }
@@ -345,20 +497,28 @@ fun AgentsAnywhereApp(
         sessionsState = sessionsState,
         isRefreshingSessions = isRefreshingSessions,
         selectedSessionId = selectedSessionId,
+        preparedSessionDraft = preparedSessionDraft,
         selectedDeviceId = selectedDeviceId,
         deviceDetailReturnDestination = AppDestination.valueOf(deviceDetailReturnDestinationName),
+        deviceSetupReturnDestination = AppDestination.valueOf(deviceSetupReturnDestinationName),
         selectedHomeTab = HomeTab.valueOf(selectedHomeTabName),
         userId = authController.savedUserId(),
         role = authController.savedRole(),
         serverUrl = authController.savedServerUrl(),
         appearanceMode = appearanceMode,
         languageMode = languageMode,
+        sidebarViewMode = sidebarViewMode,
+        projectSessionsById = projectSessionsById,
+        loadingProjectRequests = loadingProjectRequests,
+        projectSessionErrors = projectSessionErrors,
+        initialNewSessionProjectId = initialNewSessionProjectId,
         sessionDetailController = sessionDetailController,
+        sessionRealtimeController = sessionRealtimeController,
         filesController = filesController,
         remoteTerminalPool = remoteTerminalPool,
         pendingMobileLoginQr = pendingMobileLoginQr,
-        oauthFlow = oauthFlow,
-        oauthErrorMessage = oauthErrorMessage,
+        webLoginViewModel = webLoginViewModel,
+        appUpdateViewModel = appUpdateViewModel,
         navigate = navigate,
         onRefreshSessions = {
             if (!hasAuthSession || isRefreshingSessions) return@AgentsAnywhereNavHost
@@ -367,11 +527,40 @@ fun AgentsAnywhereApp(
                     showInitialLoading = false,
                     showRefreshIndicator = true,
                 )
+                val previousRequests = projectSessionsLoadedAt.keys + projectSessionErrors.keys + loadingProjectRequests
+                projectSessionsLoadedAt = emptyMap()
+                if (sidebarViewMode == com.agentsanywhere.app.ui.screens.home.HomeSidebarViewMode.Project) {
+                    val loaded = (projectSessionsById.values.flatten() + sessionsState.sessions + sessionsState.archivedSessions)
+                        .associateBy { it.id }.values
+                    sessionsState.projects.filter { projectHasActiveSessions(it, loaded) }.forEach { loadProjectSessions(it.id) }
+                    previousRequests.filter { key -> sessionsState.projects.any { it.id == key.projectId } }.forEach { key ->
+                        loadProjectSessions(key.projectId, if (key.archived) ProjectSessionStatusFilter.Archived else ProjectSessionStatusFilter.Active)
+                    }
+                }
             }
         },
+        onLoadMoreSessions = ::loadMoreSessions,
         onOpenSession = { session ->
+            preparedSessionDraft = null
             selectedSessionId = session.id
             destinationName = AppDestination.SessionDetail.name
+            if (session.unread) {
+                val request = sessionsState.beginSessionRequest(listOf(session.id))
+                sessionsState = request.state
+                scope.launch {
+                    sessionsController.markSessionRead(session.id, sessionsState.devices)
+                        .onSuccess { updated ->
+                            sessionsState = sessionsState.withPatchedSession(updated, request.generation)
+                        }
+                        .onFailure { error ->
+                            Toast.makeText(
+                                context,
+                                error.message ?: "Could not mark this session as read.",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                }
+            }
         },
         onOpenDevice = { device ->
             deviceDetailReturnDestinationName = destinationName
@@ -383,7 +572,12 @@ fun AgentsAnywhereApp(
         },
         onAppearanceModeChange = onAppearanceModeChange,
         onLanguageModeChange = onLanguageModeChange,
+        onSidebarViewModeChange = onSidebarViewModeChange,
         onLoadAccount = { authController.me() },
+        onLoadAccountAuthConfig = { authController.accountAuthConfig() },
+        onUpdateDisplayName = { displayName -> authController.updateDisplayName(displayName) },
+        onSendEmailCode = { email -> authController.sendEmailCode(email) },
+        onBindEmail = { email, code -> authController.bindEmail(email, code) },
         onUpdateAvatar = { avatar -> authController.updateAvatar(avatar) },
         onClearAvatar = { authController.clearAvatar() },
         onChangePassword = { password -> authController.changePassword(password) },
@@ -442,47 +636,47 @@ fun AgentsAnywhereApp(
                     }
             }
         },
-        onDeleteDeviceAgent = { connectorId, runtime ->
-            if (!hasAuthSession) {
-                Result.failure(IllegalStateException("Sign in again to remove this agent."))
-            } else {
-                devicesController.deleteDeviceAgent(connectorId, runtime)
-                    .onSuccess { attached ->
-                        sessionsState = sessionsState.withDeletedDeviceAgent(connectorId, runtime, attached)
-                    }
+        devicePairingStates = devicePairingStates,
+        onWaitForPairingDevice = devicePairingMonitor::waitForDevice,
+        onClearDevicePairing = devicePairingMonitor::clear,
+        onDevicePairingComplete = {
+            if (hasAuthSession) scope.launch {
+                refreshSessions(showInitialLoading = false, showRefreshIndicator = false)
             }
         },
-        onScanDeviceAgent = { connectorId, runtime, path ->
+        onListDeviceRuntimes = { connectorId ->
             if (!hasAuthSession) {
-                Result.failure(IllegalStateException("Sign in again to add this agent."))
+                Result.failure(IllegalStateException("Sign in again to load runtimes."))
             } else {
-                devicesController.scanDeviceAgent(connectorId, runtime, path)
-                    .onSuccess { result ->
-                        sessionsState = sessionsState.withDeviceAgents(connectorId, result.attachedRuntimes)
-                    }
+                devicesController.listDeviceRuntimes(connectorId)
             }
         },
-        onLoadDeviceAgentSettings = { connectorId, runtime ->
+        onSetDeviceRuntimeActive = { connectorId, runtime, active ->
             if (!hasAuthSession) {
-                Result.failure(IllegalStateException("Sign in again to load agent settings."))
+                Result.failure(IllegalStateException("Sign in again to update this runtime."))
             } else {
-                devicesController.loadDeviceAgentSettings(connectorId, runtime)
+                devicesController.setDeviceRuntimeActive(connectorId, runtime, active)
             }
         },
-        onPatchDeviceAgentSettings = { connectorId, runtime, settings ->
+        onDeleteDeviceRuntimeConfig = { connectorId, runtime ->
             if (!hasAuthSession) {
-                Result.failure(IllegalStateException("Sign in again to save agent settings."))
+                Result.failure(IllegalStateException("Sign in again to delete runtime configuration."))
             } else {
-                devicesController.patchDeviceAgentSettings(connectorId, runtime, settings)
+                devicesController.deleteDeviceRuntimeConfig(connectorId, runtime)
             }
         },
         onBulkSetSessionsArchived = { ids, archived ->
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update sessions."))
             } else {
+                val request = sessionsState.beginSessionRequest(ids)
+                sessionsState = request.state
                 sessionsController.bulkSetSessionsArchived(ids, archived, sessionsState.devices)
-                    .onSuccess { sessions ->
-                        sessionsState = sessionsState.withPatchedSessions(sessions)
+                    .onSuccess { update ->
+                        sessionsState = sessionsState
+                            .withPatchedSessions(update.sessions, request.generation)
+                            .withMissingSessionsRemoved(update.notFound, request.generation)
+                        reloadProjects()
                     }
             }
         },
@@ -490,9 +684,21 @@ fun AgentsAnywhereApp(
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update sessions."))
             } else {
+                val targetIds = (sessionsState.sessions + sessionsState.archivedSessions)
+                    .filter { session ->
+                        session.connectorId == connectorId && when (scope) {
+                            "active" -> !session.archived
+                            "archived" -> session.archived
+                            else -> true
+                        }
+                    }
+                    .map { it.id }
+                val request = sessionsState.beginSessionRequest(targetIds)
+                sessionsState = request.state
                 sessionsController.archiveAllDeviceSessions(connectorId, archived, scope, sessionsState.devices)
                     .onSuccess { sessions ->
-                        sessionsState = sessionsState.withPatchedSessions(sessions)
+                        sessionsState = sessionsState.withPatchedSessions(sessions, request.generation)
+                        reloadProjects()
                     }
             }
         },
@@ -500,9 +706,11 @@ fun AgentsAnywhereApp(
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update this session."))
             } else {
+                val request = sessionsState.beginSessionRequest(listOf(sessionId))
+                sessionsState = request.state
                 sessionsController.renameSession(sessionId, title, sessionsState.devices)
                     .onSuccess { session ->
-                        sessionsState = sessionsState.withPatchedSession(session)
+                        sessionsState = sessionsState.withPatchedSession(session, request.generation)
                     }
             }
         },
@@ -510,9 +718,12 @@ fun AgentsAnywhereApp(
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update this session."))
             } else {
+                val request = sessionsState.beginSessionRequest(listOf(sessionId))
+                sessionsState = request.state
                 sessionsController.setSessionPinned(sessionId, pinned, sessionsState.devices)
                     .onSuccess { session ->
-                        sessionsState = sessionsState.withPatchedSession(session)
+                        sessionsState = sessionsState.withPatchedSession(session, request.generation)
+                        reloadProjects()
                     }
             }
         },
@@ -520,26 +731,120 @@ fun AgentsAnywhereApp(
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update this session."))
             } else {
+                val request = sessionsState.beginSessionRequest(listOf(sessionId))
+                sessionsState = request.state
                 sessionsController.setSessionArchived(sessionId, archived, sessionsState.devices)
                     .onSuccess { session ->
-                        sessionsState = sessionsState.withPatchedSession(session)
+                        sessionsState = sessionsState.withPatchedSession(session, request.generation)
+                        reloadProjects()
                     }
             }
         },
-        onCreateSession = { title, connectorId, runtime, cwd ->
-            if (!hasAuthSession) {
-                Result.failure(IllegalStateException("Sign in again to create a session."))
-            } else {
-                sessionsController.createSession(
-                    title = title,
-                    connectorId = connectorId,
-                    runtime = runtime,
-                    cwd = cwd,
-                    devices = sessionsState.devices,
-                ).onSuccess { session ->
-                    sessionsState = sessionsState.withPatchedSession(session)
+        onLoadProjectSessions = ::loadProjectSessions,
+        onLoadProjects = ::reloadProjects,
+        onLoadArchivedPage = { projectId, cursor ->
+            sessionsController.loadArchivedSessionPage(projectId, cursor, sessionsState.devices)
+        },
+        onRestoreProject = { projectId ->
+            val ids = sessionsState.archivedSessions.filter { it.projectId == projectId }.map { it.id }
+            val request = sessionsState.beginSessionRequest(ids)
+            sessionsState = request.state
+            sessionsController.archiveProjectSessions(projectId, sessionsState.devices, archived = false, scope = "archived")
+                .mapCatching { sessions ->
+                    check(sessions.isNotEmpty() && sessions.none { it.archived }) { "Could not restore all sessions in this project." }
+                    sessions
+                }.onSuccess { sessions ->
+                    sessionsState = sessionsState.withPatchedSessions(sessions, request.generation)
+                    projectSessionsById = projectSessionsById + (projectId to
+                        (sessions + projectSessionsById[projectId].orEmpty()).distinctBy { it.id })
+                    reloadProjects()
                 }
+        },
+        onUpdateProject = { projectId, name, pinned ->
+            if (!hasAuthSession) {
+                Result.failure(IllegalStateException("Sign in again to update this project."))
+            } else {
+                sessionsController.updateProject(projectId, name, pinned)
+                    .onSuccess { project ->
+                        projectsRequestVersion++
+                        sessionsState = sessionsState.withPatchedProject(project)
+                    }
             }
+        },
+        onArchiveProjectSessions = { projectId ->
+            if (!hasAuthSession) {
+                Result.failure(IllegalStateException("Sign in again to archive project sessions."))
+            } else {
+                val targetIds = (projectSessionsById[projectId].orEmpty() + sessionsState.sessions)
+                    .filter { it.projectId == projectId && !it.archived }
+                    .map(AgentSession::id)
+                    .distinct()
+                val request = sessionsState.beginSessionRequest(targetIds)
+                sessionsState = request.state
+                sessionsController.archiveProjectSessions(projectId, sessionsState.devices, scope = "all")
+                    .onSuccess { sessions ->
+                        sessionsState = sessionsState.withPatchedSessions(sessions, request.generation)
+                        projectSessionsById = projectSessionsById + (projectId to
+                            (projectSessionsById[projectId].orEmpty() + sessions).associateBy { it.id }.values.toList())
+                        projectSessionsLoadedAt = projectSessionsLoadedAt.filterKeys { it.projectId != projectId }
+                        reloadProjects()
+                    }
+            }
+        },
+        onCreateProject = { name, connectorId, workspacePath ->
+            if (!hasAuthSession) {
+                Result.failure(IllegalStateException("Sign in again to create a project."))
+            } else {
+                sessionsController.createProject(name, connectorId, workspacePath)
+                    .onSuccess { project ->
+                        projectsRequestVersion++
+                        sessionsState = sessionsState.withPatchedProject(project)
+                    }
+            }
+        },
+        onNewSessionInProject = { project ->
+            initialNewSessionProjectId = project.id
+            destinationName = AppDestination.NewSession.name
+        },
+        onCreateSession = { draft ->
+            if (!hasAuthSession) {
+                NewSessionCreateOutcome.Failed(IllegalStateException("Sign in again to create a session."))
+            } else {
+                val refresh = sessionsState.beginSessionRequest()
+                sessionsState = refresh.state
+                NewSessionPreferenceStore(context, sessionStore.readServerUrl(), sessionStore.readUserId()).save(
+                    connectorId = draft.connectorId,
+                    runtimeId = draft.runtimeId,
+                    selections = draft.selections,
+                )
+                val outcome = sessionsController.createAndStartSession(
+                    draft = draft,
+                    devices = sessionsState.devices,
+                    projects = sessionsState.projects,
+                )
+                val refreshedState = when (outcome) {
+                    is NewSessionCreateOutcome.Created -> outcome.refreshedState
+                    is NewSessionCreateOutcome.Failed -> outcome.refreshedState
+                }
+                if (refreshedState != null) {
+                    sessionsState = sessionsState.mergedWithRefresh(refreshedState, refresh.generation)
+                }
+                if (outcome is NewSessionCreateOutcome.Created) {
+                    sessionsState = sessionsState.withPatchedSession(outcome.session.copy(optimisticTopUntil = System.currentTimeMillis() + 1_000), refresh.generation)
+                    reloadProjects()
+                }
+                outcome
+            }
+        },
+        onPrepareSession = { draft ->
+            preparedSessionDraft = draft
+            selectedSessionId = null
+            destinationName = AppDestination.SessionDetail.name
+        },
+        onPreparedSessionCreated = { session ->
+            sessionsState = sessionsState.withPatchedSession(session)
+            preparedSessionDraft = null
+            selectedSessionId = session.id
         },
         onListDirectory = { connectorId, root, path ->
             if (!hasAuthSession) {
@@ -552,6 +857,18 @@ fun AgentsAnywhereApp(
                 )
             }
         },
+        onListNewSessionRuntimes = { connectorId ->
+            sessionsController.listNewSessionRuntimes(connectorId)
+        },
+        onLoadNewSessionRuntimeCapabilities = { connectorId, runtime ->
+            sessionsController.loadNewSessionRuntimeCapabilities(connectorId, runtime)
+        },
+        onLoadNewSessionModelCatalog = { connectorId, runtime ->
+            sessionsController.loadNewSessionModelCatalog(connectorId, runtime)
+        },
+        onLoadNewSessionPermissionCatalog = { connectorId, runtime ->
+            sessionsController.loadNewSessionPermissionCatalog(connectorId, runtime)
+        },
         onSessionChanged = { session ->
             sessionsState = sessionsState.withPatchedSession(session)
         },
@@ -559,229 +876,19 @@ fun AgentsAnywhereApp(
             pendingMobileLoginQr = payload
             destinationName = AppDestination.QrWaiting.name
         },
-        onOAuthPendingReceived = { flow, destination ->
-            oauthFlow = flow
-            oauthErrorMessage = null
-            destinationName = destination.name
-        },
-        onOAuthErrorConsumed = { oauthErrorMessage = null },
     )
-}
-
-@Composable
-private fun AgentsAnywhereNavHost(
-    currentDestination: AppDestination,
-    sessionsState: SessionsState,
-    isRefreshingSessions: Boolean,
-    selectedSessionId: String?,
-    selectedDeviceId: String?,
-    deviceDetailReturnDestination: AppDestination,
-    selectedHomeTab: HomeTab,
-    userId: String,
-    role: String,
-    serverUrl: String,
-    appearanceMode: String,
-    languageMode: String,
-    sessionDetailController: SessionDetailController,
-    filesController: FilesController,
-    remoteTerminalPool: RemoteTerminalPool,
-    pendingMobileLoginQr: MobileLoginQrPayload?,
-    oauthFlow: OAuthFlowState?,
-    oauthErrorMessage: String?,
-    navigate: (AppDestination) -> Unit,
-    onRefreshSessions: () -> Unit,
-    onOpenSession: (AgentSession) -> Unit,
-    onOpenDevice: (AgentDevice) -> Unit,
-    onHomeTabSelected: (HomeTab) -> Unit,
-    onAppearanceModeChange: (String) -> Unit,
-    onLanguageModeChange: (String) -> Unit,
-    onLoadAccount: suspend () -> Result<com.agentsanywhere.app.api.AuthMeResponse>,
-    onUpdateAvatar: suspend (String) -> Result<com.agentsanywhere.app.api.AuthMeResponse>,
-    onClearAvatar: suspend () -> Result<com.agentsanywhere.app.api.AuthMeResponse>,
-    onChangePassword: suspend (String) -> Result<Unit>,
-    onSignOut: () -> Unit,
-    onRenameDevice: suspend (String, String) -> Result<AgentDevice>,
-    onDeleteDevice: suspend (String) -> Result<Unit>,
-    onPrepareDeviceSetup: suspend (String) -> Result<DeviceSetupCredential>,
-    onCreateDeviceSetup: suspend (String) -> Result<DeviceSetupCredential>,
-    onClaimDevicePairCode: suspend (DeviceSetupCredential, String) -> Result<AgentDevice>,
-    onDeleteDeviceAgent: suspend (String, String) -> Result<List<String>>,
-    onScanDeviceAgent: suspend (String, String, String) -> Result<DeviceAgentScanResult>,
-    onLoadDeviceAgentSettings: suspend (String, String) -> Result<RuntimeSettingsState>,
-    onPatchDeviceAgentSettings: suspend (String, String, Map<String, Any?>) -> Result<RuntimeSettingsState>,
-    onBulkSetSessionsArchived: suspend (List<String>, Boolean) -> Result<List<AgentSession>>,
-    onArchiveAllDeviceSessions: suspend (String, Boolean, String) -> Result<List<AgentSession>>,
-    onRenameSession: suspend (String, String) -> Result<com.agentsanywhere.app.model.AgentSession>,
-    onSetSessionPinned: suspend (String, Boolean) -> Result<com.agentsanywhere.app.model.AgentSession>,
-    onSetSessionArchived: suspend (String, Boolean) -> Result<com.agentsanywhere.app.model.AgentSession>,
-    onCreateSession: suspend (String, String, String, String) -> Result<com.agentsanywhere.app.model.AgentSession>,
-    onListDirectory: suspend (String, String, String) -> Result<NewSessionDirectory>,
-    onSessionChanged: (AgentSession) -> Unit,
-    onMobileLoginQrRequested: (MobileLoginQrPayload) -> Unit,
-    onOAuthPendingReceived: (OAuthFlowState, AppDestination) -> Unit,
-    onOAuthErrorConsumed: () -> Unit,
-) {
-    val colors = LocalAAColors.current
-    var pairDeviceSheetOpen by remember { mutableStateOf(false) }
-    val sessionComposerDraftStore = remember(userId) { SessionComposerDraftStore() }
-
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = colors.canvas,
-    ) {
-        AnimatedContent(
-            targetState = currentDestination,
-            transitionSpec = {
-                val forward = targetState.ordinal > initialState.ordinal
-                val enterOffset: (Int) -> Int = { width -> if (forward) width / 5 else -width / 5 }
-                val exitOffset: (Int) -> Int = { width -> if (forward) -width / 5 else width / 5 }
-
-                slideInHorizontally(
-                    animationSpec = tween(durationMillis = 260),
-                    initialOffsetX = enterOffset,
-                ) + fadeIn(
-                    animationSpec = tween(durationMillis = 180),
-                ) togetherWith slideOutHorizontally(
-                    animationSpec = tween(durationMillis = 260),
-                    targetOffsetX = exitOffset,
-                ) + fadeOut(
-                    animationSpec = tween(durationMillis = 160),
-                )
-            },
-            label = "App destination transition",
-        ) { destination ->
-            when (destination) {
-                AppDestination.LoginMethods -> LoginMethodsScreen(navigate)
-                AppDestination.ServerSetup -> ServerSetupScreen(navigate)
-                AppDestination.PasswordLogin -> PasswordLoginScreen(navigate)
-                AppDestination.CreateAccount -> CreateAccountScreen(navigate)
-                AppDestination.OAuthSetup -> OAuthSetupScreen(
-                    navigate = navigate,
-                    errorMessage = oauthErrorMessage,
-                    onErrorConsumed = onOAuthErrorConsumed,
-                )
-                AppDestination.OAuthLinkExisting -> OAuthLinkExistingAccountScreen(
-                    navigate = navigate,
-                    flowState = oauthFlow,
-                )
-                AppDestination.OAuthRegistrationClosed -> OAuthRegistrationClosedScreen(navigate)
-                AppDestination.OAuthCreateAccount -> OAuthCreateAccountScreen(
-                    navigate = navigate,
-                    flowState = oauthFlow,
-                    onOAuthPendingReceived = onOAuthPendingReceived,
-                )
-                AppDestination.OAuthRegistrationClosedError -> OAuthRegistrationClosedErrorScreen(
-                    navigate = navigate,
-                    flowState = oauthFlow,
-                )
-                AppDestination.QrLogin -> QrLoginScreen(
-                    navigate = navigate,
-                    onMobileLoginQrRequested = onMobileLoginQrRequested,
-                )
-                AppDestination.QrWaiting -> QrWaitingScreen(
-                    navigate = navigate,
-                    mobileLoginQr = pendingMobileLoginQr,
-                )
-                AppDestination.Sessions -> HomeScreen(
-                    navigate = navigate,
-                    state = sessionsState,
-                    selectedTab = selectedHomeTab,
-                    isRefreshing = isRefreshingSessions,
-                    userId = userId,
-                    role = role,
-                    serverUrl = serverUrl,
-                    appearanceMode = appearanceMode,
-                    languageMode = languageMode,
-                    onRefresh = onRefreshSessions,
-                    onTabSelected = onHomeTabSelected,
-                    onAppearanceModeChange = onAppearanceModeChange,
-                    onLanguageModeChange = onLanguageModeChange,
-                    onLoadAccount = onLoadAccount,
-                    onUpdateAvatar = onUpdateAvatar,
-                    onClearAvatar = onClearAvatar,
-                    onChangePassword = onChangePassword,
-                    onSignOut = onSignOut,
-                    onRenameSession = onRenameSession,
-                    onSetSessionPinned = onSetSessionPinned,
-                    onSetSessionArchived = onSetSessionArchived,
-                    onOpenSession = onOpenSession,
-                    onOpenDevice = onOpenDevice,
-                    onPairDevice = { pairDeviceSheetOpen = true },
-                )
-                AppDestination.NewSession -> NewSessionScreen(
-                    navigate = navigate,
-                    sessionsState = sessionsState,
-                    onCreateSession = onCreateSession,
-                    onListDirectory = onListDirectory,
-                    onOpenSession = onOpenSession,
-                )
-                AppDestination.SessionDetail -> SessionDetailScreen(
-                    navigate = navigate,
-                    sessionId = selectedSessionId,
-                    initialSession = sessionsState.sessions
-                        .asSequence()
-                        .plus(sessionsState.archivedSessions.asSequence())
-                        .firstOrNull { it.id == selectedSessionId },
-                    devices = sessionsState.devices,
-                    controller = sessionDetailController,
-                    filesController = filesController,
-                    terminalPool = remoteTerminalPool,
-                    composerDraftStore = sessionComposerDraftStore,
-                    onSessionChanged = onSessionChanged,
-                )
-                AppDestination.DeviceDetail -> DeviceDetailScreen(
-                    navigate = navigate,
-                    state = sessionsState,
-                    selectedDeviceId = selectedDeviceId,
-                    backDestination = deviceDetailReturnDestination,
-                    onOpenSession = onOpenSession,
-                    onRenameDevice = onRenameDevice,
-                    onDeleteDevice = onDeleteDevice,
-                    onPrepareDeviceSetup = onPrepareDeviceSetup,
-                    onClaimDevicePairCode = onClaimDevicePairCode,
-                    onDeleteDeviceAgent = onDeleteDeviceAgent,
-                    onScanDeviceAgent = onScanDeviceAgent,
-                    onLoadDeviceAgentSettings = onLoadDeviceAgentSettings,
-                    onPatchDeviceAgentSettings = onPatchDeviceAgentSettings,
-                    onBulkSetSessionsArchived = onBulkSetSessionsArchived,
-                    onArchiveAllDeviceSessions = onArchiveAllDeviceSessions,
-                )
-                AppDestination.Devices -> DevicesScreen(
-                    state = sessionsState,
-                    isRefreshing = isRefreshingSessions,
-                    onRefresh = onRefreshSessions,
-                    onOpenDevice = onOpenDevice,
-                    onBack = { navigate(AppDestination.Sessions) },
-                    onCreateDeviceSetup = onCreateDeviceSetup,
-                    onDeviceCredentialCreated = { credential ->
-                        // The create callback already patches state; this keeps the screen API explicit.
-                    },
-                    onClaimDevicePairCode = onClaimDevicePairCode,
-                )
-                AppDestination.Terminal -> TerminalScreen(
-                    navigate = navigate,
-                    state = sessionsState,
-                    terminalPool = remoteTerminalPool,
-                    onPairDevice = { pairDeviceSheetOpen = true },
-                )
-                AppDestination.Files -> FilesScreen(
-                    navigate = navigate,
-                    state = sessionsState,
-                    controller = filesController,
-                    onPairDevice = { pairDeviceSheetOpen = true },
-                )
-            }
-        }
-        PairNewDeviceSheetHost(
-            open = pairDeviceSheetOpen,
-            devices = sessionsState.devices,
-            onDismiss = { pairDeviceSheetOpen = false },
-            onCreateDeviceSetup = onCreateDeviceSetup,
-            onDeviceCredentialCreated = {},
-            onClaimDevicePairCode = onClaimDevicePairCode,
+    if (updatesAllowed) {
+        AppUpdatePromptDialog(
+            state = appUpdateViewModel.state,
+            onUpdate = appUpdateViewModel::downloadUpdate,
+            onIgnore = appUpdateViewModel::ignoreVersion,
         )
     }
+    LaunchedEffect(updatesAllowed, appUpdateViewModel.state.installFile) {
+        if (updatesAllowed) appUpdateViewModel.state.installFile?.let(onInstallUpdate)
+    }
 }
+
 
 private fun Context.hasUsableNetwork(): Boolean {
     val connectivityManager = getSystemService(ConnectivityManager::class.java)
@@ -790,10 +897,72 @@ private fun Context.hasUsableNetwork(): Boolean {
     return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
 }
 
+private val NewSessionDraftSaver = listSaver<NewSessionDraft?, Any>(
+    save = { draft ->
+        if (draft == null) {
+            emptyList()
+        } else {
+            listOf(
+                draft.connectorId,
+                draft.runtime,
+                draft.title.orEmpty(),
+                draft.cwd.orEmpty(),
+                draft.deviceName,
+                draft.runtimeLabel,
+                ArrayList(draft.knownSessionIds),
+                draft.selections.model.orEmpty(),
+                draft.selections.permission.orEmpty(),
+                draft.runtimeId,
+                draft.runtimeType,
+                draft.runtimeName,
+                draft.attachmentsEnabled,
+                draft.localSessionId,
+                draft.projectId,
+            )
+        }
+    },
+    restore = { values ->
+        if (values.isEmpty()) {
+            null
+        } else {
+            @Suppress("UNCHECKED_CAST")
+            NewSessionDraft(
+                connectorId = values[0] as String,
+                runtime = values[1] as String,
+                title = (values[2] as String).takeIf(String::isNotBlank),
+                cwd = (values[3] as String).takeIf(String::isNotBlank),
+                deviceName = values[4] as String,
+                runtimeLabel = values[5] as String,
+                knownSessionIds = (values[6] as ArrayList<String>).toSet(),
+                selections = com.agentsanywhere.app.feature.sessions.NewSessionSelections(
+                    model = (values[7] as String).takeIf(String::isNotBlank),
+                    permission = (values[8] as String).takeIf(String::isNotBlank),
+                ),
+                runtimeId = (values.getOrNull(9) as? String)?.takeIf(String::isNotBlank)
+                    ?: values[1] as String,
+                runtimeType = (values.getOrNull(10) as? String)?.takeIf(String::isNotBlank)
+                    ?: values[1] as String,
+                runtimeName = (values.getOrNull(11) as? String)?.takeIf(String::isNotBlank)
+                    ?: values[5] as String,
+                attachmentsEnabled = values.getOrNull(12) as? Boolean ?: true,
+                localSessionId = (values.getOrNull(13) as? String)?.takeIf(String::isNotBlank)
+                    ?: (values.getOrNull(12) as? String)?.takeIf(String::isNotBlank)
+                    ?: com.agentsanywhere.app.feature.sessions.NewSessionDraft.newLocalSessionId(),
+                projectId = (values.getOrNull(14) as? String).orEmpty(),
+            )
+        }
+    },
+)
+
 @Preview(showBackground = true, widthDp = 390, heightDp = 844)
 @Composable
 private fun AgentsAnywhereAppPreview() {
     AgentsAnywhereTheme {
-        AgentsAnywhereApp()
+        val context = LocalContext.current
+        val application = context.applicationContext as android.app.Application
+        AgentsAnywhereApp(
+            webLoginViewModel = WebLoginViewModel(application),
+            appUpdateViewModel = AppUpdateViewModel(application),
+        )
     }
 }

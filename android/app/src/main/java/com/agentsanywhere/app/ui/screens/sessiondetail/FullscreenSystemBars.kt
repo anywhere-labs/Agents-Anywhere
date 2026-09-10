@@ -15,6 +15,17 @@ import androidx.core.view.WindowCompat
 
 @Composable
 internal fun FullscreenBlackSystemBars() {
+    FullscreenSystemBars(
+        backgroundColor = Color.Black,
+        useDarkIcons = false,
+    )
+}
+
+@Composable
+internal fun FullscreenSystemBars(
+    backgroundColor: Color,
+    useDarkIcons: Boolean,
+) {
     val view = LocalView.current
     val window = (view.parent as? DialogWindowProvider)?.window
         ?: view.context.findActivity()?.window
@@ -39,11 +50,11 @@ internal fun FullscreenBlackSystemBars() {
     }
 
     SideEffect {
-        window.statusBarColor = Color.Black.toArgb()
-        window.navigationBarColor = Color.Black.toArgb()
+        window.statusBarColor = backgroundColor.toArgb()
+        window.navigationBarColor = backgroundColor.toArgb()
         controller.apply {
-            isAppearanceLightStatusBars = false
-            isAppearanceLightNavigationBars = false
+            isAppearanceLightStatusBars = useDarkIcons
+            isAppearanceLightNavigationBars = useDarkIcons
         }
     }
 }

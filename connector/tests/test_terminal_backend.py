@@ -38,12 +38,13 @@ class FakeTerminalBackend(TerminalBackend):
 
 
 class IdleTerminalBackend(TerminalBackend):
-    def __init__(self, notify=None) -> None:
+    def __init__(self, notify=None, *, persistent_lease_ttl_seconds=1.0) -> None:
         super().__init__(
             notify=notify,
             idle_ttl_seconds=0.04,
             closed_ttl_seconds=60,
             reaper_poll_seconds=0.005,
+            persistent_lease_ttl_seconds=persistent_lease_ttl_seconds,
         )
         self.spawned: list[dict[str, Any]] = []
         self.writes: list[bytes] = []
@@ -205,5 +206,127 @@ def test_terminal_backend_terminal_activity_refreshes_idle_deadline(tmp_path):
         )
         listing = await backend.list({"sessionId": "sess_1"})
         assert listing["terminals"] == []
+
+    asyncio.run(run())
+
+
+def test_terminal_backend_does_not_reap_persistent_idle_terminal(tmp_path):
+    async def run() -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+
+        async def notify(method: str, params: dict[str, Any]) -> None:
+            events.append((method, params))
+
+        backend = IdleTerminalBackend(notify=notify)
+        created = await backend.create(
+            {
+                "terminalId": "trm_persistent",
+                "sessionId": "sess_1",
+                "root": str(tmp_path),
+                "cwd": str(tmp_path),
+                "shell": "/bin/zsh",
+                "persistent": False,
+            }
+        )
+
+        promoted = await backend.set_persistent(
+            {"terminalId": "trm_persistent", "persistent": True}
+        )
+
+        await asyncio.sleep(0.12)
+
+        assert created["persistent"] is False
+        assert promoted["persistent"] is True
+        assert not backend.spawned[0]["terminated"].is_set()
+        assert events == []
+        listing = await backend.list({"sessionId": "sess_1"})
+        assert [item["terminalId"] for item in listing["terminals"]] == [
+            "trm_persistent"
+        ]
+        assert listing["terminals"][0]["persistent"] is True
+
+        await backend.close({"terminalId": "trm_persistent"})
+
+        assert backend.spawned[0]["terminated"].is_set()
+        assert (await backend.list({"sessionId": "sess_1"}))["terminals"] == []
+
+    asyncio.run(run())
+
+
+def test_terminal_backend_reaps_terminal_after_persistent_lease_expires(tmp_path):
+    async def run() -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+
+        async def notify(method: str, params: dict[str, Any]) -> None:
+            events.append((method, params))
+
+        backend = IdleTerminalBackend(
+            notify=notify,
+            persistent_lease_ttl_seconds=0.1,
+        )
+        await backend.create(
+            {
+                "terminalId": "trm_lease",
+                "sessionId": "sess_1",
+                "root": str(tmp_path),
+                "cwd": str(tmp_path),
+                "shell": "/bin/zsh",
+            }
+        )
+        await backend.set_persistent(
+            {"terminalId": "trm_lease", "persistent": True}
+        )
+
+        await wait_until(lambda: backend.spawned[0]["terminated"].is_set())
+
+        assert events[-1] == (
+            "terminal.exited",
+            {
+                "terminalId": "trm_lease",
+                "sessionId": "sess_1",
+                "exitCode": None,
+                "reason": "persistent_lease_expired",
+            },
+        )
+        assert (await backend.list({"sessionId": "sess_1"}))["terminals"] == []
+
+    asyncio.run(run())
+
+
+def test_terminal_backend_refreshes_persistent_lease(tmp_path):
+    async def run() -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+
+        async def notify(method: str, params: dict[str, Any]) -> None:
+            events.append((method, params))
+
+        backend = IdleTerminalBackend(
+            notify=notify,
+            persistent_lease_ttl_seconds=0.1,
+        )
+        await backend.create(
+            {
+                "terminalId": "trm_renewed_lease",
+                "sessionId": "sess_1",
+                "root": str(tmp_path),
+                "cwd": str(tmp_path),
+                "shell": "/bin/zsh",
+            }
+        )
+        await backend.set_persistent(
+            {"terminalId": "trm_renewed_lease", "persistent": True}
+        )
+
+        await asyncio.sleep(0.06)
+        await backend.set_persistent(
+            {"terminalId": "trm_renewed_lease", "persistent": True}
+        )
+        await asyncio.sleep(0.06)
+
+        assert not backend.spawned[0]["terminated"].is_set()
+        assert events == []
+
+        await wait_until(lambda: backend.spawned[0]["terminated"].is_set())
+        assert events[-1][1]["reason"] == "persistent_lease_expired"
 
     asyncio.run(run())

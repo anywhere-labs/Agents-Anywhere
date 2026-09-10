@@ -1,0 +1,93 @@
+"use client"
+
+import * as React from "react"
+import { CheckCheck } from "lucide-react"
+import { SessionFilterMenu } from "@/components/session-filter-menu"
+import { SessionSidebarItem } from "@/components/sidebar/session-sidebar-item"
+import { SidebarLoadingItem } from "@/components/sidebar/sidebar-loading-item"
+import { SidebarSectionTrigger } from "@/components/sidebar/sidebar-section-trigger"
+import {
+  Collapsible,
+  CollapsibleContent,
+} from "@/components/ui/collapsible"
+import {
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+} from "@/components/ui/sidebar"
+import type { WorkspaceSessionView } from "@/components/workspace-context"
+import { useTranslations } from "next-intl"
+
+type RecentSessionsSectionProps = {
+  sessions: WorkspaceSessionView[]
+  label?: string
+  isLoading: boolean
+  activeSessionId: string | null
+  onMarkAllRead: () => void | Promise<void>
+  onOpenSession: (sessionId: string) => void
+  onToggleSessionPin: (sessionId: string) => void
+  onToggleSessionArchive: (sessionId: string) => void
+  onRenameSession: (sessionId: string, title: string) => Promise<boolean>
+}
+
+export function RecentSessionsSection({
+  sessions,
+  label,
+  isLoading,
+  activeSessionId,
+  onMarkAllRead,
+  onOpenSession,
+  onToggleSessionPin,
+  onToggleSessionArchive,
+  onRenameSession,
+}: RecentSessionsSectionProps) {
+  const t = useTranslations("dashboard")
+  const [expanded, setExpanded] = React.useState(true)
+
+  return (
+    <SidebarGroup>
+      <Collapsible open={expanded} onOpenChange={setExpanded}>
+        <SidebarGroupLabel
+          className="flex items-center gap-1"
+          role="heading"
+          aria-level={2}
+        >
+          <SidebarSectionTrigger label={label ?? t("sections.recents")} expanded={expanded} />
+          <SessionFilterMenu />
+          <button
+            type="button"
+            aria-label={t("actions.markAllRead")}
+            onClick={() => void onMarkAllRead()}
+            className="rounded-md p-0.5 text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          >
+            <CheckCheck className="size-3.5" />
+          </button>
+        </SidebarGroupLabel>
+        <CollapsibleContent>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {isLoading ? (
+                <SidebarLoadingItem label={t("status.loadingSessions")} />
+              ) : sessions.length === 0 ? (
+                <p className="px-3 py-2 text-xs text-muted-foreground">{t("empty.noSessionsMatch")}</p>
+              ) : (
+                sessions.map((item) => (
+                  <SessionSidebarItem
+                    key={item.id}
+                    item={item}
+                    isActive={activeSessionId === item.id}
+                    onOpen={() => onOpenSession(item.id)}
+                    onTogglePin={() => onToggleSessionPin(item.id)}
+                    onToggleArchive={() => onToggleSessionArchive(item.id)}
+                    onRename={(title) => onRenameSession(item.id, title)}
+                  />
+                ))
+              )}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </CollapsibleContent>
+      </Collapsible>
+    </SidebarGroup>
+  )
+}

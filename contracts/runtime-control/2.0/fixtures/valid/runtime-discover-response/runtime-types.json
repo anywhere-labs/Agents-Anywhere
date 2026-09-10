@@ -1,0 +1,58 @@
+{
+  "runtimeTypes": [
+    {
+      "available": true,
+      "capabilities": {
+        "catalog.model": true,
+        "runtime.config": true,
+        "session.send_message": true
+      },
+      "configSchema": {
+        "defaults": {},
+        "metadata": {
+          "sourceClaim": "codex-home"
+        },
+        "revision": 1787654321000,
+        "schema": {
+          "additionalProperties": false,
+          "properties": {
+            "codexHome": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "uiSchema": {
+          "order": [
+            "codexHome"
+          ]
+        }
+      },
+      "description": "OpenAI Codex runtime",
+      "displayName": "Codex",
+      "implementationType": "sdk",
+      "instancePolicy": "single",
+      "maxInstances": 1,
+      "metadata": {},
+      "reason": null,
+      "recommendationRank": 0,
+      "recommended": true,
+      "runtimeType": "codex"
+    },
+    {
+      "available": false,
+      "capabilities": {},
+      "configSchema": null,
+      "description": "DeepSeek Harness runtime",
+      "displayName": "DeepSeek Harness",
+      "implementationType": "local-service",
+      "instancePolicy": "multiple",
+      "maxInstances": null,
+      "metadata": {},
+      "reason": "DSH Bridge is not installed",
+      "recommendationRank": null,
+      "recommended": false,
+      "runtimeType": "dsh"
+    }
+  ]
+}

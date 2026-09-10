@@ -136,8 +136,8 @@ private fun FilesHeader(
 ) {
     val colors = LocalAAColors.current
     val iconColor = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF1C1C1E)
-    val surface = if (darkMode) Color(0xFF18181B) else Color.White
-    val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE7E6E2)
+    val surface = colors.raisedSurface
+    val border = if (darkMode) colors.border else Color(0xFFE7E6E2)
     val hasOnlineDevice = devices.any { it.online }
     var expanded by remember { mutableStateOf(false) }
 

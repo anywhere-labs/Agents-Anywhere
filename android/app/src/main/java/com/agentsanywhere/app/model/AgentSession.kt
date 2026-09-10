@@ -3,6 +3,7 @@ package com.agentsanywhere.app.model
 data class AgentSession(
     val id: String,
     val connectorId: String,
+    val projectId: String?,
     val deviceName: String,
     val title: String,
     val summary: String,
@@ -17,28 +18,44 @@ data class AgentSession(
     val pinned: Boolean,
     val archived: Boolean,
     val unread: Boolean,
+    val lastReadSeq: Int,
     val takeover: Boolean,
     val connectorOnline: Boolean,
-    val runtimeSettings: Map<String, Any?> = emptyMap(),
-    val runtimeSettingsOverride: Map<String, Any?> = emptyMap(),
     val live: Boolean,
     val sortKey: String,
-)
+    val updatedSeq: Int,
+    val runtimeId: String = runtime,
+    val runtimeType: String = runtime,
+    val runtimeName: String = runtimeLabel,
+    val archivedAt: String? = null,
+    val optimisticTopUntil: Long = 0L,
+    // Preserve the canonical timestamp, including null, separately from the display activity fallback.
+    val sortAt: String? = null,
+) {
+    val runtimeLabels: RuntimeInstanceLabels
+        get() = runtimeInstanceLabels(runtimeName, runtimeType)
+
+    val runtimeContextLabel: String
+        get() = listOfNotNull(runtimeLabels.primary, runtimeLabels.secondary).joinToString(" · ")
+}
 
 enum class SessionStatus {
     Idle,
+    Waiting,
+    Pending,
     Running,
+    Stopping,
     WaitingApproval,
     Error,
+    Blocked,
+    Unknown,
 }
 
 data class AgentDevice(
     val id: String,
     val name: String,
     val deviceOs: String? = null,
-    val subtitle: String,
     val online: Boolean,
-    val attachedRuntimes: List<String> = emptyList(),
     val lastSeenAt: String? = null,
     val createdAt: String? = null,
 )

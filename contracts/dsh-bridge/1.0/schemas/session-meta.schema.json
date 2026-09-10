@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents-anywhere.dev/contracts/dsh-bridge/1.0/session-meta.schema.json",
+  "type": "object",
+  "required": ["externalSessionId", "runtime"],
+  "properties": {
+    "sessionId": { "type": ["string", "null"], "minLength": 1 },
+    "externalSessionId": { "type": "string", "minLength": 1 },
+    "runtime": { "const": "dsh" },
+    "title": { "type": ["string", "null"] },
+    "cwd": { "type": ["string", "null"] },
+    "orderingTime": { "type": ["string", "null"], "format": "date-time" },
+    "revision": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": true
+}

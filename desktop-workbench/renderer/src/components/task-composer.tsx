@@ -1,0 +1,1225 @@
+"use client"
+
+import * as React from "react"
+import { Monitor, ChevronDown, ArrowUp, Loader2, Check } from "lucide-react"
+import { toast } from "sonner"
+
+import { Button } from "@/components/ui/button"
+import { Separator } from "@/components/ui/separator"
+import { Spinner } from "@/components/ui/spinner"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+} from "@/components/ui/dropdown-menu"
+import { CascadingSelector } from "@/components/cascading-selector"
+import { useSessionToolSidebarStore } from "@/components/session-tool-sidebar-state"
+import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
+import { AgentSelectionDrawer } from "@/components/session/agent-selection-drawer"
+import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
+import {
+  AttachmentButton,
+  AttachmentPreviewList,
+  DragOverlay,
+  type AttachedFile,
+  useAttachments,
+} from "@/components/attachment-input"
+import { buildOptimisticUserMessage } from "@/components/session/optimistic-timeline"
+import {
+  ProjectEditorDialog,
+  type ProjectEditorState,
+} from "@/components/sidebar/project-editor-dialog"
+import { WorkspacePicker, type WorkspaceSelection } from "@/components/workspace-picker"
+import { useWorkspace } from "@/components/workspace-context"
+import { useAuth } from "@/components/auth/auth-context"
+import { dashboardApi } from "@/features/dashboard/api"
+import { createClientId } from "@/lib/id"
+import { cn } from "@/lib/utils"
+import { useElementWidth } from "@/hooks/use-element-width"
+import { useIsMobile } from "@/hooks/use-mobile"
+import type {
+  DeviceRuntimeView,
+  InlineAttachmentRef,
+  ProjectCreateRequest,
+  ProtocolCapabilitySet,
+  ProtocolModelCatalog,
+  ProtocolPermissionCatalog,
+  SessionView as RealSessionView,
+} from "@/features/dashboard/types"
+import { useTranslations } from "next-intl"
+import {
+  catalogItemDisabledReason,
+  catalogItemEnabled,
+  catalogI18nText,
+  modelCatalogDisplayName,
+  modelIdsForSelectionId,
+  permissionIdForSelectionId,
+  selectionIdForModelCatalog,
+  selectionIdForPermissionCatalog,
+} from "@/components/session/catalog-selection"
+import { CAPABILITY, capabilityIsUsable, attachmentMimeTypes } from "@/components/session/capabilities"
+import {
+  runtimeInstanceName,
+  runtimeTypeName,
+  sessionRuntimeRequestIdentity,
+} from "@/features/dashboard/runtime-instances"
+import { runtimeIsSelectable } from "@/features/dashboard/runtime-status-presentation"
+import {
+  availableNewSessionSelectionPreference,
+  newSessionSelectionScope,
+  preferredAvailableOptionId,
+  withNewSessionSelectionPreference,
+  type NewSessionPreference,
+  type NewSessionSelectionPreference,
+} from "@/features/dashboard/new-session-preferences"
+import { watchNewSessionRuntimeInventory } from "@/features/dashboard/new-session-runtime-inventory"
+
+const NEW_SESSION_PREFERENCE_KEY = "aa-new-session-preference-v1"
+const TITLE_WRITE_MS = 58
+const TITLE_ERASE_MS = 22
+const CJK_TITLE_WRITE_MS = 96
+const CJK_TITLE_ERASE_MS = 38
+const TITLE_HOLD_MS = 15_000
+const NEW_SESSION_TITLE_KEYS = [
+  "typewriter.buildNext",
+  "typewriter.startWhere",
+  "typewriter.workOn",
+  "typewriter.giveTask",
+  "typewriter.startWorkspace",
+  "typewriter.needsAttention",
+  "typewriter.happenHere",
+  "typewriter.rightDevice",
+  "typewriter.pickWorkspace",
+  "typewriter.nextChange",
+  "typewriter.investigate",
+  "typewriter.focusedSession",
+  "typewriter.inspect",
+  "typewriter.ideaToSession",
+  "typewriter.chooseTarget",
+  "typewriter.changingToday",
+] as const
+const MOBILE_NEW_SESSION_TITLE_KEYS = [
+  "typewriter.workOn",
+  "typewriter.giveTask",
+  "typewriter.needsAttention",
+  "typewriter.nextChange",
+  "typewriter.inspect",
+  "typewriter.changingToday",
+] as const
+
+async function inlineAttachmentsFromFiles(files: AttachedFile[]): Promise<InlineAttachmentRef[]> {
+  const inlineAttachments: InlineAttachmentRef[] = []
+  for (const attachment of files) {
+    const content = await attachment.file.arrayBuffer()
+    const contentBase64 = arrayBufferToBase64(content)
+    const sha256 = await sha256Hex(content)
+    inlineAttachments.push({
+      fileId: attachment.id.slice(0, 64),
+      name: attachment.name,
+      mediaType: attachment.file.type || "application/octet-stream",
+      size: attachment.size,
+      sha256,
+      contentBase64,
+    })
+  }
+  return inlineAttachments
+}
+
+function arrayBufferToBase64(value: ArrayBuffer): string {
+  const bytes = new Uint8Array(value)
+  const chunkSize = 0x8000
+  let binary = ""
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize)
+    binary += String.fromCharCode(...chunk)
+  }
+  return btoa(binary)
+}
+
+async function sha256Hex(value: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", value)
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+}
+
+type NewSessionTitleKey = (typeof NEW_SESSION_TITLE_KEYS)[number]
+type MobileNewSessionTitleKey = (typeof MOBILE_NEW_SESSION_TITLE_KEYS)[number]
+
+export function TaskComposer() {
+  const toolSidebarStore = useSessionToolSidebarStore()
+  const { session: authSession } = useAuth()
+  const isMobile = useIsMobile()
+  const {
+    addOptimisticMessage,
+    bindOptimisticSession,
+    connectors,
+    createProject,
+    markOptimisticMessageFailed,
+    newSessionProject,
+    openSession,
+    projects,
+    resolveProject,
+    sidebarShowsSessions,
+    updateProject,
+  } = useWorkspace()
+  const t = useTranslations("dashboard.new")
+  const typewriterTitles = React.useMemo(
+    () => {
+      const keys = isMobile ? MOBILE_NEW_SESSION_TITLE_KEYS : NEW_SESSION_TITLE_KEYS
+      return keys.map((key) => t(key as NewSessionTitleKey | MobileNewSessionTitleKey))
+    },
+    [isMobile, t],
+  )
+
+  const [runtimeInventory, setRuntimeInventory] = React.useState<Record<string, DeviceRuntimeView[]>>({})
+  const [runtimeInventoryLoading, setRuntimeInventoryLoading] = React.useState(true)
+  const runtimeInventoryRef = React.useRef(runtimeInventory)
+  runtimeInventoryRef.current = runtimeInventory
+  const onlineConnectorKey = React.useMemo(
+    () => connectors
+      .filter((connector) => connector.status === "online")
+      .map((connector) => `${connector.id}:${connector.status}`)
+      .sort()
+      .join("|"),
+    [connectors],
+  )
+
+  React.useEffect(() => {
+    if (!authSession?.accessToken) {
+      setRuntimeInventory((current) => sameRuntimeInventory(current, {}) ? current : {})
+      setRuntimeInventoryLoading(false)
+      return
+    }
+    const online = connectors.filter((connector) => connector.status === "online")
+    if (online.length === 0) {
+      setRuntimeInventory((current) => sameRuntimeInventory(current, {}) ? current : {})
+      setRuntimeInventoryLoading(false)
+      return
+    }
+    const onlineIds = new Set(online.map((connector) => connector.id))
+    const retainedInventory = Object.fromEntries(
+      Object.entries(runtimeInventoryRef.current).filter(([connectorId]) => onlineIds.has(connectorId)),
+    )
+    setRuntimeInventory((current) => sameRuntimeInventory(current, retainedInventory) ? current : retainedInventory)
+    setRuntimeInventoryLoading(
+      !online.some((connector) => activeRuntimes(retainedInventory[connector.id]).length > 0),
+    )
+
+    return watchNewSessionRuntimeInventory({
+      connectorIds: online.map((connector) => connector.id),
+      load: async (connectorId) => (
+        await dashboardApi.getConnectorRuntimes(authSession.accessToken, connectorId)
+      ).runtimes,
+      onUpdate: (connectorId, runtimes) => {
+        setRuntimeInventory((current) => {
+          const next = { ...current, [connectorId]: runtimes }
+          return sameRuntimeInventory(current, next) ? current : next
+        })
+      },
+      onInitialSettled: () => setRuntimeInventoryLoading(false),
+    })
+  }, [authSession?.accessToken, onlineConnectorKey])
+
+  // New sessions can only target runtimes that the Server has activated and the Connector reports as running.
+  const onlineConnectors = React.useMemo(
+    () => connectors.filter((connector) =>
+      connector.status === "online" && activeRuntimes(runtimeInventory[connector.id]).length > 0,
+    ),
+    [connectors, runtimeInventory],
+  )
+
+  const deviceOptions = React.useMemo(
+    () =>
+      onlineConnectors.map((c) => ({
+        id: c.id,
+        label: c.name,
+      })),
+    [onlineConnectors],
+  )
+  const hasOnlineDevice = deviceOptions.length > 0
+
+  const [selectedDevice, setSelectedDevice] = React.useState(deviceOptions[0]?.id ?? "")
+  const selectedConnector =
+    onlineConnectors.find((connector) => connector.id === selectedDevice) ??
+    onlineConnectors[0] ??
+    null
+  const selectedConnectorId = selectedConnector?.id ?? ""
+  const agentOptions = React.useMemo(
+    () => selectedConnector
+      ? activeRuntimes(runtimeInventory[selectedConnector.id]).map((runtime) => ({
+          id: runtime.runtimeId,
+          label: runtimeOptionLabel(runtime),
+        }))
+      : [],
+    [runtimeInventory, selectedConnector],
+  )
+
+  const [selectedAgent, setSelectedAgent] = React.useState(agentOptions[0]?.id ?? "")
+  const selectedRuntime = activeRuntimes(runtimeInventory[selectedConnectorId])
+    .find((runtime) => runtime.runtimeId === selectedAgent) ?? null
+  const selectedRuntimeScope = selectedRuntime
+    ? { runtimeId: selectedRuntime.runtimeId, runtimeType: selectedRuntime.runtimeType }
+    : undefined
+  const [selectedModel, setSelectedModel] = React.useState("")
+  const [selectedReasoning, setSelectedReasoning] = React.useState("")
+  const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
+  const [workspace, setWorkspace] = React.useState<WorkspaceSelection | null>(null)
+  const [projectEditor, setProjectEditor] = React.useState<ProjectEditorState>(null)
+  const [prompt, setPrompt] = React.useState("")
+  const [modelCatalog, setModelCatalog] = React.useState<ProtocolModelCatalog | null>(null)
+  const [permissionCatalog, setPermissionCatalog] = React.useState<ProtocolPermissionCatalog | null>(null)
+  const [runtimeCapabilities, setRuntimeCapabilities] = React.useState<ProtocolCapabilitySet | null>(null)
+  const [catalogsLoading, setCatalogsLoading] = React.useState(false)
+  const [creating, setCreating] = React.useState(false)
+  const creatingRef = React.useRef(false)
+  const [createTick, setCreateTick] = React.useState(0)
+  const [preferenceLoaded, setPreferenceLoaded] = React.useState(false)
+  const [preference, setPreference] = React.useState<NewSessionPreference | null>(null)
+  const preferenceRef = React.useRef<NewSessionPreference | null>(null)
+  const projectPrefillAppliedRef = React.useRef<string | null>(null)
+  const composerRef = React.useRef<HTMLDivElement | null>(null)
+  const composerWidth = useElementWidth(composerRef)
+
+  const typedTitle = useTypewriterTitle(typewriterTitles, creating)
+
+  React.useEffect(() => {
+    if (!creating) {
+      setCreateTick(0)
+      return
+    }
+
+    const tickTimer = window.setInterval(() => setCreateTick((tick) => tick + 1), 450)
+    return () => window.clearInterval(tickTimer)
+  }, [creating])
+
+  React.useEffect(() => {
+    const storedPreference = readNewSessionPreference()
+    preferenceRef.current = storedPreference
+    setPreference(storedPreference)
+    setPreferenceLoaded(true)
+  }, [])
+
+  const persistPreference = React.useCallback((next: NewSessionPreference) => {
+    preferenceRef.current = next
+    setPreference(next)
+    writeNewSessionPreference(next)
+  }, [])
+
+  const persistTargetPreference = React.useCallback((
+    connectorId: string,
+    agent: string,
+    selection: Partial<NewSessionSelectionPreference> = {},
+  ) => {
+    if (!preferenceLoaded || !connectorId || !agent) return
+    const scope = newSessionSelectionScope(connectorId, agent)
+    const existing = preferenceRef.current?.selections?.[scope]
+    persistPreference(withNewSessionSelectionPreference(
+      preferenceRef.current,
+      connectorId,
+      agent,
+      {
+        model: selection.model !== undefined ? selection.model : existing?.model ?? null,
+        permission: selection.permission !== undefined ? selection.permission : existing?.permission ?? null,
+      },
+    ))
+  }, [persistPreference, preferenceLoaded])
+
+  React.useEffect(() => {
+    if (!newSessionProject) {
+      if (projectPrefillAppliedRef.current !== null) {
+        projectPrefillAppliedRef.current = null
+        setWorkspace(null)
+      }
+      return
+    }
+
+    if (projectPrefillAppliedRef.current === newSessionProject.id) return
+    if (!deviceOptions.some((option) => option.id === newSessionProject.connectorId)) {
+      setWorkspace(null)
+      return
+    }
+    if (selectedDevice !== newSessionProject.connectorId) {
+      setSelectedDevice(newSessionProject.connectorId)
+      return
+    }
+
+    projectPrefillAppliedRef.current = newSessionProject.id
+    setWorkspace({
+      label: newSessionProject.name,
+      path: newSessionProject.workspacePath,
+      connectorId: newSessionProject.connectorId,
+      projectId: newSessionProject.id,
+    })
+  }, [deviceOptions, newSessionProject, selectedDevice])
+
+  React.useEffect(() => {
+    if (newSessionProject) return
+    const nextDevice = preferredAvailableOptionId(
+      deviceOptions,
+      selectedDevice,
+      preferenceLoaded ? preference?.connectorId : null,
+    )
+    if (nextDevice !== selectedDevice) {
+      setSelectedDevice(nextDevice)
+    }
+  }, [deviceOptions, newSessionProject, preference?.connectorId, preferenceLoaded, selectedDevice])
+
+  React.useEffect(() => {
+    setWorkspace((current) => {
+      if (!current) return current
+      if (current.connectorId && current.connectorId !== selectedConnectorId) return null
+      if (current.projectId && !projects.some((project) => (
+        project.id === current.projectId && project.connectorId === selectedConnectorId
+      ))) return null
+      return current
+    })
+  }, [projects, selectedConnectorId])
+
+  React.useEffect(() => {
+    const connectorId = selectedConnectorId
+    const preferredAgent = preferenceLoaded && preference?.connectorId === connectorId
+      ? preference.agent
+      : null
+    const nextAgent = preferredAvailableOptionId(
+      agentOptions,
+      selectedAgent,
+      preferredAgent,
+    )
+    if (nextAgent !== selectedAgent) {
+      setSelectedAgent(nextAgent)
+    }
+  }, [agentOptions, preference, preferenceLoaded, selectedAgent, selectedConnectorId])
+
+  React.useEffect(() => {
+    if (!authSession?.accessToken || !selectedConnectorId || !selectedAgent) {
+      setModelCatalog(null)
+      setPermissionCatalog(null)
+      setRuntimeCapabilities(null)
+      setCatalogsLoading(false)
+      return
+    }
+    let cancelled = false
+    setCatalogsLoading(true)
+    setModelCatalog(null)
+    setPermissionCatalog(null)
+    setRuntimeCapabilities(null)
+    dashboardApi.getConnectorRuntimeCapabilities(
+      authSession.accessToken,
+      selectedConnectorId,
+      selectedAgent,
+    )
+      .then(async (capabilitiesResponse) => {
+        const capabilitySet = capabilitiesResponse.capabilitySet
+        const canUseModelCatalog = capabilityIsUsable(
+          capabilitySet,
+          CAPABILITY.modelCatalog,
+          selectedRuntimeScope,
+        )
+        const canUsePermissionCatalog = capabilityIsUsable(
+          capabilitySet,
+          CAPABILITY.permissionCatalog,
+          selectedRuntimeScope,
+        )
+        const [modelCatalogResponse, permissionCatalogResponse] = await Promise.all([
+          canUseModelCatalog
+            ? dashboardApi.getConnectorRuntimeModelCatalog(
+                authSession.accessToken,
+                selectedConnectorId,
+                selectedAgent,
+              )
+            : Promise.resolve(null),
+          canUsePermissionCatalog
+            ? dashboardApi.getConnectorRuntimePermissionCatalog(
+                authSession.accessToken,
+                selectedConnectorId,
+                selectedAgent,
+              )
+            : Promise.resolve(null),
+        ])
+        return { capabilitySet, modelCatalogResponse, permissionCatalogResponse }
+      })
+      .then(({ capabilitySet, modelCatalogResponse, permissionCatalogResponse }) => {
+        if (cancelled) return
+        setRuntimeCapabilities(capabilitySet)
+        setModelCatalog(modelCatalogResponse?.catalog ?? null)
+        setPermissionCatalog(permissionCatalogResponse?.catalog ?? null)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setRuntimeCapabilities(null)
+        setModelCatalog(null)
+        setPermissionCatalog(null)
+      })
+      .finally(() => {
+        if (!cancelled) setCatalogsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [authSession?.accessToken, selectedAgent, selectedConnectorId, selectedRuntime?.runtimeType])
+
+  const canUseModelCatalog = capabilityIsUsable(
+    runtimeCapabilities,
+    CAPABILITY.modelCatalog,
+    selectedRuntimeScope,
+  )
+  const canUsePermissionCatalog = capabilityIsUsable(
+    runtimeCapabilities,
+    CAPABILITY.permissionCatalog,
+    selectedRuntimeScope,
+  )
+  const canUseAttachments = capabilityIsUsable(
+    runtimeCapabilities,
+    CAPABILITY.attachment,
+    selectedRuntimeScope,
+  )
+  const allowedMimeTypes = React.useMemo(() => attachmentMimeTypes(runtimeCapabilities, selectedRuntimeScope), [runtimeCapabilities, selectedRuntimeScope])
+  const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop,
+    attachmentsAllowed, attachmentError } = useAttachments({ enabled: canUseAttachments, allowedMimeTypes })
+
+  const models = React.useMemo(
+    () => modelCatalog?.models.map((item) => ({
+      id: item.id,
+      label: modelCatalogDisplayName(
+        item,
+        modelCatalog.models,
+        catalogI18nText(t, item.metadata, "labelKey", item.displayName),
+        t("defaultReasoning"),
+      ),
+      default: item.default,
+      enabled: catalogItemEnabled(item),
+      disabledReason: catalogItemDisabledReason(item),
+      selectionId: item.selectionId,
+      reasoningItems: item.reasoningItems.map((reasoning) => ({
+        id: reasoning.id,
+        label: catalogI18nText(t, reasoning.metadata, "labelKey", reasoning.displayName),
+        default: reasoning.default,
+        enabled: catalogItemEnabled(reasoning),
+        disabledReason: catalogItemDisabledReason(reasoning),
+        selectionId: reasoning.selectionId,
+      })),
+    })) ?? [],
+    [modelCatalog, t],
+  )
+  const selectedModelItem = models.find((item) => item.id === selectedModel)
+  const reasoningOptions = selectedModelItem?.reasoningItems ?? []
+  const permissionOptions = React.useMemo(
+    () => permissionCatalog?.permissions.map((item) => ({
+      id: item.id,
+      label: catalogI18nText(t, item.metadata, "labelKey", item.displayName),
+      description: catalogI18nText(t, item.metadata, "descriptionKey", item.description),
+      default: item.default,
+      enabled: catalogItemEnabled(item),
+      disabledReason: catalogItemDisabledReason(item),
+      selectionId: item.selectionId,
+    })) ?? [],
+    [permissionCatalog, t],
+  )
+
+  React.useEffect(() => {
+    const nextModel = models.find((option) => option.default && option.enabled)?.id
+      ?? models.find((option) => option.enabled)?.id
+      ?? ""
+    setSelectedModel((current) => current && models.some((option) => option.id === current && option.enabled) ? current : nextModel)
+  }, [models])
+
+  React.useEffect(() => {
+    const nextPermissionMode = permissionOptions.find((option) => option.default && option.enabled)?.id
+      ?? permissionOptions.find((option) => option.enabled)?.id
+      ?? ""
+    setSelectedPermissionMode((current) =>
+      current && permissionOptions.some((option) => option.id === current && option.enabled) ? current : nextPermissionMode,
+    )
+  }, [permissionOptions])
+
+  React.useEffect(() => {
+    const nextEffort = reasoningOptions.find((option) => option.default && option.enabled)?.id
+      ?? reasoningOptions.find((option) => option.enabled)?.id
+      ?? ""
+    setSelectedReasoning((current) =>
+      current && reasoningOptions.some((option) => option.id === current && option.enabled) ? current : nextEffort,
+    )
+  }, [reasoningOptions])
+
+  React.useEffect(() => {
+    setSelectedReasoning((current) => {
+      if (!current) return current
+      return reasoningOptions.some((option) => option.id === current && option.enabled) ? current : ""
+    })
+  }, [reasoningOptions])
+
+  React.useEffect(() => {
+    if (!preferenceLoaded || !selectedConnectorId || !selectedAgent) return
+    if (catalogsLoading || (!modelCatalog && !permissionCatalog)) return
+    const scope = newSessionSelectionScope(selectedConnectorId, selectedAgent)
+    const selectionPreference = preference?.selections?.[scope]
+    if (!selectionPreference) return
+
+    const availablePreference = availableNewSessionSelectionPreference(
+      models,
+      permissionOptions,
+      modelIdsForSelectionId(modelCatalog, selectionPreference.model),
+      permissionIdForSelectionId(permissionCatalog, selectionPreference.permission),
+    )
+    if (availablePreference.model) {
+      setSelectedModel(availablePreference.model.modelId)
+      setSelectedReasoning(availablePreference.model.reasoningId)
+    }
+    if (availablePreference.permissionId) {
+      setSelectedPermissionMode(availablePreference.permissionId)
+    }
+  }, [
+    modelCatalog,
+    models,
+    permissionCatalog,
+    permissionOptions,
+    preference,
+    preferenceLoaded,
+    catalogsLoading,
+    selectedAgent,
+    selectedConnectorId,
+  ])
+
+  const selectedPermissionOption = permissionOptions.find((option) => option.id === selectedPermissionMode)
+  const modelLabel = selectedModelItem?.label ?? t("defaultModel")
+  const selectedReasoningOption = reasoningOptions.find((option) => option.id === selectedReasoning)
+  const effortLabel = selectedReasoningOption?.label ?? t("defaultReasoning")
+  const permissionLabel = selectedPermissionOption?.label ?? t("permissionMode")
+  const permissionDrawerItems = permissionOptions
+  const selectedModelSelection = selectionIdForModelCatalog(modelCatalog, selectedModel, selectedReasoning)
+  const selectedPermissionSelection = selectionIdForPermissionCatalog(permissionCatalog, selectedPermissionMode)
+
+  const handleDeviceChange = React.useCallback((connectorId: string) => {
+    const targetOptions = activeRuntimes(runtimeInventory[connectorId])
+    const preferredAgent = preferenceRef.current?.connectorId === connectorId
+      ? preferenceRef.current.agent
+      : null
+    const nextAgent = preferredAgent && targetOptions.some((runtime) => runtime.runtimeId === preferredAgent)
+      ? preferredAgent
+      : targetOptions[0]?.runtimeId ?? ""
+    setSelectedDevice(connectorId)
+    if (nextAgent) {
+      setSelectedAgent(nextAgent)
+      persistTargetPreference(connectorId, nextAgent)
+    }
+  }, [persistTargetPreference, runtimeInventory])
+
+  const createAndSelectProject = React.useCallback(async (payload: ProjectCreateRequest) => {
+    const project = await createProject(payload)
+    if (!project) return null
+    handleDeviceChange(project.connectorId)
+    setWorkspace({
+      label: project.name,
+      path: project.workspacePath,
+      connectorId: project.connectorId,
+      projectId: project.id,
+    })
+    return project
+  }, [createProject, handleDeviceChange])
+
+  const handleAgentChange = React.useCallback((agent: string) => {
+    if (!selectedConnectorId || !agentOptions.some((option) => option.id === agent)) return
+    setSelectedAgent(agent)
+    persistTargetPreference(selectedConnectorId, agent)
+  }, [agentOptions, persistTargetPreference, selectedConnectorId])
+
+  const handlePermissionChange = React.useCallback((permission: string) => {
+    if (!selectedConnectorId || !selectedAgent) return
+    if (!permissionOptions.some((option) => option.id === permission && option.enabled)) return
+    setSelectedPermissionMode(permission)
+    persistTargetPreference(selectedConnectorId, selectedAgent, {
+      permission: selectionIdForPermissionCatalog(permissionCatalog, permission),
+    })
+  }, [permissionCatalog, permissionOptions, persistTargetPreference, selectedAgent, selectedConnectorId])
+
+  const handleModelChange = React.useCallback((model: string, reasoning: string) => {
+    if (!selectedConnectorId || !selectedAgent) return
+    const modelOption = models.find((option) => option.id === model)
+    if (!modelOption?.enabled) return
+    if (reasoning && !modelOption.reasoningItems.some((option) => option.id === reasoning && option.enabled)) return
+    setSelectedModel(model)
+    setSelectedReasoning(reasoning)
+    persistTargetPreference(selectedConnectorId, selectedAgent, {
+      model: selectionIdForModelCatalog(modelCatalog, model, reasoning),
+    })
+  }, [modelCatalog, models, persistTargetPreference, selectedAgent, selectedConnectorId])
+
+  const requiresModelSelection = canUseModelCatalog && models.length > 0
+  const requiresPermissionSelection = canUsePermissionCatalog && permissionOptions.length > 0
+  const hasSelectionSettings = models.length > 0 || permissionOptions.length > 0
+  const canCreate =
+    Boolean(authSession?.accessToken && selectedConnector && selectedRuntime && workspace?.path) &&
+    workspace?.connectorId === selectedConnectorId &&
+    !creating &&
+    !catalogsLoading &&
+    (!requiresModelSelection || Boolean(selectedModelSelection)) &&
+    (!requiresPermissionSelection || Boolean(selectedPermissionSelection)) &&
+    (attachments.length === 0 || canUseAttachments) && attachmentsAllowed &&
+    (prompt.trim().length > 0 || attachments.length > 0)
+  const selectorsLoading =
+    runtimeInventoryLoading || (
+      Boolean(authSession?.accessToken && hasOnlineDevice && selectedConnector && selectedAgent) && catalogsLoading
+    )
+  const compactSelectors = composerWidth > 0 && composerWidth < 640
+
+  const handleCreate = async () => {
+    if (!authSession?.accessToken || !selectedConnector || !selectedRuntime || !workspace?.path || creatingRef.current) return
+    if (workspace.connectorId !== selectedConnector.id) return
+    if (!prompt.trim() && attachments.length === 0) return
+    if (catalogsLoading) return
+    if (requiresModelSelection && !selectedModelSelection) return
+    if (requiresPermissionSelection && !selectedPermissionSelection) return
+    if (attachments.length > 0 && (!canUseAttachments || !attachmentsAllowed)) return
+    creatingRef.current = true
+    setCreating(true)
+    let project
+    try {
+      project = await resolveProject({ connectorId: selectedConnector.id, workspacePath: workspace.path })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("createFailed"))
+      creatingRef.current = false
+      setCreating(false)
+      return
+    }
+    const localSessionId = createClientId("session")
+    const clientMessageId = createClientId("msg")
+    const messageText = prompt.trim() || t("attachmentOnlyPrompt")
+    const selectedAttachments = attachments
+    const now = new Date().toISOString()
+    const optimisticSession: RealSessionView = {
+      id: localSessionId,
+      connectorId: selectedConnector.id,
+      projectId: project.id,
+      connectorStatus: selectedConnector.status,
+      runtime: selectedRuntime?.runtimeType ?? selectedAgent,
+      runtimeId: selectedRuntime?.runtimeId ?? selectedAgent,
+      runtimeType: selectedRuntime?.runtimeType ?? selectedAgent,
+      runtimeName: selectedRuntime ? runtimeInstanceName(selectedRuntime) : null,
+      runtimeTypeDisplayName: selectedRuntime ? runtimeTypeName(selectedRuntime) : null,
+      externalSessionId: null,
+      title: prompt.trim() || null,
+      cwd: project.workspacePath,
+      status: "waiting",
+      takeover: true,
+      pinned: false,
+      pinnedAt: null,
+      archived: false,
+      archivedAt: null,
+      unread: false,
+      lastReadSeq: 0,
+      latestTurnEndSeq: 0,
+      lastSyncedAt: null,
+      sourceObservedAt: null,
+      lastActivityAt: now,
+      lastItemAt: now,
+      lastItemOrderSeq: 1,
+      sortAt: now,
+      updatedSeq: 1,
+      effectiveRunMode: "chat",
+    }
+    const optimisticState = {
+      sessionId: localSessionId,
+      runtime: selectedRuntime?.runtimeType ?? selectedAgent,
+      runtimeId: selectedRuntime?.runtimeId ?? selectedAgent,
+      runtimeType: selectedRuntime?.runtimeType ?? selectedAgent,
+      externalSessionId: null,
+      status: "waiting" as const,
+      selections: {
+        ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
+        ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
+      },
+      statusReason: null,
+      error: null,
+      metadata: {},
+      updatedSeq: 1,
+      createdAt: now,
+      updatedAt: now,
+    }
+    addOptimisticMessage({
+      clientMessageId,
+      sessionId: localSessionId,
+      localSessionId,
+      session: optimisticSession,
+      state: optimisticState,
+      item: buildOptimisticUserMessage({
+        sessionId: localSessionId,
+        clientMessageId,
+        text: messageText,
+        attachments: selectedAttachments,
+        items: [],
+        nextSeq: 0,
+      }),
+    })
+    clear()
+    setPrompt("")
+    openSession(localSessionId)
+    try {
+      const selections = {
+        ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
+        ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
+      }
+      const createBody = {
+        connectorId: selectedConnector.id,
+        projectId: project.id,
+        ...sessionRuntimeRequestIdentity(
+          selectedRuntime?.runtimeType ?? selectedAgent,
+          selectedRuntime?.runtimeId ?? selectedAgent,
+        ),
+        title: prompt.trim() || undefined,
+        cwd: project.workspacePath,
+        ...(selectedRuntime?.runtimeType === "dsh" ? {
+          runtimeOptions: {
+            agentPreset: selectedRuntime.config?.defaultAgentPreset ?? selectedRuntime.defaults?.defaultAgentPreset,
+          },
+        } : {}),
+      }
+      const nextPreference = withNewSessionSelectionPreference(
+        preferenceRef.current,
+        selectedConnector.id,
+        selectedAgent,
+        {
+          model: selectedModelSelection,
+          permission: selectedPermissionSelection,
+        },
+      )
+      persistPreference(nextPreference)
+      const created = await dashboardApi.createAndStartSession(authSession.accessToken, {
+        ...createBody,
+        content: messageText,
+        selections,
+        attachments: selectedAttachments.length > 0
+          ? await inlineAttachmentsFromFiles(selectedAttachments)
+          : undefined,
+        clientMessageId,
+      })
+      toolSidebarStore.migrateSession(localSessionId, created.session.id)
+      bindOptimisticSession(localSessionId, created.session, created.attachments)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : t("createFailed")
+      markOptimisticMessageFailed(clientMessageId, message)
+      toast.error(message)
+    } finally {
+      creatingRef.current = false
+      setCreating(false)
+    }
+  }
+
+  return (
+    <div
+      className="relative flex flex-1 flex-col items-center justify-center px-6"
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
+      <DragOverlay isDragging={isDragging} />
+      <div className="absolute left-3 top-3 flex items-center gap-2">
+        <DashboardSidebarToggle />
+      </div>
+
+      <div className="w-full max-w-3xl">
+        <h1 className="mb-6 flex h-10 items-center justify-center overflow-hidden text-center text-3xl font-semibold leading-tight tracking-tight sm:h-auto sm:min-h-[3rem] sm:text-4xl" aria-live="polite">
+          <span className="min-w-0 truncate">{creating ? `${t("creatingBase")}${".".repeat((createTick % 3) + 1)}` : typedTitle}</span>
+          <span className="ml-1 inline-block h-[0.9em] w-0.5 translate-y-[0.1em] rounded-full bg-muted-foreground motion-safe:animate-[composer-caret_1s_steps(1,end)_infinite]" aria-hidden="true" />
+        </h1>
+
+        <div
+          ref={composerRef}
+          className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20"
+        >
+          <div className="flex flex-col gap-3 px-5 pt-4">
+            <AttachmentPreviewList attachments={attachments} onRemove={remove} />
+            {attachmentError ? <p role="alert" className="text-xs text-destructive">{attachmentError}</p> : null}
+            <Textarea
+              value={prompt}
+              onChange={(event) => setPrompt(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault()
+                  handleCreate()
+                }
+              }}
+              placeholder={t("placeholder")}
+              disabled={creating || !authSession?.accessToken || !selectedConnector}
+              className="min-h-20 max-h-64 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 text-base leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent"
+            />
+          </div>
+
+          <div className="px-5 pt-2">
+            <Separator />
+          </div>
+
+          {/* No wrapping: the option controls shrink instead, so the send
+              button always stays on the same row. */}
+          <div className="flex items-center gap-1 px-3 pb-2 pt-1.5">
+            <AttachmentButton
+              attachments={attachments}
+              onAttach={add}
+              isDragging={isDragging}
+              allowedMimeTypes={allowedMimeTypes}
+              disabled={!canUseAttachments}
+            />
+
+            {selectorsLoading ? (
+              <>
+                <ComposerSelectorLoading className="w-44" />
+                <ComposerSelectorLoading className="w-36" />
+                <ComposerSelectorLoading className="w-44" />
+              </>
+            ) : (
+              <>
+                {hasOnlineDevice && compactSelectors ? (
+                  <AgentSelectionDrawer
+                    buttonLabel={t("agent")}
+                    title={t("deviceAndAgent")}
+                    deviceLabel={t("device")}
+                    agentLabel={t("agent")}
+                    deviceItems={deviceOptions}
+                    selectedDevice={selectedDevice}
+                    onDeviceChange={handleDeviceChange}
+                    agentItems={agentOptions}
+                    selectedAgent={selectedAgent}
+                    onAgentChange={handleAgentChange}
+                  />
+                ) : hasOnlineDevice ? (
+                  <CascadingSelector
+                    icon={<Monitor className="size-4" />}
+                    primaryOptions={deviceOptions}
+                    secondaryOptions={agentOptions}
+                    selectedPrimary={selectedDevice}
+                    selectedSecondary={selectedAgent}
+                    onPrimaryChange={handleDeviceChange}
+                    onSecondaryChange={handleAgentChange}
+                    secondaryLabel={t("agent")}
+                  />
+                ) : null}
+
+                {compactSelectors && hasSelectionSettings ? (
+                  <SelectionSettingsDrawer
+                    disabled={selectorsLoading}
+                    buttonLabel={t("selectionSettings")}
+                    title={t("selectionSettings")}
+                    description={t("selectionSettingsDescription")}
+                    permissionLabel={t("permissionMode")}
+                    modelLabel={t("model")}
+                    reasoningLabel={t("reasoning")}
+                    permissionItems={permissionDrawerItems}
+                    selectedPermission={selectedPermissionMode}
+                    onPermissionChange={handlePermissionChange}
+                    modelItems={hasOnlineDevice ? models : []}
+                    selectedModel={selectedModel}
+                    selectedReasoning={selectedReasoning}
+                    onModelChange={handleModelChange}
+                  />
+                ) : !compactSelectors ? (
+                  <>
+                    {permissionOptions.length > 0 ? <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="sm" className="min-w-0 shrink gap-1.5 text-muted-foreground">
+                          {permissionOptions.length > 0 ? <span className="size-1.5 shrink-0 rounded-full bg-primary" /> : null}
+                          <span className="min-w-0 truncate text-foreground">{permissionLabel}</span>
+                          <ChevronDown className="size-3.5 opacity-50" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="w-64">
+                        {permissionOptions.map((item) => (
+                          <DropdownMenuItem
+                            key={item.id}
+                            disabled={!item.enabled}
+                            className={cn(
+                              "items-start gap-2 py-2.5",
+                              selectedPermissionMode === item.id && "text-primary focus:text-primary",
+                            )}
+                            onSelect={() => handlePermissionChange(item.id)}
+                          >
+                            <Check className={cn("mt-0.5 size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-medium leading-none">{item.label}</span>
+                              {(item.enabled ? item.description : item.disabledReason) ? (
+                                <span className="mt-1 block whitespace-normal text-xs leading-snug text-muted-foreground">
+                                  {item.enabled ? item.description : item.disabledReason}
+                                </span>
+                              ) : null}
+                            </span>
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu> : null}
+
+                    {hasOnlineDevice && models.length > 0 ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm" className="min-w-0 shrink max-w-72 gap-1.5 text-muted-foreground">
+                            {reasoningOptions.length > 0 ? <span className="text-foreground">{effortLabel}</span> : null}
+                            {reasoningOptions.length > 0 ? <span className="text-muted-foreground/50">·</span> : null}
+                            <span className="min-w-0 truncate text-foreground">{modelLabel}</span>
+                            <ChevronDown className="size-3.5 shrink-0 opacity-50" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="w-56">
+                          {models.map((modelItem) => {
+                            const modelEfforts = modelItem.reasoningItems
+                            if (modelEfforts.length === 0) {
+                              return (
+                                <DropdownMenuItem
+                                  key={modelItem.id}
+                                  disabled={!modelItem.enabled}
+                                  className="gap-2"
+                                  onSelect={() => {
+                                    handleModelChange(modelItem.id, "")
+                                  }}
+                                >
+                                  <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block truncate">{modelItem.label}</span>
+                                    {!modelItem.enabled && modelItem.disabledReason ? (
+                                      <span className="block truncate text-xs text-muted-foreground">
+                                        {modelItem.disabledReason}
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                </DropdownMenuItem>
+                              )
+                            }
+                            return (
+                              <DropdownMenuSub key={modelItem.id}>
+                                <DropdownMenuSubTrigger className="gap-2" disabled={!modelItem.enabled}>
+                                  <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
+                                  <span className="max-w-40 truncate" title={modelItem.disabledReason ?? undefined}>
+                                    {modelItem.label}
+                                  </span>
+                                </DropdownMenuSubTrigger>
+                                <DropdownMenuSubContent className="w-56">
+                                  {modelEfforts.map((item) => (
+                                    <DropdownMenuItem
+                                      key={item.id}
+                                      disabled={!item.enabled}
+                                      className="gap-2"
+                                      onSelect={() => {
+                                        handleModelChange(modelItem.id, item.id)
+                                      }}
+                                    >
+                                      <Check className={cn(
+                                        "size-3.5",
+                                        selectedModel === modelItem.id && selectedReasoning === item.id ? "opacity-100" : "opacity-0",
+                                      )} />
+                                      <span className="min-w-0 flex-1">
+                                        <span className="block truncate">{item.label}</span>
+                                        {!item.enabled && item.disabledReason ? (
+                                          <span className="block truncate text-xs text-muted-foreground">
+                                            {item.disabledReason}
+                                          </span>
+                                        ) : null}
+                                      </span>
+                                    </DropdownMenuItem>
+                                  ))}
+                                </DropdownMenuSubContent>
+                              </DropdownMenuSub>
+                            )
+                          })}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : null}
+                  </>
+                ) : null}
+              </>
+            )}
+
+            <Button
+              size="icon"
+              aria-label={t("sendTask")}
+              className="ml-auto shrink-0 rounded-full"
+              disabled={!canCreate}
+              onClick={handleCreate}
+            >
+              {creating ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-3">
+          <WorkspacePicker
+            connectorId={selectedConnectorId}
+            value={workspace}
+            onChange={setWorkspace}
+            includeProjects={!sidebarShowsSessions}
+            disabled={creating}
+            onCreateProject={() => setProjectEditor({ mode: "create" })}
+          />
+        </div>
+      </div>
+
+      <ProjectEditorDialog
+        editor={projectEditor}
+        connectors={connectors}
+        preferredConnectorId={selectedConnectorId}
+        projects={projects}
+        onOpenChange={(open) => {
+          if (!open) setProjectEditor(null)
+        }}
+        onCreate={createAndSelectProject}
+        onUpdate={updateProject}
+      />
+    </div>
+  )
+}
+
+function activeRuntimes(runtimes: DeviceRuntimeView[] | undefined) {
+  return (runtimes ?? [])
+    .filter((runtime) => runtimeIsSelectable(runtime))
+    .sort((a, b) => runtimeInstanceName(a).localeCompare(runtimeInstanceName(b)))
+}
+
+function runtimeOptionLabel(runtime: DeviceRuntimeView): string {
+  return runtimeInstanceName(runtime)
+}
+
+function sameRuntimeInventory(
+  left: Record<string, DeviceRuntimeView[]>,
+  right: Record<string, DeviceRuntimeView[]>,
+): boolean {
+  return stableRuntimeInventoryKey(left) === stableRuntimeInventoryKey(right)
+}
+
+function stableRuntimeInventoryKey(value: Record<string, DeviceRuntimeView[]>): string {
+  return Object.keys(value)
+    .sort()
+    .map((connectorId) => {
+      const runtimes = [...(value[connectorId] ?? [])]
+        .sort((left, right) => left.runtimeId.localeCompare(right.runtimeId))
+        .map((runtime) => [
+          runtime.runtimeId,
+          runtime.runtimeType,
+          runtime.displayName,
+          runtime.present,
+          runtime.configured,
+          runtime.active,
+          runtime.status,
+          runtime.updatedAt,
+        ].join(":"))
+        .join(",")
+      return `${connectorId}=${runtimes}`
+    })
+    .join("|")
+}
+
+function ComposerSelectorLoading({ className }: { className?: string }) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      disabled
+      className={cn("shrink justify-start gap-2 text-muted-foreground opacity-100", className)}
+    >
+      <Spinner className="size-3.5" />
+      <span className="h-3 w-16 rounded-full bg-muted-foreground/20" />
+    </Button>
+  )
+}
+
+function useTypewriterTitle(titles: string[], paused: boolean) {
+  const [titleIndex, setTitleIndex] = React.useState(0)
+  const [typedTitle, setTypedTitle] = React.useState("")
+
+  React.useEffect(() => {
+    if (paused || titles.length === 0) return
+
+    const title = titles[titleIndex % titles.length] ?? titles[0] ?? ""
+    const hasCjk = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(title)
+    const writeDelay = hasCjk ? CJK_TITLE_WRITE_MS : TITLE_WRITE_MS
+    const eraseDelay = hasCjk ? CJK_TITLE_ERASE_MS : TITLE_ERASE_MS
+    let cancelled = false
+    let timeout: number | undefined
+
+    const schedule = (fn: () => void, delay: number) => {
+      timeout = window.setTimeout(fn, delay)
+    }
+
+    const write = (count: number) => {
+      if (cancelled) return
+      setTypedTitle(title.slice(0, count))
+      if (count < title.length) {
+        schedule(() => write(count + 1), writeDelay)
+        return
+      }
+      schedule(() => erase(title.length), TITLE_HOLD_MS)
+    }
+
+    const erase = (count: number) => {
+      if (cancelled) return
+      setTypedTitle(title.slice(0, count))
+      if (count > 0) {
+        schedule(() => erase(count - 1), eraseDelay)
+        return
+      }
+      setTitleIndex((index) => (index + 1) % titles.length)
+    }
+
+    write(0)
+
+    return () => {
+      cancelled = true
+      if (timeout !== undefined) window.clearTimeout(timeout)
+    }
+  }, [paused, titleIndex, titles])
+
+  return typedTitle
+}
+
+function readNewSessionPreference(): NewSessionPreference | null {
+  if (typeof window === "undefined") return null
+  try {
+    const raw = window.localStorage.getItem(NEW_SESSION_PREFERENCE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<NewSessionPreference>
+    if (typeof parsed.connectorId !== "string" || typeof parsed.agent !== "string") {
+      return null
+    }
+    if (!parsed.connectorId || !parsed.agent) return null
+    return {
+      connectorId: parsed.connectorId,
+      agent: parsed.agent,
+      selections: readNewSessionSelectionPreferences(parsed.selections),
+    }
+  } catch {
+    return null
+  }
+}
+
+function readNewSessionSelectionPreferences(value: unknown): Record<string, NewSessionSelectionPreference> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  const result: Record<string, NewSessionSelectionPreference> = {}
+  for (const [scope, rawSelection] of Object.entries(value)) {
+    if (!scope || !rawSelection || typeof rawSelection !== "object" || Array.isArray(rawSelection)) continue
+    const selection = rawSelection as Partial<NewSessionSelectionPreference>
+    const model = typeof selection.model === "string" && selection.model
+      ? selection.model
+      : null
+    const permission = typeof selection.permission === "string" && selection.permission
+      ? selection.permission
+      : null
+    if (!model && !permission) continue
+    result[scope] = {
+      model,
+      permission,
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
+function writeNewSessionPreference(preference: NewSessionPreference) {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.setItem(NEW_SESSION_PREFERENCE_KEY, JSON.stringify(preference))
+  } catch {
+    // localStorage may be unavailable in private contexts. The composer can still fall back.
+  }
+}

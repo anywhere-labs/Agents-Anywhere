@@ -1,0 +1,20 @@
+{
+  "active": true,
+  "configured": true,
+  "createdAt": "2026-08-25T05:10:00Z",
+  "error": {
+    "code": "runtime_process_exited",
+    "details": {
+      "exitCode": 1
+    },
+    "message": "Runtime process exited before it became ready",
+    "retryable": true
+  },
+  "name": "Work Codex",
+  "runtimeId": "rti_codex_work_01",
+  "runtimeType": "codex",
+  "startedAt": null,
+  "status": "error",
+  "stoppedAt": "2026-08-25T05:12:00Z",
+  "updatedAt": "2026-08-25T05:12:01Z"
+}

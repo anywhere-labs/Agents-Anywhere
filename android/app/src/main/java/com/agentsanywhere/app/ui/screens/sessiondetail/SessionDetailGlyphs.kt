@@ -25,45 +25,9 @@ internal fun ArrowUpGlyph(color: Color) = DetailGlyph(sizeDp = 18, color = color
 }
 
 @Composable
-internal fun ArrowDownGlyph(color: Color, sizeDp: Int = 18) = DetailGlyph(sizeDp = sizeDp, color = color) {
-    val stroke = if (sizeDp > 18) 2.5.dp.toPx() else 2.dp.toPx()
-    drawLine(color, Offset(size.width * 0.50f, size.height * 0.18f), Offset(size.width * 0.50f, size.height * 0.78f), strokeWidth = stroke, cap = StrokeCap.Round)
-    drawLine(color, Offset(size.width * 0.50f, size.height * 0.78f), Offset(size.width * 0.26f, size.height * 0.54f), strokeWidth = stroke, cap = StrokeCap.Round)
-    drawLine(color, Offset(size.width * 0.50f, size.height * 0.78f), Offset(size.width * 0.74f, size.height * 0.54f), strokeWidth = stroke, cap = StrokeCap.Round)
-}
-
-@Composable
-internal fun ChevronRightGlyph(color: Color) = DetailGlyph(sizeDp = 18, color = color) {
-    drawLine(color, Offset(size.width * 0.38f, size.height * 0.28f), Offset(size.width * 0.62f, size.height * 0.50f), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
-    drawLine(color, Offset(size.width * 0.62f, size.height * 0.50f), Offset(size.width * 0.38f, size.height * 0.72f), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
-}
-
-@Composable
-internal fun ChevronDownGlyph(color: Color) = DetailGlyph(sizeDp = 18, color = color) {
-    drawLine(color, Offset(size.width * 0.28f, size.height * 0.40f), Offset(size.width * 0.50f, size.height * 0.62f), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
-    drawLine(color, Offset(size.width * 0.50f, size.height * 0.62f), Offset(size.width * 0.72f, size.height * 0.40f), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
-}
-
-@Composable
 internal fun ChevronUpGlyph(color: Color) = DetailGlyph(sizeDp = 18, color = color) {
     drawLine(color, Offset(size.width * 0.28f, size.height * 0.60f), Offset(size.width * 0.50f, size.height * 0.38f), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
     drawLine(color, Offset(size.width * 0.50f, size.height * 0.38f), Offset(size.width * 0.72f, size.height * 0.60f), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
-}
-
-@Composable
-internal fun SparklesGlyph(color: Color) = DetailGlyph(sizeDp = 14, color = color) {
-    val path = Path().apply {
-        moveTo(size.width * 0.50f, size.height * 0.08f)
-        lineTo(size.width * 0.59f, size.height * 0.41f)
-        lineTo(size.width * 0.92f, size.height * 0.50f)
-        lineTo(size.width * 0.59f, size.height * 0.59f)
-        lineTo(size.width * 0.50f, size.height * 0.92f)
-        lineTo(size.width * 0.41f, size.height * 0.59f)
-        lineTo(size.width * 0.08f, size.height * 0.50f)
-        lineTo(size.width * 0.41f, size.height * 0.41f)
-        close()
-    }
-    drawPath(path, color)
 }
 
 @Composable

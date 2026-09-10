@@ -1,0 +1,747 @@
+from __future__ import annotations
+
+import asyncio
+import json
+
+from fakeredis import FakeServer
+from fakeredis.aioredis import FakeRedis
+
+from agent_server.core.events import events_from_invalidation, revisions_are_complete
+from agent_server.infra.fs_downloads import FsDownloadRelayManager
+from agent_server.infra.redis_coordinator import RedisCoordinator
+from agent_server.infra.terminal_broker import SCROLLBACK_MAX_BYTES, TerminalBroker
+from agent_server.infra.terminal_stream_hub import TerminalStreamHub
+from agent_server.infra.timeline_broker import TimelineBroker
+from agent_server.infra.ws_tickets import ClientWsTicketManager
+from agent_server.services.shell_tasks import ShellTaskManager
+
+
+def _coordinator(server: FakeServer) -> RedisCoordinator:
+    return RedisCoordinator(
+        prefix="test-agents-anywhere",
+        client=FakeRedis(server=server, decode_responses=True),
+    )
+
+
+def test_ws_ticket_can_be_consumed_once_on_another_instance() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        issuer = ClientWsTicketManager(_coordinator(fake_server))
+        consumer = ClientWsTicketManager(_coordinator(fake_server))
+
+        token, _ = await issuer.issue(
+            user_id="user-1",
+            client_id="client-1",
+            session_id="session-1",
+        )
+
+        ticket = await consumer.consume(token, session_id="session-1")
+        assert ticket is not None
+        assert ticket.user_id == "user-1"
+        assert await issuer.consume(token, session_id="session-1") is None
+
+    asyncio.run(exercise())
+
+
+def test_ws_ticket_is_consumed_even_when_session_scope_is_wrong() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        tickets = ClientWsTicketManager(_coordinator(fake_server))
+        token, _ = await tickets.issue(
+            user_id="user-1",
+            client_id="client-1",
+            session_id="session-1",
+        )
+
+        assert await tickets.consume(token, session_id="session-2") is None
+        assert await tickets.consume(token, session_id="session-1") is None
+
+    asyncio.run(exercise())
+
+
+def test_timeline_and_dashboard_events_cross_instances() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        broker_1 = TimelineBroker(
+            _coordinator(fake_server),
+            dashboard_debounce_seconds=0.01,
+        )
+        broker_2 = TimelineBroker(
+            _coordinator(fake_server),
+            dashboard_debounce_seconds=0.01,
+        )
+        await broker_1.start()
+        await broker_2.start()
+        try:
+            timeline_queue = await broker_2.register("session-1")
+            dashboard_queue = await broker_2.register_dashboard("user-1")
+
+            await broker_1.publish(
+                "session-1", {"sessionId": "session-1", "nextSeq": 4}
+            )
+            await broker_1.publish_dashboard(
+                "user-1",
+                {"reason": "session.changed", "serverTime": "now"},
+            )
+
+            timeline = json.loads(
+                await asyncio.wait_for(timeline_queue.get(), timeout=1)
+            )
+            dashboard = json.loads(
+                await asyncio.wait_for(dashboard_queue.get(), timeout=1)
+            )
+            assert timeline == {"sessionId": "session-1", "nextSeq": 4}
+            assert dashboard["type"] == "dashboard.changed"
+            assert dashboard["reason"] == "session.changed"
+        finally:
+            await broker_1.close()
+            await broker_2.close()
+
+    asyncio.run(exercise())
+
+
+def test_cross_instance_invalidation_gap_is_detected() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        publisher = TimelineBroker(_coordinator(fake_server))
+        subscriber = TimelineBroker(_coordinator(fake_server))
+        await publisher.start()
+        await subscriber.start()
+        try:
+            queue = await subscriber.register("session-gap")
+            for sequence in (1, 3):
+                await publisher.publish(
+                    "session-gap",
+                    {
+                        "sessionId": "session-gap",
+                        "nextSeq": sequence,
+                        "items": [
+                            {
+                                "id": f"item-{sequence}",
+                                "updatedSeq": sequence,
+                                "revision": 1,
+                            }
+                        ],
+                    },
+                )
+
+            invalidations = [
+                json.loads(await asyncio.wait_for(queue.get(), timeout=1))
+                for _ in range(2)
+            ]
+            events = [
+                event
+                for invalidation in invalidations
+                for event in events_from_invalidation(invalidation)
+            ]
+            assert not revisions_are_complete(
+                after_sequence=0,
+                current_sequence=3,
+                events=events,
+            )
+        finally:
+            await publisher.close()
+            await subscriber.close()
+
+    asyncio.run(exercise())
+
+
+def test_distributed_lock_serializes_instances() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator_1 = _coordinator(fake_server)
+        coordinator_2 = _coordinator(fake_server)
+        second_acquired = asyncio.Event()
+
+        async def acquire_second() -> None:
+            async with coordinator_2.lock("runtime:connector-1:codex"):
+                second_acquired.set()
+
+        async with coordinator_1.lock("runtime:connector-1:codex"):
+            task = asyncio.create_task(acquire_second())
+            await asyncio.sleep(0.02)
+            assert not second_acquired.is_set()
+        await asyncio.wait_for(task, timeout=1)
+        assert second_acquired.is_set()
+
+    asyncio.run(exercise())
+
+
+def test_distributed_lock_renews_its_lease_while_held() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator_1 = _coordinator(fake_server)
+        coordinator_2 = _coordinator(fake_server)
+
+        async with coordinator_1.lock(
+            "session-revision:session-1",
+            timeout_seconds=0.2,
+            lease_seconds=0.09,
+        ):
+            await asyncio.sleep(0.16)
+            try:
+                async with coordinator_2.lock(
+                    "session-revision:session-1",
+                    timeout_seconds=0.04,
+                    lease_seconds=0.09,
+                ):
+                    raise AssertionError("second coordinator acquired a held lock")
+            except TimeoutError:
+                pass
+
+        async with coordinator_2.lock(
+            "session-revision:session-1",
+            timeout_seconds=0.2,
+            lease_seconds=0.09,
+        ):
+            pass
+
+    asyncio.run(exercise())
+
+
+def test_distributed_lock_interrupts_owner_when_renewal_fails() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = _coordinator(fake_server)
+        reached_after_failure = False
+
+        async def fail_refresh(
+            _key: str,
+            _value: str,
+            *,
+            ttl_seconds: float,
+        ) -> bool:
+            assert ttl_seconds == 0.09
+            return False
+
+        coordinator.refresh_if_value = fail_refresh  # type: ignore[method-assign]
+        try:
+            async with coordinator.lock(
+                "session-revision:session-renewal-failure",
+                timeout_seconds=0.2,
+                lease_seconds=0.09,
+            ):
+                await asyncio.sleep(0.2)
+                reached_after_failure = True
+        except RuntimeError as exc:
+            assert "failed to renew distributed lock" in str(exc)
+        else:
+            raise AssertionError("renewal failure did not fail the lock owner")
+
+        assert reached_after_failure is False
+
+    asyncio.run(exercise())
+
+
+def test_stale_lock_owner_cannot_mutate_or_publish_after_replacement() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator_1 = _coordinator(fake_server)
+        coordinator_2 = _coordinator(fake_server)
+        broker = TimelineBroker(coordinator_1)
+        lock_name = "session-revision:session-stale-owner"
+        first_acquired = asyncio.Event()
+        attempt_publish = asyncio.Event()
+        rejected_operations: list[str] = []
+
+        async def stale_owner() -> str:
+            try:
+                async with coordinator_1.lock(
+                    lock_name,
+                    timeout_seconds=0.2,
+                    lease_seconds=30,
+                ):
+                    first_acquired.set()
+                    await attempt_publish.wait()
+                    try:
+                        await coordinator_1.incrby_while_lock_owned(
+                            lock_name,
+                            coordinator_1.key("stale-counter"),
+                            1,
+                        )
+                    except RuntimeError:
+                        rejected_operations.append("increment")
+                    try:
+                        await broker.publish(
+                            "session-stale-owner",
+                            {
+                                "sessionId": "session-stale-owner",
+                                "nextSeq": 1,
+                            },
+                        )
+                    except RuntimeError:
+                        rejected_operations.append("publish")
+            except RuntimeError as exc:
+                return str(exc)
+            raise AssertionError("stale owner release was not rejected")
+
+        stale_task = asyncio.create_task(stale_owner())
+        await first_acquired.wait()
+        await coordinator_1.client.delete(coordinator_1.key("lock", lock_name))
+        async with coordinator_2.lock(
+            lock_name,
+            timeout_seconds=0.2,
+            lease_seconds=30,
+        ):
+            attempt_publish.set()
+            error = await asyncio.wait_for(stale_task, timeout=1)
+
+        assert "distributed lock is no longer owned" in error
+        assert rejected_operations == ["increment", "publish"]
+        assert (
+            await coordinator_1.client.get(coordinator_1.key("stale-counter")) is None
+        )
+
+    asyncio.run(exercise())
+
+
+def test_counter_range_seal_discards_values_from_an_old_server_epoch() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = _coordinator(fake_server)
+        lock_name = "session-revision:session-seal"
+        head_key = coordinator.key("session-revision", "session-seal", "head")
+        end_key = coordinator.key("session-revision", "session-seal", "lease-end")
+        epoch_key = coordinator.key("session-revision", "session-seal", "lease-epoch")
+        await coordinator.client.mset(
+            {
+                head_key: 80,
+                end_key: 100,
+                epoch_key: "redis-run-old",
+            }
+        )
+
+        async with coordinator.lock(lock_name):
+            sealed = await coordinator.seal_counter_range_while_lock_owned(
+                lock_name,
+                head_key=head_key,
+                end_key=end_key,
+                epoch_key=epoch_key,
+                floor=12,
+                epoch="redis-run-new",
+            )
+            assert sealed == 12
+            assert await coordinator.client.mget(head_key, end_key, epoch_key) == [
+                "12",
+                "12",
+                "redis-run-new",
+            ]
+
+            await coordinator.client.mset(
+                {
+                    head_key: 14,
+                    end_key: 20,
+                    epoch_key: "redis-run-new",
+                }
+            )
+            sealed = await coordinator.seal_counter_range_while_lock_owned(
+                lock_name,
+                head_key=head_key,
+                end_key=end_key,
+                epoch_key=epoch_key,
+                floor=16,
+                epoch="redis-run-new",
+            )
+            assert sealed == 20
+
+        await coordinator.close()
+
+    asyncio.run(exercise())
+
+
+def test_shell_task_completion_crosses_instances() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        creator = ShellTaskManager(_coordinator(fake_server))
+        receiver = ShellTaskManager(_coordinator(fake_server))
+        task = await creator.create(
+            session_id="browse-1",
+            connector_id="connector-1",
+            command="pwd",
+            cwd="/repo",
+            timeout_ms=30_000,
+        )
+        waiter = asyncio.create_task(
+            creator.wait(task.id, session_id="browse-1", timeout_seconds=1)
+        )
+        await asyncio.sleep(0)
+
+        completed = await receiver.complete(
+            task.id,
+            session_id="browse-1",
+            connector_id="connector-1",
+            status="completed",
+            result={"exitCode": 0, "stdout": "/repo\n"},
+        )
+
+        assert completed is not None
+        result = await waiter
+        assert result.status == "completed"
+        assert result.result == {"exitCode": 0, "stdout": "/repo\n"}
+        popped = await creator.pop(task.id, session_id="browse-1")
+        assert popped.status == "completed"
+        try:
+            await receiver.get(task.id, session_id="browse-1")
+        except KeyError:
+            pass
+        else:
+            raise AssertionError("completed task was not consumed")
+
+    asyncio.run(exercise())
+
+
+def test_terminal_stream_events_cross_instances() -> None:
+    class Socket:
+        def __init__(self) -> None:
+            self.messages: asyncio.Queue[dict] = asyncio.Queue()
+
+        async def send_json(self, payload: dict) -> None:
+            await self.messages.put(payload)
+
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        publisher = TerminalStreamHub(_coordinator(fake_server))
+        subscriber = TerminalStreamHub(_coordinator(fake_server))
+        await publisher.start()
+        await subscriber.start()
+        socket = Socket()
+        try:
+            await subscriber.attach("connector-1", "terminal-1", socket)  # type: ignore[arg-type]
+            await subscriber.mark_ready("connector-1", "terminal-1", socket)  # type: ignore[arg-type]
+            await publisher.publish_output(
+                "connector-1",
+                {"terminalId": "terminal-1", "dataBase64": "b2s=", "seq": 2},
+            )
+            assert await asyncio.wait_for(socket.messages.get(), timeout=1) == {
+                "type": "output",
+                "data": "b2s=",
+                "seq": 2,
+            }
+        finally:
+            await publisher.close()
+            await subscriber.close()
+
+    asyncio.run(exercise())
+
+
+def test_fs_download_relay_streams_between_instances() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        creator = FsDownloadRelayManager(_coordinator(fake_server))
+        uploader = FsDownloadRelayManager(_coordinator(fake_server))
+        consumer = FsDownloadRelayManager(_coordinator(fake_server))
+        transfer = await creator.create(
+            connector_id="connector-1",
+            root="/repo",
+            path="/repo/payload.bin",
+            name="payload.bin",
+            size=6,
+            sha256="abc",
+            media_type="application/octet-stream",
+        )
+
+        async def chunks():
+            yield b"abc"
+            yield b"def"
+
+        upload_task = asyncio.create_task(
+            uploader.upload(
+                transfer_id=transfer.transfer_id,
+                token=transfer.token,
+                chunks=chunks(),
+            )
+        )
+        streamed = [
+            chunk
+            async for chunk in consumer.stream(
+                transfer_id=transfer.transfer_id,
+                token=transfer.token,
+            )
+        ]
+
+        assert await upload_task
+        assert b"".join(streamed) == b"abcdef"
+        assert await creator.get(transfer.transfer_id, transfer.token) is None
+
+    asyncio.run(exercise())
+
+
+def test_interactive_terminal_routes_relay_and_scrollback_cross_instances() -> None:
+    class Socket:
+        def __init__(self) -> None:
+            self.messages: asyncio.Queue[dict] = asyncio.Queue()
+            self.closed = False
+
+        async def send_json(self, payload: dict) -> None:
+            await self.messages.put(payload)
+
+        async def close(self) -> None:
+            self.closed = True
+
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        relay_broker = TerminalBroker(
+            _coordinator(fake_server), instance_id="server-relay"
+        )
+        browser_broker = TerminalBroker(
+            _coordinator(fake_server), instance_id="server-browser"
+        )
+        await relay_broker.start()
+        await browser_broker.start()
+        relay_socket = Socket()
+        browser_socket = Socket()
+        second_browser = Socket()
+        capped_browser = Socket()
+        try:
+            terminal = await browser_broker.register(
+                session_id="browse-1",
+                connector_id="connector-1",
+                label="zsh",
+                root="/repo",
+                cwd="/repo",
+                shell="zsh",
+                cols=80,
+                rows=24,
+            )
+            attached = await relay_broker.attach_connector(
+                terminal.id,
+                terminal.relay_token,
+                relay_socket,  # type: ignore[arg-type]
+            )
+            assert attached is not None
+            assert await browser_broker.wait_connector(terminal.id, timeout=1)
+
+            await relay_broker.on_output(terminal.id, data=b"ready\n", seq=1)
+            await browser_broker.attach_client(
+                terminal.id,
+                browser_socket,  # type: ignore[arg-type]
+            )
+            assert await asyncio.wait_for(browser_socket.messages.get(), timeout=1) == {
+                "type": "replay",
+                "data": "cmVhZHkK",
+                "seq": 1,
+            }
+
+            assert await browser_broker.send_to_connector(
+                terminal.id, {"type": "input", "data": "bHMK"}
+            )
+            assert await asyncio.wait_for(relay_socket.messages.get(), timeout=1) == {
+                "type": "input",
+                "data": "bHMK",
+            }
+
+            await relay_broker.on_output(terminal.id, data=b"live\n", seq=2)
+            assert await asyncio.wait_for(browser_socket.messages.get(), timeout=1) == {
+                "type": "output",
+                "data": "bGl2ZQo=",
+                "seq": 2,
+            }
+
+            await relay_broker.attach_client(
+                terminal.id,
+                second_browser,  # type: ignore[arg-type]
+                from_seq=1,
+            )
+            assert await asyncio.wait_for(second_browser.messages.get(), timeout=1) == {
+                "type": "replay",
+                "data": "bGl2ZQo=",
+                "seq": 2,
+            }
+            await browser_broker.detach_client(
+                terminal.id,
+                browser_socket,  # type: ignore[arg-type]
+            )
+            assert await browser_broker.has_clients(terminal.id)
+            await relay_broker.detach_client(
+                terminal.id,
+                second_browser,  # type: ignore[arg-type]
+            )
+            assert not await browser_broker.has_clients(terminal.id)
+
+            large_chunk = b"x" * (200 * 1024)
+            await relay_broker.on_output(terminal.id, data=large_chunk, seq=3)
+            await relay_broker.on_output(terminal.id, data=large_chunk, seq=4)
+            bounded = await browser_broker.get(terminal.id)
+            assert bounded is not None
+            assert bounded.scrollback_bytes <= SCROLLBACK_MAX_BYTES
+            await browser_broker.attach_client(
+                terminal.id,
+                capped_browser,  # type: ignore[arg-type]
+            )
+            capped_replay = await asyncio.wait_for(
+                capped_browser.messages.get(), timeout=1
+            )
+            assert capped_replay["type"] == "replay"
+            assert capped_replay["seq"] == 4
+            assert len(capped_replay["data"]) < 300_000
+
+            removed = await browser_broker.remove(terminal.id)
+            assert removed is not None
+            assert await relay_broker.get(terminal.id) is None
+        finally:
+            await relay_broker.close()
+            await browser_broker.close()
+
+    asyncio.run(exercise())
+
+
+def test_lock_stats_record_acquisition_and_hold() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = _coordinator(fake_server)
+
+        async with coordinator.lock(
+            "stats:lock", timeout_seconds=1, lease_seconds=30
+        ):
+            await coordinator.incrby_while_lock_owned("stats:lock", "counter", 1)
+
+        stats = coordinator.stats
+        assert stats.acquisitions == 1
+        assert stats.hold_ms_max > 0.0
+        assert stats.wait_ms_max >= 0.0
+        assert stats.timeouts == 0
+        assert stats.renewal_failures == 0
+        assert stats.release_mismatches == 0
+
+    asyncio.run(exercise())
+
+
+def test_lock_stats_count_acquire_timeout() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        holder = _coordinator(fake_server)
+        waiter = _coordinator(fake_server)
+
+        async with holder.lock(
+            "stats:contended", timeout_seconds=1, lease_seconds=30
+        ):
+            try:
+                async with waiter.lock(
+                    "stats:contended", timeout_seconds=0.05, lease_seconds=30
+                ):
+                    raise AssertionError("second coordinator acquired a held lock")
+            except TimeoutError:
+                pass
+
+        assert waiter.stats.timeouts == 1
+        assert waiter.stats.acquisitions == 0
+        assert holder.stats.acquisitions == 1
+
+    asyncio.run(exercise())
+
+
+def test_lock_stats_count_release_mismatch() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = _coordinator(fake_server)
+        error: Exception | None = None
+
+        try:
+            async with coordinator.lock(
+                "stats:release", timeout_seconds=1, lease_seconds=30
+            ):
+                await coordinator.client.set(
+                    coordinator.key("lock", "stats:release"), "someone-else"
+                )
+        except RuntimeError as exc:
+            error = exc
+
+        assert error is not None
+        assert "no longer owned" in str(error)
+        assert coordinator.stats.release_mismatches == 1
+
+    asyncio.run(exercise())
+
+
+def test_fenced_scripts_reject_a_replaced_lock_owner() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = _coordinator(fake_server)
+        failures = 0
+
+        try:
+            async with coordinator.lock(
+                "fence:lost", timeout_seconds=1, lease_seconds=30
+            ):
+                await coordinator.client.set(
+                    coordinator.key("lock", "fence:lost"), "someone-else"
+                )
+                attempts = (
+                    coordinator.incrby_while_lock_owned("fence:lost", "counter", 1),
+                    coordinator.set_max_while_lock_owned("fence:lost", "counter", 1),
+                    coordinator.store_pending_while_lock_owned(
+                        "fence:lost",
+                        items_key="items",
+                        source_key="source",
+                        mark_read_key="mark",
+                        dirty_key="dirty",
+                        session_id="sess_lost",
+                        item_id="item_lost",
+                        raw_item='{"id":"item_lost"}',
+                    ),
+                    coordinator.publish_while_lock_owned(
+                        "fence:lost", "channel", "{}"
+                    ),
+                )
+                for attempt in attempts:
+                    try:
+                        await attempt
+                    except RuntimeError as exc:
+                        assert "no longer owned" in str(exc)
+                        failures += 1
+                    else:
+                        raise AssertionError(
+                            "fenced script mutated after lock replacement"
+                        )
+        except RuntimeError as exc:
+            assert "no longer owned" in str(exc)
+
+        assert failures == 4
+
+    asyncio.run(exercise())
+
+
+def test_set_max_while_lock_owned_never_lowers_a_watermark() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = _coordinator(fake_server)
+
+        async with coordinator.lock(
+            "fence:max", timeout_seconds=1, lease_seconds=30
+        ):
+            await coordinator.set_max_while_lock_owned("fence:max", "wm", 5)
+            await coordinator.set_max_while_lock_owned("fence:max", "wm", 3)
+
+        assert await coordinator.client.get("wm") == "5"
+
+    asyncio.run(exercise())
+
+
+def test_store_pending_script_stages_projection_and_dirty_marker() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = _coordinator(fake_server)
+
+        async with coordinator.lock(
+            "fence:store", timeout_seconds=1, lease_seconds=30
+        ):
+            await coordinator.store_pending_while_lock_owned(
+                "fence:store",
+                items_key="items",
+                source_key="source",
+                mark_read_key="mark",
+                dirty_key="dirty",
+                session_id="sess_1",
+                source_observed_at="2026-09-09T00:00:00Z",
+                item_id="item_1",
+                raw_item='{"id":"item_1"}',
+                mark_read_on_change=True,
+            )
+
+        client = coordinator.client
+        assert await client.hget("items", "item_1") == '{"id":"item_1"}'
+        assert await client.get("source") == "2026-09-09T00:00:00Z"
+        assert await client.get("mark") == "1"
+        assert await client.smembers("dirty") == {"sess_1"}
+
+    asyncio.run(exercise())

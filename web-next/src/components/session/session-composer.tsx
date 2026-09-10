@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react"
 import { ArrowUp, Check, ChevronDown, Loader2, Square } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -7,7 +8,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -22,116 +22,342 @@ import {
   useAttachments,
   type AttachedFile,
 } from "@/components/attachment-input"
-import {
-  composerMenuOptions,
-  effortFieldForModel,
-  effectiveFieldValue,
-  optionLabel,
-  runtimeConfigFields,
-  validEffortValue,
-} from "@/features/dashboard/runtime-config"
 import { cn } from "@/lib/utils"
-import type { RuntimeConfigSchema, SessionView } from "@/features/dashboard/types"
+import type {
+  ProtocolCapabilitySet,
+  ProtocolModelCatalog,
+  ProtocolPermissionCatalog,
+  RuntimeCommand,
+  RuntimeStatusValue,
+  SessionRuntimeState,
+  SessionView,
+} from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
-import { stringSetting } from "@/components/session/session-utils"
+import {
+  catalogItemDisabledReason,
+  catalogItemEnabled,
+  catalogI18nText,
+  modelCatalogDisplayName,
+  modelIdsForSelectionId,
+  permissionIdForSelectionId,
+  selectionIdForModelCatalog,
+  selectionIdForPermissionCatalog,
+} from "@/components/session/catalog-selection"
+import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
+import { CAPABILITY, capabilityIsUsable, findCapability, attachmentMimeTypes } from "@/components/session/capabilities"
+import { useElementWidth } from "@/hooks/use-element-width"
+import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 
 export type { AttachedFile }
 
 export function SessionComposer({
+  token,
   session,
-  pendingApprovalCount,
+  runtimeState,
+  pendingInteractionCount,
+  creatingSession = false,
   sending,
   interrupting,
   takeoverBusy,
   value,
-  runtimeSchema,
-  runtimeSettings,
-  runtimeSettingsBusy,
-  onPatchRuntimeSettings,
+  effectiveCapabilities,
+  modelCatalog,
+  permissionCatalog,
+  runtimeCommands,
+  commandsLoading = false,
+  onCommandQueryChange,
   onValueChange,
+  onSelectionChange,
   onSend,
   onInterrupt,
+  onCommand,
   onToggleTakeover,
 }: {
+  token: string
   session: SessionView
-  pendingApprovalCount: number
+  runtimeState?: SessionRuntimeState | null
+  pendingInteractionCount: number
+  creatingSession?: boolean
   sending: boolean
   interrupting: boolean
   takeoverBusy: boolean
   value: string
-  runtimeSchema: RuntimeConfigSchema | null
-  runtimeSettings: Record<string, unknown> | null
-  runtimeSettingsBusy: boolean
-  onPatchRuntimeSettings: (settings: Record<string, unknown>) => void
+  effectiveCapabilities: ProtocolCapabilitySet | null
+  modelCatalog: ProtocolModelCatalog | null
+  permissionCatalog: ProtocolPermissionCatalog | null
+  runtimeCommands: RuntimeCommand[]
+  commandsLoading?: boolean
+  onCommandQueryChange: (query: string | null) => void
   onValueChange: (value: string) => void
-  onSend: (content: string, attachments: AttachedFile[]) => Promise<boolean>
+  onSelectionChange: (selections: { model?: string; permission?: string }) => Promise<boolean>
+  onSend: (
+    content: string,
+    attachments: AttachedFile[],
+    selections: { model?: string; permission?: string },
+  ) => Promise<boolean>
   onInterrupt: () => void
+  onCommand: (command: string, options: { args: string[]; raw: string }) => void
   onToggleTakeover: () => void
 }) {
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
-  const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop } =
-    useAttachments()
-  const isBusy = session.status === "running" || session.status === "waiting_approval"
+  const composerRef = React.useRef<HTMLDivElement | null>(null)
+  const valueRef = React.useRef(value)
+  valueRef.current = value
+  const composerWidth = useElementWidth(composerRef)
+  const runtimeStatus = effectiveRuntimeStatus(runtimeState, session)
+  const runtimeSelections = runtimeState?.selections ?? {}
+  const dsh = sessionRuntimeType(session) === "dsh"
+  const actualModel = runtimeState?.metadata.modelSelection as { provider?: string; model?: string; reasoningEffort?: string } | undefined
+  const actualPermission = runtimeState?.metadata.permissionPreset as { id?: string; name?: string } | undefined
+  const runtimeScope = {
+    runtimeId: sessionRuntimeId(session),
+    runtimeType: sessionRuntimeType(session),
+  }
+  const isRunning = runtimeStatus === "running"
+  const isWaitingApproval = runtimeStatus === "waiting_approval"
+  const isBlocked = runtimeStatus === "blocked"
+  const isStopping = runtimeStatus === "stopping"
+  const isWaiting = runtimeStatus === "waiting" || runtimeStatus === "pending"
+  const isError = runtimeStatus === "error"
+  const isDisconnected = runtimeStatus === "disconnected"
+  const sourceUnavailable = session.archived
   const connectorOnline = session.connectorStatus === "online"
-  const canSend =
+  const acceptsUserInput =
     connectorOnline &&
-    session.takeover &&
+    !sourceUnavailable &&
+    !isDisconnected &&
+    !isWaiting &&
+    !isRunning &&
+    !isStopping &&
+    !isWaitingApproval &&
+    !isBlocked
+  const canUseSendMessage = capabilityIsUsable(effectiveCapabilities, CAPABILITY.sendMessage, runtimeScope)
+  const canUseInterrupt = capabilityIsUsable(effectiveCapabilities, CAPABILITY.interrupt, runtimeScope)
+  const interruptCapability = findCapability(effectiveCapabilities, CAPABILITY.interrupt, runtimeScope)
+  const canUseModelCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.modelCatalog, runtimeScope)
+  const canUsePermissionCatalog = capabilityIsUsable(
+    effectiveCapabilities,
+    CAPABILITY.permissionCatalog,
+    runtimeScope,
+  )
+  const canUseEffortCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.effortCatalog, runtimeScope)
+  const canUseAttachments = capabilityIsUsable(effectiveCapabilities, CAPABILITY.attachment, runtimeScope)
+  const allowedMimeTypes = React.useMemo(() => attachmentMimeTypes(effectiveCapabilities, runtimeScope), [effectiveCapabilities, runtimeScope])
+  const {
+    attachments,
+    attachmentsAllowed,
+    attachmentError,
+    isDragging,
+    uploadsPending,
+    uploadFailed,
+    allUploaded,
+    add,
+    remove,
+    clear,
+    onDragEnter,
+    onDragLeave,
+    onDragOver,
+    onDrop,
+  } = useAttachments({ sessionId: creatingSession ? undefined : session.id, token, enabled: canUseAttachments, allowedMimeTypes })
+  const canSend =
+    canUseSendMessage &&
+    !creatingSession &&
     !sending &&
     !interrupting &&
-    (session.status === "idle" || session.status === "error")
+    acceptsUserInput
+  const canRunCommand = !creatingSession && !sending && !interrupting && acceptsUserInput
   const hasInput = value.trim().length > 0 || attachments.length > 0
-  const showInterrupt = isBusy
-  const settingsFields = runtimeConfigFields(runtimeSchema, runtimeSettings, "session")
-  const permissionField = settingsFields.find((field) => field.key === "permissionMode")
-  const modelField = settingsFields.find((field) => field.key === "model")
-  const rawEffortField = settingsFields.find((field) => field.key === "effort")
-  const effortField = effortFieldForModel(
-    modelField,
-    rawEffortField,
-    runtimeSettings?.model,
+  const attachmentsReady = attachmentsAllowed && (attachments.length === 0 || (allUploaded && !uploadsPending && !uploadFailed))
+  const activeSessionCanInterrupt = Boolean(
+    connectorOnline &&
+    interruptCapability?.supported &&
+    interruptCapability.allowed &&
+    (isWaiting || isRunning || isStopping || isWaitingApproval || isBlocked),
   )
-  const effortFieldFor = (model: string) => effortFieldForModel(
-    modelField,
-    rawEffortField,
-    model,
-  )
-  const patchModel = (model: string) => {
-    const nextEffort = validEffortValue(effortFieldFor(model), runtimeSettings?.effort)
-    onPatchRuntimeSettings(nextEffort ? { model, effort: nextEffort } : { model, effort: null })
+  const showInterrupt = !creatingSession && canUseInterrupt && activeSessionCanInterrupt
+  const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
+  const [selectedModel, setSelectedModel] = React.useState("")
+  const [selectedReasoning, setSelectedReasoning] = React.useState("")
+  const permissionItems = permissionCatalog?.permissions.map((item) => ({
+    id: item.id,
+    label: catalogI18nText(tNew, item.metadata, "labelKey", item.displayName),
+    description: catalogI18nText(tNew, item.metadata, "descriptionKey", item.description),
+    default: item.default,
+    enabled: catalogItemEnabled(item),
+    disabledReason: catalogItemDisabledReason(item),
+    selectionId: item.selectionId,
+  })) ?? []
+  const modelItems = modelCatalog?.models.map((item) => ({
+    id: item.id,
+    label: modelCatalogDisplayName(
+      item,
+      modelCatalog.models,
+      catalogI18nText(tNew, item.metadata, "labelKey", item.displayName),
+      tNew("defaultReasoning"),
+    ),
+    default: item.default,
+    enabled: catalogItemEnabled(item),
+    disabledReason: catalogItemDisabledReason(item),
+    selectionId: item.selectionId,
+    reasoningItems: item.reasoningItems.map((reasoning) => ({
+      id: reasoning.id,
+      label: catalogI18nText(tNew, reasoning.metadata, "labelKey", reasoning.displayName),
+      default: reasoning.default,
+      enabled: catalogItemEnabled(reasoning),
+      disabledReason: catalogItemDisabledReason(reasoning),
+      selectionId: reasoning.selectionId,
+    })),
+  })) ?? []
+  const selectedModelItem = modelItems.find((item) => item.id === selectedModel)
+  const effortItems = selectedModelItem?.reasoningItems ?? []
+  const modelSelectionValue = modelIdsForSelectionId(modelCatalog, runtimeSelections.model ?? null, dsh)
+  const permissionSelectionValue = permissionIdForSelectionId(permissionCatalog, runtimeSelections.permission ?? null, dsh)
+  const permissionValue = permissionSelectionValue
+  const modelValue = modelSelectionValue?.modelId ?? ""
+  const effortValue = modelSelectionValue?.reasoningId ?? ""
+  const permissionLabel =
+    permissionItems.find((item) => item.id === selectedPermissionMode)?.label ?? (dsh ? actualPermission?.name : null) ?? tNew("permissionMode")
+  const modelLabel = selectedModelItem?.label ?? (dsh && actualModel?.model ? `${actualModel.model}（${actualModel.provider}）` : tNew("model"))
+  const effortLabel = effortItems.find((item) => item.id === selectedReasoning)?.label ?? (dsh ? actualModel?.reasoningEffort : null) ?? tNew("reasoning")
+  const hasSelectors = Boolean(permissionItems.length > 0 || modelItems.length > 0)
+  const compactSelectors = hasSelectors && composerWidth > 0 && composerWidth < 560
+  const permissionSelectorDisabled = creatingSession || sourceUnavailable || !connectorOnline || !canUsePermissionCatalog
+  const modelSelectorDisabled = creatingSession || sourceUnavailable || !connectorOnline || !canUseModelCatalog
+  const effortSelectorDisabled = creatingSession || sourceUnavailable || !connectorOnline || !canUseEffortCatalog
+  const selectorsDisabled = permissionSelectorDisabled && modelSelectorDisabled
+
+  React.useEffect(() => {
+    if (dsh) { setSelectedPermissionMode(permissionValue); return }
+    const hasRuntimePermission = permissionItems.some((item) => item.id === permissionValue && item.enabled)
+    const nextPermission = hasRuntimePermission
+      ? permissionValue
+      : permissionItems.find((item) => item.default && item.enabled)?.id
+        ?? permissionItems.find((item) => item.enabled)?.id
+        ?? ""
+    setSelectedPermissionMode((current) =>
+      hasRuntimePermission || !current || !permissionItems.some((item) => item.id === current && item.enabled)
+        ? nextPermission
+        : current,
+    )
+  }, [dsh, permissionItems, permissionValue])
+
+  React.useEffect(() => {
+    if (dsh) { setSelectedModel(modelValue); return }
+    const hasRuntimeModel = modelItems.some((item) => item.id === modelValue && item.enabled)
+    const nextModel = hasRuntimeModel
+      ? modelValue
+      : modelItems.find((item) => item.default && item.enabled)?.id
+        ?? modelItems.find((item) => item.enabled)?.id
+        ?? ""
+    setSelectedModel((current) =>
+      hasRuntimeModel || !current || !modelItems.some((item) => item.id === current && item.enabled) ? nextModel : current,
+    )
+  }, [dsh, modelItems, modelValue])
+
+  React.useEffect(() => {
+    if (dsh) { setSelectedReasoning(effortValue); return }
+    const hasRuntimeEffort = effortItems.some((item) => item.id === effortValue && item.enabled)
+    const nextEffort = hasRuntimeEffort
+      ? effortValue
+      : effortItems.find((item) => item.default && item.enabled)?.id
+        ?? effortItems.find((item) => item.enabled)?.id
+        ?? ""
+    setSelectedReasoning((current) =>
+      hasRuntimeEffort || !current || !effortItems.some((item) => item.id === current && item.enabled) ? nextEffort : current,
+    )
+  }, [dsh, effortItems, effortValue])
+  const selectedModelSelection = selectionIdForModelCatalog(modelCatalog, selectedModel, selectedReasoning) ?? (dsh ? runtimeSelections.model : null)
+  const selectedPermissionSelection = selectionIdForPermissionCatalog(permissionCatalog, selectedPermissionMode) ?? (dsh && actualPermission?.id !== 'custom' ? runtimeSelections.permission : null)
+  const choosePermission = (permissionId: string) => {
+    if (permissionId === selectedPermissionMode) return
+    const previousPermission = selectedPermissionMode
+    const nextSelection = selectionIdForPermissionCatalog(permissionCatalog, permissionId)
+    if (!nextSelection) return
+    setSelectedPermissionMode(permissionId)
+    void onSelectionChange({ permission: nextSelection }).then((ok) => {
+      if (!ok && !dsh) setSelectedPermissionMode(previousPermission)
+    })
   }
-  const patchModelEffort = (model: string, effort: string) => {
-    onPatchRuntimeSettings({ model, effort })
+  const chooseModel = (modelId: string, reasoningId: string) => {
+    if (modelId === selectedModel && reasoningId === selectedReasoning) return
+    const previousModel = selectedModel
+    const previousReasoning = selectedReasoning
+    const nextSelection = selectionIdForModelCatalog(modelCatalog, modelId, reasoningId)
+    if (!nextSelection) return
+    setSelectedModel(modelId)
+    setSelectedReasoning(reasoningId)
+    void onSelectionChange({ model: nextSelection }).then((ok) => {
+      if (!ok && !dsh) {
+        setSelectedModel(previousModel)
+        setSelectedReasoning(previousReasoning)
+      }
+    })
   }
-  const permissionItems = composerMenuOptions(permissionField)
-  const modelItems = composerMenuOptions(modelField)
-  const effortItems = composerMenuOptions(effortField)
-  const permissionValue = stringSetting(runtimeSettings?.permissionMode)
-  const modelValue = effectiveFieldValue(modelField, runtimeSettings?.model)
-  const effortValue = effectiveFieldValue(effortField, runtimeSettings?.effort)
-  const permissionLabel = optionLabel(permissionField, runtimeSettings?.permissionMode, tNew("permissionMode"))
-  const modelLabel = optionLabel(modelField, runtimeSettings?.model, tNew("model"))
-  const effortLabel = optionLabel(effortField, runtimeSettings?.effort, tNew("reasoning"))
-  const hasSelectors = Boolean(permissionField || modelField || effortField)
-  const placeholder = !session.takeover
+  const placeholder = creatingSession
+    ? tSession("creatingPlaceholder")
+    : sourceUnavailable
+      ? tSession("sourceUnavailablePlaceholder")
+    : !session.takeover
     ? tSession("readOnlyPlaceholder")
-    : !connectorOnline
+    : isDisconnected || !connectorOnline
       ? tSession("deviceOfflinePlaceholder")
-      : pendingApprovalCount > 0
+      : pendingInteractionCount > 0
         ? tSession("waitingApprovalPlaceholder")
-        : isBusy
-          ? tSession("busyPlaceholder")
-          : session.status === "error"
-            ? tSession("errorPlaceholder")
-            : tSession("replyPlaceholder")
+        : isWaiting
+          ? tSession("pendingPlaceholder")
+          : isStopping || isRunning
+            ? tSession("busyPlaceholder")
+            : isWaitingApproval || isBlocked
+              ? tSession("waitingApprovalPlaceholder")
+              : isError
+                ? tSession("errorPlaceholder")
+                : tSession("replyPlaceholder")
+  const commandQuery = commandQueryFromValue(value)
+  const showCommandMenu = commandQuery !== null && attachments.length === 0
+  const commandSuggestions = React.useMemo(
+    () => runtimeCommands.filter((command) => commandMatchesQuery(command, commandQuery)),
+    [commandQuery, runtimeCommands],
+  )
+  React.useEffect(() => {
+    onCommandQueryChange(showCommandMenu ? commandQuery : null)
+  }, [commandQuery, onCommandQueryChange, showCommandMenu])
+  const canSubmitCommand = commandQuery !== null && attachments.length === 0 && canRunCommand
+  const canSubmitMessage =
+    canSend &&
+    session.takeover &&
+    hasInput &&
+    attachmentsReady &&
+    (attachments.length === 0 || canUseAttachments)
+  const concurrentWriter = runtimeState?.error?.code === "DSH_CONCURRENT_WRITER_DETECTED"
+  const updateValue = React.useCallback((nextValue: string) => {
+    valueRef.current = nextValue
+    onValueChange(nextValue)
+  }, [onValueChange])
 
   const submit = async () => {
-    if (!canSend || !hasInput) return
+    if (!hasInput) return
+    const command = commandFromValue(value, commandSuggestions)
+    if (commandQuery !== null && attachments.length === 0) {
+      if (command && canRunCommand) {
+        const parsed = parseCommandValue(value)
+        updateValue("")
+        onCommand(command.id, { args: parsed.args, raw: parsed.raw })
+      }
+      return
+    }
+    if (!canSubmitMessage) return
     const text = value
     const files = attachments
-    onValueChange("")
-    clear()
-    await onSend(text, files)
+    updateValue("")
+    clear({ revokePreviews: false })
+    const sent = await onSend(text, files, {
+      ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
+      ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
+    })
+    if (!sent && valueRef.current === "") {
+      updateValue(text)
+    }
   }
 
   const primaryAction = () => {
@@ -152,7 +378,13 @@ export function SessionComposer({
     >
       <DragOverlay isDragging={isDragging} />
       <div className="mx-auto w-full max-w-3xl space-y-2">
+        {concurrentWriter ? (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+            {tSession("dshConcurrentWriter")}
+          </div>
+        ) : null}
         <div
+          ref={composerRef}
           className={cn(
             "relative rounded-2xl border border-border bg-card/85 shadow-sm backdrop-blur-xl transition-colors supports-backdrop-filter:bg-card/70 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20",
             isDragging && "border-primary bg-primary/5",
@@ -165,42 +397,102 @@ export function SessionComposer({
           ) : null}
           <div className="space-y-3 px-4 pt-4">
             <AttachmentPreviewList attachments={attachments} onRemove={remove} />
+            {attachmentError ? <p role="alert" className="text-xs text-destructive">{attachmentError}</p> : null}
+            {showCommandMenu ? (
+              <div className="rounded-xl border border-border bg-popover p-1 text-sm shadow-sm">
+                {commandSuggestions.length > 0 ? (
+                  commandSuggestions.map((command) => (
+                    <button
+                      key={command.id}
+                      type="button"
+                      className={cn(
+                        "flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent hover:text-accent-foreground",
+                        !command.enabled && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-current",
+                      )}
+                      disabled={!command.enabled}
+                      onClick={() => {
+                        if (!command.enabled) return
+                        updateValue("")
+                        onCommand(command.id, { args: [], raw: `/${command.id}` })
+                      }}
+                    >
+                      <span className="code-mono shrink-0 text-xs text-primary">/{command.id}</span>
+                      <span className="min-w-0">
+                        <span className="block font-medium">{command.title}</span>
+                        <span className="block text-xs text-muted-foreground">
+                          {command.disabledReason || command.description}
+                        </span>
+                      </span>
+                    </button>
+                  ))
+                ) : commandsLoading ? (
+                  <div className="px-3 py-2 text-xs text-muted-foreground">{tSession("commandLoading")}</div>
+                ) : (
+                  <div className="px-3 py-2 text-xs text-muted-foreground">{tSession("commandNoMatches")}</div>
+                )}
+              </div>
+            ) : null}
             <Textarea
               value={value}
-              onChange={(event) => onValueChange(event.currentTarget.value)}
+              onChange={(event) => updateValue(event.currentTarget.value)}
               onKeyDown={(event) => {
                 if (event.nativeEvent.isComposing) return
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault()
-                  primaryAction()
+                  if (!showInterrupt) void submit()
                 }
               }}
               placeholder={placeholder}
-              disabled={!session.takeover || !connectorOnline}
+              disabled={!connectorOnline || creatingSession || sourceUnavailable}
               className="min-h-12 max-h-40 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
           </div>
-          <div className="flex flex-wrap items-center gap-1 px-3 pb-3 pt-2">
+          {/* No wrapping: the option controls shrink instead, so the takeover
+              switch and send button always stay on the same row. */}
+          <div className="flex items-center gap-1 px-3 pb-3 pt-2">
             <AttachmentButton
               attachments={attachments}
               onAttach={add}
               isDragging={isDragging}
               className="size-8"
+              allowedMimeTypes={allowedMimeTypes}
+              disabled={!canUseAttachments || sourceUnavailable || creatingSession}
             />
             {hasSelectors ? (
-              <>
-                {permissionField ? (
+              compactSelectors ? (
+                <SelectionSettingsDrawer
+                  disabled={selectorsDisabled}
+                  permissionDisabled={permissionSelectorDisabled}
+                  modelDisabled={modelSelectorDisabled}
+                  reasoningDisabled={effortSelectorDisabled}
+                  buttonLabel={tNew("selectionSettings")}
+                  title={tNew("selectionSettings")}
+                  description={tNew("selectionSettingsDescription")}
+                  permissionLabel={tNew("permissionMode")}
+                  modelLabel={tNew("modelAndReasoning")}
+                  reasoningLabel={tNew("reasoning")}
+                  permissionItems={permissionItems}
+                  selectedPermission={selectedPermissionMode}
+                  onPermissionChange={choosePermission}
+                  modelItems={modelItems}
+                  selectedModel={selectedModel}
+                  selectedReasoning={selectedReasoning}
+                  onModelChange={chooseModel}
+                />
+              ) : (
+                <>
+                {permissionItems.length > 0 ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
-                        className="h-8 gap-1.5 rounded-xl px-2.5 text-muted-foreground"
-                        disabled={!runtimeSettings || runtimeSettingsBusy}
+                        className="h-8 min-w-0 shrink gap-1.5 rounded-xl px-2.5 text-muted-foreground"
+                        disabled={permissionSelectorDisabled}
                       >
-                        <span className="size-1.5 rounded-full bg-primary" />
-                        <span className="text-foreground">{permissionLabel}</span>
+                        <span className="size-1.5 shrink-0 rounded-full bg-primary" />
+                        <span className="min-w-0 truncate text-foreground">{permissionLabel}</span>
                         <ChevronDown className="size-3.5 opacity-60" />
                       </Button>
                     </DropdownMenuTrigger>
@@ -208,80 +500,98 @@ export function SessionComposer({
                       {permissionItems.map((item) => (
                         <DropdownMenuItem
                           key={item.id}
-                          className="gap-2"
-                          onSelect={() => onPatchRuntimeSettings({ permissionMode: item.id })}
+                          disabled={!item.enabled}
+                          className={cn(
+                            "items-start gap-2 py-2.5",
+                            selectedPermissionMode === item.id && "text-primary focus:text-primary",
+                          )}
+                          onSelect={() => choosePermission(item.id)}
                         >
-                          <Check className={cn("size-3.5", permissionValue === item.id ? "opacity-100" : "opacity-0")} />
-                          <span>{item.label}</span>
+                          <Check className={cn("mt-0.5 size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-medium leading-none">{item.label}</span>
+                            {(item.enabled ? item.description : item.disabledReason) ? (
+                              <span className="mt-1 block whitespace-normal text-xs leading-snug text-muted-foreground">
+                                {item.enabled ? item.description : item.disabledReason}
+                              </span>
+                            ) : null}
+                          </span>
                         </DropdownMenuItem>
                       ))}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : null}
-                {modelField || effortField ? (
+                {modelItems.length > 0 ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
-                        className="h-8 gap-1.5 rounded-xl px-2.5 text-muted-foreground"
-                        disabled={!runtimeSettings || runtimeSettingsBusy}
+                        className="h-8 min-w-0 shrink gap-1.5 rounded-xl px-2.5 text-muted-foreground"
+                        disabled={modelSelectorDisabled}
                       >
-                        {effortField ? <span className="text-foreground">{effortLabel}</span> : null}
-                        {effortField && modelField ? <span className="text-muted-foreground/50">·</span> : null}
-                        {modelField ? <span className="max-w-40 truncate text-foreground">{modelLabel}</span> : null}
+                        {effortItems.length > 0 ? <span className="text-foreground">{effortLabel}</span> : null}
+                        {effortItems.length > 0 ? <span className="text-muted-foreground/50">·</span> : null}
+                        <span className="min-w-0 max-w-40 truncate text-foreground">{modelLabel}</span>
                         <ChevronDown className="size-3.5 opacity-60" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" className="w-56">
-                      {!modelField && effortItems.length > 0 ? (
-                        effortItems.map((item) => (
-                          <DropdownMenuItem
-                            key={item.id}
-                            className="gap-2"
-                            onSelect={() => onPatchRuntimeSettings({ effort: item.id })}
-                          >
-                            <Check className={cn("size-3.5", effortValue === item.id ? "opacity-100" : "opacity-0")} />
-                            <span>{item.label}</span>
-                          </DropdownMenuItem>
-                        ))
-                      ) : null}
-                      {!modelField && effortItems.length > 0 && modelItems.length > 0 ? <DropdownMenuSeparator /> : null}
                       {modelItems.length > 0 ? (
                         modelItems.map((modelItem) => {
-                          const modelEffortField = effortFieldFor(modelItem.id)
-                          const modelEfforts = composerMenuOptions(modelEffortField)
+                          const modelEfforts = modelItem.reasoningItems
                           if (modelEfforts.length === 0) {
                             return (
                               <DropdownMenuItem
                                 key={modelItem.id}
+                                disabled={!modelItem.enabled}
                                 className="gap-2"
-                                onSelect={() => patchModel(modelItem.id)}
+                                onSelect={() => chooseModel(modelItem.id, "")}
                               >
-                                <Check className={cn("size-3.5", modelValue === modelItem.id ? "opacity-100" : "opacity-0")} />
-                                <span className="truncate">{modelItem.label}</span>
+                                <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate">{modelItem.label}</span>
+                                  {!modelItem.enabled && modelItem.disabledReason ? (
+                                    <span className="block truncate text-xs text-muted-foreground">
+                                      {modelItem.disabledReason}
+                                    </span>
+                                  ) : null}
+                                </span>
                               </DropdownMenuItem>
                             )
                           }
                           return (
                             <DropdownMenuSub key={modelItem.id}>
-                              <DropdownMenuSubTrigger className="gap-2">
-                                <Check className={cn("size-3.5", modelValue === modelItem.id ? "opacity-100" : "opacity-0")} />
-                                <span className="max-w-40 truncate">{modelItem.label}</span>
+                              <DropdownMenuSubTrigger
+                                className="gap-2"
+                                disabled={effortSelectorDisabled || !modelItem.enabled}
+                              >
+                                <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
+                                <span className="max-w-40 truncate" title={modelItem.disabledReason ?? undefined}>
+                                  {modelItem.label}
+                                </span>
                               </DropdownMenuSubTrigger>
                               <DropdownMenuSubContent className="w-56">
                                 {modelEfforts.map((item) => (
                                   <DropdownMenuItem
                                     key={item.id}
+                                    disabled={!item.enabled}
                                     className="gap-2"
-                                    onSelect={() => patchModelEffort(modelItem.id, item.id)}
+                                    onSelect={() => chooseModel(modelItem.id, item.id)}
                                   >
                                     <Check className={cn(
                                       "size-3.5",
-                                      modelValue === modelItem.id && effortValue === item.id ? "opacity-100" : "opacity-0",
+                                      selectedModel === modelItem.id && selectedReasoning === item.id ? "opacity-100" : "opacity-0",
                                     )} />
-                                    <span className="truncate">{item.label}</span>
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate">{item.label}</span>
+                                      {!item.enabled && item.disabledReason ? (
+                                        <span className="block truncate text-xs text-muted-foreground">
+                                          {item.disabledReason}
+                                        </span>
+                                      ) : null}
+                                    </span>
                                   </DropdownMenuItem>
                                 ))}
                               </DropdownMenuSubContent>
@@ -292,25 +602,26 @@ export function SessionComposer({
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : null}
-              </>
+                </>
+              )
             ) : null}
             <div
               role="switch"
               aria-checked={session.takeover}
-              aria-disabled={!connectorOnline || takeoverBusy}
-              tabIndex={connectorOnline && !takeoverBusy ? 0 : -1}
+              aria-disabled={!connectorOnline || takeoverBusy || creatingSession}
+              tabIndex={connectorOnline && !takeoverBusy && !creatingSession ? 0 : -1}
               className={cn(
-                "ml-auto flex h-8 items-center gap-2 rounded-xl px-2.5 text-sm text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                connectorOnline && !takeoverBusy && "cursor-pointer hover:bg-accent hover:text-accent-foreground",
-                (!connectorOnline || takeoverBusy) && "opacity-50",
+                "ml-auto flex h-8 shrink-0 items-center gap-2 rounded-xl px-2.5 text-sm text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                connectorOnline && !takeoverBusy && !creatingSession && "cursor-pointer hover:bg-accent hover:text-accent-foreground",
+                (!connectorOnline || takeoverBusy || creatingSession) && "opacity-50",
                 session.takeover && "text-foreground",
               )}
               onClick={() => {
-                if (!connectorOnline || takeoverBusy) return
+                if (!connectorOnline || takeoverBusy || creatingSession) return
                 onToggleTakeover()
               }}
               onKeyDown={(event) => {
-                if (!connectorOnline || takeoverBusy) return
+                if (!connectorOnline || takeoverBusy || creatingSession) return
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault()
                   onToggleTakeover()
@@ -330,13 +641,13 @@ export function SessionComposer({
               )}
               {tSession("takeover")}
             </div>
-            <span className="mx-1 h-5 w-px bg-border" />
+            <span className="mx-1 h-5 w-px shrink-0 bg-border" />
             <Button
               type="button"
               size="icon"
               aria-label={showInterrupt ? tSession("interrupt") : tSession("send")}
               className={cn("size-8 rounded-full", showInterrupt && "bg-destructive text-destructive-foreground hover:bg-destructive/90")}
-              disabled={showInterrupt ? !connectorOnline || interrupting : !canSend || !hasInput}
+              disabled={showInterrupt ? interrupting : !(canSubmitCommand || canSubmitMessage)}
               onClick={primaryAction}
             >
               {sending || interrupting ? (
@@ -352,4 +663,66 @@ export function SessionComposer({
       </div>
     </div>
   )
+}
+
+function commandQueryFromValue(value: string): string | null {
+  const parsed = parseCommandValue(value)
+  return parsed.command
+}
+
+function commandFromValue(value: string, suggestions: RuntimeCommand[]): RuntimeCommand | null {
+  const parsed = parseCommandValue(value)
+  const query = parsed.command
+  if (query === null) return null
+  if (!query) return null
+  const exact = suggestions.find((command) => command.id === query || command.aliases.includes(query))
+  if (exact && exact.enabled && (commandAcceptsParsedArgs(exact, parsed.args))) return exact
+  if (parsed.args.length > 0) return null
+  const onlyEnabled = suggestions.filter((command) => command.enabled)
+  return onlyEnabled.length === 1 ? onlyEnabled[0] ?? null : null
+}
+
+function commandMatchesQuery(command: RuntimeCommand, query: string | null): boolean {
+  if (query === null) return false
+  const normalized = query.toLowerCase()
+  if (!normalized) return true
+  return (
+    fuzzyIncludes(command.id.toLowerCase(), normalized) ||
+    fuzzyIncludes(command.title.toLowerCase(), normalized) ||
+    command.aliases.some((alias) => fuzzyIncludes(alias.toLowerCase(), normalized))
+  )
+}
+
+function fuzzyIncludes(value: string, query: string): boolean {
+  if (value.includes(query)) return true
+  let index = 0
+  for (const char of value) {
+    if (char === query[index]) index += 1
+    if (index === query.length) return true
+  }
+  return query.length === 0
+}
+
+function commandAcceptsParsedArgs(command: RuntimeCommand, args: string[]): boolean {
+  return args.length === 0 || command.acceptsArgs
+}
+
+function parseCommandValue(value: string): { command: string | null; args: string[]; raw: string } {
+  const raw = value.trim()
+  if (!raw.startsWith("/") || raw.includes("\n")) return { command: null, args: [], raw }
+  const parts = raw.slice(1).split(/\s+/).filter(Boolean)
+  const command = parts[0]?.toLowerCase() ?? ""
+  return {
+    command,
+    args: parts.slice(1),
+    raw,
+  }
+}
+
+function effectiveRuntimeStatus(
+  runtimeState: SessionRuntimeState | null | undefined,
+  session: SessionView,
+): RuntimeStatusValue {
+  if (runtimeState) return runtimeState.status
+  return session.connectorStatus === "offline" ? "disconnected" : session.status
 }

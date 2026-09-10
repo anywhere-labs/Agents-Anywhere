@@ -24,36 +24,26 @@ struct AuthScreen<Content: View>: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(title)
-                            .font(.system(size: 40, weight: .bold))
-                            .foregroundStyle(AppTheme.primaryText(colorScheme))
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        if let subtitle {
-                            Text(subtitle)
-                                .font(.title3)
-                                .foregroundStyle(AppTheme.secondaryText(colorScheme))
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-
-                    content
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.horizontal, 22)
-                .padding(.top, 22)
-                .padding(.bottom, 34)
+
+                content
             }
+            .padding(.horizontal, 22)
+            .padding(.top, 22)
+            .padding(.bottom, 34)
         }
-        .background(AppTheme.appBackground(colorScheme))
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.large)
         .toolbar {
             if showsCancel {
-                ToolbarItem(placement: .cancellationAction) {
-                    SheetCloseButton(action: onCancel)
-                }
+                SheetCloseToolbar(action: onCancel)
             }
         }
     }
@@ -81,30 +71,17 @@ struct AuthBrandLockup: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(spacing: 14) {
-            Image(colorScheme == .dark ? "login-logo-dark-mode" : "login-logo-light-mode")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 76, height: 76)
-                .accessibilityHidden(true)
+        VStack(spacing: 18) {
+            AAWordmark(fontSize: 42)
+                .foregroundStyle(AppTheme.primaryText(colorScheme))
 
-            VStack(spacing: 7) {
-                Text(title)
-                    .font(.system(size: 36, weight: .bold))
-                    .foregroundStyle(AppTheme.primaryText(colorScheme))
-                    .minimumScaleFactor(0.74)
-                    .lineLimit(1)
-
-                Text("Connect this iPhone to your self-hosted workspace.")
-                    .font(.body)
-                    .foregroundStyle(AppTheme.secondaryText(colorScheme))
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text(String(localized: "Connect this device to your workspace."))
+                .font(.body)
+                .foregroundStyle(AppTheme.secondaryText(colorScheme))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
-
-    private var title: String { "Agents Anywhere" }
 }
 
 struct AuthPrimaryButton: View {
@@ -192,9 +169,9 @@ struct LoginSummaryView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            summaryRow("Server", server)
+            summaryRow(String(localized: "Server"), server)
             Divider()
-            summaryRow("User", userId)
+            summaryRow(String(localized: "User"), userId)
         }
         .font(.body)
         .padding(.vertical, 4)
@@ -226,8 +203,7 @@ struct AuthResultView: View {
         AuthWelcomeLayout {
             VStack(spacing: 26) {
                 VStack(spacing: 16) {
-                    Image(systemName: symbolName)
-                        .font(.system(size: 56, weight: .semibold))
+                    AppSymbol(symbolName, size: 56)
                         .foregroundStyle(symbolColor)
 
                     VStack(spacing: 8) {

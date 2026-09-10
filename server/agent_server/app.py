@@ -1,100 +1,165 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import time
-import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
+from redis.exceptions import RedisError
 
-from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.api import (
     admin,
     admin_dashboard,
     agents,
-    approvals,
     auth,
+    client_ws,
+    connector_files,
     connector_ingress,
+    connector_runtimes,
+    connector_shell,
+    connector_terminal,
     connectors,
+    dashboard_stream,
+    error_handlers,
     oauth,
     pairing,
+    projects,
+    service,
     sessions,
     sessions_fs,
     sessions_terminal,
-    service,
+    shares,
 )
+from agent_server.core.api_namespace import API_V2_PREFIX
 from agent_server.core.setup_token import SetupToken
-from agent_server.services.shell_tasks import ShellTaskManager
-from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.core.utc import utc_now
+from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.db.migrations import (
+    database_schema_version,
+    require_current_database,
+    upgrade_database,
+)
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
+from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.terminal_stream_hub import TerminalStreamHub
-from agent_server.core.utc import utc_now
 from agent_server.infra.timeline_broker import TimelineBroker
-
+from agent_server.infra.ws_tickets import ClientWsTicketManager
+from agent_server.services.connector_rpc import ConnectorServiceError
+from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.device_runtimes import DeviceRuntimeService
+from agent_server.services.effective_capabilities import (
+    publish_connector_session_capabilities,
+)
+from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
+from agent_server.services.shell_tasks import ShellTaskManager
+from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
+from agent_server.services.workspace import WorkspaceServiceError
 
 CONNECTOR_PRESENCE_SWEEP_SECONDS = 5
-
-
-def _safe_static_path(candidate: Path, root: Path) -> bool:
-    """Reject any candidate that escapes the static root (LFI / path traversal).
-
-    Path traversal payloads like ``../``, ``%2e%2e%2f`` or absolute paths are
-    normalized by ``resolve()`` and then checked against the static root, so
-    only files physically under ``root`` are served.
-    """
-    try:
-        resolved = candidate.resolve(strict=False)
-        return resolved.is_relative_to(root.resolve())
-    except OSError:
-        return False
 
 
 async def _connector_presence_watchdog(app: FastAPI) -> None:
     while True:
         await asyncio.sleep(CONNECTOR_PRESENCE_SWEEP_SECONDS)
-        stale_connections = app.state.rpc.expire_stale()
+        stale_connections = await app.state.rpc.expire_stale()
         for connection in stale_connections:
-            await app.state.store.set_connector_status(connection.connector_id, "offline")
+            try:
+                await app.state.terminal_broker.remove_ephemeral_for_connector(
+                    connection.connector_id,
+                    connection_id=connection.connection_id,
+                )
+            except Exception:  # noqa: BLE001 - keep the presence watchdog alive
+                logger.exception(
+                    "failed to clean stale connector terminals connector_id={} "
+                    "connection_id={}",
+                    connection.connector_id,
+                    connection.connection_id,
+                )
+            await publish_connector_session_capabilities(
+                app.state.store,
+                app.state.rpc,
+                app.state.timeline_broker,
+                connection.connector_id,
+            )
             await publish_dashboard_changed(
                 app.state.store,
                 app.state.timeline_broker,
                 connector_id=connection.connector_id,
-                reason="connector.offline",
+                reason="connector.presence",
             )
 
 
-def create_app(db_path: str | Path | None = None) -> FastAPI:
+def create_app(
+    db_path: str | Path | None = None,
+    *,
+    migrate_database: bool | None = None,
+    redis_url: str | None = None,
+) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        await app.state.store.init_schema()
-        await app.state.store.set_all_connectors_offline()
-        presence_task = asyncio.create_task(_connector_presence_watchdog(app))
-        # If the user table is empty, eagerly generate + log the bootstrap
-        # token so the operator sees it on startup. Otherwise stay dormant —
-        # the token instance only generates one when /auth/* asks for it.
-        if await app.state.store.count_users() == 0:
-            app.state.setup_token.snapshot()
+        presence_task: asyncio.Task[None] | None = None
         try:
+            await require_current_database(app.state.store.engine)
+            app.state.database_schema_version = await database_schema_version(
+                app.state.store.engine
+            )
+            await app.state.redis.start()
+            await app.state.timeline_broker.start()
+            await app.state.timeline_write_buffer.start()
+            await app.state.terminal_stream_hub.start()
+            await app.state.terminal_broker.start()
+            await app.state.rpc.start()
+            presence_task = asyncio.create_task(_connector_presence_watchdog(app))
+            # Generate the bootstrap token early so operators see it in logs.
+            if await app.state.store.count_users() == 0:
+                app.state.setup_token.snapshot()
             yield
         finally:
-            presence_task.cancel()
+            if presence_task is not None:
+                presence_task.cancel()
+                try:
+                    await presence_task
+                except asyncio.CancelledError:
+                    pass
             try:
-                await presence_task
-            except asyncio.CancelledError:
-                pass
-            await app.state.store.set_all_connectors_offline()
-            await app.state.store.close()
+                await app.state.rpc.close()
+            finally:
+                try:
+                    await app.state.timeline_write_buffer.close()
+                finally:
+                    try:
+                        await app.state.terminal_broker.close()
+                    finally:
+                        try:
+                            await app.state.terminal_stream_hub.close()
+                        finally:
+                            try:
+                                await app.state.timeline_broker.close()
+                            finally:
+                                try:
+                                    await app.state.redis.close()
+                                finally:
+                                    await app.state.store.close()
 
-    app = FastAPI(title="Agent Server", version="0.1.7.2", lifespan=lifespan)
+    app = FastAPI(title="Agent Server", version="2.0.0", lifespan=lifespan)
+    app.add_exception_handler(
+        ConnectorServiceError,
+        error_handlers.connector_service_error_handler,
+    )
+    app.add_exception_handler(
+        WorkspaceServiceError,
+        error_handlers.workspace_service_error_handler,
+    )
     cors_origins = os.environ.get("AGENT_SERVER_CORS_ORIGINS")
     app.add_middleware(
         CORSMiddleware,
@@ -106,70 +171,208 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.state.store = Store(db_path or os.environ.get("AGENT_SERVER_DB"))
-    app.state.rpc = ConnectorRpcManager()
-    app.state.fs_downloads = FsDownloadRelayManager()
-    app.state.shell_tasks = ShellTaskManager()
-    app.state.terminal_broker = TerminalBroker()
-    app.state.terminal_stream_hub = TerminalStreamHub()
-    app.state.timeline_broker = TimelineBroker()
+    should_migrate = (
+        db_path is not None if migrate_database is None else migrate_database
+    )
+    if should_migrate:
+        upgrade_database(sqlite_path=db_path)
+    app.state.store = Store(db_path)
+    app.state.database_schema_version = "unknown"
+    resolved_redis_url = redis_url
+    if resolved_redis_url is None and db_path is None:
+        resolved_redis_url = os.environ.get("AGENT_SERVER_REDIS_URL")
+    app.state.redis = RedisCoordinator(
+        resolved_redis_url,
+        prefix=os.environ.get("AGENT_SERVER_REDIS_PREFIX", "agents-anywhere"),
+        connect_timeout_seconds=float(
+            os.environ.get("AGENT_SERVER_REDIS_CONNECT_TIMEOUT", "5")
+        ),
+        health_check_interval_seconds=float(
+            os.environ.get("AGENT_SERVER_REDIS_HEALTH_CHECK_INTERVAL", "30")
+        ),
+        slow_lock_ms=float(os.environ.get("AGENT_SERVER_LOCK_SLOW_MS", "0")),
+    )
+    app.state.rpc = ConnectorRpcManager(
+        app.state.redis,
+        instance_id=os.environ.get("AGENT_SERVER_INSTANCE_ID"),
+    )
+    app.state.fs_downloads = FsDownloadRelayManager(app.state.redis)
+    app.state.shell_tasks = ShellTaskManager(app.state.redis)
+    app.state.terminal_broker = TerminalBroker(
+        app.state.redis,
+        instance_id=app.state.rpc.instance_id,
+    )
+    app.state.terminal_stream_hub = TerminalStreamHub(app.state.redis)
+    app.state.timeline_broker = TimelineBroker(app.state.redis)
+    app.state.timeline_write_buffer = TimelineWriteBuffer(
+        app.state.store,
+        app.state.timeline_broker,
+        app.state.redis,
+        presence=app.state.rpc,
+        flush_interval_seconds=float(
+            os.environ.get("AGENT_SERVER_TIMELINE_FLUSH_INTERVAL_SECONDS", "1")
+        ),
+        revision_lease_size=int(
+            os.environ.get("AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE", "4096")
+        ),
+        profile_hotpath=os.environ.get(
+            "AGENT_SERVER_TIMELINE_PROFILE", ""
+        ).strip().lower()
+        in {"1", "true", "yes"},
+        profile_min_ms=float(
+            os.environ.get("AGENT_SERVER_TIMELINE_PROFILE_MIN_MS", "0")
+        ),
+        single_instance=os.environ.get(
+            "AGENT_SERVER_TIMELINE_SINGLE_INSTANCE", ""
+        ).strip().lower()
+        in {"1", "true", "yes"},
+        lane_idle_seconds=float(
+            os.environ.get("AGENT_SERVER_TIMELINE_LANE_IDLE_SECONDS", "900")
+        ),
+        max_lanes=int(os.environ.get("AGENT_SERVER_TIMELINE_MAX_LANES", "4096")),
+    )
+    app.state.session_runtime_state_cache = SessionRuntimeStateCache()
+    app.state.device_runtime_service = DeviceRuntimeService(
+        app.state.store,
+        app.state.rpc,
+        app.state.timeline_broker,
+        app.state.redis,
+        app.state.session_runtime_state_cache,
+        timeline_write_buffer=app.state.timeline_write_buffer,
+        terminal_broker=app.state.terminal_broker,
+    )
+    app.state.ws_tickets = ClientWsTicketManager(app.state.redis)
     app.state.setup_token = SetupToken()
     app.state.started_at_iso = utc_now()
     app.state.started_at_monotonic = time.monotonic()
 
-    @app.get("/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok", "serverTime": utc_now()}
+    @app.exception_handler(RedisError)
+    async def coordination_unavailable(
+        _request: Request, exc: RedisError
+    ) -> JSONResponse:
+        logger.error("redis coordination unavailable: {}", exc)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": {
+                    "code": "coordination_unavailable",
+                    "message": "Redis coordination is unavailable",
+                }
+            },
+        )
 
-    app.include_router(auth.router)
-    app.include_router(admin.router)
-    app.include_router(admin_dashboard.router)
-    app.include_router(service.router)
-    app.include_router(oauth.router)
-    app.include_router(connectors.router)
-    app.include_router(connector_ingress.router)
-    app.include_router(agents.router)
-    app.include_router(pairing.router)
-    app.include_router(sessions.router)
-    app.include_router(sessions_fs.router)
-    app.include_router(sessions_terminal.router)
-    app.include_router(approvals.router)
+    @app.get(f"{API_V2_PREFIX}/health")
+    @app.get(f"{API_V2_PREFIX}/health/live")
+    def health() -> dict[str, str]:
+        return {"status": "ok", "version": app.version, "serverTime": utc_now()}
+
+    @app.get(f"{API_V2_PREFIX}/health/ready")
+    async def readiness() -> JSONResponse:
+        checks: dict[str, dict[str, str]] = {}
+        ready = True
+        try:
+            await asyncio.wait_for(
+                require_current_database(app.state.store.engine), timeout=3
+            )
+            app.state.database_schema_version = await asyncio.wait_for(
+                database_schema_version(app.state.store.engine), timeout=3
+            )
+            checks["database"] = {
+                "status": "ok",
+                "schemaVersion": app.state.database_schema_version,
+            }
+        except Exception as exc:  # readiness must report dependency failures
+            ready = False
+            checks["database"] = {"status": "error", "message": str(exc)}
+        if app.state.redis.distributed:
+            try:
+                await app.state.redis.ping(timeout_seconds=2)
+                checks["redis"] = {"status": "ok"}
+            except Exception as exc:  # readiness must report dependency failures
+                ready = False
+                checks["redis"] = {"status": "error", "message": str(exc)}
+        else:
+            checks["redis"] = {"status": "not_configured"}
+        return JSONResponse(
+            status_code=200 if ready else 503,
+            content={
+                "status": "ready" if ready else "not_ready",
+                "checks": checks,
+                "instanceId": app.state.rpc.instance_id,
+                "serverTime": utc_now(),
+            },
+        )
+
+    app.include_router(auth.router, prefix=API_V2_PREFIX)
+    app.include_router(admin.router, prefix=API_V2_PREFIX)
+    app.include_router(admin_dashboard.router, prefix=API_V2_PREFIX)
+    app.include_router(dashboard_stream.router, prefix=API_V2_PREFIX)
+    app.include_router(service.router, prefix=API_V2_PREFIX)
+    app.include_router(shares.router, prefix=API_V2_PREFIX)
+    app.include_router(oauth.router, prefix=API_V2_PREFIX)
+    app.include_router(connectors.router, prefix=API_V2_PREFIX)
+    app.include_router(connector_files.router, prefix=API_V2_PREFIX)
+    app.include_router(connector_runtimes.router, prefix=API_V2_PREFIX)
+    app.include_router(connector_shell.router, prefix=API_V2_PREFIX)
+    app.include_router(connector_terminal.router, prefix=API_V2_PREFIX)
+    app.include_router(client_ws.router, prefix=API_V2_PREFIX)
+    app.include_router(connector_ingress.router, prefix=API_V2_PREFIX)
+    app.include_router(agents.router, prefix=API_V2_PREFIX)
+    app.include_router(pairing.router, prefix=API_V2_PREFIX)
+    app.include_router(projects.router, prefix=API_V2_PREFIX)
+    app.include_router(sessions.router, prefix=API_V2_PREFIX)
+    app.include_router(sessions_fs.router, prefix=API_V2_PREFIX)
+    app.include_router(sessions_terminal.router, prefix=API_V2_PREFIX)
 
     static_dir = os.environ.get("AGENT_SERVER_STATIC_DIR")
     if static_dir:
-        static_path = Path(static_dir)
+        static_path = Path(static_dir).resolve()
         if not static_path.is_dir():
             raise RuntimeError(f"AGENT_SERVER_STATIC_DIR does not exist: {static_path}")
         logger.info("serving web static files from {}", static_path)
         for mount_name in ("_next", "assets", "brand"):
             mount_path = static_path / mount_name
             if mount_path.is_dir():
-                app.mount(f"/{mount_name}", StaticFiles(directory=mount_path), name=f"web-{mount_name}")
+                app.mount(
+                    f"/{mount_name}",
+                    StaticFiles(directory=mount_path),
+                    name=f"web-{mount_name}",
+                )
+
+        def _static_file(candidate: Path) -> FileResponse:
+            try:
+                resolved = candidate.resolve()
+            except (OSError, RuntimeError):
+                raise HTTPException(status_code=404, detail="not found") from None
+            if not resolved.is_relative_to(static_path):
+                raise HTTPException(status_code=404, detail="not found")
+            return FileResponse(resolved)
 
         def _static_index(path: str = "") -> FileResponse:
             relative = path.strip("/")
+            if ".." in relative.replace("\\", "/").split("/"):
+                raise HTTPException(status_code=404, detail="not found")
             default_locale = os.environ.get("AGENT_SERVER_STATIC_DEFAULT_LOCALE", "en")
             if relative:
-                if ".." in relative.split("/"):
-                    raise HTTPException(status_code=404, detail="not found")
                 candidate = static_path / relative
-                if not _safe_static_path(candidate, static_path):
-                    raise HTTPException(status_code=404, detail="not found")
                 if candidate.is_dir() and (candidate / "index.html").is_file():
-                    return FileResponse(candidate / "index.html")
+                    return _static_file(candidate / "index.html")
                 if candidate.is_file():
-                    return FileResponse(candidate)
+                    return _static_file(candidate)
                 html_candidate = static_path / f"{relative}.html"
                 if html_candidate.is_file():
-                    return FileResponse(html_candidate)
+                    return _static_file(html_candidate)
                 default_locale_candidate = static_path / default_locale / relative
-                if default_locale_candidate.is_dir() and (default_locale_candidate / "index.html").is_file():
-                    return FileResponse(default_locale_candidate / "index.html")
+                if (
+                    default_locale_candidate.is_dir()
+                    and (default_locale_candidate / "index.html").is_file()
+                ):
+                    return _static_file(default_locale_candidate / "index.html")
 
             default_index = static_path / default_locale / "index.html"
             if default_index.is_file():
-                return FileResponse(default_index)
-            return FileResponse(static_path / "index.html")
+                return _static_file(default_index)
+            return _static_file(static_path / "index.html")
 
         @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
         def web_index() -> FileResponse:
@@ -181,7 +384,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     return app
 
-# this is a comment
+
 def main() -> None:
     uvicorn.run(
         "agent_server.app:create_app",

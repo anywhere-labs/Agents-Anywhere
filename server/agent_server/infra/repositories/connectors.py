@@ -4,6 +4,37 @@ from agent_server.infra.repositories.store_support import *
 
 
 class ConnectorRepositoryMixin:
+    async def get_connector_preferences(self, connector_id: str) -> dict[str, Any]:
+        async with self._engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    select(connectors_t.c.user_preferences).where(
+                        connectors_t.c.id == connector_id,
+                        connectors_t.c.revoked == 0,
+                    )
+                )
+            ).first()
+        if row is None:
+            raise KeyError(connector_id)
+        value = _json_loads(row.user_preferences)
+        return value if isinstance(value, dict) else {}
+
+    async def update_connector_preferences(
+        self,
+        connector_id: str,
+        preferences: dict[str, Any],
+    ) -> dict[str, Any]:
+        now = utc_now()
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                update(connectors_t)
+                .where(connectors_t.c.id == connector_id, connectors_t.c.revoked == 0)
+                .values(user_preferences=_json_dumps(preferences), updated_at=now)
+            )
+            if result.rowcount == 0:
+                raise KeyError(connector_id)
+        return preferences
+
     async def record_fs_preview_token(
         self,
         *,
@@ -190,28 +221,44 @@ class ConnectorRepositoryMixin:
             )
 
 
-    async def create_connector(self, *, name: str, user_id: str) -> tuple[ConnectorView, str, str]:
-        connector_id = f"conn_{secrets.token_urlsafe(10)}"
+    async def create_connector(
+        self,
+        *,
+        name: str,
+        user_id: str,
+        connector_kind: ConnectorKind = "cli",
+        installation_id: str | None = None,
+    ) -> tuple[ConnectorView, str, str]:
+        # An installation key is scoped to its authenticated owner. A lost
+        # registration response can be retried without creating another device.
+        connector_id = (
+            "conn_" + hashlib.sha256(f"{user_id}:{installation_id}".encode()).hexdigest()[:24]
+            if installation_id else f"conn_{secrets.token_urlsafe(10)}"
+        )
         token = _new_connector_token()
         prefix = token[:12]
         now = utc_now()
-        async with self._engine.begin() as conn:
-            await conn.execute(
-                insert(connectors_t).values(
-                    id=connector_id,
-                    user_id=user_id,
-                    name=name,
-                    status="offline",
-                    token_hash=_hash_token(token),
-                    token_prefix=prefix,
-                    created_at=now,
-                    updated_at=now,
+        try:
+            async with self._engine.begin() as conn:
+                await conn.execute(
+                    insert(connectors_t).values(
+                        id=connector_id,
+                        user_id=user_id,
+                        name=name,
+                        connector_kind=connector_kind,
+                        status="offline",
+                        token_hash=_hash_token(token),
+                        token_prefix=prefix,
+                        created_at=now,
+                        updated_at=now,
+                    )
                 )
-            )
-        await self.apply_user_agent_defaults_to_connector(
-            user_id=user_id,
-            connector_id=connector_id,
-        )
+        except IntegrityError:
+            if not installation_id:
+                raise
+            # Credentials are deliberately reissued only on an explicit
+            # registration retry. Normal starts reuse the locally saved token.
+            return await self.rotate_connector_token(connector_id, user_id=user_id)
         return await self.get_connector(connector_id), token, prefix
 
 
@@ -277,7 +324,11 @@ class ConnectorRepositoryMixin:
                 raise ValueError("invalid connector credential")
             token = connector_token
         else:
-            connector, token, _ = await self.create_connector(name=name, user_id=user_id)
+            connector, token, _ = await self.create_connector(
+                name=name,
+                user_id=user_id,
+                connector_kind="cli",
+            )
 
         values: dict[str, Any] = {
             "status": "claimed",
@@ -403,18 +454,42 @@ class ConnectorRepositoryMixin:
         return await self.get_connector(connector_id)
 
 
-    async def revoke_connector(self, connector_id: str, *, user_id: str | None = None) -> None:
-        now = utc_now()
-        query = update(connectors_t).where(
-            connectors_t.c.id == connector_id, connectors_t.c.revoked == 0
-        )
+    async def delete_connector(
+        self, connector_id: str, *, user_id: str | None = None
+    ) -> list[str]:
+        query = select(connectors_t.c.id).where(connectors_t.c.id == connector_id)
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
-        query = query.values(revoked=1, status="offline", updated_at=now)
         async with self._engine.begin() as conn:
-            result = await conn.execute(query)
-            if result.rowcount == 0:
+            # Serialize against project creation and connector-owned FK writes.
+            # Include legacy revoked rows so their owners can also purge them.
+            if (await conn.execute(query.with_for_update())).first() is None:
                 raise KeyError(connector_id)
+            session_ids = list(
+                (await conn.execute(
+                    select(sessions_t.c.id).where(sessions_t.c.connector_id == connector_id)
+                )).scalars()
+            )
+            # Session children (timeline, shares, active runs) cascade. Sessions
+            # must go before projects because project references use RESTRICT.
+            await conn.execute(
+                delete(sessions_t).where(sessions_t.c.connector_id == connector_id)
+            )
+            await conn.execute(
+                delete(projects_t).where(projects_t.c.connector_id == connector_id)
+            )
+            # Pairing credentials predate FK enforcement and need explicit cleanup.
+            await conn.execute(
+                delete(pairing_codes_t).where(pairing_codes_t.c.connector_id == connector_id)
+            )
+            # Runtime configuration, catalogs, preview tokens and terminal roots
+            # all reference the connector with ON DELETE CASCADE.
+            await conn.execute(delete(connectors_t).where(connectors_t.c.id == connector_id))
+            # Keep the rows discoverable for a retry if storage cleanup fails.
+            # Files cannot be rolled back, so run this after all SQL deletions.
+            for session_id in session_ids:
+                await self.files.delete_session(session_id)
+        return session_ids
 
 
     async def rotate_connector_token(
@@ -438,6 +513,8 @@ class ConnectorRepositoryMixin:
                     token_hash=_hash_token(token),
                     token_prefix=prefix,
                     status="offline",
+                    presence_instance_id=None,
+                    presence_connection_id=None,
                     updated_at=now,
                 )
             )
@@ -451,6 +528,9 @@ class ConnectorRepositoryMixin:
         values: dict[str, Any] = {"status": status, "updated_at": now}
         if status == "online":
             values["last_seen_at"] = now
+        else:
+            values["presence_instance_id"] = None
+            values["presence_connection_id"] = None
         if device_os is not None:
             values["device_os"] = device_os
         async with self._engine.begin() as conn:
@@ -459,14 +539,26 @@ class ConnectorRepositoryMixin:
             )
 
 
-    async def set_all_connectors_offline(self) -> None:
+    async def record_connector_connection(
+        self,
+        connector_id: str,
+        *,
+        device_os: str | None = None,
+    ) -> bool:
         now = utc_now()
+        values: dict[str, Any] = {
+            "last_seen_at": now,
+            "updated_at": now,
+        }
+        if device_os is not None:
+            values["device_os"] = device_os
         async with self._engine.begin() as conn:
-            await conn.execute(
+            result = await conn.execute(
                 update(connectors_t)
-                .where(connectors_t.c.revoked == 0, connectors_t.c.status != "offline")
-                .values(status="offline", updated_at=now)
+                .where(connectors_t.c.id == connector_id, connectors_t.c.revoked == 0)
+                .values(**values)
             )
+        return result.rowcount > 0
 
 
     async def record_connector_activity(self, connector_id: str) -> None:
@@ -479,14 +571,82 @@ class ConnectorRepositoryMixin:
             )
 
 
-    async def mark_connector_seen(self, connector_id: str) -> None:
+    async def update_protocol_capabilities(
+        self,
+        connector_id: str,
+        capability_set: dict[str, Any],
+    ) -> bool:
+        revision = capability_set.get("revision")
+        if not isinstance(revision, int) or revision < 0:
+            raise ValueError("capability_set.revision must be a non-negative integer")
         now = utc_now()
         async with self._engine.begin() as conn:
-            await conn.execute(
-                update(connectors_t)
-                .where(connectors_t.c.id == connector_id)
-                .values(status="online", last_seen_at=now, updated_at=now)
-            )
+            connector = (
+                await conn.execute(
+                    select(connectors_t.c.id).where(
+                        connectors_t.c.id == connector_id,
+                        connectors_t.c.revoked == 0,
+                    )
+                )
+            ).first()
+            if connector is None:
+                raise KeyError(connector_id)
+            current = (
+                await conn.execute(
+                    select(connector_protocol_capabilities_t.c.revision).where(
+                        connector_protocol_capabilities_t.c.connector_id == connector_id
+                    )
+                )
+            ).first()
+            if current is not None and int(current.revision) > revision:
+                return False
+            values = {
+                "revision": revision,
+                "capabilities_json": _json_dumps(capability_set),
+                "updated_at": now,
+            }
+            if current is None:
+                await conn.execute(
+                    insert(connector_protocol_capabilities_t).values(
+                        connector_id=connector_id,
+                        **values,
+                    )
+                )
+            else:
+                await conn.execute(
+                    update(connector_protocol_capabilities_t)
+                    .where(connector_protocol_capabilities_t.c.connector_id == connector_id)
+                    .values(**values)
+                )
+        return True
+
+    async def get_protocol_capabilities(
+        self,
+        connector_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
+        connector_query = select(connectors_t.c.id).where(
+            connectors_t.c.id == connector_id,
+            connectors_t.c.revoked == 0,
+        )
+        if user_id is not None:
+            connector_query = connector_query.where(connectors_t.c.user_id == user_id)
+        async with self._engine.connect() as conn:
+            if (await conn.execute(connector_query)).first() is None:
+                raise KeyError(connector_id)
+            row = (
+                await conn.execute(
+                    select(connector_protocol_capabilities_t.c.capabilities_json).where(
+                        connector_protocol_capabilities_t.c.connector_id == connector_id
+                    )
+                )
+            ).first()
+        if row is not None:
+            capabilities = _json_loads(row.capabilities_json)
+            if isinstance(capabilities, dict):
+                return capabilities
+        return {"revision": 0, "capabilities": []}
 
 
     def _connector_from_row(self, row: Any) -> ConnectorView:
@@ -494,12 +654,10 @@ class ConnectorRepositoryMixin:
             id=row["id"],
             userId=row["user_id"],
             name=row["name"],
+            connectorKind=row["connector_kind"],
             deviceOs=row["device_os"],
             status=row["status"],
             lastSeenAt=row["last_seen_at"],
-            runtimeCapabilities=_agents_view_from_state(
-                _normalize_agents_blob(_json_loads(row["runtime_capabilities"]))
-            ),
             createdAt=row["created_at"],
             updatedAt=row["updated_at"],
         )

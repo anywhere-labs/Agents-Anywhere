@@ -8,6 +8,7 @@ from typing import Any
 from agent_server.infra.files import FileStorage
 from agent_server.core.models import UploadedAttachment
 from agent_server.core.auth import create_signed_token
+from agent_server.core.api_namespace import api_v2_path
 from agent_server.core.utc import utc_now
 
 
@@ -30,14 +31,14 @@ class AttachmentService:
         data: bytes,
         media_type: str | None = None,
     ) -> dict[str, Any]:
-        await self._store.get_session(session_id, user_id=user_id)
-        return await self._persist_file_blob(
-            session_id=session_id,
-            data=data,
-            name=name,
-            media_type=media_type,
-            origin="user",
-        )
+        async with self._store.attachment_write_fence(session_id, user_id=user_id):
+            return await self._persist_file_blob(
+                session_id=session_id,
+                data=data,
+                name=name,
+                media_type=media_type,
+                origin="user",
+            )
 
     async def read_user_file(
         self,
@@ -56,6 +57,17 @@ class AttachmentService:
         }
 
     async def read_local_signed_file(
+        self,
+        *,
+        session_id: str,
+        file_id: str,
+    ) -> tuple[bytes, dict[str, Any]]:
+        self._validate_file_id(file_id)
+        data, metadata = await self._files.read(session_id, file_id)
+        self._validate_blob_integrity(data, metadata)
+        return data, metadata
+
+    async def read_shared_file(
         self,
         *,
         session_id: str,
@@ -110,7 +122,7 @@ class AttachmentService:
             {"sessionId": session_id, "fileId": file_id},
             LOCAL_FILE_TOKEN_EXPIRES_IN,
         )
-        return f"/sessions/local/{session_id}/{file_id}?token={token}"
+        return f"{api_v2_path(f'/sessions/local/{session_id}/{file_id}')}?token={token}"
 
     async def read_connector_attachment(
         self,
@@ -145,8 +157,8 @@ class AttachmentService:
             sha256=saved["sha256"],
             mediaType=saved.get("mediaType") or fallback_media_type,
             createdAt=saved["createdAt"],
-            downloadUrl=f"/sessions/{session_id}/attachments/{saved['fileId']}",
-            openUrl=f"/sessions/{session_id}/attachments/{saved['fileId']}/open",
+            downloadUrl=api_v2_path(f"/sessions/{session_id}/attachments/{saved['fileId']}"),
+            openUrl=api_v2_path(f"/sessions/{session_id}/attachments/{saved['fileId']}/open"),
         )
 
     async def _persist_file_blob(

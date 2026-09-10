@@ -1,0 +1,2408 @@
+from __future__ import annotations
+
+import asyncio
+import json
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+import pytest
+
+from connector._reference.codex.adapter import (
+    EXISTING_SYNC_CHANGED_THREAD_TIMEOUT_SECONDS,
+    EXISTING_SYNC_SCAN_TIMEOUT_SECONDS,
+    CodexAdapter,
+    _backend_notifications_from_reduction,
+    stable_session_id,
+)
+from connector._reference.codex.history import read_timeline_history, read_tool_history
+from connector._reference.codex.ipc_protocol import (
+    CodexIpcFollowingChangedBroadcast,
+    CodexIpcRequest,
+    CodexIpcStreamStateChangedBroadcast,
+)
+from connector._reference.codex.reducer import TimelineReducer
+from connector._reference.codex.rpc import APP_SERVER_STREAM_LIMIT, JsonRpcStdioClient
+from connector.server.protocol import protocol_selection_id
+from connector.server.sync_state import JsonSyncStateStore
+
+
+class FakeCodexRpc:
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, dict[str, Any] | None]] = []
+        self.responses: list[tuple[str | int, dict[str, Any] | None]] = []
+        self.started = False
+        self.closed = False
+        self.handler: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+
+    async def start(self, handler: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
+        self.started = True
+        self.handler = handler
+
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        self.requests.append((method, params))
+        if method == "thread/start":
+            return {"thread": {"id": "thr_1", "status": {"type": "loaded"}}}
+        if method == "thread/list":
+            return {"data": [{"id": "thr_existing", "path": "/tmp/rollout-thr_existing.jsonl", "updatedAt": 1779291318}]}
+        if method == "thread/resume":
+            return {"thread": {"id": (params or {}).get("threadId"), "status": {"type": "loaded"}}}
+        if method == "thread/read":
+            return {
+                "thread": {
+                    "id": (params or {}).get("threadId"),
+                    "title": "Demo thread",
+                    "cwd": "/repo",
+                    "status": {"type": "idle"},
+                    "turns": [
+                        {
+                            "id": "turn_1",
+                            "status": "completed",
+                            "input": [{"type": "text", "text": "hello"}],
+                            "items": [
+                                {
+                                    "id": "item_1",
+                                    "type": "userMessage",
+                                    "text": "hello",
+                                    "status": "completed",
+                                },
+                                {
+                                    "id": "item_2",
+                                    "type": "agentMessage",
+                                    "text": "hi",
+                                    "status": "completed",
+                                },
+                            ],
+                        }
+                    ],
+                }
+            }
+        if method == "turn/start":
+            return {"turn": {"id": "turn_2", "status": "inProgress"}}
+        return {}
+
+    async def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+        self.requests.append((method, params))
+
+    async def respond(self, request_id: str | int, result: dict[str, Any] | None = None) -> None:
+        self.responses.append((request_id, result))
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class FakeCodexIpcClient:
+    def __init__(self, *, connected: bool = True) -> None:
+        self.connected = connected
+        self.ensure_connected_calls = 0
+        self.closed = False
+        self.client_id: str | None = None
+        self.broadcasts: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+        self.requests: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+        self.message_handler = None
+        self.request_handler = None
+        self.request_predicate = None
+        self.request_error: RuntimeError | None = None
+
+    @property
+    def is_connected(self) -> bool:
+        return self.connected and self.client_id is not None
+
+    def set_message_handler(self, handler) -> None:
+        self.message_handler = handler
+
+    def set_request_handler(self, handler, *, can_handle=None) -> None:
+        self.request_handler = handler
+        self.request_predicate = can_handle
+
+    async def ensure_connected(self) -> bool:
+        self.ensure_connected_calls += 1
+        self.client_id = "ipc_client_1" if self.connected else None
+        return self.connected
+
+    async def send_broadcast(self, method: str, params: dict[str, Any], **kwargs) -> bool:
+        if not self.is_connected:
+            return False
+        self.broadcasts.append((method, params, kwargs))
+        return True
+
+    async def send_request(self, method: str, params: dict[str, Any], **kwargs):
+        self.requests.append((method, params, kwargs))
+        if self.request_error is not None:
+            raise self.request_error
+        return {"result": {"turnId": "turn_ipc"}}
+
+    async def close(self) -> None:
+        self.closed = True
+        self.client_id = None
+
+
+class InterruptThreadNotFoundRpc(FakeCodexRpc):
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if method == "turn/interrupt":
+            raise RuntimeError(json.dumps({"code": -32600, "message": "thread not found: thr_missing"}))
+        return await super().request(method, params)
+
+
+class ArchivedThreadListRpc(FakeCodexRpc):
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if method == "thread/list":
+            return {
+                "data": [
+                    {
+                        "id": "thr_archived",
+                        "updatedAt": 1779291318,
+                        "archived": True,
+                    },
+                    {
+                        "id": "thr_unresumable",
+                        "updatedAt": 1779291319,
+                        "resumeSupported": False,
+                    },
+                ]
+            }
+        return await super().request(method, params)
+
+
+class ArchivedResumeRpc(FakeCodexRpc):
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if method == "thread/resume":
+            raise RuntimeError(json.dumps({"code": -32600, "message": "thread is archived"}))
+        return await super().request(method, params)
+
+
+class MissingRolloutResumeRpc(FakeCodexRpc):
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        self.requests.append((method, params))
+        if method == "thread/resume":
+            raise RuntimeError(
+                json.dumps(
+                    {
+                        "code": -32600,
+                        "message": "no rollout found for thread id thr_missing_rollout",
+                    }
+                )
+            )
+        if method == "thread/start":
+            return {"thread": {"id": "thr_replacement", "status": {"type": "loaded"}}}
+        if method == "turn/start":
+            return {"turn": {"id": "turn_2", "status": "inProgress"}}
+        return {}
+
+
+class UnloadedThreadStartRpc(FakeCodexRpc):
+    def __init__(self) -> None:
+        super().__init__()
+        self.turn_start_attempts = 0
+
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        self.requests.append((method, params))
+        if method == "thread/resume":
+            return {"thread": {"id": (params or {}).get("threadId"), "status": {"type": "loaded"}}}
+        if method == "turn/start":
+            self.turn_start_attempts += 1
+            if self.turn_start_attempts == 1:
+                raise RuntimeError(json.dumps({"code": -32600, "message": "id not found"}))
+            return {"turn": {"id": "turn_2", "status": "inProgress"}}
+        return {}
+
+
+class MissingAfterUnloadedThreadStartRpc(FakeCodexRpc):
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        self.requests.append((method, params))
+        if method == "thread/resume":
+            raise RuntimeError(
+                json.dumps(
+                    {
+                        "code": -32600,
+                        "message": "no rollout found for thread id thr_stale",
+                    }
+                )
+            )
+        if method == "thread/start":
+            return {"thread": {"id": "thr_replacement", "status": {"type": "loaded"}}}
+        if method == "turn/start":
+            if (params or {}).get("threadId") == "thr_stale":
+                raise RuntimeError(json.dumps({"code": -32600, "message": "id not found"}))
+            return {"turn": {"id": "turn_2", "status": "inProgress"}}
+        return {}
+
+
+class MissingModelProviderResumeRpc(FakeCodexRpc):
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        self.requests.append((method, params))
+        if method == "thread/resume":
+            raise RuntimeError(
+                json.dumps(
+                    {
+                        "code": -32600,
+                        "message": "failed to load configuration: Model provider `codex` not found",
+                    }
+                )
+            )
+        return await super().request(method, params)
+
+
+def test_stdio_client_stream_limit_is_large_enough_for_codex_jsonl() -> None:
+    assert APP_SERVER_STREAM_LIMIT >= 64 * 1024 * 1024
+
+
+def test_stdio_client_preserves_numeric_server_request_ids() -> None:
+    client = JsonRpcStdioClient(command=["codex"])
+    client._server_request_ids.add(0)  # noqa: SLF001
+
+    assert client._response_id_for("0") == 0  # noqa: SLF001
+    assert 0 not in client._server_request_ids  # noqa: SLF001
+
+
+class FakeStdin:
+    def __init__(self) -> None:
+        self.chunks: list[bytes] = []
+
+    def write(self, chunk: bytes) -> None:
+        self.chunks.append(chunk)
+
+    async def drain(self) -> None:
+        return None
+
+
+class FakeProcess:
+    def __init__(self) -> None:
+        self.stdin = FakeStdin()
+
+
+async def _exercise_stdio_client_includes_empty_params() -> None:
+    client = JsonRpcStdioClient(command=["codex"])
+    client.process = FakeProcess()  # type: ignore[assignment]
+    loop = asyncio.get_running_loop()
+    loop.call_soon(lambda: client._pending[1].set_result({}))  # noqa: SLF001
+
+    await client.request("account/read")
+    await client.notify("initialized")
+
+    stdin = client.process.stdin
+    assert isinstance(stdin, FakeStdin)
+    request_payload = json.loads(stdin.chunks[0])
+    notify_payload = json.loads(stdin.chunks[1])
+    assert request_payload["params"] == {}
+    assert notify_payload["params"] == {}
+
+
+def test_stdio_client_includes_empty_params_for_no_arg_messages() -> None:
+    asyncio.run(_exercise_stdio_client_includes_empty_params())
+
+
+class EmptyAsyncReader:
+    async def readline(self) -> bytes:
+        return b""
+
+
+class StartableFakeProcess:
+    def __init__(self) -> None:
+        self.stdin = FakeStdin()
+        self.stdout = EmptyAsyncReader()
+        self.stderr = EmptyAsyncReader()
+
+
+async def _exercise_stdio_client_start_is_serialized(monkeypatch) -> None:
+    created: list[StartableFakeProcess] = []
+    initialize_seen = asyncio.Event()
+
+    async def fake_create_subprocess_exec(*_args: str, **_kwargs: Any) -> StartableFakeProcess:
+        await asyncio.sleep(0)
+        process = StartableFakeProcess()
+        created.append(process)
+        return process
+
+    async def complete_initialize_when_written() -> None:
+        client = task_client
+        while 1 not in client._pending:  # noqa: SLF001
+            await asyncio.sleep(0)
+        client._pending[1].set_result({})  # noqa: SLF001
+        initialize_seen.set()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    task_client = JsonRpcStdioClient(command=["codex"])
+
+    async def handler(_payload: dict[str, Any]) -> None:
+        return None
+
+    helper = asyncio.create_task(complete_initialize_when_written())
+    await asyncio.gather(task_client.start(handler), task_client.start(handler))
+    await helper
+
+    assert initialize_seen.is_set()
+    assert len(created) == 1
+    assert task_client._initialized is True  # noqa: SLF001
+
+
+def test_stdio_client_start_is_serialized(monkeypatch) -> None:
+    asyncio.run(_exercise_stdio_client_start_is_serialized(monkeypatch))
+
+
+def test_stdio_client_ignores_response_for_cancelled_request() -> None:
+    client = JsonRpcStdioClient(command=["codex"])
+    loop = asyncio.new_event_loop()
+    try:
+        future: asyncio.Future[dict[str, Any]] = loop.create_future()
+        future.cancel()
+
+        client._settle_pending_future(future, {"id": 1, "result": {"ok": True}})  # noqa: SLF001
+
+        assert future.cancelled()
+    finally:
+        loop.close()
+
+
+def test_reducer_maps_codex_turn_and_message_notifications() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+
+    started = reducer.reduce_notification(
+        {
+            "method": "turn/started",
+            "params": {"threadId": "thr_1", "turnId": "turn_1", "turn": {"input": "hello"}},
+        }
+    )
+    assert started.session_update == {
+        "sessionId": "sess_1",
+        "runtime": "codex",
+        "externalSessionId": "thr_1",
+        "status": "running",
+        "sourceObservedAt": started.session_update["sourceObservedAt"],
+    }
+    assert started.timeline_items[0]["type"] == "turn.start"
+    assert started.timeline_items[0]["sessionId"] == "sess_1"
+    assert started.timeline_items[0]["source"]["runtime"] == "codex"
+
+    delta = reducer.reduce_notification(
+        {
+            "method": "item/agentMessage/delta",
+            "params": {"threadId": "thr_1", "turnId": "turn_1", "itemId": "item_1", "delta": "hi"},
+        }
+    )
+    assert delta.timeline_items[0]["type"] == "message"
+    assert delta.timeline_items[0]["content"]["text"] == "hi"
+
+    completed = reducer.reduce_notification(
+        {
+            "method": "turn/completed",
+            "params": {"threadId": "thr_1", "turnId": "turn_1", "turn": {"status": "completed"}},
+        }
+    )
+    assert completed.session_update["status"] == "idle"
+    assert [item["type"] for item in completed.timeline_items] == ["turn.start", "turn.end"]
+
+
+def test_reducer_maps_compact_to_notification() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+
+    reduced = reducer.reduce_notification(
+        {
+            "method": "turn/compact/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "summary": "Context compacted successfully.",
+            },
+        }
+    )
+
+    assert reduced.timeline_items == []
+    assert reduced.approvals == []
+    assert reduced.notices[0]["type"] == "notification"
+    assert reduced.notices[0]["sessionId"] == "sess_1"
+    assert reduced.notices[0]["title"] == "Compact completed"
+    assert reduced.notices[0]["message"] == "Context compacted successfully."
+    assert reduced.notices[0]["severity"] == "success"
+    assert reduced.notices[0]["metadata"] == {"category": "compact", "state": "completed"}
+
+
+def test_reducer_keeps_agent_delta_items_separate_by_item_id() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+
+    first = reducer.reduce_notification(
+        {
+            "method": "item/agentMessage/delta",
+            "params": {"threadId": "thr_1", "turnId": "turn_1", "itemId": "msg_first", "delta": "before tool"},
+        }
+    ).timeline_items[0]
+    second = reducer.reduce_notification(
+        {
+            "method": "item/agentMessage/delta",
+            "params": {"threadId": "thr_1", "turnId": "turn_1", "itemId": "msg_second", "delta": "after tool"},
+        }
+    ).timeline_items[0]
+
+    assert first["id"] != second["id"]
+    assert first["content"]["text"] == "before tool"
+    assert second["content"]["text"] == "after tool"
+
+
+def test_reducer_keeps_live_and_snapshot_message_ids_distinct() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+
+    live_user = reducer.reduce_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "itemId": "uuid-user",
+                "item": {
+                    "id": "uuid-user",
+                    "type": "userMessage",
+                    "content": [{"type": "input_text", "text": "你是谁"}],
+                },
+            },
+        }
+    )
+    live_assistant = reducer.reduce_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "itemId": "msg_1",
+                "item": {
+                    "id": "msg_1",
+                    "type": "agentMessage",
+                    "text": "我是 Codex",
+                },
+            },
+        }
+    )
+
+    snapshot = reducer.reduce_thread_snapshot(
+        "sess_1",
+        {
+            "id": "thr_1",
+            "status": {"type": "idle"},
+            "turns": [
+                {
+                    "id": "turn_1",
+                    "status": "completed",
+                    "items": [
+                        {
+                            "id": "item-1",
+                            "type": "userMessage",
+                            "content": [{"type": "text", "text": "你是谁", "text_elements": []}],
+                        },
+                        {"id": "item-2", "type": "agentMessage", "text": "我是 Codex"},
+                    ],
+                }
+            ],
+        },
+    )
+
+    live_ids = {live_user.timeline_items[0]["id"], live_assistant.timeline_items[0]["id"]}
+    message_items = [item for item in snapshot.timeline_items if item["type"] == "message"]
+    assert not live_ids.intersection({item["id"] for item in message_items})
+    assert message_items[0]["content"]["text"] == "你是谁"
+    assert message_items[1]["content"]["text"] == "我是 Codex"
+    assert [item["type"] for item in snapshot.timeline_items] == ["turn.start", "message", "message", "turn.end"]
+
+
+def test_reducer_keeps_multiple_agent_messages_in_one_turn() -> None:
+    reducer = TimelineReducer()
+
+    snapshot = reducer.reduce_thread_snapshot(
+        "sess_1",
+        {
+            "id": "thr_1",
+            "status": {"type": "idle"},
+            "turns": [
+                {
+                    "id": "turn_1",
+                    "status": "completed",
+                    "items": [
+                        {"id": "item-1", "type": "userMessage", "text": "start"},
+                        {"id": "item-2", "type": "agentMessage", "text": "first"},
+                        {"id": "item-3", "type": "agentMessage", "text": "second"},
+                    ],
+                }
+            ],
+        },
+    )
+
+    message_items = [item for item in snapshot.timeline_items if item["type"] == "message"]
+    assert [item["content"]["text"] for item in message_items] == ["start", "first", "second"]
+    assert len({item["id"] for item in message_items}) == 3
+    assert [item["source"].get("derivedKey") for item in message_items] == [
+        "message-userMessage",
+        "message-agentMessage-0",
+        "message-agentMessage-1",
+    ]
+
+
+def test_reducer_keeps_real_message_item_ids_stable_across_live_and_snapshot() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+    live = reducer.reduce_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "item": {
+                    "id": "msg_1",
+                    "type": "agentMessage",
+                    "status": "completed",
+                    "text": "first",
+                },
+            },
+        }
+    )
+    snapshot = reducer.reduce_thread_snapshot(
+        "sess_1",
+        {
+            "id": "thr_1",
+            "status": {"type": "idle"},
+            "turns": [
+                {
+                    "id": "turn_1",
+                    "status": "completed",
+                    "items": [
+                        {"id": "msg_1", "type": "agentMessage", "text": "first"},
+                        {"id": "msg_2", "type": "agentMessage", "text": "second"},
+                    ],
+                }
+            ],
+        },
+    )
+
+    snapshot_messages = [
+        item for item in snapshot.timeline_items if item["type"] == "message"
+    ]
+    assert snapshot_messages[0]["id"] == live.timeline_items[0]["id"]
+    assert [item["source"].get("derivedKey") for item in snapshot_messages] == [
+        None,
+        None,
+    ]
+
+
+def test_reducer_replays_completed_turn_snapshot_without_new_completion_time() -> None:
+    reducer = TimelineReducer()
+    snapshot = {
+        "id": "thr_1",
+        "status": {"type": "idle"},
+        "turns": [
+            {
+                "id": "turn_1",
+                "status": "completed",
+                "items": [{"id": "item-1", "type": "agentMessage", "text": "done"}],
+            }
+        ],
+    }
+
+    first = reducer.reduce_thread_snapshot("sess_1", snapshot)
+    second = reducer.reduce_thread_snapshot("sess_1", snapshot)
+    first_end = next(item for item in first.timeline_items if item["type"] == "turn.end")
+    second_end = next(item for item in second.timeline_items if item["type"] == "turn.end")
+
+    assert "completedAt" not in first_end
+    assert "completedAt" not in second_end
+    assert second_end["contentHash"] == first_end["contentHash"]
+    assert second_end["revision"] == first_end["revision"]
+
+
+def test_reducer_content_hash_ignores_transport_event_source() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+
+    live = reducer.reduce_turn_item_snapshots(
+        "sess_1",
+        "thr_1",
+        {
+            "turnId": "turn_1",
+            "items": [
+                {
+                    "id": "msg_1",
+                    "type": "agentMessage",
+                    "status": "completed",
+                    "text": "same final answer",
+                }
+            ],
+        },
+        {0},
+    )
+    snapshot = reducer.reduce_thread_snapshot(
+        "sess_1",
+        {
+            "id": "thr_1",
+            "status": {"type": "completed"},
+            "turns": [
+                {
+                    "id": "turn_1",
+                    "status": "completed",
+                    "items": [
+                        {
+                            "id": "msg_1",
+                            "type": "agentMessage",
+                            "status": "completed",
+                            "text": "same final answer",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    live_item = next(item for item in live.timeline_items if item["type"] == "message")
+    snapshot_item = next(item for item in snapshot.timeline_items if item["type"] == "message")
+    assert snapshot_item["contentHash"] == live_item["contentHash"]
+    assert snapshot_item["revision"] == live_item["revision"]
+
+
+def test_reducer_tags_user_message_with_registered_client_message_id() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+    reducer.register_client_message(
+        session_id="sess_1",
+        thread_id="thr_1",
+        turn_id="turn_1",
+        client_message_id="opt_123",
+        text="hello",
+    )
+
+    reduced = reducer.reduce_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "item": {"id": "msg_user", "type": "userMessage", "text": "hello"},
+            },
+        }
+    )
+
+    assert reduced.timeline_items[0]["source"]["clientMessageId"] == "opt_123"
+
+
+def test_reducer_projects_steering_user_message_for_web_timeline() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+    reducer.register_client_message(
+        session_id="sess_1",
+        thread_id="thr_1",
+        turn_id="turn_1",
+        client_message_id="opt_steer",
+        text="focus on the failing test",
+    )
+
+    reduced = reducer.reduce_turn_item_snapshots(
+        "sess_1",
+        "thr_1",
+        {
+            "turnId": "turn_1",
+            "items": [
+                {"id": "msg_initial", "type": "userMessage", "text": "start"},
+                {
+                    "id": "msg_steer",
+                    "type": "steeringUserMessage",
+                    "status": "completed",
+                    "input": [
+                        {"type": "text", "text": "focus on the failing test"}
+                    ],
+                },
+            ],
+        },
+        {0, 1},
+    )
+
+    initial, steering = reduced.timeline_items
+    assert initial["type"] == "message"
+    assert "clientMessageId" not in initial["source"]
+    assert steering["type"] == "message"
+    assert steering["role"] == "user"
+    assert steering["content"]["text"] == "focus on the failing test"
+    assert steering["source"]["clientMessageId"] == "opt_steer"
+
+
+def test_reducer_matches_pending_client_message_after_attachment_suffix() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+    reducer.register_client_message(
+        session_id="sess_1",
+        thread_id="thr_1",
+        client_message_id="opt_file",
+        text="summarize",
+        attachments=[
+            {
+                "fileId": "file_1",
+                "name": "notes.md",
+                "mediaType": "text/markdown",
+                "size": 10,
+            }
+        ],
+    )
+
+    reduced = reducer.reduce_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "item": {
+                    "id": "msg_user",
+                    "type": "userMessage",
+                    "text": "summarize\n\n[Attached file: notes.md (text/markdown, 10 bytes) at /tmp/notes.md]",
+                },
+            },
+        }
+    )
+
+    assert reduced.timeline_items[0]["source"]["clientMessageId"] == "opt_file"
+    assert reduced.timeline_items[0]["content"]["attachments"] == [
+        {
+            "fileId": "file_1",
+            "name": "notes.md",
+            "mediaType": "text/markdown",
+            "size": 10,
+        }
+    ]
+
+
+def test_history_uses_canonical_message_keys_and_filters_bootstrap_prompt() -> None:
+    reducer = TimelineReducer()
+
+    bootstrap = "# AGENTS.md instructions for /\n\n<INSTRUCTIONS>\nrules\n</INSTRUCTIONS><environment_context>\n  <cwd>/</cwd>\n</environment_context>"
+    reduced = reducer.reduce_history_items(
+        "sess_1",
+        "thr_1",
+        [
+            {"turnId": "turn_1", "item": {"type": "turnStart", "_derivedKey": "turn-start"}},
+            {"turnId": "turn_1", "item": {"type": "userMessage", "text": bootstrap}},
+            {"turnId": "turn_1", "item": {"type": "userMessage", "text": "ide是什么"}},
+            {"turnId": "turn_1", "item": {"type": "agentMessage", "text": "IDE answer"}},
+            {"turnId": "turn_1", "item": {"type": "turnEnd", "_derivedKey": "turn-end", "status": "completed"}},
+        ],
+    )
+
+    messages = [item for item in reduced.timeline_items if item["type"] == "message"]
+    assert [item["content"]["text"] for item in messages] == ["ide是什么", "IDE answer"]
+    assert [item["source"].get("derivedKey") for item in messages] == [
+        "message-userMessage",
+        "message-agentMessage",
+    ]
+    turn_start = next(item for item in reduced.timeline_items if item["type"] == "turn.start")
+    assert turn_start["status"] == "done"
+
+
+def test_reducer_maps_codex_approval_request() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+
+    reduced = reducer.reduce_notification(
+        {
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "item/commandExecution/requestApproval",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "itemId": "cmd_1",
+                "command": "uv run pytest -q",
+                "cwd": "/repo",
+            },
+        }
+    )
+
+    assert reduced.session_update["status"] == "blocked"
+    assert reduced.timeline_items[0]["type"] == "tool"
+    approval = reduced.approvals[0]
+    assert approval["kind"] == "command"
+    assert approval["source"]["requestId"] == 42
+    notifications = _backend_notifications_from_reduction(reduced)
+    approval_notice = next(
+        item["params"]
+        for item in notifications
+        if item["method"] == "notice.upsert"
+        and item["params"].get("interactionType") == "approval"
+    )
+    assert approval_notice["context"]["approvalSource"]["requestId"] == 42
+    assert all(item["method"] != "approval.requested" for item in notifications)
+
+
+def test_reducer_maps_function_call_command_tool() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+
+    started = reducer.reduce_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "item": {
+                    "type": "function_call",
+                    "name": "exec_command",
+                    "call_id": "call_1",
+                    "arguments": '{"cmd":"uv run pytest -q","workdir":"/repo"}',
+                },
+            },
+        }
+    )
+    completed = reducer.reduce_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "item": {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "tests passed",
+                },
+            },
+        }
+    )
+
+    assert started.timeline_items[0]["type"] == "tool"
+    assert started.timeline_items[0]["content"]["kind"] == "command"
+    assert started.timeline_items[0]["content"]["command"] == "uv run pytest -q"
+    assert completed.timeline_items[0]["id"] == started.timeline_items[0]["id"]
+    assert completed.timeline_items[0]["content"]["outputText"] == "tests passed"
+
+
+def test_reducer_maps_live_command_execution_item() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+
+    completed = reducer.reduce_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "item": {
+                    "id": "call_1",
+                    "type": "commandExecution",
+                    "command": "pwd",
+                    "cwd": "/repo",
+                    "aggregatedOutput": "/repo\n",
+                    "exitCode": 0,
+                    "durationMs": 12,
+                    "processId": 123,
+                    "commandActions": [{"kind": "read"}],
+                    "status": "completed",
+                },
+            },
+        }
+    )
+
+    item = completed.timeline_items[0]
+    assert item["type"] == "tool"
+    assert item["status"] == "done"
+    assert item["content"]["kind"] == "command"
+    assert item["content"]["command"] == "pwd"
+    assert item["content"]["outputText"] == "/repo\n"
+    assert item["content"]["exitCode"] == 0
+    assert item["content"]["processId"] == 123
+
+
+def test_reducer_truncates_large_tool_output_and_suppresses_unchanged_revisions() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+    reducer.reduce_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "item": {
+                    "type": "function_call",
+                    "name": "exec_command",
+                    "call_id": "call_1",
+                    "arguments": '{"cmd":"yes","workdir":"/repo"}',
+                },
+            },
+        }
+    )
+    first = reducer.reduce_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "item": {"type": "function_call_output", "call_id": "call_1", "output": "a" * 5000},
+            },
+        }
+    ).timeline_items[0]
+    second = reducer.reduce_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "item": {"type": "function_call_output", "call_id": "call_1", "output": "a" * 5000},
+            },
+        }
+    ).timeline_items[0]
+
+    assert len(first["content"]["outputText"]) == 4000
+    assert first["content"]["outputTruncated"] is True
+    assert first["content"]["outputLength"] == 5000
+    assert second["revision"] == first["revision"]
+
+
+def test_codex_history_reads_function_call_tools(tmp_path) -> None:
+    history_dir = tmp_path / "2026" / "05" / "20"
+    history_dir.mkdir(parents=True)
+    history_path = history_dir / "rollout-2026-05-20T00-00-00-thr_1.jsonl"
+    records = [
+        {"type": "session_meta", "payload": {"id": "thr_1"}},
+        {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "turn_1"}},
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "call_id": "call_1",
+                "arguments": '{"cmd":"uv run pytest -q","workdir":"/repo"}',
+            },
+        },
+        {"type": "response_item", "payload": {"type": "function_call_output", "call_id": "call_1", "output": "ok"}},
+    ]
+    history_path.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+
+    history = read_tool_history("thr_1", sessions_root=tmp_path)
+
+    assert [entry.turn_id for entry in history] == ["turn_1", "turn_1"]
+    assert [entry.item["type"] for entry in history] == ["function_call", "function_call_output"]
+
+
+def test_codex_history_can_read_explicit_rollout_path(tmp_path) -> None:
+    other_root = tmp_path / "other"
+    history_path = tmp_path / "rollout-custom.jsonl"
+    records = [
+        {"type": "session_meta", "payload": {"id": "different_filename"}},
+        {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "turn_1"}},
+        {
+            "type": "response_item",
+            "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "from path"}]},
+        },
+    ]
+    history_path.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+
+    history = read_timeline_history("thr_missing_in_name", rollout_path=history_path, sessions_root=other_root)
+
+    assert [entry.item["type"] for entry in history] == ["turnStart", "userMessage"]
+    assert history[1].item["content"][0]["text"] == "from path"
+
+
+def test_codex_history_preserves_interleaved_message_and_tool_order(tmp_path) -> None:
+    history_dir = tmp_path / "2026" / "05" / "20"
+    history_dir.mkdir(parents=True)
+    history_path = history_dir / "rollout-2026-05-20T00-00-00-thr_1.jsonl"
+    records = [
+        {"type": "session_meta", "payload": {"id": "thr_1"}},
+        {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "turn_1"}},
+        {
+            "type": "event_msg",
+            "payload": {"type": "user_message", "message": "duplicated event text should not become an item"},
+        },
+        {
+            "type": "response_item",
+            "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hello"}]},
+        },
+        {
+            "type": "response_item",
+            "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "first"}]},
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "call_id": "call_1",
+                "arguments": '{"cmd":"uv run pytest -q","workdir":"/repo"}',
+            },
+        },
+        {"type": "response_item", "payload": {"type": "function_call_output", "call_id": "call_1", "output": "ok"}},
+        {
+            "type": "response_item",
+            "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "second"}]},
+        },
+        {"type": "response_item", "payload": {"type": "reasoning", "summary": [{"text": "thinking"}]}},
+        {"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "turn_1"}},
+    ]
+    history_path.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+
+    history = read_timeline_history("thr_1", sessions_root=tmp_path)
+
+    assert [entry.turn_id for entry in history] == ["turn_1"] * 8
+    assert [entry.item["type"] for entry in history] == [
+        "turnStart",
+        "userMessage",
+        "agentMessage",
+        "function_call",
+        "function_call_output",
+        "agentMessage",
+        "reasoning",
+        "turnEnd",
+    ]
+    assert history[1].item["content"][0]["text"] == "hello"
+
+    reduced = TimelineReducer().reduce_history_items(
+        "sess_1",
+        "thr_1",
+        [{"turnId": entry.turn_id, "item": entry.item} for entry in history],
+    )
+    visible = [(item["type"], item.get("role"), item["content"].get("kind"), item["content"].get("text")) for item in reduced.timeline_items]
+    assert visible == [
+        ("turn.start", None, None, None),
+        ("message", "user", None, "hello"),
+        ("message", "assistant", None, "first"),
+        ("tool", "tool", "command", None),
+        ("tool", "tool", "command", None),
+        ("message", "assistant", None, "second"),
+        ("system", "system", "reasoning", None),
+        ("turn.end", None, None, None),
+    ]
+    assert reduced.timeline_items[3]["id"] == reduced.timeline_items[4]["id"]
+    assert reduced.timeline_items[4]["content"]["outputText"] == "ok"
+    assert reduced.timeline_items[6]["content"]["summaries"] == [{"index": 0, "text": "thinking"}]
+
+
+def test_adapter_creates_syncs_and_starts_codex_turn() -> None:
+    asyncio.run(_exercise_adapter())
+
+
+def test_adapter_replaces_missing_rollout_before_starting_turn() -> None:
+    asyncio.run(_exercise_missing_rollout_replacement())
+
+
+def test_adapter_recovers_when_loaded_codex_thread_was_unloaded_before_turn_start() -> None:
+    asyncio.run(_exercise_unloaded_thread_turn_start_recovery())
+
+
+def test_adapter_replaces_thread_when_unloaded_codex_thread_rollout_is_missing() -> None:
+    asyncio.run(_exercise_unloaded_thread_missing_rollout_replacement())
+
+
+async def _exercise_adapter() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def sink(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    rpc = FakeCodexRpc()
+    adapter = CodexAdapter(rpc=rpc, notification_sink=sink)  # type: ignore[arg-type]
+
+    created = await adapter.create_session({"sessionId": "sess_1", "cwd": "/repo"})
+    assert created["sessionId"] == "sess_1"
+    assert created["externalSessionId"] == "thr_1"
+
+    synced = await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+    methods = [notification["method"] for notification in synced["backendNotifications"]]
+    assert methods == ["session.updated", "timeline.sync"]
+    assert len(synced["backendNotifications"][1]["params"]["items"]) == 4
+
+    turn = await adapter.start_turn({"sessionId": "sess_1", "content": "continue"})
+    assert turn["turnId"] == "turn_2"
+    assert [request[0] for request in rpc.requests].count("thread/resume") == 1
+    assert rpc.requests[-1][0] == "turn/start"
+    assert rpc.requests[-1][1]["threadId"] == "thr_1"
+
+    await adapter.handle_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_2",
+                "item": {"id": "msg_1", "type": "agentMessage", "text": "done", "status": "completed"},
+            },
+        }
+    )
+    assert notifications[-1][0] == "timeline.itemUpsert"
+    assert notifications[-1][1]["item"]["content"]["text"] == "done"
+
+    await adapter.resolve_approval({"requestId": 42, "status": "approved"})
+    assert rpc.responses[-1] == (42, {"decision": "accept"})
+
+
+async def _exercise_missing_rollout_replacement() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def sink(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    rpc = MissingRolloutResumeRpc()
+    adapter = CodexAdapter(rpc=rpc, notification_sink=sink)  # type: ignore[arg-type]
+
+    turn = await adapter.start_turn(
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_missing_rollout",
+            "content": "continue",
+            "cwd": "/repo",
+        }
+    )
+
+    assert turn["turnId"] == "turn_2"
+    assert turn["externalSessionId"] == "thr_replacement"
+    assert ("thread/resume", {"threadId": "thr_missing_rollout"}) in rpc.requests
+    assert ("thread/start", {"cwd": "/repo", "model": None, "approvalPolicy": None, "sandbox": None, "ephemeral": False}) in rpc.requests
+    assert rpc.requests[-1] == (
+        "turn/start",
+        {
+            "threadId": "thr_replacement",
+            "input": [{"type": "text", "text": "continue", "text_elements": []}],
+            "approvalPolicy": None,
+            "sandboxPolicy": None,
+            "model": None,
+            "effort": None,
+            "approvalsReviewer": None,
+        },
+    )
+    assert notifications == [
+        (
+            "session.updated",
+            {
+                "sessionId": "sess_1",
+                "runtime": "codex",
+                "externalSessionId": "thr_replacement",
+                "cwd": "/repo",
+            },
+        )
+    ]
+
+
+async def _exercise_unloaded_thread_turn_start_recovery() -> None:
+    rpc = UnloadedThreadStartRpc()
+    adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+    adapter.reducer.bind_session("sess_1", "thr_1")
+    adapter._loaded_thread_ids.add("thr_1")
+
+    turn = await adapter.start_turn(
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "content": "continue",
+        }
+    )
+
+    assert turn["turnId"] == "turn_2"
+    assert turn["externalSessionId"] == "thr_1"
+    assert rpc.requests == [
+        ("account/read", None),
+        ("model/list", None),
+        ("thread/loaded/list", None),
+        (
+            "turn/start",
+            {
+                "threadId": "thr_1",
+                "input": [{"type": "text", "text": "continue", "text_elements": []}],
+                "approvalPolicy": None,
+                "sandboxPolicy": None,
+                "model": None,
+                "effort": None,
+                "approvalsReviewer": None,
+            },
+        ),
+        ("thread/resume", {"threadId": "thr_1"}),
+        (
+            "turn/start",
+            {
+                "threadId": "thr_1",
+                "input": [{"type": "text", "text": "continue", "text_elements": []}],
+                "approvalPolicy": None,
+                "sandboxPolicy": None,
+                "model": None,
+                "effort": None,
+                "approvalsReviewer": None,
+            },
+        ),
+    ]
+
+
+async def _exercise_unloaded_thread_missing_rollout_replacement() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def sink(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    rpc = MissingAfterUnloadedThreadStartRpc()
+    adapter = CodexAdapter(rpc=rpc, notification_sink=sink)  # type: ignore[arg-type]
+    adapter.reducer.bind_session("sess_1", "thr_stale")
+    adapter._loaded_thread_ids.add("thr_stale")
+
+    turn = await adapter.start_turn(
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_stale",
+            "content": "continue",
+            "cwd": "/repo",
+        }
+    )
+
+    assert turn["turnId"] == "turn_2"
+    assert turn["externalSessionId"] == "thr_replacement"
+    assert ("thread/resume", {"threadId": "thr_stale"}) in rpc.requests
+    assert rpc.requests[-1][1]["threadId"] == "thr_replacement"
+    assert notifications == [
+        (
+            "session.updated",
+            {
+                "sessionId": "sess_1",
+                "runtime": "codex",
+                "externalSessionId": "thr_replacement",
+                "cwd": "/repo",
+            },
+        )
+    ]
+
+
+def test_adapter_sync_session_refreshes_loaded_codex_thread() -> None:
+    async def exercise() -> None:
+        rpc = FakeCodexRpc()
+        adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+
+        await adapter.create_session({"sessionId": "sess_1", "cwd": "/repo"})
+        await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+        await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+
+        assert rpc.requests.count(("thread/resume", {"threadId": "thr_1"})) == 2
+        assert rpc.requests.count(("thread/read", {"threadId": "thr_1", "includeTurns": True})) == 2
+
+    asyncio.run(exercise())
+
+
+def test_adapter_maps_thread_start_sandbox_policy_to_mode() -> None:
+    async def exercise() -> None:
+        rpc = FakeCodexRpc()
+        adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+
+        await adapter.create_session(
+            {
+                "sessionId": "sess_1",
+                "cwd": "/repo",
+                "permissionSelectionId": protocol_selection_id(
+                    "codex",
+                    "permission",
+                    {"approval_policy": "on-request", "sandbox": "workspace-write"},
+                ),
+            }
+        )
+
+        method, params = rpc.requests[-1]
+        assert method == "thread/start"
+        assert params is not None
+        assert params["sandbox"] == "workspace-write"
+
+    asyncio.run(exercise())
+
+
+def test_adapter_creates_stable_session_id_for_new_thread() -> None:
+    async def exercise() -> None:
+        rpc = FakeCodexRpc()
+        adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+        created = await adapter.create_session({"connectorId": "conn_1", "cwd": "/repo"})
+        session_id = stable_session_id("conn_1", "thr_1")
+        assert created["sessionId"] == session_id
+        assert created["backendNotifications"][0]["params"]["sessionId"] == session_id
+
+    asyncio.run(exercise())
+
+
+def test_adapter_sync_uses_thread_read_snapshot_only() -> None:
+    asyncio.run(_exercise_thread_read_only_sync())
+
+
+def test_adapter_sync_preserves_requested_thread_id_when_snapshot_omits_id() -> None:
+    async def exercise() -> None:
+        class MissingSnapshotIdRpc(FakeCodexRpc):
+            async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+                result = await super().request(method, params)
+                if method == "thread/read":
+                    thread = result["thread"]
+                    thread.pop("id", None)
+                return result
+
+        rpc = MissingSnapshotIdRpc()
+        adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+
+        synced = await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+        session_update = synced["backendNotifications"][0]["params"]
+        timeline_items = synced["backendNotifications"][1]["params"]["items"]
+
+        assert session_update["externalSessionId"] == "thr_1"
+        assert adapter.reducer is not None
+        assert adapter.reducer.thread_for_session("sess_1") == "thr_1"
+        assert all(item["source"]["sessionId"] == "thr_1" for item in timeline_items)
+
+    asyncio.run(exercise())
+
+
+def test_adapter_sync_prefers_requested_thread_id_when_snapshot_id_drifts() -> None:
+    async def exercise() -> None:
+        class DriftSnapshotIdRpc(FakeCodexRpc):
+            async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+                result = await super().request(method, params)
+                if method == "thread/read":
+                    result["thread"]["id"] = "thr_fork_child"
+                return result
+
+        rpc = DriftSnapshotIdRpc()
+        adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+
+        synced = await adapter.sync_session({"sessionId": "sess_parent", "externalSessionId": "thr_parent"})
+        session_update = synced["backendNotifications"][0]["params"]
+        timeline_items = synced["backendNotifications"][1]["params"]["items"]
+
+        assert session_update["externalSessionId"] == "thr_parent"
+        assert adapter.reducer is not None
+        assert adapter.reducer.thread_for_session("sess_parent") == "thr_parent"
+        assert adapter.reducer.session_for_thread("thr_fork_child") is None
+        assert all(item["source"]["sessionId"] == "thr_parent" for item in timeline_items)
+
+    asyncio.run(exercise())
+
+
+def test_adapter_interrupt_thread_not_found_is_soft_result() -> None:
+    async def exercise() -> None:
+        rpc = InterruptThreadNotFoundRpc()
+        adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+
+        result = await adapter.interrupt_turn(
+            {
+                "sessionId": "sess_1",
+                "externalSessionId": "thr_missing",
+                "turnId": "turn_missing",
+            }
+        )
+
+        assert result == {"interrupted": False, "reason": "thread_not_found"}
+
+    asyncio.run(exercise())
+
+
+def test_adapter_interrupts_remote_ipc_owner_without_turn_id() -> None:
+    async def exercise() -> None:
+        rpc = FakeCodexRpc()
+        ipc_client = FakeCodexIpcClient()
+        adapter = CodexAdapter(rpc=rpc, ipc_client=ipc_client)  # type: ignore[arg-type]
+        await adapter.sync_session(
+            {"sessionId": "sess_1", "externalSessionId": "thr_1"}
+        )
+        assert ipc_client.message_handler is not None
+        await ipc_client.message_handler(
+            CodexIpcStreamStateChangedBroadcast.model_validate(
+                {
+                    "sourceClientId": "app_owner",
+                    "params": {
+                        "conversationId": "thr_1",
+                        "change": {
+                            "type": "snapshot",
+                            "revision": 1,
+                            "conversationState": {
+                                "id": "thr_1",
+                                "threadRuntimeStatus": {"type": "active"},
+                                "turns": [],
+                            },
+                        },
+                    },
+                }
+            )
+        )
+
+        result = await adapter.interrupt_turn(
+            {"sessionId": "sess_1", "externalSessionId": "thr_1"}
+        )
+
+        assert result["interrupted"] is True
+        method, request_params, options = ipc_client.requests[-1]
+        assert method == "thread-follower-interrupt-turn"
+        assert request_params == {"conversationId": "thr_1"}
+        assert options["target_client_id"] == "app_owner"
+        assert not any(method == "turn/interrupt" for method, _params in rpc.requests)
+
+    asyncio.run(exercise())
+
+
+async def _exercise_thread_read_only_sync() -> None:
+    rpc = FakeCodexRpc()
+    adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+
+    synced = await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+    items = synced["backendNotifications"][1]["params"]["items"]
+    messages = [item for item in items if item["type"] == "message"]
+    command_items = [item for item in items if item["type"] == "tool" and item["content"].get("kind") == "command"]
+
+    assert [item["content"]["text"] for item in messages] == ["hello", "hi"]
+    assert command_items == []
+
+
+def test_adapter_discovers_existing_codex_threads() -> None:
+    asyncio.run(_exercise_existing_thread_sync())
+
+
+def test_adapter_discovers_ipc_router_during_sync_and_closes_client() -> None:
+    asyncio.run(_exercise_ipc_client_lifecycle())
+
+
+def test_adapter_reduces_ipc_snapshot_and_token_patch() -> None:
+    asyncio.run(_exercise_ipc_snapshot_and_patch())
+
+
+def test_adapter_publishes_local_app_server_state_to_ipc_followers() -> None:
+    asyncio.run(_exercise_ipc_local_owner_projection())
+
+
+def test_adapter_routes_new_turn_to_remote_ipc_owner() -> None:
+    asyncio.run(_exercise_start_turn_through_remote_ipc_owner())
+
+
+def test_adapter_steers_local_owner_and_handles_ipc_follower_request() -> None:
+    asyncio.run(_exercise_local_and_incoming_ipc_steer())
+
+
+def test_adapter_routes_steer_to_remote_ipc_owner() -> None:
+    asyncio.run(_exercise_remote_ipc_steer())
+
+
+def test_reducer_ipc_item_indexes_use_unfiltered_turn_positions() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+    reduced = reducer.reduce_turn_item_snapshots(
+        "sess_1",
+        "thr_1",
+        {
+            "turnId": "turn_1",
+            "items": [
+                {
+                    "id": "bootstrap",
+                    "type": "userMessage",
+                    "content": [{"type": "text", "text": "# AGENTS.md instructions"}],
+                },
+                {
+                    "id": "msg_1",
+                    "type": "agentMessage",
+                    "text": "hello",
+                    "status": "inProgress",
+                },
+            ],
+        },
+        {1},
+    )
+    assert len(reduced.timeline_items) == 1
+    assert reduced.timeline_items[0]["content"]["text"] == "hello"
+
+
+def test_adapter_uses_persisted_sync_marker_after_restart(tmp_path) -> None:
+    asyncio.run(_exercise_persisted_existing_thread_sync(tmp_path))
+
+
+def test_adapter_uses_separate_scan_and_changed_thread_timeouts(monkeypatch) -> None:
+    asyncio.run(_exercise_existing_thread_sync_timeouts(monkeypatch))
+
+
+def test_adapter_skips_archived_and_unresumable_codex_threads() -> None:
+    asyncio.run(_exercise_archived_thread_sync())
+
+
+def test_adapter_treats_archived_resume_failure_as_skipped() -> None:
+    asyncio.run(_exercise_archived_resume_failure_sync())
+
+
+def test_adapter_treats_missing_model_provider_as_skipped_once() -> None:
+    asyncio.run(_exercise_missing_model_provider_thread_sync())
+
+
+async def _exercise_existing_thread_sync() -> None:
+    rpc = FakeCodexRpc()
+    adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+
+    sent_notifications: list[list[dict[str, Any]]] = []
+
+    async def sink(notifications: list[dict[str, Any]]) -> None:
+        sent_notifications.append(notifications)
+
+    result = await adapter.sync_existing_sessions("conn_1")
+    session_id = stable_session_id("conn_1", "thr_existing")
+
+    assert result["threads"] == ["thr_existing"]
+    assert [notification["method"] for notification in result["backendNotifications"]] == [
+        "session.updated",
+        "timeline.sync",
+    ]
+    assert result["backendNotifications"][0]["params"]["sessionId"] == session_id
+    assert result["backendNotifications"][0]["params"]["externalSessionId"] == "thr_existing"
+    assert result["backendNotifications"][0]["params"]["lastActivityAt"] == "2026-05-20T15:35:18Z"
+    assert ("thread/list", {"limit": 100, "sortKey": "updated_at"}) in rpc.requests
+    assert ("thread/resume", {"threadId": "thr_existing"}) in rpc.requests
+    assert ("thread/read", {"threadId": "thr_existing", "includeTurns": True}) in rpc.requests
+
+    streamed = await adapter.sync_existing_sessions("conn_1", notification_sink=sink)
+    assert streamed["threads"] == []
+    assert streamed["skippedThreads"] == ["thr_existing"]
+    assert streamed["backendNotifications"] == []
+    assert sent_notifications == []
+    assert rpc.requests.count(("thread/read", {"threadId": "thr_existing", "includeTurns": True})) == 1
+
+    forced = await adapter.sync_existing_sessions("conn_1", force=True, notification_sink=sink)
+    assert forced["threads"] == ["thr_existing"]
+    assert forced["skippedThreads"] == []
+    assert [notification["method"] for notification in sent_notifications[0]] == ["session.updated", "timeline.sync"]
+
+
+async def _exercise_ipc_client_lifecycle() -> None:
+    rpc = FakeCodexRpc()
+    ipc_client = FakeCodexIpcClient()
+    adapter = CodexAdapter(rpc=rpc, ipc_client=ipc_client)  # type: ignore[arg-type]
+    await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+    await adapter.sync_existing_sessions("conn_1")
+
+    assert ipc_client.ensure_connected_calls == 2
+    await adapter.stop()
+    assert ipc_client.closed is True
+    assert rpc.closed is True
+
+
+async def _exercise_ipc_snapshot_and_patch() -> None:
+    rpc = FakeCodexRpc()
+    ipc_client = FakeCodexIpcClient()
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def sink(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    adapter = CodexAdapter(  # type: ignore[arg-type]
+        rpc=rpc,
+        ipc_client=ipc_client,
+        notification_sink=sink,
+    )
+    await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+    adapter._model_list_result = {  # noqa: SLF001
+        "data": [
+            {
+                "id": "gpt-5.6-sol",
+                "supportedReasoningEfforts": ["low", "high"],
+            }
+        ]
+    }
+    assert ipc_client.broadcasts[-1][0] == "thread-stream-following-changed"
+
+    snapshot = CodexIpcStreamStateChangedBroadcast.model_validate(
+        {
+            "sourceClientId": "owner_1",
+            "params": {
+                "conversationId": "thr_1",
+                "change": {
+                    "type": "snapshot",
+                    "revision": 1,
+                    "conversationState": {
+                        "id": "thr_1",
+                        "title": "IPC thread",
+                        "cwd": "/repo",
+                        "threadRuntimeStatus": {"type": "active"},
+                        "latestModel": "gpt-5.6-sol",
+                        "latestReasoningEffort": "low",
+                        "threadSettings": {
+                            "approvalPolicy": "on-request",
+                            "sandboxPolicy": {
+                                "type": "workspaceWrite",
+                                "networkAccess": False,
+                            },
+                        },
+                        "turnHistory": {
+                            "kind": "canonical",
+                            "history": {
+                                "generation": 1,
+                                "isComplete": True,
+                                "entitiesByKey": {
+                                    "turn_key": {
+                                        "turnId": "turn_ipc",
+                                        "status": "inProgress",
+                                        "items": [
+                                            {
+                                                "id": "msg_ipc",
+                                                "type": "agentMessage",
+                                                "status": "inProgress",
+                                                "text": "hel",
+                                            }
+                                        ],
+                                    }
+                                },
+                                "islands": [
+                                    {
+                                        "id": "tail:1",
+                                        "entries": [
+                                            {"key": "turn_key", "value": "turn_key"}
+                                        ],
+                                    }
+                                ],
+                            },
+                        },
+                    },
+                },
+            },
+        }
+    )
+    assert ipc_client.message_handler is not None
+    await ipc_client.message_handler(snapshot)
+    assert [method for method, _params in notifications] == [
+        "session.updated",
+        "timeline.sync",
+    ]
+    assert notifications[0][1]["status"] == "running"
+    assert notifications[0][1]["runtimeSettings"] == {
+        "model": "gpt-5.6-sol",
+        "effort": "low",
+        "permissionMode": "on_request_workspace_write",
+    }
+    assert notifications[0][1]["modelSelectionId"] == protocol_selection_id(
+        "codex",
+        "model",
+        {"model_id": "gpt-5.6-sol", "reasoning_id": "low"},
+    )
+    assert notifications[0][1]["permissionSelectionId"] == protocol_selection_id(
+        "codex",
+        "permission",
+        {"approval_policy": "on-request", "sandbox": "workspace-write"},
+    )
+    notifications.clear()
+
+    patch = CodexIpcStreamStateChangedBroadcast.model_validate(
+        {
+            "sourceClientId": "owner_1",
+            "params": {
+                "conversationId": "thr_1",
+                "change": {
+                    "type": "patches",
+                    "baseRevision": 1,
+                    "revision": 2,
+                    "patches": [
+                        {
+                            "op": "replace",
+                            "path": [
+                                "turnHistory",
+                                "history",
+                                "entitiesByKey",
+                                "turn_key",
+                                "items",
+                                0,
+                                "text",
+                            ],
+                            "value": "hello",
+                        }
+                    ],
+                },
+            },
+        }
+    )
+    await ipc_client.message_handler(patch)
+    assert [method for method, _params in notifications] == ["timeline.itemUpsert"]
+    assert notifications[0][1]["item"]["content"]["text"] == "hello"
+    notifications.clear()
+
+    insertion_patch = CodexIpcStreamStateChangedBroadcast.model_validate(
+        {
+            "sourceClientId": "owner_1",
+            "params": {
+                "conversationId": "thr_1",
+                "change": {
+                    "type": "patches",
+                    "baseRevision": 2,
+                    "revision": 3,
+                    "patches": [
+                        {
+                            "op": "add",
+                            "path": [
+                                "turnHistory",
+                                "history",
+                                "entitiesByKey",
+                                "turn_key",
+                                "items",
+                                1,
+                            ],
+                            "value": {
+                                "id": "msg_ipc_2",
+                                "type": "agentMessage",
+                                "status": "inProgress",
+                                "text": "next",
+                            },
+                        }
+                    ],
+                },
+            },
+        }
+    )
+    await ipc_client.message_handler(insertion_patch)
+    assert [method for method, _params in notifications] == ["timeline.itemUpsert"]
+    assert notifications[0][1]["item"]["content"]["text"] == "next"
+    notifications.clear()
+
+    status_patch = CodexIpcStreamStateChangedBroadcast.model_validate(
+        {
+            "sourceClientId": "owner_1",
+            "params": {
+                "conversationId": "thr_1",
+                "change": {
+                    "type": "patches",
+                    "baseRevision": 3,
+                    "revision": 4,
+                    "patches": [
+                        {
+                            "op": "replace",
+                            "path": ["threadRuntimeStatus"],
+                            "value": {"type": "idle"},
+                        }
+                    ],
+                },
+            },
+        }
+    )
+    await ipc_client.message_handler(status_patch)
+    assert [method for method, _params in notifications] == ["session.updated"]
+    assert notifications[0][1]["status"] == "idle"
+    notifications.clear()
+
+    gap = CodexIpcStreamStateChangedBroadcast.model_validate(
+        {
+            "sourceClientId": "owner_1",
+            "params": {
+                "conversationId": "thr_1",
+                "change": {
+                    "type": "patches",
+                    "baseRevision": 5,
+                    "revision": 6,
+                    "patches": [],
+                },
+            },
+        }
+    )
+    following_before = len(ipc_client.broadcasts)
+    await ipc_client.message_handler(gap)
+    assert notifications == []
+    assert len(ipc_client.broadcasts) == following_before + 1
+    await ipc_client.message_handler(gap)
+    assert len(ipc_client.broadcasts) == following_before + 1
+
+    resynced = CodexIpcStreamStateChangedBroadcast.model_validate(
+        {
+            "sourceClientId": "owner_1",
+            "params": {
+                "conversationId": "thr_1",
+                "change": {
+                    "type": "snapshot",
+                    "revision": 6,
+                    "conversationState": snapshot.params.change.conversationState.model_dump(
+                        mode="json"
+                    ),
+                },
+            },
+        }
+    )
+    await ipc_client.message_handler(resynced)
+    notifications.clear()
+    await ipc_client.message_handler(
+        CodexIpcStreamStateChangedBroadcast.model_validate(
+            {
+                "sourceClientId": "owner_1",
+                "params": {
+                    "conversationId": "thr_1",
+                    "change": {
+                        "type": "patches",
+                        "baseRevision": 7,
+                        "revision": 8,
+                        "patches": [],
+                    },
+                },
+            }
+        )
+    )
+    assert len(ipc_client.broadcasts) == following_before + 2
+
+
+async def _exercise_ipc_local_owner_projection() -> None:
+    rpc = FakeCodexRpc()
+    ipc_client = FakeCodexIpcClient()
+    ipc_client.request_error = RuntimeError("no-client-found")
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def sink(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    adapter = CodexAdapter(  # type: ignore[arg-type]
+        rpc=rpc,
+        ipc_client=ipc_client,
+        notification_sink=sink,
+    )
+    await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+    assert ipc_client.message_handler is not None
+    await ipc_client.message_handler(
+        CodexIpcFollowingChangedBroadcast.model_validate(
+            {
+                "sourceClientId": "ide_follower",
+                "params": {
+                    "conversationId": "thr_1",
+                    "following": True,
+                },
+            }
+        )
+    )
+    broadcasts_before = len(ipc_client.broadcasts)
+
+    # App-server notifications emitted by passive thread/resume sync must not
+    # make this Connector steal ownership from Codex App.
+    await adapter.handle_notification(
+        {
+            "method": "item/agentMessage/delta",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "itemId": "item_2",
+                "delta": "!",
+            },
+        }
+    )
+    assert ipc_client.broadcasts[broadcasts_before:] == []
+
+    await adapter.start_turn(
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "content": "continue locally",
+        }
+    )
+
+    owner_broadcasts = ipc_client.broadcasts[broadcasts_before:]
+    assert owner_broadcasts[0][0] == "thread-stream-following-changed"
+    assert owner_broadcasts[0][1]["following"] is False
+    assert owner_broadcasts[1][0] == "thread-stream-state-changed"
+    assert owner_broadcasts[1][2]["target_client_ids"] == ["ide_follower"]
+    first_change = owner_broadcasts[1][1]["change"]
+    assert first_change["type"] == "snapshot"
+    assert first_change["revision"] == 0
+
+    await adapter.handle_notification(
+        {
+            "method": "item/agentMessage/delta",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "itemId": "item_2",
+                "delta": "?",
+            },
+        }
+    )
+    second_change = ipc_client.broadcasts[-1][1]["change"]
+    assert second_change["type"] == "patches"
+    assert (second_change["baseRevision"], second_change["revision"]) == (0, 1)
+    assert second_change["patches"][0]["value"] == "hi?"
+
+    notifications.clear()
+    remote_snapshot = CodexIpcStreamStateChangedBroadcast.model_validate(
+        {
+            "sourceClientId": "other_owner",
+            "params": {
+                "conversationId": "thr_1",
+                "change": {
+                    "type": "snapshot",
+                    "revision": 9,
+                    "conversationState": {
+                        "id": "thr_1",
+                        "turns": [],
+                    },
+                },
+            },
+        }
+    )
+    await ipc_client.message_handler(remote_snapshot)
+    assert notifications == []
+
+
+async def _exercise_start_turn_through_remote_ipc_owner() -> None:
+    rpc = FakeCodexRpc()
+    ipc_client = FakeCodexIpcClient()
+    adapter = CodexAdapter(rpc=rpc, ipc_client=ipc_client)  # type: ignore[arg-type]
+    await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+    assert ipc_client.message_handler is not None
+    await ipc_client.message_handler(
+        CodexIpcStreamStateChangedBroadcast.model_validate(
+            {
+                "sourceClientId": "app_owner",
+                "params": {
+                    "conversationId": "thr_1",
+                    "change": {
+                        "type": "snapshot",
+                        "revision": 7,
+                        "conversationState": {
+                            "id": "thr_1",
+                            "threadRuntimeStatus": {"type": "idle"},
+                            "latestModel": "gpt-5.6-sol",
+                            "latestReasoningEffort": "low",
+                            "turns": [],
+                        },
+                    },
+                },
+            }
+        )
+    )
+    broadcasts_before = len(ipc_client.broadcasts)
+    rpc_requests_before = len(rpc.requests)
+
+    result = await adapter.start_turn(
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "content": "start through the App owner",
+            "clientMessageId": "msg_web",
+            "permissionSelectionId": protocol_selection_id(
+                "codex",
+                "permission",
+                {"approval_policy": "never", "sandbox": "danger-full-access"},
+            ),
+        }
+    )
+
+    assert result["turnId"] == "turn_ipc"
+    assert [item["method"] for item in result["backendNotifications"]] == [
+        "session.updated",
+        "timeline.itemUpsert",
+    ]
+    assert result["backendNotifications"][0]["params"]["status"] == "running"
+    assert result["backendNotifications"][1]["params"]["item"]["type"] == (
+        "turn.start"
+    )
+    method, request_params, options = ipc_client.requests[-1]
+    assert method == "thread-follower-start-turn"
+    assert request_params["conversationId"] == "thr_1"
+    assert request_params["turnStartParams"]["clientUserMessageId"] == "msg_web"
+    assert request_params["turnStartParams"]["input"][0]["text"] == (
+        "start through the App owner"
+    )
+    assert set(request_params["turnStartParams"]) == {
+        "input",
+        "clientUserMessageId",
+        "approvalPolicy",
+        "sandboxPolicy",
+    }
+    assert request_params["turnStartParams"]["approvalPolicy"] == "never"
+    assert request_params["turnStartParams"]["sandboxPolicy"] == {
+        "type": "dangerFullAccess"
+    }
+    assert options["target_client_id"] == "app_owner"
+    assert ipc_client.broadcasts[broadcasts_before:] == []
+    assert not any(
+        method == "turn/start" for method, _params in rpc.requests[rpc_requests_before:]
+    )
+    assert adapter._ipc_publisher.is_active("thr_1") is False  # noqa: SLF001
+
+    ipc_client.request_error = RuntimeError("thread-follower-start-turn-timeout")
+    with pytest.raises(RuntimeError, match="timeout"):
+        await adapter.start_turn(
+            {
+                "sessionId": "sess_1",
+                "externalSessionId": "thr_1",
+                "content": "must not retry locally",
+            }
+        )
+    assert ipc_client.broadcasts[broadcasts_before:] == []
+    assert adapter._ipc_publisher.is_active("thr_1") is False  # noqa: SLF001
+
+
+async def _exercise_local_and_incoming_ipc_steer() -> None:
+    rpc = FakeCodexRpc()
+    ipc_client = FakeCodexIpcClient()
+    ipc_client.request_error = RuntimeError("no-client-found")
+    adapter = CodexAdapter(rpc=rpc, ipc_client=ipc_client)  # type: ignore[arg-type]
+    await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+    await adapter.start_turn(
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "content": "begin locally",
+        }
+    )
+    assert ipc_client.requests[-1][0] == "thread-follower-start-turn"
+    ipc_client.requests.clear()
+    await adapter.handle_notification(
+        {
+            "method": "turn/started",
+            "params": {
+                "threadId": "thr_1",
+                "turn": {"id": "turn_live", "status": "inProgress", "items": []},
+            },
+        }
+    )
+
+    result = await adapter.steer_turn(
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "turnId": "turn_live",
+            "content": "focus on tests",
+            "clientMessageId": "msg_local",
+        }
+    )
+
+    assert result["steered"] is True
+    assert rpc.requests[-1] == (
+        "turn/steer",
+        {
+            "threadId": "thr_1",
+            "input": [
+                {
+                    "type": "text",
+                    "text": "focus on tests",
+                    "text_elements": [],
+                }
+            ],
+            "expectedTurnId": "turn_live",
+            "clientUserMessageId": "msg_local",
+        },
+    )
+    assert ipc_client.requests == []
+
+    request = CodexIpcRequest(
+        requestId="ipc_steer_1",
+        sourceClientId="ide_follower",
+        method="thread-follower-steer-turn",
+        version=1,
+        params={
+            "conversationId": "thr_1",
+            "clientUserMessageId": "msg_ide",
+            "input": [{"type": "text", "text": "be concise", "text_elements": []}],
+        },
+    )
+    assert ipc_client.request_predicate is not None
+    assert ipc_client.request_predicate(request) is True
+    assert ipc_client.request_handler is not None
+    response = await ipc_client.request_handler(request)
+    assert response == {"result": {}}
+    assert rpc.requests[-1][0] == "turn/steer"
+    assert rpc.requests[-1][1]["expectedTurnId"] == "turn_live"
+
+    start_request = CodexIpcRequest(
+        requestId="ipc_start_1",
+        sourceClientId="ide_follower",
+        method="thread-follower-start-turn",
+        version=1,
+        params={
+            "conversationId": "thr_1",
+            "turnStartParams": {
+                "input": [
+                    {"type": "text", "text": "new turn", "text_elements": []}
+                ],
+                "clientUserMessageId": "msg_ide_start",
+            },
+        },
+    )
+    assert ipc_client.request_predicate(start_request) is True
+    start_response = await ipc_client.request_handler(start_request)
+    assert "result" in start_response
+    assert rpc.requests[-1] == (
+        "turn/start",
+        {
+            "threadId": "thr_1",
+            "input": [
+                {"type": "text", "text": "new turn", "text_elements": []}
+            ],
+        },
+    )
+
+
+async def _exercise_remote_ipc_steer() -> None:
+    rpc = FakeCodexRpc()
+    ipc_client = FakeCodexIpcClient()
+    adapter = CodexAdapter(rpc=rpc, ipc_client=ipc_client)  # type: ignore[arg-type]
+    await adapter.sync_session({"sessionId": "sess_1", "externalSessionId": "thr_1"})
+    assert ipc_client.message_handler is not None
+    await ipc_client.message_handler(
+        CodexIpcStreamStateChangedBroadcast.model_validate(
+            {
+                "sourceClientId": "app_owner",
+                "params": {
+                    "conversationId": "thr_1",
+                    "change": {
+                        "type": "snapshot",
+                        "revision": 1,
+                        "conversationState": {
+                            "id": "thr_1",
+                            "turns": [
+                                {
+                                    "turnId": "turn_ipc",
+                                    "status": "inProgress",
+                                    "items": [],
+                                }
+                            ],
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    result = await adapter.steer_turn(
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "turnId": "turn_ipc",
+            "content": "use the IPC owner",
+            "clientMessageId": "msg_remote",
+        }
+    )
+
+    assert result == {"steered": True, "turnId": "turn_ipc"}
+    method, request_params, options = ipc_client.requests[-1]
+    assert method == "thread-follower-steer-turn"
+    assert request_params["conversationId"] == "thr_1"
+    assert request_params["input"][0]["text"] == "use the IPC owner"
+    assert options["target_client_id"] == "app_owner"
+    assert not any(method == "turn/steer" for method, _params in rpc.requests)
+
+
+async def _exercise_persisted_existing_thread_sync(tmp_path) -> None:
+    store = JsonSyncStateStore(tmp_path / "connector-state.json")
+    first_rpc = FakeCodexRpc()
+    first_adapter = CodexAdapter(rpc=first_rpc, sync_state_store=store)  # type: ignore[arg-type]
+
+    first = await first_adapter.sync_existing_sessions("conn_1")
+    assert first["threads"] == ["thr_existing"]
+    assert ("thread/read", {"threadId": "thr_existing", "includeTurns": True}) in first_rpc.requests
+
+    second_rpc = FakeCodexRpc()
+    second_adapter = CodexAdapter(rpc=second_rpc, sync_state_store=store)  # type: ignore[arg-type]
+
+    second = await second_adapter.sync_existing_sessions("conn_1")
+    assert second["threads"] == []
+    assert second["skippedThreads"] == ["thr_existing"]
+    assert ("thread/read", {"threadId": "thr_existing", "includeTurns": True}) not in second_rpc.requests
+    assert second_adapter.reducer is not None
+    assert second_adapter.reducer.session_for_thread("thr_existing") == stable_session_id("conn_1", "thr_existing")
+
+
+async def _exercise_archived_thread_sync() -> None:
+    rpc = ArchivedThreadListRpc()
+    adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+
+    result = await adapter.sync_existing_sessions("conn_1")
+
+    assert result["threads"] == []
+    assert result["skippedThreads"] == ["thr_archived", "thr_unresumable"]
+    assert result["backendNotifications"] == []
+    assert ("thread/resume", {"threadId": "thr_archived"}) not in rpc.requests
+    assert ("thread/resume", {"threadId": "thr_unresumable"}) not in rpc.requests
+
+
+async def _exercise_archived_resume_failure_sync() -> None:
+    rpc = ArchivedResumeRpc()
+    adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+
+    result = await adapter.sync_existing_sessions("conn_1")
+
+    assert result["threads"] == []
+    assert result["skippedThreads"] == ["thr_existing"]
+    assert result["backendNotifications"] == []
+
+
+async def _exercise_missing_model_provider_thread_sync() -> None:
+    rpc = MissingModelProviderResumeRpc()
+    adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+
+    result = await adapter.sync_existing_sessions("conn_1")
+    replay = await adapter.sync_existing_sessions("conn_1")
+
+    assert result["threads"] == []
+    assert result["skippedThreads"] == ["thr_existing"]
+    assert result["backendNotifications"] == []
+    assert replay["threads"] == []
+    assert replay["skippedThreads"] == ["thr_existing"]
+    assert rpc.requests.count(("thread/resume", {"threadId": "thr_existing"})) == 1
+
+
+async def _exercise_existing_thread_sync_timeouts(monkeypatch) -> None:
+    rpc = FakeCodexRpc()
+    adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+    timeouts: list[float | None] = []
+    real_wait_for = asyncio.wait_for
+
+    async def recording_wait_for(awaitable, *, timeout=None):
+        timeouts.append(timeout)
+        return await real_wait_for(awaitable, timeout=timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", recording_wait_for)
+
+    result = await adapter.sync_existing_sessions("conn_1")
+
+    assert result["threads"] == ["thr_existing"]
+    assert timeouts[:2] == [
+        EXISTING_SYNC_SCAN_TIMEOUT_SECONDS,
+        EXISTING_SYNC_CHANGED_THREAD_TIMEOUT_SECONDS,
+    ]
+
+
+def test_adapter_pushes_thread_read_snapshot_after_turn_completion() -> None:
+    asyncio.run(_exercise_delayed_thread_read_sync())
+
+
+async def _exercise_delayed_thread_read_sync() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def sink(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    rpc = FakeCodexRpc()
+    adapter = CodexAdapter(rpc=rpc, notification_sink=sink)  # type: ignore[arg-type]
+    await adapter.start()
+    adapter.reducer.bind_session("sess_1", "thr_1")
+
+    await adapter.handle_notification(
+        {
+            "method": "turn/completed",
+            "params": {"threadId": "thr_1", "turnId": "turn_1", "turn": {"status": "completed"}},
+        }
+    )
+    await asyncio.sleep(0.6)
+
+    sync_batches = [params for method, params in notifications if method == "timeline.sync"]
+    assert sync_batches
+    assert any(item["type"] == "message" and item["content"]["text"] == "hi" for item in sync_batches[-1]["items"])
+    assert ("thread/read", {"threadId": "thr_1", "includeTurns": True}) in rpc.requests
+
+
+def test_adapter_registers_client_message_id_after_turn_start() -> None:
+    asyncio.run(_exercise_adapter_registers_client_message_id())
+
+
+def test_codex_adapter_materializes_attachments_to_user_dir(tmp_path, monkeypatch) -> None:
+    asyncio.run(_exercise_codex_adapter_materializes_attachments_to_user_dir(tmp_path, monkeypatch))
+
+
+async def _exercise_codex_adapter_materializes_attachments_to_user_dir(tmp_path, monkeypatch) -> None:
+    attachments_root = tmp_path / "runtime-attachments"
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(attachments_root))
+    rpc = FakeCodexRpc()
+    adapter = CodexAdapter(rpc=rpc)  # type: ignore[arg-type]
+    adapter.reducer.bind_session("sess_attach", "thr_attach")
+
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        assert session_id == "sess_attach"
+        if file_id == "file_note":
+            return b"hello\n", "../notes.md", "text/markdown"
+        return b"\x89PNG\r\n\x1a\n", "diagram.png", "image/png"
+
+    adapter.attachment_downloader = download
+    await adapter.start_turn(
+        {
+            "sessionId": "sess_attach",
+            "externalSessionId": "thr_attach",
+            "cwd": "/repo",
+            "content": "review",
+            "attachments": [
+                {"fileId": "file_note", "name": "../notes.md"},
+                {"fileId": "file_img", "name": "diagram.png"},
+            ],
+        }
+    )
+
+    note = attachments_root / "sess_attach" / "file_note-notes.md"
+    image = attachments_root / "sess_attach" / "file_img-diagram.png"
+    assert note.read_bytes() == b"hello\n"
+    assert image.read_bytes() == b"\x89PNG\r\n\x1a\n"
+    params = rpc.requests[-1][1]
+    assert params is not None
+    assert params["input"][0]["text"] == (
+        f"review\n\n[Attached file: ../notes.md (text/markdown, 6 bytes) at {note}]"
+    )
+    assert params["input"][1] == {"type": "localImage", "path": str(image)}
+
+
+async def _exercise_adapter_registers_client_message_id() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def sink(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    rpc = FakeCodexRpc()
+    adapter = CodexAdapter(rpc=rpc, notification_sink=sink)  # type: ignore[arg-type]
+    adapter.reducer.bind_session("sess_1", "thr_1")
+
+    await adapter.start_turn(
+        {
+            "sessionId": "sess_1",
+            "externalSessionId": "thr_1",
+            "content": "hello",
+            "clientMessageId": "opt_hello",
+        }
+    )
+    await adapter.handle_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_2",
+                "item": {"id": "msg_user", "type": "userMessage", "text": "hello"},
+            },
+        }
+    )
+
+    user_items = [
+        params["item"]
+        for method, params in notifications
+        if method == "timeline.itemUpsert"
+        and params["item"]["type"] == "message"
+        and params["item"].get("role") == "user"
+    ]
+    assert user_items[-1]["source"]["clientMessageId"] == "opt_hello"
+
+def test_reducer_merges_live_reasoning_and_snapshot_into_single_item() -> None:
+    reducer = TimelineReducer()
+    reducer.bind_session("sess_1", "thr_1")
+
+    live = reducer.reduce_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "itemId": "item_real_reasoning",
+                "item": {
+                    "id": "item_real_reasoning",
+                    "type": "reasoning",
+                    "summary": [{"text": "thinking about stuff"}],
+                },
+            },
+        }
+    )
+    live_reasoning = [
+        item
+        for item in live.timeline_items
+        if item.get("type") == "system" and item.get("content", {}).get("kind") == "reasoning"
+    ]
+    assert len(live_reasoning) == 1
+    live_id = live_reasoning[0]["id"]
+
+    snapshot = reducer.reduce_thread_snapshot(
+        "sess_1",
+        {
+            "id": "thr_1",
+            "status": {"type": "idle"},
+            "turns": [
+                {
+                    "id": "turn_1",
+                    "status": "completed",
+                    "items": [
+                        {
+                            "id": "item-1",
+                            "type": "reasoning",
+                            "summary": [{"text": "thinking about stuff"}],
+                        },
+                    ],
+                }
+            ],
+        },
+    )
+    snapshot_reasoning = [
+        item
+        for item in snapshot.timeline_items
+        if item.get("type") == "system" and item.get("content", {}).get("kind") == "reasoning"
+    ]
+    assert len(snapshot_reasoning) == 1
+    assert snapshot_reasoning[0]["id"] == live_id
+    assert snapshot_reasoning[0]["source"]["derivedKey"] == "reasoning-0"

@@ -4,9 +4,9 @@ import * as React from "react"
 import { Monitor, ChevronDown, ArrowUp, Loader2, Check } from "lucide-react"
 import { toast } from "sonner"
 
-import { AgentAuthBanner } from "@/components/agent-auth-banner"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
+import { useSidebar } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -19,58 +19,64 @@ import {
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu"
 import { CascadingSelector } from "@/components/cascading-selector"
+import { useSessionToolSidebarStore } from "@/components/session-tool-sidebar-state"
+import { AgentSelectionDrawer } from "@/components/session/agent-selection-drawer"
+import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
 import {
   AttachmentButton,
   AttachmentPreviewList,
   DragOverlay,
+  type AttachedFile,
   useAttachments,
 } from "@/components/attachment-input"
 import { buildOptimisticUserMessage } from "@/components/session/optimistic-timeline"
+import {
+  ProjectEditorDialog,
+  type ProjectEditorState,
+} from "@/components/sidebar/project-editor-dialog"
 import { WorkspacePicker, type WorkspaceSelection } from "@/components/workspace-picker"
 import { useWorkspace } from "@/components/workspace-context"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import { createClientId } from "@/lib/id"
 import { cn } from "@/lib/utils"
-import {
-  composerMenuOptions,
-  effortFieldForModel,
-  effectiveFieldValue,
-  optionLabel,
-  type ComposerPermissionLabelKey,
-  runtimeConfigFields,
-  validEffortValue,
-} from "@/features/dashboard/runtime-config"
-import type { RuntimeConfigSchema, SessionView as RealSessionView } from "@/features/dashboard/types"
+import { useElementWidth } from "@/hooks/use-element-width"
+import type {
+  DeviceRuntimeView,
+  InlineAttachmentRef,
+  ProjectCreateRequest,
+  ProtocolCapabilitySet,
+  ProtocolModelCatalog,
+  ProtocolPermissionCatalog,
+  SessionView as RealSessionView,
+} from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
-
-type ComposerPermissionMode = {
-  id: "ask" | "full" | "readonly"
-  labelKey: ComposerPermissionLabelKey
-  approvalPolicy?: string
-  sandbox?: string
-}
-
-const PERMISSION_MODES: [ComposerPermissionMode, ...ComposerPermissionMode[]] = [
-  {
-    id: "ask",
-    labelKey: "askApproval",
-    approvalPolicy: undefined,
-    sandbox: undefined,
-  },
-  {
-    id: "full",
-    labelKey: "fullAccess",
-    approvalPolicy: "never",
-    sandbox: "danger-full-access",
-  },
-  {
-    id: "readonly",
-    labelKey: "readOnly",
-    approvalPolicy: "on-request",
-    sandbox: "read-only",
-  },
-]
+import {
+  catalogItemDisabledReason,
+  catalogItemEnabled,
+  catalogI18nText,
+  modelCatalogDisplayName,
+  modelIdsForSelectionId,
+  permissionIdForSelectionId,
+  selectionIdForModelCatalog,
+  selectionIdForPermissionCatalog,
+} from "@/components/session/catalog-selection"
+import { CAPABILITY, capabilityIsUsable, attachmentMimeTypes } from "@/components/session/capabilities"
+import {
+  runtimeInstanceName,
+  runtimeTypeName,
+  sessionRuntimeRequestIdentity,
+} from "@/features/dashboard/runtime-instances"
+import { runtimeIsSelectable } from "@/features/dashboard/runtime-status-presentation"
+import {
+  availableNewSessionSelectionPreference,
+  newSessionSelectionScope,
+  preferredAvailableOptionId,
+  withNewSessionSelectionPreference,
+  type NewSessionPreference,
+  type NewSessionSelectionPreference,
+} from "@/features/dashboard/new-session-preferences"
+import { watchNewSessionRuntimeInventory } from "@/features/dashboard/new-session-runtime-inventory"
 
 const NEW_SESSION_PREFERENCE_KEY = "aa-new-session-preference-v1"
 const TITLE_WRITE_MS = 58
@@ -96,53 +102,136 @@ const NEW_SESSION_TITLE_KEYS = [
   "typewriter.chooseTarget",
   "typewriter.changingToday",
 ] as const
+const MOBILE_NEW_SESSION_TITLE_KEYS = [
+  "typewriter.workOn",
+  "typewriter.giveTask",
+  "typewriter.needsAttention",
+  "typewriter.nextChange",
+  "typewriter.inspect",
+  "typewriter.changingToday",
+] as const
 
-type NewSessionPreference = {
-  connectorId: string
-  agent: string
+async function inlineAttachmentsFromFiles(files: AttachedFile[]): Promise<InlineAttachmentRef[]> {
+  const inlineAttachments: InlineAttachmentRef[] = []
+  for (const attachment of files) {
+    const content = await attachment.file.arrayBuffer()
+    const contentBase64 = arrayBufferToBase64(content)
+    const sha256 = await sha256Hex(content)
+    inlineAttachments.push({
+      fileId: attachment.id.slice(0, 64),
+      name: attachment.name,
+      mediaType: attachment.file.type || "application/octet-stream",
+      size: attachment.size,
+      sha256,
+      contentBase64,
+    })
+  }
+  return inlineAttachments
+}
+
+function arrayBufferToBase64(value: ArrayBuffer): string {
+  const bytes = new Uint8Array(value)
+  const chunkSize = 0x8000
+  let binary = ""
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize)
+    binary += String.fromCharCode(...chunk)
+  }
+  return btoa(binary)
+}
+
+async function sha256Hex(value: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", value)
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
 }
 
 type NewSessionTitleKey = (typeof NEW_SESSION_TITLE_KEYS)[number]
-
-type PrecreateEntry = {
-  key: string
-  session: RealSessionView | null
-  promise: Promise<RealSessionView>
-  consumed: boolean
-}
-
-function precreateKey(
-  connectorId: string,
-  agent: string,
-  cwd: string,
-  approvalId: string,
-): string {
-  return `${connectorId}\0${agent}\0${cwd}\0${approvalId}`
-}
+type MobileNewSessionTitleKey = (typeof MOBILE_NEW_SESSION_TITLE_KEYS)[number]
 
 export function TaskComposer() {
+  const toolSidebarStore = useSessionToolSidebarStore()
   const { session: authSession } = useAuth()
+  const { isMobile, state: sidebarState } = useSidebar()
   const {
     addOptimisticMessage,
     bindOptimisticSession,
     connectors,
-    discardOptimisticSession,
+    createProject,
+    goHome,
     markOptimisticMessageFailed,
+    newSessionProject,
     openSession,
-    requestSessionRefresh,
-    upsertSession,
-    refreshData,
+    projects,
+    resolveProject,
+    sidebarShowsSessions,
+    updateProject,
   } = useWorkspace()
   const t = useTranslations("dashboard.new")
   const typewriterTitles = React.useMemo(
-    () => NEW_SESSION_TITLE_KEYS.map((key) => t(key as NewSessionTitleKey)),
-    [t],
+    () => {
+      const keys = isMobile ? MOBILE_NEW_SESSION_TITLE_KEYS : NEW_SESSION_TITLE_KEYS
+      return keys.map((key) => t(key as NewSessionTitleKey | MobileNewSessionTitleKey))
+    },
+    [isMobile, t],
   )
 
-  // Derive online connectors for the device picker
-  const onlineConnectors = React.useMemo(
-    () => connectors.filter((connector) => connector.status === "online" && attachedRuntimes(connector).length > 0),
+  const [runtimeInventory, setRuntimeInventory] = React.useState<Record<string, DeviceRuntimeView[]>>({})
+  const [runtimeInventoryLoading, setRuntimeInventoryLoading] = React.useState(true)
+  const runtimeInventoryRef = React.useRef(runtimeInventory)
+  runtimeInventoryRef.current = runtimeInventory
+  const onlineConnectorKey = React.useMemo(
+    () => connectors
+      .filter((connector) => connector.status === "online")
+      .map((connector) => `${connector.id}:${connector.status}`)
+      .sort()
+      .join("|"),
     [connectors],
+  )
+
+  React.useEffect(() => {
+    if (!authSession?.accessToken) {
+      setRuntimeInventory((current) => sameRuntimeInventory(current, {}) ? current : {})
+      setRuntimeInventoryLoading(false)
+      return
+    }
+    const online = connectors.filter((connector) => connector.status === "online")
+    if (online.length === 0) {
+      setRuntimeInventory((current) => sameRuntimeInventory(current, {}) ? current : {})
+      setRuntimeInventoryLoading(false)
+      return
+    }
+    const onlineIds = new Set(online.map((connector) => connector.id))
+    const retainedInventory = Object.fromEntries(
+      Object.entries(runtimeInventoryRef.current).filter(([connectorId]) => onlineIds.has(connectorId)),
+    )
+    setRuntimeInventory((current) => sameRuntimeInventory(current, retainedInventory) ? current : retainedInventory)
+    setRuntimeInventoryLoading(
+      !online.some((connector) => activeRuntimes(retainedInventory[connector.id]).length > 0),
+    )
+
+    return watchNewSessionRuntimeInventory({
+      connectorIds: online.map((connector) => connector.id),
+      load: async (connectorId) => (
+        await dashboardApi.getConnectorRuntimes(authSession.accessToken, connectorId)
+      ).runtimes,
+      onUpdate: (connectorId, runtimes) => {
+        setRuntimeInventory((current) => {
+          const next = { ...current, [connectorId]: runtimes }
+          return sameRuntimeInventory(current, next) ? current : next
+        })
+      },
+      onInitialSettled: () => setRuntimeInventoryLoading(false),
+    })
+  }, [authSession?.accessToken, onlineConnectorKey])
+
+  // New sessions can only target runtimes that the Server has activated and the Connector reports as running.
+  const onlineConnectors = React.useMemo(
+    () => connectors.filter((connector) =>
+      connector.status === "online" && activeRuntimes(runtimeInventory[connector.id]).length > 0,
+    ),
+    [connectors, runtimeInventory],
   )
 
   const deviceOptions = React.useMemo(
@@ -162,53 +251,42 @@ export function TaskComposer() {
     null
   const selectedConnectorId = selectedConnector?.id ?? ""
   const agentOptions = React.useMemo(
-    () => selectedConnector ? attachedRuntimes(selectedConnector).map((runtime) => ({ id: runtime, label: runtimeLabel(runtime) })) : [],
-    [selectedConnector],
+    () => selectedConnector
+      ? activeRuntimes(runtimeInventory[selectedConnector.id]).map((runtime) => ({
+          id: runtime.runtimeId,
+          label: runtimeOptionLabel(runtime),
+        }))
+      : [],
+    [runtimeInventory, selectedConnector],
   )
 
   const [selectedAgent, setSelectedAgent] = React.useState(agentOptions[0]?.id ?? "")
+  const selectedRuntime = activeRuntimes(runtimeInventory[selectedConnectorId])
+    .find((runtime) => runtime.runtimeId === selectedAgent) ?? null
+  const selectedRuntimeScope = selectedRuntime
+    ? { runtimeId: selectedRuntime.runtimeId, runtimeType: selectedRuntime.runtimeType }
+    : undefined
   const [selectedModel, setSelectedModel] = React.useState("")
   const [selectedReasoning, setSelectedReasoning] = React.useState("")
-  const [approval, setApproval] = React.useState<(typeof PERMISSION_MODES)[number]["id"]>("ask")
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
   const [workspace, setWorkspace] = React.useState<WorkspaceSelection | null>(null)
+  const [projectEditor, setProjectEditor] = React.useState<ProjectEditorState>(null)
   const [prompt, setPrompt] = React.useState("")
-  const [runtimeSchema, setRuntimeSchema] = React.useState<RuntimeConfigSchema | null>(null)
-  const [runtimeSettings, setRuntimeSettings] = React.useState<Record<string, unknown>>({})
-  const [signingIn, setSigningIn] = React.useState(false)
-
-  const selectedAgentReport = selectedConnector?.runtimeCapabilities?.attached?.[selectedAgent]?.report
-  const agentNeedsAuth =
-    selectedAgentReport?.authStatus === "required" ||
-    selectedAgentReport?.authStatus === "unknown"
-  const agentAuthMethods = selectedAgentReport?.authMethods ?? []
-  const [runtimeConfigLoading, setRuntimeConfigLoading] = React.useState(false)
+  const [modelCatalog, setModelCatalog] = React.useState<ProtocolModelCatalog | null>(null)
+  const [permissionCatalog, setPermissionCatalog] = React.useState<ProtocolPermissionCatalog | null>(null)
+  const [runtimeCapabilities, setRuntimeCapabilities] = React.useState<ProtocolCapabilitySet | null>(null)
+  const [catalogsLoading, setCatalogsLoading] = React.useState(false)
   const [creating, setCreating] = React.useState(false)
+  const creatingRef = React.useRef(false)
   const [createTick, setCreateTick] = React.useState(0)
   const [preferenceLoaded, setPreferenceLoaded] = React.useState(false)
   const [preference, setPreference] = React.useState<NewSessionPreference | null>(null)
-  const devicePreferenceAppliedRef = React.useRef(false)
-  const agentPreferenceAppliedForDeviceRef = React.useRef<string | null>(null)
-  const precreateRef = React.useRef<PrecreateEntry | null>(null)
+  const preferenceRef = React.useRef<NewSessionPreference | null>(null)
+  const projectPrefillAppliedRef = React.useRef<string | null>(null)
+  const composerRef = React.useRef<HTMLDivElement | null>(null)
+  const composerWidth = useElementWidth(composerRef)
 
-  const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop } =
-    useAttachments()
   const typedTitle = useTypewriterTitle(typewriterTitles, creating)
-
-  const discardPrecreate = React.useCallback(
-    async (entry: PrecreateEntry | null) => {
-      if (!entry || entry.consumed) return
-      entry.consumed = true
-      try {
-        const session = entry.session ?? (await entry.promise.catch(() => null))
-        if (!session || !authSession?.accessToken) return
-        await dashboardApi.bulkArchiveSessions(authSession.accessToken, [session.id], true)
-      } catch {
-        /* best-effort cleanup of unused precreated sessions */
-      }
-    },
-    [authSession?.accessToken],
-  )
 
   React.useEffect(() => {
     if (!creating) {
@@ -221,276 +299,422 @@ export function TaskComposer() {
   }, [creating])
 
   React.useEffect(() => {
-    setPreference(readNewSessionPreference())
+    const storedPreference = readNewSessionPreference()
+    preferenceRef.current = storedPreference
+    setPreference(storedPreference)
     setPreferenceLoaded(true)
   }, [])
 
-  React.useEffect(() => {
-    if (deviceOptions.length === 0) {
-      if (selectedDevice) setSelectedDevice("")
-      return
-    }
+  const persistPreference = React.useCallback((next: NewSessionPreference) => {
+    preferenceRef.current = next
+    setPreference(next)
+    writeNewSessionPreference(next)
+  }, [])
 
-    if (preferenceLoaded && !devicePreferenceAppliedRef.current) {
-      const preferredDevice = preference?.connectorId
-      const fallbackDevice = deviceOptions[0]?.id ?? ""
-      const nextDevice = preferredDevice && deviceOptions.some((option) => option.id === preferredDevice)
-        ? preferredDevice
-        : fallbackDevice
-      devicePreferenceAppliedRef.current = true
-      if (nextDevice !== selectedDevice) {
-        setSelectedDevice(nextDevice)
+  const persistTargetPreference = React.useCallback((
+    connectorId: string,
+    agent: string,
+    selection: Partial<NewSessionSelectionPreference> = {},
+  ) => {
+    if (!preferenceLoaded || !connectorId || !agent) return
+    const scope = newSessionSelectionScope(connectorId, agent)
+    const existing = preferenceRef.current?.selections?.[scope]
+    persistPreference(withNewSessionSelectionPreference(
+      preferenceRef.current,
+      connectorId,
+      agent,
+      {
+        model: selection.model !== undefined ? selection.model : existing?.model ?? null,
+        permission: selection.permission !== undefined ? selection.permission : existing?.permission ?? null,
+      },
+    ))
+  }, [persistPreference, preferenceLoaded])
+
+  React.useEffect(() => {
+    if (!newSessionProject) {
+      if (projectPrefillAppliedRef.current !== null) {
+        projectPrefillAppliedRef.current = null
+        setWorkspace(null)
       }
       return
     }
 
-    if (!deviceOptions.some((option) => option.id === selectedDevice)) {
-      setSelectedDevice(deviceOptions[0]?.id ?? "")
+    if (projectPrefillAppliedRef.current === newSessionProject.id) return
+    if (!deviceOptions.some((option) => option.id === newSessionProject.connectorId)) {
+      setWorkspace(null)
+      return
     }
-  }, [deviceOptions, preference?.connectorId, preferenceLoaded, selectedDevice])
+    if (selectedDevice !== newSessionProject.connectorId) {
+      setSelectedDevice(newSessionProject.connectorId)
+      return
+    }
+
+    projectPrefillAppliedRef.current = newSessionProject.id
+    setWorkspace({
+      label: newSessionProject.name,
+      path: newSessionProject.workspacePath,
+      connectorId: newSessionProject.connectorId,
+      projectId: newSessionProject.id,
+    })
+  }, [deviceOptions, newSessionProject, selectedDevice])
 
   React.useEffect(() => {
-    setWorkspace(null)
-  }, [selectedConnector?.id])
+    if (newSessionProject) return
+    const nextDevice = preferredAvailableOptionId(
+      deviceOptions,
+      selectedDevice,
+      preferenceLoaded ? preference?.connectorId : null,
+    )
+    if (nextDevice !== selectedDevice) {
+      setSelectedDevice(nextDevice)
+    }
+  }, [deviceOptions, newSessionProject, preference?.connectorId, preferenceLoaded, selectedDevice])
+
+  React.useEffect(() => {
+    setWorkspace((current) => {
+      if (!current) return current
+      if (current.connectorId && current.connectorId !== selectedConnectorId) return null
+      if (current.projectId && !projects.some((project) => (
+        project.id === current.projectId && project.connectorId === selectedConnectorId
+      ))) return null
+      return current
+    })
+  }, [projects, selectedConnectorId])
 
   React.useEffect(() => {
     const connectorId = selectedConnectorId
-
-    if (!connectorId || agentOptions.length === 0) {
-      if (selectedAgent) setSelectedAgent("")
-      return
-    }
-
-    if (
-      preferenceLoaded &&
-      preference?.connectorId === connectorId &&
-      agentPreferenceAppliedForDeviceRef.current !== connectorId
-    ) {
-      const preferredAgent = preference.agent
-      if (agentOptions.some((option) => option.id === preferredAgent)) {
-        agentPreferenceAppliedForDeviceRef.current = connectorId
-        if (preferredAgent !== selectedAgent) {
-          setSelectedAgent(preferredAgent)
-        }
-        return
-      }
-      agentPreferenceAppliedForDeviceRef.current = connectorId
-    }
-
-    if (!agentOptions.some((option) => option.id === selectedAgent)) {
-      setSelectedAgent(agentOptions[0]?.id ?? "")
+    const preferredAgent = preferenceLoaded && preference?.connectorId === connectorId
+      ? preference.agent
+      : null
+    const nextAgent = preferredAvailableOptionId(
+      agentOptions,
+      selectedAgent,
+      preferredAgent,
+    )
+    if (nextAgent !== selectedAgent) {
+      setSelectedAgent(nextAgent)
     }
   }, [agentOptions, preference, preferenceLoaded, selectedAgent, selectedConnectorId])
 
   React.useEffect(() => {
     if (!authSession?.accessToken || !selectedConnectorId || !selectedAgent) {
-      setRuntimeSchema(null)
-      setRuntimeSettings({})
-      setRuntimeConfigLoading(false)
+      setModelCatalog(null)
+      setPermissionCatalog(null)
+      setRuntimeCapabilities(null)
+      setCatalogsLoading(false)
       return
     }
     let cancelled = false
-    setRuntimeConfigLoading(true)
-    setRuntimeSchema(null)
-    setRuntimeSettings({})
-    Promise.all([
-      dashboardApi.getRuntimeConfigSchema(authSession.accessToken, selectedAgent),
-      dashboardApi.getConnectorAgentSettings(authSession.accessToken, selectedConnectorId, selectedAgent),
-      dashboardApi.getAgentDefaults(authSession.accessToken),
-    ])
-      .then(([schemaResponse, settingsResponse, defaultsResponse]) => {
+    setCatalogsLoading(true)
+    setModelCatalog(null)
+    setPermissionCatalog(null)
+    setRuntimeCapabilities(null)
+    dashboardApi.getConnectorRuntimeCapabilities(
+      authSession.accessToken,
+      selectedConnectorId,
+      selectedAgent,
+    )
+      .then(async (capabilitiesResponse) => {
+        const capabilitySet = capabilitiesResponse.capabilitySet
+        const canUseModelCatalog = capabilityIsUsable(
+          capabilitySet,
+          CAPABILITY.modelCatalog,
+          selectedRuntimeScope,
+        )
+        const canUsePermissionCatalog = capabilityIsUsable(
+          capabilitySet,
+          CAPABILITY.permissionCatalog,
+          selectedRuntimeScope,
+        )
+        const [modelCatalogResponse, permissionCatalogResponse] = await Promise.all([
+          canUseModelCatalog
+            ? dashboardApi.getConnectorRuntimeModelCatalog(
+                authSession.accessToken,
+                selectedConnectorId,
+                selectedAgent,
+              )
+            : Promise.resolve(null),
+          canUsePermissionCatalog
+            ? dashboardApi.getConnectorRuntimePermissionCatalog(
+                authSession.accessToken,
+                selectedConnectorId,
+                selectedAgent,
+              )
+            : Promise.resolve(null),
+        ])
+        return { capabilitySet, modelCatalogResponse, permissionCatalogResponse }
+      })
+      .then(({ capabilitySet, modelCatalogResponse, permissionCatalogResponse }) => {
         if (cancelled) return
-        const userDefaultSettings = defaultsResponse.runtimes[selectedAgent]?.settings ?? {}
-        // Prefer device-merged schema (live ACP modelOptions from the connector report).
-        setRuntimeSchema(settingsResponse.schema ?? schemaResponse.schema)
-        setRuntimeSettings({
-          ...userDefaultSettings,
-          ...(settingsResponse.runtimeSettings ?? settingsResponse.settings ?? {}),
-        })
+        setRuntimeCapabilities(capabilitySet)
+        setModelCatalog(modelCatalogResponse?.catalog ?? null)
+        setPermissionCatalog(permissionCatalogResponse?.catalog ?? null)
       })
       .catch(() => {
         if (cancelled) return
-        setRuntimeSchema(null)
-        setRuntimeSettings({})
+        setRuntimeCapabilities(null)
+        setModelCatalog(null)
+        setPermissionCatalog(null)
       })
       .finally(() => {
-        if (!cancelled) setRuntimeConfigLoading(false)
+        if (!cancelled) setCatalogsLoading(false)
       })
     return () => {
       cancelled = true
     }
-  }, [authSession?.accessToken, selectedAgent, selectedConnectorId])
+  }, [authSession?.accessToken, selectedAgent, selectedConnectorId, selectedRuntime?.runtimeType])
 
-  const runtimeFields = React.useMemo(
-    () => runtimeConfigFields(runtimeSchema, runtimeSettings, "session"),
-    [runtimeSchema, runtimeSettings],
+  const canUseModelCatalog = capabilityIsUsable(
+    runtimeCapabilities,
+    CAPABILITY.modelCatalog,
+    selectedRuntimeScope,
   )
-  const modelField = runtimeFields.find((field) => field.key === "model")
-  const permissionField = runtimeFields.find((field) => field.key === "permissionMode")
-  const rawEffortField = runtimeFields.find((field) => field.key === "effort")
-  const effortField = effortFieldForModel(
-    modelField,
-    rawEffortField,
-    selectedModel || runtimeSettings.model,
+  const canUsePermissionCatalog = capabilityIsUsable(
+    runtimeCapabilities,
+    CAPABILITY.permissionCatalog,
+    selectedRuntimeScope,
   )
-  const effortFieldFor = (model: string) => effortFieldForModel(
-    modelField,
-    rawEffortField,
-    model,
+  const canUseAttachments = capabilityIsUsable(
+    runtimeCapabilities,
+    CAPABILITY.attachment,
+    selectedRuntimeScope,
   )
-  const models = composerMenuOptions(modelField)
-  const permissionOptions = composerMenuOptions(permissionField)
-  const reasoningOptions = composerMenuOptions(effortField)
+  const allowedMimeTypes = React.useMemo(() => attachmentMimeTypes(runtimeCapabilities, selectedRuntimeScope), [runtimeCapabilities, selectedRuntimeScope])
+  const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop,
+    attachmentsAllowed, attachmentError } = useAttachments({ enabled: canUseAttachments, allowedMimeTypes })
+
+  const models = React.useMemo(
+    () => modelCatalog?.models.map((item) => ({
+      id: item.id,
+      label: modelCatalogDisplayName(
+        item,
+        modelCatalog.models,
+        catalogI18nText(t, item.metadata, "labelKey", item.displayName),
+        t("defaultReasoning"),
+      ),
+      default: item.default,
+      enabled: catalogItemEnabled(item),
+      disabledReason: catalogItemDisabledReason(item),
+      selectionId: item.selectionId,
+      reasoningItems: item.reasoningItems.map((reasoning) => ({
+        id: reasoning.id,
+        label: catalogI18nText(t, reasoning.metadata, "labelKey", reasoning.displayName),
+        default: reasoning.default,
+        enabled: catalogItemEnabled(reasoning),
+        disabledReason: catalogItemDisabledReason(reasoning),
+        selectionId: reasoning.selectionId,
+      })),
+    })) ?? [],
+    [modelCatalog, t],
+  )
+  const selectedModelItem = models.find((item) => item.id === selectedModel)
+  const reasoningOptions = selectedModelItem?.reasoningItems ?? []
+  const permissionOptions = React.useMemo(
+    () => permissionCatalog?.permissions.map((item) => ({
+      id: item.id,
+      label: catalogI18nText(t, item.metadata, "labelKey", item.displayName),
+      description: catalogI18nText(t, item.metadata, "descriptionKey", item.description),
+      default: item.default,
+      enabled: catalogItemEnabled(item),
+      disabledReason: catalogItemDisabledReason(item),
+      selectionId: item.selectionId,
+    })) ?? [],
+    [permissionCatalog, t],
+  )
 
   React.useEffect(() => {
-    const nextModel = effectiveFieldValue(modelField, runtimeSettings.model)
-    setSelectedModel((current) => current && models.some((option) => option.id === current) ? current : nextModel)
-  }, [modelField, models, runtimeSettings.model])
+    const nextModel = models.find((option) => option.default && option.enabled)?.id
+      ?? models.find((option) => option.enabled)?.id
+      ?? ""
+    setSelectedModel((current) => current && models.some((option) => option.id === current && option.enabled) ? current : nextModel)
+  }, [models])
 
   React.useEffect(() => {
-    const nextPermissionMode = effectiveFieldValue(permissionField, runtimeSettings.permissionMode)
+    const nextPermissionMode = permissionOptions.find((option) => option.default && option.enabled)?.id
+      ?? permissionOptions.find((option) => option.enabled)?.id
+      ?? ""
     setSelectedPermissionMode((current) =>
-      current && permissionOptions.some((option) => option.id === current) ? current : nextPermissionMode,
+      current && permissionOptions.some((option) => option.id === current && option.enabled) ? current : nextPermissionMode,
     )
-  }, [permissionField, permissionOptions, runtimeSettings.permissionMode])
+  }, [permissionOptions])
 
   React.useEffect(() => {
-    const nextEffort = effectiveFieldValue(effortField, runtimeSettings.effort)
+    const nextEffort = reasoningOptions.find((option) => option.default && option.enabled)?.id
+      ?? reasoningOptions.find((option) => option.enabled)?.id
+      ?? ""
     setSelectedReasoning((current) =>
-      current && reasoningOptions.some((option) => option.id === current) ? current : nextEffort,
+      current && reasoningOptions.some((option) => option.id === current && option.enabled) ? current : nextEffort,
     )
-  }, [effortField, reasoningOptions, runtimeSettings.effort])
+  }, [reasoningOptions])
 
   React.useEffect(() => {
     setSelectedReasoning((current) => {
       if (!current) return current
-      return reasoningOptions.some((option) => option.id === current) ? current : ""
+      return reasoningOptions.some((option) => option.id === current && option.enabled) ? current : ""
     })
   }, [reasoningOptions])
 
-  // Precreate connector/platform session once device+runtime+cwd are chosen so
-  // Send only pays for takeover + turn.start (not cold session.create).
   React.useEffect(() => {
-    const token = authSession?.accessToken
-    const connector = selectedConnector
-    const agent = selectedAgent
-    const cwd = workspace?.path
-    if (!token || !connector || !agent || !cwd || connector.status !== "online") {
-      return
-    }
-    if (selectedAgentReport?.authStatus === "required") {
-      return
-    }
+    if (!preferenceLoaded || !selectedConnectorId || !selectedAgent) return
+    if (catalogsLoading || (!modelCatalog && !permissionCatalog)) return
+    const scope = newSessionSelectionScope(selectedConnectorId, selectedAgent)
+    const selectionPreference = preference?.selections?.[scope]
+    if (!selectionPreference) return
 
-    const key = precreateKey(connector.id, agent, cwd, approval)
-    if (precreateRef.current?.key === key && !precreateRef.current.consumed) {
-      return
+    const availablePreference = availableNewSessionSelectionPreference(
+      models,
+      permissionOptions,
+      modelIdsForSelectionId(modelCatalog, selectionPreference.model),
+      permissionIdForSelectionId(permissionCatalog, selectionPreference.permission),
+    )
+    if (availablePreference.model) {
+      setSelectedModel(availablePreference.model.modelId)
+      setSelectedReasoning(availablePreference.model.reasoningId)
     }
-
-    let cancelled = false
-    const timer = window.setTimeout(() => {
-      if (cancelled) return
-      const previous = precreateRef.current
-      if (previous && previous.key !== key) {
-        void discardPrecreate(previous)
-      }
-      if (precreateRef.current?.key === key && !precreateRef.current.consumed) {
-        return
-      }
-      const approvalModeForCreate = PERMISSION_MODES.find((o) => o.id === approval) ?? PERMISSION_MODES[0]
-      const promise = dashboardApi
-        .createSession(token, {
-          connectorId: connector.id,
-          runtime: agent,
-          cwd,
-          approvalPolicy: approvalModeForCreate.approvalPolicy,
-          sandbox: approvalModeForCreate.sandbox,
-        })
-        .then((created) => created.session)
-      const entry: PrecreateEntry = {
-        key,
-        session: null,
-        promise,
-        consumed: false,
-      }
-      precreateRef.current = entry
-      void promise
-        .then((session) => {
-          if (cancelled || precreateRef.current !== entry) {
-            void discardPrecreate({ ...entry, session, consumed: false })
-            return
-          }
-          entry.session = session
-        })
-        .catch(() => {
-          if (precreateRef.current === entry) {
-            precreateRef.current = null
-          }
-        })
-    }, 450)
-
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
+    if (availablePreference.permissionId) {
+      setSelectedPermissionMode(availablePreference.permissionId)
     }
   }, [
-    approval,
-    authSession?.accessToken,
-    discardPrecreate,
+    modelCatalog,
+    models,
+    permissionCatalog,
+    permissionOptions,
+    preference,
+    preferenceLoaded,
+    catalogsLoading,
     selectedAgent,
-    selectedAgentReport?.authStatus,
-    selectedConnector,
-    workspace?.path,
+    selectedConnectorId,
   ])
 
-  React.useEffect(() => {
-    return () => {
-      void discardPrecreate(precreateRef.current)
-      precreateRef.current = null
-    }
-  }, [discardPrecreate])
-
-  const approvalMode = PERMISSION_MODES.find((o) => o.id === approval) ?? PERMISSION_MODES[0]
   const selectedPermissionOption = permissionOptions.find((option) => option.id === selectedPermissionMode)
-  const modelLabel = optionLabel(modelField, selectedModel || runtimeSettings.model, t("defaultModel"))
-  const effortLabel = optionLabel(effortField, selectedReasoning || runtimeSettings.effort, t("defaultReasoning"))
-  const permissionLabel = selectedPermissionOption?.label ?? t(approvalMode.labelKey)
+  const modelLabel = selectedModelItem?.label ?? t("defaultModel")
+  const selectedReasoningOption = reasoningOptions.find((option) => option.id === selectedReasoning)
+  const effortLabel = selectedReasoningOption?.label ?? t("defaultReasoning")
+  const permissionLabel = selectedPermissionOption?.label ?? t("permissionMode")
+  const permissionDrawerItems = permissionOptions
+  const selectedModelSelection = selectionIdForModelCatalog(modelCatalog, selectedModel, selectedReasoning)
+  const selectedPermissionSelection = selectionIdForPermissionCatalog(permissionCatalog, selectedPermissionMode)
+
+  const handleDeviceChange = React.useCallback((connectorId: string) => {
+    const targetOptions = activeRuntimes(runtimeInventory[connectorId])
+    const preferredAgent = preferenceRef.current?.connectorId === connectorId
+      ? preferenceRef.current.agent
+      : null
+    const nextAgent = preferredAgent && targetOptions.some((runtime) => runtime.runtimeId === preferredAgent)
+      ? preferredAgent
+      : targetOptions[0]?.runtimeId ?? ""
+    setSelectedDevice(connectorId)
+    if (nextAgent) {
+      setSelectedAgent(nextAgent)
+      persistTargetPreference(connectorId, nextAgent)
+    }
+  }, [persistTargetPreference, runtimeInventory])
+
+  const createAndSelectProject = React.useCallback(async (payload: ProjectCreateRequest) => {
+    const project = await createProject(payload)
+    if (!project) return null
+    handleDeviceChange(project.connectorId)
+    setWorkspace({
+      label: project.name,
+      path: project.workspacePath,
+      connectorId: project.connectorId,
+      projectId: project.id,
+    })
+    return project
+  }, [createProject, handleDeviceChange])
+
+  const handleAgentChange = React.useCallback((agent: string) => {
+    if (!selectedConnectorId || !agentOptions.some((option) => option.id === agent)) return
+    setSelectedAgent(agent)
+    persistTargetPreference(selectedConnectorId, agent)
+  }, [agentOptions, persistTargetPreference, selectedConnectorId])
+
+  const handlePermissionChange = React.useCallback((permission: string) => {
+    if (!selectedConnectorId || !selectedAgent) return
+    if (!permissionOptions.some((option) => option.id === permission && option.enabled)) return
+    setSelectedPermissionMode(permission)
+    persistTargetPreference(selectedConnectorId, selectedAgent, {
+      permission: selectionIdForPermissionCatalog(permissionCatalog, permission),
+    })
+  }, [permissionCatalog, permissionOptions, persistTargetPreference, selectedAgent, selectedConnectorId])
+
+  const handleModelChange = React.useCallback((model: string, reasoning: string) => {
+    if (!selectedConnectorId || !selectedAgent) return
+    const modelOption = models.find((option) => option.id === model)
+    if (!modelOption?.enabled) return
+    if (reasoning && !modelOption.reasoningItems.some((option) => option.id === reasoning && option.enabled)) return
+    setSelectedModel(model)
+    setSelectedReasoning(reasoning)
+    persistTargetPreference(selectedConnectorId, selectedAgent, {
+      model: selectionIdForModelCatalog(modelCatalog, model, reasoning),
+    })
+  }, [modelCatalog, models, persistTargetPreference, selectedAgent, selectedConnectorId])
+
+  const requiresModelSelection = canUseModelCatalog && models.length > 0
+  const requiresPermissionSelection = canUsePermissionCatalog && permissionOptions.length > 0
+  const hasSelectionSettings = models.length > 0 || permissionOptions.length > 0
   const canCreate =
-    Boolean(authSession?.accessToken && selectedConnector && selectedAgent) &&
+    Boolean(authSession?.accessToken && selectedConnector && selectedRuntime && workspace?.path) &&
+    workspace?.connectorId === selectedConnectorId &&
     !creating &&
-    !runtimeConfigLoading &&
+    !catalogsLoading &&
+    (!requiresModelSelection || Boolean(selectedModelSelection)) &&
+    (!requiresPermissionSelection || Boolean(selectedPermissionSelection)) &&
+    (attachments.length === 0 || canUseAttachments) && attachmentsAllowed &&
     (prompt.trim().length > 0 || attachments.length > 0)
   const selectorsLoading =
-    Boolean(authSession?.accessToken && hasOnlineDevice && selectedConnector && selectedAgent) &&
-    (runtimeConfigLoading || !runtimeSchema)
+    runtimeInventoryLoading || (
+      Boolean(authSession?.accessToken && hasOnlineDevice && selectedConnector && selectedAgent) && catalogsLoading
+    )
+  const compactSelectors = composerWidth > 0 && composerWidth < 640
+  const showCollapsedBrand = isMobile || sidebarState === "collapsed"
 
   const handleCreate = async () => {
-    if (!authSession?.accessToken || !selectedConnector || !selectedAgent || creating) return
+    if (!authSession?.accessToken || !selectedConnector || !selectedRuntime || !workspace?.path || creatingRef.current) return
+    if (workspace.connectorId !== selectedConnector.id) return
     if (!prompt.trim() && attachments.length === 0) return
-    // Set creating immediately to prevent double-submit → duplicate sessions.
+    if (catalogsLoading) return
+    if (requiresModelSelection && !selectedModelSelection) return
+    if (requiresPermissionSelection && !selectedPermissionSelection) return
+    if (attachments.length > 0 && (!canUseAttachments || !attachmentsAllowed)) return
+    creatingRef.current = true
     setCreating(true)
+    let project
+    try {
+      project = await resolveProject({ connectorId: selectedConnector.id, workspacePath: workspace.path })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("createFailed"))
+      creatingRef.current = false
+      setCreating(false)
+      return
+    }
     const localSessionId = createClientId("session")
     const clientMessageId = createClientId("msg")
     const messageText = prompt.trim() || t("attachmentOnlyPrompt")
     const selectedAttachments = attachments
     const now = new Date().toISOString()
-    let boundRealSessionId: string | null = null
     const optimisticSession: RealSessionView = {
       id: localSessionId,
       connectorId: selectedConnector.id,
+      projectId: project.id,
       connectorStatus: selectedConnector.status,
-      runtime: selectedAgent,
+      runtime: selectedRuntime?.runtimeType ?? selectedAgent,
+      runtimeId: selectedRuntime?.runtimeId ?? selectedAgent,
+      runtimeType: selectedRuntime?.runtimeType ?? selectedAgent,
+      runtimeName: selectedRuntime ? runtimeInstanceName(selectedRuntime) : null,
+      runtimeTypeDisplayName: selectedRuntime ? runtimeTypeName(selectedRuntime) : null,
       externalSessionId: null,
       title: prompt.trim() || null,
-      cwd: workspace?.path || null,
-      status: "idle",
-      takeover: false,
+      cwd: project.workspacePath,
+      status: "waiting",
+      takeover: true,
       pinned: false,
       pinnedAt: null,
       archived: false,
       archivedAt: null,
       unread: false,
       lastReadSeq: 0,
+      latestTurnEndSeq: 0,
       lastSyncedAt: null,
       sourceObservedAt: null,
       lastActivityAt: now,
@@ -499,14 +723,31 @@ export function TaskComposer() {
       sortAt: now,
       updatedSeq: 1,
       effectiveRunMode: "chat",
-      runtimeSettings: null,
-      runtimeSettingsOverride: null,
+    }
+    const optimisticState = {
+      sessionId: localSessionId,
+      runtime: selectedRuntime?.runtimeType ?? selectedAgent,
+      runtimeId: selectedRuntime?.runtimeId ?? selectedAgent,
+      runtimeType: selectedRuntime?.runtimeType ?? selectedAgent,
+      externalSessionId: null,
+      status: "waiting" as const,
+      selections: {
+        ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
+        ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
+      },
+      statusReason: null,
+      error: null,
+      metadata: {},
+      updatedSeq: 1,
+      createdAt: now,
+      updatedAt: now,
     }
     addOptimisticMessage({
       clientMessageId,
       sessionId: localSessionId,
       localSessionId,
       session: optimisticSession,
+      state: optimisticState,
       item: buildOptimisticUserMessage({
         sessionId: localSessionId,
         clientMessageId,
@@ -520,192 +761,90 @@ export function TaskComposer() {
     setPrompt("")
     openSession(localSessionId)
     try {
-      const cwd = workspace?.path || undefined
-      const key =
-        cwd
-          ? precreateKey(selectedConnector.id, selectedAgent, cwd, approval)
-          : null
-      const precreate =
-        key && precreateRef.current?.key === key && !precreateRef.current.consumed
-          ? precreateRef.current
-          : null
-      let createdSession: RealSessionView | null = null
-      if (precreate) {
-        precreate.consumed = true
-        precreateRef.current = null
-        try {
-          createdSession = precreate.session ?? (await precreate.promise)
-          const title = prompt.trim() || undefined
-          if (title) {
-            try {
-              const patched = await dashboardApi.patchSession(
-                authSession.accessToken,
-                createdSession.id,
-                { title },
-              )
-              createdSession = patched.session
-            } catch {
-              /* title is best-effort; turn can still start */
-            }
-          }
-        } catch {
-          createdSession = null
-        }
+      const selections = {
+        ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
+        ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
       }
-      if (!createdSession) {
-        const created = await dashboardApi.createSession(authSession.accessToken, {
-          connectorId: selectedConnector.id,
-          runtime: selectedAgent,
-          title: prompt.trim() || undefined,
-          cwd,
-          approvalPolicy: approvalMode.approvalPolicy,
-          sandbox: approvalMode.sandbox,
-        })
-        createdSession = created.session
+      const createBody = {
+        connectorId: selectedConnector.id,
+        projectId: project.id,
+        ...sessionRuntimeRequestIdentity(
+          selectedRuntime?.runtimeType ?? selectedAgent,
+          selectedRuntime?.runtimeId ?? selectedAgent,
+        ),
+        title: prompt.trim() || undefined,
+        cwd: project.workspacePath,
+        ...(selectedRuntime?.runtimeType === "dsh" ? {
+          runtimeOptions: {
+            agentPreset: selectedRuntime.config?.defaultAgentPreset ?? selectedRuntime.defaults?.defaultAgentPreset,
+          },
+        } : {}),
       }
-      const nextPreference = { connectorId: selectedConnector.id, agent: selectedAgent }
-      writeNewSessionPreference(nextPreference)
-      setPreference(nextPreference)
-      bindOptimisticSession(localSessionId, createdSession)
-      boundRealSessionId = createdSession.id
-      const takeover = await dashboardApi.enableTakeover(authSession.accessToken, createdSession.id)
-      const sessionId = takeover.session.id
-      boundRealSessionId = sessionId
-      bindOptimisticSession(localSessionId, takeover.session)
-      const settings: Record<string, unknown> = {}
-      const validSelectedReasoning = validEffortValue(effortField, selectedReasoning)
-      if (selectedPermissionMode) settings.permissionMode = selectedPermissionMode
-      if (selectedModel) settings.model = selectedModel
-      if (validSelectedReasoning) settings.effort = validSelectedReasoning
-      if (Object.keys(settings).length > 0) {
-        await dashboardApi.patchSessionRuntimeSettings(authSession.accessToken, sessionId, settings)
-      }
-      const files = selectedAttachments.map((attachment) => attachment.file)
-      const upload = files.length > 0
-        ? await dashboardApi.uploadSessionAttachments(authSession.accessToken, sessionId, files)
-        : null
-      const attachmentRefs = upload?.attachments.map((attachment) => ({ fileId: attachment.fileId })) ?? []
-      await dashboardApi.sendSessionMessage(
-        authSession.accessToken,
-        sessionId,
-        messageText,
+      const nextPreference = withNewSessionSelectionPreference(
+        preferenceRef.current,
+        selectedConnector.id,
+        selectedAgent,
         {
-          attachments: attachmentRefs,
-          clientMessageId,
-          model: selectedModel || undefined,
-          effort: validSelectedReasoning || undefined,
+          model: selectedModelSelection,
+          permission: selectedPermissionSelection,
         },
       )
-      upsertSession(takeover.session)
-      requestSessionRefresh(sessionId, clientMessageId)
-      refreshData()
+      persistPreference(nextPreference)
+      const created = await dashboardApi.createAndStartSession(authSession.accessToken, {
+        ...createBody,
+        content: messageText,
+        selections,
+        attachments: selectedAttachments.length > 0
+          ? await inlineAttachmentsFromFiles(selectedAttachments)
+          : undefined,
+        clientMessageId,
+      })
+      toolSidebarStore.migrateSession(localSessionId, created.session.id)
+      bindOptimisticSession(localSessionId, created.session, created.attachments)
     } catch (err) {
       const message = err instanceof Error ? err.message : t("createFailed")
       markOptimisticMessageFailed(clientMessageId, message)
-      // Drop orphan local-only session so sidebar does not keep a ghost entry.
-      if (!boundRealSessionId) {
-        discardOptimisticSession(localSessionId)
-      } else {
-        // Ensure we leave a single real session in a terminal error state.
-        try {
-          await dashboardApi.interruptSession(authSession.accessToken, boundRealSessionId)
-        } catch {
-          /* best-effort */
-        }
-        refreshData()
-        requestSessionRefresh(boundRealSessionId, clientMessageId)
-      }
-      const isAuthError = /auth|login|unauthor/i.test(message)
-      if (isAuthError && authSession?.accessToken && selectedConnector) {
-        toast.error(message, {
-          action: {
-            label: t("signInAgent"),
-            onClick: () => {
-              void signInSelectedAgent()
-            },
-          },
-          duration: 12_000,
-        })
-      } else {
-        toast.error(message)
-      }
+      toast.error(message)
     } finally {
+      creatingRef.current = false
       setCreating(false)
-    }
-  }
-
-  const signInSelectedAgent = async (methodId?: string) => {
-    if (!authSession?.accessToken || !selectedConnector || !selectedAgent || signingIn) return
-    setSigningIn(true)
-    try {
-      toast.message(t("agentSignInStarted", { name: selectedAgent }), {
-        description: t("agentSignInStartedHint"),
-      })
-      const response = await dashboardApi.authenticateConnectorAgent(
-        authSession.accessToken,
-        selectedConnector.id,
-        selectedAgent,
-        methodId,
-      )
-      refreshData()
-      // Reload schema so live model list appears after auth.
-      try {
-        const settings = await dashboardApi.getConnectorAgentSettings(
-          authSession.accessToken,
-          selectedConnector.id,
-          selectedAgent,
-        )
-        if (settings.schema) setRuntimeSchema(settings.schema)
-        setRuntimeSettings((prev) => ({
-          ...prev,
-          ...(settings.runtimeSettings ?? settings.settings ?? {}),
-        }))
-      } catch {
-        /* best-effort */
-      }
-      if (response.authStatus === "ok") {
-        toast.success(response.message || t("agentSignInSuccess", { name: selectedAgent }))
-      } else {
-        toast.error(response.message || response.authHint || t("agentSignInFailed", { name: selectedAgent }))
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("agentSignInFailed", { name: selectedAgent }))
-    } finally {
-      setSigningIn(false)
     }
   }
 
   return (
     <div
-      className="flex flex-1 flex-col items-center justify-center px-6"
+      className="relative flex flex-1 flex-col items-center justify-center px-6"
       onDragEnter={onDragEnter}
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
       <DragOverlay isDragging={isDragging} />
+      {showCollapsedBrand ? (
+        <div className="absolute left-13 top-2.5 flex h-9 items-center">
+          <button
+            type="button"
+            onClick={goHome}
+            className="aa-wordmark text-xl leading-none text-foreground transition-colors hover:text-primary"
+          >
+            Agents Anywhere
+          </button>
+        </div>
+      ) : null}
 
       <div className="w-full max-w-3xl">
-        <h1 className="mb-8 min-h-[3.5rem] text-balance text-center text-5xl font-semibold leading-tight tracking-tight" aria-live="polite">
-          <span>{creating ? `${t("creatingBase")}${".".repeat((createTick % 3) + 1)}` : typedTitle}</span>
+        <h1 className="mb-6 flex h-10 items-center justify-center overflow-hidden text-center text-3xl font-semibold leading-tight tracking-tight sm:h-auto sm:min-h-[3rem] sm:text-4xl" aria-live="polite">
+          <span className="min-w-0 truncate">{creating ? `${t("creatingBase")}${".".repeat((createTick % 3) + 1)}` : typedTitle}</span>
           <span className="ml-1 inline-block h-[0.9em] w-0.5 translate-y-[0.1em] rounded-full bg-muted-foreground motion-safe:animate-[composer-caret_1s_steps(1,end)_infinite]" aria-hidden="true" />
         </h1>
 
-        {agentNeedsAuth && selectedConnector && selectedAgent ? (
-          <AgentAuthBanner
-            className="mb-4"
-            agentName={selectedAgent}
-            methods={agentAuthMethods}
-            hint={selectedAgentReport?.authHint}
-            signingIn={signingIn}
-            disabled={selectedConnector.status !== "online"}
-            onSignIn={(methodId) => void signInSelectedAgent(methodId)}
-          />
-        ) : null}
-
-        <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
-          <div className="space-y-3 px-6 pt-6">
+        <div
+          ref={composerRef}
+          className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20"
+        >
+          <div className="flex flex-col gap-3 px-5 pt-4">
             <AttachmentPreviewList attachments={attachments} onRemove={remove} />
+            {attachmentError ? <p role="alert" className="text-xs text-destructive">{attachmentError}</p> : null}
             <Textarea
               value={prompt}
               onChange={(event) => setPrompt(event.currentTarget.value)}
@@ -718,142 +857,186 @@ export function TaskComposer() {
               }}
               placeholder={t("placeholder")}
               disabled={creating || !authSession?.accessToken || !selectedConnector}
-              className="min-h-24 max-h-64 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 text-base leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent"
+              className="min-h-20 max-h-64 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 text-base leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
           </div>
 
-          <div className="px-6 pt-3">
+          <div className="px-5 pt-2">
             <Separator />
           </div>
 
-          <div className="flex flex-wrap items-center gap-1 px-3 pb-3 pt-2">
+          {/* No wrapping: the option controls shrink instead, so the send
+              button always stays on the same row. */}
+          <div className="flex items-center gap-1 px-3 pb-2 pt-1.5">
             <AttachmentButton
               attachments={attachments}
               onAttach={add}
               isDragging={isDragging}
+              allowedMimeTypes={allowedMimeTypes}
+              disabled={!canUseAttachments}
             />
 
             {selectorsLoading ? (
               <>
-                <ComposerSelectorLoading className="w-36" />
                 <ComposerSelectorLoading className="w-44" />
                 <ComposerSelectorLoading className="w-36" />
+                <ComposerSelectorLoading className="w-44" />
               </>
             ) : (
               <>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
-                      {permissionField ? <span className="size-1.5 rounded-full bg-primary" /> : null}
-                      <span className="text-foreground">{permissionLabel}</span>
-                      <ChevronDown className="size-3.5 opacity-50" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-64">
-                    {permissionField ? (
-                      permissionOptions.map((item) => (
-                        <DropdownMenuItem
-                          key={item.id}
-                          className="gap-2"
-                          onSelect={() => setSelectedPermissionMode(item.id)}
-                        >
-                          <Check className={cn("size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
-                          <span>{item.label}</span>
-                        </DropdownMenuItem>
-                      ))
-                    ) : (
-                      PERMISSION_MODES.map((opt) => (
-                        <DropdownMenuItem key={opt.id} onSelect={() => setApproval(opt.id)}>
-                          {t(opt.labelKey)}
-                        </DropdownMenuItem>
-                      ))
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-
-                {hasOnlineDevice ? (
+                {hasOnlineDevice && compactSelectors ? (
+                  <AgentSelectionDrawer
+                    buttonLabel={t("agent")}
+                    title={t("deviceAndAgent")}
+                    deviceLabel={t("device")}
+                    agentLabel={t("agent")}
+                    deviceItems={deviceOptions}
+                    selectedDevice={selectedDevice}
+                    onDeviceChange={handleDeviceChange}
+                    agentItems={agentOptions}
+                    selectedAgent={selectedAgent}
+                    onAgentChange={handleAgentChange}
+                  />
+                ) : hasOnlineDevice ? (
                   <CascadingSelector
                     icon={<Monitor className="size-4" />}
                     primaryOptions={deviceOptions}
                     secondaryOptions={agentOptions}
                     selectedPrimary={selectedDevice}
                     selectedSecondary={selectedAgent}
-                    onPrimaryChange={setSelectedDevice}
-                    onSecondaryChange={setSelectedAgent}
+                    onPrimaryChange={handleDeviceChange}
+                    onSecondaryChange={handleAgentChange}
                     secondaryLabel={t("agent")}
                   />
                 ) : null}
 
-                {hasOnlineDevice && (models.length > 0 || reasoningOptions.length > 0) ? (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="sm" className="max-w-72 gap-1.5 text-muted-foreground">
-                        {effortField ? <span className="text-foreground">{effortLabel}</span> : null}
-                        {effortField && modelField ? <span className="text-muted-foreground/50">·</span> : null}
-                        {modelField ? <span className="truncate text-foreground">{modelLabel}</span> : null}
-                        <ChevronDown className="size-3.5 shrink-0 opacity-50" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-56">
-                      {!modelField && reasoningOptions.length > 0 ? (
-                        reasoningOptions.map((item) => (
+                {compactSelectors && hasSelectionSettings ? (
+                  <SelectionSettingsDrawer
+                    disabled={selectorsLoading}
+                    buttonLabel={t("selectionSettings")}
+                    title={t("selectionSettings")}
+                    description={t("selectionSettingsDescription")}
+                    permissionLabel={t("permissionMode")}
+                    modelLabel={t("model")}
+                    reasoningLabel={t("reasoning")}
+                    permissionItems={permissionDrawerItems}
+                    selectedPermission={selectedPermissionMode}
+                    onPermissionChange={handlePermissionChange}
+                    modelItems={hasOnlineDevice ? models : []}
+                    selectedModel={selectedModel}
+                    selectedReasoning={selectedReasoning}
+                    onModelChange={handleModelChange}
+                  />
+                ) : !compactSelectors ? (
+                  <>
+                    {permissionOptions.length > 0 ? <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="sm" className="min-w-0 shrink gap-1.5 text-muted-foreground">
+                          {permissionOptions.length > 0 ? <span className="size-1.5 shrink-0 rounded-full bg-primary" /> : null}
+                          <span className="min-w-0 truncate text-foreground">{permissionLabel}</span>
+                          <ChevronDown className="size-3.5 opacity-50" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="w-64">
+                        {permissionOptions.map((item) => (
                           <DropdownMenuItem
                             key={item.id}
-                            className="gap-2"
-                            onSelect={() => setSelectedReasoning(item.id)}
+                            disabled={!item.enabled}
+                            className={cn(
+                              "items-start gap-2 py-2.5",
+                              selectedPermissionMode === item.id && "text-primary focus:text-primary",
+                            )}
+                            onSelect={() => handlePermissionChange(item.id)}
                           >
-                            <Check className={cn("size-3.5", selectedReasoning === item.id ? "opacity-100" : "opacity-0")} />
-                            <span className="truncate">{item.label}</span>
+                            <Check className={cn("mt-0.5 size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-medium leading-none">{item.label}</span>
+                              {(item.enabled ? item.description : item.disabledReason) ? (
+                                <span className="mt-1 block whitespace-normal text-xs leading-snug text-muted-foreground">
+                                  {item.enabled ? item.description : item.disabledReason}
+                                </span>
+                              ) : null}
+                            </span>
                           </DropdownMenuItem>
-                        ))
-                      ) : null}
-                      {models.map((modelItem) => {
-                        const modelEffortField = effortFieldFor(modelItem.id)
-                        const modelEfforts = composerMenuOptions(modelEffortField)
-                        if (modelEfforts.length === 0) {
-                          return (
-                            <DropdownMenuItem
-                              key={modelItem.id}
-                              className="gap-2"
-                              onSelect={() => {
-                                setSelectedModel(modelItem.id)
-                                setSelectedReasoning("")
-                              }}
-                            >
-                              <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
-                              <span className="truncate">{modelItem.label}</span>
-                            </DropdownMenuItem>
-                          )
-                        }
-                        return (
-                          <DropdownMenuSub key={modelItem.id}>
-                            <DropdownMenuSubTrigger className="gap-2">
-                              <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
-                              <span className="max-w-40 truncate">{modelItem.label}</span>
-                            </DropdownMenuSubTrigger>
-                            <DropdownMenuSubContent className="w-56">
-                              {modelEfforts.map((item) => (
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu> : null}
+
+                    {hasOnlineDevice && models.length > 0 ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm" className="min-w-0 shrink max-w-72 gap-1.5 text-muted-foreground">
+                            {reasoningOptions.length > 0 ? <span className="text-foreground">{effortLabel}</span> : null}
+                            {reasoningOptions.length > 0 ? <span className="text-muted-foreground/50">·</span> : null}
+                            <span className="min-w-0 truncate text-foreground">{modelLabel}</span>
+                            <ChevronDown className="size-3.5 shrink-0 opacity-50" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="w-56">
+                          {models.map((modelItem) => {
+                            const modelEfforts = modelItem.reasoningItems
+                            if (modelEfforts.length === 0) {
+                              return (
                                 <DropdownMenuItem
-                                  key={item.id}
+                                  key={modelItem.id}
+                                  disabled={!modelItem.enabled}
                                   className="gap-2"
                                   onSelect={() => {
-                                    setSelectedModel(modelItem.id)
-                                    setSelectedReasoning(item.id)
+                                    handleModelChange(modelItem.id, "")
                                   }}
                                 >
-                                  <Check className={cn(
-                                    "size-3.5",
-                                    selectedModel === modelItem.id && selectedReasoning === item.id ? "opacity-100" : "opacity-0",
-                                  )} />
-                                  <span className="truncate">{item.label}</span>
+                                  <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block truncate">{modelItem.label}</span>
+                                    {!modelItem.enabled && modelItem.disabledReason ? (
+                                      <span className="block truncate text-xs text-muted-foreground">
+                                        {modelItem.disabledReason}
+                                      </span>
+                                    ) : null}
+                                  </span>
                                 </DropdownMenuItem>
-                              ))}
-                            </DropdownMenuSubContent>
-                          </DropdownMenuSub>
-                        )
-                      })}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                              )
+                            }
+                            return (
+                              <DropdownMenuSub key={modelItem.id}>
+                                <DropdownMenuSubTrigger className="gap-2" disabled={!modelItem.enabled}>
+                                  <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
+                                  <span className="max-w-40 truncate" title={modelItem.disabledReason ?? undefined}>
+                                    {modelItem.label}
+                                  </span>
+                                </DropdownMenuSubTrigger>
+                                <DropdownMenuSubContent className="w-56">
+                                  {modelEfforts.map((item) => (
+                                    <DropdownMenuItem
+                                      key={item.id}
+                                      disabled={!item.enabled}
+                                      className="gap-2"
+                                      onSelect={() => {
+                                        handleModelChange(modelItem.id, item.id)
+                                      }}
+                                    >
+                                      <Check className={cn(
+                                        "size-3.5",
+                                        selectedModel === modelItem.id && selectedReasoning === item.id ? "opacity-100" : "opacity-0",
+                                      )} />
+                                      <span className="min-w-0 flex-1">
+                                        <span className="block truncate">{item.label}</span>
+                                        {!item.enabled && item.disabledReason ? (
+                                          <span className="block truncate text-xs text-muted-foreground">
+                                            {item.disabledReason}
+                                          </span>
+                                        ) : null}
+                                      </span>
+                                    </DropdownMenuItem>
+                                  ))}
+                                </DropdownMenuSubContent>
+                              </DropdownMenuSub>
+                            )
+                          })}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : null}
+                  </>
                 ) : null}
               </>
             )}
@@ -861,7 +1044,7 @@ export function TaskComposer() {
             <Button
               size="icon"
               aria-label={t("sendTask")}
-              className="ml-auto rounded-full"
+              className="ml-auto shrink-0 rounded-full"
               disabled={!canCreate}
               onClick={handleCreate}
             >
@@ -875,15 +1058,65 @@ export function TaskComposer() {
             connectorId={selectedConnectorId}
             value={workspace}
             onChange={setWorkspace}
+            includeProjects={!sidebarShowsSessions}
+            disabled={creating}
+            onCreateProject={() => setProjectEditor({ mode: "create" })}
           />
         </div>
       </div>
+
+      <ProjectEditorDialog
+        editor={projectEditor}
+        connectors={connectors}
+        preferredConnectorId={selectedConnectorId}
+        projects={projects}
+        onOpenChange={(open) => {
+          if (!open) setProjectEditor(null)
+        }}
+        onCreate={createAndSelectProject}
+        onUpdate={updateProject}
+      />
     </div>
   )
 }
 
-function attachedRuntimes(connector: { runtimeCapabilities?: { attached?: Record<string, unknown> } }) {
-  return Object.keys(connector.runtimeCapabilities?.attached ?? {}).sort((a, b) => a.localeCompare(b))
+function activeRuntimes(runtimes: DeviceRuntimeView[] | undefined) {
+  return (runtimes ?? [])
+    .filter((runtime) => runtimeIsSelectable(runtime))
+    .sort((a, b) => runtimeInstanceName(a).localeCompare(runtimeInstanceName(b)))
+}
+
+function runtimeOptionLabel(runtime: DeviceRuntimeView): string {
+  return runtimeInstanceName(runtime)
+}
+
+function sameRuntimeInventory(
+  left: Record<string, DeviceRuntimeView[]>,
+  right: Record<string, DeviceRuntimeView[]>,
+): boolean {
+  return stableRuntimeInventoryKey(left) === stableRuntimeInventoryKey(right)
+}
+
+function stableRuntimeInventoryKey(value: Record<string, DeviceRuntimeView[]>): string {
+  return Object.keys(value)
+    .sort()
+    .map((connectorId) => {
+      const runtimes = [...(value[connectorId] ?? [])]
+        .sort((left, right) => left.runtimeId.localeCompare(right.runtimeId))
+        .map((runtime) => [
+          runtime.runtimeId,
+          runtime.runtimeType,
+          runtime.displayName,
+          runtime.present,
+          runtime.configured,
+          runtime.active,
+          runtime.status,
+          runtime.updatedAt,
+        ].join(":"))
+        .join(",")
+      return `${connectorId}=${runtimes}`
+    })
+    .join("|")
 }
 
 function ComposerSelectorLoading({ className }: { className?: string }) {
@@ -893,7 +1126,7 @@ function ComposerSelectorLoading({ className }: { className?: string }) {
       variant="ghost"
       size="sm"
       disabled
-      className={cn("justify-start gap-2 text-muted-foreground opacity-100", className)}
+      className={cn("shrink justify-start gap-2 text-muted-foreground opacity-100", className)}
     >
       <Spinner className="size-3.5" />
       <span className="h-3 w-16 rounded-full bg-muted-foreground/20" />
@@ -950,17 +1183,6 @@ function useTypewriterTitle(titles: string[], paused: boolean) {
   return typedTitle
 }
 
-function runtimeLabel(runtime: string): string {
-  if (runtime === "codex") return "Codex"
-  if (runtime === "claude") return "Claude Code"
-  if (runtime === "opencode") return "OpenCode"
-  if (runtime === "gemini") return "Gemini CLI"
-  if (runtime === "grok_build") return "Grok Build"
-  if (runtime === "cursor") return "Cursor"
-  if (runtime === "codebuddy") return "CodeBuddy"
-  return runtime.slice(0, 1).toUpperCase() + runtime.slice(1)
-}
-
 function readNewSessionPreference(): NewSessionPreference | null {
   if (typeof window === "undefined") return null
   try {
@@ -974,10 +1196,32 @@ function readNewSessionPreference(): NewSessionPreference | null {
     return {
       connectorId: parsed.connectorId,
       agent: parsed.agent,
+      selections: readNewSessionSelectionPreferences(parsed.selections),
     }
   } catch {
     return null
   }
+}
+
+function readNewSessionSelectionPreferences(value: unknown): Record<string, NewSessionSelectionPreference> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  const result: Record<string, NewSessionSelectionPreference> = {}
+  for (const [scope, rawSelection] of Object.entries(value)) {
+    if (!scope || !rawSelection || typeof rawSelection !== "object" || Array.isArray(rawSelection)) continue
+    const selection = rawSelection as Partial<NewSessionSelectionPreference>
+    const model = typeof selection.model === "string" && selection.model
+      ? selection.model
+      : null
+    const permission = typeof selection.permission === "string" && selection.permission
+      ? selection.permission
+      : null
+    if (!model && !permission) continue
+    result[scope] = {
+      model,
+      permission,
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined
 }
 
 function writeNewSessionPreference(preference: NewSessionPreference) {

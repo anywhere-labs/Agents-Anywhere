@@ -26,8 +26,6 @@ server/*.sqlite
 server/*.sqlite3
 server/*.db
 server/*.files/
-_reference/**
-!_reference/httpx-s3-client/
-!_reference/httpx-s3-client/**
+_reference/
 docs/reference/*
 !docs/reference/README.md

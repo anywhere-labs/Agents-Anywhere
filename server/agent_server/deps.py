@@ -4,56 +4,97 @@ from fastapi import Depends, Header, HTTPException
 from starlette.requests import HTTPConnection
 
 from agent_server.core.auth import verify_user_access_token
-from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.core.models import UserView
-from agent_server.services.approvals import ApprovalService
-from agent_server.services.attachments import AttachmentService
-from agent_server.services.connector_ingest import ConnectorIngestService
-from agent_server.services.device_agent_settings import DeviceAgentSettingsService
-from agent_server.services.runtime_config import RuntimeConfigService
-from agent_server.services.session_run import SessionRunService
-from agent_server.services.terminal import TerminalService
-from agent_server.services.shell_tasks import ShellTaskManager
+from agent_server.infra.connector_gateway import ConnectorGateway
+from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
+from agent_server.services.attachments import AttachmentService
+from agent_server.infra.terminal_broker import TerminalBroker
+from agent_server.services.catalogs import CatalogService
+from agent_server.services.connector_files import ConnectorFileService
+from agent_server.services.connector_ingest import ConnectorIngestService
+from agent_server.services.connector_notifications import ConnectorNotificationService
+from agent_server.services.connector_realtime import ConnectorRealtimeService
+from agent_server.services.connector_shell import ConnectorShellService
+from agent_server.services.device_runtimes import DeviceRuntimeService
+from agent_server.services.event_recovery import EventRecoveryService
+from agent_server.services.session_run import SessionRunService
+from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
+from agent_server.services.terminal import TerminalService
+from agent_server.services.terminal_relay import TerminalRelayService
+from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
 
 def get_store(conn: HTTPConnection) -> Store:
     return conn.app.state.store
 
 
-def get_runtime_config_service(conn: HTTPConnection) -> RuntimeConfigService:
-    return conn.app.state.store.runtime_config
-
-
 def get_attachment_service(conn: HTTPConnection) -> AttachmentService:
     return conn.app.state.store.attachments
 
 
-def get_approval_service(conn: HTTPConnection) -> ApprovalService:
-    return ApprovalService(conn.app.state.store, conn.app.state.rpc)
+def get_catalog_service(conn: HTTPConnection) -> CatalogService:
+    return CatalogService(conn.app.state.store)
+
+
+def get_event_recovery_service(conn: HTTPConnection) -> EventRecoveryService:
+    return EventRecoveryService(
+        conn.app.state.store,
+        conn.app.state.rpc,
+        conn.app.state.timeline_write_buffer,
+    )
 
 
 def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService:
+    realtime = get_connector_realtime_service(conn)
     return ConnectorIngestService(
         conn.app.state.store,
+        ConnectorNotificationService(
+            conn.app.state.store,
+            realtime,
+            conn.app.state.timeline_write_buffer,
+        ),
+        conn.app.state.timeline_broker,
+        conn.app.state.device_runtime_service,
         conn.app.state.rpc,
+        conn.app.state.session_runtime_state_cache,
+    )
+
+
+def get_connector_realtime_service(conn: HTTPConnection) -> ConnectorRealtimeService:
+    return ConnectorRealtimeService(
         conn.app.state.shell_tasks,
         conn.app.state.terminal_broker,
         conn.app.state.terminal_stream_hub,
-        conn.app.state.timeline_broker,
+    )
+
+
+def get_connector_shell_service(conn: HTTPConnection) -> ConnectorShellService:
+    return ConnectorShellService(
+        ConnectorGateway(conn.app.state.rpc),
+        conn.app.state.shell_tasks,
+    )
+
+
+def get_connector_file_service(conn: HTTPConnection) -> ConnectorFileService:
+    return ConnectorFileService(
+        ConnectorGateway(conn.app.state.rpc),
+        conn.app.state.fs_downloads,
     )
 
 
 def get_session_run_service(conn: HTTPConnection) -> SessionRunService:
-    return SessionRunService(conn.app.state.store, conn.app.state.rpc)
-
-
-def get_device_agent_settings_service(conn: HTTPConnection) -> DeviceAgentSettingsService:
-    return DeviceAgentSettingsService(
-        conn.app.state.store.runtime_config,
+    return SessionRunService(
+        conn.app.state.store,
+        conn.app.state.rpc,
+        conn.app.state.device_runtime_service,
     )
+
+
+def get_device_runtime_service(conn: HTTPConnection) -> DeviceRuntimeService:
+    return conn.app.state.device_runtime_service
 
 
 def get_terminal_service(conn: HTTPConnection) -> TerminalService:
@@ -64,12 +105,20 @@ def get_terminal_service(conn: HTTPConnection) -> TerminalService:
     )
 
 
+def get_terminal_relay_service(conn: HTTPConnection) -> TerminalRelayService:
+    return TerminalRelayService(
+        conn.app.state.store,
+        conn.app.state.rpc,
+        conn.app.state.terminal_broker,
+    )
+
+
 def get_rpc(conn: HTTPConnection) -> ConnectorRpcManager:
     return conn.app.state.rpc
 
 
-def get_shell_tasks(conn: HTTPConnection) -> ShellTaskManager:
-    return conn.app.state.shell_tasks
+def get_terminal_broker(conn: HTTPConnection) -> TerminalBroker:
+    return conn.app.state.terminal_broker
 
 
 def get_fs_downloads(conn: HTTPConnection) -> FsDownloadRelayManager:
@@ -80,7 +129,19 @@ def get_timeline_broker(conn: HTTPConnection) -> TimelineBroker:
     return conn.app.state.timeline_broker
 
 
-def current_user_id(authorization: str | None = Header(None, alias="Authorization")) -> str:
+def get_timeline_write_buffer(conn: HTTPConnection) -> TimelineWriteBuffer:
+    return conn.app.state.timeline_write_buffer
+
+
+def get_session_runtime_state_cache(
+    conn: HTTPConnection,
+) -> SessionRuntimeStateCache:
+    return conn.app.state.session_runtime_state_cache
+
+
+def current_user_id(
+    authorization: str | None = Header(None, alias="Authorization"),
+) -> str:
     """Lightweight: returns user id from the bearer token without DB lookup.
 
     Use this for endpoints that only need to know who the caller is. For

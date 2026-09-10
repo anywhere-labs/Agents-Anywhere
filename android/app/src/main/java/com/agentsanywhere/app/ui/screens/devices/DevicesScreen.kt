@@ -33,6 +33,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,25 +46,31 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
-import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
+import com.agentsanywhere.app.feature.devices.DeviceAgentPreviews
+import com.agentsanywhere.app.feature.devices.DeviceAgentPreviewState
+import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
+import com.agentsanywhere.app.feature.devices.onlineAgentCount
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.screens.common.AppEmptyState
 import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
+import com.composables.icons.lucide.Circle
+import com.composables.icons.lucide.CircleCheck
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.valentinilk.shimmer.shimmer
-import java.time.Duration
-import java.time.Instant
-import java.time.format.DateTimeParseException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,9 +80,8 @@ fun DevicesScreen(
     onRefresh: () -> Unit,
     onOpenDevice: (AgentDevice) -> Unit,
     onBack: (() -> Unit)? = null,
-    onCreateDeviceSetup: suspend (String) -> Result<DeviceSetupCredential>,
-    onDeviceCredentialCreated: (DeviceSetupCredential) -> Unit,
-    onClaimDevicePairCode: suspend (DeviceSetupCredential, String) -> Result<AgentDevice>,
+    agentPreviews: DeviceAgentPreviews,
+    onAddDevice: () -> Unit,
 ) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
@@ -83,8 +89,6 @@ fun DevicesScreen(
     val refreshState = rememberPullToRefreshState()
     val refreshIndicatorContainer = if (darkMode) Color(0xFF27272A) else Color(0xFFF2F2F2)
     val refreshIndicatorColor = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF8E8E93)
-    var setupSheetOpen by remember { mutableStateOf(false) }
-
     if (onBack != null) {
         BackHandler(onBack = onBack)
     }
@@ -133,9 +137,7 @@ fun DevicesScreen(
                         item("add-device") {
                             AddDeviceRow(
                                 darkMode = darkMode,
-                                onClick = {
-                                    setupSheetOpen = true
-                                },
+                                onClick = onAddDevice,
                             )
                         }
                         if (devices.isEmpty()) {
@@ -146,6 +148,7 @@ fun DevicesScreen(
                             items(devices, key = { it.id }) { device ->
                                 DeviceRow(
                                     device = device,
+                                    agentPreview = agentPreviews.byDeviceId[device.id],
                                     darkMode = darkMode,
                                     onClick = { onOpenDevice(device) },
                                 )
@@ -157,14 +160,57 @@ fun DevicesScreen(
         }
     }
 
-    PairNewDeviceSheetHost(
-        open = setupSheetOpen,
-        devices = state.devices,
-        onDismiss = { setupSheetOpen = false },
-        onCreateDeviceSetup = onCreateDeviceSetup,
-        onDeviceCredentialCreated = onDeviceCredentialCreated,
-        onClaimDevicePairCode = onClaimDevicePairCode,
-    )
+}
+
+@Composable
+internal fun rememberDeviceAgentPreviews(
+    devices: List<AgentDevice>,
+    isRefreshing: Boolean,
+    refreshKey: Long,
+    onListDeviceRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
+): DeviceAgentPreviews {
+    val onlineDeviceIds = remember(devices) {
+        devices.filter(AgentDevice::online).map(AgentDevice::id).toSet()
+    }
+    val onlineDeviceKey = remember(onlineDeviceIds) {
+        onlineDeviceIds.sorted().joinToString("|")
+    }
+    var previews by remember { mutableStateOf(DeviceAgentPreviews()) }
+
+    LaunchedEffect(onlineDeviceKey, isRefreshing, refreshKey) {
+        val refresh = previews.beginRefresh(onlineDeviceIds)
+        previews = refresh
+        val generation = refresh.generation
+        if (isRefreshing || onlineDeviceIds.isEmpty()) return@LaunchedEffect
+
+        coroutineScope {
+            onlineDeviceIds.forEach { deviceId ->
+                launch {
+                    val result = try {
+                        onListDeviceRuntimes(deviceId)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        Result.failure(error)
+                    }
+                    previews = result.fold(
+                        onSuccess = { inventory ->
+                            previews.loaded(
+                                requestGeneration = generation,
+                                deviceId = deviceId,
+                                onlineAgentCount = inventory.onlineAgentCount(),
+                            )
+                        },
+                        onFailure = {
+                            previews.failed(generation, deviceId)
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    return previews
 }
 
 @Composable
@@ -184,8 +230,8 @@ private fun DevicesHeader(
 ) {
     val colors = LocalAAColors.current
     val iconColor = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF1C1C1E)
-    val iconSurface = if (darkMode) Color(0xFF18181B) else Color.White
-    val iconBorder = if (darkMode) Color(0xFF27272A) else Color(0xFFE7E6E2)
+    val iconSurface = colors.raisedSurface
+    val iconBorder = if (darkMode) colors.border else Color(0xFFE7E6E2)
 
     Row(
         modifier = Modifier
@@ -300,6 +346,7 @@ private fun AddDeviceRow(
 @Composable
 internal fun DeviceRow(
     device: AgentDevice,
+    agentPreview: DeviceAgentPreviewState?,
     darkMode: Boolean,
     onClick: () -> Unit,
 ) {
@@ -358,10 +405,10 @@ internal fun DeviceRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                StatusPill(online = device.online, darkMode = darkMode)
+                DeviceStatusLabel(online = device.online)
             }
             Text(
-                text = deviceMeta(device),
+                text = deviceAgentPreviewLabel(device, agentPreview),
                 modifier = Modifier.fillMaxWidth(0.84f),
                 color = meta,
                 fontSize = 13.sp,
@@ -381,41 +428,26 @@ internal fun DeviceRow(
 }
 
 @Composable
-private fun StatusPill(online: Boolean, darkMode: Boolean) {
-    val textColor = when {
-        online && darkMode -> Color(0xFF74F2B2)
-        online -> Color(0xFF159A61)
-        darkMode -> Color(0xFFA1A1AA)
-        else -> Color(0xFF999999)
-    }
-    val surface = when {
-        online && darkMode -> Color(0xFF0E2A1F)
-        online -> Color(0xFFEAF7EF)
-        darkMode -> Color(0xFF27272A)
-        else -> Color(0xFFF0F0F0)
-    }
-    val border = when {
-        online && darkMode -> Color(0xFF164A35)
-        online -> Color.Transparent
-        darkMode -> Color(0xFF3F3F46)
-        else -> Color.Transparent
-    }
+private fun DeviceStatusLabel(online: Boolean) {
+    val colors = LocalAAColors.current
+    val statusColor = if (online) Color(0xFF10B981) else colors.muted
 
-    Box(
-        modifier = Modifier
-            .height(23.dp)
-            .width(62.dp)
-            .clip(CircleShape)
-            .background(surface)
-            .border(1.dp, border, CircleShape),
-        contentAlignment = Alignment.Center,
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        Icon(
+            imageVector = if (online) Lucide.CircleCheck else Lucide.Circle,
+            contentDescription = null,
+            tint = if (online) statusColor else statusColor.copy(alpha = 0.4f),
+            modifier = Modifier.size(16.dp),
+        )
         Text(
             text = stringResource(if (online) R.string.devices_online else R.string.devices_offline),
-            color = textColor,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            lineHeight = 14.sp,
+            color = statusColor,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            lineHeight = 16.sp,
             maxLines = 1,
         )
     }
@@ -444,7 +476,7 @@ private fun DevicesLoadingList(darkMode: Boolean) {
 
 @Composable
 private fun LoadingRow(darkMode: Boolean) {
-    val surface = if (darkMode) Color(0xFF18181B) else Color.White
+    val surface = LocalAAColors.current.raisedSurface
     val border = if (darkMode) Color(0xFF27272A) else Color(0xFFECECEC)
     val line = if (darkMode) Color(0xFF27272A) else Color(0xFFF0F0F0)
     val shape = RoundedCornerShape(15.dp)
@@ -470,14 +502,22 @@ private fun LoadingRow(darkMode: Boolean) {
 }
 
 @Composable
-private fun deviceMeta(device: AgentDevice): String {
-    val count = device.attachedRuntimes.size
-    val agents = stringResource(
-        if (count == 1) R.string.devices_agent_count_one else R.string.devices_agent_count_other,
-        count,
-    )
-    val seen = if (device.online) stringResource(R.string.common_now) else device.lastSeenAt.relativeTimeLabel()
-    return "$agents · $seen"
+private fun deviceAgentPreviewLabel(
+    device: AgentDevice,
+    preview: DeviceAgentPreviewState?,
+): String {
+    if (!device.online) return stringResource(R.string.devices_offline)
+    return when (preview) {
+        is DeviceAgentPreviewState.Loaded -> pluralStringResource(
+            R.plurals.devices_agents_online,
+            preview.onlineAgentCount,
+            preview.onlineAgentCount,
+        )
+        DeviceAgentPreviewState.Unavailable -> stringResource(R.string.devices_agent_status_unavailable)
+        DeviceAgentPreviewState.Loading,
+        null,
+        -> stringResource(R.string.devices_agent_status_loading)
+    }
 }
 
 internal fun List<AgentDevice>.sortedForDevicesPage(): List<AgentDevice> {
@@ -486,29 +526,6 @@ internal fun List<AgentDevice>.sortedForDevicesPage(): List<AgentDevice> {
             .thenBy { it.createdAt.orEmpty() }
             .thenBy { it.name.lowercase() },
     )
-}
-
-@Composable
-private fun String?.relativeTimeLabel(): String {
-    if (isNullOrBlank()) return stringResource(R.string.devices_seen_offline)
-    val instant = try {
-        Instant.parse(this)
-    } catch (_: DateTimeParseException) {
-        return stringResource(R.string.devices_seen_offline)
-    }
-    val elapsed = Duration.between(instant, Instant.now()).coerceAtLeast(Duration.ZERO)
-    val minutes = elapsed.toMinutes()
-    val hours = elapsed.toHours()
-    val days = elapsed.toDays()
-    return when {
-        minutes < 1 -> stringResource(R.string.common_now)
-        minutes < 60 -> stringResource(R.string.devices_seen_minutes_ago, minutes)
-        hours < 24 -> stringResource(R.string.devices_seen_hours_ago, hours)
-        days == 1L -> stringResource(R.string.devices_seen_yesterday)
-        days < 30 -> stringResource(R.string.devices_seen_days_ago, days)
-        days < 365 -> stringResource(R.string.devices_seen_months_ago, days / 30)
-        else -> stringResource(R.string.devices_seen_years_ago, days / 365)
-    }
 }
 
 private fun deviceKind(device: AgentDevice): DeviceKind {

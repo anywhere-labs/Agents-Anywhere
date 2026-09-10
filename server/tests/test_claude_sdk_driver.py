@@ -4,7 +4,10 @@ import builtins
 
 import pytest
 
-from agent_server.infra.runtimes.claude.sdk_driver import ClaudeSdkChatDriver, ClaudeSdkUnavailableError
+from agent_server.infra.runtimes.claude.sdk_driver import (
+    ClaudeSdkChatDriver,
+    ClaudeSdkUnavailableError,
+)
 
 
 async def _permission_handler(*_args, **_kwargs):
@@ -56,7 +59,7 @@ def test_claude_sdk_driver_raises_clear_error_when_dependency_missing(monkeypatc
 
 
 @pytest.mark.anyio
-async def test_claude_sdk_driver_start_turn_and_interrupt_with_fake_sdk():
+async def test_claude_sdk_driver_send_message_and_interrupt_with_fake_sdk():
     class FakeOptions:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
@@ -84,13 +87,13 @@ async def test_claude_sdk_driver_start_turn_and_interrupt_with_fake_sdk():
     driver = ClaudeSdkChatDriver(sdk_module=FakeSdk)
 
     await driver.create_session({"sessionId": "sess_1", "cwd": "/repo"})
-    result = await driver.start_turn({"sessionId": "sess_1", "content": "Run tests"})
+    result = await driver.send_message({"sessionId": "sess_1", "content": "Run tests"})
     interrupted = await driver.interrupt({"sessionId": "sess_1"})
 
     client = driver._clients["sess_1"]
     assert client.connected is True
     assert client.queries == ["Run tests"]
     assert client.options.kwargs["include_partial_messages"] is True
-    assert result == {"turnId": None}
+    assert result == {"accepted": True}
     assert interrupted == {"interrupted": True}
     assert client.interrupted is True

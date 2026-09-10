@@ -1,0 +1,220 @@
+import Foundation
+import Testing
+@testable import ClientCore
+
+@Suite @MainActor struct NewSessionTests {
+    private func make(_ http: TestHTTPTransport, defaults: UserDefaults? = nil, account: String = "one") -> NewSessionModel {
+        let connectors = V2ConnectorAPI(transport: http)
+        let model = NewSessionModel(scope: .init(serverURL: URL(string: "https://example.test")!, accountID: account),
+            devices: .init(connectorAPI: connectors), preparation: .init(connectorAPI: connectors),
+            creation: .init(sessionAPI: V2SessionAPI(transport: http)), projectAPI: V2ProjectAPI(transport: http),
+            defaults: defaults ?? UserDefaults(suiteName: "aa-tests-\(UUID().uuidString)")!)
+        if let response: V2ProjectListResponse = try? JSONDecoder().decode(V2ProjectListResponse.self, from: fixtureData("projects")) { model.updateProjects(response.projects) }
+        return model
+    }
+    private func transport() -> TestHTTPTransport {
+        let http = TestHTTPTransport()
+        http.respond = { call in
+            if call.path.hasSuffix("/rti_work") { return try fixtureData("runtime") }
+            if call.path.hasSuffix("/create-and-start") { return try fixtureData("session") }
+            return try http.defaultResponse(call)
+        }
+        return http
+    }
+    private func devices(online: Bool = true) throws -> [V2Connector] {
+        var object = try fixtureObject("connector")
+        var device = object["connector"] as! [String: Any]
+        device["status"] = online ? "online" : "offline"
+        object["connector"] = device
+        let response: V2ConnectorResponse = try decode(object)
+        return [response.connector]
+    }
+
+    @Test func cachedDashboardRestoresTheTargetBeforeLoadingThePage() throws {
+        let suite = "aa-tests-\(UUID().uuidString)"; let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let key = "aa.native.new-session.v1." + Data("https://example.test\none".utf8).base64EncodedString()
+        let preference = NewSessionPreference(draftText: "keep this draft", connectorID: "device", runtimeID: "rti_work",
+            workspaces: ["device": "/workspace"], projectIDs: ["device": "project"])
+        defaults.set(try JSONEncoder().encode(preference), forKey: key)
+        let http = transport(); let model = make(http, defaults: defaults)
+
+        model.updateConnectors(try devices())
+
+        #expect(model.connector?.id == "device" && model.runtimeID == "rti_work")
+        #expect(model.project?.id == "project" && model.workspace == "/workspace")
+        #expect(model.draft.text == "keep this draft")
+        #expect(http.calls.isEmpty, "Cache restoration does not wait for remote target preparation")
+        #expect(!model.canCreate, "Cached display data cannot authorize a send before validation")
+    }
+
+    @Test func targetRefreshIgnoresDashboardMetadataButTracksConnectivity() throws {
+        let model = make(transport())
+        model.updateConnectors(try devices())
+        let initial = model.refreshKey
+        var object = try fixtureObject("connector")
+        var device = object["connector"] as! [String: Any]
+        device["name"] = "Renamed device"
+        device["lastSeenAt"] = "2026-09-07T12:00:00Z"
+        object["connector"] = device
+        let updated: V2ConnectorResponse = try decode(object)
+        model.updateConnectors([updated.connector])
+        #expect(model.connector?.name == "Renamed device")
+        #expect(model.refreshKey == initial)
+
+        model.updateConnectors(try devices(online: false))
+        #expect(model.refreshKey != initial)
+        model.updateConnectors(try devices())
+        model.updateNetwork(.init(availability: .offline))
+        #expect(model.refreshKey != initial)
+    }
+
+    @Test func creationStagesBeforeNetworkAndKeepsOneClientIDThroughBinding() async throws {
+        let http = transport(); let model = make(http); let gate = TestGate()
+        model.draft.text = "Start now"
+        await model.refresh(connectors: try devices()); _ = model.selectProject("project")
+        var staged: NewSessionSubmission?
+        var boundID: String?
+        model.onStaged = { value in staged = value; await gate.wait() }
+        model.onBound = { value, _ in boundID = value.pending.id }
+        let creation = Task { await model.create(text: "Start now") }
+        try await eventually { staged != nil }
+        #expect(model.draft.text.isEmpty && staged?.pending.content == "Start now")
+        #expect(http.count("create-and-start") == 0)
+        gate.release()
+        #expect(await creation.value?.id == "session")
+        let request = try #require(http.calls.first { $0.path.hasSuffix("create-and-start") })
+        #expect(request.body?["clientMessageId"]?.stringValue == staged?.pending.id)
+        #expect(boundID == staged?.pending.id)
+    }
+
+    @Test func offlineDraftAndTargetSurviveAndReconnectRefreshesWithoutWrites() async throws {
+        let http = transport(); let model = make(http)
+        model.draft.text = "保留这个任务"
+        await model.refresh(connectors: try devices())
+        _ = model.selectProject("project")
+        #expect(model.canCreate)
+        #expect(model.runtimeID == "rti_work")
+        #expect(http.count("catalogs/model") == 0) // Unsupported capabilities are not queried.
+        model.updateNetwork(.init(availability: .offline))
+        await model.refresh(connectors: [])
+        #expect(!model.canCreate)
+        #expect(model.runtimeID == "rti_work")
+        #expect(model.draft.text == "保留这个任务")
+        model.updateNetwork(.init(availability: .online))
+        await model.refresh(connectors: try devices())
+        _ = model.selectProject("project")
+        #expect(model.canCreate)
+        #expect(http.calls.allSatisfy { $0.method == .get || $0.path.hasSuffix("fs/list") })
+    }
+
+    @Test func latePreparationCannotReenableOfflineDevice() async throws {
+        let http = transport(); let model = make(http)
+        let gate = TestGate()
+        http.respond = { call in
+            if call.path.hasSuffix("capabilities") { await gate.wait() }
+            if call.path.hasSuffix("/rti_work") { return try fixtureData("runtime") }
+            return try http.defaultResponse(call)
+        }
+        let loading = Task { await model.refresh(connectors: try devices())
+        _ = model.selectProject("project") }
+        try await eventually { http.count("capabilities") == 1 }
+        await model.refresh(connectors: try devices(online: false))
+        gate.release(); _ = await loading.result
+        #expect(model.prepared == nil)
+        #expect(!model.canCreate)
+        #expect(model.connector?.status == .offline)
+    }
+
+    @Test func targetIsAtomicAndWorkspacePreferencesAreAccountScoped() async throws {
+        let suite = "aa-tests-\(UUID().uuidString)"; let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = make(transport(), defaults: defaults)
+        await model.refresh(connectors: try devices())
+        _ = model.selectProject("project")
+        #expect(await model.selectTarget(connectorID: "device", runtimeID: "rti_work"))
+        #expect(model.selectProject("project"))
+        #expect(!(await model.selectTarget(connectorID: "another-device", runtimeID: "rti_work")))
+        #expect(model.connectorID == "device" && model.runtimeID == "rti_work")
+        #expect(model.workspace == "/workspace")
+        let restored = make(transport(), defaults: defaults)
+        #expect(restored.connectorID == "device" && restored.runtimeID == "rti_work")
+        #expect(restored.projectID == "project")
+        #expect(restored.workspace == "/workspace")
+        let otherAccount = make(transport(), defaults: defaults, account: "two")
+        #expect(otherAccount.connectorID.isEmpty && otherAccount.workspace.isEmpty)
+    }
+
+    @Test func creationRevalidatesRuntimeBeforeWriting() async throws {
+        let http = transport(); let model = make(http)
+        model.draft.text = "task"
+        await model.refresh(connectors: try devices())
+        _ = model.selectProject("project")
+        #expect(model.canCreate)
+        http.respond = { call in
+            if call.path.hasSuffix("/rti_work") {
+                var runtime = try fixtureObject("runtime"); runtime["status"] = "stopped"; runtime["active"] = false
+                return try JSONSerialization.data(withJSONObject: runtime)
+            }
+            return try http.defaultResponse(call)
+        }
+        #expect(await model.create(text: "task") == nil)
+        #expect(http.calls.allSatisfy { $0.method == .get || $0.path.hasSuffix("fs/list") })
+        #expect(!model.creationUncertain)
+        #expect(model.draft.text == "task")
+    }
+
+    @Test func uncertainCreationDoesNotReplayAfterReconnectAndKeepsConcurrentEdits() async throws {
+        let http = transport(); let model = make(http)
+        model.draft.text = "task"
+        await model.refresh(connectors: try devices())
+        _ = model.selectProject("project")
+        http.respond = { call in
+            if call.path.hasSuffix("/rti_work") { return try fixtureData("runtime") }
+            if call.method == .post { model.draft.text = "next draft"; throw URLError(.timedOut) }
+            return try http.defaultResponse(call)
+        }
+        #expect(await model.create(text: "task") == nil)
+        #expect(model.creationUncertain)
+        model.updateNetwork(.init(availability: .offline))
+        model.updateNetwork(.init(availability: .online))
+        await model.refresh(connectors: try devices())
+        _ = model.selectProject("project")
+        #expect(await model.create(text: "next draft") == nil)
+        #expect(http.calls.filter { $0.method == .post && !$0.path.hasSuffix("fs/list") }.count == 1)
+        #expect(model.error != nil && model.draft.text == "next draft")
+    }
+
+    @Test func missingProjectAndFailedResolutionKeepTheDraftWithoutWriting() async throws {
+        let http = transport(); let model = make(http)
+        await model.refresh(connectors: try devices())
+        model.draft.text = "keep me"
+        #expect(model.canCreate, "Remote home can be sent without manually choosing a project")
+        #expect(model.selectWorkspace("/another-workspace"))
+        http.respond = { call in
+            if call.path == "/projects" { throw URLError(.timedOut) }
+            if call.path.hasSuffix("/rti_work") { return try fixtureData("runtime") }
+            return try http.defaultResponse(call)
+        }
+        #expect(await model.create(text: "keep me") == nil)
+        #expect(!model.creationUncertain && model.projectID == nil)
+        #expect(model.draft.text == "keep me" && http.calls.allSatisfy { $0.method == .get || $0.path.hasSuffix("fs/list") })
+    }
+
+    @Test func successfulCreateUsesTypeAndInstanceAndDoesNotPersistDraft() async throws {
+        let http = transport(); let model = make(http)
+        model.draft.text = "task\nsecond line"
+        await model.refresh(connectors: try devices())
+        _ = model.selectProject("project")
+        #expect(model.selectProject("project"))
+        let result = await model.create(text: model.draft.text)
+        #expect(result != nil)
+        let request = try #require(http.calls.first { $0.path.hasSuffix("create-and-start") })
+        #expect(request.body?["projectId"] == .string("project"))
+        #expect(request.body?["runtime"] == .string("claude"))
+        #expect(request.body?["runtimeId"] == .string("rti_work"))
+        #expect(request.body?["cwd"] == .string("/workspace"))
+        #expect(request.body?["content"] == .string("task\nsecond line"))
+        #expect(model.draft.text.isEmpty)
+    }
+}

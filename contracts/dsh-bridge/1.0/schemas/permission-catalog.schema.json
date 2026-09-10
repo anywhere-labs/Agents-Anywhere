@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents-anywhere.dev/contracts/dsh-bridge/1.0/permission-catalog.schema.json",
+  "type": "object",
+  "required": ["runtime", "revision", "permissions"],
+  "properties": {
+    "runtime": { "const": "dsh" },
+    "revision": { "type": "integer", "minimum": 0 },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "selectionId", "enabled"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "selectionId": { "pattern": "^dsh:permission:[A-Za-z0-9_-]+$" },
+          "enabled": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

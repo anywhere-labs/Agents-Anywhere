@@ -1,26 +1,67 @@
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    WithJsonSchema,
+    model_validator,
+)
+
+from agent_server.core.email_settings import EmailSettingsUpdate, EmailSettingsView
+from agent_server.core.runtime_identity import (
+    RuntimeIdentity,
+    RuntimeIdentityError,
+    validate_runtime_type,
+)
+
+_PROTOCOL_1_RUNTIME_NAMES = ("codex", "claude", "opencode", "acp", "dsh")
+LegacyRuntimeName = Literal["codex", "claude", "opencode", "acp", "dsh"]
 
 
-# Open string so ACP agents (cursor, gemini, codebuddy, grok_build, …) can be
-# first-class runtimes without a server release per agent. Constrained to
-# lowercase snake_case ids (1–64 chars). "platform" is reserved for TimelineSource.
+def _validate_runtime_name(value: str) -> str:
+    try:
+        return str(validate_runtime_type(value))
+    except RuntimeIdentityError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+# Runtime Control 2.0 can discover new normalized provider keys. Protocol 1.0
+# keeps its original advertised enum until the additive 1.1 contract ships.
 RuntimeName = Annotated[
     str,
-    StringConstraints(
-        strip_whitespace=True,
-        min_length=1,
-        max_length=64,
-        pattern=r"^[a-z][a-z0-9_]*$",
+    AfterValidator(_validate_runtime_name),
+    WithJsonSchema(
+        {
+            "enum": list(_PROTOCOL_1_RUNTIME_NAMES),
+            "type": "string",
+        }
     ),
 ]
 ConnectorStatus = Literal["offline", "online"]
 ConnectorDeviceOs = Literal["macos", "windows", "linux"]
-SessionStatus = Literal["idle", "running", "waiting_approval", "error"]
-TimelineType = Literal["turn.start", "turn.end", "message", "tool", "artifact", "system"]
+ConnectorKind = Literal["desktop", "cli"]
+SessionStatus = Literal[
+    "idle",
+    "waiting",
+    "pending",
+    "running",
+    "stopping",
+    "waiting_approval",
+    "error",
+    "blocked",
+]
+TimelineType = Literal[
+    "message",
+    "tool",
+    "artifact",
+    "marker",
+    "system",
+]
 TimelineStatus = Literal[
     "pending",
     "running",
@@ -49,52 +90,22 @@ ApprovalKind = Literal[
 ]
 
 
-class AttachedAgentView(BaseModel):
-    """One agent the user has chosen to attach to a device.
-
-    `report` is the daemon's most recent discovery output for this runtime
-    (path / version / check status). It gets refreshed whenever the daemon
-    rediscovers, but the agent stays attached even if the report turns
-    unhealthy — only an explicit Delete moves it out.
-    """
-    report: dict[str, Any]
-    attachedAt: str
-
-
-class DeviceAgentsState(BaseModel):
-    """Frontend-facing per-device agent view.
-
-    The database stores v3 agent state as observed machine facts plus desired
-    user intent. This response keeps the older `attached` / `disabled` shape
-    so the current frontend can stay unchanged:
-
-    - `attached`: runtimes enabled by the user and visible on Device → Agents.
-    - `disabled`: runtimes the user explicitly deleted.
-    - `lastDiscoveredAt`: timestamp of the connector's last full discovery.
-    """
-    version: int = 3
-    lastDiscoveredAt: str | None = None
-    attached: dict[str, AttachedAgentView] = Field(default_factory=dict)
-    disabled: list[str] = Field(default_factory=list)
-
-
 class ConnectorView(BaseModel):
     id: str
     userId: str
     name: str
+    connectorKind: ConnectorKind
     deviceOs: ConnectorDeviceOs | None = None
     status: ConnectorStatus
     lastSeenAt: str | None = None
-    # Per-device agent view. Field name kept for API/db compat with the
-    # original "runtime capabilities" payload; backend storage is v3 observed
-    # facts + desired intent, exposed here as attached/disabled.
-    runtimeCapabilities: DeviceAgentsState = Field(default_factory=DeviceAgentsState)
     createdAt: str
     updatedAt: str
 
 
 class ConnectorCreateRequest(BaseModel):
     name: str = "Codex Connector"
+    connectorKind: ConnectorKind = "cli"
+    installationId: UUID | None = None
 
 
 class ConnectorUpdateRequest(BaseModel):
@@ -124,11 +135,82 @@ class ConnectorListResponse(BaseModel):
     serverTime: str
 
 
+class ProjectSidebarSessionCounts(BaseModel):
+    active: int = 0
+    archived: int = 0
+
+
+class ProjectView(BaseModel):
+    id: str
+    userId: str
+    connectorId: str
+    name: str
+    workspacePath: str
+    manuallyCreated: bool = False
+    pinned: bool = False
+    pinnedAt: str | None = None
+    activeSessionCount: int = 0
+    sidebarSessionCounts: ProjectSidebarSessionCounts = Field(
+        default_factory=ProjectSidebarSessionCounts
+    )
+    lastActivityAt: str | None = None
+    createdAt: str
+    updatedAt: str
+
+
+class ProjectCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=255)
+    connectorId: str = Field(min_length=1)
+    workspacePath: str = Field(min_length=1, max_length=4096)
+    # Automatic workspace selection must not claim or rename an existing project.
+    manuallyCreated: bool = True
+    # Retained for compatibility with older clients. Project creation never
+    # binds existing sessions, even when this legacy flag is true.
+    attachMatchingSessions: bool = False
+
+
+class ProjectPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    pinned: bool | None = None
+
+    @model_validator(mode="after")
+    def _require_change(self) -> ProjectPatchRequest:
+        if self.name is None and self.pinned is None:
+            raise ValueError("at least one project field is required")
+        return self
+
+
+class ProjectResponse(BaseModel):
+    project: ProjectView
+    serverTime: str
+
+
+class ProjectCreateResponse(ProjectResponse):
+    attachedSessions: int = 0
+
+
+class ProjectListResponse(BaseModel):
+    projects: list[ProjectView]
+    serverTime: str
+
+
+class ProjectDeleteResponse(BaseModel):
+    projectId: str
+    detachedSessions: int
+    serverTime: str
+
+
 UserRoleName = Literal["admin", "member"]
 
 
 class AuthRequest(BaseModel):
-    userId: str
+    email: str = Field(max_length=320)
+    displayName: str | None = Field(default=None, max_length=64)
+    code: str | None = Field(default=None, max_length=6)
     password: str | None = None
     passwordVerifier: str | None = None
     passwordSalt: str | None = None
@@ -138,7 +220,7 @@ class AuthRequest(BaseModel):
 
 
 class AuthPasswordSaltRequest(BaseModel):
-    userId: str
+    email: str = Field(max_length=320)
 
 
 class AuthPasswordSaltResponse(BaseModel):
@@ -148,6 +230,9 @@ class AuthPasswordSaltResponse(BaseModel):
 
 class UserView(BaseModel):
     userId: str
+    email: str | None = None
+    emailVerified: bool = False
+    displayName: str = ""
     role: UserRoleName
     disabled: bool
     avatar: str | None = None
@@ -157,6 +242,9 @@ class UserView(BaseModel):
 
 class AuthResponse(BaseModel):
     userId: str
+    email: str | None = None
+    emailVerified: bool = False
+    displayName: str = ""
     role: UserRoleName
     accessToken: str
     tokenType: str = "bearer"
@@ -165,6 +253,9 @@ class AuthResponse(BaseModel):
 
 class AuthMeResponse(BaseModel):
     userId: str
+    email: str | None = None
+    emailVerified: bool = False
+    displayName: str = ""
     role: UserRoleName
     disabled: bool
     avatar: str | None = None
@@ -172,6 +263,7 @@ class AuthMeResponse(BaseModel):
 
 
 class AuthConfigResponse(BaseModel):
+    emailVerificationRequired: bool = False
     needsBootstrap: bool
     registrationOpen: bool
     oauthRegistrationOpen: bool = False
@@ -182,6 +274,28 @@ class AuthConfigResponse(BaseModel):
     # the token value itself.
     setupTokenExpiresAt: str | None = None
     serverTime: str
+
+
+class EmailCodeRequest(BaseModel):
+    email: str = Field(max_length=320)
+    purpose: Literal["register", "bind"]
+    setupToken: str | None = None
+    pendingToken: str | None = None
+
+
+class EmailCodeResponse(BaseModel):
+    expiresIn: int = 600
+    retryAfter: int = 60
+    serverTime: str
+
+
+class BindEmailRequest(BaseModel):
+    email: str = Field(max_length=320)
+    code: str | None = Field(default=None, max_length=6)
+
+
+class UpdateProfileRequest(BaseModel):
+    displayName: str = Field(min_length=1, max_length=64)
 
 
 class ChangePasswordRequest(BaseModel):
@@ -201,13 +315,18 @@ class ServiceInfoResponse(BaseModel):
     version: str
     database: str
     databasePath: str | None = None
+    databaseSchemaVersion: str
+    coordination: Literal["memory", "redis"]
+    instanceId: str
     startedAt: str
     uptimeSeconds: int
     serverTime: str
 
 
 class AdminUserCreateRequest(BaseModel):
-    userId: str
+    email: str = Field(max_length=320)
+    displayName: str = Field(min_length=1, max_length=64)
+    code: str | None = Field(default=None, max_length=6)
     password: str | None = None
     passwordVerifier: str | None = None
     passwordSalt: str | None = None
@@ -215,6 +334,7 @@ class AdminUserCreateRequest(BaseModel):
 
 
 class AdminUserUpdateRequest(BaseModel):
+    displayName: str | None = Field(default=None, max_length=64)
     role: UserRoleName | None = None
     disabled: bool | None = None
     password: str | None = None
@@ -228,13 +348,13 @@ class AdminUserListResponse(BaseModel):
 
 
 class DashboardIntensitySettings(BaseModel):
-    basis: Literal["turns"] = "turns"
+    basis: Literal["messages"] = "messages"
     lightMax: int = Field(default=10, ge=0)
     mediumMax: int = Field(default=50, ge=0)
 
 
 class DashboardHistogramSettings(BaseModel):
-    turns: list[int] = Field(default_factory=lambda: [0, 5, 20, 100])
+    messages: list[int] = Field(default_factory=lambda: [0, 5, 20, 100])
     sessions: list[int] = Field(default_factory=lambda: [0, 1, 5, 20])
 
 
@@ -262,9 +382,9 @@ class DashboardSummary(BaseModel):
     activeUsers: int = 0
     wau: int = 0
     mau: int = 0
-    totalTurns: int = 0
+    totalMessages: int = 0
     activeSessions: int = 0
-    avgTurnsPerActiveUser: float = 0
+    avgMessagesPerActiveUser: float = 0
     avgActiveSessionsPerActiveUser: float = 0
     totalDevices: int = 0
     avgDevicesPerUser: float = 0
@@ -278,9 +398,9 @@ class DashboardSeriesPoint(BaseModel):
     activeUsers: int = 0
     wau: int = 0
     mau: int = 0
-    totalTurns: int = 0
+    totalMessages: int = 0
     activeSessions: int = 0
-    avgTurnsPerActiveUser: float = 0
+    avgMessagesPerActiveUser: float = 0
     avgActiveSessionsPerActiveUser: float = 0
     totalDevices: int = 0
     avgDevicesPerUser: float = 0
@@ -311,7 +431,7 @@ class DashboardOverviewResponse(BaseModel):
     range: DashboardRange
     summary: DashboardSummary
     series: list[DashboardSeriesPoint]
-    turnHistogram: list[DashboardHistogramBucket]
+    messageHistogram: list[DashboardHistogramBucket]
     sessionHistogram: list[DashboardHistogramBucket]
     userSegments: list[DashboardUserSegmentItem]
     deviceBreakdown: list[DashboardBreakdownItem]
@@ -352,12 +472,14 @@ class InstanceSettingsView(BaseModel):
     registrationOpen: bool
     oauthRegistrationOpen: bool = False
     oauth: OAuthProviderPublicConfig | None = None
+    email: EmailSettingsView = Field(default_factory=EmailSettingsView)
 
 
 class InstanceSettingsUpdateRequest(BaseModel):
     registrationOpen: bool | None = None
     oauthRegistrationOpen: bool | None = None
     oauth: OAuthProviderConfigUpdate | None = None
+    email: EmailSettingsUpdate | None = None
 
 
 class OAuthStartResponse(BaseModel):
@@ -379,7 +501,9 @@ class OAuthCallbackResponse(BaseModel):
 
 class OAuthFinalizeRequest(BaseModel):
     pendingToken: str
-    userId: str | None = None
+    email: str | None = Field(default=None, max_length=320)
+    displayName: str | None = Field(default=None, max_length=64)
+    code: str | None = Field(default=None, max_length=6)
     password: str | None = None
     passwordVerifier: str | None = None
     passwordSalt: str | None = None
@@ -499,8 +623,17 @@ class ConnectorIngestRequest(BaseModel):
     notifications: list[ConnectorNotification] = Field(min_length=1)
 
 
+class ConnectorIngestRejectedNotification(BaseModel):
+    index: int
+    method: str
+    code: str
+    message: str
+    errorType: str | None = None
+
+
 class ConnectorIngestResponse(BaseModel):
     accepted: int
+    rejected: list[ConnectorIngestRejectedNotification] = Field(default_factory=list)
     serverTime: str
 
 
@@ -546,24 +679,75 @@ class PairingPollResponse(BaseModel):
 
 
 class SessionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     connectorId: str
+    projectId: str = Field(min_length=1)
     runtime: RuntimeName = "codex"
+    runtimeId: str | None = None
     externalSessionId: str | None = None
     title: str | None = None
     cwd: str | None = None
-    runtimeSettings: dict[str, Any] | None = None
-    # Forwarded to the connector's runtime-create RPC. For codex these map to
-    # `thread/start.approvalPolicy` and `thread/start.sandbox` — set to
-    # "never"/"danger-full-access" to disable approval prompts during testing.
-    approvalPolicy: str | None = None
-    sandbox: str | None = None
+    selections: dict[str, str | None] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_runtime_identity(self) -> SessionCreateRequest:
+        identity = RuntimeIdentity.create(
+            runtime_type=self.runtime,
+            runtime_id=self.runtimeId or self.runtime,
+        )
+        self.runtimeId = str(identity.runtime_id)
+        return self
+
+
+class AttachmentRef(BaseModel):
+    fileId: str = Field(min_length=1, max_length=64)
+
+
+class InlineAttachmentRef(BaseModel):
+    fileId: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=512)
+    mediaType: str = Field(default="application/octet-stream", max_length=255)
+    size: int | None = Field(default=None, ge=0)
+    sha256: str | None = Field(default=None, max_length=128)
+    contentBase64: str = Field(min_length=1)
+
+
+class SessionCreateAndStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    connectorId: str
+    projectId: str = Field(min_length=1)
+    runtime: RuntimeName = "codex"
+    runtimeId: str | None = None
+    title: str | None = None
+    cwd: str | None = None
+    content: str
+    selections: dict[str, str | None] = Field(default_factory=dict)
+    runtimeOptions: dict[str, Any] = Field(default_factory=dict, max_length=16)
+    attachments: list[InlineAttachmentRef] = Field(default_factory=list, max_length=10)
+    clientMessageId: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_runtime_identity(self) -> SessionCreateAndStartRequest:
+        identity = RuntimeIdentity.create(
+            runtime_type=self.runtime,
+            runtime_id=self.runtimeId or self.runtime,
+        )
+        self.runtimeId = str(identity.runtime_id)
+        return self
 
 
 class SessionView(BaseModel):
     id: str
     connectorId: str
+    projectId: str | None = None
     connectorStatus: ConnectorStatus
     runtime: RuntimeName
+    runtimeId: str | None = None
+    runtimeType: RuntimeName | None = None
+    runtimeName: str | None = None
+    runtimeTypeDisplayName: str | None = None
     externalSessionId: str | None = None
     title: str | None = None
     cwd: str | None = None
@@ -573,8 +757,22 @@ class SessionView(BaseModel):
     pinnedAt: str | None = None
     archived: bool = False
     archivedAt: str | None = None
+    userArchived: bool = False
+    sourceAvailability: Literal[
+        "available",
+        "archived",
+        "unavailable",
+        "deleted",
+        "missing",
+        "unknown",
+    ] = "available"
+    sourceAvailabilityReason: str | None = None
+    sourceAvailabilityUpdatedAt: str | None = None
+    sourceObservationOrigin: Literal["event", "inventory", "operation"] | None = None
+    archiveSource: Literal["user", "runtime", "both"] | None = None
     unread: bool = False
     lastReadSeq: int = 0
+    latestTurnEndSeq: int = 0
     lastSyncedAt: str | None = None
     sourceObservedAt: str | None = None
     lastActivityAt: str | None = None
@@ -582,8 +780,77 @@ class SessionView(BaseModel):
     lastItemOrderSeq: int | None = None
     sortAt: str | None = None
     updatedSeq: int
-    runtimeSettings: dict[str, Any] | None = None
-    runtimeSettingsOverride: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _normalize_runtime_identity(self) -> SessionView:
+        identity = RuntimeIdentity.create(
+            runtime_type=self.runtime,
+            runtime_id=self.runtimeId or self.runtime,
+        )
+        self.runtimeId = str(identity.runtime_id)
+        self.runtimeType = self.runtime
+        return self
+
+
+class ConnectorSessionResolution(BaseModel):
+    """One connector notification's session resolution.
+
+    ``sessionId`` is the canonical session the notification applies to, or
+    ``None`` when no session matched. ``runtime``/``runtimeId`` are the identity
+    the lookup used. The ``bound*`` fields describe the raw session row when it
+    exists but was not usable, so the caller can still raise its binding error.
+    """
+
+    sessionId: str | None = None
+    runtime: str | None = None
+    runtimeId: str | None = None
+    boundConnectorId: str | None = None
+    boundRuntime: str | None = None
+    boundRuntimeId: str | None = None
+
+
+class SessionRuntimeState(BaseModel):
+    sessionId: str
+    runtime: RuntimeName
+    runtimeId: str | None = None
+    runtimeType: RuntimeName | None = None
+    externalSessionId: str | None = None
+    status: SessionStatus = "idle"
+    selections: dict[str, str | None] = Field(default_factory=dict)
+    statusReason: str | None = None
+    error: dict[str, Any] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    updatedSeq: int
+    createdAt: str
+    updatedAt: str
+
+    @model_validator(mode="after")
+    def _normalize_runtime_identity(self) -> SessionRuntimeState:
+        identity = RuntimeIdentity.create(
+            runtime_type=self.runtime,
+            runtime_id=self.runtimeId or self.runtime,
+        )
+        self.runtimeId = str(identity.runtime_id)
+        self.runtimeType = self.runtime
+        return self
+
+
+class SessionRuntimeStateResponse(BaseModel):
+    state: SessionRuntimeState
+    serverTime: str
+
+
+class SessionSelectionPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selections: dict[str, str | None] = Field(min_length=1, max_length=32)
+
+
+class SessionSelectionPatchResponse(BaseModel):
+    ok: bool
+    state: SessionRuntimeState | None = None
+    connectorResult: dict[str, Any] | None = None
+    serverTime: str
 
 
 class SessionPatchRequest(BaseModel):
@@ -595,10 +862,6 @@ class SessionPatchRequest(BaseModel):
 class BulkArchiveRequest(BaseModel):
     ids: list[str] = Field(min_length=1, max_length=200)
     archived: bool
-
-
-class BulkReadRequest(BaseModel):
-    ids: list[str] = Field(min_length=1, max_length=200)
 
 
 class BulkArchiveResponse(BaseModel):
@@ -621,15 +884,57 @@ class ArchiveAllResponse(BaseModel):
     serverTime: str
 
 
+class ProjectSessionListResponse(BaseModel):
+    sessions: list[SessionView]
+    hasMore: bool
+    nextCursor: str | None = None
+    serverTime: str
+
+
 class SessionResponse(BaseModel):
     session: SessionView
     serverTime: str
 
 
+SessionShareScope = Literal["message", "session"]
+
+
+class SessionShareCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope: SessionShareScope
+    itemIds: list[str] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def _validate_item_ids(self) -> SessionShareCreateRequest:
+        if self.scope == "message" and not self.itemIds:
+            raise ValueError("itemIds is required when sharing a reply")
+        if self.scope == "session" and self.itemIds:
+            raise ValueError("itemIds must be empty when sharing a session")
+        if len(set(self.itemIds)) != len(self.itemIds):
+            raise ValueError("itemIds must not contain duplicates")
+        return self
+
+
+class SessionShareCreateResponse(BaseModel):
+    shareId: str
+    sharePath: str
+    shareUrl: str
+    scope: SessionShareScope
+    createdAt: str
+
+
+class PublicSharedSession(BaseModel):
+    id: str
+    title: str | None = None
+    runtime: RuntimeName
+    runtimeName: str | None = None
+    cwd: str | None = None
+
+
 class TimelineSource(BaseModel):
     runtime: RuntimeName | Literal["platform"]
     sessionId: str | None = None
-    turnId: str | None = None
     itemId: str | None = None
     itemType: str | None = None
     event: str | None = None
@@ -640,7 +945,6 @@ class TimelineSource(BaseModel):
 class TimelineItemIn(BaseModel):
     id: str
     sessionId: str
-    turnId: str | None = None
     type: TimelineType
     status: TimelineStatus
     role: TimelineRole | None = None
@@ -660,11 +964,19 @@ class TimelineItem(TimelineItemIn):
     updatedAt: str
 
 
+class PublicSessionShareResponse(BaseModel):
+    shareId: str
+    scope: SessionShareScope
+    session: PublicSharedSession
+    items: list[TimelineItem]
+    createdAt: str
+    serverTime: str
+
+
 class ApprovalSource(BaseModel):
     runtime: RuntimeName
     requestId: str | int
     sessionId: str | None = None
-    turnId: str | None = None
     itemId: str | None = None
     method: str | None = None
 
@@ -672,7 +984,6 @@ class ApprovalSource(BaseModel):
 class ApprovalIn(BaseModel):
     id: str
     sessionId: str
-    turnId: str | None = None
     status: ApprovalStatus = "pending"
     kind: ApprovalKind = "unknown"
     targetItemId: str | None = None
@@ -690,76 +1001,152 @@ class Approval(ApprovalIn):
     createdAt: str
 
 
-class SessionStateResponse(BaseModel):
-    session: SessionView
-    items: list[TimelineItem]
-    approvals: list[Approval]
-    nextSeq: int
-    hasMore: bool
+NoticeType = Literal["notification", "interaction"]
+NoticeSeverity = Literal["info", "success", "warning", "error"]
+NoticeStatus = Literal[
+    "open",
+    "responding",
+    "response_accepted",
+    "resolving",
+    "resolved",
+    "closed",
+    "expired",
+    "cancelled",
+    "failed",
+]
+InteractionType = Literal["approval", "execution_error", "confirmation", "input_request", "unknown"]
+NoticeActionStyle = Literal["primary", "secondary", "danger"]
+
+
+class NoticeBlocking(BaseModel):
+    scope: Literal["session"]
+    targetId: str
+
+
+class NoticeActionInput(BaseModel):
+    required: bool = False
+    schema_: dict[str, Any] | None = Field(default=None, alias="schema")
+    uiSchema: dict[str, Any] | None = None
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class NoticeAction(BaseModel):
+    actionId: str
+    label: str
+    style: NoticeActionStyle = "secondary"
+    input: NoticeActionInput = Field(default_factory=NoticeActionInput)
+
+
+class NoticeSource(BaseModel):
+    runtime: RuntimeName | Literal["platform"] | None = None
+    component: str | None = None
+    approvalId: str | None = None
+    timelineItemId: str | None = None
+    operationId: str | None = None
+
+
+class NoticeIn(BaseModel):
+    noticeId: str
+    type: NoticeType
+    sessionId: str
+    source: NoticeSource = Field(default_factory=NoticeSource)
+    title: str
+    message: str | None = None
+    severity: NoticeSeverity = "info"
+    status: NoticeStatus = "open"
+    interactionType: InteractionType | None = None
+    blocking: NoticeBlocking | None = None
+    responseRequired: bool = False
+    actions: list[NoticeAction] = Field(default_factory=list)
+    context: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    expiresAt: str | None = None
+    revision: int = 1
+    createdAt: str | None = None
+    resolvedAt: str | None = None
+
+
+class Notice(NoticeIn):
+    updatedSeq: int
+    createdAt: str
+    updatedAt: str
+
+
+class RuntimeNoticeListResponse(BaseModel):
+    notices: list[NoticeIn] = Field(default_factory=list)
     serverTime: str
 
 
-class AttachmentRef(BaseModel):
-    fileId: str = Field(min_length=1, max_length=64)
+class NoticeListResponse(BaseModel):
+    notices: list[Notice] = Field(default_factory=list)
+    serverTime: str
+
+
+class InteractionRespondRequest(BaseModel):
+    actionId: str
+    input: dict[str, Any] | None = None
 
 
 class MessageCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     content: str
     attachments: list[AttachmentRef] = Field(default_factory=list, max_length=10)
-    # Optional per-message overrides surfaced by the composer dropdowns. The
-    # backend forwards these to the connector as permissionMode / model /
-    # effort; what (if anything) consumes them is runtime-specific.
-    mode: str | None = None
-    model: str | None = None
-    effort: str | None = None
     # Client-generated id (e.g. optimistic temp id). Forwarded to the connector;
     # the connector tags the resulting timeline item so the frontend can
     # dedupe its optimistic placeholder against the real server item.
     clientMessageId: str | None = None
 
 
-class AgentCatalogEntry(BaseModel):
-    runtime: RuntimeName
-    key: str
-    displayLabel: str
+class SessionCommandRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    command: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
+    args: list[str] = Field(default_factory=list, max_length=32)
+    raw: str | None = Field(default=None, max_length=4096)
+
+
+class RuntimeCommandView(BaseModel):
+    id: str
+    title: str
     description: str | None = None
-    isDefault: bool
-    sortOrder: int
-    efforts: list["AgentCatalogEntry"] = Field(default_factory=list)
-
-
-class AgentCatalogResponse(BaseModel):
-    runtime: RuntimeName
-    entries: list[AgentCatalogEntry]
-    serverTime: str
-
-
-class UserAgentDefaultRuntime(BaseModel):
-    runtime: RuntimeName
+    aliases: list[str] = Field(default_factory=list)
+    category: str | None = None
+    scope: str = "session"
     enabled: bool = True
-    settings: dict[str, Any] = Field(default_factory=dict)
-    models: list[AgentCatalogEntry] = Field(default_factory=list)
+    disabledReason: str | None = None
+    acceptsArgs: bool = False
+    argsSchema: dict[str, Any] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class UserAgentDefaultsResponse(BaseModel):
-    runtimes: dict[str, UserAgentDefaultRuntime]
+class SessionCommandListResponse(BaseModel):
+    commands: list[RuntimeCommandView] = Field(default_factory=list)
     serverTime: str
 
 
-class AgentCatalogEntryUpdate(BaseModel):
-    key: str = Field(min_length=1)
-    displayLabel: str = Field(min_length=1)
-    description: str | None = None
-    sortOrder: int = 0
-    efforts: list["AgentCatalogEntryUpdate"] | None = None
+class RuntimeCommandListResponse(BaseModel):
+    commands: list[RuntimeCommandView] = Field(default_factory=list)
+    serverTime: str
 
 
-class UserAgentDefaultRuntimeUpdate(BaseModel):
-    models: list[AgentCatalogEntryUpdate] | None = None
+class SessionCommandResponse(BaseModel):
+    command: str
+    ok: bool = True
+    code: str | None = None
+    message: str | None = None
+    result: Any = None
+    session: SessionView | None = None
+    serverTime: str
 
 
-class UserAgentDefaultsUpdateRequest(BaseModel):
-    runtimes: dict[str, UserAgentDefaultRuntimeUpdate] = Field(default_factory=dict)
+class SessionSteerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    content: str
+    attachments: list[AttachmentRef] = Field(default_factory=list, max_length=10)
+    clientMessageId: str | None = None
 
 
 class ConnectorPreferencesResponse(BaseModel):
@@ -768,47 +1155,9 @@ class ConnectorPreferencesResponse(BaseModel):
     serverTime: str
 
 
-class ConnectorRuntimeCapabilitiesResponse(BaseModel):
-    connectorId: str
-    runtimeCapabilities: DeviceAgentsState
-    serverTime: str
-
-
-class ConnectorRuntimeScanRequest(BaseModel):
-    runtime: RuntimeName
-    path: str | None = None
-
-
 class ConnectorFsListRequest(BaseModel):
     root: str = Field(min_length=1)
     path: str | None = Field(default=None, min_length=1)
-
-
-class ConnectorRuntimeScanResponse(BaseModel):
-    connectorId: str
-    runtimeCapabilities: DeviceAgentsState
-    scanned: dict[str, Any]
-    serverTime: str
-
-
-class ConnectorAgentAuthenticateRequest(BaseModel):
-    """User-triggered ACP interactive login (device opens browser once)."""
-
-    methodId: str | None = None
-
-
-class ConnectorAgentAuthenticateResponse(BaseModel):
-    connectorId: str
-    runtime: str
-    authStatus: str
-    methodId: str | None = None
-    authMethods: list[dict[str, Any]] | None = None
-    authHint: str | None = None
-    modelOptions: list[dict[str, Any]] | None = None
-    modeOptions: list[dict[str, Any]] | None = None
-    runtimeCapabilities: DeviceAgentsState
-    message: str | None = None
-    serverTime: str
 
 
 class UploadedAttachment(BaseModel):
@@ -952,6 +1301,10 @@ class TerminalView(BaseModel):
     scrollbackBytes: int = 0
     scrollbackSeq: int = 0
     ephemeralGroupId: str | None = None
+    persistent: bool = Field(
+        default=False,
+        description="Keep the terminal alive through a renewable lease instead of the ordinary Connector idle TTL.",
+    )
     createdAt: str
 
 
@@ -965,11 +1318,19 @@ class TerminalCreateRequest(BaseModel):
     rows: int = Field(default=24, ge=1, le=200)
     label: str | None = Field(default=None, max_length=64)
     ephemeralGroupId: str | None = Field(default=None, min_length=1, max_length=96)
+    persistent: bool = Field(
+        default=False,
+        description="Keep the terminal alive through a renewable lease instead of the ordinary Connector idle TTL.",
+    )
     env: dict[str, str] | None = None
 
 
 class TerminalPatchRequest(BaseModel):
     label: str = Field(min_length=1, max_length=64)
+
+
+class TerminalPersistenceRequest(BaseModel):
+    persistent: bool
 
 
 class TerminalResizeRequest(BaseModel):

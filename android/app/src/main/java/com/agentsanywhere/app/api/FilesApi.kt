@@ -27,6 +27,7 @@ class FilesApi(
             path = result.optString("path", root).ifBlank { root },
             entries = result.optJSONArray("entries").toObjectList { toRemoteDirectoryEntry() },
             truncated = result.optBoolean("truncated", false),
+            targetType = result.optString("targetType", "directory"),
         )
     }
 

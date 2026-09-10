@@ -3,129 +3,113 @@ package com.agentsanywhere.app.feature.sessiondetail
 import com.agentsanywhere.app.model.AgentSession
 
 data class SessionDetailState(
-    val session: AgentSession? = null,
-    val messages: List<TimelineMessage> = emptyList(),
-    val approvals: List<TimelineApproval> = emptyList(),
-    val nextSeq: Int = 0,
-    val hasMore: Boolean = false,
-    val isLoading: Boolean = false,
-    val loadingOlder: Boolean = false,
-    val errorMessage: String? = null,
+    val meta: SessionMeta = SessionMeta(),
+    val timeline: SessionTimelineState = SessionTimelineState(),
+    val runtime: SessionRuntimeState = SessionRuntimeState(),
+    val capabilities: EffectiveCapabilities = EffectiveCapabilities(),
+    val runtimeCapabilities: RuntimeCapabilities = RuntimeCapabilities(),
+    val notices: RuntimeNotices = RuntimeNotices(),
+    val catalogs: RuntimeCatalogs = RuntimeCatalogs(),
+    val commands: RuntimeCommands = RuntimeCommands(),
+    val realtime: SessionRealtimeState = SessionRealtimeState(),
+    val initialized: Boolean = false,
     val actionError: String? = null,
-    val sseConnected: Boolean = false,
     val takeoverInFlight: Boolean = false,
     val sending: Boolean = false,
     val interrupting: Boolean = false,
-    val runtimeSettings: RuntimeSettingsState = RuntimeSettingsState(),
-)
+    val selectionUpdating: Boolean = false,
+    val commandExecuting: Boolean = false,
+    val respondingNoticeIds: Set<String> = emptySet(),
+) {
+    val session: AgentSession?
+        get() = meta.session
 
-data class RuntimeSettingsState(
-    val schema: RuntimeConfigSchema? = null,
-    val settings: Map<String, Any?> = emptyMap(),
-    val overrideSettings: Map<String, Any?> = emptyMap(),
+    val messages: List<TimelineMessage>
+        get() = timeline.messages
+
+    val nextSeq: Int
+        get() = timeline.nextSeq
+
+    val hasMore: Boolean
+        get() = timeline.hasMore
+
+    fun withSession(session: AgentSession?): SessionDetailState = copy(meta = meta.copy(session = session))
+}
+
+data class SessionRealtimeState(
+    val connected: Boolean = false,
+    val recovering: Boolean = false,
+    val reconnectAttempt: Int = 0,
+    val cursor: String = "seq:0",
+    val processedEventIds: Set<String> = emptySet(),
+    val lastErrorMessage: String? = null,
+) {
+    fun rememberEvent(eventId: String, cursor: String): SessionRealtimeState {
+        val remembered = (processedEventIds + eventId).let { ids ->
+            if (ids.size <= MAX_PROCESSED_EVENTS) ids else ids.drop(ids.size - RETAINED_PROCESSED_EVENTS).toSet()
+        }
+        return copy(cursor = laterEventCursor(this.cursor, cursor), processedEventIds = remembered)
+    }
+
+    private companion object {
+        const val MAX_PROCESSED_EVENTS = 1_000
+        const val RETAINED_PROCESSED_EVENTS = 500
+    }
+}
+
+internal fun laterEventCursor(current: String, incoming: String): String {
+    val currentSequence = current.removePrefix("seq:").toLongOrNull() ?: 0L
+    val incomingSequence = incoming.removePrefix("seq:").toLongOrNull() ?: return current
+    return if (incomingSequence >= currentSequence) incoming else current
+}
+
+data class SessionMeta(
+    val session: AgentSession? = null,
+    val serverTime: String? = null,
     val isLoading: Boolean = false,
-    val savingKey: String? = null,
     val errorMessage: String? = null,
 )
 
-data class RuntimeConfigSchema(
-    val runtime: String,
-    val schemaVersion: Int,
-    val fields: List<RuntimeConfigField>,
+internal fun SessionDetailState.beginSnapshotLoad(clearErrors: Boolean): SessionDetailState = copy(
+    meta = meta.copy(
+        isLoading = true,
+        errorMessage = if (clearErrors) null else meta.errorMessage,
+    ),
+    timeline = timeline.copy(
+        isLoading = true,
+        loadingOlder = false,
+        errorMessage = if (clearErrors) null else timeline.errorMessage,
+    ),
+    runtime = runtime.copy(
+        isLoading = true,
+        errorMessage = if (clearErrors) null else runtime.errorMessage,
+    ),
+    capabilities = capabilities.copy(
+        isLoading = true,
+        errorMessage = if (clearErrors) null else capabilities.errorMessage,
+    ),
+    notices = notices.copy(
+        isLoading = true,
+        errorMessage = if (clearErrors) null else notices.errorMessage,
+    ),
 )
 
-data class RuntimeConfigField(
-    val key: String,
-    val label: String,
-    val type: String,
-    val description: String?,
-    val options: List<RuntimeConfigOption>,
-    val visibleWhen: Map<String, Any?>,
-    val allowSessionOverride: Boolean,
-    val hidden: Boolean,
+internal fun SessionDetailState.completeSnapshotLoad(): SessionDetailState = copy(
+    meta = meta.copy(isLoading = false, errorMessage = null),
+    timeline = timeline.copy(isLoading = false, loadingOlder = false, errorMessage = null),
+    runtime = runtime.copy(isLoading = false, errorMessage = null),
+    capabilities = capabilities.copy(isLoading = false, errorMessage = null),
+    notices = notices.copy(isLoading = false, errorMessage = null),
 )
 
-data class RuntimeConfigOption(
-    val value: String,
-    val label: String,
-    val description: String?,
-    val efforts: List<RuntimeConfigOption>? = null,
+internal fun SessionDetailState.failSnapshotLoad(message: String?): SessionDetailState = copy(
+    meta = meta.copy(isLoading = false, errorMessage = meta.errorMessage ?: message),
+    timeline = timeline.copy(
+        isLoading = false,
+        loadingOlder = false,
+        errorMessage = timeline.errorMessage ?: message,
+    ),
+    runtime = runtime.copy(isLoading = false, errorMessage = runtime.errorMessage ?: message),
+    capabilities = capabilities.copy(isLoading = false, errorMessage = capabilities.errorMessage ?: message),
+    notices = notices.copy(isLoading = false, errorMessage = notices.errorMessage ?: message),
 )
-
-data class TimelineMessage(
-    val id: String,
-    val sourceItemId: String = id,
-    val author: MessageAuthor,
-    val text: String,
-    val attachments: List<TimelineAttachment> = emptyList(),
-    val status: String = "done",
-    val type: String = "message",
-    val kind: TimelineMessageKind = TimelineMessageKind.Text,
-    val title: String = "",
-    val subtitle: String = "",
-    val badge: String = "",
-    val detail: String = "",
-    val body: String = "",
-    val orderSeq: Int = 0,
-    val updatedSeq: Int = 0,
-    val clientMessageId: String? = null,
-    val turnId: String? = null,
-    val optimistic: Boolean = false,
-)
-
-data class TimelineAttachment(
-    val fileId: String,
-    val name: String,
-    val mediaType: String,
-    val size: Long,
-) {
-    val isImage: Boolean
-        get() = mediaType.startsWith("image/")
-}
-
-data class AttachmentImageRequest(
-    val url: String,
-    val authorizationToken: String,
-    val cacheKey: String,
-)
-
-data class TimelineApproval(
-    val id: String,
-    val title: String,
-    val description: String?,
-    val kind: String,
-    val status: String,
-    val choices: List<String>,
-    val updatedSeq: Int,
-)
-
-sealed interface SessionStreamEvent {
-    data object Connected : SessionStreamEvent
-    data object Disconnected : SessionStreamEvent
-    data class Delta(val value: SessionDetailDelta) : SessionStreamEvent
-    data class Failed(val message: String) : SessionStreamEvent
-}
-
-data class SessionDetailDelta(
-    val session: AgentSession? = null,
-    val messages: List<TimelineMessage> = emptyList(),
-    val replaceSourceItemIds: Set<String> = emptySet(),
-    val approvals: List<TimelineApproval>? = null,
-    val nextSeq: Int = 0,
-    val refetch: Boolean = false,
-)
-
-enum class MessageAuthor {
-    User,
-    Agent,
-    Tool,
-}
-
-enum class TimelineMessageKind {
-    Text,
-    Reasoning,
-    Command,
-    FileChange,
-    ToolCall,
-    System,
-}

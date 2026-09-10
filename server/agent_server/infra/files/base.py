@@ -29,14 +29,25 @@ class FileStorage(ABC):
     ) -> None: ...
 
     @abstractmethod
-    async def read(
-        self, session_id: str, file_id: str
-    ) -> tuple[bytes, dict[str, Any]]:
+    async def read(self, session_id: str, file_id: str) -> tuple[bytes, dict[str, Any]]:
         """Return (data, metadata). Raise KeyError if not found."""
 
     @abstractmethod
     async def delete(self, session_id: str, file_id: str) -> None:
         """Remove the blob + sidecar. No-op if already gone."""
+
+    @abstractmethod
+    async def delete_session(self, session_id: str) -> None:
+        """Remove all blobs and metadata for one session. Safe to retry."""
+
+    @staticmethod
+    def _validate_session_id(session_id: str) -> None:
+        if (
+            not session_id
+            or session_id in {".", ".."}
+            or any(char in session_id for char in ("/", "\\", "\0"))
+        ):
+            raise ValueError("invalid file storage session id")
 
     @abstractmethod
     async def exists(self, session_id: str, file_id: str) -> bool:

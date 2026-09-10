@@ -5,18 +5,35 @@ import base64
 import hashlib
 import json
 import time
+from collections.abc import Callable
 from typing import Any
 
-from fastapi.testclient import TestClient
+import anyio
+import pytest
+from conftest import ApiV2TestClient as TestClient, make_test_client
+from runtime_fixtures import seed_runtime_inventory
+from sqlalchemy import text
+from starlette.websockets import WebSocketDisconnect
 
 from agent_server.api.sessions_terminal import _send_terminal_ws_error
 from agent_server.app import create_app
-from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
+from agent_server.core.models import SessionRuntimeState, TimelineItemIn
+from agent_server.core.protocol import protocol_selection_id
+from agent_server.infra.connector_rpc import (
+    ConnectorOfflineError,
+    ConnectorRpcError,
+    ConnectorRpcManager,
+    DuplicateConnectorConnectionError,
+)
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
+from agent_server.services.device_runtimes import DeviceRuntimeService
+from agent_server.services.effective_capabilities import (
+    publish_connector_session_capabilities,
+)
 
 
 def make_client(tmp_path):
-    return TestClient(create_app(tmp_path / "test.sqlite3"))
+    return make_test_client(tmp_path / "test.sqlite3")
 
 
 ADMIN_USER = "user1"
@@ -32,7 +49,7 @@ def auth_headers(client: TestClient, user_id: str = ADMIN_USER, password: str = 
     - if registration is closed (403), ask admin to create the user via /admin/users,
       then /auth/login.
     """
-    login = client.post("/auth/login", json={"userId": user_id, "password": password})
+    login = client.post("/auth/login", json={"email": f"{user_id}@example.com", "displayName": user_id, "password": password})
     if login.status_code == 200:
         token = login.json()["accessToken"]
         return {"Authorization": f"Bearer {token}"}
@@ -42,7 +59,7 @@ def auth_headers(client: TestClient, user_id: str = ADMIN_USER, password: str = 
     # generation on the server side; peek() reads the value without further
     # side effects.
     cfg = client.get("/auth/config").json()
-    register_body: dict[str, Any] = {"userId": user_id, "password": password}
+    register_body: dict[str, Any] = {"email": f"{user_id}@example.com", "displayName": user_id, "password": password}
     if cfg["needsBootstrap"]:
         register_body["setupToken"] = client.app.state.setup_token.peek()
     register = client.post("/auth/register", json=register_body)
@@ -55,22 +72,136 @@ def auth_headers(client: TestClient, user_id: str = ADMIN_USER, password: str = 
     create = client.post(
         "/admin/users",
         headers=admin,
-        json={"userId": user_id, "password": password, "role": "member"},
+        json={"email": f"{user_id}@example.com", "displayName": user_id, "password": password, "role": "member"},
     )
     assert create.status_code == 201, create.text
-    login = client.post("/auth/login", json={"userId": user_id, "password": password})
+    login = client.post("/auth/login", json={"email": f"{user_id}@example.com", "displayName": user_id, "password": password})
     assert login.status_code == 200, login.text
     return {"Authorization": f"Bearer {login.json()['accessToken']}"}
 
 
-def create_connector_and_session(client: TestClient, user_id: str = ADMIN_USER):
+def account_user_id(client: TestClient, name: str = ADMIN_USER) -> str:
+    headers = auth_headers(client, user_id=name)
+    return client.get("/auth/me", headers=headers).json()["userId"]
+
+
+def seed_codex_model_catalog(app: Any, connector_id: str) -> str:
+    selection_id = protocol_selection_id("codex", "model", {"model_id": "gpt-5.5", "reasoning_id": "xhigh"})
+    asyncio.run(
+        app.state.store.update_protocol_catalog(
+            connector_id,
+            runtime="codex",
+            catalog_type="model",
+            revision=1,
+            catalog={
+                "runtime": "codex",
+                "revision": 1,
+                "models": [
+                    {
+                        "id": "gpt-5.5",
+                        "displayName": "GPT 5.5",
+                        "selectionId": None,
+                        "reasoningItems": [
+                            {
+                                "id": "xhigh",
+                                "displayName": "Extra high",
+                                "fullModelId": "gpt-5.5",
+                                "selectionId": selection_id,
+                                "default": False,
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+    )
+    return selection_id
+
+
+def seed_codex_permission_catalog(app: Any, connector_id: str) -> str:
+    selection_id = protocol_selection_id("codex", "permission", {"permission_id": "fullAccess"})
+    asyncio.run(
+        app.state.store.update_protocol_catalog(
+            connector_id,
+            runtime="codex",
+            catalog_type="permission",
+            revision=1,
+            catalog={
+                "runtime": "codex",
+                "revision": 1,
+                "permissions": [
+                    {
+                        "id": "fullAccess",
+                        "displayName": "Full access",
+                        "selectionId": selection_id,
+                        "default": False,
+                    }
+                ],
+            },
+        )
+    )
+    return selection_id
+
+
+def seed_runtime_capabilities(
+    app: Any,
+    connector_id: str,
+    runtime: str,
+    *capability_ids: str,
+) -> None:
+    asyncio.run(
+        app.state.store.update_protocol_capabilities(
+            connector_id,
+            {
+                "revision": 1,
+                "capabilities": [
+                    {
+                        "capabilityId": capability_id,
+                        "version": "1",
+                        "scope": "runtime",
+                        "runtime": runtime,
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    }
+                    for capability_id in capability_ids
+                ],
+            },
+        )
+    )
+
+
+def _create_test_project(client, headers, connector_id, cwd="/repo") -> str:
+    """Return the connector workspace project, creating it once per workspace."""
+
+    for project in client.get("/projects", headers=headers).json()["projects"]:
+        if project["connectorId"] == connector_id and project["workspacePath"] == cwd:
+            return project["id"]
+    response = client.post(
+        "/projects",
+        headers=headers,
+        json={
+            "name": f"Project {connector_id} {cwd}",
+            "connectorId": connector_id,
+            "workspacePath": cwd,
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["project"]["id"]
+
+
+def create_connector_and_session(
+    client: TestClient,
+    user_id: str = ADMIN_USER,
+    runtime: str = "codex",
+):
     headers = auth_headers(client, user_id=user_id)
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
     assert connector_response.status_code == 200
     connector_body = connector_response.json()
     connector_id = connector_body["connector"]["id"]
     connector_token = connector_body["connectorToken"]
-    assert connector_body["connector"]["userId"] == user_id
+    assert connector_body["connector"]["userId"] == client.get("/auth/me", headers=headers).json()["userId"]
 
     auth_response = client.post(
         "/connector/auth",
@@ -79,20 +210,188 @@ def create_connector_and_session(client: TestClient, user_id: str = ADMIN_USER):
     assert auth_response.status_code == 200
     access_token = auth_response.json()["accessToken"]
 
+    seed_runtime_capabilities(
+        client.app,
+        connector_id,
+        runtime,
+        "session.send_message",
+        "session.interrupt",
+        "session.steer",
+        "session.commands",
+        "session.interaction.approval",
+        "catalog.model",
+        "catalog.permission",
+        *([] if runtime == "dsh" else ["runtime.attachment"]),
+    )
+
+    project_id = _create_test_project(client, headers, connector_id)
     session_response = client.post(
         "/sessions",
         headers=headers,
         json={
             "connectorId": connector_id,
-            "runtime": "codex",
-            "externalSessionId": f"thr_{connector_id}_demo",
+            "projectId": project_id,
+            "runtime": runtime,
+            "externalSessionId": (
+                f"thr_{connector_id}_demo"
+                if runtime == "codex"
+                else f"{runtime}_{connector_id}_demo"
+            ),
             "title": "Demo",
             "cwd": "/repo",
         },
     )
-    assert session_response.status_code == 200
+    assert session_response.status_code == 200, session_response.text
     session_id = session_response.json()["session"]["id"]
     return connector_id, access_token, session_id, headers
+
+
+def session_view_for_assertions(
+    client: TestClient,
+    session_id: str,
+    headers: dict[str, str],
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Read target session APIs and return the aggregate shape older assertions need."""
+    query = params or {}
+    limit = int(query.get("limit", 200))
+    meta_response = client.get(
+        f"/sessions/{session_id}/meta",
+        headers=headers,
+    )
+    meta_response.raise_for_status()
+    session = meta_response.json()["session"]
+
+    timeline_query: dict[str, Any] | None = None
+    mode = query.get("mode")
+    if mode == "latest":
+        timeline_query = {"mode": "latest", "limit": limit}
+    elif mode == "before" or query.get("beforeOrderSeq") is not None:
+        timeline_query = {
+            "mode": "history",
+            "beforeOrderSeq": query.get("beforeOrderSeq"),
+            "limit": limit,
+        }
+    elif "afterSeq" in query:
+        timeline_query = {
+            "mode": "changes",
+            "afterSeq": query.get("afterSeq", 0),
+            "limit": limit,
+        }
+
+    if timeline_query is None:
+        timeline_query = {"mode": "latest", "limit": limit}
+
+    cached_runtime_state = asyncio.run(
+        client.app.state.session_runtime_state_cache.get(session_id)
+    )
+    if cached_runtime_state is None and params is None:
+        state_response = client.get(
+            f"/sessions/{session_id}/runtime/state",
+            headers=headers,
+        )
+        state_response.raise_for_status()
+        runtime_state = state_response.json()["state"]
+        session = {**session, "status": runtime_state["status"]}
+    elif cached_runtime_state is None:
+        runtime_state = None
+    else:
+        runtime_state = cached_runtime_state.model_dump(mode="json")
+        session = {**session, "status": runtime_state["status"]}
+
+    timeline_response = client.get(
+        f"/sessions/{session_id}/timeline",
+        headers=headers,
+        params=timeline_query,
+    )
+    timeline_response.raise_for_status()
+    timeline = timeline_response.json()
+    notices = []
+    approvals = []
+
+    return {
+        "session": session,
+        "state": runtime_state,
+        "items": timeline["items"],
+        "approvals": approvals,
+        "nextSeq": timeline["nextSeq"],
+        "hasMore": timeline["hasMore"],
+        "serverTime": meta_response.json()["serverTime"],
+    }
+
+
+def _runtime_inventory(runtime: str) -> dict[str, Any]:
+    return {
+        "runtimes": [
+            {
+                "runtimeId": runtime,
+                "runtimeType": runtime,
+                "displayName": runtime.title(),
+                "discovery": {"available": True},
+                "schema": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+                "uiSchema": {},
+                "defaults": {},
+                "status": "available",
+                "configured": True,
+                "capabilities": {
+                    "modelCatalog": True,
+                    "permissionCatalog": True,
+                    "sessionSnapshot": True,
+                    "sessionState": True,
+                    "startTurn": True,
+                    "steerTurn": True,
+                    "interruptTurn": True,
+                    "interactions": True,
+                },
+                "metadata": {},
+            }
+        ]
+    }
+
+
+def _seed_running_runtime(
+    client: TestClient,
+    connector_id: str,
+    fake_rpc: Any,
+    runtime: str = "codex",
+) -> None:
+    client.app.state.rpc = fake_rpc
+    client.app.state.device_runtime_service = DeviceRuntimeService(
+        client.app.state.store,
+        fake_rpc,
+        client.app.state.timeline_broker,
+        client.app.state.redis,
+    )
+
+    async def _seed() -> None:
+        await seed_runtime_inventory(
+            client.app.state.store,
+            connector_id,
+            _runtime_inventory(runtime),
+        )
+        await client.app.state.store.set_device_runtime_config(
+            connector_id,
+            runtime,
+            {},
+        )
+        await client.app.state.store.set_device_runtime_active(
+            connector_id,
+            runtime,
+            True,
+        )
+        await client.app.state.store.set_device_runtime_status(
+            connector_id,
+            runtime,
+            "running",
+        )
+        await client.app.state.store.set_connector_status(connector_id, "online")
+
+    asyncio.run(_seed())
 
 
 def test_revoke_connector_rotates_token_and_disconnects(tmp_path):
@@ -109,7 +408,7 @@ def test_revoke_connector_rotates_token_and_disconnects(tmp_path):
             self.disconnected: list[tuple[str, str]] = []
             self.online = True
 
-        def is_online(self, requested_connector_id: str) -> bool:
+        async def is_online(self, requested_connector_id: str) -> bool:
             return self.online and requested_connector_id == connector_id
 
         async def disconnect(self, requested_connector_id: str, *, reason: str) -> bool:
@@ -155,11 +454,12 @@ def wait_for(predicate, *, attempts: int = 20, interval: float = 0.01):
 
 def wait_for_item_update(client: TestClient, session_id: str, headers: dict[str, str], after_seq: int):
     def read_state():
-        body = client.get(
-            f"/sessions/{session_id}/state",
-            headers=headers,
+        body = session_view_for_assertions(
+            client,
+            session_id,
+            headers,
             params={"afterSeq": after_seq},
-        ).json()
+        )
         return body if body["items"] else None
 
     return wait_for(read_state)
@@ -191,7 +491,7 @@ def wait_for_sessions_order(
     return wait_for(read_sessions)
 
 
-def test_platform_session_create_uses_connector_returned_session_id(tmp_path):
+def test_platform_session_create_without_external_session_is_rejected(tmp_path):
     app = create_app(tmp_path / "test.sqlite3")
     client = TestClient(app)
     headers = auth_headers(client)
@@ -199,63 +499,295 @@ def test_platform_session_create_uses_connector_returned_session_id(tmp_path):
     connector_body = connector_response.json()
     connector_id = connector_body["connector"]["id"]
 
-    class FakeCreateRpc:
-        def __init__(self) -> None:
-            self.requests: list[tuple[str, dict[str, Any]]] = []
-
-        def is_online(self, requested_connector_id: str) -> bool:
-            return requested_connector_id == connector_id
-
-        async def request(self, requested_connector_id: str, method: str, params: dict[str, Any], *, timeout: float = 30) -> dict[str, str]:
-            self.requests.append((method, params))
-            assert requested_connector_id == connector_id
-            await app.state.store.upsert_connector_session(
-                connector_id=connector_id,
-                session_id="sess_codex_created",
-                runtime="codex",
-                external_session_id="thr_created",
-                title=None,
-                cwd="/repo",
-                status="idle",
-            )
-            return {"sessionId": "sess_codex_created", "externalSessionId": "thr_created"}
-
-    fake_rpc = FakeCreateRpc()
+    fake_rpc = FakeLocalRpc()
     app.state.rpc = fake_rpc
 
     response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "codex", "title": "New Codex session", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "title": "New Codex session", "cwd": "/repo"},
     )
-    assert response.status_code == 200
-    assert fake_rpc.requests == [
-        (
-            "session.create",
+    assert response.status_code == 422
+    assert response.json()["detail"] == "new sessions must use /sessions/create-and-start"
+    assert fake_rpc.requests == []
+
+
+def test_session_create_does_not_persist_external_session_model_selection(tmp_path):
+    app = create_app(tmp_path / "test.sqlite3")
+    client = TestClient(app)
+    headers = auth_headers(client)
+    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
+    connector_id = connector_response.json()["connector"]["id"]
+    model_selection_id = seed_codex_model_catalog(app, connector_id)
+    fake_rpc = FakeLocalRpc()
+    app.state.rpc = fake_rpc
+
+    response = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "projectId": _create_test_project(client, headers, connector_id),
+            "runtime": "codex",
+            "title": "Selected model",
+            "cwd": "/repo",
+            "externalSessionId": "thr_selected_model",
+            "selections": {"model": model_selection_id},
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert fake_rpc.requests == []
+    session_id = response.json()["session"]["id"]
+    state = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
+    assert state.status_code == 200
+    assert state.json()["state"]["selections"] == {}
+
+
+def test_session_create_does_not_persist_external_session_permission_selection(tmp_path):
+    app = create_app(tmp_path / "test.sqlite3")
+    client = TestClient(app)
+    headers = auth_headers(client)
+    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
+    connector_id = connector_response.json()["connector"]["id"]
+    permission_selection_id = seed_codex_permission_catalog(app, connector_id)
+    fake_rpc = FakeLocalRpc()
+    app.state.rpc = fake_rpc
+
+    response = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "projectId": _create_test_project(client, headers, connector_id),
+            "runtime": "codex",
+            "title": "Selected permission",
+            "cwd": "/repo",
+            "externalSessionId": "thr_selected_permission",
+            "selections": {"permission": permission_selection_id},
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert fake_rpc.requests == []
+    session_id = response.json()["session"]["id"]
+    state = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
+    assert state.status_code == 200
+    assert state.json()["state"]["selections"] == {}
+
+
+def test_session_create_and_start_preallocates_session_and_passes_selections(tmp_path):
+    app = create_app(tmp_path / "test.sqlite3")
+    client = TestClient(app)
+    headers = auth_headers(client)
+    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
+    connector_id = connector_response.json()["connector"]["id"]
+    model_selection_id = seed_codex_model_catalog(app, connector_id)
+    seed_runtime_capabilities(
+        app,
+        connector_id,
+        "codex",
+        "runtime.attachment",
+        "catalog.model",
+    )
+
+    class FakeCreateAndStartRpc:
+        def __init__(self) -> None:
+            self.requests: list[tuple[str, dict[str, Any]]] = []
+
+        async def is_online(self, requested_connector_id: str) -> bool:
+            return requested_connector_id == connector_id
+
+        async def request(
+            self,
+            requested_connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> dict[str, str]:
+            self.requests.append((method, params))
+            assert requested_connector_id == connector_id
+            return {
+                "sessionId": params["sessionId"],
+                "externalSessionId": "thr_create_and_start",
+                "turnId": "turn_create_and_start",
+            }
+
+    fake_rpc = FakeCreateAndStartRpc()
+    app.state.rpc = fake_rpc
+
+    response = client.post(
+        "/sessions/create-and-start",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "projectId": _create_test_project(client, headers, connector_id),
+            "runtime": "codex",
+            "title": "Start now",
+            "cwd": "/repo",
+            "content": "hello",
+            "selections": {"model": model_selection_id},
+            "attachments": [
+                {
+                    "fileId": "file_inline",
+                    "name": "note.txt",
+                    "mediaType": "text/plain",
+                    "size": 5,
+                    "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                    "contentBase64": "aGVsbG8=",
+                }
+            ],
+            "clientMessageId": "cm_create_and_start",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    session = body["session"]
+    response_attachment = body["attachments"][0]
+    assert session["takeover"] is True
+    assert session["externalSessionId"] == "thr_create_and_start"
+    create_requests = [
+        request for request in fake_rpc.requests if request[0] == "session.create"
+    ]
+    assert len(create_requests) == 1
+    _, create_params = create_requests[0]
+    assert create_params["runtime"] == "codex"
+    assert create_params["sessionId"] == session["id"]
+    assert create_params["content"] == "hello"
+    assert create_params["title"] == "Start now"
+    assert create_params["cwd"] == "/repo"
+    assert create_params["selections"] == {"model": model_selection_id}
+    assert create_params["clientMessageId"] == "cm_create_and_start"
+    attachment = create_params["attachments"][0]
+    assert attachment["fileId"].startswith("file_")
+    assert attachment["name"] == "note.txt"
+    assert attachment["mediaType"] == "text/plain"
+    assert "contentBase64" not in attachment
+    assert attachment["size"] == 5
+    assert attachment["sha256"] == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    assert response_attachment == {
+        "fileId": attachment["fileId"],
+        "name": "note.txt",
+        "mediaType": "text/plain",
+        "size": 5,
+        "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    }
+    timeline_attachment = create_params["timelineAttachments"][0]
+    assert timeline_attachment == {
+        "fileId": attachment["fileId"],
+        "name": "note.txt",
+        "mediaType": "text/plain",
+        "size": 5,
+        "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    }
+    stored_attachment = client.get(
+        f"/sessions/{session['id']}/attachments/{attachment['fileId']}",
+        headers=headers,
+    )
+    assert stored_attachment.status_code == 200
+    assert stored_attachment.json()["contentBase64"] == "aGVsbG8="
+    open_attachment = client.get(
+        f"/sessions/{session['id']}/attachments/{response_attachment['fileId']}/open",
+        headers=headers,
+        follow_redirects=False,
+    )
+    assert open_attachment.status_code == 302
+    state = client.get(f"/sessions/{session['id']}/runtime/state", headers=headers)
+    assert state.status_code == 200
+    assert state.json()["state"]["status"] == "idle"
+    assert state.json()["state"]["selections"] == {}
+    active = asyncio.run(client.app.state.store.get_active_run(session["id"]))
+    assert active is not None
+    assert active["status"] == "running"
+    assert active["externalSessionId"] == "thr_create_and_start"
+    assert "turnId" not in active
+
+
+def test_session_state_reads_runtime_status_over_stale_db_status(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    asyncio.run(client.app.state.store.set_session_status(session_id, "running"))
+    asyncio.run(
+        client.app.state.store.update_protocol_capabilities(
+            connector_id,
             {
-                "runtime": "codex",
-                "title": "New Codex session",
-                "cwd": "/repo",
-                "approvalPolicy": "on-request",
-                "model": "gpt-5.6-sol",
-                "effort": "medium",
-                "sandbox": {
-                    "type": "workspaceWrite",
-                    "writableRoots": ["/repo"],
-                    "networkAccess": False,
-                    "excludeTmpdirEnvVar": True,
-                    "excludeSlashTmp": True,
-                },
+                "revision": 1,
+                "capabilities": [
+                    {
+                        "capabilityId": "session.send_message",
+                        "version": "1",
+                        "scope": "runtime",
+                        "runtime": "codex",
+                    }
+                ],
             },
         )
-    ]
-    assert response.json()["session"]["id"] == "sess_codex_created"
-    assert response.json()["session"]["title"] == "New Codex session"
-    listed = client.get("/sessions", headers=headers).json()["sessions"]
-    assert [session["id"] for session in listed if session["externalSessionId"] == "thr_created"] == ["sess_codex_created"]
+    )
+
+    class FakeRuntimeStateRpc:
+        async def is_online(self, requested_connector_id: str) -> bool:
+            return requested_connector_id == connector_id
+
+        async def request(
+            self,
+            requested_connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> dict[str, Any]:
+            assert requested_connector_id == connector_id
+            assert method == "session.state"
+            return {
+                "state": {
+                    "sessionId": params["sessionId"],
+                    "runtime": params["runtime"],
+                    "externalSessionId": params.get("externalSessionId"),
+                    "status": "idle",
+                    "selections": {},
+                    "metadata": {"source": "test.runtime"},
+                }
+            }
+
+    client.app.state.rpc = FakeRuntimeStateRpc()
+
+    state = session_view_for_assertions(client, session_id, headers)
+
+    assert state["session"]["status"] == "idle"
+    assert state["state"]["status"] == "idle"
 
 
-def test_claude_session_create_allows_initial_missing_external_session_id(tmp_path):
+def test_session_create_rejects_legacy_runtime_settings_model_fields(tmp_path):
+    app = create_app(tmp_path / "test.sqlite3")
+    client = TestClient(app)
+    headers = auth_headers(client)
+    connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
+    connector_id = connector_response.json()["connector"]["id"]
+    app.state.rpc = FakeLocalRpc()
+
+    response = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "projectId": _create_test_project(client, headers, connector_id),
+            "runtime": "codex",
+            "cwd": "/repo",
+            "runtimeSettings": {
+                "model": "gpt-5.5",
+                "effort": "xhigh",
+                "permissionMode": "fullAccess",
+            },
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_claude_session_create_without_external_session_uses_create_and_start(tmp_path):
     app = create_app(tmp_path / "test.sqlite3")
     client = TestClient(app)
     headers = auth_headers(client)
@@ -266,7 +798,7 @@ def test_claude_session_create_allows_initial_missing_external_session_id(tmp_pa
         def __init__(self) -> None:
             self.requests: list[tuple[str, dict[str, Any]]] = []
 
-        def is_online(self, requested_connector_id: str) -> bool:
+        async def is_online(self, requested_connector_id: str) -> bool:
             return requested_connector_id == connector_id
 
         async def request(
@@ -287,23 +819,12 @@ def test_claude_session_create_allows_initial_missing_external_session_id(tmp_pa
     response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "claude", "title": "New Claude session", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "claude", "title": "New Claude session", "cwd": "/repo"},
     )
 
-    assert response.status_code == 200, response.text
-    assert response.json()["session"]["id"] == "sess_claude_created"
-    assert response.json()["session"]["externalSessionId"] is None
-    assert fake_rpc.requests == [
-        (
-            "session.create",
-            {
-                "runtime": "claude",
-                "title": "New Claude session",
-                "cwd": "/repo",
-                "permissionMode": "acceptEdits",
-            },
-        )
-    ]
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "new sessions must use /sessions/create-and-start"
+    assert fake_rpc.requests == []
 
 
 def test_session_title_defaults_to_first_user_message(tmp_path):
@@ -321,7 +842,7 @@ def test_session_title_defaults_to_first_user_message(tmp_path):
     session_response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_title", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_title", "cwd": "/repo"},
     )
     session_id = session_response.json()["session"]["id"]
 
@@ -417,7 +938,7 @@ def test_session_updated_without_external_id_does_not_clear_existing_external_id
         )
 
         def read_updated_state():
-            body = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+            body = session_view_for_assertions(client, session_id, headers)
             return body if body["session"]["title"] == "Updated without external id" else None
 
         state = wait_for(read_updated_state)
@@ -427,9 +948,272 @@ def test_session_updated_without_external_id_does_not_clear_existing_external_id
     assert state["session"]["title"] == "Updated without external id"
 
 
+def test_session_state_updated_pushes_ephemeral_runtime_state(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "session.state.updated",
+                        "params": {
+                            "sessionId": session_id,
+                            "runtime": "codex",
+                            "status": "running",
+                            "selections": {"model": "sel_model_runtime"},
+                            "statusReason": "tool_call",
+                            "metadata": {"phase": "tool"},
+                        },
+                    },
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+        event = receive_session_ws_event(ws, "runtime.state.updated")
+
+    assert event["type"] == "runtime.state.updated"
+    body = event["payload"]["state"]
+    assert body["status"] == "running"
+    assert body["selections"] == {"model": "sel_model_runtime"}
+    assert body["statusReason"] == "tool_call"
+    assert body["metadata"] == {"phase": "tool"}
+    state = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
+    assert state.status_code == 200, state.text
+    assert state.json()["state"]["status"] == "running"
+
+
+def test_named_session_state_notification_refreshes_cache_and_pushes_runtime_id(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    connector_id, access_token, _session_id, headers = create_connector_and_session(
+        client
+    )
+    named_session_id = "sess_named_runtime"
+    asyncio.run(
+        client.app.state.store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id=named_session_id,
+            runtime="codex",
+            runtime_id="rti_work",
+            cwd="/repo",
+            external_session_id=None,
+        )
+    )
+    asyncio.run(
+        client.app.state.session_runtime_state_cache.put(
+            SessionRuntimeState(
+                sessionId=named_session_id,
+                runtime="codex",
+                runtimeId="codex",
+                status="running",
+                updatedSeq=0,
+                createdAt="2026-08-26T00:00:00Z",
+                updatedAt="2026-08-26T00:00:00Z",
+            )
+        )
+    )
+    ticket = ws_ticket(client, named_session_id, headers)
+
+    with client.websocket_connect(
+        f"/sessions/{named_session_id}/ws?ticket={ticket}"
+    ) as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "session.state.updated",
+                        "params": {
+                            "sessionId": named_session_id,
+                            "runtime": "codex",
+                            "runtimeId": "rti_work",
+                            "status": "running",
+                            "selections": {},
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+        event = receive_session_ws_event(ws, "runtime.state.updated")
+
+    assert event["payload"]["state"]["runtime"] == "codex"
+    assert event["payload"]["state"]["runtimeId"] == "rti_work"
+    cached = asyncio.run(
+        client.app.state.session_runtime_state_cache.get(named_session_id)
+    )
+    assert cached is not None
+    assert cached.runtimeId == "rti_work"
+
+
+def test_session_list_projects_cached_runtime_status(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, headers = create_connector_and_session(client)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.state.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "status": "running",
+                        "metadata": {"source": "test"},
+                    },
+                },
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    listed = client.get("/sessions", headers=headers)
+    assert listed.status_code == 200, listed.text
+    session = next(item for item in listed.json()["sessions"] if item["id"] == session_id)
+    assert session["status"] == "running"
+
+
+def test_session_state_updated_pushes_blocked_then_idle(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "session.state.updated",
+                        "params": {
+                            "sessionId": session_id,
+                            "runtime": "codex",
+                            "status": "blocked",
+                            "metadata": {"source": "codex.command.compact"},
+                        },
+                    },
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+        blocked = receive_session_ws_event(
+            ws,
+            "runtime.state.updated",
+            predicate=lambda event: (
+                event["payload"]["state"]["status"] == "blocked"
+                and event["payload"]["state"]["metadata"]["source"]
+                == "codex.command.compact"
+            ),
+        )
+
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "session.state.updated",
+                        "params": {
+                            "sessionId": session_id,
+                            "runtime": "codex",
+                            "status": "idle",
+                            "metadata": {"source": "codex.thread/compacted"},
+                        },
+                    },
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+        idle = receive_session_ws_event(
+            ws,
+            "runtime.state.updated",
+            predicate=lambda event: (
+                event["sequence"] > blocked["sequence"]
+                and event["payload"]["state"]["status"] == "idle"
+                and event["payload"]["state"]["metadata"]["source"]
+                == "codex.thread/compacted"
+            ),
+        )
+
+    assert blocked["payload"]["state"]["status"] == "blocked"
+    assert blocked["payload"]["state"]["metadata"]["source"] == "codex.command.compact"
+    assert idle["payload"]["state"]["status"] == "idle"
+    assert idle["payload"]["state"]["metadata"]["source"] == "codex.thread/compacted"
+
+
+def test_session_state_updated_rejects_legacy_selection_fields(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, _headers = create_connector_and_session(client)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.state.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "status": "running",
+                        "modelSelectionId": "sel_model_legacy",
+                    },
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "unsupported_legacy_selection_fields"
+
+
+def test_session_updated_rejects_legacy_selection_fields(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, _headers = create_connector_and_session(client)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "status": "running",
+                        "permissionSelectionId": "sel_permission_legacy",
+                    },
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "unsupported_legacy_selection_fields"
+
+
 def wait_for_state_items(client: TestClient, session_id: str, headers: dict[str, str], predicate):
     def read_state():
-        body = client.get(f"/sessions/{session_id}/state", headers=headers, params={"afterSeq": 0}).json()
+        body = session_view_for_assertions(
+            client,
+            session_id,
+            headers,
+            params={"afterSeq": 0},
+        )
         return body if predicate(body["items"]) else None
 
     return wait_for(read_state)
@@ -437,19 +1221,161 @@ def wait_for_state_items(client: TestClient, session_id: str, headers: dict[str,
 
 def wait_for_state(client: TestClient, session_id: str, headers: dict[str, str], predicate):
     def read_state():
-        body = client.get(f"/sessions/{session_id}/state", headers=headers, params={"afterSeq": 0}).json()
+        body = session_view_for_assertions(
+            client,
+            session_id,
+            headers,
+            params={"afterSeq": 0},
+        )
         return body if predicate(body) else None
 
     return wait_for(read_state)
 
 
 class FakeApprovalRpc:
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(self, *, fail: bool = False, gone: bool = False) -> None:
         self.fail = fail
+        self.gone = gone
         self.requests: list[tuple[str, str, dict[str, Any], float]] = []
 
-    def is_online(self, connector_id: str) -> bool:
+    async def is_online(self, connector_id: str) -> bool:
         return True
+
+    async def request(
+        self,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+        *,
+        timeout: float = 30,
+    ) -> Any:
+        self.requests.append((connector_id, method, params, timeout))
+        if method == "session.capabilities":
+            return {"capabilitySet": {"revision": 1, "capabilities": [{
+                "capabilityId": "session.interaction.approval", "scope": "session",
+                "runtime": params["runtime"], "sessionId": params["sessionId"],
+                "supported": True, "available": True, "allowed": True,
+            }]}}
+        if self.fail:
+            raise ConnectorRpcError("codex_error", "request gone")
+        if self.gone:
+            raise ConnectorRpcError("approval_not_found", "approval not found")
+        if method == "session.notices":
+            session_id = params["sessionId"]
+            return {
+                "notices": [
+                    {
+                        "noticeId": "notice_runtime_approval",
+                        "type": "interaction",
+                        "sessionId": session_id,
+                        "source": {"runtime": params["runtime"]},
+                        "title": "Runtime approval",
+                        "severity": "warning",
+                        "status": "open",
+                        "interactionType": "approval",
+                        "responseRequired": True,
+                        "actions": [{"actionId": "approve", "label": "Approve"}],
+                        "context": {
+                            "approvalStatus": "pending",
+                            "approvalSource": {
+                                "requestId": "approval_runtime_1",
+                                "method": "item/commandExecution/requestApproval",
+                                "threadId": "thr_1",
+                                "itemId": "call_1",
+                            },
+                        },
+                        "metadata": {},
+                    }
+                ]
+            }
+        return {"resolved": True}
+
+
+class FakeTerminalRelaySocket:
+    def __init__(self, rpc, broker, terminal_id):
+        self.rpc = rpc
+        self.broker = broker
+        self.terminal_id = terminal_id
+        self.closed = False
+
+    async def send_json(self, message):
+        self.rpc.terminal_relay_messages.append(message)
+        kind = message["type"]
+        terminal = self.rpc.terminals[self.terminal_id]
+        if kind == "snapshot":
+            result = {
+                "terminal": terminal,
+                "baseSeq": 0,
+                "seq": 1,
+                "dataBase64": "b2s=",
+                "outputs": [{"seq": 1, "dataBase64": "b2s="}],
+            }
+        elif kind == "resize":
+            terminal.update(cols=message["cols"], rows=message["rows"])
+            result = {
+                "terminalId": self.terminal_id,
+                "cols": message["cols"],
+                "rows": message["rows"],
+            }
+        else:
+            result = {"terminalId": self.terminal_id, "written": True}
+        if "requestId" in message:
+            await self.broker.relay_response(
+                self.terminal_id,
+                {
+                    "type": "response",
+                    "requestId": message["requestId"],
+                    "ok": True,
+                    "result": result,
+                },
+            )
+
+    async def close(self, **kwargs):
+        self.closed = True
+
+
+class FakeLocalRpc:
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, str, dict[str, Any], float]] = []
+        self.terminals: dict[str, dict[str, Any]] = {}
+        self.runtime_states: dict[str, dict[str, Any]] = {}
+        self.timeout_terminal_list = False
+        self.delay_terminal_close = 0.0
+        self.closed_on_resize: set[str] = set()
+        self.interrupt_result: dict[str, Any] = {"interrupted": True}
+        self.terminal_relay_broker: Any | None = None
+        self.terminal_relay_sockets: dict[str, FakeWebSocket] = {}
+        self.terminal_relay_messages: list[dict[str, Any]] = []
+        self.fail = False
+        self.timeout_session_methods: set[str] = set()
+
+    async def is_online(self, connector_id: str) -> bool:
+        return True
+
+    async def request_bound(
+        self,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+        *,
+        timeout: float = 30,
+    ) -> tuple[Any, str]:
+        return (
+            await self.request(
+                connector_id,
+                method,
+                params,
+                timeout=timeout,
+            ),
+            "fake-connection",
+        )
+
+    async def is_connection_id_current(
+        self,
+        _connector_id: str,
+        connection_id: str,
+    ) -> bool:
+        return connection_id == "fake-connection"
 
     async def request(
         self,
@@ -462,36 +1388,8 @@ class FakeApprovalRpc:
         self.requests.append((connector_id, method, params, timeout))
         if self.fail:
             raise ConnectorRpcError("codex_error", "request gone")
-        if method == "capabilities.setActiveRuntimes":
-            return {"runtimes": params.get("runtimes") or []}
-        return {"resolved": True}
-
-
-class FakeLocalRpc:
-    def __init__(self) -> None:
-        self.requests: list[tuple[str, str, dict[str, Any], float]] = []
-        self.terminals: dict[str, dict[str, Any]] = {}
-        self.timeout_terminal_list = False
-        self.delay_terminal_close = 0.0
-        self.closed_on_resize: set[str] = set()
-        self.interrupt_result: dict[str, Any] = {"interrupted": True}
-        self.terminal_relay_broker: Any | None = None
-        self.terminal_relay_sockets: dict[str, FakeWebSocket] = {}
-
-    def is_online(self, connector_id: str) -> bool:
-        return True
-
-    async def request(
-        self,
-        connector_id: str,
-        method: str,
-        params: dict[str, Any],
-        *,
-        timeout: float = 30,
-    ) -> Any:
-        self.requests.append((connector_id, method, params, timeout))
-        if method == "capabilities.setActiveRuntimes":
-            return {"runtimes": params.get("runtimes") or []}
+        if method in self.timeout_session_methods:
+            raise TimeoutError(f"{method} timed out")
         if method == "terminal.create":
             terminal_id = params["terminalId"]
             self.terminals[terminal_id] = {
@@ -501,6 +1399,7 @@ class FakeLocalRpc:
                 "label": params.get("label") or "Shell",
                 "cols": params.get("cols") or 80,
                 "rows": params.get("rows") or 24,
+                "persistent": params.get("persistent", False),
                 "status": "running",
                 "pid": 123,
                 "closed": False,
@@ -510,7 +1409,13 @@ class FakeLocalRpc:
             terminal_id = params["terminalId"]
             token = params["token"]
             if self.terminal_relay_broker is not None:
-                ws = FakeWebSocket()
+                ws = (
+                    FakeTerminalRelaySocket(
+                        self, self.terminal_relay_broker, terminal_id
+                    )
+                    if params.get("mode") == "attach"
+                    else FakeWebSocket()
+                )
                 await self.terminal_relay_broker.attach_connector(terminal_id, token, ws)
                 self.terminal_relay_sockets[terminal_id] = ws
             return {"terminalId": terminal_id, "connecting": True}
@@ -561,8 +1466,227 @@ class FakeLocalRpc:
                 "dataBase64": "b2s=",
                 "outputs": [{"seq": 1, "dataBase64": "b2s="}],
             }
-        if method == "turn.interrupt":
+        if method == "session.interrupt":
             return self.interrupt_result
+        if method == "session.state":
+            session_id = params["sessionId"]
+            state = self.runtime_states.get(session_id)
+            if state is None:
+                state = {
+                    "sessionId": session_id,
+                    "runtime": params["runtime"],
+                    "externalSessionId": params.get("externalSessionId"),
+                    "status": "idle",
+                    "selections": {},
+                    "metadata": {},
+                }
+            return {"state": state}
+        if method == "session.notices":
+            session_id = params["sessionId"]
+            return {
+                "notices": [
+                    {
+                        "noticeId": "notice_runtime_approval",
+                        "type": "interaction",
+                        "sessionId": session_id,
+                        "source": {"runtime": params["runtime"]},
+                        "title": "Runtime approval",
+                        "severity": "warning",
+                        "status": "open",
+                        "interactionType": "approval",
+                        "responseRequired": True,
+                        "actions": [{"actionId": "approve", "label": "Approve"}],
+                        "context": {},
+                        "metadata": {},
+                    }
+                ]
+            }
+        if method == "session.selections.update":
+            session_id = params["sessionId"]
+            previous = self.runtime_states.get(session_id, {})
+            previous_selections = previous.get("selections")
+            selections = previous_selections if isinstance(previous_selections, dict) else {}
+            next_state = {
+                "sessionId": session_id,
+                "runtime": params["runtime"],
+                "externalSessionId": params.get("externalSessionId"),
+                "status": previous.get("status") or "idle",
+                "selections": {**selections, **params["selections"]},
+                "metadata": previous.get("metadata") if isinstance(previous.get("metadata"), dict) else {},
+            }
+            self.runtime_states[session_id] = next_state
+            return {"ok": True, "state": next_state}
+        if method == "session.commands":
+            return {
+                "commands": [
+                    {
+                        "id": "resume",
+                        "title": "Resume",
+                        "description": "Resume the current turn.",
+                        "aliases": ["continue"],
+                        "category": "session",
+                        "scope": "session",
+                        "enabled": True,
+                        "disabledReason": None,
+                        "acceptsArgs": False,
+                        "argsSchema": None,
+                        "metadata": {},
+                    }
+                ]
+            }
+        if method == "session.capabilities":
+            session_id = params["sessionId"]
+            runtime_state = self.runtime_states.get(session_id)
+            runtime_status = "idle"
+            if runtime_state is not None:
+                runtime_status = runtime_state.get("status") or "idle"
+            session_is_running = runtime_status == "running"
+            return {
+                "capabilitySet": {
+                    "revision": 11,
+                    "capabilities": [
+                        {
+                            "capabilityId": "runtime.attachment",
+                            "scope": "session",
+                            "runtime": params["runtime"],
+                            "sessionId": session_id,
+                            "supported": params["runtime"] in {"codex", "claude"},
+                            "available": params["runtime"] in {"codex", "claude"},
+                            "allowed": True,
+                        },
+                        *[{
+                            "capabilityId": capability_id, "scope": "session",
+                            "runtime": params["runtime"], "sessionId": session_id,
+                            "supported": True, "available": True, "allowed": True,
+                        } for capability_id in ["session.commands", "session.interaction.approval"]],
+                        {
+                            "capabilityId": "session.send_message",
+                            "version": "1",
+                            "scope": "session",
+                            "runtime": params["runtime"],
+                            "sessionId": session_id,
+                            "supported": True,
+                            "available": not session_is_running,
+                            "allowed": True,
+                            "unavailableReason": (
+                                "runtime_turn_running"
+                                if session_is_running
+                                else None
+                            ),
+                            "parameters": {},
+                        },
+                        {
+                            "capabilityId": "session.interrupt",
+                            "version": "1",
+                            "scope": "session",
+                            "runtime": params["runtime"],
+                            "sessionId": session_id,
+                            "supported": True,
+                            "available": session_is_running,
+                            "allowed": True,
+                            "unavailableReason": (
+                                None
+                                if session_is_running
+                                else "session_not_interruptible"
+                            ),
+                            "parameters": {},
+                        },
+                        {
+                            "capabilityId": "session.steer",
+                            "version": "1",
+                            "scope": "session",
+                            "runtime": params["runtime"],
+                            "sessionId": session_id,
+                            "supported": True,
+                            "available": session_is_running,
+                            "allowed": True,
+                            "unavailableReason": (
+                                None
+                                if session_is_running
+                                else "session_not_running"
+                            ),
+                            "parameters": {},
+                        },
+                        {
+                            "capabilityId": "catalog.model",
+                            "version": "1",
+                            "scope": "runtime",
+                            "runtime": params["runtime"],
+                            "sessionId": None,
+                            "supported": True,
+                            "available": True,
+                            "allowed": True,
+                            "unavailableReason": None,
+                            "parameters": {},
+                        },
+                        {
+                            "capabilityId": "catalog.permission",
+                            "version": "1",
+                            "scope": "runtime",
+                            "runtime": params["runtime"],
+                            "sessionId": None,
+                            "supported": True,
+                            "available": True,
+                            "allowed": True,
+                            "unavailableReason": None,
+                            "parameters": {},
+                        },
+                        {
+                            "capabilityId": "catalog.effort",
+                            "version": "1",
+                            "scope": "runtime",
+                            "runtime": params["runtime"],
+                            "sessionId": None,
+                            "supported": True,
+                            "available": True,
+                            "allowed": True,
+                            "unavailableReason": None,
+                            "parameters": {},
+                        },
+                    ],
+                }
+            }
+        if method == "session.command.execute":
+            return {
+                "command": params["command"],
+                "ok": True,
+                "code": "executed",
+                "message": "Command executed.",
+                "result": {"echo": params},
+            }
+        if method == "runtime.modelCatalog":
+            return {
+                "catalog": {
+                    "runtime": params["runtime"],
+                    "revision": 90,
+                    "models": [
+                        {
+                            "id": "gpt-live",
+                            "displayName": "GPT Live",
+                            "selectionId": "sel_model_live",
+                            "default": True,
+                            "reasoningItems": [],
+                            "metadata": {"source": "runtime"},
+                        }
+                    ],
+                }
+            }
+        if method == "runtime.permissionCatalog":
+            return {
+                "catalog": {
+                    "runtime": params["runtime"],
+                    "revision": 91,
+                    "permissions": [
+                        {
+                            "id": "read-only",
+                            "displayName": "Read only",
+                            "selectionId": "sel_permission_live",
+                            "default": True,
+                            "metadata": {"source": "runtime"},
+                        }
+                    ],
+                }
+            }
         return {"method": method, "params": params}
 
 
@@ -583,25 +1707,44 @@ def ingest_pending_command_approval(client: TestClient, access_token: str, sessi
         json={
             "notifications": [
                 {
-                    "method": "approval.requested",
+                    "method": "notice.upsert",
                     "params": {
-                        "id": "appr_1",
+                        "noticeId": "notice_approval_appr_1",
+                        "type": "interaction",
                         "sessionId": session_id,
-                        "turnId": "turn_1",
-                        "status": "pending",
-                        "kind": "command",
-                        "targetItemId": "tl_tool",
-                        "title": "Codex wants to run a command",
-                        "description": "pwd",
-                        "payload": {"command": "pwd"},
-                        "choices": ["approve", "approve_for_session", "reject", "cancel"],
                         "source": {
                             "runtime": "codex",
-                            "requestId": "42",
-                            "sessionId": "thr_1",
-                            "turnId": "turn_1",
-                            "itemId": "call_1",
-                            "method": "item/commandExecution/requestApproval",
+                            "component": "codex",
+                            "approvalId": "appr_1",
+                            "timelineItemId": "tl_tool",
+                        },
+                        "title": "Codex wants to run a command",
+                        "message": "pwd",
+                        "severity": "warning",
+                        "status": "open",
+                        "interactionType": "approval",
+                        "blocking": {"scope": "session", "targetId": session_id},
+                        "responseRequired": True,
+                        "actions": [
+                            {"actionId": "approve", "label": "Approve", "style": "primary"},
+                            {"actionId": "approve_for_session", "label": "Approve for session"},
+                            {"actionId": "reject", "label": "Reject", "style": "danger"},
+                            {"actionId": "cancel", "label": "Cancel"},
+                        ],
+                        "context": {
+                            "approvalId": "appr_1",
+                            "approvalStatus": "pending",
+                            "approvalSource": {
+                                "runtime": "codex",
+                                "requestId": "42",
+                                "sessionId": "thr_1",
+                                "itemId": "call_1",
+                                "method": "item/commandExecution/requestApproval",
+                            },
+                            "targetItemId": "tl_tool",
+                            "kind": "command",
+                            "payload": {"command": "pwd"},
+                            "choices": ["approve", "approve_for_session", "reject", "cancel"],
                         },
                     },
                 },
@@ -612,7 +1755,6 @@ def ingest_pending_command_approval(client: TestClient, access_token: str, sessi
                         "item": {
                             "id": "tl_tool",
                             "sessionId": session_id,
-                            "turnId": "turn_1",
                             "type": "tool",
                             "status": "waiting_approval",
                             "role": "tool",
@@ -624,7 +1766,6 @@ def ingest_pending_command_approval(client: TestClient, access_token: str, sessi
                             "source": {
                                 "runtime": "codex",
                                 "sessionId": "thr_1",
-                                "turnId": "turn_1",
                                 "itemId": "call_1",
                                 "itemType": "commandExecution",
                             },
@@ -640,6 +1781,77 @@ def ingest_pending_command_approval(client: TestClient, access_token: str, sessi
     assert response.status_code == 200
 
 
+def interaction_notice_id(
+    client: TestClient,
+    session_id: str,
+    headers: dict[str, str],
+    interaction_type: str,
+) -> str:
+    response = client.get(f"/sessions/{session_id}/runtime/notices", headers=headers)
+    response.raise_for_status()
+    return next(
+        notice["noticeId"]
+        for notice in response.json()["notices"]
+        if notice["interactionType"] == interaction_type
+    )
+
+
+def ws_ticket(client: TestClient, session_id: str, headers: dict[str, str], client_id: str = "web_test") -> str:
+    response = client.post(
+        "/ws-ticket",
+        headers=headers,
+        json={"clientId": client_id, "scope": {"sessionId": session_id}},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["ticket"]
+
+
+def dashboard_ws_ticket(
+    client: TestClient,
+    headers: dict[str, str],
+    client_id: str = "web_dashboard_test",
+) -> str:
+    response = client.post(
+        "/ws-ticket",
+        headers=headers,
+        json={"clientId": client_id, "scope": {"dashboard": True}},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["ticket"]
+
+
+async def _receive_ws_test_message(ws: Any, timeout: float) -> dict[str, Any]:
+    with anyio.fail_after(timeout):
+        return await ws._send_rx.receive()
+
+
+def receive_session_ws_event(
+    ws: Any,
+    event_type: str,
+    *,
+    predicate: Callable[[dict[str, Any]], bool] | None = None,
+    timeout: float = 5.0,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    seen: list[tuple[Any, Any, Any]] = []
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            message = ws.portal.call(_receive_ws_test_message, ws, remaining)
+        except TimeoutError:
+            break
+        ws._raise_on_close(message)
+        event = json.loads(message["text"])
+        seen.append((event.get("type"), event.get("sequence"), event.get("eventId")))
+        if event.get("type") == event_type and (
+            predicate is None or predicate(event)
+        ):
+            return event
+    raise AssertionError(
+        f"session websocket did not receive {event_type} within {timeout}s; "
+        f"received={seen}"
+    )
+
+
 def test_connectors_can_be_listed_without_sessions(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
@@ -648,12 +1860,711 @@ def test_connectors_can_be_listed_without_sessions(tmp_path):
     response = client.post("/connectors", headers=headers, json={"name": "dev"})
     assert response.status_code == 200
     connector = response.json()["connector"]
+    assert connector["connectorKind"] == "cli"
 
     listed = client.get("/connectors", headers=headers)
     assert listed.status_code == 200
     body = listed.json()
     assert body["connectors"] == [connector]
     assert body["serverTime"]
+
+
+def test_connector_create_accepts_desktop_kind_and_rejects_unknown_kind(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+
+    created = client.post(
+        "/connectors",
+        headers=headers,
+        json={"name": "This Mac", "connectorKind": "desktop"},
+    )
+    assert created.status_code == 200
+    connector = created.json()["connector"]
+    assert connector["connectorKind"] == "desktop"
+
+    fetched = client.get(f"/connectors/{connector['id']}", headers=headers)
+    assert fetched.status_code == 200
+    assert fetched.json()["connector"]["connectorKind"] == "desktop"
+
+    revoked = client.post(f"/connectors/{connector['id']}/revoke", headers=headers)
+    assert revoked.status_code == 200
+    assert revoked.json()["connector"]["connectorKind"] == "desktop"
+
+    invalid = client.post(
+        "/connectors",
+        headers=headers,
+        json={"name": "Unknown", "connectorKind": "browser"},
+    )
+    assert invalid.status_code == 422
+
+
+def test_dashboard_ws_returns_connector_and_session_snapshot(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    ticket = dashboard_ws_ticket(client, headers)
+
+    with client.websocket_connect(f"/dashboard/ws?ticket={ticket}") as ws:
+        snapshot = ws.receive_json()
+        assert snapshot["type"] == "dashboard.snapshot"
+        assert [connector["id"] for connector in snapshot["connectors"]] == [connector_id]
+        assert [session["id"] for session in snapshot["sessions"]] == [session_id]
+        assert snapshot["sessionPages"] == {
+            "active": {"hasMore": False, "nextCursor": None},
+            "archived": {"hasMore": False, "nextCursor": None},
+        }
+
+
+def test_sessions_list_uses_cursor_pages_and_archive_filter(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _access_token, first_session_id, headers = create_connector_and_session(client)
+    session_ids = [first_session_id]
+    for index in range(4):
+        session_ids.append(_create_extra_session(
+            client, headers, connector_id, f"thr_page_{index}", title=f"Page {index}"
+        ))
+
+    seen: list[str] = []
+    cursor = None
+    while True:
+        params = {"archived": False, "limit": 2}
+        if cursor is not None:
+            params["cursor"] = cursor
+        response = client.get("/sessions", headers=headers, params=params)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        seen.extend(session["id"] for session in body["sessions"])
+        if not body["hasMore"]:
+            assert body["nextCursor"] is None
+            break
+        cursor = body["nextCursor"]
+        assert cursor
+
+    assert len(seen) == len(set(seen)) == 5
+    assert set(seen) == set(session_ids)
+
+    archived_id = seen[0]
+    archived = client.patch(
+        f"/sessions/{archived_id}/meta",
+        headers=headers,
+        json={"archived": True},
+    )
+    assert archived.status_code == 200, archived.text
+    archived_page = client.get(
+        "/sessions",
+        headers=headers,
+        params={"archived": True, "limit": 30},
+    )
+    assert archived_page.status_code == 200, archived_page.text
+    assert [session["id"] for session in archived_page.json()["sessions"]] == [archived_id]
+
+
+def test_sessions_cursor_uses_timeline_and_revision_tiebreaks(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
+    session_ids = [first_session_id]
+    for index in range(4):
+        response = client.post(
+            "/sessions",
+            headers=headers,
+            json={
+                "connectorId": connector_id,
+                "projectId": _create_test_project(client, headers, connector_id),
+                "runtime": "codex",
+                "externalSessionId": f"thr_tiebreak_{index}",
+                "title": f"Tiebreak {index}",
+                "cwd": "/repo",
+            },
+        )
+        assert response.status_code == 200, response.text
+        session_ids.append(response.json()["session"]["id"])
+
+    order_seqs = (3, 3, 2, 2, 1)
+    seeded = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": f"tl_{session_id}",
+                            "sessionId": session_id,
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {"text": f"item {index}", "format": "markdown"},
+                            "source": {"runtime": "codex", "itemId": f"item_{index}"},
+                            "orderSeq": order_seq,
+                            "revision": 1,
+                            "contentHash": f"sha256:tiebreak:{index}",
+                            "createdAt": "2028-05-20T12:00:00Z",
+                            "updatedAt": "2028-05-20T12:00:00Z",
+                        },
+                    },
+                }
+                for index, (session_id, order_seq) in enumerate(
+                    zip(session_ids, order_seqs, strict=True)
+                )
+            ]
+        },
+    )
+    assert seeded.status_code == 200, seeded.text
+    assert seeded.json()["accepted"] == len(session_ids)
+
+    # Flush buffered items before applying metadata-only revisions. Those
+    # revisions retain the same effective sort time and exercise updatedSeq.
+    client.get("/sessions", headers=headers).raise_for_status()
+    for session_id, titles in (
+        (session_ids[1], ("B updated",)),
+        (session_ids[2], ("C updated once", "C updated twice")),
+    ):
+        for title in titles:
+            response = client.post(
+                "/connector/ingest",
+                headers={"Authorization": f"Bearer {access_token}"},
+                json={
+                    "notifications": [
+                        {
+                            "method": "session.updated",
+                            "params": {
+                                "sessionId": session_id,
+                                "runtime": "codex",
+                                "runtimeId": "codex",
+                                "title": title,
+                            },
+                        }
+                    ]
+                },
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["accepted"] == 1
+
+    expected = [
+        session_ids[1],
+        session_ids[0],
+        session_ids[2],
+        session_ids[3],
+        session_ids[4],
+    ]
+    full = client.get(
+        "/sessions",
+        headers=headers,
+        params={"limit": 100},
+    ).json()["sessions"]
+    assert [session["id"] for session in full] == expected
+
+    seen: list[str] = []
+    cursor = None
+    while True:
+        params = {"limit": 2}
+        if cursor is not None:
+            params["cursor"] = cursor
+        response = client.get("/sessions", headers=headers, params=params)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        seen.extend(session["id"] for session in body["sessions"])
+        if not body["hasMore"]:
+            break
+        cursor = body["nextCursor"]
+        assert cursor
+
+    assert seen == expected
+
+
+def test_sessions_list_rejects_invalid_cursor(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, _session_id, headers = create_connector_and_session(client)
+
+    response = client.get(
+        "/sessions",
+        headers=headers,
+        params={"cursor": "not-a-session-cursor"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid session cursor"
+
+
+def test_dashboard_ws_projects_cached_runtime_status(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = dashboard_ws_ticket(client, headers)
+
+    with client.websocket_connect(f"/dashboard/ws?ticket={ticket}") as ws:
+        snapshot = ws.receive_json()
+        assert snapshot["type"] == "dashboard.snapshot"
+        session = next(item for item in snapshot["sessions"] if item["id"] == session_id)
+        assert session["status"] == "idle"
+
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "session.state.updated",
+                        "params": {
+                            "sessionId": session_id,
+                            "runtime": "codex",
+                            "status": "running",
+                            "metadata": {"source": "test"},
+                        },
+                    },
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+        pushed = ws.receive_json()
+
+    assert pushed["type"] == "dashboard.snapshot"
+    session = next(item for item in pushed["sessions"] if item["id"] == session_id)
+    assert session["status"] == "running"
+
+
+def test_dashboard_ws_pushes_snapshot_after_dashboard_change(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    ticket = dashboard_ws_ticket(client, headers)
+
+    with client.websocket_connect(f"/dashboard/ws?ticket={ticket}") as ws:
+        snapshot = ws.receive_json()
+        assert snapshot["type"] == "dashboard.snapshot"
+        assert [connector["id"] for connector in snapshot["connectors"]] == [connector_id]
+        assert [session["id"] for session in snapshot["sessions"]] == [session_id]
+
+        created = client.post("/connectors", headers=headers, json={"name": "next"})
+        assert created.status_code == 200, created.text
+        next_connector_id = created.json()["connector"]["id"]
+
+        pushed = ws.receive_json()
+        assert pushed["type"] == "dashboard.snapshot"
+        assert next_connector_id in [connector["id"] for connector in pushed["connectors"]]
+        assert session_id in [session["id"] for session in pushed["sessions"]]
+
+
+def test_connector_ingest_skips_dashboard_for_unchanged_session_batch(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+
+    seeded = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.source.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "availability": "available",
+                        "reason": "inventory active",
+                        "observedAt": "2026-09-03T00:00:00Z",
+                        "observationOrigin": "inventory",
+                    },
+                }
+            ]
+        },
+    )
+    assert seeded.status_code == 200, seeded.text
+    before = client.get(
+        f"/sessions/{session_id}/meta",
+        headers=headers,
+    ).json()["session"]
+
+    dashboard_publications: list[tuple[str, dict[str, Any]]] = []
+    session_publications: list[tuple[str, dict[str, Any]]] = []
+
+    async def record_dashboard(user_id: str, payload: dict[str, Any]) -> None:
+        dashboard_publications.append((user_id, payload))
+
+    async def record_session(session_id: str, payload: dict[str, Any]) -> None:
+        session_publications.append((session_id, payload))
+
+    client.app.state.timeline_broker.publish_dashboard = record_dashboard
+    client.app.state.timeline_broker.publish = record_session
+    scan_token = "codex-unchanged-inventory-0001"
+    response = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "title": before["title"],
+                        "cwd": before["cwd"],
+                    },
+                },
+                {
+                    "method": "session.source.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "availability": "available",
+                        "reason": "inventory active",
+                        "observedAt": "2026-09-03T00:00:01Z",
+                        "observationOrigin": "inventory",
+                    },
+                },
+                {
+                    "method": "session.inventory.begin",
+                    "params": {
+                        "runtime": "codex",
+                        "scanToken": scan_token,
+                    },
+                },
+                {
+                    "method": "session.inventory.complete",
+                    "params": {
+                        "runtime": "codex",
+                        "scanToken": scan_token,
+                        "complete": True,
+                        "sessions": [
+                            {
+                                "sessionId": session_id,
+                                "sourceState": {
+                                    "availability": "available",
+                                    "reason": "inventory active",
+                                    "observedAt": "2026-09-03T00:00:02Z",
+                                },
+                            }
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["accepted"] == 4
+    assert dashboard_publications == []
+    assert session_publications == []
+    after = client.get(f"/sessions/{session_id}/meta", headers=headers).json()["session"]
+    assert after["updatedSeq"] == before["updatedSeq"]
+    assert after["sortAt"] == before["sortAt"]
+
+    activity = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "lastActivityAt": "2099-09-03T00:00:00Z",
+                    },
+                }
+            ]
+        },
+    )
+    assert activity.status_code == 200, activity.text
+    assert len(dashboard_publications) == 1
+    assert session_publications
+    activity_session = client.get(
+        f"/sessions/{session_id}/meta",
+        headers=headers,
+    ).json()["session"]
+    assert activity_session["updatedSeq"] == after["updatedSeq"]
+    assert activity_session["sortAt"] != after["sortAt"]
+
+
+def test_connector_ingest_publishes_dashboard_once_for_changed_session_batch(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, first_session_id, headers = (
+        create_connector_and_session(client)
+    )
+    second = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "projectId": _create_test_project(client, headers, connector_id),
+            "runtime": "codex",
+            "externalSessionId": "thr_dashboard_batch_second",
+            "title": "Second",
+            "cwd": "/repo",
+        },
+    )
+    assert second.status_code == 200, second.text
+    second_session_id = second.json()["session"]["id"]
+
+    dashboard_publications: list[tuple[str, dict[str, Any]]] = []
+
+    async def record_dashboard(user_id: str, payload: dict[str, Any]) -> None:
+        dashboard_publications.append((user_id, payload))
+
+    client.app.state.timeline_broker.publish_dashboard = record_dashboard
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.updated",
+                    "params": {
+                        "sessionId": first_session_id,
+                        "runtime": "codex",
+                        "title": "First changed",
+                    },
+                },
+                {
+                    "method": "session.updated",
+                    "params": {
+                        "sessionId": second_session_id,
+                        "runtime": "codex",
+                        "title": "Second changed",
+                    },
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["accepted"] == 2
+    assert len(dashboard_publications) == 1
+
+
+def test_connector_ingest_publishes_dashboard_for_new_idle_session(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, _session_id, headers = (
+        create_connector_and_session(client)
+    )
+    new_session_id = "sess_unknown_idle_dashboard"
+    dashboard_publications: list[tuple[str, dict[str, Any]]] = []
+
+    async def record_dashboard(user_id: str, payload: dict[str, Any]) -> None:
+        dashboard_publications.append((user_id, payload))
+
+    client.app.state.timeline_broker.publish_dashboard = record_dashboard
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    # A new session must resolve to a project workspace, so only
+                    # the meta-carrying notification can introduce one.
+                    "method": "session.updated",
+                    "params": {
+                        "sessionId": new_session_id,
+                        "runtime": "codex",
+                        "cwd": "/repo",
+                        "status": "idle",
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["accepted"] == 1
+    assert len(dashboard_publications) == 1
+    sessions = client.get("/sessions", headers=headers).json()["sessions"]
+    assert any(session["id"] == new_session_id for session in sessions)
+
+
+def test_dashboard_ws_rejects_session_scoped_ticket(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with pytest.raises(WebSocketDisconnect), client.websocket_connect(
+        f"/dashboard/ws?ticket={ticket}"
+    ):
+        pass
+
+
+def test_ws_ticket_scope_must_select_exactly_one_target(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+
+    missing = client.post(
+        "/ws-ticket",
+        headers=headers,
+        json={"clientId": "web", "scope": {}},
+    )
+    assert missing.status_code == 422
+
+    ambiguous = client.post(
+        "/ws-ticket",
+        headers=headers,
+        json={
+            "clientId": "web",
+            "scope": {"dashboard": True, "sessionId": session_id},
+        },
+    )
+    assert ambiguous.status_code == 422
+
+
+def test_session_runtime_command_list_reads_full_runtime_commands(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.get(
+        f"/sessions/{session_id}/runtime/commands",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [item["id"] for item in body["commands"]] == ["resume"]
+    assert fake_rpc.requests[-1] == (
+        connector_id,
+        "session.commands",
+        {
+            "sessionId": session_id,
+            "runtime": "codex",
+            "runtimeId": "codex",
+            "limit": 100,
+            "externalSessionId": f"thr_{connector_id}_demo",
+        },
+        30,
+    )
+
+
+def test_session_command_execute_calls_runtime(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/commands",
+        headers=headers,
+        json={"command": "resume", "raw": "/resume now", "args": ["now"]},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["command"] == "resume"
+    assert body["ok"] is True
+    assert body["code"] == "executed"
+    assert body["message"] == "Command executed."
+    assert fake_rpc.requests[-1] == (
+        connector_id,
+        "session.command.execute",
+        {
+            "sessionId": session_id,
+            "runtime": "codex",
+            "runtimeId": "codex",
+            "command": "resume",
+            "args": ["now"],
+            "externalSessionId": f"thr_{connector_id}_demo",
+            "raw": "/resume now",
+        },
+        30,
+    )
+
+
+def test_session_runtime_command_execute_calls_runtime(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/commands",
+        headers=headers,
+        json={"command": "resume", "raw": "/resume now", "args": ["now"]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["message"] == "Command executed."
+    assert fake_rpc.requests[-1] == (
+        connector_id,
+        "session.command.execute",
+        {
+            "sessionId": session_id,
+            "runtime": "codex",
+            "runtimeId": "codex",
+            "command": "resume",
+            "args": ["now"],
+            "externalSessionId": f"thr_{connector_id}_demo",
+            "raw": "/resume now",
+        },
+        30,
+    )
+
+
+def test_session_runtime_state_and_capabilities_read_from_runtime(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+
+    state_response = client.get(
+        f"/sessions/{session_id}/runtime/state",
+        headers=headers,
+    )
+    capabilities_response = client.get(
+        f"/sessions/{session_id}/runtime/capabilities",
+        headers=headers,
+    )
+
+    assert state_response.status_code == 200, state_response.text
+    assert state_response.json()["state"]["status"] == "idle"
+    assert capabilities_response.status_code == 200, capabilities_response.text
+    body = capabilities_response.json()
+    assert body["connectorId"] == connector_id
+    assert body["capabilitySet"]["capabilities"][0]["capabilityId"] == "session.send_message"
+    assert [request[1] for request in fake_rpc.requests[-2:]] == [
+        "session.state",
+        "session.capabilities",
+    ]
+
+
+def test_session_runtime_state_rejects_connector_identity_mismatch(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "runtimeId": "rti_other",
+        "status": "idle",
+        "selections": {},
+    }
+    client.app.state.rpc = fake_rpc
+
+    response = client.get(
+        f"/sessions/{session_id}/runtime/state",
+        headers=headers,
+    )
+
+    assert response.status_code == 502
+    assert "runtimeId" in response.json()["detail"]
+
+
+def test_session_command_returns_runtime_rpc_error(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    fake_rpc.fail = True  # type: ignore[attr-defined]
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/commands",
+        headers=headers,
+        json={"command": "does-not-exist", "raw": "/does-not-exist"},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "codex_error"
 
 
 def test_connector_status_response_uses_live_ws_not_stale_db(tmp_path):
@@ -663,7 +2574,7 @@ def test_connector_status_response_uses_live_ws_not_stale_db(tmp_path):
 
     connector = client.get(f"/connectors/{connector_id}", headers=headers).json()["connector"]
     assert connector["status"] == "offline"
-    session = client.get(f"/sessions/{session_id}/state", headers=headers).json()["session"]
+    session = session_view_for_assertions(client, session_id, headers)["session"]
     assert session["connectorStatus"] == "offline"
 
     with client.websocket_connect(
@@ -674,8 +2585,26 @@ def test_connector_status_response_uses_live_ws_not_stale_db(tmp_path):
         connector = client.get(f"/connectors/{connector_id}", headers=headers).json()["connector"]
         assert connector["status"] == "online"
         assert connector["deviceOs"] == "macos"
-        session = client.get(f"/sessions/{session_id}/state", headers=headers).json()["session"]
+        session = session_view_for_assertions(client, session_id, headers)["session"]
         assert session["connectorStatus"] == "online"
+
+
+def test_connector_connection_records_metadata_without_persisting_presence(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, _, _ = create_connector_and_session(client)
+
+    async def exercise() -> None:
+        store = client.app.state.store
+        assert await store.record_connector_connection(
+            connector_id,
+            device_os="linux",
+        )
+        connector = await store.get_connector(connector_id)
+        assert connector.status == "offline"
+        assert connector.deviceOs == "linux"
+        assert connector.lastSeenAt is not None
+
+    asyncio.run(exercise())
 
 
 def test_rpc_manager_expires_stale_connector_heartbeats():
@@ -684,29 +2613,57 @@ def test_rpc_manager_expires_stale_connector_heartbeats():
     def clock() -> float:
         return now
 
-    manager = ConnectorRpcManager(heartbeat_timeout_seconds=60, clock=clock)
-    websocket = FakeWebSocket()
-    connection = manager.register("conn_1", websocket)  # type: ignore[arg-type]
-    assert manager.is_online("conn_1")
+    async def exercise() -> None:
+        nonlocal now
+        manager = ConnectorRpcManager(heartbeat_timeout_seconds=60, clock=clock)
+        websocket = FakeWebSocket()
+        connection = await manager.register("conn_1", websocket)  # type: ignore[arg-type]
+        assert await manager.is_online("conn_1")
 
-    now = 59.0
-    assert manager.is_online("conn_1")
+        now = 59.0
+        assert await manager.is_online("conn_1")
 
-    now = 61.0
-    assert not manager.is_online("conn_1")
-    assert manager.expire_stale() == [connection]
-    assert not manager.is_online("conn_1")
+        now = 61.0
+        assert not await manager.is_online("conn_1")
+        assert await manager.expire_stale() == [connection]
+        assert not await manager.is_online("conn_1")
+
+    asyncio.run(exercise())
 
 
-def test_old_replaced_connection_unregister_does_not_remove_current_connection():
-    manager = ConnectorRpcManager()
-    old = manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
-    current = manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
+def test_active_duplicate_connector_connection_is_rejected():
+    async def exercise() -> None:
+        manager = ConnectorRpcManager()
+        old = await manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
 
-    assert manager.unregister("conn_1", old) is False
-    assert manager.is_online("conn_1")
-    assert manager.unregister("conn_1", current) is True
-    assert not manager.is_online("conn_1")
+        with pytest.raises(DuplicateConnectorConnectionError):
+            await manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
+
+        assert await manager.is_online("conn_1")
+        assert await manager.unregister("conn_1", old) is True
+        assert not await manager.is_online("conn_1")
+
+    asyncio.run(exercise())
+
+
+def test_stale_connector_connection_can_be_replaced():
+    now = 0.0
+
+    def clock() -> float:
+        return now
+
+    async def exercise() -> None:
+        nonlocal now
+        manager = ConnectorRpcManager(heartbeat_timeout_seconds=60, clock=clock)
+        old = await manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
+        now = 61.0
+        current = await manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
+
+        assert await manager.unregister("conn_1", old) is False
+        assert await manager.is_online("conn_1")
+        assert await manager.unregister("conn_1", current) is True
+
+    asyncio.run(exercise())
 
 
 def test_rpc_manager_unregisters_connector_when_ws_send_is_closed():
@@ -714,18 +2671,17 @@ def test_rpc_manager_unregisters_connector_when_ws_send_is_closed():
         async def send_json(self, message: dict[str, Any]) -> None:
             raise RuntimeError('Cannot call "send" once a close message has been sent.')
 
-    manager = ConnectorRpcManager()
-    manager.register("conn_1", ClosedWebSocket())  # type: ignore[arg-type]
-
     async def run_request() -> str:
+        manager = ConnectorRpcManager()
+        await manager.register("conn_1", ClosedWebSocket())  # type: ignore[arg-type]
         try:
             await manager.request("conn_1", "terminal.list", {}, timeout=0.1)
         except ConnectorOfflineError as exc:
+            assert not await manager.is_online("conn_1")
             return str(exc)
         return "unexpected success"
 
     assert asyncio.run(run_request()) == "connector disconnected"
-    assert not manager.is_online("conn_1")
 
 
 def test_terminal_ws_error_send_ignores_already_closed_socket():
@@ -756,7 +2712,7 @@ def test_connector_crud_updates_and_revokes_devices(tmp_path):
         def __init__(self) -> None:
             self.disconnected: list[tuple[str, str]] = []
 
-        def is_online(self, requested_connector_id: str) -> bool:
+        async def is_online(self, requested_connector_id: str) -> bool:
             return requested_connector_id == connector_id
 
         async def disconnect(self, requested_connector_id: str, *, reason: str) -> bool:
@@ -773,7 +2729,7 @@ def test_connector_crud_updates_and_revokes_devices(tmp_path):
     updated = client.patch(f"/connectors/{connector_id}", headers=headers, json={"name": "studio"})
     assert updated.status_code == 200
     assert updated.json()["connector"]["name"] == "studio"
-    assert updated.json()["connector"]["userId"] == ADMIN_USER
+    assert updated.json()["connector"]["userId"] == account_user_id(client)
 
     deleted = client.delete(f"/connectors/{connector_id}", headers=headers)
     assert deleted.status_code == 204
@@ -795,17 +2751,17 @@ def test_user_data_is_isolated_by_jwt_subject(tmp_path):
     assert client.get("/connectors", headers=user_two_headers).json()["connectors"] == []
     assert client.get("/sessions", headers=user_two_headers).json()["sessions"] == []
     assert client.get(f"/connectors/{connector_id}", headers=user_two_headers).status_code == 404
-    assert client.get(f"/sessions/{session_id}/state", headers=user_two_headers).status_code == 404
+    assert client.get(f"/sessions/{session_id}/snapshot", headers=user_two_headers).status_code == 404
 
     assert client.get(f"/connectors/{connector_id}", headers=user_one_headers).status_code == 200
-    assert client.get(f"/sessions/{session_id}/state", headers=user_one_headers).status_code == 200
+    assert client.get(f"/sessions/{session_id}/snapshot", headers=user_one_headers).status_code == 200
 
 
 def test_state_polling_and_timeline_item_upsert(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
-    initial_state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    initial_state = session_view_for_assertions(client, session_id, headers)
     assert initial_state["session"]["connectorStatus"] == "offline"
     assert initial_state["items"] == []
     assert initial_state["nextSeq"] == 0
@@ -850,12 +2806,87 @@ def test_state_polling_and_timeline_item_upsert(tmp_path):
         assert state["items"][0]["content"]["text"] == "hello"
         assert state["items"][0]["updatedSeq"] <= state["nextSeq"]
 
-        empty_increment = client.get(
-            f"/sessions/{session_id}/state",
-            headers=headers,
+        empty_increment = session_view_for_assertions(
+            client,
+            session_id,
+            headers,
             params={"afterSeq": state["nextSeq"]},
-        ).json()
+        )
         assert empty_increment["items"] == []
+
+
+def test_session_meta_endpoint_reads_and_patches_server_owned_metadata(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    initial = client.get(f"/sessions/{session_id}/meta", headers=headers)
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["session"]["id"] == session_id
+    assert initial.json()["session"]["connectorId"] == connector_id
+
+    patched = client.patch(
+        f"/sessions/{session_id}/meta",
+        headers=headers,
+        json={"title": "Renamed from meta", "pinned": True},
+    )
+
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["session"]["title"] == "Renamed from meta"
+    assert patched.json()["session"]["pinned"] is True
+
+
+def test_session_timeline_endpoint_reads_durable_timeline_only(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "timeline.itemUpsert",
+                "params": {
+                    "sessionId": session_id,
+                    "item": {
+                        "id": "tl_timeline",
+                        "sessionId": session_id,
+                        "turnId": "turn_1",
+                        "type": "message",
+                        "status": "done",
+                        "role": "assistant",
+                        "content": {"text": "timeline only", "format": "markdown"},
+                        "source": {
+                            "runtime": "codex",
+                            "sessionId": "thr_1",
+                            "turnId": "turn_1",
+                            "itemId": "item_timeline",
+                            "itemType": "agentMessage",
+                        },
+                        "orderSeq": 1,
+                        "revision": 1,
+                        "contentHash": "sha256:timeline-only",
+                    },
+                },
+            }
+        )
+        state = wait_for_item_update(client, session_id, headers, 0)
+
+    timeline = client.get(
+        f"/sessions/{session_id}/timeline",
+        headers=headers,
+        params={"mode": "changes", "afterSeq": 0, "limit": 10},
+    )
+
+    assert timeline.status_code == 200, timeline.text
+    body = timeline.json()
+    assert body["sessionId"] == session_id
+    assert body["nextSeq"] == state["nextSeq"]
+    assert body["items"][0]["content"]["text"] == "timeline only"
+    assert "state" not in body
+    assert "notices" not in body
+    assert "effectiveCapabilities" not in body
 
 
 def test_server_serves_next_static_export(tmp_path, monkeypatch):
@@ -922,41 +2953,100 @@ def test_session_state_supports_latest_and_before_timeline_windows(tmp_path):
             )
 
         def read_latest_five():
-            body = client.get(
-                f"/sessions/{session_id}/state",
-                headers=headers,
+            body = session_view_for_assertions(
+                client,
+                session_id,
+                headers,
                 params={"mode": "latest", "limit": 5},
-            ).json()
+            )
             return body if len(body["items"]) == 5 else None
 
         assert wait_for(read_latest_five) is not None
 
-        latest = client.get(
-            f"/sessions/{session_id}/state",
-            headers=headers,
+        latest = session_view_for_assertions(
+            client,
+            session_id,
+            headers,
             params={"mode": "latest", "limit": 2},
-        ).json()
+        )
         assert [item["id"] for item in latest["items"]] == ["tl_4", "tl_5"]
         assert latest["hasMore"] is True
 
-        older = client.get(
-            f"/sessions/{session_id}/state",
-            headers=headers,
+        older = session_view_for_assertions(
+            client,
+            session_id,
+            headers,
             params={"mode": "before", "beforeOrderSeq": 4, "limit": 2},
-        ).json()
+        )
         assert [item["id"] for item in older["items"]] == ["tl_2", "tl_3"]
         assert older["hasMore"] is True
 
-        oldest = client.get(
-            f"/sessions/{session_id}/state",
-            headers=headers,
+        oldest = session_view_for_assertions(
+            client,
+            session_id,
+            headers,
             params={"mode": "before", "beforeOrderSeq": 2, "limit": 2},
-        ).json()
+        )
         assert [item["id"] for item in oldest["items"]] == ["tl_1"]
         assert oldest["hasMore"] is False
 
 
-def test_session_status_is_derived_from_turn_ledger(tmp_path):
+def test_session_snapshot_and_timeline_default_to_latest_hundred_items(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+
+    async def seed_timeline_items() -> None:
+        from agent_server.core.models import TimelineItemIn
+
+        store = client.app.state.store
+        for order_seq in range(1, 102):
+            await store.upsert_timeline_item(
+                session_id=session_id,
+                item=TimelineItemIn.model_validate(
+                    {
+                        "id": f"tl_{order_seq}",
+                        "sessionId": session_id,
+                        "turnId": "turn_1",
+                        "type": "message",
+                        "status": "done",
+                        "role": "assistant",
+                        "content": {"text": f"item {order_seq}", "format": "markdown"},
+                        "source": {
+                            "runtime": "codex",
+                            "sessionId": "thr_1",
+                            "turnId": "turn_1",
+                            "itemId": f"item_{order_seq}",
+                            "itemType": "agentMessage",
+                        },
+                        "orderSeq": order_seq,
+                        "revision": 1,
+                        "contentHash": f"sha256:{order_seq}",
+                    },
+                ),
+            )
+
+    asyncio.run(seed_timeline_items())
+
+    timeline = client.get(f"/sessions/{session_id}/timeline", headers=headers)
+    assert timeline.status_code == 200, timeline.text
+    timeline_body = timeline.json()
+    assert len(timeline_body["items"]) == 100
+    assert timeline_body["items"][0]["id"] == "tl_2"
+    assert timeline_body["items"][-1]["id"] == "tl_101"
+    assert timeline_body["hasMore"] is True
+
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+    snapshot_timeline = snapshot.json()["timeline"]
+    assert len(snapshot_timeline["items"]) == 100
+    assert snapshot_timeline["items"][0]["id"] == "tl_2"
+    assert snapshot_timeline["items"][-1]["id"] == "tl_101"
+    assert snapshot_timeline["hasMore"] is True
+
+
+def test_session_state_update_drives_runtime_status_independently_from_timeline(
+    tmp_path,
+):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
@@ -967,42 +3057,47 @@ def test_session_status_is_derived_from_turn_ledger(tmp_path):
         ws.send_json(
             {
                 "type": "notification",
-                "method": "session.updated",
-                "params": {"sessionId": session_id, "status": "running"},
+                "method": "session.state.updated",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "externalSessionId": "thr_1",
+                    "status": "running",
+                    "selections": {},
+                    "metadata": {},
+                },
             }
         )
         state = wait_for_state(
             client,
             session_id,
             headers,
-            lambda body: body["session"]["status"] == "idle",
+            lambda body: body["session"]["status"] == "running",
         )
-        assert state["session"]["status"] == "idle"
+        assert state["session"]["status"] == "running"
 
-        turn_start = {
-            "id": "tl_turn_start",
+        tool_item = {
+            "id": "tl_tool",
             "sessionId": session_id,
-            "turnId": "turn_1",
-            "type": "turn.start",
+            "type": "tool",
             "status": "running",
-            "role": None,
-            "content": {"title": None, "inputSummary": None},
+            "role": "tool",
+            "content": {"kind": "command", "command": "pytest"},
             "source": {
                 "runtime": "codex",
                 "sessionId": "thr_1",
-                "turnId": "turn_1",
-                "event": "turn/started",
-                "derivedKey": "turn-start",
+                "itemId": "tool_1",
+                "itemType": "commandExecution",
             },
             "orderSeq": 1,
             "revision": 1,
-            "contentHash": "sha256:start",
+            "contentHash": "sha256:tool-running",
         }
         ws.send_json(
             {
                 "type": "notification",
                 "method": "timeline.itemUpsert",
-                "params": {"sessionId": session_id, "item": turn_start},
+                "params": {"sessionId": session_id, "item": tool_item},
             }
         )
         state = wait_for_state(
@@ -1010,7 +3105,7 @@ def test_session_status_is_derived_from_turn_ledger(tmp_path):
             session_id,
             headers,
             lambda body: (
-                any(item["type"] == "turn.start" for item in body["items"])
+                any(item["id"] == "tl_tool" for item in body["items"])
                 and body["session"]["status"] == "running"
             ),
         )
@@ -1023,19 +3118,26 @@ def test_session_status_is_derived_from_turn_ledger(tmp_path):
                 "params": {
                     "sessionId": session_id,
                     "item": {
-                        **turn_start,
-                        "id": "tl_turn_end",
-                        "type": "turn.end",
+                        **tool_item,
                         "status": "done",
-                        "content": {"result": "completed"},
-                        "source": {
-                            **turn_start["source"],
-                            "event": "turn/completed",
-                            "derivedKey": "turn-end",
-                        },
-                        "orderSeq": 2,
-                        "contentHash": "sha256:end",
+                        "content": {"kind": "command", "command": "pytest", "exitCode": 0},
+                        "revision": 2,
+                        "contentHash": "sha256:tool-done",
                     },
+                },
+            }
+        )
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.state.updated",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "externalSessionId": "thr_1",
+                    "status": "idle",
+                    "selections": {},
+                    "metadata": {},
                 },
             }
         )
@@ -1044,7 +3146,7 @@ def test_session_status_is_derived_from_turn_ledger(tmp_path):
             session_id,
             headers,
             lambda body: (
-                any(item["type"] == "turn.end" for item in body["items"])
+                any(item["id"] == "tl_tool" and item["status"] == "done" for item in body["items"])
                 and body["session"]["status"] == "idle"
             ),
         )
@@ -1085,7 +3187,7 @@ def test_session_status_is_derived_from_turn_ledger(tmp_path):
         assert updated["items"][0]["content"]["text"] == "hello done"
 
 
-def test_timeline_upsert_removes_legacy_history_duplicates(tmp_path):
+def test_timeline_sync_preserves_distinct_runtime_item_ids(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
@@ -1136,10 +3238,10 @@ def test_timeline_upsert_removes_legacy_history_duplicates(tmp_path):
 
         state = wait_for_item_update(client, session_id, headers, 0)
         messages = [item for item in state["items"] if item["type"] == "message"]
-        assert [item["id"] for item in messages] == ["tl_canonical"]
+        assert [item["id"] for item in messages] == ["tl_legacy", "tl_canonical"]
 
 
-def test_timeline_sync_removes_snapshot_reasoning_duplicate_after_live_item(tmp_path):
+def test_timeline_sync_preserves_distinct_reasoning_item_ids(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
@@ -1219,13 +3321,223 @@ def test_timeline_sync_removes_snapshot_reasoning_duplicate_after_live_item(tmp_
     )
     assert synced.status_code == 200, synced.text
 
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    state = session_view_for_assertions(client, session_id, headers)
     reasoning_items = [
         item
         for item in state["items"]
         if item["type"] == "system" and item["content"].get("kind") == "reasoning"
     ]
-    assert [item["id"] for item in reasoning_items] == ["tl_live_reasoning"]
+    assert [item["id"] for item in reasoning_items] == [
+        "tl_live_reasoning",
+        "tl_snapshot_reasoning",
+    ]
+
+
+def test_complete_timeline_sync_dedupes_duplicate_item_ids(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    base_item = {
+        "id": "item-316",
+        "sessionId": session_id,
+        "turnId": "turn_1",
+        "type": "message",
+        "status": "done",
+        "role": "assistant",
+        "source": {
+            "runtime": "codex",
+            "sessionId": "thr_1",
+            "turnId": "turn_1",
+            "itemId": "item-316",
+            "itemType": "agentMessage",
+        },
+        "orderSeq": 316,
+        "revision": 1,
+    }
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": session_id,
+                        "complete": True,
+                        "items": [
+                            {
+                                **base_item,
+                                "content": {"text": "partial", "format": "markdown"},
+                                "contentHash": "sha256:partial",
+                            },
+                            {
+                                **base_item,
+                                "content": {"text": "complete answer", "format": "markdown"},
+                                "contentHash": "sha256:complete",
+                                "revision": 2,
+                            },
+                        ],
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    state = session_view_for_assertions(client, session_id, headers)
+    messages = [item for item in state["items"] if item["id"] == "item-316"]
+    assert len(messages) == 1
+    assert messages[0]["content"]["text"] == "complete answer"
+
+
+def test_incomplete_timeline_sync_upserts_without_removing_existing_items(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    first = {
+        "id": "item-1",
+        "sessionId": session_id,
+        "turnId": "turn_1",
+        "type": "message",
+        "status": "done",
+        "role": "assistant",
+        "content": {"text": "existing", "format": "markdown"},
+        "source": {
+            "runtime": "codex",
+            "sessionId": "thr_1",
+            "turnId": "turn_1",
+            "itemId": "item-1",
+            "itemType": "agentMessage",
+        },
+        "orderSeq": 1,
+        "revision": 1,
+        "contentHash": "sha256:first",
+    }
+    second = {
+        **first,
+        "id": "item-2",
+        "content": {"text": "upserted", "format": "markdown"},
+        "source": {**first["source"], "itemId": "item-2"},
+        "orderSeq": 2,
+        "contentHash": "sha256:second",
+    }
+
+    initial = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": session_id,
+                        "complete": False,
+                        "items": [first],
+                    },
+                }
+            ]
+        },
+    )
+    assert initial.status_code == 200, initial.text
+
+    update = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": session_id,
+                        "complete": False,
+                        "items": [second],
+                    },
+                }
+            ]
+        },
+    )
+    assert update.status_code == 200, update.text
+
+    state = session_view_for_assertions(client, session_id, headers)
+    messages = [item for item in state["items"] if item["id"] in {"item-1", "item-2"}]
+    assert [item["id"] for item in messages] == ["item-1", "item-2"]
+
+
+def test_connector_ingest_rejects_bad_notification_without_500(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    first = {
+        "id": "item-ok-1",
+        "sessionId": session_id,
+        "turnId": "turn_1",
+        "type": "message",
+        "status": "done",
+        "role": "assistant",
+        "content": {"text": "first", "format": "markdown"},
+        "source": {
+            "runtime": "codex",
+            "sessionId": "thr_1",
+            "turnId": "turn_1",
+            "itemId": "item-ok-1",
+            "itemType": "agentMessage",
+        },
+        "orderSeq": 1,
+        "revision": 1,
+        "contentHash": "sha256:first-ok",
+    }
+    second = {
+        **first,
+        "id": "item-ok-2",
+        "content": {"text": "second", "format": "markdown"},
+        "source": {**first["source"], "itemId": "item-ok-2"},
+        "orderSeq": 2,
+        "contentHash": "sha256:second-ok",
+    }
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {"sessionId": session_id, "item": first},
+                },
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": "item-bad",
+                            "sessionId": session_id,
+                            "content": {"text": "bad", "format": "markdown"},
+                        },
+                    },
+                },
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {"sessionId": session_id, "item": second},
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["accepted"] == 2
+    assert len(body["rejected"]) == 1
+    assert body["rejected"][0]["index"] == 1
+    assert body["rejected"][0]["method"] == "timeline.itemUpsert"
+    assert body["rejected"][0]["errorType"] == "ValidationError"
+    state = session_view_for_assertions(client, session_id, headers)
+    messages = [
+        item
+        for item in state["items"]
+        if item["id"] in {"item-ok-1", "item-ok-2", "item-bad"}
+    ]
+    assert [item["id"] for item in messages] == ["item-ok-1", "item-ok-2"]
 
 
 def test_sessions_sort_by_latest_timeline_item_not_session_update(tmp_path):
@@ -1234,7 +3546,7 @@ def test_sessions_sort_by_latest_timeline_item_not_session_update(tmp_path):
     second_response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_sort", "title": "Second", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_sort", "title": "Second", "cwd": "/repo"},
     )
     assert second_response.status_code == 200
     second_session_id = second_response.json()["session"]["id"]
@@ -1310,11 +3622,21 @@ def test_sessions_sort_by_latest_timeline_item_not_session_update(tmp_path):
             }
         )
 
-        listed = wait_for_sessions_order(client, [first_session_id, second_session_id], headers)
+        listed = wait_for_sessions_order(
+            client,
+            [first_session_id, second_session_id],
+            headers,
+            extra=lambda sessions: any(
+                session["id"] == first_session_id
+                and session["lastItemAt"] == "2027-05-20T12:00:00Z"
+                for session in sessions
+            ),
+        )
         assert [session["id"] for session in listed[:2]] == [first_session_id, second_session_id]
-        assert listed[0]["lastItemAt"] == "2027-05-20T12:00:00Z"
-        assert listed[0]["lastItemOrderSeq"] == 1
-        first_state = client.get(f"/sessions/{first_session_id}/state", headers=headers).json()
+        first_session = next(session for session in listed if session["id"] == first_session_id)
+        assert first_session["lastItemAt"] == "2027-05-20T12:00:00Z"
+        assert first_session["lastItemOrderSeq"] == 1
+        first_state = session_view_for_assertions(client, first_session_id, headers)
         assert first_state["session"]["lastItemAt"] == "2027-05-20T12:00:00Z"
         assert first_state["session"]["lastItemOrderSeq"] == 1
 
@@ -1325,7 +3647,7 @@ def test_sessions_sort_by_latest_item_timestamp_not_highest_order_seq(tmp_path):
     second_response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_order", "title": "Second", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_order", "title": "Second", "cwd": "/repo"},
     )
     assert second_response.status_code == 200
     second_session_id = second_response.json()["session"]["id"]
@@ -1389,20 +3711,25 @@ def test_sessions_sort_by_latest_item_timestamp_not_highest_order_seq(tmp_path):
             client,
             [first_session_id, second_session_id],
             headers,
-            extra=lambda sessions: sessions[0]["lastItemAt"] == "2027-05-20T12:00:00Z",
+            extra=lambda sessions: any(
+                session["id"] == first_session_id
+                and session["lastItemAt"] == "2027-05-20T12:00:00Z"
+                for session in sessions
+            ),
         )
         assert [session["id"] for session in listed[:2]] == [first_session_id, second_session_id]
-        assert listed[0]["lastItemAt"] == "2027-05-20T12:00:00Z"
-        assert listed[0]["lastItemOrderSeq"] == 9000
+        first_session = next(session for session in listed if session["id"] == first_session_id)
+        assert first_session["lastItemAt"] == "2027-05-20T12:00:00Z"
+        assert first_session["lastItemOrderSeq"] == 9000
 
 
-def test_sessions_sort_by_codex_last_activity_at(tmp_path):
+def test_sessions_sort_by_last_activity_at(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
     second_response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_activity", "title": "Second", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_activity", "title": "Second", "cwd": "/repo"},
     )
     assert second_response.status_code == 200
     second_session_id = second_response.json()["session"]["id"]
@@ -1412,7 +3739,7 @@ def test_sessions_sort_by_codex_last_activity_at(tmp_path):
         headers={"Authorization": f"Bearer {access_token}"},
     ) as ws:
         for session_id, activity_at in (
-            (first_session_id, "2026-05-20T12:00:00Z"),
+            (first_session_id, "2026-05-20T14:00:00Z"),
             (second_session_id, "2026-05-20T13:00:00Z"),
         ):
             ws.send_json(
@@ -1429,12 +3756,196 @@ def test_sessions_sort_by_codex_last_activity_at(tmp_path):
 
         listed = wait_for_sessions_order(
             client,
-            [second_session_id, first_session_id],
+            [first_session_id, second_session_id],
             headers,
-            extra=lambda sessions: sessions[0]["lastActivityAt"] == "2026-05-20T13:00:00Z",
+            extra=lambda sessions: sessions[0]["lastActivityAt"] == "2026-05-20T14:00:00Z",
         )
-        assert [session["id"] for session in listed[:2]] == [second_session_id, first_session_id]
-        assert listed[0]["lastActivityAt"] == "2026-05-20T13:00:00Z"
+        assert [session["id"] for session in listed[:2]] == [first_session_id, second_session_id]
+        assert listed[0]["lastActivityAt"] == "2026-05-20T14:00:00Z"
+        assert listed[0]["sortAt"] == "2026-05-20T14:00:00Z"
+
+
+def test_sessions_sort_at_uses_newest_item_or_activity_timestamp(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
+    second_response = client.post(
+        "/sessions",
+        headers=headers,
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_stale_activity", "title": "Second", "cwd": "/repo"},
+    )
+    assert second_response.status_code == 200
+    second_session_id = second_response.json()["session"]["id"]
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.updated",
+                "params": {
+                    "sessionId": first_session_id,
+                    "status": "idle",
+                    "lastActivityAt": "2026-05-20T15:00:00Z",
+                },
+            }
+        )
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.updated",
+                "params": {
+                    "sessionId": second_session_id,
+                    "status": "idle",
+                    "lastActivityAt": "2026-05-20T14:00:00Z",
+                },
+            }
+        )
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "timeline.sync",
+                "params": {
+                    "sessionId": first_session_id,
+                    "items": [
+                        {
+                            "id": "tl_first_newer_than_activity",
+                            "sessionId": first_session_id,
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {"text": "newer than activity", "format": "markdown"},
+                            "source": {"runtime": "codex", "itemId": "item_first"},
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:first-newer-than-activity",
+                            "createdAt": "2026-05-20T13:00:00Z",
+                            "updatedAt": "2026-05-20T13:00:00Z",
+                        }
+                    ],
+                },
+            }
+        )
+
+        listed = wait_for_sessions_order(
+            client,
+            [first_session_id, second_session_id],
+            headers,
+            extra=lambda sessions: any(
+                session["id"] == first_session_id
+                and session["sortAt"] == "2026-05-20T15:00:00Z"
+                and session["lastItemAt"] == "2026-05-20T13:00:00Z"
+                for session in sessions
+            ),
+        )
+        assert [session["id"] for session in listed[:2]] == [first_session_id, second_session_id]
+        first_session = next(session for session in listed if session["id"] == first_session_id)
+        assert first_session["lastActivityAt"] == "2026-05-20T15:00:00Z"
+        assert first_session["lastItemAt"] == "2026-05-20T13:00:00Z"
+        assert first_session["sortAt"] == "2026-05-20T15:00:00Z"
+
+
+def test_complete_timeline_snapshot_recomputes_session_sort_at(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
+    second_response = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "projectId": _create_test_project(client, headers, connector_id),
+            "runtime": "codex",
+            "externalSessionId": "thr_second_snapshot_sort",
+            "title": "Second",
+            "cwd": "/repo",
+        },
+    )
+    assert second_response.status_code == 200
+    second_session_id = second_response.json()["session"]["id"]
+
+    seeded = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.updated",
+                    "params": {
+                        "sessionId": first_session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "lastActivityAt": "2027-05-20T10:00:00Z",
+                    },
+                },
+                {
+                    "method": "session.updated",
+                    "params": {
+                        "sessionId": second_session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "lastActivityAt": "2027-05-20T11:00:00Z",
+                    },
+                },
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": first_session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "complete": True,
+                        "items": [
+                            {
+                                "id": "tl_snapshot_latest",
+                                "sessionId": first_session_id,
+                                "type": "message",
+                                "status": "done",
+                                "role": "assistant",
+                                "content": {"text": "latest", "format": "markdown"},
+                                "source": {"runtime": "codex", "itemId": "item_latest"},
+                                "orderSeq": 1,
+                                "revision": 1,
+                                "contentHash": "sha256:snapshot-latest",
+                                "createdAt": "2028-05-20T12:00:00Z",
+                                "updatedAt": "2028-05-20T12:00:00Z",
+                            }
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+    assert seeded.status_code == 200, seeded.text
+    assert seeded.json()["accepted"] == 3
+    listed = client.get("/sessions", headers=headers).json()["sessions"]
+    assert [session["id"] for session in listed[:2]] == [first_session_id, second_session_id]
+    assert listed[0]["sortAt"] == "2028-05-20T12:00:00Z"
+
+    cleared = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": first_session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "complete": True,
+                        "items": [],
+                    },
+                }
+            ]
+        },
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["accepted"] == 1
+
+    listed = client.get("/sessions", headers=headers).json()["sessions"]
+    assert [session["id"] for session in listed[:2]] == [second_session_id, first_session_id]
+    first_session = next(session for session in listed if session["id"] == first_session_id)
+    assert first_session["lastItemAt"] is None
+    assert first_session["sortAt"] == "2027-05-20T10:00:00Z"
 
 
 def test_empty_sessions_sort_by_session_timestamp(tmp_path):
@@ -1443,7 +3954,7 @@ def test_empty_sessions_sort_by_session_timestamp(tmp_path):
     second_response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_empty", "title": "Second empty", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_empty", "title": "Second empty", "cwd": "/repo"},
     )
     assert second_response.status_code == 200
     second_session_id = second_response.json()["session"]["id"]
@@ -1453,17 +3964,111 @@ def test_empty_sessions_sort_by_session_timestamp(tmp_path):
     assert listed[0]["sortAt"] >= listed[1]["sortAt"]
 
 
+def test_session_state_does_not_move_until_timeline_output(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
+    second_response = client.post(
+        "/sessions",
+        headers=headers,
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_stable", "title": "Second", "cwd": "/repo"},
+    )
+    assert second_response.status_code == 200
+    second_session_id = second_response.json()["session"]["id"]
+
+    initial = client.get("/sessions", headers=headers).json()["sessions"]
+    initial_first = next(session for session in initial if session["id"] == first_session_id)
+    assert [session["id"] for session in initial[:2]] == [second_session_id, first_session_id]
+
+    running_response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.state.updated",
+                    "params": {
+                        "sessionId": first_session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "status": "running",
+                    },
+                }
+            ]
+        },
+    )
+    assert running_response.status_code == 200, running_response.text
+    running = client.get("/sessions", headers=headers).json()["sessions"]
+    assert [session["id"] for session in running[:2]] == [second_session_id, first_session_id]
+    running_first = next(session for session in running if session["id"] == first_session_id)
+    assert running_first["sortAt"] == initial_first["sortAt"]
+
+    updates_response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": first_session_id,
+                        "item": {
+                            "id": "tl_streaming_assistant",
+                            "sessionId": first_session_id,
+                            "turnId": "turn_stable",
+                            "type": "message",
+                            "status": "running",
+                            "role": "assistant",
+                            "content": {"text": "partial", "format": "markdown"},
+                            "source": {"runtime": "codex", "turnId": "turn_stable", "itemId": "assistant_1"},
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:partial",
+                            "createdAt": "2028-05-20T12:00:00Z",
+                            "updatedAt": "2028-05-20T12:00:00Z",
+                        },
+                    },
+                },
+                {
+                    "method": "session.turnEnded",
+                    "params": {
+                        "sessionId": first_session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "turnId": "turn_stable",
+                        "outcome": "completed",
+                    },
+                },
+                {
+                    "method": "session.state.updated",
+                    "params": {
+                        "sessionId": first_session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "status": "idle",
+                    },
+                },
+            ]
+        },
+    )
+    assert updates_response.status_code == 200, updates_response.text
+
+    completed = client.get("/sessions", headers=headers).json()["sessions"]
+    assert [session["id"] for session in completed[:2]] == [first_session_id, second_session_id]
+    assert completed[0]["sortAt"] == "2028-05-20T12:00:00Z"
+    assert completed[0]["status"] == "idle"
+    assert completed[0]["unread"] is True
+
+
 def test_sessions_sort_at_ignores_sync_observed_timestamp(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
     second_response = client.post(
         "/sessions",
         headers=headers,
-        json={"connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_sync_observed", "title": "Second", "cwd": "/repo"},
+        json={"projectId": _create_test_project(client, headers, connector_id), "connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_sync_observed", "title": "Second", "cwd": "/repo"},
     )
     assert second_response.status_code == 200
     second_session_id = second_response.json()["session"]["id"]
-
     with client.websocket_connect(
         "/connector/ws",
         headers={"Authorization": f"Bearer {access_token}"},
@@ -1511,8 +4116,16 @@ def test_sessions_sort_at_ignores_sync_observed_timestamp(tmp_path):
             [first_session_id, second_session_id],
             headers,
             extra=lambda sessions: (
-                sessions[0]["sortAt"] == "2027-05-20T12:00:00Z"
-                and sessions[1]["sortAt"] == "2027-05-20T11:00:00Z"
+                any(
+                    session["id"] == first_session_id
+                    and session["lastItemAt"] == "2027-05-20T12:00:00Z"
+                    for session in sessions
+                )
+                and any(
+                    session["id"] == second_session_id
+                    and session["lastActivityAt"] == "2027-05-20T11:00:00Z"
+                    for session in sessions
+                )
             ),
         )
         assert [session["id"] for session in listed[:2]] == [first_session_id, second_session_id]
@@ -1524,7 +4137,7 @@ def test_takeover_gates_remote_message_and_rpc(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
-    read_only_response = client.post(f"/sessions/{session_id}/messages", headers=headers, json={"content": "hi"})
+    read_only_response = client.post(f"/sessions/{session_id}/runtime/messages", headers=headers, json={"content": "hi"})
     assert read_only_response.status_code == 409
 
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
@@ -1540,7 +4153,7 @@ def test_takeover_gates_remote_message_and_rpc(tmp_path):
                 "params": {"sessionId": session_id, "status": "idle"},
             }
         )
-        online_state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+        online_state = session_view_for_assertions(client, session_id, headers)
         assert online_state["session"]["connectorStatus"] == "online"
         assert online_state["session"]["takeover"] is True
 
@@ -1549,124 +4162,59 @@ def test_rpc_manager_sends_request_and_matches_response():
     asyncio.run(_exercise_rpc_manager())
 
 
-def test_agent_catalog_lists_seeded_claude_entries(tmp_path):
+def test_legacy_agent_mode_catalog_is_removed(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
 
-    modes = client.get("/agents/claude/modes", headers=headers)
-    assert modes.status_code == 200, modes.text
-    body = modes.json()
-    assert body["runtime"] == "claude"
-    keys = [entry["key"] for entry in body["entries"]]
-    assert keys == ["default", "acceptEdits", "plan", "auto", "bypassPermissions"]
-    defaults = [entry["key"] for entry in body["entries"] if entry["isDefault"]]
-    assert defaults == ["default"]
-    assert body["entries"][0]["displayLabel"] == "Ask permissions"
-    assert body["entries"][0]["sortOrder"] == 1
-
-    models = client.get("/agents/claude/models", headers=headers).json()
-    model_keys = [entry["key"] for entry in models["entries"]]
-    assert model_keys == [
-        "claude-opus-4-7",
-        "claude-opus-4-7[1m]",
-        "claude-sonnet-4-6",
-        "claude-haiku-4-5",
-        "claude-opus-4-6",
-    ]
-    assert next(e for e in models["entries"] if e["isDefault"])["key"] == "claude-opus-4-7[1m]"
-    assert [entry["key"] for entry in models["entries"][0]["efforts"]] == [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max",
-    ]
-    assert models["entries"][3]["efforts"] == []
-
-    efforts = client.get("/agents/claude/efforts", headers=headers).json()
-    effort_keys = [entry["key"] for entry in efforts["entries"]]
-    assert effort_keys == ["low", "medium", "high", "xhigh", "max"]
-    assert next(e for e in efforts["entries"] if e["isDefault"])["key"] == "max"
+    assert client.get("/agents/claude/modes", headers=headers).status_code == 404
+    assert client.get("/agents/claude/models", headers=headers).status_code == 404
+    assert client.get("/agents/claude/efforts", headers=headers).status_code == 404
 
 
 def test_codex_agent_catalog_lists_seeded_entries(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
 
-    modes = client.get("/agents/codex/modes", headers=headers).json()
-    assert modes["runtime"] == "codex"
-    assert modes["entries"] == []
-
-    models = client.get("/agents/codex/models", headers=headers).json()
-    assert models["runtime"] == "codex"
-    assert [entry["key"] for entry in models["entries"]] == [
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
-        "gpt-5.6-luna",
-        "gpt-5.5",
-        "gpt-5.4",
-        "gpt-5.4-mini",
-        "gpt-5.3-codex",
-        "gpt-5.2",
-    ]
-    assert next(e for e in models["entries"] if e["isDefault"])["key"] == "gpt-5.6-sol"
-    assert [entry["key"] for entry in models["entries"][0]["efforts"]] == [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max",
-        "ultra",
-    ]
-    assert [entry["key"] for entry in models["entries"][2]["efforts"]] == [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max",
-    ]
-    assert [entry["key"] for entry in models["entries"][3]["efforts"]] == [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-    ]
-
-    efforts = client.get("/agents/codex/efforts", headers=headers).json()
-    assert efforts["runtime"] == "codex"
-    assert [entry["key"] for entry in efforts["entries"]] == [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max",
-        "ultra",
-    ]
-    assert next(e for e in efforts["entries"] if e["isDefault"])["key"] == "medium"
+    assert client.get("/agents/codex/modes", headers=headers).status_code == 404
+    assert client.get("/agents/codex/models", headers=headers).status_code == 404
+    assert client.get("/agents/codex/efforts", headers=headers).status_code == 404
 
 
 def test_agent_catalog_requires_authentication(tmp_path):
     client = make_client(tmp_path)
-    assert client.get("/agents/claude/modes").status_code == 401
+    assert client.get("/agents/claude/permission-catalog").status_code == 401
 
 
 def test_agent_catalog_rejects_unknown_runtime(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
     # RuntimeName Literal is enforced by pydantic; unknown runtimes 422.
-    assert client.get("/agents/python/modes", headers=headers).status_code == 422
+    assert client.get("/agents/python/permission-catalog", headers=headers).status_code == 422
 
 
-def test_seed_agent_catalog_is_idempotent(tmp_path):
+def test_agent_catalog_routes_are_removed(tmp_path):
     client = make_client(tmp_path)
-    headers = auth_headers(client)
-    first = client.get("/agents/claude/modes", headers=headers).json()["entries"]
-    # Re-seeding must not insert duplicates or alter labels.
-    asyncio.run(client.app.state.store.seed_agent_catalog())
-    asyncio.run(client.app.state.store.seed_agent_catalog())
-    second = client.get("/agents/claude/modes", headers=headers).json()["entries"]
-    assert first == second
-    assert len(first) == 5
+    connector_id, _access_token, _session_id, headers = create_connector_and_session(client)
+
+    model = client.get(
+        "/agents/codex/model-catalog",
+        headers=headers,
+        params={"connectorId": connector_id, "query": "gpt", "limit": 12},
+    )
+    permission = client.get(
+        "/agents/codex/permission-catalog",
+        headers=headers,
+        params={"connectorId": connector_id, "query": "read", "limit": 13},
+    )
+
+    assert model.status_code == 410, model.text
+    assert model.json()["detail"]["use"] == (
+        "/connectors/{connectorId}/runtimes/codex/catalogs/model"
+    )
+    assert permission.status_code == 410, permission.text
+    assert permission.json()["detail"]["use"] == (
+        "/connectors/{connectorId}/runtimes/codex/catalogs/permission"
+    )
 
 
 def test_connector_preferences_round_trip_via_daemon_notification(tmp_path):
@@ -1704,645 +4252,659 @@ def test_connector_preferences_round_trip_via_daemon_notification(tmp_path):
     assert after["preferences"]["readAt"] == "2026-05-27T10:00:00Z"
 
 
-class FakeScanRpc:
-    """Scripted RPC for the runtime-capabilities scan endpoint.
-
-    Tests set `online_connector_id` (None ⇒ offline), then either a
-    `scan_result` or `scan_error`. Each request is recorded so we can
-    assert what params the backend forwarded to the daemon.
-    """
-
-    def __init__(self) -> None:
-        self.online_connector_id: str | None = None
-        self.scan_result: Any = None
-        self.scan_error: Exception | None = None
-        self.requests: list[tuple[str, str, dict[str, Any], float]] = []
-
-    def is_online(self, connector_id: str) -> bool:
-        return self.online_connector_id == connector_id
-
-    async def request(
-        self,
-        connector_id: str,
-        method: str,
-        params: dict[str, Any],
-        *,
-        timeout: float = 30,
-    ) -> Any:
-        self.requests.append((connector_id, method, params, timeout))
-        if method == "capabilities.scanRuntime":
-            if self.scan_error is not None:
-                raise self.scan_error
-            return self.scan_result
-        if method == "capabilities.forceResyncRuntime":
-            # Fire-and-forget from the scan attach path; nothing to return.
-            return {"runtime": params.get("runtime"), "resynced": True}
-        if method == "capabilities.setActiveRuntimes":
-            return {"runtimes": params.get("runtimes") or []}
-        raise AssertionError(f"unexpected method {method!r}")
 
 
-def _agents(client: TestClient, connector_id: str, headers: dict[str, str]) -> dict[str, Any]:
-    """Shorthand: GET /runtime-capabilities and return its body's state field."""
-    return client.get(
-        f"/connectors/{connector_id}/runtime-capabilities", headers=headers
-    ).json()["runtimeCapabilities"]
-
-
-# ── Initial pair → discovery ingest auto-attaches healthy runtimes ──────────
-
-
-def test_pair_then_discovery_push_auto_attaches_healthy_runtimes(tmp_path):
-    """First-pair behavior: daemon publishes a discovery report and we
-    auto-attach every runtime that looks usable. Codex with execution=ok
-    gets attached; an all-missing claude doesn't (we don't surface
-    "agent broken / not installed" rows the user never asked about)."""
+def test_protocol_capabilities_ingest_and_merge(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
+    revision = 1_785_489_256_422_611
 
-    # Brand-new device → empty agents state.
-    state = _agents(client, connector_id, headers)
-    assert state == {
-        "version": 3,
-        "lastDiscoveredAt": None,
-        "attached": {},
-        "disabled": [],
-    }
-
-    discovery = {
-        "version": 1,
-        "checkedAt": "2026-06-01T00:00:00Z",
-        "runtimes": {
-            "codex": {
-                "history": "ok",
-                "execution": "ok",
-                "selected": {"source": "cli", "path": "/usr/local/bin/codex"},
-            },
-            "claude": {
-                "history": "unavailable",
-                "execution": "unavailable",
-                "checked": [
-                    {"source": "cli", "path": "/opt/claude", "status": "missing"}
-                ],
-                "error": {"code": "claude_cli_unavailable", "message": "Not installed."},
-            },
-        },
+    capability_set = {
+        "revision": revision,
+        "capabilities": [
+            {
+                "capabilityId": "session.interrupt",
+                "scope": "runtime",
+                "runtime": "codex",
+                "version": "1",
+                "supported": True,
+                "available": True,
+                "allowed": True,
+                "parameters": {"source": "discovery"},
+            }
+        ],
     }
     ingest = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"notifications": [{"method": "protocol.capabilitiesUpdated", "params": capability_set}]},
+    )
+
+    assert ingest.status_code == 200, ingest.text
+    capability_body = asyncio.run(
+        client.app.state.store.get_protocol_capabilities(connector_id)
+    )
+    assert capability_body["revision"] == revision
+    assert capability_body["capabilities"][0]["capabilityId"] == "session.interrupt"
+
+    stale = {
+        "revision": revision - 1,
+        "capabilities": [
+            {
+                "capabilityId": "session.steer",
+                "scope": "runtime",
+                "runtime": "codex",
+            }
+        ],
+    }
+    stale_ingest = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"notifications": [{"method": "protocol.capabilitiesUpdated", "params": stale}]},
+    )
+
+    assert stale_ingest.status_code == 200, stale_ingest.text
+    capability_body = asyncio.run(
+        client.app.state.store.get_protocol_capabilities(connector_id)
+    )
+    assert capability_body["revision"] == revision
+    assert {item["capabilityId"] for item in capability_body["capabilities"]} == {
+        "session.interrupt"
+    }
+
+    response = client.get(f"/connectors/{connector_id}/protocol/capabilities", headers=headers)
+    assert response.status_code == 410, response.text
+    assert response.json()["detail"]["code"] == (
+        "connector_protocol_capabilities_route_removed"
+    )
+
+
+def test_runtime_capability_update_merges_and_pushes_session_projection(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    runtime_capability_set = {
+        "revision": 7,
+        "capabilities": [
+            {
+                "capabilityId": "session.send_message",
+                "scope": "runtime",
+                "runtime": "codex",
+                "supported": True,
+                "available": True,
+                "allowed": True,
+            }
+        ],
+    }
+    response = client.post(
         "/connector/ingest",
         headers={"Authorization": f"Bearer {access_token}"},
         json={
             "notifications": [
-                {"method": "connector.capabilitiesUpdated", "params": discovery}
+                {
+                    "method": "protocol.capabilitiesUpdated",
+                    "params": runtime_capability_set,
+                }
             ]
         },
     )
-    assert ingest.status_code == 200
+    assert response.status_code == 200, response.text
 
-    state = _agents(client, connector_id, headers)
-    assert set(state["attached"].keys()) == {"codex"}
-    assert state["attached"]["codex"]["report"]["selected"]["path"] == "/usr/local/bin/codex"
-    assert "attachedAt" in state["attached"]["codex"]
-    assert state["disabled"] == []
-    # The same state surfaces on the ConnectorView itself (used by /connectors list).
-    connector = client.get(f"/connectors/{connector_id}", headers=headers).json()["connector"]
-    assert set(connector["runtimeCapabilities"]["attached"].keys()) == {"codex"}
-
-
-def test_pair_then_all_missing_capabilities_does_not_surface_error(tmp_path):
-    """Regression guard: an all-missing discovery push must NOT 5xx. The
-    backend stores nothing in `attached` (user didn't install anything yet),
-    but the request succeeds — the daemon needs to be able to publish even
-    when it found nothing."""
-    client = make_client(tmp_path)
-    connector_id, access_token, _, headers = create_connector_and_session(client)
-
-    discovery = {
-        "version": 1,
-        "runtimes": {
-            "codex": {
-                "history": "unavailable",
-                "execution": "unavailable",
-                "checked": [
-                    {"source": "cli", "path": "/usr/local/bin/codex", "status": "missing"}
-                ],
-                "error": {"code": "codex_unavailable", "message": "Not installed."},
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "runtime.capability.updated",
+                        "params": {
+                            "runtime": "codex",
+                            "revision": 1,
+                            "sessionId": session_id,
+                            "connectorId": connector_id,
+                            "capabilities": [
+                                {
+                                    "capabilityId": "session.interrupt",
+                                    "scope": "session",
+                                    "runtime": "codex",
+                                    "sessionId": session_id,
+                                    "supported": True,
+                                    "available": True,
+                                    "allowed": True,
+                                }
+                            ],
+                        },
+                    }
+                ]
             },
-            "claude": {
-                "history": "unavailable",
-                "execution": "unavailable",
-                "checked": [
-                    {"source": "cli", "path": "/opt/homebrew/bin/claude", "status": "missing"}
-                ],
-                "error": {"code": "claude_cli_unavailable", "message": "Not installed."},
-            },
-        },
+        )
+        assert response.status_code == 200, response.text
+        event = ws.receive_json()
+
+    stored = asyncio.run(client.app.state.store.get_protocol_capabilities(connector_id))
+    stored_capabilities = {
+        item["capabilityId"]: item
+        for item in stored["capabilities"]
     }
-    ingest = client.post(
+    assert stored["revision"] == 7
+    assert stored_capabilities["session.send_message"]["scope"] == "runtime"
+    assert stored_capabilities["session.interrupt"]["scope"] == "session"
+    assert event["type"] == "runtime.capability.updated"
+    effective = {
+        item["capabilityId"]: item
+        for item in event["payload"]["capabilitySet"]["capabilities"]
+    }
+    assert effective["session.interrupt"]["supported"] is True
+
+
+def test_protocol_capabilities_validation_is_mapped_by_transport(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, _, _ = create_connector_and_session(client)
+
+    response = client.post(
         "/connector/ingest",
         headers={"Authorization": f"Bearer {access_token}"},
         json={
             "notifications": [
-                {"method": "connector.capabilitiesUpdated", "params": discovery}
+                {
+                    "method": "protocol.capabilitiesUpdated",
+                    "params": {"revision": "invalid", "capabilities": []},
+                }
             ]
         },
     )
-    assert ingest.status_code == 200
-    state = _agents(client, connector_id, headers)
-    assert state["attached"] == {}
-    assert state["disabled"] == []
 
-
-# ── Subsequent discovery only refreshes existing reports ───────────────────
-
-
-def test_subsequent_discovery_does_not_auto_attach_new_runtimes(tmp_path):
-    """After first pair, discovery pushes should only update the report of
-    runtimes that are already `attached`. A newly-discovered codex must NOT
-    auto-resurrect itself on reconnect — the user has to Add it explicitly."""
-    client = make_client(tmp_path)
-    connector_id, access_token, _, headers = create_connector_and_session(client)
-
-    # Initial pair: only claude attached.
-    initial = {
-        "version": 1,
-        "runtimes": {
-            "claude": {"history": "ok_empty", "execution": "ok", "selected": {"source": "cli", "path": "/c"}},
-        },
-    }
-    client.post(
-        "/connector/ingest",
-        headers={"Authorization": f"Bearer {access_token}"},
-        json={"notifications": [{"method": "connector.capabilitiesUpdated", "params": initial}]},
-    )
-    assert set(_agents(client, connector_id, headers)["attached"].keys()) == {"claude"}
-
-    # Second discovery push: daemon now sees codex too. Server must NOT
-    # add it to `attached` — codex never went through Add.
-    second = {
-        "version": 1,
-        "runtimes": {
-            "codex": {"history": "ok", "execution": "ok", "selected": {"source": "cli", "path": "/x/codex"}},
-            "claude": {"history": "ok_empty", "execution": "ok", "selected": {"source": "cli", "path": "/c2"}},
-        },
-    }
-    client.post(
-        "/connector/ingest",
-        headers={"Authorization": f"Bearer {access_token}"},
-        json={"notifications": [{"method": "connector.capabilitiesUpdated", "params": second}]},
-    )
-    state = _agents(client, connector_id, headers)
-    assert set(state["attached"].keys()) == {"claude"}
-    # Claude's report DOES get refreshed (path updated from /c to /c2).
-    assert state["attached"]["claude"]["report"]["selected"]["path"] == "/c2"
-
-
-def test_capabilities_push_sends_server_owned_active_runtime_set(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, access_token, _, headers = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
-
-    discovery = {
-        "version": 1,
-        "runtimes": {
-            "codex": {"history": "ok", "execution": "ok", "selected": {"source": "cli", "path": "/codex"}},
-            "claude": {"history": "ok_empty", "execution": "ok", "selected": {"source": "cli", "path": "/claude"}},
-        },
-    }
-    ingest = client.post(
-        "/connector/ingest",
-        headers={"Authorization": f"Bearer {access_token}"},
-        json={"notifications": [{"method": "connector.capabilitiesUpdated", "params": discovery}]},
-    )
-
-    assert ingest.status_code == 200
-    assert set(_agents(client, connector_id, headers)["attached"].keys()) == {"codex", "claude"}
-    active_updates = [r for r in fake_rpc.requests if r[1] == "capabilities.setActiveRuntimes"]
-    assert active_updates
-    assert active_updates[-1][0] == connector_id
-    assert set(active_updates[-1][2]["runtimes"]) == {"codex", "claude"}
-
-
-# ── Delete (detach) ────────────────────────────────────────────────────────
-
-
-def test_delete_runtime_detaches_disables_and_cascades(tmp_path):
-    """DELETE removes the runtime from `attached`, adds it to `disabled`,
-    and cascade-deletes every session that runtime owns (timeline_items
-    + approvals follow via FK)."""
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-
-    # Seed: codex + claude attached, plus a session per runtime; codex
-    # session has a timeline_item + approval so we can confirm the cascade.
-    asyncio.run(
-        client.app.state.store.apply_discovery(
-            connector_id,
-            {
-                "version": 1,
-                "runtimes": {
-                    "codex": {"history": "ok", "execution": "ok", "selected": {"source": "cli", "path": "/c"}},
-                    "claude": {"history": "ok_empty", "execution": "ok", "selected": {"source": "cli", "path": "/cl"}},
-                },
-            },
-        )
-    )
-    claude_session_id = client.post(
-        "/sessions",
-        headers=headers,
-        json={
-            "connectorId": connector_id,
-            "runtime": "claude",
-            "externalSessionId": "thr_claude_keep",
-            "title": "claude keep",
-        },
-    ).json()["session"]["id"]
-    codex_session_id = next(
-        s["id"]
-        for s in client.get("/sessions", headers=headers).json()["sessions"]
-        if s["runtime"] == "codex"
-    )
-
-    async def seed_cascade():
-        from agent_server.core.models import ApprovalIn, TimelineItemIn
-
-        await client.app.state.store.upsert_timeline_item(
-            session_id=codex_session_id,
-            item=TimelineItemIn.model_validate(
-                {
-                    "id": "tl_cascade",
-                    "sessionId": codex_session_id,
-                    "type": "message",
-                    "status": "done",
-                    "role": "assistant",
-                    "content": {"text": "hi"},
-                    "source": {"runtime": "codex"},
-                    "orderSeq": 1,
-                    "contentHash": "abc",
-                }
-            ),
-        )
-        await client.app.state.store.upsert_approval(
-            ApprovalIn.model_validate(
-                {
-                    "id": "appr_cascade",
-                    "sessionId": codex_session_id,
-                    "turnId": "turn_x",
-                    "status": "pending",
-                    "kind": "command",
-                    "targetItemId": "tl_cascade",
-                    "title": "rm -rf /",
-                    "description": None,
-                    "payload": {"command": "noop"},
-                    "choices": ["approve", "reject"],
-                    "source": {
-                        "runtime": "codex",
-                        "requestId": "1",
-                        "sessionId": "thr_codex",
-                        "turnId": "turn_x",
-                        "itemId": "call_x",
-                        "method": "x",
-                    },
-                }
-            ),
-        )
-
-    asyncio.run(seed_cascade())
-
-    response = client.delete(
-        f"/connectors/{connector_id}/runtime-capabilities/codex",
-        headers=headers,
-    )
-    assert response.status_code == 200, response.text
-    state = response.json()["runtimeCapabilities"]
-    assert "codex" not in state["attached"]
-    assert "claude" in state["attached"]
-    assert "codex" in state["disabled"]
-
-    # Sessions: codex gone, claude preserved.
-    remaining = {s["id"] for s in client.get("/sessions", headers=headers).json()["sessions"]}
-    assert codex_session_id not in remaining
-    assert claude_session_id in remaining
-
-    # Cascade fired — timeline + approvals for codex session are gone.
-    async def count_orphans() -> tuple[int, int]:
-        from sqlalchemy import select
-
-        from agent_server.infra.db import approvals as approvals_t
-        from agent_server.infra.db import timeline_items as timeline_t
-
-        async with client.app.state.store.engine.connect() as conn:
-            tl = (
-                await conn.execute(
-                    select(timeline_t.c.id).where(timeline_t.c.session_id == codex_session_id)
-                )
-            ).all()
-            ap = (
-                await conn.execute(
-                    select(approvals_t.c.id).where(approvals_t.c.session_id == codex_session_id)
-                )
-            ).all()
-        return len(tl), len(ap)
-
-    tl_count, ap_count = asyncio.run(count_orphans())
-    assert tl_count == 0
-    assert ap_count == 0
-
-
-def test_delete_runtime_sends_active_set_and_invalidates_when_daemon_online(tmp_path):
-    """Delete recomputes the server-owned active set and separately clears
-    the deleted runtime's adapter sync cursors."""
-    client = make_client(tmp_path)
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
-    connector_id, _, _, headers = create_connector_and_session(client)
-
-    assert (
-        client.delete(
-            f"/connectors/{connector_id}/runtime-capabilities/codex",
-            headers=headers,
-        ).status_code
-        == 200
-    )
-
-    def _invalidates() -> list[tuple]:
-        return [r for r in fake_rpc.requests if r[1] == "capabilities.invalidateRuntime"]
-
-    def _active_updates() -> list[tuple]:
-        return [r for r in fake_rpc.requests if r[1] == "capabilities.setActiveRuntimes"]
-
-    wait_for(lambda: len(_invalidates()) >= 1)
-    wait_for(lambda: len(_active_updates()) >= 1)
-    assert _active_updates()[0][0] == connector_id
-    assert _active_updates()[0][2]["runtimes"] == []
-    assert _invalidates() == [
-        (connector_id, "capabilities.invalidateRuntime", {"runtime": "codex"}, 15),
-    ]
-
-
-def test_delete_runtime_offline_daemon_still_returns_200(tmp_path):
-    """If the daemon is offline at delete time, the SQL delete still
-    succeeds — the daemon will re-converge on its next reconnect via the
-    server-side `apply_discovery` filter (which drops `disabled` runtimes
-    from any incoming push)."""
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-
-    response = client.delete(
-        f"/connectors/{connector_id}/runtime-capabilities/codex",
-        headers=headers,
-    )
-    assert response.status_code == 200, response.text
-
-
-def test_delete_runtime_is_idempotent(tmp_path):
-    """Deleting a runtime that was never attached returns 200 (it's a
-    declarative "make sure this isn't here" operation). The runtime
-    still ends up in `disabled` so future discovery pushes can't add it."""
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-
-    response = client.delete(
-        f"/connectors/{connector_id}/runtime-capabilities/opencode",
-        headers=headers,
-    )
-    assert response.status_code == 200
-    state = response.json()["runtimeCapabilities"]
-    assert state["attached"] == {}
-    assert "opencode" in state["disabled"]
-
-
-def test_delete_runtime_forbidden_for_other_user(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, *_ = create_connector_and_session(client)
-    intruder = auth_headers(client, user_id="someone-else", password="secret2")
-    response = client.delete(
-        f"/connectors/{connector_id}/runtime-capabilities/codex",
-        headers=intruder,
-    )
-    assert response.status_code == 404
-
-
-# ── Add (scan) ─────────────────────────────────────────────────────────────
-
-
-def test_scan_runtime_attaches_on_success_and_clears_disabled(tmp_path):
-    """A successful scan attaches the runtime AND removes it from `disabled`.
-    That's the only path users have to bring back a runtime they previously
-    Deleted — no separate "re-enable" action."""
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-
-    # Pre-seed: codex was previously deleted (in `disabled`); claude is
-    # attached. The scan should reattach codex AND leave claude alone.
-    asyncio.run(
-        client.app.state.store.apply_discovery(
-            connector_id,
-            {
-                "version": 1,
-                "runtimes": {
-                    "claude": {"history": "ok_empty", "execution": "ok", "selected": {"source": "cli", "path": "/cl"}},
-                },
-            },
-        )
-    )
-    asyncio.run(client.app.state.store.detach_runtime(connector_id, "codex"))
-    state = _agents(client, connector_id, headers)
-    assert "codex" in state["disabled"]
-
-    fake = FakeScanRpc()
-    fake.online_connector_id = connector_id
-    fake.scan_result = {
-        "runtime": "codex",
-        "report": {
-            "history": "ok",
-            "execution": "ok",
-            "selected": {"source": "custom", "path": "/Users/me/codex"},
-            "checked": [{"source": "custom", "path": "/Users/me/codex", "status": "ok"}],
-        },
-    }
-    client.app.state.rpc = fake
-
-    response = client.post(
-        f"/connectors/{connector_id}/runtime-capabilities/scan",
-        headers=headers,
-        json={"runtime": "codex", "path": "/Users/me/codex"},
-    )
-
-    assert response.status_code == 200, response.text
-    state = response.json()["runtimeCapabilities"]
-    assert state["attached"]["codex"]["report"]["selected"]["path"] == "/Users/me/codex"
-    assert state["attached"]["claude"]["report"]["selected"]["path"] == "/cl"  # untouched
-    assert "codex" not in state["disabled"]
-    # Daemon got the scan params we expected (with the user-supplied path).
-    assert fake.requests[0][1] == "capabilities.scanRuntime"
-    assert fake.requests[0][2] == {"runtime": "codex", "path": "/Users/me/codex"}
-
-    def _active_updates() -> list[tuple]:
-        return [r for r in fake.requests if r[1] == "capabilities.setActiveRuntimes"]
-
-    wait_for(lambda: len(_active_updates()) >= 1)
-    assert _active_updates()[0][0] == connector_id
-    assert set(_active_updates()[0][2]["runtimes"]) == {"codex", "claude"}
-
-    # ...and after attach was committed, a force-resync RPC was scheduled
-    # for the same runtime. The order matters: if force-resync had fired
-    # BEFORE the attach commit, the session notifications it pushes would
-    # land at /connector/ingest with codex still in `disabled` and the
-    # IngestFilter would drop every single one.
-    def _resync_calls() -> list[tuple]:
-        return [r for r in fake.requests if r[1] == "capabilities.forceResyncRuntime"]
-
-    wait_for(lambda: len(_resync_calls()) >= 1)
-    assert _resync_calls() == [
-        (connector_id, "capabilities.forceResyncRuntime", {"runtime": "codex"}, 90),
-    ]
-
-
-def test_scan_runtime_missing_does_not_persist(tmp_path):
-    """An all-missing scan result is purely modal feedback ("we looked,
-    didn't find it"). The user hasn't gained an agent on this device, so
-    we don't surface a broken row on the Device page — `attached` is
-    unchanged. The response carries the scan report so the modal can
-    render the inline "Couldn't find" chip."""
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-    fake = FakeScanRpc()
-    fake.online_connector_id = connector_id
-    fake.scan_result = {
-        "runtime": "codex",
-        "report": {
-            "history": "unavailable",
-            "execution": "unavailable",
-            "checked": [
-                {"source": "custom", "path": "/tmp/nope", "status": "missing", "reason": "file not found"},
-            ],
-            "error": {"code": "codex_unavailable", "message": "Not found."},
-        },
-    }
-    client.app.state.rpc = fake
-
-    response = client.post(
-        f"/connectors/{connector_id}/runtime-capabilities/scan",
-        headers=headers,
-        json={"runtime": "codex", "path": "/tmp/nope"},
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["scanned"]["report"]["execution"] == "unavailable"
-    # `attached` stays empty — we don't clutter the Device page.
-    assert body["runtimeCapabilities"]["attached"] == {}
-
-
-def test_scan_runtime_failed_check_attaches_with_warning_report(tmp_path):
-    """Scan found a binary but the version probe blew up. We DO attach
-    (so the Device page can show a warning row + tooltip) — `selected` is
-    None but at least one `checked` entry is `status: failed`."""
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-    fake = FakeScanRpc()
-    fake.online_connector_id = connector_id
-    fake.scan_result = {
-        "runtime": "codex",
-        "report": {
-            "history": "unavailable",
-            "execution": "unavailable",
-            "checked": [
-                {"source": "app", "path": "/Applications/Codex.app/.../codex", "status": "failed", "reason": "exit 1"}
-            ],
-            "error": {"code": "codex_unavailable", "message": "version probe failed"},
-        },
-    }
-    client.app.state.rpc = fake
-
-    response = client.post(
-        f"/connectors/{connector_id}/runtime-capabilities/scan",
-        headers=headers,
-        json={"runtime": "codex"},
-    )
-    assert response.status_code == 200
-    state = response.json()["runtimeCapabilities"]
-    assert "codex" in state["attached"]
-    assert state["attached"]["codex"]["report"]["execution"] == "unavailable"
-
-
-def test_scan_runtime_offline_returns_503(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-    client.app.state.rpc = FakeScanRpc()  # not online
-    response = client.post(
-        f"/connectors/{connector_id}/runtime-capabilities/scan",
-        headers=headers,
-        json={"runtime": "codex"},
-    )
-    assert response.status_code == 503
-
-
-def test_scan_runtime_unsupported_returns_400(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, _, headers = create_connector_and_session(client)
-    fake = FakeScanRpc()
-    fake.online_connector_id = connector_id
-    fake.scan_error = ConnectorRpcError("ValueError", "unsupported runtime 'opencode'")
-    client.app.state.rpc = fake
-    response = client.post(
-        f"/connectors/{connector_id}/runtime-capabilities/scan",
-        headers=headers,
-        json={"runtime": "opencode"},
-    )
     assert response.status_code == 400
-    assert response.json()["detail"]["code"] == "unsupported_runtime"
+    assert response.json()["detail"]["code"] == "invalid_protocol_capabilities"
 
 
-# ── Ingest filter: disabled-runtime notifications get dropped silently ─────
-
-
-def test_ingest_filter_drops_session_update_for_disabled_runtime(tmp_path):
-    """After Delete, daemon may still be holding stale in-memory state and
-    keep publishing session updates for the disabled runtime (it'll only
-    learn about the invalidate when its WS reader catches up). Server must
-    drop these notifications even if they get through — `disabled` is the
-    durable line of defense."""
+def test_protocol_catalog_ingest_is_rejected(tmp_path):
     client = make_client(tmp_path)
-    connector_id, access_token, _, headers = create_connector_and_session(client)
-    asyncio.run(client.app.state.store.detach_runtime(connector_id, "codex"))
+    _, access_token, _, _ = create_connector_and_session(client)
+
+    for method, params in (
+        (
+            "protocol.modelCatalogUpdated",
+            {"runtime": "codex", "revision": 1, "models": []},
+        ),
+        (
+            "protocol.permissionCatalogUpdated",
+            {"runtime": "codex", "revision": 1, "permissions": []},
+        ),
+    ):
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"notifications": [{"method": method, "params": params}]},
+        )
+
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"]["code"] == "unsupported_notification"
+
+
+def test_runtime_catalog_update_ingest_publishes_session_event(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+    selection_id = protocol_selection_id(
+        "codex",
+        "model",
+        {"model_id": "gpt-catalog-push"},
+    )
+    payload = {
+        "notifications": [
+            {
+                "method": "runtime.catalog.updated",
+                "params": {
+                    "catalogType": "model",
+                    "catalog": {
+                        "runtime": "codex",
+                        "revision": 1,
+                        "models": [
+                            {
+                                "id": "gpt-catalog-push",
+                                "displayName": "GPT Catalog Push",
+                                "selectionId": selection_id,
+                                "reasoningItems": [],
+                                "default": True,
+                            }
+                        ],
+                    },
+                },
+            }
+        ]
+    }
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json=payload,
+        )
+        assert response.status_code == 200, response.text
+        event = receive_session_ws_event(ws, "runtime.catalog.updated")
+
+    assert event["payload"]["catalogType"] == "model"
+    assert event["payload"]["catalog"]["models"][0]["selectionId"] == selection_id
+
+
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
+def test_notice_upsert_ingest_projects_notification_to_snapshot(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, headers = create_connector_and_session(client)
+
+    notice = {
+        "noticeId": "notice_compact_done",
+        "type": "notification",
+        "sessionId": session_id,
+        "source": {"runtime": "codex", "component": "codex"},
+        "title": "Compact completed",
+        "message": "The session context was compacted.",
+        "severity": "success",
+        "status": "open",
+        "context": {"reason": "compact", "state": "completed"},
+        "metadata": {"category": "compact", "state": "completed"},
+    }
+    ingest = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"notifications": [{"method": "notice.upsert", "params": notice}]},
+    )
+
+    assert ingest.status_code == 200, ingest.text
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+    notices = snapshot.json()["notices"]
+    assert [item["noticeId"] for item in notices] == ["notice_compact_done"]
+    assert notices[0]["type"] == "notification"
+    assert notices[0]["metadata"]["category"] == "compact"
+
+
+def test_notice_upsert_relays_live_notice_without_persisting_to_snapshot(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+    notice = {
+        "noticeId": "notice_compact_done",
+        "type": "notification",
+        "sessionId": session_id,
+        "source": {"runtime": "codex", "component": "codex"},
+        "title": "Compact completed",
+        "message": "The session context was compacted.",
+        "severity": "success",
+        "status": "open",
+        "context": {"reason": "compact", "state": "completed"},
+        "metadata": {"category": "compact", "state": "completed"},
+    }
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        ingest = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"notifications": [{"method": "notice.upsert", "params": notice}]},
+        )
+        assert ingest.status_code == 200, ingest.text
+        event = ws.receive_json()
+
+    assert event["type"] == "runtime.notice.updated"
+    assert event["payload"]["notice"]["noticeId"] == "notice_compact_done"
+    assert event["payload"]["notice"]["updatedSeq"] == event["sequence"]
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+    assert snapshot.json()["notices"] == []
+
+
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
+def test_notice_upsert_projects_open_interaction_through_application_service(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    notice = {
+        "noticeId": "interaction_input_1",
+        "type": "interaction",
+        "sessionId": session_id,
+        "source": {"runtime": "codex", "component": "codex"},
+        "title": "Input required",
+        "status": "open",
+        "interactionType": "input_request",
+        "responseRequired": True,
+        "actions": [{"actionId": "submit", "label": "Submit"}],
+    }
 
     ingest = client.post(
         "/connector/ingest",
         headers={"Authorization": f"Bearer {access_token}"},
-        json={
-            "notifications": [
-                {
-                    "method": "session.updated",
-                    "params": {
-                        "sessionId": "sess_fake",
-                        "runtime": "codex",
-                        "externalSessionId": "thr_xyz",
-                        "title": "should not appear",
-                    },
-                }
-            ]
-        },
+        json={"notifications": [{"method": "notice.upsert", "params": notice}]},
     )
-    assert ingest.status_code == 200
-    sessions = client.get("/sessions", headers=headers).json()["sessions"]
-    assert all(s["externalSessionId"] != "thr_xyz" for s in sessions)
+    assert ingest.status_code == 200, ingest.text
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/notices/interaction_input_1/respond",
+        headers=headers,
+        json={"actionId": "submit", "input": {"value": "confirmed"}},
+    )
+
+    assert response.status_code == 200, response.text
+    stored = asyncio.run(client.app.state.store.get_notice("interaction_input_1"))
+    assert stored.status == "resolved"
+    assert stored.context["response"] == {
+        "actionId": "submit",
+        "input": {"value": "confirmed"},
+    }
 
 
-def test_ingest_filter_drops_timeline_update_for_disabled_session(tmp_path):
-    """Same defense, one layer deeper: a timeline.itemUpsert that references
-    a session belonging to a disabled runtime must also get dropped."""
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
+def test_notice_upsert_accepts_interaction_lifecycle_from_connector(tmp_path):
     client = make_client(tmp_path)
-    connector_id, access_token, _, headers = create_connector_and_session(client)
-    # The test fixture creates a codex session — use that one.
-    session_id = client.get("/sessions", headers=headers).json()["sessions"][0]["id"]
+    _, access_token, session_id, _ = create_connector_and_session(client)
 
-    asyncio.run(client.app.state.store.detach_runtime(connector_id, "codex"))
+    def ingest(status: str, response_required: bool) -> None:
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "notice.upsert",
+                        "params": {
+                            "noticeId": "interaction_lifecycle_1",
+                            "type": "interaction",
+                            "sessionId": session_id,
+                            "title": "Input required",
+                            "status": status,
+                            "interactionType": "input_request",
+                            "responseRequired": response_required,
+                            "actions": [{"actionId": "submit", "label": "Submit"}]
+                            if response_required
+                            else [],
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
 
-    # Session was cascade-deleted by detach, but the daemon doesn't know.
-    # Pretend daemon publishes a timeline item for the now-gone session.
+    ingest("open", True)
+    ingest("responding", True)
+    ingest("closed", False)
+
+    stored = asyncio.run(client.app.state.store.get_notice("interaction_lifecycle_1"))
+    assert stored.status == "closed"
+    assert stored.responseRequired is False
+    assert stored.blocking is None
+
+
+def test_session_snapshot_includes_effective_capabilities(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    model_selection_id = seed_codex_model_catalog(client.app, connector_id)
+    permission_selection_id = seed_codex_permission_catalog(client.app, connector_id)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+
+    capability_set = {
+        "revision": 3,
+        "capabilities": [
+            {
+                "capabilityId": "session.interrupt",
+                "scope": "runtime",
+                "runtime": "codex",
+                "supported": True,
+                "available": True,
+                "allowed": True,
+            },
+            {
+                "capabilityId": "session.steer",
+                "scope": "runtime",
+                "runtime": "codex",
+                "supported": True,
+                "available": True,
+                "allowed": True,
+            },
+            {
+                "capabilityId": "catalog.model",
+                "scope": "runtime",
+                "runtime": "codex",
+                "supported": True,
+                "available": True,
+                "allowed": True,
+            },
+        ],
+    }
     ingest = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"notifications": [{"method": "protocol.capabilitiesUpdated", "params": capability_set}]},
+    )
+    assert ingest.status_code == 200, ingest.text
+
+    idle_snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert idle_snapshot.status_code == 200, idle_snapshot.text
+    idle_body = idle_snapshot.json()
+    assert idle_body["runtimeCapabilities"]["revision"] == 11
+    assert idle_body["state"]["status"] == "idle"
+    assert idle_body["state"]["selections"] == {}
+    idle_caps = {
+        item["capabilityId"]: item for item in idle_body["effectiveCapabilities"]["capabilities"]
+    }
+    assert idle_caps["session.send_message"]["available"] is True
+    assert idle_caps["session.interrupt"]["available"] is False
+    assert idle_caps["session.interrupt"]["unavailableReason"] == "session_not_taken_over"
+    assert idle_caps["session.steer"]["available"] is False
+    assert idle_caps["catalog.model"]["available"] is True
+    assert idle_body["catalogs"]["model"]["models"][0]["reasoningItems"][0]["selectionId"] == model_selection_id
+    assert idle_body["catalogs"]["permission"]["permissions"][0]["selectionId"] == permission_selection_id
+    assert idle_body["eventCursor"].startswith("seq:")
+
+    takeover = client.post(f"/sessions/{session_id}/takeover", headers=headers)
+    assert takeover.status_code == 200, takeover.text
+    ticket = ws_ticket(client, session_id, headers)
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "externalSessionId": f"thr_{connector_id}_demo",
+        "status": "running",
+        "selections": {"model": "sel_model_runtime"},
+        "metadata": {"source": "test.runtime"},
+    }
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+
+        # Hydration must not block first paint on the runtime read: it serves the
+        # persisted fact and refreshes the live state after the response.
+        state_snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+        assert state_snapshot.status_code == 200, state_snapshot.text
+        state_body = state_snapshot.json()["state"]
+        assert state_body["status"] == "idle"
+        assert state_body["selections"] == {}
+
+        pushed = receive_session_ws_event(ws, "runtime.state.updated")
+        assert pushed["payload"]["state"]["status"] == "running"
+        assert pushed["payload"]["state"]["selections"] == {
+            "model": "sel_model_runtime"
+        }
+
+    running_snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert running_snapshot.status_code == 200, running_snapshot.text
+    running_caps = {
+        item["capabilityId"]: item
+        for item in running_snapshot.json()["effectiveCapabilities"]["capabilities"]
+    }
+    assert running_caps["session.send_message"]["available"] is False
+    assert running_caps["session.send_message"]["unavailableReason"] == "runtime_turn_running"
+    assert running_caps["session.interrupt"]["available"] is True
+    assert running_caps["session.steer"]["available"] is True
+
+
+def test_session_snapshot_does_not_publish_revision_for_direct_status_noop(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+    client.app.state.rpc = FakeLocalRpc()
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        subscribed = ws.receive_json()
+        assert subscribed["type"] == "session.subscribed"
+
+        snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+
+        assert snapshot.status_code == 200, snapshot.text
+        assert snapshot.json()["eventCursor"] == subscribed["cursor"]
+        with pytest.raises(TimeoutError):
+            ws.portal.call(_receive_ws_test_message, ws, 0.1)
+
+
+def test_session_snapshot_reprojects_capabilities_when_connector_goes_offline(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+
+    class DisconnectAfterCapabilitiesRpc(FakeLocalRpc):
+        online = True
+
+        async def is_online(self, _connector_id: str) -> bool:
+            return self.online
+
+        async def request(
+            self,
+            connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> Any:
+            result = await super().request(
+                connector_id,
+                method,
+                params,
+                timeout=timeout,
+            )
+            if method == "session.capabilities":
+                self.online = False
+            return result
+
+    fake_rpc = DisconnectAfterCapabilitiesRpc()
+    client.app.state.rpc = fake_rpc
+
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+
+    assert snapshot.status_code == 200, snapshot.text
+    body = snapshot.json()
+    assert body["session"]["connectorStatus"] == "offline"
+    capabilities = {
+        item["capabilityId"]: item
+        for item in body["effectiveCapabilities"]["capabilities"]
+    }
+    assert capabilities["session.send_message"]["available"] is False
+    assert (
+        capabilities["session.send_message"]["unavailableReason"]
+        == "connector_offline"
+    )
+
+
+def test_session_snapshot_returns_persisted_runtime_catalogs(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    model_selection_id = seed_codex_model_catalog(client.app, connector_id)
+    permission_selection_id = seed_codex_permission_catalog(client.app, connector_id)
+
+    response = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+
+    assert response.status_code == 200, response.text
+    catalogs = response.json()["catalogs"]
+    assert catalogs["model"]["models"][0]["reasoningItems"][0]["selectionId"] == model_selection_id
+    assert catalogs["permission"]["permissions"][0]["selectionId"] == permission_selection_id
+
+
+def test_session_snapshot_falls_back_when_live_notices_and_capabilities_timeout(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    seed_codex_model_catalog(client.app, connector_id)
+    seed_codex_permission_catalog(client.app, connector_id)
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.timeout_session_methods = {"session.notices", "session.capabilities"}
+    client.app.state.rpc = fake_rpc
+
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+
+    assert snapshot.status_code == 200, snapshot.text
+    body = snapshot.json()
+    assert body["notices"] == []
+    assert body["runtimeCapabilities"]["revision"] == 1
+
+    notices = client.get(f"/sessions/{session_id}/runtime/notices", headers=headers)
+    assert notices.status_code == 504, notices.text
+    assert notices.json()["detail"]["code"] == "runtime_notices_timeout"
+
+
+def test_session_snapshot_does_not_block_on_runtime_state_read(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.timeout_session_methods = {"session.state"}
+    client.app.state.rpc = fake_rpc
+
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+
+    assert snapshot.status_code == 200, snapshot.text
+    body = snapshot.json()
+    assert body["state"]["status"] == "idle"
+    assert body["state"]["selections"] == {}
+
+
+def test_running_tool_item_keeps_session_interruptible(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "externalSessionId": f"thr_{connector_id}_demo",
+        "status": "running",
+        "selections": {},
+        "metadata": {"source": "test.runtime"},
+    }
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    capability_set = {
+        "revision": 4,
+        "capabilities": [
+            {
+                "capabilityId": "session.interrupt",
+                "scope": "runtime",
+                "runtime": "codex",
+                "supported": True,
+                "available": True,
+                "allowed": True,
+            },
+        ],
+    }
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"notifications": [{"method": "protocol.capabilitiesUpdated", "params": capability_set}]},
+    )
+    assert response.status_code == 200, response.text
+
+    response = client.post(
         "/connector/ingest",
         headers={"Authorization": f"Bearer {access_token}"},
         json={
@@ -2352,167 +4914,255 @@ def test_ingest_filter_drops_timeline_update_for_disabled_session(tmp_path):
                     "params": {
                         "sessionId": session_id,
                         "item": {
-                            "id": "tl_after_delete",
+                            "id": "tl_running_tool",
                             "sessionId": session_id,
-                            "type": "message",
-                            "status": "done",
-                            "role": "assistant",
-                            "content": {"text": "ghost"},
-                            "source": {"runtime": "codex"},
-                            "orderSeq": 99,
-                            "contentHash": "z",
+                            "turnId": "turn_tool_only",
+                            "type": "tool",
+                            "status": "running",
+                            "role": "tool",
+                            "content": {"name": "shell", "input": {"cmd": "sleep 10"}},
+                            "source": {
+                                "runtime": "codex",
+                                "sessionId": "thr_1",
+                                "turnId": "turn_tool_only",
+                                "itemId": "tool_1",
+                                "itemType": "toolCall",
+                            },
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:running-tool",
                         },
                     },
                 }
             ]
         },
     )
-    # Ingest succeeds (no 500); session is gone via cascade; trying to
-    # GET it now should 404, confirming nothing was resurrected.
-    assert ingest.status_code == 200
-    state = client.get(f"/sessions/{session_id}/state", headers=headers)
-    assert state.status_code == 404
+    assert response.status_code == 200, response.text
+
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+    body = snapshot.json()
+    assert body["session"]["status"] == "running"
+    caps = {
+        item["capabilityId"]: item
+        for item in body["effectiveCapabilities"]["capabilities"]
+    }
+    assert caps["session.interrupt"]["available"] is True
+
+    interrupt = client.post(f"/sessions/{session_id}/runtime/interrupt", headers=headers)
+    assert interrupt.status_code == 200, interrupt.text
+    assert any(request[1] == "session.interrupt" for request in fake_rpc.requests)
 
 
-# ── v1 → v3 migration on read ──────────────────────────────────────────────
+# ── Delete (detach) ────────────────────────────────────────────────────────
 
 
-def test_legacy_v1_capabilities_blob_migrates_to_v3_view_on_read(tmp_path):
-    """Devices paired before this refactor have a v1 blob persisted (the
-    flat `{version: 1, runtimes: {...}}` shape). `get_device_agents` must
-    translate that on the fly so existing rows keep working without a
-    forced wipe-and-repair."""
+
+
+def test_send_message_rejects_model_selection_id(tmp_path):
     client = make_client(tmp_path)
-    connector_id, *_, headers = create_connector_and_session(client)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
-    async def seed_legacy():
-        from sqlalchemy import update
+    response = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={
+            "content": "hi",
+            "modelSelectionId": "sel_model",
+        },
+    )
 
-        from agent_server.infra.db import connectors as connectors_t
+    assert response.status_code == 422
+    assert not any(method == "session.send_message" for _, method, _, _ in fake_rpc.requests)
 
-        legacy = {
-            "version": 1,
-            "checkedAt": "2026-05-01T00:00:00Z",
-            "runtimes": {
-                "codex": {
-                    "history": "ok",
-                    "execution": "ok",
-                    "selected": {"source": "cli", "path": "/old/codex"},
-                },
-                "ghost": {  # missing-only, should NOT auto-attach
-                    "history": "unavailable",
-                    "execution": "unavailable",
-                    "checked": [{"source": "cli", "path": "/x", "status": "missing"}],
-                },
+
+def test_patch_session_selections_routes_to_runtime_and_reads_live_state(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    asyncio.run(
+        client.app.state.store.update_protocol_capabilities(
+            connector_id,
+            {
+                "revision": 1,
+                "capabilities": [
+                    {
+                        "capabilityId": capability_id,
+                        "scope": "runtime",
+                        "runtime": "codex",
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    }
+                    for capability_id in (
+                        "catalog.model",
+                        "catalog.permission",
+                        "session.send_message",
+                    )
+                ],
             },
-        }
-        async with client.app.state.store.engine.begin() as conn:
-            await conn.execute(
-                update(connectors_t)
-                .where(connectors_t.c.id == connector_id)
-                .values(runtime_capabilities=json.dumps(legacy))
-            )
-
-    asyncio.run(seed_legacy())
-
-    state = _agents(client, connector_id, headers)
-    assert state["version"] == 3
-    assert set(state["attached"].keys()) == {"codex"}  # ghost filtered (all-missing)
-    assert state["attached"]["codex"]["report"]["selected"]["path"] == "/old/codex"
-    assert state["disabled"] == []
-
-
-def test_send_message_validates_codex_model_effort_before_mutating_run_state(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, session_id, headers = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
-    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
-    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
-
-    response = client.post(
-        f"/sessions/{session_id}/messages",
-        headers=headers,
-        json={
-            "content": "hi",
-            "mode": "bypassPermissions",
-            "model": "gpt-5.6-luna",
-            "effort": "ultra",
-        },
+        )
     )
-
-    assert response.status_code == 422, response.text
-    assert fake_rpc.requests == []
-    assert asyncio.run(client.app.state.store.get_active_run(session_id)) is None
-    assert asyncio.run(client.app.state.store.get_session(session_id)).status == "idle"
-
-
-def test_send_message_reports_corrupt_persisted_runtime_settings_as_server_error(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, session_id, headers = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
-    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
-    async def corrupt_override() -> None:
-        from sqlalchemy import update
-
-        from agent_server.infra.db import sessions as sessions_t
-
-        async with client.app.state.store.engine.begin() as conn:
-            await conn.execute(
-                update(sessions_t)
-                .where(sessions_t.c.id == session_id)
-                .values(runtime_settings_override="{not-json")
-            )
-
-    asyncio.run(corrupt_override())
-    response = client.post(
-        f"/sessions/{session_id}/messages",
+    response = client.patch(
+        f"/sessions/{session_id}/runtime/selections",
         headers=headers,
-        json={"content": "hi", "model": "gpt-5.6-sol", "effort": "medium"},
-    )
-
-    assert response.status_code == 500, response.text
-    assert response.json()["detail"] == "invalid persisted runtime settings"
-    assert fake_rpc.requests == []
-
-
-def test_send_message_forwards_valid_codex_model_effort_but_ignores_legacy_mode(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, session_id, headers = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
-    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
-    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
-
-    response = client.post(
-        f"/sessions/{session_id}/messages",
-        headers=headers,
-        json={
-            "content": "hi",
-            "mode": "bypassPermissions",
-            "model": "gpt-5.6-luna",
-            "effort": "max",
-        },
+        json={"selections": {"model": "sel_model_live", "permission": "sel_permission_live"}},
     )
 
     assert response.status_code == 200, response.text
-    assert fake_rpc.requests[-1][1] == "turn.start"
-    params = fake_rpc.requests[-1][2]
-    assert params["content"] == "hi"
-    assert "permissionMode" not in params
-    assert params["approvalPolicy"] == "on-request"
-    assert params["sandboxPolicy"] == {
-        "type": "workspaceWrite",
-        "writableRoots": ["/repo"],
-        "networkAccess": False,
-        "excludeTmpdirEnvVar": True,
-        "excludeSlashTmp": True,
+    assert (
+        connector_id,
+        "session.selections.update",
+        {
+            "sessionId": session_id,
+            "runtime": "codex",
+            "runtimeId": "codex",
+            "selections": {"model": "sel_model_live", "permission": "sel_permission_live"},
+            "externalSessionId": f"thr_{connector_id}_demo",
+        },
+        30,
+    ) in fake_rpc.requests
+    state = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
+    assert state.status_code == 200, state.text
+    assert state.json()["state"]["selections"] == {
+        "model": "sel_model_live",
+        "permission": "sel_permission_live",
     }
-    assert params["model"] == "gpt-5.6-luna"
-    assert params["effort"] == "max"
+
+    fake_rpc.requests.clear()
+    sent = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "hi after selection"},
+    )
+
+    assert sent.status_code == 200, sent.text
+    turn_start = next(
+        request for request in fake_rpc.requests if request[1] == "session.send_message"
+    )
+    params = turn_start[2]
+    assert "selections" not in params
+    assert "modelSelectionId" not in params
+    assert "permissionSelectionId" not in params
+
+
+def test_patch_session_selections_does_not_persist_runtime_rejection(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    class RejectingSelectionRpc(FakeLocalRpc):
+        async def request(
+            self,
+            connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> Any:
+            self.requests.append((connector_id, method, params, timeout))
+            if method == "session.selections.update":
+                return {
+                    "ok": False,
+                    "code": "codex_invalid_selection",
+                    "message": "unknown Codex model selection",
+                }
+            return await super().request(
+                connector_id,
+                method,
+                params,
+                timeout=timeout,
+            )
+
+    fake_rpc = RejectingSelectionRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.patch(
+        f"/sessions/{session_id}/runtime/selections",
+        headers=headers,
+        json={"selections": {"model": "sel_model_missing"}},
+    )
+
+    assert response.status_code == 502, response.text
+    state = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
+    if state.status_code == 200:
+        assert state.json()["state"]["selections"] == {}
+
+
+def test_patch_session_selections_rejects_connector_identity_mismatch(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    class MismatchedSelectionRpc(FakeLocalRpc):
+        async def request(
+            self,
+            connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> Any:
+            if method == "session.selections.update":
+                self.requests.append((connector_id, method, params, timeout))
+                return {
+                    "ok": True,
+                    "state": {
+                        "sessionId": "sess_other",
+                        "runtime": params["runtime"],
+                        "runtimeId": params["runtimeId"],
+                        "status": "idle",
+                        "selections": params["selections"],
+                    },
+                }
+            return await super().request(
+                connector_id,
+                method,
+                params,
+                timeout=timeout,
+            )
+
+    client.app.state.rpc = MismatchedSelectionRpc()
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.patch(
+        f"/sessions/{session_id}/runtime/selections",
+        headers=headers,
+        json={"selections": {"model": "sel_model_mismatch"}},
+    )
+
+    assert response.status_code == 502
+    assert "sessionId" in response.json()["detail"]
+
+
+def test_send_message_rejects_legacy_model_fields(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    client.app.state.rpc = FakeLocalRpc()
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={
+            "content": "hi",
+            "model": "gpt-5.5",
+            "effort": "xhigh",
+            "mode": "auto",
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_send_message_forwards_client_message_id_to_connector(tmp_path):
@@ -2524,41 +5174,162 @@ def test_send_message_forwards_client_message_id_to_connector(tmp_path):
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={"content": "hi", "clientMessageId": "opt_abc"},
     )
 
     assert response.status_code == 200, response.text
-    params = fake_rpc.requests[-1][2]
+    params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
     assert params["clientMessageId"] == "opt_abc"
 
 
-def test_send_message_allows_error_session_and_marks_running(tmp_path):
+@pytest.mark.parametrize("cached_allowed, live_allowed", [(False, True), (True, False)])
+def test_send_message_and_display_use_live_capabilities_when_cache_disagrees(
+    tmp_path, monkeypatch, cached_allowed, live_allowed,
+):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    class LiveRpc(FakeLocalRpc):
+        async def request(self, connector_id, method, params, timeout=30):
+            result = await super().request(connector_id, method, params, timeout=timeout)
+            if method == "session.capabilities":
+                for item in result["capabilitySet"]["capabilities"]:
+                    if item["capabilityId"] == "session.send_message":
+                        item["allowed"] = live_allowed
+            return result
+
+    rpc = LiveRpc()
+    client.app.state.rpc = rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    async def stale_capabilities(*_args, **_kwargs):
+        return {"revision": 1, "capabilities": [{
+            "capabilityId": "session.send_message", "runtime": "codex",
+            "scope": "session", "sessionId": session_id,
+            "supported": True, "available": True, "allowed": cached_allowed,
+        }]}
+
+    monkeypatch.setattr(client.app.state.store, "get_protocol_capabilities", stale_capabilities)
+    displayed = client.get(f"/sessions/{session_id}/runtime/capabilities", headers=headers)
+    displayed.raise_for_status()
+    send = next(item for item in displayed.json()["capabilitySet"]["capabilities"]
+                if item["capabilityId"] == "session.send_message")
+    assert send["allowed"] is live_allowed
+    for message in ["first", "second"]:
+        response = client.post(f"/sessions/{session_id}/runtime/messages", headers=headers,
+                               json={"content": message, "clientMessageId": message})
+        assert response.status_code == (200 if live_allowed else 409), response.text
+    sends = [params["content"] for _, method, params, _ in rpc.requests if method == "session.send_message"]
+    assert sends == (["first", "second"] if live_allowed else [])
+
+
+def test_failed_live_capability_read_is_retryable_without_dispatching_message(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+    rpc = FakeLocalRpc()
+    client.app.state.rpc = rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    rpc.timeout_session_methods = {"session.capabilities"}
+    response = client.post(f"/sessions/{session_id}/runtime/messages", headers=headers,
+                           json={"content": "retry", "clientMessageId": "retry"})
+    assert response.status_code == 504, response.text
+    assert not any(method == "session.send_message" for _, method, _, _ in rpc.requests)
+    rpc.timeout_session_methods.clear()
+    response = client.post(f"/sessions/{session_id}/runtime/messages", headers=headers,
+                           json={"content": "retry", "clientMessageId": "retry"})
+    assert response.status_code == 200, response.text
+
+
+def test_send_message_starts_new_turn_from_error_state(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "externalSessionId": f"thr_{connector_id}_demo",
+        "status": "error",
+        "selections": {},
+        "error": {"code": "turn_failed", "message": "boom"},
+        "metadata": {"source": "test.turn.failed"},
+    }
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "try again"},
+    )
+
+    assert response.status_code == 200, response.text
+    params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
+    assert params["content"] == "try again"
+
+
+def test_send_message_rejects_running_state(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "externalSessionId": f"thr_{connector_id}_demo",
+        "status": "running",
+        "selections": {},
+        "metadata": {"source": "test.turn.running"},
+    }
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "should be rejected"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "session is running"
+    assert not any(method == "session.send_message" for _, method, _, _ in fake_rpc.requests)
+
+
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
+def test_stored_execution_error_notice_does_not_override_runtime_send_capability(
+    tmp_path,
+):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
-    asyncio.run(client.app.state.store.set_session_status(session_id, "error"))
+    notice = asyncio.run(
+        upsert_execution_error_interaction(
+            client.app.state.store,
+            session_id=session_id,
+            error={"code": "runtime_error", "message": "boom"},
+        )
+    )
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={"content": "try again"},
     )
 
     assert response.status_code == 200, response.text
-    assert fake_rpc.requests[-1][1] == "turn.start"
-    assert fake_rpc.requests[-1][2]["content"] == "try again"
-    session = asyncio.run(
-        client.app.state.store.get_session(
-            session_id,
-            user_id=ADMIN_USER,
-        ),
-    )
-    assert session.status == "running"
+    turn_start_params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
+    assert turn_start_params["content"] == "try again"
+    assert asyncio.run(
+        client.app.state.store.get_notice(notice.noticeId)
+    ).status == "open"
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+    assert snapshot.json()["session"]["status"] == "idle"
 
 
 def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_path):
@@ -2579,7 +5350,7 @@ def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_pat
     attachment = upload_response.json()["attachments"][0]
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={
             "content": "read attachment",
@@ -2588,7 +5359,7 @@ def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_pat
     )
 
     assert response.status_code == 200, response.text
-    params = fake_rpc.requests[-1][2]
+    params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
     assert params["attachments"] == [
         {
             "fileId": attachment["fileId"],
@@ -2596,8 +5367,8 @@ def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_pat
             "mediaType": "text/markdown",
             "size": len(data),
             "sha256": hashlib.sha256(data).hexdigest(),
-            "downloadUrl": f"/connector/sessions/{session_id}/attachments/{attachment['fileId']}/content",
-            "platformOpenUrl": f"/sessions/{session_id}/attachments/{attachment['fileId']}/open",
+            "downloadUrl": f"/api/v2/connector/sessions/{session_id}/attachments/{attachment['fileId']}/content",
+            "platformOpenUrl": f"/api/v2/sessions/{session_id}/attachments/{attachment['fileId']}/open",
         }
     ]
     assert params["timelineAttachments"] == [
@@ -2611,7 +5382,7 @@ def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_pat
     ]
 
 
-def test_ingest_adds_active_run_attachments_to_user_message(tmp_path):
+def test_ingest_preserves_runtime_owned_user_message_identity_and_attachments(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
@@ -2629,7 +5400,7 @@ def test_ingest_adds_active_run_attachments_to_user_message(tmp_path):
     attachment = upload_response.json()["attachments"][0]
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={
             "content": "read attachment",
@@ -2655,12 +5426,24 @@ def test_ingest_adds_active_run_attachments_to_user_message(tmp_path):
                             "type": "message",
                             "status": "done",
                             "role": "user",
-                            "content": {"text": "read attachment"},
+                            "content": {
+                                "text": "read attachment",
+                                "attachments": [
+                                    {
+                                        "fileId": attachment["fileId"],
+                                        "name": "notes.md",
+                                        "mediaType": "text/markdown",
+                                        "size": len(data),
+                                        "sha256": hashlib.sha256(data).hexdigest(),
+                                    }
+                                ],
+                            },
                             "source": {
                                 "runtime": "codex",
                                 "sessionId": "thr_demo",
                                 "turnId": "turn_file",
                                 "event": "item/completed",
+                                "clientMessageId": "opt_file",
                             },
                             "orderSeq": 1,
                             "revision": 1,
@@ -2672,9 +5455,10 @@ def test_ingest_adds_active_run_attachments_to_user_message(tmp_path):
         },
     )
     assert response.status_code == 200, response.text
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    state = session_view_for_assertions(client, session_id, headers)
     item = next(item for item in state["items"] if item["id"] == "tl_user_file")
     assert item["source"]["clientMessageId"] == "opt_file"
+    assert item["content"]["text"] == "read attachment"
     assert item["content"]["attachments"] == [
         {
             "fileId": attachment["fileId"],
@@ -2686,7 +5470,7 @@ def test_ingest_adds_active_run_attachments_to_user_message(tmp_path):
     ]
 
 
-def test_send_message_uses_codex_defaults_without_explicit_overrides(tmp_path):
+def test_send_message_omits_unspecified_overrides(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
@@ -2695,18 +5479,15 @@ def test_send_message_uses_codex_defaults_without_explicit_overrides(tmp_path):
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={"content": "hi"},
     )
 
     assert response.status_code == 200
-    params = fake_rpc.requests[-1][2]
-    assert "permissionMode" not in params
-    assert params["model"] == "gpt-5.6-sol"
-    assert params["effort"] == "medium"
-    assert params["approvalPolicy"] == "on-request"
-    assert params["sandboxPolicy"]["type"] == "workspaceWrite"
+    params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
+    for key in ("permissionMode", "model", "effort", "approvalPolicy", "sandboxPolicy"):
+        assert key not in params
 
 
 def test_send_message_records_active_run(tmp_path):
@@ -2718,7 +5499,7 @@ def test_send_message_records_active_run(tmp_path):
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={"content": "hi", "clientMessageId": "opt_active"},
     )
@@ -2728,8 +5509,94 @@ def test_send_message_records_active_run(tmp_path):
     assert active is not None
     assert active["runtime"] == "codex"
     assert active["status"] == "running"
-    assert active["turnId"] is None
+    assert "turnId" not in active
     assert active["params"]["content"] == "hi"
+
+
+def test_send_message_rejects_persisted_runtime_archived_session(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    asyncio.run(
+        client.app.state.store.update_session_source_state(
+            session_id,
+            availability="archived",
+            reason="thread/archived",
+            observed_at="2026-08-27T12:00:00Z",
+            observation_origin="event",
+        )
+    )
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "hi"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "session_archived"
+    assert not any(method == "session.send_message" for _, method, _, _ in fake_rpc.requests)
+
+
+def test_send_message_persists_runtime_source_failure_and_clears_run(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    class ArchivedSessionRpc(FakeLocalRpc):
+        async def request(
+            self,
+            connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> Any:
+            if method != "session.send_message":
+                return await super().request(
+                    connector_id,
+                    method,
+                    params,
+                    timeout=timeout,
+                )
+            self.requests.append((connector_id, method, params, timeout))
+            return {
+                "ok": False,
+                "code": "session_archived",
+                "message": "Codex session is archived",
+                "sourceState": {
+                    "sessionId": session_id,
+                    "externalSessionId": params.get("externalSessionId"),
+                    "runtime": "codex",
+                    "availability": "archived",
+                    "reason": "JSON-RPC error -32600",
+                    "observedAt": "2026-08-27T12:00:00Z",
+                    "observationOrigin": "operation",
+                },
+            }
+
+    fake_rpc = ArchivedSessionRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "hi"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "session_archived"
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+    session = snapshot.json()["session"]
+    assert session["archived"] is True
+    assert session["sourceAvailability"] == "archived"
+    assert session["sourceObservationOrigin"] == "operation"
+    assert asyncio.run(client.app.state.store.get_active_run(session_id)) is None
 
 
 def _create_claude_session(client, connector_id, headers, fake_rpc):
@@ -2751,45 +5618,21 @@ def _create_claude_session(client, connector_id, headers, fake_rpc):
         return session.id
 
     session_id = asyncio.run(_seed())
+    seed_runtime_capabilities(
+        client.app,
+        connector_id,
+        "claude",
+        "session.send_message",
+        "session.interrupt",
+        "session.steer",
+        "session.commands",
+        "session.interaction.approval",
+        "catalog.model",
+        "catalog.permission",
+        "runtime.attachment",
+    )
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
     return session_id
-
-
-def _ingest_open_turn(client, access_token, session_id, turn_id="turn_1"):
-    """Push a turn.start (with no matching turn.end) so the session has an
-    open turn — the precondition /interrupt checks via get_open_turn_id."""
-    response = client.post(
-        "/connector/ingest",
-        headers={"Authorization": f"Bearer {access_token}"},
-        json={
-            "notifications": [
-                {
-                    "method": "timeline.itemUpsert",
-                    "params": {
-                        "sessionId": session_id,
-                        "item": {
-                            "id": f"tl_{turn_id}_start",
-                            "sessionId": session_id,
-                            "turnId": turn_id,
-                            "type": "turn.start",
-                            "status": "running",
-                            "content": {},
-                            "source": {
-                                "runtime": "claude",
-                                "turnId": turn_id,
-                                "event": "turn/started",
-                                "derivedKey": "turn-start",
-                            },
-                            "orderSeq": 1,
-                            "revision": 1,
-                            "contentHash": "sha256:open-turn",
-                        },
-                    },
-                }
-            ]
-        },
-    )
-    assert response.status_code == 200, response.text
 
 
 def test_send_message_carries_runtime_for_codex_session(tmp_path):
@@ -2801,12 +5644,12 @@ def test_send_message_carries_runtime_for_codex_session(tmp_path):
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={"content": "hi"},
     )
     assert response.status_code == 200
-    params = fake_rpc.requests[-1][2]
+    params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
     assert params["runtime"] == "codex"
 
 
@@ -2818,14 +5661,13 @@ def test_send_message_carries_runtime_for_claude_session(tmp_path):
     session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
-        json={"content": "hi", "mode": "acceptEdits"},
+        json={"content": "hi"},
     )
     assert response.status_code == 200, response.text
-    params = fake_rpc.requests[-1][2]
+    params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
     assert params["runtime"] == "claude"
-    assert params["permissionMode"] == "acceptEdits"
     assert params["cwd"] == "/repo"
 
 
@@ -2833,22 +5675,150 @@ def test_interrupt_and_sync_carry_runtime(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
+    _seed_running_runtime(client, connector_id, fake_rpc, "claude")
     session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
+    fake_rpc.runtime_states[session_id] = {"status": "running"}
 
-    # /interrupt now requires an open turn (turn.start with no turn.end).
-    _ingest_open_turn(client, access_token, session_id, turn_id="turn_claude_1")
-
-    client.post(f"/sessions/{session_id}/interrupt", headers=headers).raise_for_status()
-    interrupt_params = fake_rpc.requests[-1][2]
-    assert fake_rpc.requests[-1][1] == "turn.interrupt"
+    client.post(f"/sessions/{session_id}/runtime/interrupt", headers=headers).raise_for_status()
+    interrupt_params = wait_for_rpc_method(fake_rpc, "session.interrupt")[2]
     assert interrupt_params["runtime"] == "claude"
-    assert interrupt_params["turnId"] == "turn_claude_1"
+    assert "turnId" not in interrupt_params
 
     client.post(f"/sessions/{session_id}/sync", headers=headers).raise_for_status()
-    sync_params = fake_rpc.requests[-1][2]
-    assert fake_rpc.requests[-1][1] == "session.sync"
+    sync_params = wait_for_rpc_method(fake_rpc, "session.sync")[2]
     assert sync_params["runtime"] == "claude"
+
+
+def test_steer_routes_running_codex_session_without_turn_id(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    seed_runtime_capabilities(client.app, connector_id, "codex", "session.steer")
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "externalSessionId": "thread-demo",
+        "status": "running",
+        "selections": {},
+        "metadata": {},
+    }
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/steer",
+        headers=headers,
+        json={"content": "focus on IPC", "clientMessageId": "msg_steer_1"},
+    )
+
+    assert response.status_code == 200, response.text
+    params = wait_for_rpc_method(fake_rpc, "session.steer")[2]
+    external_session_id = asyncio.run(
+        client.app.state.store.get_session(session_id)
+    ).externalSessionId
+    assert params == {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "content": "focus on IPC",
+        "externalSessionId": external_session_id,
+        "cwd": "/repo",
+        "clientMessageId": "msg_steer_1",
+    }
+    assert asyncio.run(client.app.state.store.get_active_run(session_id)) is None
+
+
+def test_running_dsh_steer_is_routed_by_capability(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(
+        client,
+        runtime="dsh",
+    )
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    seed_runtime_capabilities(client.app, connector_id, "dsh", "session.steer")
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "dsh",
+        "externalSessionId": f"dsh_{connector_id}_demo",
+        "status": "running",
+        "selections": {},
+        "metadata": {},
+    }
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/steer",
+        headers=headers,
+        json={"content": "focus on the bridge"},
+    )
+
+    assert response.status_code == 200, response.text
+    params = wait_for_rpc_method(fake_rpc, "session.steer")[2]
+    assert params["runtime"] == "dsh"
+    assert params["externalSessionId"] == f"dsh_{connector_id}_demo"
+
+
+def test_dsh_attachment_without_capability_never_calls_connector(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client, runtime="dsh")
+    session = asyncio.run(client.app.state.store.get_session(session_id))
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+
+    response = client.post(
+        "/sessions/create-and-start",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtimeId": session.runtimeId,
+            "projectId": session.projectId,
+            "runtime": "dsh",
+            "content": "read this",
+            "attachments": [
+                {
+                    "fileId": "file-inline",
+                    "name": "note.txt",
+                    "mediaType": "text/plain",
+                    "size": 1,
+                    "contentBase64": "eA==",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 409
+    assert fake_rpc.requests == []
+
+
+def test_steer_rejects_idle_session_and_turn_overrides(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    seed_runtime_capabilities(client.app, connector_id, "codex", "session.steer")
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    idle_response = client.post(
+        f"/sessions/{session_id}/runtime/steer",
+        headers=headers,
+        json={"content": "too late"},
+    )
+    override_response = client.post(
+        f"/sessions/{session_id}/runtime/steer",
+        headers=headers,
+        json={"content": "change model", "modelSelectionId": "codex:gpt-5"},
+    )
+
+    assert idle_response.status_code == 409
+    assert idle_response.json()["detail"] == "session is not running"
+    assert override_response.status_code == 422
+    assert not any(method == "session.steer" for _, method, _, _ in fake_rpc.requests)
 
 
 def test_interrupt_not_found_result_clears_stale_active_run(tmp_path):
@@ -2856,6 +5826,8 @@ def test_interrupt_not_found_result_clears_stale_active_run(tmp_path):
     connector_id, _, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     fake_rpc.interrupt_result = {"interrupted": False, "reason": "thread_not_found"}
+    # The thread disappears after a live capability check admitted interruption.
+    fake_rpc.runtime_states[session_id] = {"status": "running"}
     client.app.state.rpc = fake_rpc
 
     async def seed() -> None:
@@ -2866,19 +5838,55 @@ def test_interrupt_not_found_result_clears_stale_active_run(tmp_path):
             external_session_id="thr_missing",
             params={"content": "hi"},
         )
-        await client.app.state.store.update_active_run_turn_id(session_id, "turn_missing")
 
     asyncio.run(seed())
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
-    response = client.post(f"/sessions/{session_id}/interrupt", headers=headers)
+    response = client.post(f"/sessions/{session_id}/runtime/interrupt", headers=headers)
 
     assert response.status_code == 200, response.text
     assert response.json()["result"] == {"interrupted": False, "reason": "thread_not_found"}
     assert asyncio.run(client.app.state.store.get_active_run(session_id)) is None
 
 
-def test_turn_start_updates_and_turn_end_clears_active_run(tmp_path):
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
+def test_interrupt_cancels_blocking_interactions(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    ingest_pending_command_approval(client, access_token, session_id)
+    notice_id = interaction_notice_id(client, session_id, headers, "approval")
+    before_seq = asyncio.run(client.app.state.store.get_session_seq(session_id))
+
+    response = client.post(f"/sessions/{session_id}/runtime/interrupt", headers=headers)
+
+    assert response.status_code == 200, response.text
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    assert snapshot["notices"] == []
+    assert snapshot["approvals"] == []
+    notice = asyncio.run(client.app.state.store.get_notice(notice_id))
+    assert notice.status == "cancelled"
+    assert notice.context["closedReason"] == "interrupt_requested"
+    recovered = client.get(
+        f"/sessions/{session_id}/events",
+        headers=headers,
+        params={"after": f"seq:{before_seq}"},
+    ).json()
+    assert recovered["snapshotRequired"] is False
+    runtime_notice_events = [
+        event
+        for event in recovered["events"]
+        if event["type"] == "runtime.notice.updated"
+    ]
+    assert len(runtime_notice_events) == 1
+    assert runtime_notice_events[0]["payload"]["notice"]["noticeId"] == notice_id
+    assert runtime_notice_events[0]["payload"]["notice"]["status"] == "cancelled"
+
+
+def test_timeline_items_do_not_own_active_run(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
@@ -2886,14 +5894,13 @@ def test_turn_start_updates_and_turn_end_clears_active_run(tmp_path):
     session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
 
     client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={"content": "hi"},
     ).raise_for_status()
-    _ingest_open_turn(client, access_token, session_id, turn_id="turn_active_1")
     active = asyncio.run(client.app.state.store.get_active_run(session_id))
     assert active is not None
-    assert active["turnId"] == "turn_active_1"
+    assert "turnId" not in active
 
     response = client.post(
         "/connector/ingest",
@@ -2905,21 +5912,20 @@ def test_turn_start_updates_and_turn_end_clears_active_run(tmp_path):
                     "params": {
                         "sessionId": session_id,
                         "item": {
-                            "id": "tl_turn_active_1_end",
+                            "id": "tl_message_complete",
                             "sessionId": session_id,
-                            "turnId": "turn_active_1",
-                            "type": "turn.end",
+                            "type": "message",
                             "status": "done",
-                            "content": {"result": "ok"},
+                            "role": "assistant",
+                            "content": {"text": "ok"},
                             "source": {
                                 "runtime": "claude",
-                                "turnId": "turn_active_1",
-                                "event": "turn/completed",
-                                "derivedKey": "turn-end",
+                                "event": "message/completed",
+                                "derivedKey": "message-complete",
                             },
-                            "orderSeq": 2,
+                            "orderSeq": 1,
                             "revision": 1,
-                            "contentHash": "sha256:turn-end",
+                            "contentHash": "sha256:message-complete",
                         },
                     },
                 }
@@ -2928,10 +5934,31 @@ def test_turn_start_updates_and_turn_end_clears_active_run(tmp_path):
     )
 
     assert response.status_code == 200, response.text
+    assert asyncio.run(client.app.state.store.get_active_run(session_id)) is not None
+
+    state_response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.state.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "claude",
+                        "externalSessionId": "uuid-claude-demo",
+                        "status": "idle",
+                    },
+                }
+            ]
+        },
+    )
+
+    assert state_response.status_code == 200, state_response.text
     assert asyncio.run(client.app.state.store.get_active_run(session_id)) is None
 
 
-def test_claude_chat_active_run_merges_history_timeline_sync(tmp_path):
+def test_claude_history_sync_uses_runtime_owned_user_identity(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
@@ -2939,7 +5966,7 @@ def test_claude_chat_active_run_merges_history_timeline_sync(tmp_path):
     session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
 
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/runtime/messages",
         headers=headers,
         json={"content": "hi", "clientMessageId": "opt_active"},
     )
@@ -2972,6 +5999,7 @@ def test_claude_chat_active_run_merges_history_timeline_sync(tmp_path):
                                     "turnId": "turn_scanner",
                                     "event": "transcript-user",
                                     "derivedKey": "message",
+                                    "clientMessageId": "opt_active",
                                 },
                                 "orderSeq": 1,
                                 "revision": 1,
@@ -2985,13 +6013,13 @@ def test_claude_chat_active_run_merges_history_timeline_sync(tmp_path):
     )
 
     assert response.status_code == 200, response.text
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    state = session_view_for_assertions(client, session_id, headers)
     assert [item["id"] for item in state["items"]] == ["claude_msg_scanner_duplicate"]
     assert state["items"][0]["source"]["clientMessageId"] == "opt_active"
     assert asyncio.run(client.app.state.store.get_active_run(session_id)) is not None
 
 
-def test_timeline_sync_keeps_existing_client_message_id(tmp_path):
+def test_timeline_sync_accepts_runtime_source_updates_for_same_id(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
@@ -3039,6 +6067,7 @@ def test_timeline_sync_keeps_existing_client_message_id(tmp_path):
             for key, value in tagged_item["source"].items()
             if key != "clientMessageId"
         },
+        "contentHash": "sha256:user-hi-without-client-id",
     }
     response = client.post(
         "/connector/ingest",
@@ -3057,8 +6086,177 @@ def test_timeline_sync_keeps_existing_client_message_id(tmp_path):
     )
     assert response.status_code == 200, response.text
 
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
-    assert state["items"][0]["source"]["clientMessageId"] == "opt_keep"
+    state = session_view_for_assertions(client, session_id, headers)
+    assert state["items"][0]["source"].get("clientMessageId") is None
+
+
+def test_timeline_sync_uses_content_hash_as_state_identity(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    def ingest(*, revision: int, status: str, event: str) -> None:
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.sync",
+                        "params": {
+                            "sessionId": session_id,
+                            "items": [
+                                {
+                                    "id": "tl_hash_identity",
+                                    "sessionId": session_id,
+                                    "turnId": "turn_hash",
+                                    "type": "message",
+                                    "status": status,
+                                    "role": "assistant",
+                                    "content": {"text": "same final answer"},
+                                    "source": {
+                                        "runtime": "codex",
+                                        "sessionId": "thread_hash",
+                                        "turnId": "turn_hash",
+                                        "itemId": "msg_hash",
+                                        "itemType": "agentMessage",
+                                        "event": event,
+                                    },
+                                    "orderSeq": 1,
+                                    "revision": revision,
+                                    "contentHash": "sha256:canonical-final",
+                                }
+                            ],
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+
+    ingest(revision=1, status="running", event="ipc/thread-stream-state-changed")
+    first = session_view_for_assertions(client, session_id, headers)
+    first_item = first["items"][0]
+    ingest(revision=9, status="done", event="thread/read")
+    second = session_view_for_assertions(client, session_id, headers)
+    second_item = second["items"][0]
+
+    assert second_item["updatedSeq"] == first_item["updatedSeq"]
+    assert second_item["revision"] == first_item["revision"]
+    assert second_item["status"] == "running"
+
+
+def test_timeline_sync_upserts_without_deleting_missing_items(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    def item(item_id: str, order_seq: int, text: str, content_hash: str):
+        return {
+            "id": item_id,
+            "sessionId": session_id,
+            "turnId": "turn_upsert_sync",
+            "type": "message",
+            "status": "done",
+            "role": "assistant",
+            "content": {"text": text},
+            "source": {
+                "runtime": "codex",
+                "sessionId": "thread_upsert_sync",
+                "turnId": "turn_upsert_sync",
+                "itemId": item_id,
+                "itemType": "agentMessage",
+            },
+            "orderSeq": order_seq,
+            "revision": 1,
+            "contentHash": content_hash,
+        }
+
+    def sync(items: list[dict[str, Any]]) -> None:
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.sync",
+                        "params": {"sessionId": session_id, "items": items},
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+
+    sync(
+        [
+            item("tl_upsert_keep", 1, "keep me", "sha256:upsert-keep-v1"),
+            item("tl_upsert_patch", 2, "old text", "sha256:upsert-patch-v1"),
+        ]
+    )
+    sync([item("tl_upsert_patch", 2, "new text", "sha256:upsert-patch-v2")])
+
+    state = session_view_for_assertions(client, session_id, headers)
+    by_id = {entry["id"]: entry for entry in state["items"]}
+    assert by_id["tl_upsert_keep"]["content"]["text"] == "keep me"
+    assert by_id["tl_upsert_patch"]["content"]["text"] == "new text"
+
+
+def test_timeline_sync_does_not_infer_user_identity_from_active_run(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "same text", "clientMessageId": "opt_latest"},
+    ).raise_for_status()
+
+    def user_item(item_id: str, order_seq: int):
+        return {
+            "id": item_id,
+            "sessionId": session_id,
+            "type": "message",
+            "status": "done",
+            "role": "user",
+            "content": {"text": "same text"},
+            "source": {
+                "runtime": "codex",
+                "sessionId": "thread-demo",
+                "itemId": f"source-{item_id}",
+                "itemType": "userMessage",
+                "event": "ipc/thread-stream-state-changed",
+            },
+            "orderSeq": order_seq,
+            "revision": 1,
+            "contentHash": f"sha256:{item_id}",
+        }
+
+    items = [
+        user_item("tl_old_user", 1),
+        user_item("tl_new_user", 2),
+    ]
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {"sessionId": session_id, "items": items},
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    state = session_view_for_assertions(client, session_id, headers)
+    by_id = {item["id"]: item for item in state["items"]}
+    assert by_id["tl_old_user"]["source"].get("clientMessageId") is None
+    assert by_id["tl_new_user"]["source"].get("clientMessageId") is None
+    active = asyncio.run(client.app.state.store.get_active_run(session_id))
+    assert active is not None
+    assert "turnId" not in active
 
 
 def test_live_timeline_upsert_appends_when_connector_order_seq_restarts(tmp_path):
@@ -3128,7 +6326,7 @@ def test_live_timeline_upsert_appends_when_connector_order_seq_restarts(tmp_path
     )
     assert live.status_code == 200, live.text
 
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    state = session_view_for_assertions(client, session_id, headers)
     by_id = {item["id"]: item for item in state["items"]}
     assert by_id["tl_history"]["orderSeq"] == 50
     assert by_id["tl_live"]["orderSeq"] == 51
@@ -3215,7 +6413,7 @@ def test_timeline_sync_appends_when_connector_order_seq_restarts(tmp_path):
     )
     assert synced.status_code == 200, synced.text
 
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    state = session_view_for_assertions(client, session_id, headers)
     by_id = {item["id"]: item for item in state["items"]}
     assert by_id["tl_history"]["orderSeq"] == 50
     assert by_id["tl_history"]["content"]["text"] == "old edited"
@@ -3301,7 +6499,9 @@ def test_connector_terminal_lifecycle_uses_workspace_scope(tmp_path):
         {
             "terminalId": terminal_id,
             "sessionId": scope_id,
-            "token": client.app.state.terminal_broker.get(terminal_id).relay_token,
+            "token": asyncio.run(
+                client.app.state.terminal_broker.get(terminal_id)
+            ).relay_token,
         },
         15,
     )
@@ -3338,6 +6538,7 @@ def test_connector_terminal_v2_forwards_lifecycle_to_connector(tmp_path):
     connector_id, _, _, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
+    fake_rpc.terminal_relay_broker = client.app.state.terminal_broker
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
 
     created = client.post(
@@ -3366,6 +6567,8 @@ def test_connector_terminal_v2_forwards_lifecycle_to_connector(tmp_path):
             "rows": 24,
             "env": {},
             "label": "Shell",
+            "persistent": False,
+            "outputTransport": "relay",
         },
         15,
     )
@@ -3407,7 +6610,7 @@ def test_connector_terminal_v2_forwards_lifecycle_to_connector(tmp_path):
         json={"cols": 100, "rows": 30},
     )
     assert resized.status_code == 200, resized.text
-    assert fake_rpc.requests[-1][1] == "terminal.resize"
+    assert fake_rpc.terminal_relay_messages[-1]["type"] == "resize"
 
     written = client.post(
         f"/connectors/{connector_id}/terminals-v2/{terminal_id}/write",
@@ -3415,11 +6618,21 @@ def test_connector_terminal_v2_forwards_lifecycle_to_connector(tmp_path):
         json={"dataBase64": "Cg=="},
     )
     assert written.status_code == 200, written.text
-    assert fake_rpc.requests[-1][1] == "terminal.write"
+    assert fake_rpc.terminal_relay_messages[-1]["type"] == "input"
+    assert not {"terminal.write", "terminal.resize", "terminal.snapshot"} & {
+        r[1] for r in fake_rpc.requests
+    }
 
     closed = client.delete(f"/connectors/{connector_id}/terminals-v2/{terminal_id}", headers=headers)
     assert closed.status_code == 200, closed.text
     assert fake_rpc.requests[-1][1] == "terminal.close"
+    assert asyncio.run(client.app.state.terminal_broker.get(terminal_id)) is None
+    other = asyncio.run(client.app.state.terminal_broker.register(
+        session_id="browse_other", connector_id="other", label="Shell",
+        cwd="/repo", shell="", cols=80, rows=24, purpose="relay", relay_mode="attach",
+    ))
+    client.delete(f"/connectors/{connector_id}/terminals-v2/{other.id}", headers=headers).raise_for_status()
+    assert asyncio.run(client.app.state.terminal_broker.get(other.id)) is not None
 
 
 def test_connector_terminal_v2_stream_uses_websocket_protocol(tmp_path):
@@ -3428,6 +6641,7 @@ def test_connector_terminal_v2_stream_uses_websocket_protocol(tmp_path):
     token = headers["Authorization"].removeprefix("Bearer ")
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
+    fake_rpc.terminal_relay_broker = client.app.state.terminal_broker
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
 
     created = client.post(
@@ -3443,36 +6657,27 @@ def test_connector_terminal_v2_stream_uses_websocket_protocol(tmp_path):
     ) as websocket:
         assert websocket.receive_json() == {"type": "replay", "data": "b2s=", "seq": 1}
 
+        # The main control channel can now fail without affecting terminal I/O.
+        fake_rpc.fail = True
         websocket.send_json({"type": "input", "data": "Cg=="})
-        assert wait_for_rpc_method(fake_rpc, "terminal.write")[1:] == (
-            "terminal.write",
-            {
-                "terminalId": terminal_id,
-                "sessionId": f"browse_{connector_id}",
-                "dataBase64": "Cg==",
-            },
-            5,
-        )
-
         websocket.send_json({"type": "resize", "cols": 120, "rows": 40})
-        assert wait_for_rpc_method(fake_rpc, "terminal.resize")[1:] == (
-            "terminal.resize",
-            {
-                "terminalId": terminal_id,
-                "sessionId": f"browse_{connector_id}",
-                "cols": 120,
-                "rows": 40,
-            },
-            5,
-        )
-
-        asyncio.run(
-            client.app.state.terminal_stream_hub.publish_output(
-                connector_id,
-                {"terminalId": terminal_id, "dataBase64": "bGl2ZQ==", "seq": 2},
-            )
+        websocket.send_json({"type": "ping"})
+        assert websocket.receive_json() == {"type": "pong"}
+        assert fake_rpc.terminal_relay_messages[-2:] == [
+            {"type": "input", "data": "Cg=="},
+            {"type": "resize", "cols": 120, "rows": 40},
+        ]
+        websocket.portal.call(
+            client.app.state.terminal_stream_hub.publish_relay,
+            connector_id,
+            terminal_id,
+            {"type": "output", "data": "bGl2ZQ==", "seq": 2},
         )
         assert websocket.receive_json() == {"type": "output", "data": "bGl2ZQ==", "seq": 2}
+        assert not {"terminal.write", "terminal.resize", "terminal.snapshot"} & {
+            r[1] for r in fake_rpc.requests
+        }
+    assert fake_rpc.terminals[terminal_id]["closed"] is False
 
 
 def test_terminal_broker_removes_connector_user_terminals_only(tmp_path):
@@ -3510,8 +6715,48 @@ def test_terminal_broker_removes_connector_user_terminals_only(tmp_path):
     )
 
     assert [terminal.id for terminal in removed] == [user_terminal_id]
-    assert client.app.state.terminal_broker.get(user_terminal_id) is None
-    assert client.app.state.terminal_broker.get(other_terminal_id) is not None
+    assert asyncio.run(client.app.state.terminal_broker.get(user_terminal_id)) is None
+    assert (
+        asyncio.run(client.app.state.terminal_broker.get(other_terminal_id)) is not None
+    )
+
+
+def test_terminal_broker_cleanup_is_scoped_to_connector_connection(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, _ = create_connector_and_session(client)
+
+    async def exercise() -> tuple[str, str]:
+        broker = client.app.state.terminal_broker
+        old_terminal = await broker.register(
+            session_id=session_id,
+            connector_id=connector_id,
+            connector_connection_id="cnx_old",
+            label="old",
+            cwd="/repo",
+            shell="zsh",
+            cols=80,
+            rows=24,
+        )
+        new_terminal = await broker.register(
+            session_id=session_id,
+            connector_id=connector_id,
+            connector_connection_id="cnx_new",
+            label="new",
+            cwd="/repo",
+            shell="zsh",
+            cols=80,
+            rows=24,
+        )
+        removed = await broker.remove_ephemeral_for_connector(
+            connector_id,
+            connection_id="cnx_old",
+        )
+        assert [terminal.id for terminal in removed] == [old_terminal.id]
+        assert await broker.get(old_terminal.id) is None
+        assert await broker.get(new_terminal.id) is not None
+        return old_terminal.id, new_terminal.id
+
+    asyncio.run(exercise())
 
 
 def test_terminal_broker_forwards_browser_events_to_connector_relay(tmp_path):
@@ -3576,43 +6821,113 @@ def test_user_terminal_resize_removes_terminal_missing_on_connector(tmp_path):
     assert listing.json()["terminals"] == []
 
 
-def test_interrupt_does_not_mark_session_idle_before_turn_end(tmp_path):
+def test_interrupt_does_not_infer_idle_from_successful_response(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
-    _ingest_open_turn(client, access_token, session_id, turn_id="turn_claude_1")
-
-    response = client.post(f"/sessions/{session_id}/interrupt", headers=headers)
+    fake_rpc.runtime_states[session_id] = {"status": "running"}
+    response = client.post(f"/sessions/{session_id}/runtime/interrupt", headers=headers)
 
     assert response.status_code == 200, response.text
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
-    assert state["session"]["status"] == "running"
+    # Accepted interruption does not mean the native runtime has stopped yet.
+    assert asyncio.run(client.app.state.store.get_session(session_id)).status == "running"
 
 
-def test_approval_resolve_carries_runtime(tmp_path):
+def test_interaction_respond_carries_runtime(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)
     ingest_pending_command_approval(client, access_token, session_id)
     fake_rpc = FakeApprovalRpc()
     client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    notice_id = interaction_notice_id(client, session_id, headers, "approval")
 
     response = client.post(
-        "/approvals/appr_1/resolve",
+        f"/sessions/{session_id}/runtime/notices/{notice_id}/respond",
+        headers=headers,
+        json={"actionId": "approve"},
+    )
+    assert response.status_code == 200
+    params = next(
+        request[2] for request in fake_rpc.requests if request[1] == "interaction.respond"
+    )
+    assert params["runtime"] == "codex"
+    assert params["noticeId"] == notice_id
+    assert params["actionId"] == "approve"
+    assert params["inputData"]["approvalSource"]["requestId"] == "approval_runtime_1"
+    assert params["inputData"]["approvalSource"]["method"] == (
+        "item/commandExecution/requestApproval"
+    )
+
+
+def test_runtime_notice_respond_carries_runtime(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    ingest_pending_command_approval(client, access_token, session_id)
+    fake_rpc = FakeApprovalRpc()
+    client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    notice_id = interaction_notice_id(client, session_id, headers, "approval")
+
+    list_response = client.get(f"/sessions/{session_id}/runtime/notices", headers=headers)
+    response = client.post(
+        f"/sessions/{session_id}/runtime/notices/{notice_id}/respond",
+        headers=headers,
+        json={"actionId": "approve"},
+    )
+
+    assert list_response.status_code == 200, list_response.text
+    runtime_notice = list_response.json()["notices"][0]
+    assert runtime_notice["noticeId"] == "notice_runtime_approval"
+    assert "updatedSeq" not in runtime_notice
+    assert response.status_code == 200, response.text
+    requested_connector_id, method, params, _timeout = next(
+        request for request in fake_rpc.requests if request[1] == "interaction.respond"
+    )
+    assert requested_connector_id == connector_id
+    assert method == "interaction.respond"
+    assert params["runtime"] == "codex"
+    assert params["noticeId"] == notice_id
+    assert params["actionId"] == "approve"
+
+
+def test_runtime_notice_respond_returns_not_found_rpc_payload(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    client.app.state.rpc = FakeApprovalRpc(gone=True)
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/notices/notice_missing/respond",
+        headers=headers,
+        json={"actionId": "approve"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "approval_not_found"
+
+
+def test_legacy_approval_api_is_removed(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ingest_pending_command_approval(client, access_token, session_id)
+
+    response = client.post(
+        "/api/v2/approvals/appr_1/resolve",
         headers=headers,
         json={"status": "approved"},
     )
-    assert response.status_code == 200
-    params = fake_rpc.requests[-1][2]
-    assert params["runtime"] == "codex"
+
+    assert response.status_code == 404
 
 
-def test_approval_request_with_external_session_id_resolves_to_server_session(tmp_path):
+def test_legacy_approval_request_notification_is_rejected(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)
-    external_session_id = f"thr_{connector_id}_demo"
-
     response = client.post(
         "/connector/ingest",
         headers={"Authorization": f"Bearer {access_token}"},
@@ -3620,48 +6935,13 @@ def test_approval_request_with_external_session_id_resolves_to_server_session(tm
             "notifications": [
                 {
                     "method": "approval.requested",
-                    "params": {
-                        "id": "appr_external_session",
-                        "sessionId": external_session_id,
-                        "turnId": "turn_1",
-                        "status": "pending",
-                        "kind": "command",
-                        "targetItemId": "tl_tool_external",
-                        "title": "Codex wants to run a command",
-                        "description": "pwd",
-                        "payload": {"command": "pwd"},
-                        "choices": ["approve", "approve_for_session", "reject", "cancel"],
-                        "source": {
-                            "runtime": "codex",
-                            "requestId": "42",
-                            "sessionId": external_session_id,
-                            "turnId": "turn_1",
-                            "itemId": "call_1",
-                            "method": "item/commandExecution/requestApproval",
-                        },
-                    },
+                    "params": {"id": "appr_legacy", "sessionId": session_id},
                 },
             ],
         },
     )
-    assert response.status_code == 200, response.text
-
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
-    assert [approval["id"] for approval in state["approvals"]] == ["appr_external_session"]
-    assert state["approvals"][0]["sessionId"] == session_id
-
-    fake_rpc = FakeApprovalRpc()
-    client.app.state.rpc = fake_rpc
-    resolved = client.post(
-        "/approvals/appr_external_session/resolve",
-        headers=headers,
-        json={"status": "approved"},
-    )
-
-    assert resolved.status_code == 200, resolved.text
-    params = fake_rpc.requests[-1][2]
-    assert params["sessionId"] == session_id
-    assert params["externalSessionId"] == external_session_id
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "unsupported_notification"
 
 
 def test_pairing_flow_returns_one_time_connector_credentials(tmp_path):
@@ -3717,6 +6997,25 @@ def test_pairing_flow_returns_one_time_connector_credentials(tmp_path):
     assert consumed.status_code == 200
     assert consumed.json()["status"] == "consumed"
     assert consumed.json()["config"] is None
+
+
+def test_pairing_created_connector_defaults_to_cli_kind(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+
+    started = client.post(
+        "/pairing/start",
+        json={"serverUrl": "http://127.0.0.1:8000", "ttlSeconds": 600},
+    )
+    pairing = started.json()
+    claimed = client.post(
+        "/pairing/claim",
+        headers=headers,
+        json={"code": pairing["code"], "name": "CLI paired"},
+    )
+
+    assert claimed.status_code == 200
+    assert claimed.json()["connector"]["connectorKind"] == "cli"
 
 
 def test_connector_can_upsert_discovered_codex_session(tmp_path):
@@ -3847,7 +7146,7 @@ def test_discovered_codex_session_reuses_existing_external_session(tmp_path):
     assert matching[0]["takeover"] is True
     state = wait_for_item_update(client, session_id, headers, 0)
     assert state["items"][0]["content"]["text"] == "synced to canonical"
-    duplicate_state = client.get("/sessions/sess_codex_duplicate/state", headers=headers)
+    duplicate_state = client.get("/sessions/sess_codex_duplicate/snapshot", headers=headers)
     assert duplicate_state.status_code == 404
 
 
@@ -3902,12 +7201,12 @@ def test_connector_http_ingest_upserts_session_and_timeline(tmp_path):
 
     assert response.status_code == 200
     assert response.json()["accepted"] == 2
-    state = client.get("/sessions/sess_http_existing/state", headers=headers).json()
+    state = session_view_for_assertions(client, "sess_http_existing", headers)
     assert state["session"]["externalSessionId"] == "thr_http"
     assert state["items"][0]["content"]["kind"] == "command"
 
 
-def test_connector_ingest_skips_new_local_archived_session(tmp_path):
+def test_connector_ingest_archives_local_hidden_session_meta(tmp_path):
     client = make_client(tmp_path)
     _, access_token, _, headers = create_connector_and_session(client)
 
@@ -3917,15 +7216,14 @@ def test_connector_ingest_skips_new_local_archived_session(tmp_path):
         json={
             "notifications": [
                 {
-                    "method": "session.updated",
+                    "method": "session.meta.upsert",
                     "params": {
                         "sessionId": "sess_local_archived",
                         "runtime": "codex",
                         "externalSessionId": "thr_local_archived",
                         "title": "Local archived",
                         "cwd": "/repo",
-                        "status": "idle",
-                        "localState": "archived",
+                        "metadata": {"local_state": "archived", "hidden": True},
                     },
                 },
             ],
@@ -3934,13 +7232,204 @@ def test_connector_ingest_skips_new_local_archived_session(tmp_path):
 
     assert response.status_code == 200
     assert response.json()["accepted"] == 1
-    listed = client.get("/sessions", headers=headers).json()["sessions"]
-    assert all(session["id"] != "sess_local_archived" for session in listed)
-    state = client.get("/sessions/sess_local_archived/state", headers=headers)
-    assert state.status_code == 404
+    state = client.get("/sessions/sess_local_archived/snapshot", headers=headers)
+    assert state.status_code == 200, state.text
+    assert state.json()["session"]["archived"] is True
+    assert state.json()["session"]["archivedAt"] is not None
 
 
-def test_connector_http_ingest_accepts_status_update_before_external_id(tmp_path):
+def test_connector_source_event_archives_without_restoring_aa_archive(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+
+    archived = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.source.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "externalSessionId": "thr_1",
+                        "availability": "archived",
+                        "reason": "thread/archived",
+                        "observedAt": "2026-08-27T12:00:00Z",
+                        "observationOrigin": "event",
+                    },
+                }
+            ]
+        },
+    )
+
+    assert archived.status_code == 200, archived.text
+    session = session_view_for_assertions(client, session_id, headers)["session"]
+    assert session["archived"] is True
+    assert session["userArchived"] is True
+    assert session["archiveSource"] == "user"
+    assert session["sourceAvailability"] == "archived"
+    assert session["sourceObservationOrigin"] == "event"
+
+    restored = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.source.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "externalSessionId": "thr_1",
+                        "availability": "available",
+                        "reason": "thread/unarchived",
+                        "observedAt": "2026-08-27T12:01:00Z",
+                        "observationOrigin": "event",
+                    },
+                }
+            ]
+        },
+    )
+
+    assert restored.status_code == 200, restored.text
+    session = session_view_for_assertions(client, session_id, headers)["session"]
+    assert session["archived"] is True
+    assert session["sourceAvailability"] == "available"
+
+
+def test_session_inventory_does_not_overwrite_newer_source_event(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+    scan_token = "codex-inventory-scan-token-0001"
+
+    response = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.inventory.begin",
+                    "params": {"runtime": "codex", "scanToken": scan_token},
+                },
+                {
+                    "method": "session.source.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "externalSessionId": "thr_1",
+                        "availability": "archived",
+                        "observedAt": "2026-08-27T12:01:00Z",
+                        "observationOrigin": "event",
+                    },
+                },
+                {
+                    "method": "session.inventory.complete",
+                    "params": {
+                        "runtime": "codex",
+                        "scanToken": scan_token,
+                        "complete": True,
+                        "sessions": [
+                            {
+                                "sessionId": session_id,
+                                "externalSessionId": "thr_1",
+                                "sourceState": {
+                                    "availability": "available",
+                                    "observedAt": "2026-08-27T12:00:00Z",
+                                    "observationOrigin": "inventory",
+                                },
+                            }
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    session = session_view_for_assertions(client, session_id, headers)["session"]
+    assert session["archived"] is True
+    assert session["sourceAvailability"] == "archived"
+    assert session["sourceObservationOrigin"] == "event"
+
+
+def test_connector_ingest_dsh_hidden_state_is_reversible_without_archiving(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, _, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+
+    hidden = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": "sess_dsh_hidden",
+                        "runtime": "dsh",
+                        "externalSessionId": "dsh_hidden",
+                        "title": "DSH hidden",
+                        "cwd": "/repo",
+                        "metadata": {"localArchived": True},
+                    },
+                }
+            ]
+        },
+    )
+
+    assert hidden.status_code == 200, hidden.text
+    hidden_snapshot = client.get("/sessions/sess_dsh_hidden/snapshot", headers=headers)
+    assert hidden_snapshot.status_code == 200, hidden_snapshot.text
+    assert hidden_snapshot.json()["session"]["archived"] is False
+    listed_ids = {
+        session.id
+        for session in asyncio.run(
+            client.app.state.store.list_sessions(
+                user_id=account_user_id(client),
+            )
+        )
+    }
+    assert "sess_dsh_hidden" in listed_ids
+
+    visible = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": "sess_dsh_hidden",
+                        "runtime": "dsh",
+                        "externalSessionId": "dsh_hidden",
+                        "title": "DSH visible again",
+                        "cwd": "/repo",
+                        "metadata": {"local_state": "active", "hidden": False},
+                    },
+                }
+            ]
+        },
+    )
+
+    assert visible.status_code == 200, visible.text
+    visible_snapshot = client.get("/sessions/sess_dsh_hidden/snapshot", headers=headers)
+    assert visible_snapshot.status_code == 200, visible_snapshot.text
+    assert visible_snapshot.json()["session"]["archived"] is False
+    listed_ids = {
+        session.id
+        for session in asyncio.run(
+            client.app.state.store.list_sessions(
+                user_id=account_user_id(client),
+            )
+        )
+    }
+    assert "sess_dsh_hidden" in listed_ids
+
+
+def test_connector_ingest_ordered_meta_then_timeline_creates_session_before_items(tmp_path):
     client = make_client(tmp_path)
     _, access_token, _, headers = create_connector_and_session(client)
 
@@ -3950,12 +7439,426 @@ def test_connector_http_ingest_accepts_status_update_before_external_id(tmp_path
         json={
             "notifications": [
                 {
-                    "method": "session.updated",
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": "sess_scanner_ordered",
+                        "runtime": "codex",
+                        "externalSessionId": "thr_scanner_ordered",
+                        "title": "Scanner ordered",
+                        "cwd": "/repo",
+                    },
+                },
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": "sess_scanner_ordered",
+                        "runtime": "codex",
+                        "externalSessionId": "thr_scanner_ordered",
+                        "complete": True,
+                        "items": [
+                            {
+                                "id": "tl_scanner_ordered_user",
+                                "sessionId": "sess_scanner_ordered",
+                                "type": "message",
+                                "status": "done",
+                                "role": "user",
+                                "content": {
+                                    "kind": "markdown",
+                                    "text": "scanner history",
+                                    "format": "markdown",
+                                },
+                                "source": {
+                                    "runtime": "codex",
+                                    "sessionId": "thr_scanner_ordered",
+                                    "itemId": "item_scanner_ordered_user",
+                                    "event": "thread/read",
+                                },
+                                "orderSeq": 1,
+                                "revision": 1,
+                                "contentHash": "sha256:scanner-ordered-user",
+                            }
+                        ],
+                    },
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["accepted"] == 2
+    state = session_view_for_assertions(client, "sess_scanner_ordered", headers)
+    assert state["session"]["externalSessionId"] == "thr_scanner_ordered"
+    assert [item["id"] for item in state["items"]] == ["tl_scanner_ordered_user"]
+
+
+def test_connector_ingest_prefers_explicit_platform_session_over_external_match(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, _, headers = create_connector_and_session(client)
+
+    async def _seed_sessions() -> tuple[str, str]:
+        store = client.app.state.store
+        platform_project = await store.create_project(
+            user_id=account_user_id(client),
+            connector_id=connector_id,
+            name="Platform Claude",
+            workspace_path="/repo",
+        )
+        platform = await store.create_session(
+            connector_id=connector_id,
+            project_id=platform_project.id,
+            user_id=account_user_id(client),
+            runtime="claude",
+            external_session_id=None,
+            title="Platform Claude",
+            cwd="/repo",
+        )
+        imported = await client.app.state.store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id="sess_claude_imported",
+            runtime="claude",
+            external_session_id="claude_external_race",
+            title="Imported Claude",
+            cwd="/repo",
+        )
+        return platform.id, imported.id
+
+    platform_session_id, imported_session_id = asyncio.run(_seed_sessions())
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": platform_session_id,
+                        "item": {
+                            "id": "assistant_live",
+                            "sessionId": platform_session_id,
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {
+                                "kind": "markdown",
+                                "text": "live answer",
+                            },
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:assistant-live",
+                            "source": {
+                                "runtime": "claude",
+                                "sessionId": "claude_external_race",
+                                "event": "claude.turn.result",
+                            },
+                        },
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    platform_state = session_view_for_assertions(client, platform_session_id, headers)
+    imported_state = session_view_for_assertions(client, imported_session_id, headers)
+    assert [item["id"] for item in platform_state["items"]] == ["assistant_live"]
+    assert imported_state["items"] == []
+
+
+def test_connector_ingest_does_not_overwrite_platform_archive_state(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    archive_response = client.post(
+        "/sessions/archive",
+        headers=headers,
+        json=[session_id],
+    )
+    assert archive_response.status_code == 200, archive_response.text
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "externalSessionId": "thr_synced_active",
+                        "title": "Synced active",
+                        "cwd": "/repo",
+                        "metadata": {"local_state": "active", "hidden": False},
+                    },
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    state = session_view_for_assertions(client, session_id, headers)
+    assert state["session"]["archived"] is True
+    assert state["session"]["archivedAt"] is not None
+
+
+def test_dsh_complete_inventory_tracks_missing_without_changing_user_archive(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, _, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+
+    seeded = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "dsh",
+                        "externalSessionId": external_id,
+                        "title": session_id,
+                        "cwd": "/repo",
+                    },
+                }
+                for session_id, external_id in (
+                    ("sess_dsh_kept", "dsh-kept"),
+                    ("sess_dsh_missing", "dsh-missing"),
+                )
+            ]
+        },
+    )
+    assert seeded.status_code == 200, seeded.text
+
+    archived = client.post(
+        "/sessions/archive",
+        headers=headers,
+        json=["sess_dsh_kept"],
+    )
+    assert archived.status_code == 200, archived.text
+
+    scan_token = "dsh-inventory-scan-token-0001"
+    reconciled = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.inventory.begin",
+                    "params": {"runtime": "dsh", "scanToken": scan_token},
+                },
+                {
+                    "method": "session.inventory.complete",
+                    "params": {
+                        "runtime": "dsh",
+                        "scanToken": scan_token,
+                        "complete": True,
+                        "sessions": [
+                            {
+                                "sessionId": "sess_dsh_kept",
+                                "externalSessionId": "dsh-kept",
+                                "sourceState": "visible",
+                            }
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+    assert reconciled.status_code == 200, reconciled.text
+    assert reconciled.json()["accepted"] == 2
+
+    listed_ids = {
+        session.id
+        for session in asyncio.run(
+            client.app.state.store.list_sessions(
+                user_id=account_user_id(client),
+                archived=True,
+            )
+        )
+    }
+    assert "sess_dsh_kept" in listed_ids
+    assert "sess_dsh_missing" not in listed_ids
+    kept = client.get("/sessions/sess_dsh_kept/snapshot", headers=headers)
+    missing = client.get("/sessions/sess_dsh_missing/snapshot", headers=headers)
+    assert kept.status_code == 200, kept.text
+    assert missing.status_code == 200, missing.text
+    assert kept.json()["session"]["archived"] is True
+    assert missing.json()["session"]["archived"] is False
+
+    next_scan_token = "dsh-inventory-scan-token-0002"
+    reappeared = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.inventory.begin",
+                    "params": {"runtime": "dsh", "scanToken": next_scan_token},
+                },
+                {
+                    "method": "session.inventory.complete",
+                    "params": {
+                        "runtime": "dsh",
+                        "scanToken": next_scan_token,
+                        "complete": True,
+                        "sessions": [
+                            {
+                                "sessionId": "sess_dsh_kept",
+                                "externalSessionId": "dsh-kept",
+                                "sourceState": "visible",
+                            },
+                            {
+                                "sessionId": "sess_dsh_missing",
+                                "externalSessionId": "dsh-missing",
+                                "sourceState": "visible",
+                            },
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+    assert reappeared.status_code == 200, reappeared.text
+
+    active_ids = {
+        session.id
+        for session in asyncio.run(client.app.state.store.list_sessions(user_id=account_user_id(client)))
+    }
+    archived_ids = {
+        session.id
+        for session in asyncio.run(
+            client.app.state.store.list_sessions(
+                user_id=account_user_id(client),
+                archived=True,
+            )
+        )
+    }
+    assert {"sess_dsh_kept", "sess_dsh_missing"}.issubset(active_ids | archived_ids)
+    kept = client.get("/sessions/sess_dsh_kept/snapshot", headers=headers)
+    assert kept.status_code == 200, kept.text
+    assert kept.json()["session"]["archived"] is True
+
+
+def test_dsh_visible_inventory_preserves_all_aa_archives(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, _, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+
+    seeded = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "dsh",
+                        "externalSessionId": external_id,
+                        "title": session_id,
+                        "cwd": "/repo",
+                    },
+                }
+                for session_id, external_id in (
+                    ("sess_dsh_legacy_archive", "dsh-legacy-archive"),
+                    ("sess_dsh_user_archive", "dsh-user-archive"),
+                )
+            ]
+        },
+    )
+    assert seeded.status_code == 200, seeded.text
+
+    async def mark_archives() -> None:
+        async with client.app.state.store.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "UPDATE sessions SET archived = 1, archived_at = :now, "
+                    "dsh_archive_legacy = 1 WHERE id = 'sess_dsh_legacy_archive'"
+                ),
+                {"now": "2026-08-16T00:00:00Z"},
+            )
+
+    asyncio.run(mark_archives())
+    user_archived = client.post(
+        "/sessions/archive",
+        headers=headers,
+        json=["sess_dsh_user_archive"],
+    )
+    assert user_archived.status_code == 200, user_archived.text
+
+    scan_token = "dsh-legacy-archive-recovery"
+    reconciled = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.inventory.begin",
+                    "params": {"runtime": "dsh", "scanToken": scan_token},
+                },
+                {
+                    "method": "session.inventory.complete",
+                    "params": {
+                        "runtime": "dsh",
+                        "scanToken": scan_token,
+                        "complete": True,
+                        "sessions": [
+                            {
+                                "sessionId": "sess_dsh_legacy_archive",
+                                "externalSessionId": "dsh-legacy-archive",
+                                "sourceState": "visible",
+                            },
+                            {
+                                "sessionId": "sess_dsh_user_archive",
+                                "externalSessionId": "dsh-user-archive",
+                                "sourceState": "visible",
+                            },
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+    assert reconciled.status_code == 200, reconciled.text
+
+    legacy = client.get("/sessions/sess_dsh_legacy_archive/snapshot", headers=headers)
+    user = client.get("/sessions/sess_dsh_user_archive/snapshot", headers=headers)
+    assert legacy.status_code == 200, legacy.text
+    assert user.status_code == 200, user.text
+    assert legacy.json()["session"]["archived"] is True
+    assert user.json()["session"]["archived"] is True
+
+
+def test_connector_http_ingest_accepts_state_update_before_external_id(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, _, headers = create_connector_and_session(client)
+    # A session must resolve to a project workspace before state can arrive.
+    asyncio.run(
+        client.app.state.store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id="sess_codex_out_of_order",
+            runtime="codex",
+            cwd="/repo",
+            external_session_id=None,
+        )
+    )
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.state.updated",
                     "params": {
                         "sessionId": "sess_codex_out_of_order",
                         "runtime": "codex",
+                        "externalSessionId": None,
                         "status": "running",
-                        "sourceObservedAt": "2027-05-20T12:00:00Z",
+                        "selections": {},
+                        "metadata": {},
                     },
                 },
                 {
@@ -3989,10 +7892,12 @@ def test_connector_http_ingest_accepts_status_update_before_external_id(tmp_path
 
     assert response.status_code == 200
     assert response.json()["accepted"] == 2
-    state = client.get("/sessions/sess_codex_out_of_order/state", headers=headers).json()
+    state = session_view_for_assertions(client, "sess_codex_out_of_order", headers)
     assert state["session"]["runtime"] == "codex"
     assert state["session"]["externalSessionId"] is None
-    assert state["items"][0]["content"]["text"] == "timeline arrived after status"
+    assert state["session"]["status"] == "running"
+    message = next(item for item in state["items"] if item["type"] == "message")
+    assert message["content"]["text"] == "timeline arrived after status"
 
 
 def test_timeline_sync_keeps_existing_realtime_items_missing_from_snapshot(tmp_path):
@@ -4082,7 +7987,10 @@ def test_timeline_sync_keeps_existing_realtime_items_missing_from_snapshot(tmp_p
 
 def test_claude_history_sync_replaces_live_item_with_snapshot_same_id(tmp_path):
     client = make_client(tmp_path)
-    _, access_token, session_id, headers = create_connector_and_session(client)
+    _, access_token, session_id, headers = create_connector_and_session(
+        client,
+        runtime="claude",
+    )
 
     with client.websocket_connect(
         "/connector/ws",
@@ -4176,12 +8084,15 @@ def test_claude_history_sync_replaces_live_item_with_snapshot_same_id(tmp_path):
         tool = state["items"][0]
         assert tool["id"] == "claude_tool_result_same"
         assert tool["content"] == {"toolUseId": "toolu_1", "result": "passed"}
-        assert tool["revision"] == 1
+        assert tool["revision"] == 3
 
 
 def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
     client = make_client(tmp_path)
-    _, access_token, session_id, headers = create_connector_and_session(client)
+    _, access_token, session_id, headers = create_connector_and_session(
+        client,
+        runtime="claude",
+    )
 
     with client.websocket_connect(
         "/connector/ws",
@@ -4304,27 +8215,8 @@ def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
                 "method": "timeline.sync",
                 "params": {
                     "sessionId": session_id,
+                    "complete": True,
                     "items": [
-                        {
-                            "id": "turn_history:turn-start",
-                            "sessionId": session_id,
-                            "turnId": "turn_history",
-                            "type": "turn.start",
-                            "status": "running",
-                            "role": None,
-                            "content": {},
-                            "source": {
-                                "runtime": "claude",
-                                "sessionId": "claude_session_1",
-                                "turnId": "turn_history",
-                                "itemId": "turn_history:turn-start",
-                                "itemType": "turn.start",
-                                "derivedKey": "turn-start",
-                            },
-                            "orderSeq": 1,
-                            "revision": 1,
-                            "contentHash": "sha256:history-start",
-                        },
                         {
                             "id": "claude_msg_history_user",
                             "sessionId": session_id,
@@ -4342,7 +8234,7 @@ def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
                                 "derivedKey": "message",
                                 "clientMessageId": "opt_1",
                             },
-                            "orderSeq": 2,
+                            "orderSeq": 1,
                             "revision": 1,
                             "contentHash": "sha256:history-user",
                         },
@@ -4362,7 +8254,7 @@ def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
                                 "itemType": "text",
                                 "derivedKey": "message",
                             },
-                            "orderSeq": 3,
+                            "orderSeq": 2,
                             "revision": 1,
                             "contentHash": "sha256:history-message",
                         },
@@ -4377,7 +8269,6 @@ def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
             headers,
             lambda items: {item["id"] for item in items}
             == {
-                "turn_history:turn-start",
                 "claude_msg_history_user",
                 "claude_msg_history_answer",
             },
@@ -4386,12 +8277,11 @@ def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
         assert "claude_msg_live_partial" not in item_ids
         assert "turn_live:user" not in item_ids
         assert "claude_tool_live" not in item_ids
-        assert "turn_history:turn-start" in item_ids
         assert "claude_msg_history_user" in item_ids
         assert "claude_msg_history_answer" in item_ids
 
 
-def test_claude_empty_timeline_sync_clears_existing_timeline(tmp_path):
+def test_claude_timeline_sync_without_complete_merges_existing_timeline(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
@@ -4408,7 +8298,7 @@ def test_claude_empty_timeline_sync_clears_existing_timeline(tmp_path):
                     "params": {
                         "sessionId": session_id,
                         "item": {
-                            "id": "claude_live_only",
+                            "id": "claude_live_answer",
                             "sessionId": session_id,
                             "turnId": "turn_live",
                             "type": "message",
@@ -4432,7 +8322,27 @@ def test_claude_empty_timeline_sync_clears_existing_timeline(tmp_path):
                     "method": "timeline.sync",
                     "params": {
                         "sessionId": session_id,
-                        "items": [],
+                        "items": [
+                            {
+                                "id": "claude_history_answer",
+                                "sessionId": session_id,
+                                "turnId": "turn_history",
+                                "type": "message",
+                                "status": "done",
+                                "role": "assistant",
+                                "content": {"text": "history"},
+                                "source": {
+                                    "runtime": "claude",
+                                    "sessionId": "claude_session_1",
+                                    "turnId": "turn_history",
+                                    "itemId": "msg_history",
+                                    "itemType": "assistant",
+                                },
+                                "orderSeq": 2,
+                                "revision": 1,
+                                "contentHash": "sha256:history",
+                            }
+                        ],
                     },
                 },
             ]
@@ -4440,7 +8350,69 @@ def test_claude_empty_timeline_sync_clears_existing_timeline(tmp_path):
     )
     assert response.status_code == 200, response.text
 
-    state = client.get(f"/sessions/{session_id}/state", headers=headers).json()
+    state = session_view_for_assertions(client, session_id, headers)
+    assert {item["id"] for item in state["items"]} == {
+        "claude_live_answer",
+        "claude_history_answer",
+    }
+
+
+def test_claude_empty_timeline_sync_clears_existing_timeline(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, _, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.itemUpsert",
+                        "params": {
+                            "sessionId": session_id,
+                            "item": {
+                                "id": "claude_live_only",
+                                "sessionId": session_id,
+                                "turnId": "turn_live",
+                                "type": "message",
+                                "status": "done",
+                                "role": "assistant",
+                                "content": {"text": "live"},
+                                "source": {
+                                    "runtime": "claude",
+                                    "sessionId": "claude_session_1",
+                                    "turnId": "turn_live",
+                                    "itemId": "msg_live",
+                                    "itemType": "assistant",
+                                },
+                                "orderSeq": 1,
+                                "revision": 1,
+                                "contentHash": "sha256:live",
+                            },
+                        },
+                    },
+                    {
+                        "method": "timeline.sync",
+                        "params": {
+                            "sessionId": session_id,
+                            "complete": True,
+                            "items": [],
+                        },
+                    },
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+        snapshot_event = receive_session_ws_event(ws, "timeline.snapshot")
+        assert snapshot_event["payload"]["items"] == []
+
+    state = session_view_for_assertions(client, session_id, headers)
     assert state["items"] == []
 
 
@@ -4486,8 +8458,8 @@ def test_timeline_sync_without_changes_does_not_rearm_unread(tmp_path):
         wait_for_item_update(client, session_id, headers, 0)
 
         session = client.get("/sessions", headers=headers).json()["sessions"][0]
-        assert session["unread"] is True
-        read_session = client.post(f"/sessions/{session_id}/read", headers=headers).json()["session"]
+        assert session["unread"] is False
+        read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
         assert read_session["unread"] is False
         read_seq = read_session["lastReadSeq"]
 
@@ -4513,25 +8485,199 @@ def test_timeline_sync_without_changes_does_not_rearm_unread(tmp_path):
         assert session["unread"] is False
 
 
+def test_connector_timeline_item_upsert_does_not_rearm_unread(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
+    assert read_session["unread"] is False
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "timeline.itemUpsert",
+                "params": {
+                    "sessionId": session_id,
+                    "item": {
+                        "id": "tl_tool_1",
+                        "sessionId": session_id,
+                        "turnId": "turn_1",
+                        "type": "tool",
+                        "status": "done",
+                        "role": None,
+                        "content": {"kind": "command", "command": "echo hello"},
+                        "source": {
+                            "runtime": "codex",
+                            "sessionId": "thr_1",
+                            "turnId": "turn_1",
+                            "itemId": "tool_1",
+                            "itemType": "commandExecution",
+                        },
+                        "orderSeq": 1,
+                        "revision": 1,
+                        "contentHash": "sha256:tool-1",
+                    },
+                },
+            }
+        )
+
+        def read_sessions():
+            sessions = client.get("/sessions", headers=headers).json()["sessions"]
+            current = next(session for session in sessions if session["id"] == session_id)
+            return current if current["lastItemOrderSeq"] == 1 else None
+
+        session = wait_for(read_sessions)
+
+    assert session["unread"] is False
+    assert session["lastReadSeq"] == session["updatedSeq"]
+
+
+def test_connector_turn_end_after_read_rearms_unread(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
+    read_seq = read_session["lastReadSeq"]
+    assert read_session["unread"] is False
+    assert read_session["latestTurnEndSeq"] == 0
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.state.updated",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "runtimeId": "codex",
+                    "externalSessionId": f"thr_{connector_id}_demo",
+                    "status": "running",
+                },
+            }
+        )
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.turnEnded",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "runtimeId": "codex",
+                    "externalSessionId": f"thr_{connector_id}_demo",
+                    "turnId": "turn_1",
+                    "outcome": "completed",
+                },
+            }
+        )
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.state.updated",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "runtimeId": "codex",
+                    "externalSessionId": f"thr_{connector_id}_demo",
+                    "status": "idle",
+                },
+            }
+        )
+
+        def read_sessions():
+            sessions = client.get("/sessions", headers=headers).json()["sessions"]
+            current = next(session for session in sessions if session["id"] == session_id)
+            return (
+                current
+                if current["latestTurnEndSeq"] > read_seq
+                and current["status"] == "idle"
+                else None
+            )
+
+        session = wait_for(read_sessions)
+
+    assert session["status"] == "idle"
+    assert session["unread"] is True
+    assert session["lastReadSeq"] >= read_seq
+    assert session["latestTurnEndSeq"] > session["lastReadSeq"]
+    assert session["updatedSeq"] >= session["latestTurnEndSeq"]
+
+    read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
+    assert read_session["unread"] is False
+    assert read_session["lastReadSeq"] >= read_session["latestTurnEndSeq"]
+
+
+def test_session_metadata_update_does_not_clear_unread_turn_end(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
+    read_seq = read_session["lastReadSeq"]
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.turnEnded",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "runtimeId": "codex",
+                    "externalSessionId": f"thr_{connector_id}_demo",
+                    "turnId": "turn_1",
+                    "outcome": "completed",
+                },
+            }
+        )
+        wait_for(lambda: client.get("/sessions", headers=headers).json()["sessions"][0]["unread"])
+
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.updated",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "title": "Renamed after turn end",
+                },
+            }
+        )
+
+        def read_sessions():
+            sessions = client.get("/sessions", headers=headers).json()["sessions"]
+            current = next(session for session in sessions if session["id"] == session_id)
+            return current if current["title"] == "Renamed after turn end" else None
+
+        session = wait_for(read_sessions)
+
+    assert session["unread"] is True
+    assert session["lastReadSeq"] == read_seq
+    assert session["latestTurnEndSeq"] > read_seq
+
+
 def test_timeline_sync_completed_at_drift_does_not_rearm_unread(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
     item = {
-        "id": "tl_turn_end",
+        "id": "tl_session_complete",
         "sessionId": session_id,
-        "turnId": "turn_1",
-        "type": "turn.end",
+        "type": "system",
         "status": "done",
-        "content": {"result": "completed"},
+        "content": {"kind": "runtime", "result": "completed"},
         "source": {
             "runtime": "codex",
             "sessionId": "thr_1",
-            "turnId": "turn_1",
-            "derivedKey": "turn-end",
+            "derivedKey": "session-complete",
         },
         "orderSeq": 1,
         "revision": 1,
-        "contentHash": "sha256:turn-end",
+        "contentHash": "sha256:session-complete",
         "completedAt": "2026-06-08T00:00:00Z",
     }
 
@@ -4547,7 +8693,7 @@ def test_timeline_sync_completed_at_drift_does_not_rearm_unread(tmp_path):
             }
         )
         wait_for_item_update(client, session_id, headers, 0)
-        read_session = client.post(f"/sessions/{session_id}/read", headers=headers).json()["session"]
+        read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
         read_seq = read_session["lastReadSeq"]
         assert read_session["unread"] is False
 
@@ -4610,7 +8756,7 @@ def test_session_updated_sync_timestamps_do_not_rearm_unread(tmp_path):
         )
         wait_for_item_update(client, session_id, headers, 0)
 
-        read_session = client.post(f"/sessions/{session_id}/read", headers=headers).json()["session"]
+        read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
         assert read_session["unread"] is False
         read_seq = read_session["lastReadSeq"]
 
@@ -4660,12 +8806,1146 @@ def test_session_updated_sync_timestamps_do_not_rearm_unread(tmp_path):
         assert session["unread"] is False
 
 
-def test_dashboard_events_route_precedes_session_events(tmp_path):
+def test_ws_ticket_is_session_scoped_and_single_use(tmp_path):
     client = make_client(tmp_path)
-    paths = [getattr(route, "path", "") for route in client.app.router.routes]
-    dashboard_index = paths.index("/sessions/events/dashboard")
-    session_events_index = paths.index("/sessions/{session_id}/events")
-    assert dashboard_index < session_events_index
+    _, _, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        subscribed = ws.receive_json()
+        assert subscribed["type"] == "session.subscribed"
+        assert subscribed["sessionId"] == session_id
+
+    with pytest.raises(Exception):
+        with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}"):
+            pass
+
+
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
+def test_session_ws_projects_timeline_and_notice_events(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.itemUpsert",
+                        "params": {
+                            "sessionId": session_id,
+                            "item": {
+                                "id": "tl_ws_failed",
+                                "sessionId": session_id,
+                                "turnId": "turn_ws",
+                                "type": "turn.end",
+                                "status": "failed",
+                                "role": None,
+                                "content": {
+                                    "result": "failed",
+                                    "error": {"code": "runtime_error", "message": "boom"},
+                                },
+                                "source": {
+                                    "runtime": "codex",
+                                    "sessionId": "thr_1",
+                                    "turnId": "turn_ws",
+                                    "event": "turn/completed",
+                                    "derivedKey": "turn-end",
+                                },
+                                "orderSeq": 1,
+                                "revision": 1,
+                                "contentHash": "sha256:ws-failed",
+                            },
+                        },
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+
+        received = [ws.receive_json() for _ in range(5)]
+        event_types = {event["type"] for event in received}
+        assert "timeline.item_created" in event_types
+        assert "session.meta.updated" in event_types
+        assert "runtime.capability.updated" in event_types
+        assert "runtime.notice.snapshot" in event_types
+        capability_event = next(
+            event for event in received if event["type"] == "runtime.capability.updated"
+        )
+        capabilities = {
+            capability["capabilityId"]: capability
+            for capability in capability_event["payload"]["capabilitySet"]["capabilities"]
+        }
+        assert capabilities["session.send_message"]["allowed"] is False
+
+
+def test_session_ws_updates_effective_capabilities_after_takeover(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(f"/sessions/{session_id}/takeover", headers=headers)
+        assert response.status_code == 200, response.text
+
+        received = [ws.receive_json() for _ in range(3)]
+        assert [event["sequence"] for event in received] == sorted(
+            event["sequence"] for event in received
+        )
+        assert {event["type"] for event in received} == {
+            "runtime.capability.updated",
+            "runtime.state.updated",
+            "session.meta.updated",
+        }
+        with pytest.raises(TimeoutError):
+            ws.portal.call(_receive_ws_test_message, ws, 0.1)
+        event = next(
+            item
+            for item in received
+            if item["type"] == "runtime.capability.updated"
+        )
+        capabilities = {
+            capability["capabilityId"]: capability
+            for capability in event["payload"]["capabilitySet"]["capabilities"]
+        }
+        assert capabilities["session.send_message"]["allowed"] is True
+
+
+def test_session_ws_suppresses_repeated_capability_semantics_across_sequences(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    def invalidation(sequence: int, revision: int, *, reverse: bool) -> dict[str, Any]:
+        capabilities = [
+            {
+                "capabilityId": "session.send_message",
+                "scope": "session",
+                "runtime": "codex",
+                "runtimeId": "codex",
+                "sessionId": session_id,
+                "supported": True,
+                "available": True,
+                "allowed": True,
+                "unavailableReason": None,
+                "parameters": {},
+            },
+            {
+                "capabilityId": "session.interrupt",
+                "scope": "session",
+                "runtime": "codex",
+                "runtimeId": "codex",
+                "sessionId": session_id,
+                "supported": True,
+                "available": False,
+                "allowed": True,
+                "unavailableReason": "runtime_turn_idle",
+                "parameters": {},
+            },
+        ]
+        return {
+            "sessionId": session_id,
+            "nextSeq": sequence,
+            "session": {"id": session_id, "updatedSeq": sequence},
+            "capabilitySet": {
+                "revision": revision,
+                "capabilities": (
+                    list(reversed(capabilities)) if reverse else capabilities
+                ),
+            },
+        }
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        ws.portal.call(
+            client.app.state.timeline_broker.publish,
+            session_id,
+            invalidation(10, 10, reverse=False),
+        )
+        first = [ws.receive_json() for _ in range(2)]
+        assert {event["type"] for event in first} == {
+            "session.meta.updated",
+            "runtime.capability.updated",
+        }
+
+        ws.portal.call(
+            client.app.state.timeline_broker.publish,
+            session_id,
+            invalidation(11, 99, reverse=True),
+        )
+        assert ws.receive_json()["type"] == "session.meta.updated"
+        with pytest.raises(TimeoutError):
+            ws.portal.call(_receive_ws_test_message, ws, 0.1)
+
+
+def test_session_ws_does_not_piggyback_capabilities_on_turn_end(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "session.turnEnded",
+                        "params": {
+                            "sessionId": session_id,
+                            "runtime": "codex",
+                            "runtimeId": "codex",
+                            "turnId": "turn-capability-dedupe",
+                            "outcome": "completed",
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert ws.receive_json()["type"] == "session.meta.updated"
+        with pytest.raises(TimeoutError):
+            ws.portal.call(_receive_ws_test_message, ws, 0.1)
+
+
+def test_session_ws_only_pushes_real_capability_change_across_session_updates(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+
+    takeover = client.post(f"/sessions/{session_id}/takeover", headers=headers)
+    assert takeover.status_code == 200, takeover.text
+    initial_capability = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "runtime.capability.updated",
+                    "params": {
+                        "connectorId": connector_id,
+                        "runtime": "codex",
+                        "sessionId": session_id,
+                        "revision": 1,
+                        "capabilities": [
+                            {
+                                "capabilityId": "session.send_message",
+                                "scope": "session",
+                                "runtime": "codex",
+                                "sessionId": session_id,
+                                "supported": True,
+                                "available": False,
+                                "allowed": True,
+                                "unavailableReason": "session_running",
+                                "parameters": {"phase": "running"},
+                            }
+                        ],
+                    },
+                }
+            ]
+        },
+    )
+    assert initial_capability.status_code == 200, initial_capability.text
+    running = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.state.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "status": "running",
+                    },
+                }
+            ]
+        },
+    )
+    assert running.status_code == 200, running.text
+    ticket = ws_ticket(client, session_id, headers)
+
+    notifications = [
+        {
+            "method": "session.turnEnded",
+            "params": {
+                "sessionId": session_id,
+                "runtime": "codex",
+                "runtimeId": "codex",
+                "turnId": "turn-capability-source-split",
+                "outcome": "completed",
+            },
+        },
+        {
+            "method": "session.state.updated",
+            "params": {
+                "sessionId": session_id,
+                "runtime": "codex",
+                "runtimeId": "codex",
+                "status": "idle",
+            },
+        },
+        {
+            "method": "runtime.capability.updated",
+            "params": {
+                "connectorId": connector_id,
+                "runtime": "codex",
+                "sessionId": session_id,
+                "revision": 2,
+                "capabilities": [
+                    {
+                        "capabilityId": "session.send_message",
+                        "scope": "session",
+                        "runtime": "codex",
+                        "sessionId": session_id,
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                        "parameters": {"phase": "idle"},
+                    }
+                ],
+            },
+        },
+        {
+            "method": "session.source.updated",
+            "params": {
+                "sessionId": session_id,
+                "runtime": "codex",
+                "runtimeId": "codex",
+                "availability": "available",
+                "reason": "session-start-scan",
+                "observedAt": "2026-09-02T00:00:01Z",
+                "observationOrigin": "event",
+            },
+        },
+        {
+            "method": "session.updated",
+            "params": {
+                "sessionId": session_id,
+                "runtime": "codex",
+                "runtimeId": "codex",
+                "title": "Capability source split",
+            },
+        },
+    ]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        for notification in notifications:
+            response = client.post(
+                "/connector/ingest",
+                headers=connector_headers,
+                json={"notifications": [notification]},
+            )
+            assert response.status_code == 200, response.text
+
+        received: list[dict[str, Any]] = []
+        while True:
+            try:
+                message = ws.portal.call(_receive_ws_test_message, ws, 0.1)
+            except TimeoutError:
+                break
+            ws._raise_on_close(message)
+            received.append(json.loads(message["text"]))
+
+    capability_events = [
+        event
+        for event in received
+        if event["type"] == "runtime.capability.updated"
+    ]
+    assert len(capability_events) == 1, [
+        (event["type"], event["sequence"], event["eventId"])
+        for event in received
+    ]
+    send_capability = next(
+        capability
+        for capability in capability_events[0]["payload"]["capabilitySet"][
+            "capabilities"
+        ]
+        if capability["capabilityId"] == "session.send_message"
+    )
+    assert send_capability["parameters"] == {"phase": "idle"}
+
+
+def test_session_ws_preserves_same_sequence_presence_a_b_a_transition(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+    seeded = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "protocol.capabilitiesUpdated",
+                    "params": {
+                        "revision": 1,
+                        "capabilities": [
+                            {
+                                "capabilityId": "session.send_message",
+                                "scope": "runtime",
+                                "runtime": "codex",
+                                "supported": True,
+                                "available": True,
+                                "allowed": True,
+                            }
+                        ],
+                    },
+                }
+            ]
+        },
+    )
+    assert seeded.status_code == 200, seeded.text
+    takeover = client.post(f"/sessions/{session_id}/takeover", headers=headers)
+    assert takeover.status_code == 200, takeover.text
+    ticket = ws_ticket(client, session_id, headers)
+
+    class Presence:
+        online = True
+
+        async def is_online(self, requested_connector_id: str) -> bool:
+            assert requested_connector_id == connector_id
+            return self.online
+
+    presence = Presence()
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        observed_statuses: list[str] = []
+        observed_available: list[bool] = []
+        observed_sequences: list[int] = []
+        for online in (True, False, True):
+            presence.online = online
+            ws.portal.call(
+                publish_connector_session_capabilities,
+                client.app.state.store,
+                presence,
+                client.app.state.timeline_broker,
+                connector_id,
+            )
+            events = [ws.receive_json() for _ in range(2)]
+            assert {event["type"] for event in events} == {
+                "session.meta.updated",
+                "runtime.capability.updated",
+            }, events
+            observed_sequences.extend(event["sequence"] for event in events)
+            session_event = next(
+                event for event in events if event["type"] == "session.meta.updated"
+            )
+            capability_event = next(
+                event
+                for event in events
+                if event["type"] == "runtime.capability.updated"
+            )
+            observed_statuses.append(
+                session_event["payload"]["session"]["connectorStatus"]
+            )
+            send_capability = next(
+                capability
+                for capability in capability_event["payload"]["capabilitySet"][
+                    "capabilities"
+                ]
+                if capability["capabilityId"] == "session.send_message"
+            )
+            observed_available.append(send_capability["available"])
+
+        assert observed_statuses == ["online", "offline", "online"]
+        assert observed_available == [True, False, True]
+        assert len(set(observed_sequences)) == 1
+
+
+def test_session_ws_preserves_rpc_presence_disconnect_and_reconnect_at_same_sequence(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+    takeover = client.post(f"/sessions/{session_id}/takeover", headers=headers)
+    assert takeover.status_code == 200, takeover.text
+    ticket = ws_ticket(client, session_id, headers)
+
+    def receive_presence_projection(ws, expected_status: str) -> list[int]:
+        events = [ws.receive_json() for _ in range(2)]
+        assert {event["type"] for event in events} == {
+            "session.meta.updated",
+            "runtime.capability.updated",
+        }, events
+        session_event = next(
+            event for event in events if event["type"] == "session.meta.updated"
+        )
+        capability_event = next(
+            event
+            for event in events
+            if event["type"] == "runtime.capability.updated"
+        )
+        assert (
+            session_event["payload"]["session"]["connectorStatus"]
+            == expected_status
+        )
+        send_capability = next(
+            capability
+            for capability in capability_event["payload"]["capabilitySet"][
+                "capabilities"
+            ]
+            if capability["capabilityId"] == "session.send_message"
+        )
+        assert send_capability["available"] is (expected_status == "online")
+        return [event["sequence"] for event in events]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        subscribed = ws.receive_json()
+        assert subscribed["type"] == "session.subscribed"
+        observed_sequences: list[int] = []
+        manager = client.app.state.rpc
+
+        first_connection = ws.portal.call(
+            manager.register,
+            connector_id,
+            FakeWebSocket(),
+        )
+        ws.portal.call(
+            publish_connector_session_capabilities,
+            client.app.state.store,
+            manager,
+            client.app.state.timeline_broker,
+            connector_id,
+        )
+        observed_sequences.extend(receive_presence_projection(ws, "online"))
+
+        assert ws.portal.call(manager.unregister, connector_id, first_connection)
+        ws.portal.call(
+            publish_connector_session_capabilities,
+            client.app.state.store,
+            manager,
+            client.app.state.timeline_broker,
+            connector_id,
+        )
+        observed_sequences.extend(receive_presence_projection(ws, "offline"))
+
+        second_connection = ws.portal.call(
+            manager.register,
+            connector_id,
+            FakeWebSocket(),
+        )
+        ws.portal.call(
+            publish_connector_session_capabilities,
+            client.app.state.store,
+            manager,
+            client.app.state.timeline_broker,
+            connector_id,
+        )
+        observed_sequences.extend(receive_presence_projection(ws, "online"))
+
+        assert set(observed_sequences) == {subscribed["sequence"]}
+        assert ws.portal.call(manager.unregister, connector_id, second_connection)
+
+
+def test_session_ws_projects_codex_timeline_sync_as_incremental_update_without_refetch(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.sync",
+                        "params": {
+                            "sessionId": session_id,
+                            "items": [
+                                {
+                                    "id": "tl_ws_sync_message",
+                                    "sessionId": session_id,
+                                    "turnId": "turn_ws_sync",
+                                    "type": "message",
+                                    "status": "done",
+                                    "role": "assistant",
+                                    "content": {"text": "synced over ws"},
+                                    "source": {
+                                        "runtime": "codex",
+                                        "sessionId": "thr_1",
+                                        "turnId": "turn_ws_sync",
+                                        "itemId": "msg_sync",
+                                        "itemType": "agentMessage",
+                                    },
+                                    "orderSeq": 1,
+                                    "revision": 1,
+                                    "contentHash": "sha256:ws-sync-message",
+                                }
+                            ],
+                        },
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+
+        timeline_event = receive_session_ws_event(ws, "timeline.item_created")
+        assert timeline_event["payload"]["item"]["content"]["text"] == "synced over ws"
+
+
+def test_increment_after_complete_timeline_sync_streams_in_sequence(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    def item(item_id: str, text: str, order_seq: int) -> dict[str, Any]:
+        return {
+            "id": item_id,
+            "sessionId": session_id,
+            "type": "message",
+            "status": "done",
+            "role": "assistant",
+            "content": {"text": text},
+            "source": {
+                "runtime": "codex",
+                "sessionId": "thr_1",
+                "itemId": item_id,
+                "itemType": "agentMessage",
+            },
+            "orderSeq": order_seq,
+            "revision": 1,
+            "contentHash": f"sha256:{item_id}",
+        }
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.sync",
+                        "params": {
+                            "sessionId": session_id,
+                            "complete": True,
+                            "items": [item("snapshot_item", "snapshot", 1)],
+                        },
+                    },
+                    {
+                        "method": "timeline.itemUpsert",
+                        "params": {
+                            "sessionId": session_id,
+                            "item": item("incremental_item", "incremental", 2),
+                        },
+                    },
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+        snapshot = ws.receive_json()
+        incremental = ws.receive_json()
+        assert snapshot["type"] == "timeline.snapshot"
+        assert incremental["type"] == "timeline.item_created"
+        assert snapshot["sequence"] < incremental["sequence"]
+        assert incremental["payload"]["item"]["id"] == "incremental_item"
+
+    state = session_view_for_assertions(client, session_id, headers)
+    assert [value["id"] for value in state["items"]] == [
+        "snapshot_item",
+        "incremental_item",
+    ]
+
+
+def test_session_ws_pushes_compact_item_completion_update(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.itemUpsert",
+                        "params": {
+                            "sessionId": session_id,
+                            "item": {
+                                "id": "context_compaction_thr_1",
+                                "sessionId": session_id,
+                                "turnId": None,
+                                "type": "system",
+                                "status": "running",
+                                "role": "system",
+                                "content": {"kind": "compact", "state": "started"},
+                                "source": {
+                                    "runtime": "codex",
+                                    "sessionId": "thr_1",
+                                    "event": "thread/compact/started",
+                                    "itemId": "context_compaction_thr_1",
+                                    "itemType": "contextCompaction",
+                                },
+                                "orderSeq": 1,
+                                "revision": 1,
+                                "contentHash": "sha256:compact-started",
+                            },
+                        },
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+        created = receive_session_ws_event(ws, "timeline.item_created")
+        assert created["type"] == "timeline.item_created"
+        assert created["payload"]["item"]["content"]["state"] == "started"
+
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.itemUpsert",
+                        "params": {
+                            "sessionId": session_id,
+                            "item": {
+                                "id": "context_compaction_thr_1",
+                                "sessionId": session_id,
+                                "turnId": "turn_compact",
+                                "type": "system",
+                                "status": "done",
+                                "role": "system",
+                                "content": {"kind": "compact", "state": "completed"},
+                                "source": {
+                                    "runtime": "codex",
+                                    "sessionId": "thr_1",
+                                    "turnId": "turn_compact",
+                                    "event": "thread/compacted",
+                                    "itemId": "context_compaction_thr_1",
+                                    "itemType": "contextCompaction",
+                                },
+                                "orderSeq": 1,
+                                "revision": 1,
+                                "contentHash": "sha256:compact-completed",
+                            },
+                        },
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+        updated = receive_session_ws_event(ws, "timeline.item_updated")
+        assert updated["type"] == "timeline.item_updated"
+        assert updated["payload"]["item"]["id"] == "context_compaction_thr_1"
+        assert updated["payload"]["item"]["status"] == "done"
+        assert updated["payload"]["item"]["content"]["state"] == "completed"
+
+
+def test_large_complete_codex_timeline_sync_refetches_once(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+    items = [
+        {
+            "id": f"tl_ws_large_{index}",
+            "sessionId": session_id,
+            "turnId": "turn_ws_large",
+            "type": "message",
+            "status": "done",
+            "role": "assistant",
+            "content": {"text": f"message {index}"},
+            "source": {
+                "runtime": "codex",
+                "sessionId": "thr_1",
+                "turnId": "turn_ws_large",
+                "itemId": f"msg_large_{index}",
+                "itemType": "agentMessage",
+            },
+            "orderSeq": index + 1,
+            "revision": 1,
+            "contentHash": f"sha256:ws-large-{index}",
+        }
+        for index in range(101)
+    ]
+    payload = {
+        "notifications": [
+            {
+                "method": "timeline.sync",
+                "params": {
+                    "sessionId": session_id,
+                    "complete": True,
+                    "items": items,
+                },
+            }
+        ]
+    }
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json=payload,
+        )
+        assert response.status_code == 200, response.text
+        event = ws.receive_json()
+        assert event["type"] == "session.refetch_required"
+        sequence_after_first_sync = asyncio.run(
+            client.app.state.store.get_session_seq(session_id)
+        )
+
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json=payload,
+        )
+        assert response.status_code == 200, response.text
+        assert (
+            asyncio.run(client.app.state.store.get_session_seq(session_id))
+            == sequence_after_first_sync
+        )
+
+
+def test_session_events_recovery_returns_json_events(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": "tl_recovery",
+                            "sessionId": session_id,
+                            "turnId": "turn_recovery",
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {"text": "hello"},
+                            "source": {
+                                "runtime": "codex",
+                                "sessionId": "thr_1",
+                                "turnId": "turn_recovery",
+                                "itemId": "msg_1",
+                                "itemType": "agentMessage",
+                            },
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:recovery",
+                        },
+                    },
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    recovered = client.get(f"/sessions/{session_id}/events", headers=headers, params={"after": "seq:0"})
+    assert recovered.status_code == 200, recovered.text
+    body = recovered.json()
+    assert body["snapshotRequired"] is False
+    assert body["nextCursor"].startswith("seq:")
+    event_types = [event["type"] for event in body["events"]]
+    assert "timeline.item_created" in event_types
+    assert "session.meta.updated" in event_types
+    assert "runtime.capability.updated" in event_types
+    capability_event = next(
+        event for event in body["events"] if event["type"] == "runtime.capability.updated"
+    )
+    assert "capabilitySet" in capability_event["payload"]
+
+
+def test_session_events_recovery_rejects_invalid_cursor(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+
+    response = client.get(
+        f"/sessions/{session_id}/events",
+        headers=headers,
+        params={"after": "1"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "invalid event cursor"
+
+
+def test_session_events_recovery_requires_snapshot_for_future_cursor(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+
+    response = client.get(
+        f"/sessions/{session_id}/events",
+        headers=headers,
+        params={"after": "seq:99"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["snapshotRequired"] is True
+    assert response.json()["events"] == []
+
+
+def test_session_events_recovery_returns_live_projection_at_current_cursor(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    assert snapshot["session"]["connectorStatus"] == "offline"
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as connector_ws:
+        connector_ws.send_json(
+            {"type": "notification", "method": "connector.heartbeat", "params": {}}
+        )
+
+        def read_online_meta():
+            response = client.get(f"/sessions/{session_id}/meta", headers=headers)
+            if response.status_code != 200:
+                return None
+            return (
+                response.json()
+                if response.json()["session"]["connectorStatus"] == "online"
+                else None
+            )
+
+        wait_for(read_online_meta)
+        response = client.get(
+            f"/sessions/{session_id}/events",
+            headers=headers,
+            params={"after": snapshot["eventCursor"]},
+        )
+
+    assert response.status_code == 200
+    recovery = response.json()
+    assert recovery["snapshotRequired"] is False
+    assert recovery["nextCursor"] == snapshot["eventCursor"]
+    assert {event["type"] for event in recovery["events"]} == {
+        "session.meta.updated",
+        "runtime.capability.updated",
+    }
+    session_event = next(
+        event for event in recovery["events"] if event["type"] == "session.meta.updated"
+    )
+    assert session_event["cursor"] == snapshot["eventCursor"]
+    assert session_event["payload"]["session"]["connectorStatus"] == "online"
+    capability_event = next(
+        event
+        for event in recovery["events"]
+        if event["type"] == "runtime.capability.updated"
+    )
+    send_capability = next(
+        capability
+        for capability in capability_event["payload"]["capabilitySet"]["capabilities"]
+        if capability["capabilityId"] == "session.send_message"
+    )
+    assert send_capability["available"] is True
+
+
+def test_session_events_recovery_returns_same_sequence_capability_change(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    before_capabilities = {
+        capability["capabilityId"]: capability
+        for capability in snapshot["effectiveCapabilities"]["capabilities"]
+    }
+    assert before_capabilities["runtime.config"]["supported"] is False
+
+    changed = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "runtime.capability.updated",
+                    "params": {
+                        "connectorId": connector_id,
+                        "runtime": "codex",
+                        "sessionId": session_id,
+                        "revision": 1,
+                        "capabilities": [
+                            {
+                                "capabilityId": "runtime.config",
+                                "scope": "session",
+                                "runtime": "codex",
+                                "sessionId": session_id,
+                                "supported": True,
+                                "available": True,
+                                "allowed": True,
+                            }
+                        ],
+                    },
+                }
+            ]
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    current = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    assert current["eventCursor"] == snapshot["eventCursor"]
+    current_capabilities = {
+        capability["capabilityId"]: capability
+        for capability in current["effectiveCapabilities"]["capabilities"]
+    }
+    assert current_capabilities["runtime.config"]["supported"] is True
+
+    response = client.get(
+        f"/sessions/{session_id}/events",
+        headers=headers,
+        params={"after": snapshot["eventCursor"]},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["nextCursor"] == snapshot["eventCursor"]
+    assert {
+        event["cursor"] for event in response.json()["events"]
+    } == {snapshot["eventCursor"]}
+    capability_event = next(
+        event
+        for event in response.json()["events"]
+        if event["type"] == "runtime.capability.updated"
+    )
+    runtime_config = next(
+        capability
+        for capability in capability_event["payload"]["capabilitySet"][
+            "capabilities"
+        ]
+        if capability["capabilityId"] == "runtime.config"
+    )
+    assert runtime_config["supported"] is True
+
+
+def test_session_events_recovery_returns_latest_upsert_for_sparse_watermark(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    def ingest(revision: int, text: str) -> None:
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.itemUpsert",
+                        "params": {
+                            "sessionId": session_id,
+                            "item": {
+                                "id": "tl_collapsed_recovery",
+                                "sessionId": session_id,
+                                "type": "message",
+                                "status": "done",
+                                "role": "assistant",
+                                "content": {"text": text},
+                                "source": {
+                                    "runtime": "codex",
+                                    "sessionId": "thr_1",
+                                    "itemId": "msg_1",
+                                    "itemType": "agentMessage",
+                                },
+                                "orderSeq": 1,
+                                "revision": revision,
+                                "contentHash": f"sha256:collapsed-{revision}",
+                            },
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+
+    ingest(1, "first")
+    ingest(2, "second")
+    response = client.get(
+        f"/sessions/{session_id}/events",
+        headers=headers,
+        params={"after": "seq:0"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["snapshotRequired"] is False
+    assert body["nextCursor"].startswith("seq:")
+    item_events = [
+        event for event in body["events"] if event["type"] == "timeline.item_updated"
+    ]
+    assert len(item_events) == 1
+    assert item_events[0]["payload"]["item"]["content"]["text"] == "second"
+
+
+def test_session_events_recovery_requires_snapshot_for_truncated_delta(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": "tl_truncated_recovery",
+                            "sessionId": session_id,
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {"text": "hello"},
+                            "source": {
+                                "runtime": "codex",
+                                "sessionId": "thr_1",
+                            },
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:truncated",
+                        },
+                    },
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    store = client.app.state.store
+    original = store.list_timeline_since
+
+    async def truncated(*, session_id: str, after_seq: int, limit: int):
+        items, _has_more = await original(
+            session_id=session_id,
+            after_seq=after_seq,
+            limit=limit,
+        )
+        return items, True
+
+    store.list_timeline_since = truncated
+    try:
+        recovery = client.get(
+            f"/sessions/{session_id}/events",
+            headers=headers,
+            params={"after": "seq:0"},
+        )
+    finally:
+        store.list_timeline_since = original
+
+    assert recovery.status_code == 200
+    assert recovery.json()["snapshotRequired"] is True
+    assert recovery.json()["events"] == []
 
 
 def test_existing_connector_session_metadata_sync_does_not_rearm_unread(tmp_path):
@@ -4702,7 +9982,7 @@ def test_existing_connector_session_metadata_sync_does_not_rearm_unread(tmp_path
         )
 
     asyncio.run(exercise())
-    read_session = client.post(f"/sessions/{session_id}/read", headers=headers).json()["session"]
+    read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
     read_seq = read_session["lastReadSeq"]
     assert read_session["unread"] is False
 
@@ -4734,7 +10014,7 @@ def test_existing_connector_session_metadata_sync_does_not_rearm_unread(tmp_path
     assert session["unread"] is False
 
 
-def test_timeline_sync_keeps_more_complete_existing_tool_item(tmp_path):
+def test_timeline_sync_accepts_latest_runtime_value_for_same_tool_id(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
@@ -4802,14 +10082,14 @@ def test_timeline_sync_keeps_more_complete_existing_tool_item(tmp_path):
             client,
             session_id,
             headers,
-            lambda items: len(items) == 1 and items[0]["content"].get("outputText") == "1\n",
+            lambda items: len(items) == 1 and items[0]["status"] == "running",
         )
         assert len(state["items"]) == 1
-        assert state["items"][0]["status"] == "done"
-        assert state["items"][0]["content"]["outputText"] == "1\n"
+        assert state["items"][0]["status"] == "running"
+        assert state["items"][0]["content"].get("outputText") is None
 
 
-def test_timeline_sync_dedupes_snapshot_message_already_seen_live(tmp_path):
+def test_timeline_sync_preserves_same_content_with_distinct_ids(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
@@ -4881,12 +10161,101 @@ def test_timeline_sync_dedupes_snapshot_message_already_seen_live(tmp_path):
             client,
             session_id,
             headers,
-            lambda items: len([item for item in items if item["type"] == "message"]) == 1,
+            lambda items: len([item for item in items if item["type"] == "message"]) == 2,
         )
-        assert [item["id"] for item in state["items"] if item["type"] == "message"] == ["tl_live_msg"]
+        assert [item["id"] for item in state["items"] if item["type"] == "message"] == [
+            "tl_live_msg",
+            "tl_snapshot_msg",
+        ]
 
 
-def test_timeline_sync_deduped_snapshot_message_does_not_rearm_unread(tmp_path):
+def test_timeline_sync_preserves_distinct_ids_for_same_source_item(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    source = {
+        "runtime": "codex",
+        "sessionId": "thr_1",
+        "turnId": "turn_1",
+        "itemId": "msg_real_1",
+        "itemType": "agentMessage",
+    }
+    live_item = {
+        "id": "tl_live_real_msg",
+        "sessionId": session_id,
+        "turnId": "turn_1",
+        "type": "message",
+        "status": "done",
+        "role": "assistant",
+        "content": {"text": "same answer", "format": "markdown"},
+        "source": source,
+        "orderSeq": 10,
+        "revision": 2,
+        "contentHash": "sha256:live-real-message",
+    }
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {"sessionId": session_id, "item": live_item},
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    snapshot_item = {
+        **live_item,
+        "id": "tl_snapshot_real_msg",
+        "source": {**source, "derivedKey": "message-agentMessage-0"},
+        "orderSeq": 20,
+        "revision": 1,
+        "contentHash": "sha256:snapshot-real-message",
+    }
+    sync_payload = {
+        "notifications": [
+            {
+                "method": "timeline.sync",
+                "params": {"sessionId": session_id, "items": [snapshot_item]},
+            }
+        ]
+    }
+    ticket = ws_ticket(client, session_id, headers)
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json=sync_payload,
+        )
+        assert response.status_code == 200, response.text
+        receive_session_ws_event(ws, "timeline.item_created")
+
+        state = session_view_for_assertions(client, session_id, headers)
+        messages = [item for item in state["items"] if item["type"] == "message"]
+        assert [item["id"] for item in messages] == [
+            "tl_live_real_msg",
+            "tl_snapshot_real_msg",
+        ]
+        sequence_after_first_sync = asyncio.run(
+            client.app.state.store.get_session_seq(session_id)
+        )
+
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json=sync_payload,
+        )
+        assert response.status_code == 200, response.text
+        assert (
+            asyncio.run(client.app.state.store.get_session_seq(session_id))
+            == sequence_after_first_sync
+        )
+
+
+def test_timeline_sync_new_distinct_id_advances_read_sequence(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
@@ -4923,7 +10292,7 @@ def test_timeline_sync_deduped_snapshot_message_does_not_rearm_unread(tmp_path):
             }
         )
         wait_for_item_update(client, session_id, headers, 0)
-        read_session = client.post(f"/sessions/{session_id}/read", headers=headers).json()["session"]
+        read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
         read_seq = read_session["lastReadSeq"]
         assert read_session["unread"] is False
 
@@ -4965,39 +10334,42 @@ def test_timeline_sync_deduped_snapshot_message_does_not_rearm_unread(tmp_path):
             return current if current["sourceObservedAt"] == "2026-06-08T00:00:02Z" else None
 
         session = wait_for(read_sessions)
-        assert session["updatedSeq"] == read_seq
+        assert session["updatedSeq"] > read_seq
         assert session["unread"] is False
 
 
-def test_approval_resolve_waits_for_connector_success_and_updates_target_item(tmp_path):
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
+def test_interaction_respond_waits_for_connector_success_and_updates_target_item(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)
     ingest_pending_command_approval(client, access_token, session_id)
     fake_rpc = FakeApprovalRpc()
     client.app.state.rpc = fake_rpc
+    notice_id = interaction_notice_id(client, session_id, headers, "approval")
 
     response = client.post(
-        "/approvals/appr_1/resolve",
+        f"/sessions/{session_id}/runtime/notices/{notice_id}/respond",
         headers=headers,
-        json={"status": "approved"},
+        json={"actionId": "approve"},
     )
 
     assert response.status_code == 200
-    assert fake_rpc.requests == [
-        (
-            connector_id,
-            "approval.resolve",
-            {
-                "approvalId": "appr_1",
-                "status": "approved",
-                "requestId": "42",
-                "sessionId": session_id,
-                "runtime": "codex",
-                "externalSessionId": f"thr_{connector_id}_demo",
-            },
-            30,
-        )
-    ]
+    requested_connector_id, method, params, timeout = next(
+        request for request in fake_rpc.requests if request[1] == "interaction.respond"
+    )
+    assert requested_connector_id == connector_id
+    assert method == "interaction.respond"
+    assert timeout == 30
+    assert params["sessionId"] == session_id
+    assert params["runtime"] == "codex"
+    assert params["externalSessionId"] == f"thr_{connector_id}_demo"
+    assert params["noticeId"] == notice_id
+    assert params["actionId"] == "approve"
+    assert params["inputData"]["approvalId"] == "appr_1"
+    assert params["inputData"]["approvalStatus"] == "approved"
+    assert params["inputData"]["requestId"] == "42"
+    assert params["inputData"]["approvalSource"]["requestId"] == "42"
+    assert params["inputData"]["approvalSource"]["method"] == "item/commandExecution/requestApproval"
     state = wait_for_state_items(
         client,
         session_id,
@@ -5007,31 +10379,307 @@ def test_approval_resolve_waits_for_connector_success_and_updates_target_item(tm
     assert state["approvals"] == []
     assert state["session"]["status"] == "idle"
     assert state["items"][0]["status"] == "done"
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    approval_notices = [notice for notice in snapshot["notices"] if notice["interactionType"] == "approval"]
+    assert approval_notices == []
 
 
-def test_approval_resolve_keeps_pending_when_connector_fails(tmp_path):
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
+def test_interaction_response_recovery_falls_back_across_legacy_approval_gap(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ingest_pending_command_approval(client, access_token, session_id)
+    client.app.state.rpc = FakeApprovalRpc()
+    notice_id = interaction_notice_id(client, session_id, headers, "approval")
+    before_seq = asyncio.run(client.app.state.store.get_session_seq(session_id))
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/notices/{notice_id}/respond",
+        headers=headers,
+        json={"actionId": "approve"},
+    )
+
+    assert response.status_code == 200, response.text
+    recovered = client.get(
+        f"/sessions/{session_id}/events",
+        headers=headers,
+        params={"after": f"seq:{before_seq}"},
+    )
+    assert recovered.status_code == 200, recovered.text
+    recovery_body = recovered.json()
+    assert recovery_body["snapshotRequired"] is False
+    runtime_notice_events = [
+        event
+        for event in recovery_body["events"]
+        if event["type"] == "runtime.notice.updated"
+    ]
+    assert len(runtime_notice_events) == 1
+    assert runtime_notice_events[0]["payload"]["notice"]["noticeId"] == notice_id
+    assert runtime_notice_events[0]["payload"]["notice"]["status"] == "resolved"
+    notice = asyncio.run(client.app.state.store.get_notice(notice_id))
+    assert notice.status == "resolved"
+
+
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
+def test_interaction_respond_keeps_pending_when_connector_fails(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
     ingest_pending_command_approval(client, access_token, session_id)
     client.app.state.rpc = FakeApprovalRpc(fail=True)
+    notice_id = interaction_notice_id(client, session_id, headers, "approval")
 
     response = client.post(
-        "/approvals/appr_1/resolve",
+        f"/sessions/{session_id}/runtime/notices/{notice_id}/respond",
         headers=headers,
-        json={"status": "approved"},
+        json={"actionId": "approve"},
     )
 
     assert response.status_code == 502
-    state = client.get(f"/sessions/{session_id}/state", headers=headers, params={"afterSeq": 0}).json()
+    state = session_view_for_assertions(
+        client,
+        session_id,
+        headers,
+        params={"afterSeq": 0},
+    )
     assert state["approvals"][0]["status"] == "pending"
     assert state["items"][0]["status"] == "waiting_approval"
     assert state["items"][0]["content"]["approval"]["status"] == "pending"
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    approval_notice = next(notice for notice in snapshot["notices"] if notice["interactionType"] == "approval")
+    assert approval_notice["status"] == "failed"
+    assert approval_notice["blocking"] == {"scope": "session", "targetId": session_id}
+    assert snapshot["session"]["status"] == "idle"
 
 
-def test_interrupted_turn_closes_pending_approval_tool_item(tmp_path):
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
+def test_approval_interaction_expires_when_runtime_no_longer_accepts_response(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
     ingest_pending_command_approval(client, access_token, session_id)
+    client.app.state.rpc = FakeApprovalRpc(gone=True)
+
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    notice_id = next(notice for notice in snapshot["notices"] if notice["interactionType"] == "approval")[
+        "noticeId"
+    ]
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/notices/{notice_id}/respond",
+        headers=headers,
+        json={"actionId": "approve"},
+    )
+
+    assert response.status_code == 409
+    notice = asyncio.run(client.app.state.store.get_notice(notice_id))
+    assert notice.status == "expired"
+    assert notice.context["approvalStatus"] == "expired"
+    assert notice.context["closedReason"] == "runtime_no_longer_accepts_response"
+
+
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
+def test_failed_approval_interaction_can_retry(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ingest_pending_command_approval(client, access_token, session_id)
+    rpc = FakeApprovalRpc(fail=True)
+    client.app.state.rpc = rpc
+    notice_id = interaction_notice_id(client, session_id, headers, "approval")
+
+    failed = client.post(
+        f"/sessions/{session_id}/runtime/notices/{notice_id}/respond",
+        headers=headers,
+        json={"actionId": "approve"},
+    )
+
+    assert failed.status_code == 502, failed.text
+    notice = asyncio.run(client.app.state.store.get_notice(notice_id))
+    assert notice.status == "failed"
+    assert notice.resolvedAt is None
+    assert notice.context["response"] == {"actionId": "approve", "input": {}}
+
+    rpc.fail = False
+    resolved = client.post(
+        f"/sessions/{session_id}/runtime/notices/{notice_id}/respond",
+        headers=headers,
+        json={"actionId": "approve"},
+    )
+
+    assert resolved.status_code == 200, resolved.text
+    notice = asyncio.run(client.app.state.store.get_notice(notice_id))
+    assert notice.status == "resolved"
+    assert notice.resolvedAt is not None
+
+
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
+def test_interaction_status_compare_and_set_rejects_stale_transition(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, _ = create_connector_and_session(client)
+    notice = asyncio.run(
+        upsert_execution_error_interaction(
+            client.app.state.store,
+            session_id=session_id,
+            error={"code": "runtime_error", "message": "boom"},
+        )
+    )
+    sequence_before = asyncio.run(client.app.state.store.get_session_seq(session_id))
+
+    with pytest.raises(ValueError, match="interaction status changed"):
+        asyncio.run(
+            client.app.state.store.update_notice_status(
+                notice.noticeId,
+                "resolved",
+                expected_status="failed",
+            )
+        )
+
+    current = asyncio.run(client.app.state.store.get_notice(notice.noticeId))
+    assert current.status == "open"
+    assert asyncio.run(client.app.state.store.get_session_seq(session_id)) == sequence_before
+
+
+def test_session_status_compare_and_set_rejects_stale_transition(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, _ = create_connector_and_session(client)
+    sequence_before = asyncio.run(client.app.state.store.get_session_seq(session_id))
+
+    with pytest.raises(ValueError, match="session status changed"):
+        asyncio.run(
+            client.app.state.store.set_session_status(
+                session_id,
+                "running",
+                expected_status="pending",
+            )
+        )
+
+    current = asyncio.run(client.app.state.store.get_session(session_id))
+    assert current.status == "idle"
+    assert asyncio.run(client.app.state.store.get_session_seq(session_id)) == sequence_before
+
+
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
+def test_session_stays_blocked_until_all_blocking_interactions_resolve(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ingest_pending_command_approval(client, access_token, session_id)
+    error_notice = asyncio.run(
+        upsert_execution_error_interaction(
+            client.app.state.store,
+            session_id=session_id,
+            error={"code": "runtime_error", "message": "boom"},
+        )
+    )
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/notices/{error_notice.noticeId}/respond",
+        headers=headers,
+        json={"actionId": "continue"},
+    )
+
+    assert response.status_code == 200, response.text
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    assert snapshot["session"]["status"] == "idle"
+    assert [notice["interactionType"] for notice in snapshot["notices"]] == ["approval"]
+
+
+def test_runtime_interruption_closes_pending_approval_tool_item(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ingest_pending_command_approval(client, access_token, session_id)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "notice.upsert",
+                    "params": {
+                        "noticeId": "notice_approval_appr_1",
+                        "type": "interaction",
+                        "sessionId": session_id,
+                        "source": {
+                            "runtime": "codex",
+                            "component": "codex",
+                            "approvalId": "appr_1",
+                            "timelineItemId": "tl_tool",
+                        },
+                        "title": "Codex wants to run a command",
+                        "message": "pwd",
+                        "severity": "warning",
+                        "status": "cancelled",
+                        "interactionType": "approval",
+                        "blocking": None,
+                        "responseRequired": False,
+                        "actions": [],
+                        "context": {
+                            "approvalId": "appr_1",
+                            "approvalStatus": "cancelled",
+                            "targetItemId": "tl_tool",
+                        },
+                    },
+                },
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": "tl_tool",
+                            "sessionId": session_id,
+                            "type": "tool",
+                            "status": "cancelled",
+                            "role": "tool",
+                            "content": {
+                                "kind": "command",
+                                "command": "pwd",
+                                "approval": {"id": "appr_1", "status": "cancelled"},
+                            },
+                            "source": {
+                                "runtime": "codex",
+                                "sessionId": "thr_1",
+                                "itemId": "call_1",
+                                "itemType": "commandExecution",
+                            },
+                            "orderSeq": 1,
+                            "revision": 2,
+                            "contentHash": "sha256:cancelled-tool",
+                        },
+                    },
+                },
+                {
+                    "method": "session.state.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "externalSessionId": "thr_1",
+                        "status": "idle",
+                        "selections": {},
+                        "metadata": {},
+                    },
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    state = session_view_for_assertions(
+        client,
+        session_id,
+        headers,
+        params={"afterSeq": 0},
+    )
+    assert state["approvals"] == []
+    tool = next(item for item in state["items"] if item["id"] == "tl_tool")
+    assert tool["status"] == "cancelled"
+    assert tool["content"]["approval"]["status"] == "cancelled"
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    assert snapshot["notices"] == []
+    assert snapshot["session"]["status"] == "idle"
+
+
+@pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
+def test_failed_turn_creates_blocking_execution_error_interaction(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
 
     response = client.post(
         "/connector/ingest",
@@ -5043,23 +10691,26 @@ def test_interrupted_turn_closes_pending_approval_tool_item(tmp_path):
                     "params": {
                         "sessionId": session_id,
                         "item": {
-                            "id": "tl_turn_end",
+                            "id": "tl_turn_end_failed",
                             "sessionId": session_id,
-                            "turnId": "turn_1",
+                            "turnId": "turn_failed",
                             "type": "turn.end",
-                            "status": "interrupted",
+                            "status": "failed",
                             "role": None,
-                            "content": {"result": "interrupted", "error": None},
+                            "content": {
+                                "result": "failed",
+                                "error": {"code": "runtime_process_exited", "message": "process exited"},
+                            },
                             "source": {
                                 "runtime": "codex",
                                 "sessionId": "thr_1",
-                                "turnId": "turn_1",
+                                "turnId": "turn_failed",
                                 "event": "turn/completed",
                                 "derivedKey": "turn-end",
                             },
                             "orderSeq": 2,
                             "revision": 1,
-                            "contentHash": "sha256:interrupted",
+                            "contentHash": "sha256:failed",
                         },
                     },
                 }
@@ -5067,12 +10718,12 @@ def test_interrupted_turn_closes_pending_approval_tool_item(tmp_path):
         },
     )
 
-    assert response.status_code == 200
-    state = client.get(f"/sessions/{session_id}/state", headers=headers, params={"afterSeq": 0}).json()
-    assert state["approvals"] == []
-    tool = next(item for item in state["items"] if item["id"] == "tl_tool")
-    assert tool["status"] == "cancelled"
-    assert tool["content"]["approval"]["status"] == "cancelled"
+    assert response.status_code == 200, response.text
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    assert snapshot["session"]["status"] == "idle"
+    notice = next(notice for notice in snapshot["notices"] if notice["interactionType"] == "execution_error")
+    assert notice["blocking"] == {"scope": "session", "targetId": session_id}
+    assert notice["context"]["error"]["code"] == "runtime_process_exited"
 
 
 def test_connector_fs_read_does_not_require_takeover(tmp_path):
@@ -5157,7 +10808,7 @@ def test_connector_fs_read_prepares_transfer_without_persisting(tmp_path):
     )
     assert prepare_response.status_code == 200
     prepared = prepare_response.json()["result"]
-    assert prepared["downloadUrl"].startswith(f"/connectors/{connector_id}/fs/transfers/")
+    assert prepared["downloadUrl"].startswith(f"/api/v2/connectors/{connector_id}/fs/transfers/")
     assert "contentBase64" not in prepared
     assert fake_rpc.requests[0][1] == "fs.prepareDownload"
     assert fake_rpc.requests[0][2]["root"] == "/repo"
@@ -5170,7 +10821,7 @@ def test_fs_download_relay_streams_uploaded_chunks():
 
 async def _exercise_fs_download_relay_streams_uploaded_chunks() -> None:
     manager = FsDownloadRelayManager()
-    transfer = manager.create(
+    transfer = await manager.create(
         connector_id="conn_1",
         root="/repo",
         path="/repo/payload.bin",
@@ -5230,7 +10881,12 @@ def test_fs_and_shell_rpc_forward_validated_workspace_params(tmp_path):
     assert write_response.status_code == 200
     assert list_response.status_code == 200
     assert shell_response.status_code == 200
-    assert fake_rpc.requests == [
+    workspace_requests = [
+        request
+        for request in fake_rpc.requests
+        if request[1] in {"fs.writeFile", "fs.readDir", "shell.exec"}
+    ]
+    assert workspace_requests == [
         (
             connector_id,
             "fs.writeFile",
@@ -5274,9 +10930,18 @@ def test_fs_and_shell_rpc_forward_windows_workspace_params(tmp_path):
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    windows_project = asyncio.run(
+        client.app.state.store.create_project(
+            user_id=account_user_id(client),
+            connector_id=connector_id,
+            name="Windows paths",
+            workspace_path=r"C:\Users\admin",
+        )
+    )
     session = asyncio.run(
         client.app.state.store.create_session(
             connector_id=connector_id,
+            project_id=windows_project.id,
             runtime="codex",
             external_session_id="thr_windows_paths",
             title="Windows paths",
@@ -5512,17 +11177,17 @@ def test_client_uploads_attachment_and_connector_downloads_by_session(tmp_path):
     upload_response = client.post(
         f"/sessions/{session_id}/attachments",
         headers=headers,
-        files={"files": ("blob.bin", data, "application/octet-stream")},
+        files={"files": ("截图.png", data, "image/png")},
     )
 
     assert upload_response.status_code == 200
     upload_body = upload_response.json()["attachments"][0]
     assert upload_body["sessionId"] == session_id
-    assert upload_body["name"] == "blob.bin"
+    assert upload_body["name"] == "截图.png"
     assert upload_body["size"] == len(data)
     assert upload_body["sha256"] == hashlib.sha256(data).hexdigest()
-    assert upload_body["downloadUrl"] == f"/sessions/{session_id}/attachments/{upload_body['fileId']}"
-    assert upload_body["openUrl"] == f"/sessions/{session_id}/attachments/{upload_body['fileId']}/open"
+    assert upload_body["downloadUrl"] == f"/api/v2/sessions/{session_id}/attachments/{upload_body['fileId']}"
+    assert upload_body["openUrl"] == f"/api/v2/sessions/{session_id}/attachments/{upload_body['fileId']}/open"
 
     download_response = client.get(upload_body["downloadUrl"], headers=headers)
 
@@ -5535,11 +11200,12 @@ def test_client_uploads_attachment_and_connector_downloads_by_session(tmp_path):
     open_response = client.get(upload_body["openUrl"], headers=headers, follow_redirects=False)
     assert open_response.status_code == 302
     local_url = open_response.headers["location"]
-    assert local_url.startswith(f"/sessions/local/{session_id}/{upload_body['fileId']}?token=")
+    assert local_url.startswith(f"/api/v2/sessions/local/{session_id}/{upload_body['fileId']}?token=")
 
     raw_response = client.get(local_url)
     assert raw_response.status_code == 200
     assert raw_response.content == data
+    assert "filename*=UTF-8''%E6%88%AA%E5%9B%BE.png" in raw_response.headers["content-disposition"]
 
     user_token_open_response = client.get(
         f"{upload_body['openUrl']}?token={headers['Authorization'].removeprefix('Bearer ')}",
@@ -5549,7 +11215,7 @@ def test_client_uploads_attachment_and_connector_downloads_by_session(tmp_path):
     assert client.get(f"{upload_body['openUrl']}-token", headers=headers).status_code == 404
 
     connector_download = client.get(
-        f"/connector/sessions/{session_id}/attachments/{upload_body['fileId']}/content",
+        f"/api/v2/connector/sessions/{session_id}/attachments/{upload_body['fileId']}/content",
         headers={"Authorization": f"Bearer {connector_access_token}"},
     )
     assert connector_download.status_code == 200
@@ -5557,17 +11223,246 @@ def test_client_uploads_attachment_and_connector_downloads_by_session(tmp_path):
     assert still_available.status_code == 200
 
 
+def test_reply_share_is_public_but_only_exposes_selected_items_and_files(
+    tmp_path,
+    monkeypatch,
+):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+    selected_data = b"selected image"
+    private_data = b"private image"
+    selected_upload = client.post(
+        f"/sessions/{session_id}/attachments",
+        headers=headers,
+        files={"files": ("selected.png", selected_data, "image/png")},
+    )
+    private_upload = client.post(
+        f"/sessions/{session_id}/attachments",
+        headers=headers,
+        files={"files": ("private.png", private_data, "image/png")},
+    )
+    assert selected_upload.status_code == 200, selected_upload.text
+    assert private_upload.status_code == 200, private_upload.text
+    selected_file = selected_upload.json()["attachments"][0]
+    private_file = private_upload.json()["attachments"][0]
+
+    async def seed_items() -> None:
+        from agent_server.core.models import TimelineItemIn
+
+        store = client.app.state.store
+        items = [
+            {
+                "id": "tl_user",
+                "role": "user",
+                "content": {"text": "look at both"},
+            },
+            {
+                "id": "tl_selected",
+                "role": "assistant",
+                "content": {
+                    "text": "selected reply",
+                    "attachments": [
+                        {
+                            "fileId": selected_file["fileId"],
+                            "name": "selected.png",
+                            "mediaType": "image/png",
+                        }
+                    ],
+                },
+            },
+            {
+                "id": "tl_private",
+                "role": "assistant",
+                "content": {
+                    "text": "other reply",
+                    "attachments": [
+                        {
+                            "fileId": private_file["fileId"],
+                            "name": "private.png",
+                            "mediaType": "image/png",
+                        }
+                    ],
+                },
+            },
+        ]
+        for order_seq, item in enumerate(items, start=1):
+            await store.upsert_timeline_item(
+                session_id=session_id,
+                item=TimelineItemIn.model_validate(
+                    {
+                        **item,
+                        "sessionId": session_id,
+                        "type": "message",
+                        "status": "done",
+                        "source": {
+                            "runtime": "codex",
+                            "sessionId": "thr_share",
+                            "itemId": item["id"],
+                        },
+                        "orderSeq": order_seq,
+                        "revision": 1,
+                        "contentHash": f"sha256:{item['id']}",
+                    }
+                ),
+            )
+
+    asyncio.run(seed_items())
+    monkeypatch.setenv("AGENT_SERVER_PUBLIC_ORIGIN", "https://agents.example")
+
+    create_response = client.post(
+        f"/sessions/{session_id}/shares",
+        headers=headers,
+        json={"scope": "message", "itemIds": ["tl_selected"]},
+    )
+
+    assert create_response.status_code == 201, create_response.text
+    share = create_response.json()
+    assert share["shareUrl"] == f"https://agents.example/share/{share['shareId']}"
+    public_response = client.get(f"/api/v2/public/shares/{share['shareId']}")
+    assert public_response.status_code == 200, public_response.text
+    assert [item["id"] for item in public_response.json()["items"]] == [
+        "tl_selected"
+    ]
+
+    selected_response = client.get(
+        f"/api/v2/public/shares/{share['shareId']}/attachments/{selected_file['fileId']}"
+    )
+    assert selected_response.status_code == 200
+    assert selected_response.content == selected_data
+    assert selected_response.headers["content-type"] == "image/png"
+    private_response = client.get(
+        f"/api/v2/public/shares/{share['shareId']}/attachments/{private_file['fileId']}"
+    )
+    assert private_response.status_code == 404
+
+    user_item_response = client.post(
+        f"/sessions/{session_id}/shares",
+        headers=headers,
+        json={"scope": "message", "itemIds": ["tl_user"]},
+    )
+    assert user_item_response.status_code == 422
+
+    other_user_headers = auth_headers(client, user_id="share_other")
+    forbidden_response = client.post(
+        f"/sessions/{session_id}/shares",
+        headers=other_user_headers,
+        json={"scope": "session", "itemIds": []},
+    )
+    assert forbidden_response.status_code == 404
+
+
+def test_session_share_is_an_immutable_snapshot(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+
+    async def seed_item(item_id: str, order_seq: int) -> None:
+        from agent_server.core.models import TimelineItemIn
+
+        await client.app.state.store.upsert_timeline_item(
+            session_id=session_id,
+            item=TimelineItemIn.model_validate(
+                {
+                    "id": item_id,
+                    "sessionId": session_id,
+                    "type": "message",
+                    "status": "done",
+                    "role": "assistant",
+                    "content": {"text": item_id},
+                    "source": {
+                        "runtime": "codex",
+                        "sessionId": "thr_snapshot",
+                        "itemId": item_id,
+                    },
+                    "orderSeq": order_seq,
+                    "revision": 1,
+                    "contentHash": f"sha256:{item_id}",
+                }
+            ),
+        )
+
+    asyncio.run(seed_item("tl_before_share", 1))
+    create_response = client.post(
+        f"/sessions/{session_id}/shares",
+        headers=headers,
+        json={"scope": "session", "itemIds": []},
+    )
+    assert create_response.status_code == 201, create_response.text
+    share_id = create_response.json()["shareId"]
+
+    asyncio.run(seed_item("tl_after_share", 2))
+    public_response = client.get(f"/api/v2/public/shares/{share_id}")
+
+    assert public_response.status_code == 200, public_response.text
+    assert [item["id"] for item in public_response.json()["items"]] == [
+        "tl_before_share"
+    ]
+
+
+def test_session_share_flushes_pending_timeline_before_snapshot(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("AGENT_SERVER_TIMELINE_FLUSH_INTERVAL_SECONDS", "60")
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+    pending = asyncio.run(
+        client.app.state.timeline_write_buffer.accept(
+            session_id=session_id,
+            item=TimelineItemIn.model_validate(
+                {
+                    "id": "tl_pending_share",
+                    "sessionId": session_id,
+                    "type": "message",
+                    "status": "done",
+                    "role": "assistant",
+                    "content": {"text": "pending reply"},
+                    "source": {
+                        "runtime": "codex",
+                        "itemId": "pending-share",
+                    },
+                    "orderSeq": 1,
+                    "revision": 1,
+                    "contentHash": "sha256:pending-share",
+                }
+            ),
+        )
+    )
+    assert asyncio.run(client.app.state.store.timeline.read(session_id)) == []
+
+    create_response = client.post(
+        f"/sessions/{session_id}/shares",
+        headers=headers,
+        json={"scope": "session", "itemIds": []},
+    )
+
+    assert create_response.status_code == 201, create_response.text
+    stored = asyncio.run(client.app.state.store.timeline.read(session_id))
+    assert [item.id for item in stored] == ["tl_pending_share"]
+    assert stored[0].updatedSeq == pending.item.updatedSeq
+
+    share_id = create_response.json()["shareId"]
+    public_response = client.get(f"/api/v2/public/shares/{share_id}")
+    assert public_response.status_code == 200, public_response.text
+    assert [item["id"] for item in public_response.json()["items"]] == [
+        "tl_pending_share"
+    ]
+
+
 async def _exercise_rpc_manager():
     manager = ConnectorRpcManager()
     websocket = FakeWebSocket()
-    manager.register("conn_1", websocket)  # type: ignore[arg-type]
+    await manager.register("conn_1", websocket)  # type: ignore[arg-type]
 
     request_task = asyncio.create_task(
-        manager.request("conn_1", "turn.start", {"sessionId": "sess_1", "content": "hi"})
+        manager.request(
+            "conn_1",
+            "session.send_message",
+            {"sessionId": "sess_1", "content": "hi"},
+        )
     )
     sent = await asyncio.wait_for(websocket.sent.get(), timeout=1)
     assert sent["type"] == "request"
-    assert sent["method"] == "turn.start"
+    assert sent["method"] == "session.send_message"
     assert sent["params"] == {"sessionId": "sess_1", "content": "hi"}
 
     manager.resolve_response(
@@ -5576,10 +11471,10 @@ async def _exercise_rpc_manager():
             "id": sent["id"],
             "type": "response",
             "ok": True,
-            "result": {"turnId": "turn_1"},
+            "result": {"accepted": True},
         },
     )
-    assert await asyncio.wait_for(request_task, timeout=1) == {"turnId": "turn_1"}
+    assert await asyncio.wait_for(request_task, timeout=1) == {"accepted": True}
 
 
 def _create_extra_session(
@@ -5588,35 +11483,56 @@ def _create_extra_session(
     connector_id: str,
     external_id: str,
     title: str = "Extra",
+    *,
+    project_id: str | None = None,
+    cwd: str = "/repo",
 ) -> str:
+    if project_id is None:
+        project_id = _create_test_project(client, headers, connector_id, cwd)
+    payload = {
+        "connectorId": connector_id,
+        "projectId": project_id,
+        "runtime": "codex",
+        "externalSessionId": external_id,
+        "title": title,
+        "cwd": cwd,
+    }
     response = client.post(
         "/sessions",
         headers=headers,
-        json={
-            "connectorId": connector_id,
-            "runtime": "codex",
-            "externalSessionId": external_id,
-            "title": title,
-            "cwd": "/repo",
-        },
+        json=payload,
     )
     assert response.status_code == 200, response.text
     return response.json()["session"]["id"]
 
 
 def _sessions_by_id(client: TestClient, headers: dict[str, str]) -> dict[str, Any]:
-    return {s["id"]: s for s in client.get("/sessions", headers=headers).json()["sessions"]}
+    sessions: dict[str, Any] = {}
+    for archived in (False, True):
+        cursor = None
+        while True:
+            params = {"archived": archived, "limit": 100}
+            if cursor is not None:
+                params["cursor"] = cursor
+            response = client.get("/sessions", headers=headers, params=params)
+            response.raise_for_status()
+            body = response.json()
+            sessions.update({session["id"]: session for session in body["sessions"]})
+            cursor = body["nextCursor"]
+            if not body["hasMore"]:
+                break
+    return sessions
 
 
-def test_bulk_archive_archives_owned_sessions(tmp_path):
+def test_archive_endpoint_archives_owned_sessions(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_a, headers = create_connector_and_session(client)
     session_b = _create_extra_session(client, headers, connector_id, "thr_b", title="B")
 
     response = client.post(
-        "/sessions/bulk-archive",
+        "/sessions/archive",
         headers=headers,
-        json={"ids": [session_a, session_b], "archived": True},
+        json=[session_a, session_b],
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -5629,19 +11545,37 @@ def test_bulk_archive_archives_owned_sessions(tmp_path):
     assert current[session_b]["archived"] is True
 
 
-def test_bulk_archive_can_unarchive(tmp_path):
+def test_archive_endpoint_accepts_session_id_array(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_a, headers = create_connector_and_session(client)
+    session_b = _create_extra_session(client, headers, connector_id, "thr_b", title="B")
+
+    response = client.post(
+        "/sessions/archive",
+        headers=headers,
+        json=[session_a, session_b, "missing"],
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert {session["id"] for session in body["sessions"]} == {session_a, session_b}
+    assert body["notFound"] == ["missing"]
+    assert all(session["archived"] is True for session in body["sessions"])
+
+
+def test_unarchive_endpoint_can_unarchive(tmp_path):
     client = make_client(tmp_path)
     _, _, session_id, headers = create_connector_and_session(client)
 
     client.post(
-        "/sessions/bulk-archive",
+        "/sessions/archive",
         headers=headers,
-        json={"ids": [session_id], "archived": True},
+        json=[session_id],
     ).raise_for_status()
     response = client.post(
-        "/sessions/bulk-archive",
+        "/sessions/unarchive",
         headers=headers,
-        json={"ids": [session_id], "archived": False},
+        json=[session_id],
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -5649,15 +11583,15 @@ def test_bulk_archive_can_unarchive(tmp_path):
     assert body["sessions"][0]["archivedAt"] is None
 
 
-def test_bulk_archive_filters_unowned_ids(tmp_path):
+def test_archive_endpoint_filters_unowned_ids(tmp_path):
     client = make_client(tmp_path)
     _, _, session_one, user_one_headers = create_connector_and_session(client, user_id=ADMIN_USER)
     _, _, session_two, user_two_headers = create_connector_and_session(client, user_id="user2")
 
     response = client.post(
-        "/sessions/bulk-archive",
+        "/sessions/archive",
         headers=user_one_headers,
-        json={"ids": [session_one, session_two, "not-a-session"], "archived": True},
+        json=[session_one, session_two, "not-a-session"],
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -5669,29 +11603,72 @@ def test_bulk_archive_filters_unowned_ids(tmp_path):
     assert other_state[session_two]["archived"] is False
 
 
-def test_bulk_archive_rejects_empty_ids(tmp_path):
+def test_archive_endpoint_rejects_empty_ids(tmp_path):
     client = make_client(tmp_path)
     _, _, _, headers = create_connector_and_session(client)
     response = client.post(
-        "/sessions/bulk-archive",
+        "/sessions/archive",
         headers=headers,
-        json={"ids": [], "archived": True},
+        json=[],
     )
     assert response.status_code == 422
 
 
-def test_bulk_archive_rejects_too_many_ids(tmp_path):
+def test_archive_endpoint_rejects_too_many_ids(tmp_path):
     client = make_client(tmp_path)
     _, _, _, headers = create_connector_and_session(client)
     response = client.post(
-        "/sessions/bulk-archive",
+        "/sessions/archive",
         headers=headers,
-        json={"ids": [f"id-{i}" for i in range(201)], "archived": True},
+        json=[f"id-{i}" for i in range(201)],
     )
     assert response.status_code == 422
 
 
-def test_bulk_read_marks_owned_sessions_read(tmp_path):
+def test_read_endpoint_flushes_pending_timeline_before_marking_read(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("AGENT_SERVER_TIMELINE_FLUSH_INTERVAL_SECONDS", "60")
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+    pending = asyncio.run(
+        client.app.state.timeline_write_buffer.accept(
+            session_id=session_id,
+            item=TimelineItemIn.model_validate(
+                {
+                    "id": "tl_pending_read",
+                    "sessionId": session_id,
+                    "type": "message",
+                    "status": "done",
+                    "role": "assistant",
+                    "content": {"text": "pending"},
+                    "source": {"runtime": "codex", "itemId": "pending-read"},
+                    "orderSeq": 1,
+                    "revision": 1,
+                    "contentHash": "sha256:pending-read",
+                }
+            ),
+            mark_read_on_change=True,
+        )
+    )
+    assert asyncio.run(client.app.state.store.timeline.read(session_id)) == []
+
+    response = client.post(
+        "/sessions/read",
+        headers=headers,
+        json=[session_id],
+    )
+
+    assert response.status_code == 200, response.text
+    stored = asyncio.run(client.app.state.store.timeline.read(session_id))
+    assert [item.id for item in stored] == ["tl_pending_read"]
+    assert stored[0].updatedSeq == pending.item.updatedSeq
+    read_session = response.json()["sessions"][0]
+    assert read_session["lastReadSeq"] == pending.item.updatedSeq
+
+
+def test_read_endpoint_marks_owned_sessions_read(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_a, headers = create_connector_and_session(client)
     session_b = _create_extra_session(client, headers, connector_id, "thr_b", title="B")
@@ -5732,9 +11709,9 @@ def test_bulk_read_marks_owned_sessions_read(tmp_path):
         )
 
     response = client.post(
-        "/sessions/bulk-read",
+        "/sessions/read",
         headers=headers,
-        json={"ids": [session_a, session_b, session_a]},
+        json=[session_a, session_b, session_a],
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -5749,36 +11726,153 @@ def test_bulk_read_marks_owned_sessions_read(tmp_path):
     assert current[session_b]["lastReadSeq"] == current[session_b]["updatedSeq"]
 
 
-def test_bulk_read_filters_unowned_ids(tmp_path):
+def test_read_endpoint_accepts_session_id_array(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_a, headers = create_connector_and_session(client)
+    session_b = _create_extra_session(client, headers, connector_id, "thr_b", title="B")
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        for session_id, item_id in ((session_a, "msg_a"), (session_b, "msg_b")):
+            ws.send_json(
+                {
+                    "type": "notification",
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": f"tl_{item_id}",
+                            "sessionId": session_id,
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {"text": item_id, "format": "markdown"},
+                            "source": {"runtime": "codex", "itemId": item_id},
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": f"sha256:{item_id}",
+                        },
+                    },
+                }
+            )
+        wait_for(
+            lambda: (
+                state
+                if (state := _sessions_by_id(client, headers))[session_a]["unread"]
+                and state[session_b]["unread"]
+                else None
+            )
+        )
+
+    response = client.post(
+        "/sessions/read",
+        headers=headers,
+        json=[session_a, session_b, session_a],
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["notFound"] == []
+    assert [session["id"] for session in body["sessions"]] == [session_a, session_b]
+    assert all(session["unread"] is False for session in body["sessions"])
+
+
+def test_read_endpoint_filters_unowned_ids(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("AGENT_SERVER_TIMELINE_FLUSH_INTERVAL_SECONDS", "60")
     client = make_client(tmp_path)
     _, _, session_one, user_one_headers = create_connector_and_session(client, user_id=ADMIN_USER)
     _, _, session_two, _ = create_connector_and_session(client, user_id="user2")
+    asyncio.run(
+        client.app.state.timeline_write_buffer.accept(
+            session_id=session_two,
+            item=TimelineItemIn.model_validate(
+                {
+                    "id": "tl_foreign_pending",
+                    "sessionId": session_two,
+                    "type": "message",
+                    "status": "done",
+                    "role": "assistant",
+                    "content": {"text": "foreign"},
+                    "source": {"runtime": "codex", "itemId": "foreign"},
+                    "orderSeq": 1,
+                    "revision": 1,
+                    "contentHash": "sha256:foreign",
+                }
+            ),
+        )
+    )
+    assert asyncio.run(client.app.state.store.timeline.read(session_two)) == []
 
     response = client.post(
-        "/sessions/bulk-read",
+        "/sessions/read",
         headers=user_one_headers,
-        json={"ids": [session_one, session_two, "not-a-session"]},
+        json=[session_one, session_two, "not-a-session"],
     )
     assert response.status_code == 200, response.text
     body = response.json()
     assert {s["id"] for s in body["sessions"]} == {session_one}
     assert set(body["notFound"]) == {session_two, "not-a-session"}
+    assert asyncio.run(client.app.state.store.timeline.read(session_two)) == []
 
 
-def test_bulk_read_rejects_empty_ids(tmp_path):
+def test_list_endpoint_does_not_flush_unowned_pending_timeline(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("AGENT_SERVER_TIMELINE_FLUSH_INTERVAL_SECONDS", "60")
+    client = make_client(tmp_path)
+    _, _, session_one, user_one_headers = create_connector_and_session(
+        client,
+        user_id=ADMIN_USER,
+    )
+    _, _, session_two, _ = create_connector_and_session(client, user_id="user2")
+    asyncio.run(
+        client.app.state.timeline_write_buffer.accept(
+            session_id=session_two,
+            item=TimelineItemIn.model_validate(
+                {
+                    "id": "tl_foreign_pending_list",
+                    "sessionId": session_two,
+                    "type": "message",
+                    "status": "done",
+                    "role": "assistant",
+                    "content": {"text": "foreign"},
+                    "source": {"runtime": "codex", "itemId": "foreign-list"},
+                    "orderSeq": 1,
+                    "revision": 1,
+                    "contentHash": "sha256:foreign-list",
+                }
+            ),
+        )
+    )
+    assert asyncio.run(client.app.state.store.timeline.read(session_two)) == []
+
+    response = client.get("/sessions", headers=user_one_headers)
+
+    assert response.status_code == 200, response.text
+    assert [session["id"] for session in response.json()["sessions"]] == [session_one]
+    assert asyncio.run(client.app.state.store.timeline.read(session_two)) == []
+
+
+def test_read_endpoint_rejects_empty_ids(tmp_path):
     client = make_client(tmp_path)
     _, _, _, headers = create_connector_and_session(client)
-    response = client.post("/sessions/bulk-read", headers=headers, json={"ids": []})
+    response = client.post("/sessions/read", headers=headers, json=[])
     assert response.status_code == 422
 
 
-def test_bulk_read_rejects_too_many_ids(tmp_path):
+def test_read_endpoint_rejects_too_many_ids(tmp_path):
     client = make_client(tmp_path)
     _, _, _, headers = create_connector_and_session(client)
     response = client.post(
-        "/sessions/bulk-read",
+        "/sessions/read",
         headers=headers,
-        json={"ids": [f"id-{i}" for i in range(201)]},
+        json=[f"id-{i}" for i in range(201)],
     )
     assert response.status_code == 422
 
@@ -5788,9 +11882,9 @@ def test_archive_all_scope_active_skips_archived(tmp_path):
     connector_id, _, active_session, headers = create_connector_and_session(client)
     already_archived = _create_extra_session(client, headers, connector_id, "thr_arch")
     client.post(
-        "/sessions/bulk-archive",
+        "/sessions/archive",
         headers=headers,
-        json={"ids": [already_archived], "archived": True},
+        json=[already_archived],
     ).raise_for_status()
 
     response = client.post(
@@ -5813,9 +11907,9 @@ def test_archive_all_scope_archived_can_unarchive(tmp_path):
     connector_id, _, session_a, headers = create_connector_and_session(client)
     session_b = _create_extra_session(client, headers, connector_id, "thr_b")
     client.post(
-        "/sessions/bulk-archive",
+        "/sessions/archive",
         headers=headers,
-        json={"ids": [session_a, session_b], "archived": True},
+        json=[session_a, session_b],
     ).raise_for_status()
 
     response = client.post(
@@ -5863,3 +11957,325 @@ class FakeWebSocket:
 
     async def send_json(self, message: dict[str, Any]) -> None:
         await self.sent.put(message)
+
+
+def test_project_crud_adopts_the_workspace_project_and_enforces_ownership(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    created = client.post(
+        "/projects",
+        headers=headers,
+        json={
+            "name": "  Agents Anywhere  ",
+            "connectorId": connector_id,
+            "workspacePath": "/repo/",
+            "attachMatchingSessions": True,
+        },
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()
+    project = body["project"]
+    project_id = project["id"]
+    # The session already at /repo resolves into this project, so the count is 1
+    # even though project creation never binds sessions (attachedSessions stays 0).
+    me = client.get("/auth/me", headers=headers).json()
+    assert {key: value for key, value in project.items() if key != "lastActivityAt"} == {
+        "id": project_id,
+        "userId": me["userId"],
+        "connectorId": connector_id,
+        "name": "Agents Anywhere",
+        "workspacePath": "/repo",
+        "pinned": False,
+        "pinnedAt": None,
+        "manuallyCreated": True,
+        "activeSessionCount": 1,
+        "sidebarSessionCounts": {"active": 1, "archived": 0},
+        "createdAt": project["createdAt"],
+        "updatedAt": project["updatedAt"],
+    }
+    assert project["lastActivityAt"] is not None
+    assert body["attachedSessions"] == 0
+
+    # The session already resolves to this workspace's project.
+    session = client.get(
+        f"/sessions/{session_id}/meta",
+        headers=headers,
+    ).json()["session"]
+    assert session["projectId"] == project_id
+
+    listed = client.get("/projects", headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert [item["id"] for item in listed.json()["projects"]] == [project_id]
+
+    patched = client.patch(
+        f"/projects/{project_id}",
+        headers=headers,
+        json={"name": "Renamed", "pinned": True},
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["project"]["name"] == "Renamed"
+    assert patched.json()["project"]["pinned"] is True
+    assert patched.json()["project"]["pinnedAt"] is not None
+
+    immutable = client.patch(
+        f"/projects/{project_id}",
+        headers=headers,
+        json={"workspacePath": "/somewhere-else"},
+    )
+    assert immutable.status_code == 422
+
+    same_workspace = client.post(
+        "/projects",
+        headers=headers,
+        json={
+            "name": "Second project",
+            "connectorId": connector_id,
+            "workspacePath": "/repo",
+        },
+    )
+    assert same_workspace.status_code == 200, same_workspace.text
+    second_project = same_workspace.json()["project"]
+    # One project per workspace: a second create adopts the existing project.
+    assert second_project["id"] == project_id
+    assert second_project["workspacePath"] == project["workspacePath"]
+    assert same_workspace.json()["attachedSessions"] == 0
+
+    session = client.get(
+        f"/sessions/{session_id}/meta",
+        headers=headers,
+    ).json()["session"]
+    assert session["projectId"] == project_id
+    projects = client.get("/projects", headers=headers).json()["projects"]
+    assert [item["id"] for item in projects] == [project_id]
+
+    other_headers = auth_headers(client, user_id="user2")
+    assert client.get("/projects", headers=other_headers).json()["projects"] == []
+    assert (
+        client.patch(
+            f"/projects/{project_id}",
+            headers=other_headers,
+            json={"name": "Not Mine"},
+        ).status_code
+        == 404
+    )
+    assert client.delete(f"/projects/{project_id}", headers=other_headers).status_code == 404
+
+
+def test_project_delete_is_refused_while_sessions_still_resolve_to_it(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    created = client.post(
+        "/projects",
+        headers=headers,
+        json={
+            "name": "Project",
+            "connectorId": connector_id,
+            "workspacePath": "/repo",
+        },
+    )
+    project_id = created.json()["project"]["id"]
+    bound_session_id = _create_extra_session(
+        client,
+        headers,
+        connector_id,
+        "thr_project_bound_for_delete",
+        project_id=project_id,
+    )
+
+    # sessions.project_id is ON DELETE RESTRICT, so the delete is refused while
+    # any session still points at the project; nothing is unbound implicitly.
+    deleted = client.delete(f"/projects/{project_id}", headers=headers)
+    assert deleted.status_code == 409, deleted.text
+    assert "archive or move them" in deleted.json()["detail"]
+
+    projects = client.get("/projects", headers=headers).json()["projects"]
+    assert [item["id"] for item in projects] == [project_id]
+    bound_session = client.get(
+        f"/sessions/{bound_session_id}/meta",
+        headers=headers,
+    )
+    assert bound_session.status_code == 200
+    assert bound_session.json()["session"]["projectId"] == project_id
+    standalone_session = client.get(
+        f"/sessions/{session_id}/meta",
+        headers=headers,
+    )
+    assert standalone_session.status_code == 200
+
+
+def test_project_sessions_list_and_archive_all_are_scoped_to_project(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, existing_session, headers = create_connector_and_session(client)
+    unmatched = _create_extra_session(
+        client, headers, connector_id, "thr_other_workspace", title="Other", cwd="/other"
+    )
+    created = client.post(
+        "/projects",
+        headers=headers,
+        json={
+            "name": "Project",
+            "connectorId": connector_id,
+            "workspacePath": "/project-repo",
+        },
+    )
+    project_id = created.json()["project"]["id"]
+    session_a = _create_extra_session(
+        client,
+        headers,
+        connector_id,
+        "thr_project_a",
+        project_id=project_id,
+        cwd="/project-repo",
+    )
+    session_b = _create_extra_session(
+        client,
+        headers,
+        connector_id,
+        "thr_project_b",
+        project_id=project_id,
+        cwd="/project-repo",
+    )
+
+    listed = client.get(
+        f"/projects/{project_id}/sessions",
+        headers=headers,
+    )
+    assert listed.status_code == 200, listed.text
+    assert {session["id"] for session in listed.json()["sessions"]} == {
+        session_a,
+        session_b,
+    }
+    assert all(
+        session["projectId"] == project_id
+        for session in listed.json()["sessions"]
+    )
+
+    archived = client.post(
+        f"/projects/{project_id}/sessions/archive-all",
+        headers=headers,
+        json={"archived": True, "scope": "active"},
+    )
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["affected"] == 2
+    assert {session["id"] for session in archived.json()["sessions"]} == {
+        session_a,
+        session_b,
+    }
+    assert all(session["archived"] is True for session in archived.json()["sessions"])
+
+    archived_page = client.get(
+        f"/projects/{project_id}/sessions",
+        headers=headers,
+        params={"archived": True},
+    )
+    assert {session["id"] for session in archived_page.json()["sessions"]} == {
+        session_a,
+        session_b,
+    }
+    assert client.get(
+        f"/sessions/{unmatched}/meta",
+        headers=headers,
+    ).json()["session"]["archived"] is False
+    existing = client.get(
+        f"/sessions/{existing_session}/meta",
+        headers=headers,
+    ).json()["session"]
+    assert existing["projectId"] != project_id
+    assert existing["archived"] is False
+
+
+def test_session_create_validates_and_persists_project_binding(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, _, headers = create_connector_and_session(client)
+    created = client.post(
+        "/projects",
+        headers=headers,
+        json={
+            "name": "Other Workspace",
+            "connectorId": connector_id,
+            "workspacePath": "/project",
+        },
+    )
+    project_id = created.json()["project"]["id"]
+
+    matching = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "projectId": project_id,
+            "runtime": "codex",
+            "externalSessionId": "thr_project_bound",
+            "title": "Bound",
+            "cwd": "/project",
+        },
+    )
+    assert matching.status_code == 200, matching.text
+    assert matching.json()["session"]["projectId"] == project_id
+
+    mismatch = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "projectId": project_id,
+            "runtime": "codex",
+            "externalSessionId": "thr_project_mismatch",
+            "title": "Mismatch",
+            "cwd": "/wrong",
+        },
+    )
+    assert mismatch.status_code == 422
+    assert mismatch.json()["detail"]["code"] == "project_workspace_mismatch"
+
+    user_two_connector, _, _, user_two_headers = create_connector_and_session(
+        client,
+        user_id="user2",
+    )
+    unowned = client.post(
+        "/sessions",
+        headers=user_two_headers,
+        json={
+            "connectorId": user_two_connector,
+            "projectId": project_id,
+            "runtime": "codex",
+            "externalSessionId": "thr_unowned_project",
+            "title": "Unowned",
+            "cwd": "/project",
+        },
+    )
+    assert unowned.status_code == 404
+    assert unowned.json()["detail"] == "project not found"
+
+
+def test_dashboard_snapshot_includes_projects_and_refreshes_after_create(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    ticket = dashboard_ws_ticket(client, headers)
+
+    with client.websocket_connect(f"/dashboard/ws?ticket={ticket}") as ws:
+        initial = ws.receive_json()
+        assert len(initial["projects"]) == 1
+        existing_project_id = initial["projects"][0]["id"]
+
+        created = client.post(
+            "/projects",
+            headers=headers,
+            json={
+                "name": "Live Project",
+                "connectorId": connector_id,
+                "workspacePath": "/live-project",
+            },
+        )
+        assert created.status_code == 200, created.text
+        project_id = created.json()["project"]["id"]
+        refreshed = ws.receive_json()
+
+    assert {project["id"] for project in refreshed["projects"]} == {existing_project_id, project_id}
+    refreshed_session = next(
+        session for session in refreshed["sessions"] if session["id"] == session_id
+    )
+    assert refreshed_session["projectId"] == existing_project_id

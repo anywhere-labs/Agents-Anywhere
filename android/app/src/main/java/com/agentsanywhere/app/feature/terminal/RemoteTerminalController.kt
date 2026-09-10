@@ -360,6 +360,11 @@ class RemoteTerminalController(
                     diag("ws closed code=$code reason=$reason manual=$manuallyClosed terminal=$terminalId")
                     if (socket !== webSocket) return
                     socket = null
+                    if (isUnauthorizedTerminalConnection(closeCode = code)) {
+                        manuallyClosed = true
+                        streamAuthorizationToken?.let(terminalController::notifyUnauthorized)
+                        return
+                    }
                     if (!manuallyClosed) {
                         scheduleReconnect()
                     }
@@ -369,7 +374,8 @@ class RemoteTerminalController(
                     diag("ws failure ${t::class.java.simpleName}: ${t.message} manual=$manuallyClosed terminal=$terminalId")
                     if (socket !== webSocket) return
                     socket = null
-                    if (response?.code == 401) {
+                    if (isUnauthorizedTerminalConnection(httpStatusCode = response?.code)) {
+                        manuallyClosed = true
                         streamAuthorizationToken?.let(terminalController::notifyUnauthorized)
                         return
                     }
@@ -765,6 +771,13 @@ class RemoteTerminalController(
         private const val REMOTE_RESIZE_DEBOUNCE_MS = 160L
         private const val OUTPUT_DRAIN_DELAY_MS = 16L
     }
+}
+
+internal fun isUnauthorizedTerminalConnection(
+    httpStatusCode: Int? = null,
+    closeCode: Int? = null,
+): Boolean {
+    return httpStatusCode == 401 || closeCode == 4401
 }
 
 data class RemoteTerminalState(

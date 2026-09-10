@@ -1,7 +1,6 @@
 package com.agentsanywhere.app.ui.screens.devices
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,14 +25,14 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.agentsanywhere.app.R
-import com.agentsanywhere.app.feature.devices.DeviceDetailAgent
+import com.agentsanywhere.app.feature.devices.DeviceRuntime
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 
 internal sealed interface DeviceConfirmAction {
     data object DeleteDevice : DeviceConfirmAction
     data class RevokeDevice(val deviceName: String) : DeviceConfirmAction
-    data class DeleteAgent(val agent: DeviceDetailAgent) : DeviceConfirmAction
+    data class DeleteRuntimeConfig(val runtime: DeviceRuntime) : DeviceConfirmAction
     data class ArchiveAllSessions(
         val deviceName: String,
         val archived: Boolean,
@@ -49,11 +48,6 @@ internal fun DeviceConfirmDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    val colors = LocalAAColors.current
-    val darkMode = colors.canvas == Color(0xFF09090B)
-    val shape = RoundedCornerShape(26.dp)
-    val surface = if (darkMode) Color(0xFF18181B) else Color.White
-    val secondaryButton = if (darkMode) Color(0xFF27272A) else Color(0xFFF3F3F3)
     val title: String
     val body: String
     val confirmLabel: String
@@ -76,15 +70,22 @@ internal fun DeviceConfirmDialog(
             body = stringResource(R.string.device_confirm_revoke_body, action.deviceName)
             confirmLabel = if (busy) stringResource(R.string.device_confirm_revoking) else stringResource(R.string.common_revoke)
         }
-        is DeviceConfirmAction.DeleteAgent -> {
+        is DeviceConfirmAction.DeleteRuntimeConfig -> {
             danger = true
-            val label = action.agent.label
-            title = stringResource(R.string.device_confirm_remove_agent_title, label)
-            body = stringResource(R.string.device_confirm_remove_agent_body, label)
+            val label = action.runtime.labels.primary
+            title = stringResource(R.string.device_confirm_delete_runtime_config_title, label)
+            body = stringResource(
+                if (action.runtime.active) {
+                    R.string.device_confirm_delete_active_runtime_config_body
+                } else {
+                    R.string.device_confirm_delete_runtime_config_body
+                },
+                label,
+            )
             confirmLabel = when {
-                busy -> stringResource(R.string.device_confirm_removing)
-                errorMessage != null -> stringResource(R.string.device_confirm_retry_remove)
-                else -> stringResource(R.string.device_confirm_remove_agent)
+                busy -> stringResource(R.string.device_confirm_deleting)
+                errorMessage != null -> stringResource(R.string.device_confirm_retry_delete)
+                else -> stringResource(R.string.device_confirm_delete_runtime_config)
             }
         }
         is DeviceConfirmAction.ArchiveAllSessions -> {
@@ -106,6 +107,39 @@ internal fun DeviceConfirmDialog(
         }
     }
 
+    DeviceConfirmDialog(
+        title = title,
+        body = body,
+        confirmLabel = confirmLabel,
+        danger = danger,
+        busy = busy,
+        errorMessage = errorMessage,
+        onDismiss = onDismiss,
+        onConfirm = onConfirm,
+    )
+}
+
+@Composable
+internal fun DeviceConfirmDialog(
+    title: String,
+    body: String,
+    confirmLabel: String,
+    dismissLabel: String = stringResource(R.string.common_cancel),
+    danger: Boolean = false,
+    busy: Boolean = false,
+    errorMessage: String? = null,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val colors = LocalAAColors.current
+    val darkMode = colors.isDark
+    val shape = RoundedCornerShape(26.dp)
+    val surface = colors.dialogSurface
+    val secondaryButton = colors.secondaryActionSurface
+    val titleColor = if (darkMode) Color(0xFFF5F5F5) else colors.ink
+    val bodyColor = if (darkMode) Color(0xFF858585) else colors.muted
+    val dangerButton = Color(0xFFEF4444)
+
     Dialog(
         onDismissRequest = { if (!busy) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -117,20 +151,19 @@ internal fun DeviceConfirmDialog(
                 .shadow(34.dp, shape, ambientColor = Color(0x33000000), spotColor = Color(0x33000000))
                 .clip(shape)
                 .background(surface)
-                .border(1.dp, colors.border, shape)
                 .padding(22.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             Text(
                 text = title,
-                color = colors.ink,
+                color = titleColor,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.ExtraBold,
                 lineHeight = 29.sp,
             )
             Text(
                 text = body,
-                color = colors.muted,
+                color = bodyColor,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
                 lineHeight = 21.sp,
@@ -151,9 +184,9 @@ internal fun DeviceConfirmDialog(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 DeviceDialogButton(
-                    label = stringResource(R.string.common_cancel),
+                    label = dismissLabel,
                     background = secondaryButton,
-                    content = colors.ink,
+                    content = if (darkMode) Color(0xFFF5F5F5) else colors.ink,
                     enabled = !busy,
                     modifier = Modifier.weight(1f),
                     onClick = onDismiss,
@@ -161,7 +194,7 @@ internal fun DeviceConfirmDialog(
                 DeviceDialogButton(
                     label = confirmLabel,
                     background = if (danger) {
-                        colors.errorText.copy(alpha = if (busy) 0.38f else 1f)
+                        dangerButton.copy(alpha = if (busy) 0.38f else 1f)
                     } else if (darkMode) {
                         Color(0xFFE4E4E7)
                     } else {

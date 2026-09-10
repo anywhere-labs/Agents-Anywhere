@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents-anywhere.dev/contracts/dsh-bridge/1.0/sync-batch.schema.json",
+  "title": "DSH ordered event batch",
+  "type": "object",
+  "required": ["streamId", "batchSeq", "projectionVersion", "operations"],
+  "properties": {
+    "streamId": { "type": "string", "minLength": 1 },
+    "batchSeq": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "projectionVersion": { "const": 2 },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["kind"],
+        "properties": {
+          "kind": { "enum": ["snapshot.begin", "snapshot.items", "snapshot.commit", "snapshot.abort", "notifications", "workspace.inventory"] },
+          "sessionId": { "type": "string", "minLength": 1 },
+          "snapshotId": { "type": "string", "minLength": 1 },
+          "throughSeq": { "type": "integer", "minimum": -1 },
+          "totalItems": { "type": "integer", "minimum": 0 },
+          "meta": { "type": "object", "required": ["externalSessionId"] },
+          "items": { "type": "array", "items": { "type": "object" } },
+          "workspaces": { "type": "array", "items": { "type": "object", "required": ["id", "title", "path", "sessionIds"] } },
+          "notifications": {
+            "type": "array", "minItems": 1,
+            "items": {
+              "type": "object", "required": ["method", "params"],
+              "properties": {
+                "method": { "enum": ["session.meta.upsert", "session.source.updated", "session.state.updated", "session.turnEnded", "session.inventory.begin", "session.inventory.complete", "timeline.itemUpsert", "notice.upsert", "runtime.capability.updated", "session.capability.updated", "catalog.model.update", "catalog.permission.update"] },
+                "params": { "type": "object" }
+              }
+            }
+          }
+        },
+        "allOf": [
+          { "if": { "properties": { "kind": { "pattern": "^snapshot\\." } } }, "then": { "required": ["sessionId", "snapshotId"] } },
+          { "if": { "properties": { "kind": { "const": "snapshot.begin" } } }, "then": { "required": ["meta", "throughSeq"] } },
+          { "if": { "properties": { "kind": { "const": "snapshot.items" } } }, "then": { "required": ["items"] } },
+          { "if": { "properties": { "kind": { "const": "snapshot.commit" } } }, "then": { "required": ["totalItems", "throughSeq"] } },
+          { "if": { "properties": { "kind": { "const": "notifications" } } }, "then": { "required": ["notifications"] } },
+          { "if": { "properties": { "kind": { "const": "workspace.inventory" } } }, "then": { "required": ["workspaces"] } }
+        ]
+      }
+    }
+  }
+}

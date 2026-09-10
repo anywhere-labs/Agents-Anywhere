@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct QRCodeLoginView: View {
-    @EnvironmentObject private var appState: AppState
+    @ObservedObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var path: [QRLoginRoute] = []
     @State private var isClosing = false
@@ -11,6 +11,7 @@ struct QRCodeLoginView: View {
     var body: some View {
         NavigationStack(path: $path) {
             QRScanStepView(
+                appState: appState,
                 onCancel: { dismiss() },
                 onPayload: { payload in
                     path.append(.confirm(payload))
@@ -20,6 +21,7 @@ struct QRCodeLoginView: View {
                 switch route {
                 case let .confirm(payload):
                     QRConfirmStepView(
+                        appState: appState,
                         payload: payload,
                         onCancel: { dismiss() },
                         onWaiting: {
@@ -28,6 +30,7 @@ struct QRCodeLoginView: View {
                     )
                 case let .waiting(payload):
                     QRWaitingStepView(
+                        appState: appState,
                         payload: payload,
                         onCancel: { dismiss() },
                         onSignedIn: {
@@ -36,9 +39,9 @@ struct QRCodeLoginView: View {
                     )
                 case .success:
                     AuthResultView(
-                        title: "Login Success",
-                        message: "Your iPhone is signed in. Go to your dashboard to continue.",
-                        buttonTitle: "Go to Dashboard",
+                        title: String(localized: "Login Success"),
+                        message: String(localized: "Your iPhone is signed in. Go to your dashboard to continue."),
+                        buttonTitle: String(localized: "Go to Dashboard"),
                         buttonSystemImage: "arrow.right",
                         symbolName: "checkmark.circle.fill",
                         symbolColor: .green,
@@ -52,6 +55,7 @@ struct QRCodeLoginView: View {
                 }
             }
         }
+        .appSheetPresentation(.expanded)
     }
 }
 
@@ -62,7 +66,7 @@ private enum QRLoginRoute: Hashable {
 }
 
 private struct QRScanStepView: View {
-    @EnvironmentObject private var appState: AppState
+    @ObservedObject var appState: AppState
     @Environment(\.colorScheme) private var colorScheme
 
     let onCancel: () -> Void
@@ -73,8 +77,8 @@ private struct QRScanStepView: View {
 
     var body: some View {
         AuthScreen(
-            title: "QR Code Login",
-            subtitle: "Scan the login QR code from the web console.",
+            title: String(localized: "QR Code Login"),
+            subtitle: String(localized: "Scan the login QR code from the web console."),
             onCancel: onCancel,
         ) {
             VStack(alignment: .leading, spacing: 16) {
@@ -91,7 +95,7 @@ private struct QRScanStepView: View {
                     .frame(height: 380)
                     .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
 
-                    Text("Point the camera at the web QR code")
+                    Text(String(localized: "Point the camera at the web QR code"))
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 14)
@@ -124,19 +128,19 @@ private struct QRScanStepView: View {
             let data = Data(value.utf8)
             let decoded = try JSONDecoder().decode(MobileLoginPayload.self, from: data)
             guard decoded.type == "agents-anywhere.mobile-login", decoded.version == 1 else {
-                parseError = "This is not an Agents Anywhere mobile login QR code."
+                parseError = String(localized: "This is not an Agents Anywhere mobile login QR code.")
                 return
             }
             didReadPayload = true
             onPayload(decoded)
         } catch {
-            parseError = "This QR code is not a valid Agents Anywhere login code."
+            parseError = String(localized: "This QR code is not a valid Agents Anywhere login code.")
         }
     }
 }
 
 private struct QRConfirmStepView: View {
-    @EnvironmentObject private var appState: AppState
+    @ObservedObject var appState: AppState
     @Environment(\.colorScheme) private var colorScheme
 
     let payload: MobileLoginPayload
@@ -145,16 +149,17 @@ private struct QRConfirmStepView: View {
 
     @State private var isRequesting = false
     @State private var alertMessage: String?
+    @State private var requestTask: Task<Void, Never>?
 
     var body: some View {
         AuthScreen(
-            title: "Confirm Login",
-            subtitle: "Do you want to sign in as \(payload.userId)?",
+            title: String(localized: "Confirm Login"),
+            subtitle: String(localized: "Do you want to sign in as \(payload.userId)?"),
             onCancel: onCancel,
         ) {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Server")
+                    Text(String(localized: "Server"))
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
                     Text(payload.webUrl)
@@ -168,57 +173,63 @@ private struct QRConfirmStepView: View {
                 .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
 
                 AuthPrimaryButton(
-                    title: "Log In",
+                    title: String(localized: "Log In"),
                     isLoading: isRequesting,
                 ) {
-                    Task { await requestWebConfirmation() }
+                    requestTask = Task { await requestWebConfirmation() }
                 }
             }
         }
-        .alert("Login Request Failed", isPresented: Binding(
+        .onDisappear { requestTask?.cancel(); requestTask = nil }
+        .alert(String(localized: "Login Request Failed"), isPresented: Binding(
             get: { alertMessage != nil },
             set: { if !$0 { alertMessage = nil } },
         )) {
-            Button("OK", role: .cancel) {}
+            if appState.authNeedsLocalNetworkSettings {
+                Button(String(localized: "Open Settings")) {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                }
+            }
+            Button(String(localized: "OK"), role: .cancel) {}
         } message: {
-            Text(alertMessage ?? "The login request could not be started.")
+            Text(alertMessage ?? String(localized: "The login request could not be started."))
         }
     }
 
     private func requestWebConfirmation() async {
+        guard !isRequesting else { return }
         isRequesting = true
         defer { isRequesting = false }
         if await appState.requestMobileLogin(payload: payload) {
-            onWaiting()
-        } else {
-            alertMessage = appState.authError ?? "The login request could not be started."
+            if !Task.isCancelled { onWaiting() }
+        } else if !Task.isCancelled {
+            alertMessage = appState.authError ?? String(localized: "The login request could not be started.")
         }
     }
 }
 
 private struct QRWaitingStepView: View {
-    @EnvironmentObject private var appState: AppState
+    @ObservedObject var appState: AppState
     @Environment(\.colorScheme) private var colorScheme
 
     let payload: MobileLoginPayload
     let onCancel: () -> Void
     let onSignedIn: () -> Void
 
-    @State private var statusText = "Waiting for confirmation"
+    @State private var statusText = String(localized: "Waiting for confirmation")
     @State private var isFinishing = false
     @State private var alertMessage: String?
     @State private var pollingTask: Task<Void, Never>?
 
     var body: some View {
         AuthScreen(
-            title: "Confirm on Web",
-            subtitle: "Click confirm in the web console, then return here.",
+            title: String(localized: "Confirm on Web"),
+            subtitle: String(localized: "Click confirm in the web console, then return here."),
             showsCancel: !isFinishing,
             onCancel: onCancel,
         ) {
             VStack(spacing: 24) {
-                Image(systemName: "desktopcomputer.and.arrow.down")
-                    .font(.system(size: 58, weight: .semibold))
+                AppSymbol("desktopcomputer.and.arrow.down", size: 58)
                     .foregroundStyle(AppTheme.primaryText(colorScheme))
 
                 Text(statusText)
@@ -241,19 +252,19 @@ private struct QRWaitingStepView: View {
             stopPolling()
         }
         .navigationBarBackButtonHidden(isFinishing)
-        .alert("Login Status", isPresented: Binding(
+        .alert(String(localized: "Login Status"), isPresented: Binding(
             get: { alertMessage != nil },
             set: { if !$0 { alertMessage = nil } },
         )) {
-            Button("OK", role: .cancel) {}
+            Button(String(localized: "OK"), role: .cancel) {}
         } message: {
-            Text(alertMessage ?? "Confirm the login on the web console and try again.")
+            Text(alertMessage ?? String(localized: "Confirm the login on the web console and try again."))
         }
     }
 
     private func startPolling() {
         stopPolling()
-        statusText = "Waiting for confirmation"
+        statusText = String(localized: "Waiting for confirmation")
         pollingTask = Task {
             while !Task.isCancelled {
                 let shouldContinue = await pollApprovalOnce()
@@ -273,7 +284,7 @@ private struct QRWaitingStepView: View {
     @MainActor
     private func pollApprovalOnce() async -> Bool {
         guard let status = await appState.mobileLoginStatus(payload: payload) else {
-            alertMessage = appState.authError ?? "Could not check the login status."
+            alertMessage = appState.authError ?? String(localized: "Could not check the login status.")
             return false
         }
 
@@ -282,19 +293,19 @@ private struct QRWaitingStepView: View {
             await finishLogin()
             return false
         case "pending_web_confirm":
-            statusText = "Waiting for confirmation"
+            statusText = String(localized: "Waiting for confirmation")
             return true
         case "rejected":
-            alertMessage = "This login request was rejected."
+            alertMessage = String(localized: "This login request was rejected.")
             return false
         case "expired":
-            alertMessage = "This login request expired. Scan a new QR code."
+            alertMessage = String(localized: "This login request expired. Scan a new QR code.")
             return false
         case "consumed":
-            alertMessage = "This login request has already been used."
+            alertMessage = String(localized: "This login request has already been used.")
             return false
         default:
-            alertMessage = "Current login status: \(status.status)"
+            alertMessage = String(localized: "Current login status: \(status.status)")
             return false
         }
     }
@@ -307,12 +318,11 @@ private struct QRWaitingStepView: View {
             onSignedIn()
         } else {
             isFinishing = false
-            alertMessage = appState.authError ?? "The login could not be completed."
+            alertMessage = appState.authError ?? String(localized: "The login could not be completed.")
         }
     }
 }
 
 #Preview {
-    QRCodeLoginView()
-        .environmentObject(AppState())
+    QRCodeLoginView(appState: AppState())
 }

@@ -1,13 +1,16 @@
 package com.agentsanywhere.app.feature.auth
 
-import android.net.Uri
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.AuthApi
-import com.agentsanywhere.app.api.AuthConfigResponse
 import com.agentsanywhere.app.api.AuthMeResponse
+import com.agentsanywhere.app.api.AuthResponse
 import com.agentsanywhere.app.api.MobileLoginStatusResponse
+import com.agentsanywhere.app.api.normalizeServerOrigin
 import com.agentsanywhere.app.model.MobileLoginQrPayload
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -83,6 +86,35 @@ class AuthController(
         }
     }
 
+    suspend fun accountAuthConfig(): Result<com.agentsanywhere.app.api.AuthConfigResponse> =
+        withAccountCredentials { serverUrl, _ -> api.authConfig(serverUrl) }
+
+    suspend fun updateDisplayName(displayName: String): Result<AuthMeResponse> =
+        withAccountCredentials { serverUrl, token -> api.updateDisplayName(serverUrl, token, displayName) }
+
+    suspend fun sendEmailCode(email: String): Result<com.agentsanywhere.app.api.EmailCodeResponse> =
+        withAccountCredentials { serverUrl, token -> api.sendEmailCode(serverUrl, token, email) }
+
+    suspend fun bindEmail(email: String, code: String?): Result<AuthMeResponse> =
+        withAccountCredentials { serverUrl, token -> api.bindEmail(serverUrl, token, email, code) }
+
+    private suspend fun <T> withAccountCredentials(action: (String, String) -> T): Result<T> {
+        val serverUrl = sessionStore.readServerUrl()
+        val token = sessionStore.readAccessToken()
+        if (serverUrl.isBlank() || token.isBlank()) {
+            return Result.failure(IllegalStateException("Sign in again to update account."))
+        }
+        return withContext(Dispatchers.IO) {
+            try {
+                Result.success(action(serverUrl, token))
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Result.failure(error)
+            }
+        }
+    }
+
     suspend fun changePassword(newPassword: String): Result<Unit> {
         if (newPassword.length < 8) {
             return Result.failure(IllegalArgumentException("Password must be at least 8 characters."))
@@ -102,219 +134,63 @@ class AuthController(
         }
     }
 
-    suspend fun loginWithPassword(
-        serverUrl: String,
-        userId: String,
-        password: String,
+    suspend fun createWebLoginSession(serverUrl: String): Result<WebLoginSession> {
+        val server = runCatching { resolveLoginServer(serverUrl) }.getOrElse {
+            return Result.failure(it)
+        }
+
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                api.requireHealthyServer(serverUrl = server.serverUrl)
+                api.requireWebLoginHost(webOrigin = server.oauthWebOrigin)
+                currentCoroutineContext().ensureActive()
+                sessionStore.saveServerUrl(server.serverUrl)
+                com.agentsanywhere.app.feature.auth.createWebLoginSession(server)
+            }.recoverCatching { error ->
+                if (error is CancellationException) throw error
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not reach the server.", error)
+            }
+        }
+    }
+
+    fun parseWebLoginCallback(
+        callbackUrl: String,
+        session: WebLoginSession,
+    ): WebLoginCallback = com.agentsanywhere.app.feature.auth.parseWebLoginCallback(callbackUrl, session)
+
+    suspend fun completeWebLogin(
+        session: WebLoginSession,
+        code: String,
     ): Result<Unit> {
-        val normalizedServerUrl = normalizeServerUrl(serverUrl)
-            ?: return Result.failure(IllegalArgumentException("Enter a valid server URL."))
-        val trimmedUserId = userId.trim()
-        if (trimmedUserId.isBlank()) {
-            return Result.failure(IllegalArgumentException("Enter your User ID."))
+        if (code.isBlank()) {
+            return Result.failure(IllegalArgumentException("Missing authorization code."))
         }
-        if (password.isBlank()) {
-            return Result.failure(IllegalArgumentException("Enter your password."))
-        }
-
         return withContext(Dispatchers.IO) {
             runCatching {
-                sessionStore.saveServerUrl(normalizedServerUrl)
-                val auth = api.login(
-                    serverUrl = normalizedServerUrl,
-                    userId = trimmedUserId,
-                    password = password,
+                val token = api.oauthToken(
+                    serverUrl = session.serverUrl,
+                    code = code,
+                    codeVerifier = session.codeVerifier,
                 )
-                sessionStore.saveAuthSession(normalizedServerUrl, auth)
-            }.recoverCatching { error ->
-                if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "Login failed.", error)
-            }
-        }
-    }
-
-    suspend fun registerWithPassword(
-        serverUrl: String,
-        userId: String,
-        password: String,
-    ): Result<Unit> {
-        val normalizedServerUrl = normalizeServerUrl(serverUrl)
-            ?: return Result.failure(IllegalArgumentException("Enter a valid server URL."))
-        val trimmedUserId = userId.trim().lowercase()
-        if (!USER_ID_PATTERN.matches(trimmedUserId)) {
-            return Result.failure(IllegalArgumentException(USER_ID_HINT))
-        }
-        if (password.length < 8) {
-            return Result.failure(IllegalArgumentException("Password must be at least 8 characters."))
-        }
-
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                sessionStore.saveServerUrl(normalizedServerUrl)
-                val auth = api.register(
-                    serverUrl = normalizedServerUrl,
-                    userId = trimmedUserId,
-                    password = password,
+                currentCoroutineContext().ensureActive()
+                val operationContext = currentCoroutineContext()
+                completeWebLoginSession(
+                    token = token,
+                    loadMe = { accessToken ->
+                        api.me(serverUrl = session.serverUrl, token = accessToken)
+                    },
+                    saveSession = { auth ->
+                        operationContext.ensureActive()
+                        sessionStore.saveAuthSession(session.serverUrl, auth)
+                    },
                 )
-                sessionStore.saveAuthSession(normalizedServerUrl, auth)
             }.recoverCatching { error ->
+                if (error is CancellationException) throw error
                 if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "Registration failed.", error)
+                throw IllegalStateException(error.message ?: "Could not complete web sign-in.", error)
             }
         }
-    }
-
-    suspend fun startOAuth(
-        serverUrl: String,
-        returnTo: String,
-    ): Result<String> {
-        val normalizedServerUrl = normalizeServerUrl(serverUrl)
-            ?: return Result.failure(IllegalArgumentException("Enter a valid server URL."))
-
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                sessionStore.saveServerUrl(normalizedServerUrl)
-                api.startOAuth(
-                    serverUrl = normalizedServerUrl,
-                    returnTo = returnTo,
-                ).authorizeUrl
-            }.recoverCatching { error ->
-                if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "OAuth sign-in failed.", error)
-            }
-        }
-    }
-
-    suspend fun authConfig(serverUrl: String): Result<AuthConfigResponse> {
-        val normalizedServerUrl = normalizeServerUrl(serverUrl)
-            ?: return Result.failure(IllegalArgumentException("Enter a valid server URL."))
-
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                sessionStore.saveServerUrl(normalizedServerUrl)
-                api.authConfig(serverUrl = normalizedServerUrl)
-            }.recoverCatching { error ->
-                if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "Could not check auth configuration.", error)
-            }
-        }
-    }
-
-    suspend fun finalizeBoundOAuth(
-        serverUrl: String,
-        pendingToken: String,
-        userId: String,
-        password: String,
-    ): Result<Unit> {
-        val normalizedServerUrl = normalizeServerUrl(serverUrl)
-            ?: return Result.failure(IllegalArgumentException("Enter a valid server URL."))
-        val trimmedUserId = userId.trim()
-        if (trimmedUserId.isBlank()) {
-            return Result.failure(IllegalArgumentException("Missing matched User ID."))
-        }
-        if (password.isBlank()) {
-            return Result.failure(IllegalArgumentException("Enter your password."))
-        }
-
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                val response = api.finalizeOAuth(
-                    serverUrl = normalizedServerUrl,
-                    pendingToken = pendingToken,
-                    userId = trimmedUserId,
-                    password = password,
-                    setPassword = false,
-                )
-                sessionStore.saveAuthSession(normalizedServerUrl, response.auth)
-            }.recoverCatching { error ->
-                if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "OAuth sign-in failed.", error)
-            }
-        }
-    }
-
-    suspend fun finalizeNewOAuthAccount(
-        serverUrl: String,
-        pendingToken: String,
-        userId: String,
-        password: String,
-    ): Result<Unit> {
-        val normalizedServerUrl = normalizeServerUrl(serverUrl)
-            ?: return Result.failure(IllegalArgumentException("Enter a valid server URL."))
-        val trimmedUserId = userId.trim()
-        if (trimmedUserId.isBlank()) {
-            return Result.failure(IllegalArgumentException("Enter your User ID."))
-        }
-        if (password.isBlank()) {
-            return Result.failure(IllegalArgumentException("Enter your password."))
-        }
-
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                val response = api.finalizeOAuth(
-                    serverUrl = normalizedServerUrl,
-                    pendingToken = pendingToken,
-                    userId = trimmedUserId,
-                    password = password,
-                    setPassword = true,
-                )
-                sessionStore.saveAuthSession(normalizedServerUrl, response.auth)
-            }.recoverCatching { error ->
-                if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "OAuth sign-in failed.", error)
-            }
-        }
-    }
-
-    suspend fun finalizeAuthenticatedOAuth(
-        serverUrl: String,
-        pendingToken: String,
-    ): Result<Unit> {
-        val normalizedServerUrl = normalizeServerUrl(serverUrl)
-            ?: return Result.failure(IllegalArgumentException("Enter a valid server URL."))
-
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                val response = api.finalizeOAuth(
-                    serverUrl = normalizedServerUrl,
-                    pendingToken = pendingToken,
-                )
-                sessionStore.saveAuthSession(normalizedServerUrl, response.auth)
-            }.recoverCatching { error ->
-                if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "OAuth sign-in failed.", error)
-            }
-        }
-    }
-
-    fun parseOAuthCallback(uri: Uri?): OAuthCallbackResult? {
-        if (uri == null) return null
-        if (uri.scheme != OAUTH_CALLBACK_SCHEME || uri.host != OAUTH_CALLBACK_HOST) return null
-
-        val error = uri.getQueryParameter("oauth_error")
-        if (!error.isNullOrBlank()) {
-            return OAuthCallbackResult.Error(error)
-        }
-
-        val statusText = uri.getQueryParameter("oauth_status") ?: return null
-        val pendingToken = uri.getQueryParameter("oauth_pending").orEmpty()
-        if (pendingToken.isBlank()) {
-            return OAuthCallbackResult.Error("OAuth sign-in failed.")
-        }
-        val suggestedUserId = uri.getQueryParameter("oauth_user").orEmpty()
-        val status = when (statusText) {
-            "authenticated" -> OAuthPendingStatus.Authenticated
-            "needs_password" -> OAuthPendingStatus.NeedsPassword
-            "needs_registration" -> OAuthPendingStatus.NeedsRegistration
-            else -> return OAuthCallbackResult.Error("OAuth sign-in failed.")
-        }
-        return OAuthCallbackResult.Pending(
-            OAuthPending(
-                status = status,
-                pendingToken = pendingToken,
-                suggestedUserId = suggestedUserId,
-            ),
-        )
     }
 
     suspend fun requestMobileLoginFromQr(
@@ -395,48 +271,27 @@ class AuthController(
     }
 
     private fun normalizeServerUrl(serverUrl: String): String? {
-        val trimmed = serverUrl.trim().trimEnd('/')
-        if (trimmed.isBlank()) return null
-        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed
-        if (trimmed.contains("://")) return null
-
-        val host = trimmed.substringBefore('/').substringBefore(':').lowercase()
-        if (host.isBlank()) return null
-
-        val scheme = if (usesLocalNetworkHost(host) || trimmed.contains(':')) {
-            "http"
-        } else {
-            "https"
-        }
-        return "$scheme://$trimmed"
+        return normalizeServerOrigin(serverUrl)
     }
 
-    private fun usesLocalNetworkHost(host: String): Boolean {
-        if (host == "localhost" || host.endsWith(".local")) return true
-        val parts = host.split('.')
-        if (parts.size != 4) return false
-        val octets = parts.map { it.toIntOrNull() ?: return false }
-        return when {
-            octets.any { it !in 0..255 } -> false
-            octets[0] == 10 -> true
-            octets[0] == 127 -> true
-            octets[0] == 192 && octets[1] == 168 -> true
-            octets[0] == 172 && octets[1] in 16..31 -> true
-            else -> false
-        }
-    }
-
-    companion object {
-        const val OAUTH_CALLBACK_URI = "agents-anywhere://oauth/callback"
-        private const val OAUTH_CALLBACK_SCHEME = "agents-anywhere"
-        private const val OAUTH_CALLBACK_HOST = "oauth"
-    }
 }
 
-private val USER_ID_PATTERN = Regex("^[a-z0-9_-]{3,40}$")
-private const val USER_ID_HINT = "Use 3-40 lowercase letters, numbers, underscores, or hyphens."
-
-sealed interface OAuthCallbackResult {
-    data class Pending(val pending: OAuthPending) : OAuthCallbackResult
-    data class Error(val message: String) : OAuthCallbackResult
+internal fun completeWebLoginSession(
+    token: com.agentsanywhere.app.api.OAuthTokenResponse,
+    loadMe: (String) -> AuthMeResponse,
+    saveSession: (AuthResponse) -> Unit,
+) {
+    val me = loadMe(token.accessToken)
+    saveSession(
+        AuthResponse(
+            userId = me.userId,
+            email = me.email,
+            displayName = me.displayName,
+            emailVerified = me.emailVerified,
+            role = me.role,
+            accessToken = token.accessToken,
+            tokenType = token.tokenType,
+            serverTime = me.serverTime,
+        ),
+    )
 }

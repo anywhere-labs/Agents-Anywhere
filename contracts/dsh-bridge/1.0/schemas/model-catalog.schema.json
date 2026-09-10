@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents-anywhere.dev/contracts/dsh-bridge/1.0/model-catalog.schema.json",
+  "type": "object",
+  "required": ["runtime", "revision", "models"],
+  "properties": {
+    "runtime": { "const": "dsh" },
+    "revision": { "type": "integer", "minimum": 0 },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "selectionId", "enabled", "reasoningItems"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "selectionId": { "pattern": "^dsh:model:[A-Za-z0-9_-]+$" },
+          "enabled": { "type": "boolean" },
+          "reasoningItems": { "type": "array" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

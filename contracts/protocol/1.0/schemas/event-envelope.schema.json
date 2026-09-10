@@ -1,0 +1,62 @@
+{
+  "$id": "urn:agents-anywhere:protocol:1.0:event-envelope",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "cursor": {
+      "pattern": "^seq:(0|[1-9][0-9]*)$",
+      "title": "Cursor",
+      "type": "string"
+    },
+    "emittedAt": {
+      "title": "Emittedat",
+      "type": "string"
+    },
+    "eventId": {
+      "minLength": 1,
+      "title": "Eventid",
+      "type": "string"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+    },
+    "protocolVersion": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Protocolversion",
+      "type": "string"
+    },
+    "sequence": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "type": {
+      "minLength": 1,
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "eventId",
+    "sequence",
+    "cursor",
+    "type",
+    "sessionId",
+    "emittedAt",
+    "payload"
+  ],
+  "title": "ProtocolEventEnvelope",
+  "type": "object",
+  "x-direction": "egress",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "serialization"
+}

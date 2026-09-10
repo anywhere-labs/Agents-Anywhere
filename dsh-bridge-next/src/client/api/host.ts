@@ -1,0 +1,26 @@
+import { HOST_NAMESPACE, type OnboardingHostApi } from '../../contracts/index.js'
+
+export interface HostRpc {
+  call(channel: string, endpoint: string, payload: unknown): Promise<{ ok: boolean; value?: unknown; error?: { message?: string } }>
+}
+
+export function createHostApi(rpc: HostRpc): OnboardingHostApi {
+  const call = async <T>(method: string, args: Record<string, unknown> = {}): Promise<T> => {
+    const result = await rpc.call('/api', `${HOST_NAMESPACE}/${method}`, { args })
+    if (!result.ok) throw new Error(result.error?.message ?? '插件连接暂不可用，请重试。')
+    return result.value as T
+  }
+  return {
+    readBridgeLogs: () => call('readBridgeLogs'),
+    inspect: () => call('inspect'), openDesktop: () => call('openDesktop'), begin: input => call('begin', input ? { input } : {}),
+    cancel: () => call('cancel'), logout: () => call('logout'),
+    recoverDevice: action => call('recoverDevice', { action }),
+    controlConnector: action => call('controlConnector', { action }),
+    saveConnectorSettings: settings => call('saveConnectorSettings', { settings }),
+    openConnectorFolder: folder => call('openConnectorFolder', { folder }),
+    resetConnector: forceLocal => call('resetConnector', { forceLocal }),
+    createMobileLogin: () => call('createMobileLogin'),
+    inspectMobileLogin: id => call('inspectMobileLogin', { id }),
+    confirmMobileLogin: (id, approved) => call('confirmMobileLogin', { id, approved }),
+  }
+}

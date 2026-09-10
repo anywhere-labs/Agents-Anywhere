@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents-anywhere.dev/contracts/dsh-bridge/1.0/request.schema.json",
+  "title": "DSH bridge request",
+  "type": "object",
+  "required": ["jsonrpc", "id", "method", "params"],
+  "properties": {
+    "jsonrpc": { "const": "2.0" },
+    "id": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 }] },
+    "method": {
+      "enum": [
+        "initialize", "runtime.getConfig", "runtime.getCapabilities",
+        "runtime.sync.subscribe", "runtime.sync.ack", "runtime.sync.unsubscribe", "runtime.sync.refresh", "workspace.list",
+        "catalog.listModels", "catalog.listPermissions", "catalog.listAgentPresets", "session.list",
+        "session.getSnapshot", "session.getState", "session.getNotices",
+        "session.getCapabilities", "session.createAndStart", "session.startTurn",
+        "session.steer", "session.interrupt", "session.updateSelections",
+        "session.listCommands", "session.executeCommand",
+        "session.respondInteraction", "ping", "shutdown"
+      ]
+    },
+    "params": { "type": "object" }
+  },
+  "additionalProperties": false
+}

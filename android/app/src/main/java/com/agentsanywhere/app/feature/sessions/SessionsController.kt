@@ -3,26 +3,46 @@ package com.agentsanywhere.app.feature.sessions
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.DevicesApi
 import com.agentsanywhere.app.api.FilesApi
+import com.agentsanywhere.app.api.RemoteInlineAttachmentRef
+import com.agentsanywhere.app.api.RemoteProject
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.RemoteDevice
 import com.agentsanywhere.app.api.RemoteSession
-import com.agentsanywhere.app.feature.auth.AuthSessionStore
+import com.agentsanywhere.app.api.RemoteSessionCreateAndStartRequest
+import com.agentsanywhere.app.api.RemoteDashboardSnapshot
+import com.agentsanywhere.app.api.RemoteSessionPage
+import com.agentsanywhere.app.api.RemoteSessionsMutationResponse
+import com.agentsanywhere.app.api.isValidRuntimeInstanceId
+import com.agentsanywhere.app.api.isValidRuntimeType
+import com.agentsanywhere.app.feature.auth.AuthSessionReader
+import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.toAgentDevice
+import com.agentsanywhere.app.feature.devices.toDeviceRuntimeList
 import com.agentsanywhere.app.model.AgentDevice
+import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
-import com.agentsanywhere.app.model.SessionStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
-import java.time.Duration
-import java.time.Instant
-import java.time.format.DateTimeParseException
+import java.io.IOException
+import java.security.MessageDigest
+import java.util.Base64
 
 class SessionsController(
     private val sessionsApi: SessionsApi,
     private val devicesApi: DevicesApi,
     private val filesApi: FilesApi,
-    private val sessionStore: AuthSessionStore,
+    private val sessionStore: AuthSessionReader,
 ) {
+    fun dashboardSnapshotState(snapshot: RemoteDashboardSnapshot): SessionsState {
+        return toState(
+            remoteSessions = snapshot.sessions,
+            remoteDevices = snapshot.devices,
+            remoteProjects = snapshot.projects,
+            activePage = snapshot.activePage,
+            archivedPage = snapshot.archivedPage,
+        )
+    }
     suspend fun loadSessions(): Result<SessionsState> {
         val serverUrl = sessionStore.readServerUrl()
         val accessToken = sessionStore.readAccessToken()
@@ -32,18 +52,66 @@ class SessionsController(
 
         return withContext(Dispatchers.IO) {
             runCatching {
-                val sessions = sessionsApi.listSessions(
+                val activePage = sessionsApi.listSessions(
                     serverUrl = serverUrl,
                     authorizationToken = accessToken,
+                    archived = false,
+                )
+                val archivedPage = sessionsApi.listSessions(
+                    serverUrl = serverUrl,
+                    authorizationToken = accessToken,
+                    archived = true,
                 )
                 val devices = devicesApi.listDevices(
                     serverUrl = serverUrl,
                     authorizationToken = accessToken,
                 )
-                toState(sessions, devices)
+                val projects = sessionsApi.listProjects(
+                    serverUrl = serverUrl,
+                    authorizationToken = accessToken,
+                )
+                toState(
+                    remoteSessions = activePage.sessions + archivedPage.sessions,
+                    remoteDevices = devices,
+                    remoteProjects = projects.projects,
+                    activePage = activePage.pageInfo(),
+                    archivedPage = archivedPage.pageInfo(),
+                )
             }.recoverCatching { error ->
-                if (error is ApiException) throw error
+                if (error is CancellationException || error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not load sessions.", error)
+            }
+        }
+    }
+
+    suspend fun loadMoreSessions(
+        archived: Boolean,
+        cursor: String,
+        devices: List<AgentDevice>,
+    ): Result<SessionPageAppend> {
+        val serverUrl = sessionStore.readServerUrl()
+        val accessToken = sessionStore.readAccessToken()
+        if (serverUrl.isBlank() || accessToken.isBlank()) {
+            return Result.failure(IllegalStateException("Sign in again to load sessions."))
+        }
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val page = sessionsApi.listSessions(
+                    serverUrl = serverUrl,
+                    authorizationToken = accessToken,
+                    archived = archived,
+                    cursor = cursor,
+                )
+                val devicesById = devices.associateBy { it.id }
+                SessionPageAppend(
+                    sessions = page.sessions.map { it.toAgentSession(devicesById) },
+                    archived = archived,
+                    hasMore = page.hasMore,
+                    nextCursor = page.nextCursor,
+                )
+            }.recoverCatching { error ->
+                if (error is CancellationException || error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not load more sessions.", error)
             }
         }
     }
@@ -62,33 +130,113 @@ class SessionsController(
         )
     }
 
-    suspend fun createSession(
-        title: String,
-        connectorId: String,
-        runtime: String,
-        cwd: String,
+    suspend fun createAndStartSession(
+        draft: NewSessionCreateDraft,
         devices: List<AgentDevice>,
-    ): Result<AgentSession> {
+        projects: List<AgentProject> = emptyList(),
+    ): NewSessionCreateOutcome {
+        validateNewSessionDraft(draft)?.let { error ->
+            return NewSessionCreateOutcome.Failed(IllegalArgumentException(error))
+        }
         val serverUrl = sessionStore.readServerUrl()
         val accessToken = sessionStore.readAccessToken()
         if (serverUrl.isBlank() || accessToken.isBlank()) {
-            return Result.failure(IllegalStateException("Sign in again to create a session."))
+            return NewSessionCreateOutcome.Failed(IllegalStateException("Sign in again to create a session."))
         }
 
         return withContext(Dispatchers.IO) {
-            runCatching {
-                sessionsApi.createSession(
+            val resolved = try {
+                val path = resolveDirectory(serverUrl, accessToken, draft.connectorId, draft.cwd.orEmpty())
+                val project = resolveWorkspaceProject(
+                    connectorId = draft.connectorId, path = path,
+                    deviceOs = devices.firstOrNull { it.id == draft.connectorId }?.deviceOs,
+                    knownProjects = projects,
+                    list = { sessionsApi.listProjects(serverUrl, accessToken).projects.map(RemoteProject::toAgentProject) },
+                    create = { name, workspace -> sessionsApi.createProject(
+                        serverUrl, accessToken, name, draft.connectorId, workspace, manuallyCreated = false,
+                    ).project.toAgentProject() },
+                )
+                draft.copy(projectId = project.id, cwd = project.workspacePath)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                return@withContext NewSessionCreateOutcome.Failed(error)
+            }
+            try {
+                val response = sessionsApi.createAndStartSession(
                     serverUrl = serverUrl,
                     authorizationToken = accessToken,
-                    connectorId = connectorId,
-                    runtime = runtime,
-                    title = title.trim().takeIf { it.isNotBlank() },
-                    cwd = cwd.trim().takeIf { it.isNotBlank() },
-                ).toAgentSession(devices.associateBy { it.id })
-            }.recoverCatching { error ->
-                if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "Could not create session.", error)
+                    request = RemoteSessionCreateAndStartRequest(
+                        connectorId = draft.connectorId,
+                        projectId = resolved.projectId,
+                        runtime = draft.runtimeType,
+                        title = draft.title?.trim()?.takeIf(String::isNotBlank),
+                        cwd = resolved.cwd,
+                        content = draft.content.trim(),
+                        selections = draft.selections.toMap(),
+                        attachments = draft.attachments.map(NewSessionAttachmentPart::toInlineAttachmentRef),
+                        clientMessageId = draft.clientMessageId,
+                        runtimeId = draft.runtimeId,
+                        runtimeType = draft.runtimeType,
+                    ),
+                )
+                NewSessionCreateOutcome.Created(
+                    session = response.session.toAgentSession(devices.associateBy { it.id }),
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (error.mayHaveUnknownCreateOutcome()) {
+                    reconcileCreateAfterNetworkFailure(
+                        draft = resolved,
+                        serverUrl = serverUrl,
+                        accessToken = accessToken,
+                        originalError = error,
+                    )
+                } else {
+                    NewSessionCreateOutcome.Failed(error.asCreateFailure())
+                }
             }
+        }
+    }
+
+    private fun reconcileCreateAfterNetworkFailure(
+        draft: NewSessionCreateDraft,
+        serverUrl: String,
+        accessToken: String,
+        originalError: Throwable,
+    ): NewSessionCreateOutcome {
+        val refreshedState = runCatching {
+            val activePage = sessionsApi.listSessions(serverUrl, accessToken, archived = false)
+            val archivedPage = sessionsApi.listSessions(serverUrl, accessToken, archived = true)
+            val projects = sessionsApi.listProjects(serverUrl, accessToken)
+            toState(
+                remoteSessions = activePage.sessions + archivedPage.sessions,
+                remoteDevices = devicesApi.listDevices(serverUrl, accessToken),
+                remoteProjects = projects.projects,
+                activePage = activePage.pageInfo(),
+                archivedPage = archivedPage.pageInfo(),
+            )
+        }.getOrNull()
+        val candidates = refreshedState?.newCreateCandidates(draft).orEmpty()
+        return when {
+            candidates.size == 1 -> NewSessionCreateOutcome.Created(
+                session = candidates.single(),
+                recoveredAfterNetworkFailure = true,
+                refreshedState = refreshedState,
+            )
+            refreshedState != null && candidates.isEmpty() -> NewSessionCreateOutcome.Failed(
+                error = originalError.asCreateFailure(),
+                outcomeUnknown = false,
+                refreshedState = refreshedState,
+            )
+            else -> NewSessionCreateOutcome.Failed(
+                error = NewSessionCreateResultUnknownException(
+                    "The create request ended before its result could be confirmed. Return to Sessions and refresh before trying again.",
+                ),
+                outcomeUnknown = true,
+                refreshedState = refreshedState,
+            )
         }
     }
 
@@ -112,6 +260,7 @@ class SessionsController(
                     root = root,
                     path = path,
                 )
+                require(directory.targetType != "file") { "Choose a directory, not a file." }
                 NewSessionDirectory(
                     path = directory.path,
                     entries = directory.entries
@@ -127,9 +276,83 @@ class SessionsController(
                         .sortedBy { it.name.lowercase() },
                 )
             }.recoverCatching { error ->
-                if (error is ApiException) throw error
+                if (error is CancellationException || error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not load this directory.", error)
             }
+        }
+    }
+
+    suspend fun listNewSessionRuntimes(
+        connectorId: String,
+    ): Result<DeviceRuntimeList> {
+        val auth = newSessionAuth() ?: return Result.failure(
+            IllegalStateException("Sign in again to load runtimes."),
+        )
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                devicesApi.listDeviceRuntimes(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    deviceId = connectorId,
+                ).toDeviceRuntimeList()
+            }.wrapNewSessionFailure("Could not load runtimes.")
+        }
+    }
+
+    suspend fun loadNewSessionRuntimeCapabilities(
+        connectorId: String,
+        runtimeId: String,
+    ): Result<NewSessionRuntimeCapabilities> {
+        val auth = newSessionAuth() ?: return Result.failure(
+            IllegalStateException("Sign in again to load runtime capabilities."),
+        )
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                devicesApi.getDeviceRuntimeCapabilities(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    deviceId = connectorId,
+                    runtimeId = runtimeId,
+                ).toNewSessionRuntimeCapabilities()
+            }.wrapNewSessionFailure("Could not load runtime capabilities.")
+        }
+    }
+
+    suspend fun loadNewSessionModelCatalog(
+        connectorId: String,
+        runtimeId: String,
+    ): Result<NewSessionModelCatalog> {
+        val auth = newSessionAuth() ?: return Result.failure(
+            IllegalStateException("Sign in again to load the model catalog."),
+        )
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                devicesApi.getDeviceRuntimeModelCatalog(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    deviceId = connectorId,
+                    runtimeId = runtimeId,
+                ).toNewSessionModelCatalog()
+            }.wrapNewSessionFailure("Could not load the model catalog.")
+        }
+    }
+
+    suspend fun loadNewSessionPermissionCatalog(
+        connectorId: String,
+        runtimeId: String,
+    ): Result<NewSessionPermissionCatalog> {
+        val auth = newSessionAuth() ?: return Result.failure(
+            IllegalStateException("Sign in again to load the permission catalog."),
+        )
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                devicesApi.getDeviceRuntimePermissionCatalog(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    deviceId = connectorId,
+                    runtimeId = runtimeId,
+                ).toNewSessionPermissionCatalog()
+            }.wrapNewSessionFailure("Could not load the permission catalog.")
         }
     }
 
@@ -147,6 +370,153 @@ class SessionsController(
         )
     }
 
+    private fun resolveDirectory(serverUrl: String, token: String, connectorId: String, path: String): String {
+        val clean = path.trim()
+        if (!clean.startsWith("~")) return clean
+        val result = filesApi.listFiles(serverUrl, token, connectorId, clean, ".")
+        require(result.path.isNotBlank() && !result.path.startsWith("~") && result.targetType != "file") {
+            "Could not resolve the workspace directory."
+        }
+        return result.path
+    }
+
+    suspend fun loadArchivedSessionPage(projectId: String?, cursor: String?, devices: List<AgentDevice>): Result<SessionPageAppend> {
+        val auth = newSessionAuth() ?: return Result.failure(IllegalStateException("Sign in again to load archived sessions."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val page = if (projectId == null) sessionsApi.listSessions(auth.serverUrl, auth.accessToken, archived = true, limit = 100, cursor = cursor)
+                    else sessionsApi.listProjectSessions(auth.serverUrl, auth.accessToken, projectId, archived = true, limit = 100, cursor = cursor)
+                SessionPageAppend(page.sessions.map { it.toAgentSession(devices.associateBy(AgentDevice::id)) }, true, page.hasMore, page.nextCursor)
+            }.wrapNewSessionFailure("Could not load archived sessions.")
+        }
+    }
+
+    suspend fun loadProjects(): Result<List<AgentProject>> {
+        val auth = newSessionAuth()
+            ?: return Result.failure(IllegalStateException("Sign in again to load projects."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                sessionsApi.listProjects(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                ).projects.map(RemoteProject::toAgentProject)
+            }.wrapNewSessionFailure("Could not load projects.")
+        }
+    }
+
+    suspend fun loadProjectSessions(
+        projectId: String,
+        devices: List<AgentDevice>,
+        archived: Boolean = false,
+    ): Result<List<AgentSession>> {
+        if (projectId.isBlank()) return Result.failure(IllegalArgumentException("Project ID is required."))
+        val auth = newSessionAuth()
+            ?: return Result.failure(IllegalStateException("Sign in again to load project sessions."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val sessions = mutableListOf<RemoteSession>()
+                val seenCursors = mutableSetOf<String>()
+                var cursor: String? = null
+                do {
+                    val page = sessionsApi.listProjectSessions(
+                        serverUrl = auth.serverUrl,
+                        authorizationToken = auth.accessToken,
+                        projectId = projectId,
+                        archived = archived,
+                        cursor = cursor,
+                    )
+                    sessions += page.sessions
+                    val nextCursor = page.nextCursor?.takeIf(String::isNotBlank)
+                    val shouldContinue = page.hasMore && nextCursor != null && seenCursors.add(nextCursor)
+                    cursor = nextCursor
+                } while (shouldContinue)
+                val devicesById = devices.associateBy { it.id }
+                sessions.distinctBy { it.id }.map { it.toAgentSession(devicesById) }
+            }.wrapNewSessionFailure("Could not load project sessions.")
+        }
+    }
+
+    suspend fun createProject(
+        name: String,
+        connectorId: String,
+        workspacePath: String,
+    ): Result<AgentProject> {
+        val normalizedName = name.trim()
+        val normalizedPath = workspacePath.trim()
+        if (normalizedName.isBlank()) return Result.failure(IllegalArgumentException("Project name is required."))
+        if (connectorId.isBlank()) return Result.failure(IllegalArgumentException("Connector is required."))
+        if (normalizedPath.isBlank()) return Result.failure(IllegalArgumentException("Project path is required."))
+        val auth = newSessionAuth()
+            ?: return Result.failure(IllegalStateException("Sign in again to create a project."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                sessionsApi.createProject(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    name = normalizedName,
+                    connectorId = connectorId,
+                    workspacePath = resolveDirectory(auth.serverUrl, auth.accessToken, connectorId, normalizedPath),
+                ).project.toAgentProject()
+            }.wrapNewSessionFailure("Could not create this project.")
+        }
+    }
+
+    suspend fun updateProject(
+        projectId: String,
+        name: String? = null,
+        pinned: Boolean? = null,
+    ): Result<AgentProject> {
+        if (projectId.isBlank()) return Result.failure(IllegalArgumentException("Project ID is required."))
+        val normalizedName = name?.trim()
+        if (normalizedName != null && normalizedName.isBlank()) {
+            return Result.failure(IllegalArgumentException("Project name is required."))
+        }
+        if (normalizedName == null && pinned == null) {
+            return Result.failure(IllegalArgumentException("A project change is required."))
+        }
+        val auth = newSessionAuth()
+            ?: return Result.failure(IllegalStateException("Sign in again to update this project."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                sessionsApi.updateProject(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    projectId = projectId,
+                    name = normalizedName,
+                    pinned = pinned,
+                ).project.toAgentProject()
+            }.wrapNewSessionFailure("Could not update this project.")
+        }
+    }
+
+    suspend fun setProjectPinned(
+        projectId: String,
+        pinned: Boolean,
+    ): Result<AgentProject> = updateProject(projectId = projectId, pinned = pinned)
+
+    suspend fun archiveProjectSessions(
+        projectId: String,
+        devices: List<AgentDevice>,
+        archived: Boolean = true,
+        scope: String = "active",
+    ): Result<List<AgentSession>> {
+        if (projectId.isBlank()) return Result.failure(IllegalArgumentException("Project ID is required."))
+        val auth = newSessionAuth()
+            ?: return Result.failure(IllegalStateException("Sign in again to update project sessions."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val devicesById = devices.associateBy { it.id }
+                sessionsApi.archiveAllProjectSessions(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    projectId = projectId,
+                    archived = archived,
+                    scope = scope,
+                ).map { it.toAgentSession(devicesById) }
+            }.wrapNewSessionFailure("Could not update project sessions.")
+        }
+    }
+
     suspend fun setSessionArchived(
         sessionId: String,
         archived: Boolean,
@@ -161,28 +531,59 @@ class SessionsController(
         )
     }
 
+    suspend fun loadSessionMeta(
+        sessionId: String,
+        devices: List<AgentDevice>,
+    ): Result<AgentSession> {
+        val auth = newSessionAuth()
+            ?: return Result.failure(IllegalStateException("Sign in again to load this session."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                sessionsApi.getSessionMeta(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    sessionId = sessionId,
+                ).session.toAgentSession(devices.associateBy { it.id })
+            }.wrapNewSessionFailure("Could not load this session.")
+        }
+    }
+
+    suspend fun markSessionRead(
+        sessionId: String,
+        devices: List<AgentDevice>,
+    ): Result<AgentSession> {
+        val auth = newSessionAuth()
+            ?: return Result.failure(IllegalStateException("Sign in again to update this session."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                sessionsApi.markSessionRead(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    sessionId = sessionId,
+                ).session.toAgentSession(devices.associateBy { it.id })
+            }.wrapNewSessionFailure("Could not mark this session as read.")
+        }
+    }
+
+    suspend fun markSessionsRead(
+        ids: List<String>,
+        devices: List<AgentDevice>,
+    ): Result<SessionBatchUpdate> {
+        return mutateSessions(ids, devices, "Could not mark sessions as read.") { serverUrl, accessToken, normalized ->
+            sessionsApi.markSessionsRead(serverUrl, accessToken, normalized)
+        }
+    }
+
     suspend fun bulkSetSessionsArchived(
         ids: List<String>,
         archived: Boolean,
         devices: List<AgentDevice>,
-    ): Result<List<AgentSession>> {
-        val serverUrl = sessionStore.readServerUrl()
-        val accessToken = sessionStore.readAccessToken()
-        if (serverUrl.isBlank() || accessToken.isBlank()) {
-            return Result.failure(IllegalStateException("Sign in again to update sessions."))
-        }
-
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                sessionsApi.bulkArchiveSessions(
-                    serverUrl = serverUrl,
-                    authorizationToken = accessToken,
-                    ids = ids,
-                    archived = archived,
-                ).map { it.toAgentSession(devices.associateBy { device -> device.id }) }
-            }.recoverCatching { error ->
-                if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "Could not update sessions.", error)
+    ): Result<SessionBatchUpdate> {
+        return mutateSessions(ids, devices, "Could not update sessions.") { serverUrl, accessToken, normalized ->
+            if (archived) {
+                sessionsApi.archiveSessions(serverUrl, accessToken, normalized)
+            } else {
+                sessionsApi.unarchiveSessions(serverUrl, accessToken, normalized)
             }
         }
     }
@@ -209,7 +610,7 @@ class SessionsController(
                     scope = scope,
                 ).map { it.toAgentSession(devices.associateBy { device -> device.id }) }
             }.recoverCatching { error ->
-                if (error is ApiException) throw error
+                if (error is CancellationException || error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not update sessions.", error)
             }
         }
@@ -237,9 +638,9 @@ class SessionsController(
                     title = title,
                     pinned = pinned,
                     archived = archived,
-                ).toAgentSession(devices.associateBy { it.id })
+                ).session.toAgentSession(devices.associateBy { it.id })
             }.recoverCatching { error ->
-                if (error is ApiException) throw error
+                if (error is CancellationException || error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not update this session.", error)
             }
         }
@@ -248,6 +649,9 @@ class SessionsController(
     private fun toState(
         remoteSessions: List<RemoteSession>,
         remoteDevices: List<RemoteDevice>,
+        remoteProjects: List<RemoteProject>,
+        activePage: com.agentsanywhere.app.api.RemoteSessionPageInfo,
+        archivedPage: com.agentsanywhere.app.api.RemoteSessionPageInfo,
     ): SessionsState {
         val devicesById = remoteDevices.associate { device ->
             device.id to device.toAgentDevice()
@@ -258,59 +662,59 @@ class SessionsController(
                 session.toAgentSession(devicesById)
             }
         val sessions = allSessions
-            .filterNot { it.archived }
-        val archivedSessions = allSessions.filter { it.archived }
+            .filterNot { it.archived }.sortedWith(sessionListComparator())
+        val archivedSessions = allSessions.filter { it.archived }.sortedWith(archivedSessionComparator())
         val devices = devicesById.values.sortedBy { it.name.lowercase() }
 
         return SessionsState(
             sessions = sessions,
             archivedSessions = archivedSessions,
+            projects = remoteProjects.map(RemoteProject::toAgentProject),
             devices = devices,
             isLoading = false,
             errorMessage = null,
             hasLoaded = true,
+            activeHasMore = activePage.hasMore,
+            activeNextCursor = activePage.nextCursor,
+            archivedHasMore = archivedPage.hasMore,
+            archivedNextCursor = archivedPage.nextCursor,
+            activeFirstPageIds = sessions.mapTo(mutableSetOf()) { it.id },
+            archivedFirstPageIds = archivedSessions.mapTo(mutableSetOf()) { it.id },
         )
     }
 
-    private fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>): AgentSession {
-        val workspace = cwd.workspaceName()
-        val statusValue = status.toSessionStatus()
-        val displayTitle = title?.takeIf { it.isNotBlank() }
-            ?: externalSessionId?.takeIf { it.isNotBlank() }
-            ?: "Untitled session"
-        val activityAt = lastActivityAt ?: lastItemAt ?: sortAt ?: sourceObservedAt ?: lastSyncedAt
-        val runtimeText = runtime.runtimeLabel()
-        val deviceName = devicesById[connectorId]?.name ?: connectorId.shortConnectorLabel()
-        val metaParts = listOfNotNull(
-            runtimeText,
-            deviceName.takeIf { it.isNotBlank() },
-            workspace.takeIf { it.isNotBlank() },
-        )
+    private fun RemoteSessionPage.pageInfo() = com.agentsanywhere.app.api.RemoteSessionPageInfo(
+        hasMore = hasMore,
+        nextCursor = nextCursor,
+    )
 
-        return AgentSession(
-            id = id,
-            connectorId = connectorId,
-            deviceName = deviceName,
-            title = displayTitle,
-            summary = summaryText(statusValue, cwd, connectorStatus),
-            cwd = cwd,
-            workspaceLabel = workspace,
-            runtime = runtime,
-            runtimeLabel = runtimeText,
-            status = statusValue,
-            statusLabel = statusValue.statusLabel(),
-            updatedAtLabel = activityAt.relativeTimeLabel(),
-            metaLabel = metaParts.joinToString("  ·  "),
-            pinned = pinned,
-            archived = archived,
-            unread = unread,
-            takeover = takeover,
-            connectorOnline = connectorStatus == "online",
-            runtimeSettings = runtimeSettings,
-            runtimeSettingsOverride = runtimeSettingsOverride,
-            live = statusValue == SessionStatus.Running || statusValue == SessionStatus.WaitingApproval,
-            sortKey = sortAt ?: lastActivityAt ?: lastItemAt ?: "",
-        )
+    private suspend fun mutateSessions(
+        ids: List<String>,
+        devices: List<AgentDevice>,
+        fallbackMessage: String,
+        request: (String, String, List<String>) -> RemoteSessionsMutationResponse,
+    ): Result<SessionBatchUpdate> {
+        val normalized = try {
+            validatedSessionMutationIds(ids)
+        } catch (error: IllegalArgumentException) {
+            return Result.failure(error)
+        }
+        if (normalized.isEmpty()) {
+            return Result.success(SessionBatchUpdate(emptyList(), emptyList(), null))
+        }
+        val auth = newSessionAuth()
+            ?: return Result.failure(IllegalStateException("Sign in again to update sessions."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val response = request(auth.serverUrl, auth.accessToken, normalized)
+                val devicesById = devices.associateBy { it.id }
+                SessionBatchUpdate(
+                    sessions = response.sessions.map { it.toAgentSession(devicesById) },
+                    notFound = response.notFound,
+                    serverTime = response.serverTime,
+                )
+            }.wrapNewSessionFailure(fallbackMessage)
+        }
     }
 
     private fun sessionComparator(): Comparator<RemoteSession> {
@@ -320,80 +724,84 @@ class SessionsController(
             .thenByDescending { it.updatedSeq }
     }
 
-    private fun summaryText(
-        status: SessionStatus,
-        cwd: String?,
-        connectorStatus: String,
-    ): String {
-        return when {
-            status == SessionStatus.WaitingApproval -> "Waiting for approval."
-            status == SessionStatus.Running -> "Running now."
-            status == SessionStatus.Error -> "Needs attention."
-            !cwd.isNullOrBlank() -> cwd
-            connectorStatus == "offline" -> "Device is offline."
-            else -> "Ready for the next update."
+
+    private fun newSessionAuth(): NewSessionAuth? {
+        val serverUrl = sessionStore.readServerUrl()
+        val accessToken = sessionStore.readAccessToken()
+        if (serverUrl.isBlank() || accessToken.isBlank()) return null
+        return NewSessionAuth(serverUrl = serverUrl, accessToken = accessToken)
+    }
+
+    private fun <T> Result<T>.wrapNewSessionFailure(fallbackMessage: String): Result<T> {
+        return recoverCatching { error ->
+            if (error is CancellationException || error is ApiException) throw error
+            throw IllegalStateException(error.message ?: fallbackMessage, error)
         }
     }
 
-    private fun String.toSessionStatus(): SessionStatus {
-        return when (this) {
-            "running" -> SessionStatus.Running
-            "waiting_approval" -> SessionStatus.WaitingApproval
-            "error" -> SessionStatus.Error
-            else -> SessionStatus.Idle
-        }
-    }
+    private data class NewSessionAuth(
+        val serverUrl: String,
+        val accessToken: String,
+    )
+}
 
-    private fun SessionStatus.statusLabel(): String {
-        return when (this) {
-            SessionStatus.Idle -> "Idle"
-            SessionStatus.Running -> "Running"
-            SessionStatus.WaitingApproval -> "Approval"
-            SessionStatus.Error -> "Error"
-        }
+internal fun validateNewSessionDraft(draft: NewSessionCreateDraft): String? {
+    if (draft.connectorId.isBlank()) return "Choose a connector before starting."
+    if (draft.cwd.isNullOrBlank()) return "Choose a workspace before starting."
+    if (!draft.runtimeType.isValidRuntimeType() || draft.runtime != draft.runtimeType) {
+        return "Choose a valid runtime type before starting."
     }
-
-    private fun String.runtimeLabel(): String {
-        return when (this) {
-            "codex" -> "Codex"
-            "claude" -> "Claude Code"
-            "opencode" -> "OpenCode"
-            "acp" -> "ACP"
-            else -> replaceFirstChar { char ->
-                if (char.isLowerCase()) char.titlecase() else char.toString()
-            }
-        }
+    if (!draft.runtimeId.isValidRuntimeInstanceId(draft.runtimeType)) {
+        return "Choose a valid runtime instance before starting."
     }
-
-    private fun String?.workspaceName(): String {
-        val trimmed = this?.trim()?.trimEnd('/') ?: return ""
-        if (trimmed.isBlank()) return ""
-        return trimmed.substringAfterLast('/').ifBlank { trimmed }
+    if (draft.content.isBlank() && draft.attachments.isEmpty()) return "Enter a message or attach a file before starting."
+    if (draft.clientMessageId.isBlank()) return "The client message ID is missing."
+    if (draft.attachments.size > MAX_CREATE_ATTACHMENTS) return "You can attach up to $MAX_CREATE_ATTACHMENTS files."
+    draft.attachments.firstOrNull { it.name.isBlank() }?.let { return "An attachment name is missing." }
+    draft.attachments.firstOrNull { it.bytes.isEmpty() }?.let { return "Attachments cannot be empty." }
+    draft.attachments.firstOrNull { it.bytes.size > MAX_CREATE_ATTACHMENT_BYTES }?.let {
+        return "Attachment ${it.name} is too large."
     }
+    return null
+}
 
-    private fun String.shortConnectorLabel(): String {
-        return take(8).ifBlank { "Device" }
-    }
+internal fun NewSessionAttachmentPart.toInlineAttachmentRef(): RemoteInlineAttachmentRef {
+    val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+    val sha256 = digest.joinToString(separator = "") { byte -> "%02x".format(byte) }
+    return RemoteInlineAttachmentRef(
+        fileId = sha256,
+        name = name,
+        mediaType = mediaType.ifBlank { "application/octet-stream" },
+        size = bytes.size.toLong(),
+        sha256 = sha256,
+        contentBase64 = Base64.getEncoder().encodeToString(bytes),
+    )
+}
 
-    private fun String?.relativeTimeLabel(): String {
-        if (isNullOrBlank()) return ""
-        val instant = try {
-            Instant.parse(this)
-        } catch (_: DateTimeParseException) {
-            return ""
-        }
-        val elapsed = Duration.between(instant, Instant.now()).coerceAtLeast(Duration.ZERO)
-        val minutes = elapsed.toMinutes()
-        val hours = elapsed.toHours()
-        val days = elapsed.toDays()
-        return when {
-            minutes < 1 -> "now"
-            minutes < 60 -> "${minutes}m"
-            hours < 24 -> "${hours}h"
-            days == 1L -> "Yest."
-            days < 7 -> "${days}d"
-            days < 365 -> "${days / 7}w"
-            else -> "${days / 365}y"
-        }
+private fun Throwable.mayHaveUnknownCreateOutcome(): Boolean {
+    if (this !is ApiException || statusCode != null) return false
+    return generateSequence<Throwable>(this) { it.cause }.any { it is IOException }
+}
+
+private fun Throwable.asCreateFailure(): Throwable {
+    return if (this is ApiException) this else {
+        IllegalStateException(message ?: "Could not create and start this session.", this)
     }
 }
+
+private const val MAX_CREATE_ATTACHMENTS = 10
+private const val MAX_CREATE_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
+internal fun normalizeSessionIds(ids: List<String>): List<String> {
+    return ids.distinct()
+}
+
+internal fun validatedSessionMutationIds(ids: List<String>): List<String> {
+    val normalized = normalizeSessionIds(ids)
+    require(normalized.size <= MAX_SESSION_MUTATION_IDS) {
+        "At most $MAX_SESSION_MUTATION_IDS sessions can be updated at once."
+    }
+    return normalized
+}
+
+private const val MAX_SESSION_MUTATION_IDS = 200

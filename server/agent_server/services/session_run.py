@@ -1,22 +1,60 @@
 from __future__ import annotations
 
-import json
-import time
+import base64
+import binascii
+import hashlib
+import re
+from dataclasses import dataclass
 from typing import Any
 
-from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError, ConnectorRpcManager
-from agent_server.core.models import MessageCreateRequest, RpcResponsePayload, SessionCreateRequest
-from agent_server.core.runtime_config import PersistedRuntimeConfigError
-from agent_server.infra.perf import elapsed_ms, log_stage
-from agent_server.infra.runtimes.serializers import serializer_for_runtime
-from agent_server.infra.repositories.facade import Store
+from agent_server.core.api_namespace import api_v2_path
+from agent_server.core.capabilities import (
+    CATALOG_MODEL,
+    CATALOG_PERMISSION,
+    RUNTIME_ATTACHMENT,
+    SESSION_INTERRUPT,
+    SESSION_SEND_MESSAGE,
+    SESSION_STEER,
+)
+from agent_server.core.models import (
+    InlineAttachmentRef,
+    MessageCreateRequest,
+    RpcResponsePayload,
+    SessionCreateAndStartRequest,
+    SessionCreateRequest,
+    SessionRuntimeState,
+    SessionSelectionPatchRequest,
+    SessionStatus,
+    SessionSteerRequest,
+    SessionView,
+)
+from agent_server.core.protocol import ProtocolCapabilitySet
+from agent_server.core.runtime_identity import (
+    SessionRuntimeBindingError,
+    resolve_session_runtime_binding,
+)
 from agent_server.core.utc import utc_now
+from agent_server.infra.connector_rpc import (
+    ConnectorOfflineError,
+    ConnectorRpcError,
+    ConnectorRpcManager,
+)
+from agent_server.infra.repositories.projects import _clean_workspace_path
+from agent_server.services.device_runtimes import (
+    DeviceRuntimeError,
+    DeviceRuntimeService,
+)
+from agent_server.services.effective_capabilities import (
+    derive_session_effective_capabilities,
+    read_session_capability_facts,
+)
+from agent_server.services.repository_ports import SessionRunRepository
 
 
 class SessionRunError(RuntimeError):
     status_code = 500
 
-    def __init__(self, detail: str) -> None:
+    def __init__(self, detail: Any) -> None:
         super().__init__(detail)
         self.detail = detail
 
@@ -33,14 +71,41 @@ class SessionRunUpstreamError(SessionRunError):
     status_code = 502
 
 
+class SessionRunTimeoutError(SessionRunError):
+    status_code = 504
+
+
 class SessionRunInvalidConfigError(SessionRunError):
     status_code = 422
 
 
+SESSION_SOURCE_ERROR_CODES = {
+    "archived": "session_archived",
+    "unavailable": "session_unavailable",
+    "deleted": "session_deleted",
+    "missing": "session_missing",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedInlineAttachment:
+    file_id: str
+    name: str
+    media_type: str
+    size: int
+    sha256: str
+
+
 class SessionRunService:
-    def __init__(self, store: Store, manager: ConnectorRpcManager) -> None:
+    def __init__(
+        self,
+        store: SessionRunRepository,
+        manager: ConnectorRpcManager,
+        device_runtimes: DeviceRuntimeService,
+    ) -> None:
         self._store = store
         self._manager = manager
+        self._device_runtimes = device_runtimes
 
     async def create_session(
         self,
@@ -54,116 +119,265 @@ class SessionRunService:
                 raise KeyError(payload.connectorId)
         except KeyError:
             raise SessionRunNotFoundError("connector not found") from None
+        project_id, project_cwd = await self._validate_project_binding(
+            payload.projectId,
+            connector_id=payload.connectorId,
+            cwd=payload.cwd,
+            user_id=user_id,
+        )
+        payload.cwd = project_cwd
+        runtime_id = _request_runtime_id(payload)
+        await self._require_runtime_instance(
+            payload.connectorId,
+            payload.runtime,
+            runtime_id,
+            user_id=user_id,
+            require_running=False,
+        )
 
         connector_result = None
         if payload.externalSessionId is not None:
-            try:
-                settings_bundle = await self._store.get_initial_runtime_settings_bundle(
-                    payload.connectorId,
-                    payload.runtime,
-                    user_id=user_id,
-                    cwd=payload.cwd,
-                    patch=payload.runtimeSettings,
-                )
-                durable_runtime_settings = settings_bundle["durable"]
-            except (json.JSONDecodeError, PersistedRuntimeConfigError) as exc:
-                raise SessionRunError("invalid persisted runtime settings") from exc
-            except ValueError as exc:
-                raise SessionRunInvalidConfigError(str(exc)) from exc
             session = await self._store.create_session(
                 connector_id=payload.connectorId,
+                project_id=project_id,
                 user_id=user_id,
                 runtime=payload.runtime,
+                runtime_id=runtime_id,
                 external_session_id=payload.externalSessionId,
                 title=payload.title,
                 cwd=payload.cwd,
-                runtime_settings_override=durable_runtime_settings,
             )
             return {"session": session, "connectorResult": connector_result}
 
-        if not self._manager.is_online(payload.connectorId):
-            raise SessionRunConflictError("connector is offline")
-        auth_blocked = _acp_auth_blocked_detail(connector, payload.runtime)
-        if auth_blocked is not None:
-            raise SessionRunUpstreamError(auth_blocked)
+        raise SessionRunInvalidConfigError(
+            "new sessions must use /sessions/create-and-start"
+        )
+
+    async def create_and_start_session(
+        self,
+        payload: SessionCreateAndStartRequest,
+        *,
+        user_id: str,
+    ) -> dict[str, Any]:
         try:
-            settings_bundle = await self._store.get_initial_runtime_settings_bundle(
+            connector = await self._store.get_connector(payload.connectorId)
+            if connector.userId != user_id:
+                raise KeyError(payload.connectorId)
+        except KeyError:
+            raise SessionRunNotFoundError("connector not found") from None
+        project_id, project_cwd = await self._validate_project_binding(
+            payload.projectId,
+            connector_id=payload.connectorId,
+            cwd=payload.cwd,
+            user_id=user_id,
+        )
+        payload.cwd = project_cwd
+        runtime_id = _request_runtime_id(payload)
+        await self._require_runtime_instance(
+            payload.connectorId,
+            payload.runtime,
+            runtime_id,
+            user_id=user_id,
+            require_running=True,
+        )
+        if not await self._manager.is_online(payload.connectorId):
+            raise SessionRunConflictError("connector is offline")
+        if payload.attachments:
+            await self._require_runtime_capability(
                 payload.connectorId,
                 payload.runtime,
+                runtime_id,
+                RUNTIME_ATTACHMENT,
                 user_id=user_id,
-                cwd=payload.cwd,
-                patch=payload.runtimeSettings,
+                attachment_media_types=[attachment.mediaType for attachment in payload.attachments],
             )
-            runtime_settings = settings_bundle["effective"]
-            durable_runtime_settings = settings_bundle["durable"]
-            connector_settings = settings_bundle["connector"]
-        except (json.JSONDecodeError, PersistedRuntimeConfigError) as exc:
-            raise SessionRunError("invalid persisted runtime settings") from exc
-        except ValueError as exc:
-            raise SessionRunInvalidConfigError(str(exc)) from exc
 
-        connector_params = {
+        selections = _selections_from_mapping(payload.selections)
+        session = await self._store.create_session(
+            connector_id=payload.connectorId,
+            project_id=project_id,
+            user_id=user_id,
+            runtime=payload.runtime,
+            runtime_id=runtime_id,
+            external_session_id=None,
+            title=payload.title,
+            cwd=payload.cwd,
+            selections=selections,
+            takeover=True,
+        )
+        params: dict[str, Any] = {
             "runtime": payload.runtime,
-            "title": payload.title,
-            "cwd": payload.cwd,
-            **connector_settings,
+            "runtimeId": runtime_id,
+            "sessionId": session.id,
+            "content": payload.content,
         }
-        if payload.runtime == "codex" and "sandboxPolicy" in connector_params:
-            connector_params["sandbox"] = connector_params.pop("sandboxPolicy")
-        if payload.approvalPolicy is not None:
-            connector_params["approvalPolicy"] = payload.approvalPolicy
-        if payload.sandbox is not None:
-            connector_params["sandbox"] = payload.sandbox
+        if payload.title is not None:
+            params["title"] = payload.title
+        if payload.cwd is not None:
+            params["cwd"] = payload.cwd
+        if selections:
+            params["selections"] = selections
+        if payload.runtimeOptions:
+            params["runtimeOptions"] = dict(payload.runtimeOptions)
+        if payload.clientMessageId:
+            params["clientMessageId"] = payload.clientMessageId
+        persisted_attachment_refs: list[dict[str, Any]] = []
+        if payload.attachments:
+            persisted_attachments = await self._persist_inline_attachments(
+                session_id=session.id,
+                user_id=user_id,
+                attachments=payload.attachments,
+            )
+            persisted_attachment_refs = [
+                _timeline_payload_from_persisted_inline_attachment(attachment)
+                for attachment in persisted_attachments
+            ]
+            params["attachments"] = [
+                _connector_attachment_reference_payload(attachment)
+                for attachment in persisted_attachments
+            ]
+            params["timelineAttachments"] = persisted_attachment_refs
 
+        await self._store.start_active_run(
+            session_id=session.id,
+            runtime=payload.runtime,
+            runtime_id=runtime_id,
+            params=params,
+        )
         try:
             connector_result = await self._manager.request(
                 payload.connectorId,
                 "session.create",
-                connector_params,
+                params,
                 timeout=60,
             )
         except ConnectorOfflineError as exc:
+            await self._store.clear_active_run(session.id)
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
+            await self._store.clear_active_run(session.id)
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
 
-        session_id = connector_result.get("sessionId") if isinstance(connector_result, dict) else None
-        external_session_id = (
-            connector_result.get("externalSessionId") if isinstance(connector_result, dict) else None
+        if not isinstance(connector_result, dict):
+            await self._mark_create_and_start_failed(
+                session.id,
+                runtime=payload.runtime,
+                code="invalid_connector_result",
+                message="connector did not return a session result",
+            )
+            raise SessionRunUpstreamError("connector did not return a session result")
+        try:
+            resolve_session_runtime_binding(
+                connector_result,
+                session_id=session.id,
+                runtime_type=payload.runtime,
+                runtime_id=runtime_id,
+            )
+        except SessionRuntimeBindingError as exc:
+            await self._mark_create_and_start_failed(
+                session.id,
+                runtime=payload.runtime,
+                code="invalid_runtime_binding",
+                message=str(exc),
+            )
+            raise SessionRunUpstreamError(str(exc)) from exc
+        external_session_id = connector_result.get("externalSessionId")
+        if external_session_id is not None and (
+            not isinstance(external_session_id, str) or not external_session_id
+        ):
+            await self._mark_create_and_start_failed(
+                session.id,
+                runtime=payload.runtime,
+                code="missing_external_session_id",
+                message="connector returned an invalid external session id",
+            )
+            raise SessionRunUpstreamError("connector returned an invalid external session id")
+        await self._store.start_active_run(
+            session_id=session.id,
+            runtime=payload.runtime,
+            runtime_id=runtime_id,
+            external_session_id=external_session_id if isinstance(external_session_id, str) else None,
+            params=params,
         )
-        if not isinstance(session_id, str):
-            raise SessionRunUpstreamError("connector did not return a session id")
-        if payload.runtime != "claude" and not isinstance(external_session_id, str):
-            raise SessionRunUpstreamError("connector did not return an external session id")
-        if isinstance(external_session_id, str):
-            try:
-                session_id = await self._store.resolve_connector_session_id(
-                    connector_id=payload.connectorId,
-                    session_id=session_id,
-                    external_session_id=external_session_id,
-                )
-            except KeyError:
-                pass
         session = await self._store.upsert_connector_session(
             connector_id=payload.connectorId,
-            session_id=session_id,
+            session_id=session.id,
             runtime=payload.runtime,
-            external_session_id=external_session_id,
+            runtime_id=runtime_id,
+            external_session_id=external_session_id if isinstance(external_session_id, str) else None,
             title=payload.title,
             cwd=payload.cwd,
-            status="idle",
             last_synced_at=utc_now(),
-            runtime_settings_override=durable_runtime_settings,
             origin="platform",
         )
-        if session.runtimeSettings != runtime_settings:
-            session = session.model_copy(
-                update={
-                    "runtimeSettings": runtime_settings,
-                    "runtimeSettingsOverride": runtime_settings,
+        return {
+            "session": session,
+            "connectorResult": connector_result,
+            "attachments": persisted_attachment_refs,
+        }
+
+    async def _validate_project_binding(
+        self,
+        project_id: str | None,
+        *,
+        connector_id: str,
+        cwd: str | None,
+        user_id: str,
+    ) -> tuple[str, str]:
+        if not project_id:
+            raise SessionRunInvalidConfigError(
+                {
+                    "code": "project_required",
+                    "message": "a project must be selected for every session",
                 }
             )
-        return {"session": session, "connectorResult": connector_result}
+        try:
+            project = await self._store.get_project(project_id, user_id=user_id)
+        except KeyError:
+            raise SessionRunNotFoundError("project not found") from None
+        if project.connectorId != connector_id:
+            raise SessionRunInvalidConfigError(
+                {
+                    "code": "project_workspace_mismatch",
+                    "message": (
+                        "project connector and workspace must match the session"
+                    ),
+                }
+            )
+        if cwd is None:
+            # Keep the connector request and the persisted session on the
+            # project's canonical workspace path.
+            cwd = project.workspacePath
+        else:
+            try:
+                _cleaned_cwd, cwd_key = _clean_workspace_path(cwd, None)
+                _project_path, project_key = _clean_workspace_path(
+                    project.workspacePath,
+                    None,
+                )
+            except ValueError:
+                cwd_key = ""
+                project_key = "__invalid__"
+            if cwd_key != project_key:
+                raise SessionRunInvalidConfigError(
+                    {
+                        "code": "project_workspace_mismatch",
+                        "message": (
+                            "project connector and workspace must match the session"
+                        ),
+                    }
+                )
+        return project.id, project.workspacePath
+
+    async def _mark_create_and_start_failed(
+        self,
+        session_id: str,
+        *,
+        runtime: str,
+        code: str,
+        message: str,
+    ) -> None:
+        await self._store.clear_active_run(session_id)
 
     async def send_message(
         self,
@@ -172,52 +386,31 @@ class SessionRunService:
         *,
         user_id: str,
     ) -> RpcResponsePayload:
-        prep_started = time.perf_counter()
         try:
             session = await self._store.get_session(session_id, user_id=user_id)
-        except (json.JSONDecodeError, PersistedRuntimeConfigError) as exc:
-            raise SessionRunError("invalid persisted runtime settings") from exc
         except KeyError:
             raise SessionRunNotFoundError("session not found") from None
 
+        if session.archived:
+            raise SessionRunConflictError(_session_source_error_detail(session))
         if not session.takeover:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
-        if not self._manager.is_online(session.connectorId):
+        if not await self._manager.is_online(session.connectorId):
             raise SessionRunConflictError("connector is offline")
-        if session.status not in {"idle", "error"}:
-            raise SessionRunConflictError(f"session is {session.status}")
-        message_settings: dict[str, Any] = {}
-        if session.runtime == "claude" and payload.mode is not None:
-            message_settings["permissionMode"] = payload.mode
-        if payload.model is not None:
-            message_settings["model"] = payload.model
-        if payload.effort is not None:
-            message_settings["effort"] = payload.effort
-        try:
-            # Apply message overrides before status/active-run mutation.  The
-            # service reads the same device-live schema used by the settings
-            # endpoints, so an unsupported model/effort pair cannot bypass the
-            # contract through post-serialization parameter replacement.
-            effective_settings = await self._store.runtime_config.get_effective_runtime_settings_for_message(
-                session_id,
-                message_settings,
-                user_id=user_id,
-            )
-            runtime_params = serializer_for_runtime(session.runtime).serialize(
-                settings=effective_settings,
-                cwd=session.cwd,
-            )
-        except (json.JSONDecodeError, PersistedRuntimeConfigError) as exc:
-            raise SessionRunError("invalid persisted runtime settings") from exc
-        except ValueError as exc:
-            raise SessionRunInvalidConfigError(str(exc)) from exc
-
-        await self._store.set_session_status(session_id, "running")
+        await self._ensure_session_runtime_running(session, user_id=user_id)
+        runtime_status = await self._read_runtime_status(session)
+        if runtime_status not in {"idle", "error"}:
+            raise SessionRunConflictError(f"session is {runtime_status}")
+        await self._require_session_capability(
+            session,
+            SESSION_SEND_MESSAGE,
+            user_id=user_id,
+        )
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,
+            "runtimeId": _session_runtime_id(session),
             "content": payload.content,
-            **runtime_params,
         }
         if session.cwd:
             params["cwd"] = session.cwd
@@ -231,49 +424,394 @@ class SessionRunService:
                 user_id=user_id,
                 file_ids=[a.fileId for a in payload.attachments],
             )
+            await self._require_session_capability(
+                session,
+                RUNTIME_ATTACHMENT,
+                user_id=user_id,
+                attachment_media_types=[item["mediaType"] for item in attachment_payloads],
+            )
+            params["attachments"] = attachment_payloads
+            params["timelineAttachments"] = [_timeline_attachment_payload(item) for item in attachment_payloads]
+
+        await self._store.start_active_run(
+            session_id=session_id,
+            runtime=session.runtime,
+            runtime_id=_session_runtime_id(session),
+            external_session_id=session.externalSessionId,
+            params=params,
+        )
+        try:
+            result = await self._manager.request(
+                session.connectorId,
+                "session.send_message",
+                params,
+            )
+        except ConnectorOfflineError as exc:
+            await self._store.clear_active_run(session_id)
+            raise SessionRunConflictError(str(exc)) from exc
+        except ConnectorRpcError as exc:
+            await self._store.clear_active_run(session_id)
+            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+        if isinstance(result, dict) and result.get("ok") is False:
+            await self._store.clear_active_run(session_id)
+            await self._persist_operation_source_state(session, result)
+            code = result.get("code")
+            message = result.get("message")
+            raise SessionRunConflictError(
+                {
+                    "code": code if isinstance(code, str) else "runtime_operation_failed",
+                    "message": (
+                        message
+                        if isinstance(message, str)
+                        else "runtime operation failed"
+                    ),
+                }
+            )
+        return RpcResponsePayload(ok=True, result=result)
+
+    async def _persist_operation_source_state(
+        self,
+        session: SessionView,
+        result: dict[str, Any],
+    ) -> None:
+        source_state = result.get("sourceState")
+        if not isinstance(source_state, dict):
+            return
+        availability = source_state.get("availability")
+        observation_origin = source_state.get("observationOrigin")
+        if availability not in SESSION_SOURCE_ERROR_CODES:
+            return
+        if observation_origin not in {"event", "inventory", "operation"}:
+            return
+        if source_state.get("sessionId") not in {None, session.id}:
+            return
+        if source_state.get("runtime") not in {None, session.runtime}:
+            return
+        reason = source_state.get("reason")
+        observed_at = source_state.get("observedAt")
+        await self._store.update_session_source_state(
+            session.id,
+            availability=availability,
+            reason=reason if isinstance(reason, str) else None,
+            observed_at=observed_at if isinstance(observed_at, str) else None,
+            observation_origin=observation_origin,
+        )
+
+    async def _read_runtime_status(self, session: SessionView) -> SessionStatus:
+        params: dict[str, Any] = {
+            "sessionId": session.id,
+            "runtime": session.runtime,
+            "runtimeId": _session_runtime_id(session),
+        }
+        if session.externalSessionId:
+            params["externalSessionId"] = session.externalSessionId
+        try:
+            result = await self._manager.request(
+                session.connectorId,
+                "session.state",
+                params,
+                timeout=10,
+            )
+        except ConnectorOfflineError as exc:
+            raise SessionRunConflictError(str(exc)) from exc
+        except ConnectorRpcError as exc:
+            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+        if not isinstance(result, dict):
+            return "idle"
+        state = result.get("state")
+        if not isinstance(state, dict):
+            return "idle"
+        try:
+            resolve_session_runtime_binding(
+                state,
+                session_id=session.id,
+                runtime_type=session.runtime,
+                runtime_id=_session_runtime_id(session),
+            )
+        except SessionRuntimeBindingError as exc:
+            raise SessionRunUpstreamError(str(exc)) from exc
+        status = state.get("status")
+        if status in {
+            "idle",
+            "waiting",
+            "pending",
+            "running",
+            "stopping",
+            "waiting_approval",
+            "error",
+            "blocked",
+        }:
+            return status
+        return "idle"
+
+    async def update_session_selections(
+        self,
+        session_id: str,
+        payload: SessionSelectionPatchRequest,
+        *,
+        user_id: str,
+    ) -> tuple[SessionRuntimeState, dict[str, Any] | None]:
+        try:
+            session = await self._store.get_session(session_id, user_id=user_id)
+        except KeyError:
+            raise SessionRunNotFoundError("session not found") from None
+        if not session.takeover:
+            raise SessionRunConflictError("session is read-only until takeover is enabled")
+        if not await self._manager.is_online(session.connectorId):
+            raise SessionRunConflictError("connector is offline")
+        for selection_type, capability_id in (
+            ("model", CATALOG_MODEL),
+            ("permission", CATALOG_PERMISSION),
+        ):
+            if selection_type in payload.selections:
+                await self._require_session_capability(
+                    session,
+                    capability_id,
+                    user_id=user_id,
+                )
+        await self._ensure_session_runtime_running(session, user_id=user_id)
+        params: dict[str, Any] = {
+            "sessionId": session_id,
+            "runtime": session.runtime,
+            "runtimeId": _session_runtime_id(session),
+            "selections": payload.selections,
+        }
+        if session.externalSessionId:
+            params["externalSessionId"] = session.externalSessionId
+        try:
+            result = await self._manager.request(
+                session.connectorId,
+                "session.selections.update",
+                params,
+                timeout=30,
+            )
+        except ConnectorOfflineError as exc:
+            raise SessionRunConflictError(str(exc)) from exc
+        except ConnectorRpcError as exc:
+            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+        if isinstance(result, dict) and result.get("ok") is False:
+            code = result.get("code")
+            message = result.get("message")
+            raise SessionRunUpstreamError(
+                str(message or code or "runtime rejected selection update")
+            )
+        try:
+            state = _runtime_state_from_selection_result(
+                session,
+                payload.selections,
+                result,
+            )
+        except SessionRuntimeBindingError as exc:
+            raise SessionRunUpstreamError(str(exc)) from exc
+        return state, result if isinstance(result, dict) else None
+
+    async def steer_session(
+        self,
+        session_id: str,
+        payload: SessionSteerRequest,
+        *,
+        user_id: str,
+    ) -> RpcResponsePayload:
+        try:
+            session = await self._store.get_session(session_id, user_id=user_id)
+        except KeyError:
+            raise SessionRunNotFoundError("session not found") from None
+        if not session.takeover:
+            raise SessionRunConflictError(
+                "session is read-only until takeover is enabled"
+            )
+        if not await self._manager.is_online(session.connectorId):
+            raise SessionRunConflictError("connector is offline")
+        await self._ensure_session_runtime_running(session, user_id=user_id)
+        runtime_status = await self._read_runtime_status(session)
+        if runtime_status != "running":
+            raise SessionRunConflictError("session is not running")
+        await self._require_session_capability(
+            session,
+            SESSION_STEER,
+            user_id=user_id,
+        )
+
+        params: dict[str, Any] = {
+            "sessionId": session_id,
+            "runtime": session.runtime,
+            "runtimeId": _session_runtime_id(session),
+            "content": payload.content,
+        }
+        external_session_id = session.externalSessionId
+        if external_session_id:
+            params["externalSessionId"] = external_session_id
+        if session.cwd:
+            params["cwd"] = session.cwd
+        if payload.clientMessageId:
+            params["clientMessageId"] = payload.clientMessageId
+        if payload.attachments:
+            attachment_payloads = await self._attachment_payloads(
+                session_id=session_id,
+                user_id=user_id,
+                file_ids=[attachment.fileId for attachment in payload.attachments],
+            )
+            await self._require_session_capability(
+                session,
+                RUNTIME_ATTACHMENT,
+                user_id=user_id,
+                attachment_media_types=[item["mediaType"] for item in attachment_payloads],
+            )
             params["attachments"] = attachment_payloads
             params["timelineAttachments"] = [
                 _timeline_attachment_payload(item) for item in attachment_payloads
             ]
 
-        await self._store.start_active_run(
-            session_id=session_id,
-            runtime=session.runtime,
-            external_session_id=session.externalSessionId,
-            params=params,
-        )
-        log_stage(
-            "server.message_prep",
-            elapsed_ms(prep_started),
-            runtime=session.runtime,
-            session_id=session_id,
-            connector_id=session.connectorId,
-        )
         try:
             result = await self._manager.request(
                 session.connectorId,
-                "turn.start",
+                "session.steer",
                 params,
             )
         except ConnectorOfflineError as exc:
-            await self._store.set_session_status(session_id, "error")
-            await self._store.clear_active_run(session_id)
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
-            await self._store.set_session_status(session_id, "error")
-            await self._store.clear_active_run(session_id)
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
-        turn_id = result.get("turnId") if isinstance(result, dict) else None
-        if isinstance(turn_id, str) and turn_id:
-            log_stage(
-                "server.turn_start_accepted",
-                elapsed_ms(prep_started),
-                runtime=session.runtime,
-                session_id=session_id,
-                turn_id=turn_id,
-                connector_id=session.connectorId,
-            )
         return RpcResponsePayload(ok=True, result=result)
+
+    async def _require_runtime_capability(
+        self,
+        connector_id: str,
+        runtime: str,
+        runtime_id: str,
+        capability_id: str,
+        *,
+        user_id: str,
+        attachment_media_types: list[str] | None = None,
+    ) -> None:
+        capability_set = ProtocolCapabilitySet.model_validate(
+            await self._store.get_protocol_capabilities(
+                connector_id,
+                user_id=user_id,
+            )
+        )
+        capability = next(
+            (
+                item
+                for item in capability_set.capabilities
+                if item.runtime == runtime
+                and item.scope == "runtime"
+                and item.capabilityId == capability_id
+                and _capability_runtime_id(item) == runtime_id
+            ),
+            None,
+        )
+        if capability is None:
+            capability = next(
+                (
+                    item
+                    for item in capability_set.capabilities
+                    if item.runtime == runtime
+                    and item.scope == "runtime"
+                    and item.capabilityId == capability_id
+                    and _capability_runtime_id(item) is None
+                ),
+                None,
+            )
+        if capability is None or not (
+            capability.supported and capability.available and capability.allowed
+        ):
+            raise SessionRunConflictError(
+                f"runtime capability is unavailable: {capability_id}"
+            )
+
+        if attachment_media_types:
+            _validate_attachment_mime_types(_capability_metadata(capability), attachment_media_types)
+
+    async def _require_session_capability(
+        self,
+        session: SessionView,
+        capability_id: str,
+        *,
+        user_id: str,
+        attachment_media_types: list[str] | None = None,
+    ) -> None:
+        try:
+            capability_set = await read_session_capability_facts(
+                self._manager, session, runtime_id=_session_runtime_id(session),
+            )
+        except ConnectorOfflineError as exc:
+            raise SessionRunConflictError(str(exc)) from exc
+        except TimeoutError as exc:
+            raise SessionRunTimeoutError({
+                "code": "runtime_capabilities_timeout",
+                "message": "connector session capabilities request timed out",
+            }) from exc
+        except ConnectorRpcError as exc:
+            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+        except ValueError as exc:
+            raise SessionRunUpstreamError(str(exc)) from exc
+        online_session = session.model_copy(update={"connectorStatus": "online"})
+        effective = derive_session_effective_capabilities(
+            session=online_session,
+            runtime_capabilities=capability_set,
+        )
+        capability = next(
+            (
+                item
+                for item in effective.capabilities
+                if item.capabilityId == capability_id
+            ),
+            None,
+        )
+        if capability is None or not (
+            capability.supported and capability.available and capability.allowed
+        ):
+            raise SessionRunConflictError(
+                f"session capability is unavailable: {capability_id}"
+            )
+
+        if attachment_media_types:
+            _validate_attachment_mime_types(_capability_metadata(capability), attachment_media_types)
+
+    async def _require_runtime_instance(
+        self,
+        connector_id: str,
+        runtime: str,
+        runtime_id: str,
+        *,
+        user_id: str,
+        require_running: bool,
+    ) -> None:
+        try:
+            await self._device_runtimes.ensure_session_routable(
+                connector_id,
+                runtime_type=runtime,
+                runtime_id=runtime_id,
+                user_id=user_id,
+                ensure_running=require_running,
+            )
+        except DeviceRuntimeError as exc:
+            self._raise_device_runtime_error(exc)
+
+    async def _ensure_session_runtime_running(
+        self,
+        session: SessionView,
+        *,
+        user_id: str,
+    ) -> None:
+        await self._require_runtime_instance(
+            session.connectorId,
+            session.runtime,
+            _session_runtime_id(session),
+            user_id=user_id,
+            require_running=True,
+        )
+
+    @staticmethod
+    def _raise_device_runtime_error(exc: DeviceRuntimeError) -> None:
+        if exc.status_code == 404:
+            raise SessionRunNotFoundError(exc.message) from exc
+        if exc.status_code == 422:
+            raise SessionRunInvalidConfigError(exc.detail) from exc
+        if exc.status_code == 502:
+            raise SessionRunUpstreamError(exc.detail) from exc
+        raise SessionRunConflictError(exc.detail) from exc
 
     async def _attachment_payloads(
         self,
@@ -281,7 +819,7 @@ class SessionRunService:
         session_id: str,
         user_id: str,
         file_ids: list[str],
-    ) -> list[dict[str, Any]]:
+    ) -> list[PersistedInlineAttachment]:
         payloads: list[dict[str, Any]] = []
         for file_id in file_ids:
             try:
@@ -301,11 +839,46 @@ class SessionRunService:
                     "mediaType": metadata.get("mediaType") or "",
                     "size": metadata.get("size"),
                     "sha256": metadata.get("sha256"),
-                    "downloadUrl": f"/connector/sessions/{session_id}/attachments/{file_id}/content",
-                    "platformOpenUrl": f"/sessions/{session_id}/attachments/{file_id}/open",
+                    "downloadUrl": api_v2_path(f"/connector/sessions/{session_id}/attachments/{file_id}/content"),
+                    "platformOpenUrl": api_v2_path(f"/sessions/{session_id}/attachments/{file_id}/open"),
                 }
             )
         return payloads
+
+    async def _persist_inline_attachments(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        attachments: list[InlineAttachmentRef],
+    ) -> list[dict[str, Any]]:
+        """Persist create-and-start inline attachments into session file storage.
+
+        Side effects:
+        - decodes request base64
+        - writes each attachment into the server session-scoped file store
+        """
+
+        persisted: list[PersistedInlineAttachment] = []
+        for attachment in attachments:
+            data = _decode_inline_attachment(attachment)
+            saved = await self._store.save_user_uploaded_file(
+                session_id=session_id,
+                user_id=user_id,
+                name=attachment.name,
+                data=data,
+                media_type=attachment.mediaType,
+            )
+            persisted.append(
+                PersistedInlineAttachment(
+                    file_id=str(saved["fileId"]),
+                    name=str(saved["name"]),
+                    media_type=str(saved.get("mediaType") or ""),
+                    size=int(saved["size"]),
+                    sha256=str(saved["sha256"]),
+                )
+            )
+        return persisted
 
     async def interrupt_session(
         self,
@@ -336,101 +909,109 @@ class SessionRunService:
             raise SessionRunNotFoundError("session not found") from None
         if require_takeover and not session.takeover:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
-        active_run = await self._store.get_active_run(session_id)
-        turn_id = active_run.get("turnId") if active_run else None
-        if turn_id is None:
-            turn_id = await self._store.get_open_turn_id(session_id)
-        if turn_id is None and session.status not in {"running", "waiting_approval"}:
-            raise SessionRunConflictError("no active turn to interrupt")
-
+        if require_takeover:
+            await self._require_session_capability(
+                session,
+                SESSION_INTERRUPT,
+                user_id=user_id,
+            )
+        await self._ensure_session_runtime_running(session, user_id=user_id)
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,
+            "runtimeId": _session_runtime_id(session),
         }
-        if turn_id is not None:
-            params["turnId"] = turn_id
-        external_session_id = (
-            active_run.get("externalSessionId") if active_run else session.externalSessionId
-        )
-        if external_session_id:
-            params["externalSessionId"] = external_session_id
         try:
-            result = await self._manager.request(session.connectorId, "turn.interrupt", params)
+            result = await self._manager.request(
+                session.connectorId,
+                "session.interrupt",
+                params,
+            )
         except ConnectorOfflineError as exc:
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
-        # Always reconcile run/status after interrupt so UI cannot stick on "running"
-        # when the agent had no interruptible client (e.g. Claude connect hang).
-        if _interrupt_target_not_found(result) or _interrupt_cleared_without_client(result):
-            await self._store.clear_active_run(session_id)
-            await self._store.refresh_session_status_from_timeline(session_id)
-            if (await self._store.get_session(session_id, user_id=user_id)).status in {
-                "running",
-                "waiting_approval",
-            }:
-                await self._store.set_session_status(session_id, "idle")
-        elif isinstance(result, dict) and result.get("interrupted") is True:
-            await self._store.clear_active_run(session_id)
-            await self._store.refresh_session_status_from_timeline(session_id)
-            if (await self._store.get_session(session_id, user_id=user_id)).status in {
-                "running",
-                "waiting_approval",
-            }:
-                await self._store.set_session_status(session_id, "idle")
+        await self._store.clear_active_run(session_id)
         return RpcResponsePayload(ok=True, result=result)
 
 
-# Non-ACP drivers keep their own auth/create paths; skip report-based short-circuit.
-_NON_ACP_RUNTIMES = frozenset({"claude", "codex"})
+def _session_source_error_detail(session: SessionView) -> dict[str, str]:
+    availability = session.sourceAvailability
+    code = SESSION_SOURCE_ERROR_CODES.get(availability, "session_archived")
+    if session.userArchived and session.archiveSource == "user":
+        message = "session is archived in Agents Anywhere"
+    else:
+        message = f"session is {availability} in the local runtime"
+    return {"code": code, "message": message}
 
 
-def _acp_auth_blocked_detail(connector: Any, runtime: str) -> str | None:
-    """Return a ready-to-surface error when ACP report already says auth is required."""
-    if runtime in _NON_ACP_RUNTIMES:
-        return None
-    caps = getattr(connector, "runtimeCapabilities", None)
-    attached = getattr(caps, "attached", None) if caps is not None else None
-    if not isinstance(attached, dict):
-        return None
-    agent = attached.get(runtime)
-    if agent is None:
-        return None
-    report = getattr(agent, "report", None)
-    if not isinstance(report, dict):
-        return None
-    if report.get("authStatus") != "required":
-        return None
-    hint = report.get("authHint")
-    if isinstance(hint, str) and hint.strip():
-        return hint.strip()
-    return (
-        f"Authentication required for {runtime}. "
-        "Sign in on the device from Agents Anywhere, then try again."
+def _selections_from_mapping(value: dict[str, str | None]) -> dict[str, str]:
+    return {key: item for key, item in value.items() if isinstance(item, str) and item}
+
+
+def _request_runtime_id(
+    payload: SessionCreateRequest | SessionCreateAndStartRequest,
+) -> str:
+    return payload.runtimeId or payload.runtime
+
+
+def _session_runtime_id(session: SessionView) -> str:
+    return session.runtimeId or session.runtime
+
+
+def _capability_runtime_id(capability: Any) -> str | None:
+    value = getattr(capability, "runtimeId", None)
+    return value if isinstance(value, str) and value else None
+
+
+def _runtime_state_from_selection_result(
+    session: SessionView,
+    selections: dict[str, str | None],
+    result: object,
+) -> SessionRuntimeState:
+    now = utc_now()
+    raw_state = result.get("state") if isinstance(result, dict) else None
+    if isinstance(raw_state, dict):
+        session_id, runtime, runtime_id = resolve_session_runtime_binding(
+            raw_state,
+            session_id=session.id,
+            runtime_type=session.runtime,
+            runtime_id=_session_runtime_id(session),
+        )
+        return SessionRuntimeState.model_validate(
+            {
+                "sessionId": session_id,
+                "runtime": runtime,
+                "runtimeId": runtime_id,
+                "externalSessionId": raw_state.get("externalSessionId")
+                or session.externalSessionId,
+                "status": raw_state.get("status") or "idle",
+                "selections": raw_state.get("selections")
+                if isinstance(raw_state.get("selections"), dict)
+                else selections,
+                "statusReason": raw_state.get("statusReason"),
+                "error": raw_state.get("error")
+                if isinstance(raw_state.get("error"), dict)
+                else None,
+                "metadata": raw_state.get("metadata")
+                if isinstance(raw_state.get("metadata"), dict)
+                else {},
+                "updatedSeq": session.updatedSeq,
+                "createdAt": now,
+                "updatedAt": now,
+            }
+        )
+    return SessionRuntimeState(
+        sessionId=session.id,
+        runtime=session.runtime,
+        runtimeId=_session_runtime_id(session),
+        externalSessionId=session.externalSessionId,
+        status="idle",
+        selections=selections,
+        updatedSeq=session.updatedSeq,
+        createdAt=now,
+        updatedAt=now,
     )
-
-
-def _interrupt_target_not_found(result: object) -> bool:
-    if not isinstance(result, dict):
-        return False
-    if result.get("interrupted") is not False:
-        return False
-    reason = result.get("reason")
-    return reason in {"thread_not_found", "turn_not_found"}
-
-
-def _interrupt_cleared_without_client(result: object) -> bool:
-    if not isinstance(result, dict):
-        return False
-    if result.get("interrupted") is True and result.get("reason") == "task_cancelled":
-        return True
-    if result.get("interrupted") is not False:
-        return False
-    reason = str(result.get("reason") or "")
-    return reason in {
-        "no active Claude SDK client",
-        "session not registered",
-    }
 
 
 def _timeline_attachment_payload(value: dict[str, Any]) -> dict[str, Any]:
@@ -441,3 +1022,66 @@ def _timeline_attachment_payload(value: dict[str, Any]) -> dict[str, Any]:
         "size": value.get("size"),
         "sha256": value.get("sha256"),
     }
+
+
+def _connector_attachment_reference_payload(attachment: PersistedInlineAttachment) -> dict[str, Any]:
+    return {
+        "fileId": attachment.file_id,
+        "name": attachment.name,
+        "mediaType": attachment.media_type,
+        "size": attachment.size,
+        "sha256": attachment.sha256,
+    }
+
+
+def _timeline_payload_from_persisted_inline_attachment(
+    attachment: PersistedInlineAttachment,
+) -> dict[str, Any]:
+    return {
+        "fileId": attachment.file_id,
+        "name": attachment.name,
+        "mediaType": attachment.media_type,
+        "size": attachment.size,
+        "sha256": attachment.sha256,
+    }
+
+
+def _decode_inline_attachment(attachment: InlineAttachmentRef) -> bytes:
+    try:
+        data = base64.b64decode(attachment.contentBase64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise SessionRunInvalidConfigError(
+            f"attachment {attachment.fileId} contentBase64 is invalid"
+        ) from exc
+    if attachment.size is not None and attachment.size != len(data):
+        raise SessionRunInvalidConfigError(
+            f"attachment {attachment.fileId} size does not match content"
+        )
+    if attachment.sha256 is not None:
+        actual_sha256 = hashlib.sha256(data).hexdigest()
+        if attachment.sha256 != actual_sha256:
+            raise SessionRunInvalidConfigError(
+                f"attachment {attachment.fileId} sha256 does not match content"
+            )
+    return data
+
+
+def _capability_metadata(capability: Any) -> dict[str, Any]:
+    """Optional runtime restrictions a capability may not publish at all."""
+    metadata = getattr(capability, "metadata", None)
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _validate_attachment_mime_types(metadata: dict[str, Any], media_types: list[str]) -> None:
+    """Enforce optional runtime MIME restrictions on stored upload metadata."""
+    if "allowedMimeTypes" not in metadata:
+        return
+    raw = metadata["allowedMimeTypes"]
+    allowed = {
+        value.strip().lower() for value in raw if isinstance(value, str)
+        and re.fullmatch(r"[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+", value.strip().lower())
+    } if isinstance(raw, list) else set()
+    for media_type in media_types:
+        normalized = media_type.split(";", 1)[0].strip().lower()
+        if normalized not in allowed:
+            raise SessionRunConflictError(f"attachment type is not supported by this runtime: {normalized}")

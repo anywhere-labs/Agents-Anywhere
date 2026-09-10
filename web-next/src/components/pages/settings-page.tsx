@@ -3,15 +3,11 @@
 import * as React from "react"
 import Cropper, { type Area, type Point } from "react-easy-crop"
 import {
-  ArrowDown,
-  ArrowUp,
+  Archive,
   Camera,
-  ChevronLeft,
-  Pencil,
-  Plus,
+  ChevronDown,
   RotateCw,
-  Save,
-  Settings,
+  Smartphone,
   Sun,
   Trash2,
   Upload,
@@ -24,7 +20,7 @@ import { toast } from "sonner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { SettingsSection } from "@/components/settings/settings-section"
 import {
   Dialog,
   DialogContent,
@@ -33,6 +29,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
+} from "@/components/ui/drawer"
 import {
   Field,
   FieldContent,
@@ -46,30 +49,41 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Slider } from "@/components/ui/slider"
 import { Spinner } from "@/components/ui/spinner"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { MobileSignInPanel } from "@/components/pages/mobile-signin-panel"
+import { Switch } from "@/components/ui/switch"
+import { AccountProfileCard } from "@/components/pages/account-profile-card"
+import { accountDisplayName } from "@/features/auth/account-profile"
+import { MobileConnectionDialog } from "@/components/pages/mobile-signin-panel"
+import { ArchivedSessionsTab } from "@/components/settings/archived-sessions-tab"
+import { PageHeader } from "@/components/pages/page-header"
 import { useAuth } from "@/components/auth/auth-context"
 import { LocaleSwitcher } from "@/components/locale-switcher"
 import { LoadingState } from "@/components/loading-state"
 import { useWorkspace } from "@/components/workspace-context"
 import { authApi } from "@/features/auth/api"
 import type { AuthMe } from "@/features/auth/types"
-import { dashboardApi } from "@/features/dashboard/api"
-import type { AgentCatalogEntry } from "@/features/dashboard/types"
+import { useMobileConnectionsSidebarVisibility } from "@/features/mobile-connections/sidebar-visibility"
 import { cn } from "@/lib/utils"
 
-type SettingsTab = "account" | "agent" | "appearance"
+type SettingsTab =
+  | "account"
+  | "appearance"
+  | "mobile-connections"
+  | "archived-sessions"
+type SettingsLabelKey =
+  | "account"
+  | "appearance"
+  | "mobileConnections"
+  | "archivedSessions"
 type AppearanceMode = "light" | "dark" | "auto"
 
-const AGENT_RUNTIMES = ["codex", "claude"] as const
 const AVATAR_OUTPUT_SIZE = 256
 const AVATAR_MAX_FILE_SIZE = 8 * 1024 * 1024
 
-const navItems: { id: SettingsTab; labelKey: "account" | "agent" | "appearance"; icon: typeof User }[] = [
+const navItems: { id: SettingsTab; labelKey: SettingsLabelKey; icon: typeof User }[] = [
   { id: "account", labelKey: "account", icon: User },
-  { id: "agent", labelKey: "agent", icon: Settings },
   { id: "appearance", labelKey: "appearance", icon: Sun },
+  { id: "mobile-connections", labelKey: "mobileConnections", icon: Smartphone },
+  { id: "archived-sessions", labelKey: "archivedSessions", icon: Archive },
 ]
 
 function AccountTab({
@@ -98,25 +112,21 @@ function AccountTab({
 
   return (
     <div className="flex flex-col gap-4">
-      <section className="rounded-xl border border-border bg-card">
-        <div className="px-6 py-5">
-          <h2 className="text-base font-semibold">{t("account")}</h2>
-        </div>
-        <Separator />
+      <SettingsSection title={t("account")} contentClassName="p-0">
         <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
           <div className="flex min-w-0 items-center gap-4">
             <Avatar className="size-16 rounded-full">
-              {me.avatar && <AvatarImage src={me.avatar} alt={me.userId} />}
+              {me.avatar && <AvatarImage src={me.avatar} alt={accountDisplayName(me)} />}
               <AvatarFallback className="rounded-full bg-primary text-xl text-primary-foreground">
-                {me.userId.slice(0, 2).toUpperCase()}
+                {accountDisplayName(me).slice(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0">
-              <p className="truncate text-base font-semibold">{me.userId}</p>
+              <p className="truncate text-base font-semibold">{accountDisplayName(me)}</p>
               <p className="text-sm capitalize text-muted-foreground">{me.role}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex max-w-full flex-wrap items-center gap-2">
             {me.avatar ? (
               <Button type="button" variant="outline" size="sm" onClick={clearAvatar} disabled={clearingAvatar}>
                 {clearingAvatar ? <Spinner /> : <Trash2 data-icon="inline-start" />}
@@ -130,52 +140,87 @@ function AccountTab({
           </div>
         </div>
         <Separator />
-        <div className="divide-y divide-border">
-          <div className="flex items-center px-6 py-4">
-            <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("userId")}</span>
-            <span className="code-mono text-sm">{me.userId}</span>
+        <dl className="divide-y divide-border">
+          <div className="grid grid-cols-1 gap-1 px-6 py-4 sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-center sm:gap-0">
+            <dt className="text-sm text-muted-foreground">{t("profile.email")}</dt>
+            <dd className="min-w-0 code-mono text-sm [overflow-wrap:anywhere]">{me.email ?? "—"}</dd>
           </div>
-          <div className="flex items-center px-6 py-4">
-            <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("role")}</span>
-            <span className="code-mono text-sm">{me.role}</span>
+          <div className="grid grid-cols-1 gap-1 px-6 py-4 sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-center sm:gap-0">
+            <dt className="text-sm text-muted-foreground">{t("role")}</dt>
+            <dd className="min-w-0 code-mono text-sm">{me.role}</dd>
           </div>
-          <div className="flex items-center px-6 py-4">
-            <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("accountStatus")}</span>
-            <span
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
-                me.disabled ? "bg-destructive/10 text-destructive" : "bg-emerald-500/10 text-emerald-600",
-              )}
-            >
-              <span className={cn("size-1.5 rounded-full", me.disabled ? "bg-destructive" : "bg-emerald-500")} />
-              {me.disabled ? t("disabled") : t("active")}
-            </span>
+          <div className="grid grid-cols-1 gap-1 px-6 py-4 sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-center sm:gap-0">
+            <dt className="text-sm text-muted-foreground">{t("accountStatus")}</dt>
+            <dd>
+              <Badge variant={me.disabled ? "destructive" : "secondary"}>
+                {me.disabled ? t("disabled") : t("active")}
+              </Badge>
+            </dd>
           </div>
-        </div>
-      </section>
+        </dl>
+      </SettingsSection>
 
-      <section className="rounded-xl border border-border bg-card">
-        <div className="flex items-center justify-between gap-4 px-6 py-5">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold">{t("password")}</h2>
-            <p className="mt-0.5 text-sm text-muted-foreground">{t("passwordDescription")}</p>
-          </div>
+      <SettingsSection
+        title={t("password")}
+        description={t("passwordDescription")}
+        action={
           <Button type="button" variant="destructive" size="sm" onClick={() => setPasswordOpen(true)}>
             <RotateCw data-icon="inline-start" />
             {t("resetPassword")}
           </Button>
-        </div>
-      </section>
+        }
+      />
 
-      <MobileSignInPanel token={token} userId={me.userId} />
+      <AccountProfileCard me={me} token={token} onMeChange={onMeChange} />
 
       <ResetPasswordDialog open={passwordOpen} token={token} onOpenChange={setPasswordOpen} />
       <AvatarCropDialog
         open={avatarOpen}
         token={token}
-        userId={me.userId}
+        userId={accountDisplayName(me)}
         onMeChange={onMeChange}
         onOpenChange={setAvatarOpen}
+      />
+    </div>
+  )
+}
+
+function MobileConnectionsTab({ token, userId }: { token: string; userId: string }) {
+  const t = useTranslations("pages.settings")
+  const tMobile = useTranslations("dashboard.mobileConnections")
+  const [sidebarVisible, setSidebarVisible] = useMobileConnectionsSidebarVisibility()
+
+  return (
+    <div className="flex flex-col gap-4">
+      <SettingsSection title={t("mobileSidebarTitle")} description={t("mobileSidebarDescription")}>
+        <FieldGroup>
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldLabel htmlFor="mobile-connections-sidebar-visible">
+                {t("mobileSidebarShow")}
+              </FieldLabel>
+              <FieldDescription>{t("mobileSidebarShowDescription")}</FieldDescription>
+            </FieldContent>
+            <Switch
+              id="mobile-connections-sidebar-visible"
+              checked={sidebarVisible}
+              onCheckedChange={setSidebarVisible}
+            />
+          </Field>
+        </FieldGroup>
+      </SettingsSection>
+
+      <SettingsSection
+        title={tMobile("onboardingTitle")}
+        description={tMobile("onboardingDescription")}
+        action={
+          <MobileConnectionDialog token={token} userId={userId}>
+            <Button type="button" size="sm">
+              <Smartphone data-icon="inline-start" />
+              {tMobile("startConnection")}
+            </Button>
+          </MobileConnectionDialog>
+        }
       />
     </div>
   )
@@ -422,7 +467,7 @@ function AvatarCropDialog({
                 max={3}
                 step={0.01}
                 disabled={!source}
-                onValueChange={(value) => setZoom(value[0] ?? 1)}
+                onValueChange={(value: number[]) => setZoom(value[0] ?? 1)}
               />
             </Field>
           </FieldGroup>
@@ -445,500 +490,6 @@ function AvatarCropDialog({
   )
 }
 
-function AgentTab({ token }: { token: string }) {
-  const t = useTranslations("pages.settings")
-  const [selectedRuntime, setSelectedRuntime] = React.useState<(typeof AGENT_RUNTIMES)[number]>("codex")
-  const [modelsByRuntime, setModelsByRuntime] = React.useState<Record<string, AgentCatalogEntry[]>>({})
-  const [savedModelsByRuntime, setSavedModelsByRuntime] = React.useState<Record<string, AgentCatalogEntry[]>>({})
-  const [editingModel, setEditingModel] = React.useState<{ runtime: string; index: number | null } | null>(null)
-  const [editingEffort, setEditingEffort] = React.useState<{ runtime: string; modelIndex: number; effortIndex: number | null } | null>(null)
-  const [loading, setLoading] = React.useState(true)
-  const [saving, setSaving] = React.useState(false)
-  const [error, setError] = React.useState<string | null>(null)
-  const dirty = React.useMemo(
-    () =>
-      JSON.stringify(toAgentDefaultsPayloadByRuntime(modelsByRuntime)) !==
-        JSON.stringify(toAgentDefaultsPayloadByRuntime(savedModelsByRuntime)),
-    [modelsByRuntime, savedModelsByRuntime],
-  )
-
-  React.useEffect(() => {
-    if (!token) {
-      setLoading(false)
-      return
-    }
-    let cancelled = false
-    setLoading(true)
-    setError(null)
-    dashboardApi.getAgentDefaults(token)
-      .then((defaultsResponse) => {
-        if (cancelled) return
-        const nextModelsByRuntime = Object.fromEntries(
-          AGENT_RUNTIMES.map((runtime) => [runtime, defaultsResponse.runtimes[runtime]?.models ?? []]),
-        )
-        setModelsByRuntime(nextModelsByRuntime)
-        setSavedModelsByRuntime(nextModelsByRuntime)
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : t("agentDefaultsLoadFailed"))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [token, t])
-
-  const saveModels = async () => {
-    if (!token || saving || !dirty) return
-    setSaving(true)
-    setError(null)
-    try {
-      const response = await dashboardApi.updateAgentDefaults(token, {
-        ...Object.fromEntries(
-          AGENT_RUNTIMES.map((runtime) => [
-            runtime,
-            { models: toAgentDefaultsPayload(modelsByRuntime[runtime] ?? []) },
-          ]),
-        ),
-      })
-      const nextModelsByRuntime = Object.fromEntries(
-        AGENT_RUNTIMES.map((runtime) => [runtime, response.runtimes[runtime]?.models ?? modelsByRuntime[runtime] ?? []]),
-      )
-      setModelsByRuntime(nextModelsByRuntime)
-      setSavedModelsByRuntime(nextModelsByRuntime)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("agentDefaultsSaveFailed"))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const setRuntimeModels = (runtime: string, updater: (models: AgentCatalogEntry[]) => AgentCatalogEntry[]) => {
-    setModelsByRuntime((current) => ({
-      ...current,
-      [runtime]: updater(current[runtime] ?? []),
-    }))
-  }
-
-  const moveModel = (runtime: string, index: number, direction: -1 | 1) => {
-    setRuntimeModels(runtime, (models) => moveEntry(models, index, direction))
-  }
-
-  const removeModel = (runtime: string, index: number) => {
-    setRuntimeModels(runtime, (models) => models.filter((_, itemIndex) => itemIndex !== index))
-  }
-
-  const moveEffort = (runtime: string, modelIndex: number, effortIndex: number, direction: -1 | 1) => {
-    setRuntimeModels(runtime, (models) => models.map((model, index) => (
-      index === modelIndex ? { ...model, efforts: moveEntry(model.efforts, effortIndex, direction) } : model
-    )))
-  }
-
-  const removeEffort = (runtime: string, modelIndex: number, effortIndex: number) => {
-    setRuntimeModels(runtime, (models) => models.map((model, index) => (
-      index === modelIndex
-        ? { ...model, efforts: model.efforts.filter((_, itemIndex) => itemIndex !== effortIndex) }
-        : model
-    )))
-  }
-
-  const upsertModel = (runtime: string, index: number | null, model: AgentCatalogEntry) => {
-    setRuntimeModels(runtime, (models) => {
-      if (index == null) return [...models, model]
-      return models.map((item, itemIndex) => itemIndex === index ? model : item)
-    })
-  }
-
-  const upsertEffort = (runtime: string, modelIndex: number, effortIndex: number | null, effort: AgentCatalogEntry) => {
-    setRuntimeModels(runtime, (models) => models.map((model, index) => {
-      if (index !== modelIndex) return model
-      const efforts = effortIndex == null
-        ? [...model.efforts, effort]
-        : model.efforts.map((item, itemIndex) => itemIndex === effortIndex ? effort : item)
-      return { ...model, efforts }
-    }))
-  }
-
-  return (
-    <div className="flex flex-col gap-4">
-      <section className="rounded-xl border border-border bg-card">
-        <div className="flex items-center justify-between gap-4 px-6 py-5">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold">{t("modelCatalog")}</h2>
-            <p className="mt-0.5 text-sm text-muted-foreground">{t("modelCatalogDescription")}</p>
-          </div>
-          <Button type="button" disabled={!dirty || saving} onClick={() => void saveModels()}>
-            {saving ? <Spinner /> : <Save data-icon="inline-start" />}
-            {t("saveChanges")}
-          </Button>
-        </div>
-        <Separator />
-        {loading ? (
-          <LoadingState className="min-h-48" />
-        ) : error ? (
-          <div className="px-6 py-8 text-sm text-destructive">{error}</div>
-        ) : (
-          <Tabs value={selectedRuntime} onValueChange={(value) => setSelectedRuntime(value as (typeof AGENT_RUNTIMES)[number])} className="gap-0">
-            <div className="flex items-center justify-between gap-4 px-6 py-4">
-              <TabsList>
-                {AGENT_RUNTIMES.map((runtime) => (
-                  <TabsTrigger key={runtime} value={runtime}>{runtime}</TabsTrigger>
-                ))}
-              </TabsList>
-              <Button type="button" variant="outline" size="sm" onClick={() => setEditingModel({ runtime: selectedRuntime, index: null })}>
-                <Plus data-icon="inline-start" />
-                {t("addModel")}
-              </Button>
-            </div>
-            <Separator />
-            {AGENT_RUNTIMES.map((runtime) => (
-              <TabsContent key={runtime} value={runtime} className="m-0">
-                <AgentModelCatalog
-                  runtime={runtime}
-                  models={modelsByRuntime[runtime] ?? []}
-                  onEditModel={(index) => setEditingModel({ runtime, index })}
-                  onRemoveModel={(index) => removeModel(runtime, index)}
-                  onMoveModel={(index, direction) => moveModel(runtime, index, direction)}
-                  onAddEffort={(modelIndex) => setEditingEffort({ runtime, modelIndex, effortIndex: null })}
-                  onEditEffort={(modelIndex, effortIndex) => setEditingEffort({ runtime, modelIndex, effortIndex })}
-                  onRemoveEffort={(modelIndex, effortIndex) => removeEffort(runtime, modelIndex, effortIndex)}
-                  onMoveEffort={(modelIndex, effortIndex, direction) => moveEffort(runtime, modelIndex, effortIndex, direction)}
-                />
-              </TabsContent>
-            ))}
-          </Tabs>
-        )}
-        {saving ? (
-          <>
-            <Separator />
-            <div className="flex items-center gap-2 px-6 py-4 text-sm text-muted-foreground">
-              <Spinner />
-              <span>{t("saving")}</span>
-            </div>
-          </>
-        ) : null}
-      </section>
-      <ModelEditDialog
-        open={Boolean(editingModel)}
-        runtime={editingModel?.runtime ?? selectedRuntime}
-        model={editingModel && editingModel.index != null ? modelsByRuntime[editingModel.runtime]?.[editingModel.index] : null}
-        onOpenChange={(open) => {
-          if (!open) setEditingModel(null)
-        }}
-        onSave={(model) => {
-          if (!editingModel) return
-          upsertModel(editingModel.runtime, editingModel.index, model)
-          setEditingModel(null)
-        }}
-      />
-      <EffortEditDialog
-        open={Boolean(editingEffort)}
-        runtime={editingEffort?.runtime ?? selectedRuntime}
-        effort={editingEffort && editingEffort.effortIndex != null
-          ? modelsByRuntime[editingEffort.runtime]?.[editingEffort.modelIndex]?.efforts[editingEffort.effortIndex]
-          : null}
-        onOpenChange={(open) => {
-          if (!open) setEditingEffort(null)
-        }}
-        onSave={(effort) => {
-          if (!editingEffort) return
-          upsertEffort(editingEffort.runtime, editingEffort.modelIndex, editingEffort.effortIndex, effort)
-          setEditingEffort(null)
-        }}
-      />
-    </div>
-  )
-}
-
-function moveEntry<T>(items: T[], index: number, direction: -1 | 1): T[] {
-  const nextIndex = index + direction
-  if (nextIndex < 0 || nextIndex >= items.length) return items
-  const next = [...items]
-  const current = next[index]
-  const target = next[nextIndex]
-  if (current === undefined || target === undefined) return items
-  next[index] = target
-  next[nextIndex] = current
-  return next
-}
-
-function AgentModelCatalog({
-  runtime,
-  models,
-  onEditModel,
-  onRemoveModel,
-  onMoveModel,
-  onAddEffort,
-  onEditEffort,
-  onRemoveEffort,
-  onMoveEffort,
-}: {
-  runtime: string
-  models: AgentCatalogEntry[]
-  onEditModel: (index: number) => void
-  onRemoveModel: (index: number) => void
-  onMoveModel: (index: number, direction: -1 | 1) => void
-  onAddEffort: (modelIndex: number) => void
-  onEditEffort: (modelIndex: number, effortIndex: number) => void
-  onRemoveEffort: (modelIndex: number, effortIndex: number) => void
-  onMoveEffort: (modelIndex: number, effortIndex: number, direction: -1 | 1) => void
-}) {
-  const t = useTranslations("pages.settings")
-  if (models.length === 0) {
-    return <p className="px-6 py-8 text-sm text-muted-foreground">{t("noModels")}</p>
-  }
-  return (
-    <Accordion type="multiple" className="rounded-none border-0">
-      {models.map((model, modelIndex) => (
-        <AccordionItem key={model.key} value={model.key} className="border-0 data-open:bg-transparent">
-          <div className="flex min-h-20 items-center gap-3 px-6 py-4">
-            <div className="min-w-0 flex-1 text-left">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="truncate text-sm font-medium">{model.displayLabel}</span>
-                {modelIndex === 0 ? <Badge variant="secondary">{t("defaultModel")}</Badge> : null}
-              </div>
-              <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                <span className="truncate">{model.key}</span>
-                <span>{model.efforts.length} {t("reasoningEffort")}</span>
-                <span>{runtime}</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-1">
-              <Button type="button" variant="ghost" size="icon" className="size-7" onClick={() => onEditModel(modelIndex)}>
-                <Pencil className="size-3.5" />
-              </Button>
-              <Button type="button" variant="ghost" size="icon" className="size-7" disabled={modelIndex === 0} onClick={() => onMoveModel(modelIndex, -1)}>
-                <ArrowUp className="size-3.5" />
-              </Button>
-              <Button type="button" variant="ghost" size="icon" className="size-7" disabled={modelIndex === models.length - 1} onClick={() => onMoveModel(modelIndex, 1)}>
-                <ArrowDown className="size-3.5" />
-              </Button>
-              <Button type="button" variant="ghost" size="icon" className="size-7" onClick={() => onRemoveModel(modelIndex)}>
-                <Trash2 className="size-3.5" />
-              </Button>
-              <AccordionTrigger
-                aria-label={model.displayLabel}
-                className="size-7 flex-none items-center justify-center gap-0 rounded-md border-0 p-0 hover:bg-accent hover:no-underline [&_[data-slot=accordion-trigger-icon]]:ml-0 [&_[data-slot=accordion-trigger-icon]]:size-3.5"
-              />
-            </div>
-          </div>
-          <AccordionContent className="px-6 pb-5">
-            {model.description ? <p className="mb-3 text-sm text-muted-foreground">{model.description}</p> : null}
-            <div className="mb-3 flex justify-end">
-              <Button type="button" variant="outline" size="sm" onClick={() => onAddEffort(modelIndex)}>
-                <Plus data-icon="inline-start" />
-                {t("addEffort")}
-              </Button>
-            </div>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t("reasoningEffort")}</TableHead>
-                  <TableHead>Key</TableHead>
-                  <TableHead className="w-36 text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {model.efforts.map((effort, effortIndex) => (
-                  <TableRow key={effort.key}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{effort.displayLabel}</span>
-                        {effortIndex === 0 ? <Badge variant="secondary">{t("defaultEffort")}</Badge> : null}
-                      </div>
-                      {effort.description ? <div className="text-xs text-muted-foreground">{effort.description}</div> : null}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{effort.key}</TableCell>
-                    <TableCell>
-                      <div className="flex justify-end gap-1">
-                        <Button type="button" variant="ghost" size="icon" className="size-7" onClick={() => onEditEffort(modelIndex, effortIndex)}>
-                          <Pencil className="size-3.5" />
-                        </Button>
-                        <Button type="button" variant="ghost" size="icon" className="size-7" disabled={effortIndex === 0} onClick={() => onMoveEffort(modelIndex, effortIndex, -1)}>
-                          <ArrowUp className="size-3.5" />
-                        </Button>
-                        <Button type="button" variant="ghost" size="icon" className="size-7" disabled={effortIndex === model.efforts.length - 1} onClick={() => onMoveEffort(modelIndex, effortIndex, 1)}>
-                          <ArrowDown className="size-3.5" />
-                        </Button>
-                        <Button type="button" variant="ghost" size="icon" className="size-7" onClick={() => onRemoveEffort(modelIndex, effortIndex)}>
-                          <Trash2 className="size-3.5" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </AccordionContent>
-        </AccordionItem>
-      ))}
-    </Accordion>
-  )
-}
-
-function ModelEditDialog({
-  open,
-  runtime,
-  model,
-  onOpenChange,
-  onSave,
-}: {
-  open: boolean
-  runtime: string
-  model: AgentCatalogEntry | null | undefined
-  onOpenChange: (open: boolean) => void
-  onSave: (model: AgentCatalogEntry) => void
-}) {
-  const t = useTranslations("pages.settings")
-  const [key, setKey] = React.useState("")
-  const [label, setLabel] = React.useState("")
-  const [description, setDescription] = React.useState("")
-
-  React.useEffect(() => {
-    if (!open) return
-    setKey(model?.key ?? "")
-    setLabel(model?.displayLabel ?? "")
-    setDescription(model?.description ?? "")
-  }, [model, open])
-
-  const submit = () => {
-    const cleanKey = key.trim()
-    const cleanLabel = label.trim()
-    if (!cleanKey || !cleanLabel) return
-    onSave({
-      runtime,
-      key: cleanKey,
-      displayLabel: cleanLabel,
-      description: description.trim() || null,
-      isDefault: false,
-      sortOrder: model?.sortOrder ?? 0,
-      efforts: model?.efforts ?? [],
-    })
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{model ? t("editModel") : t("addModel")}</DialogTitle>
-          <DialogDescription>{runtime}</DialogDescription>
-        </DialogHeader>
-        <FieldGroup>
-          <Field>
-            <FieldLabel>{t("modelId")}</FieldLabel>
-            <Input value={key} onChange={(event) => setKey(event.currentTarget.value)} spellCheck={false} />
-          </Field>
-          <Field>
-            <FieldLabel>{t("displayName")}</FieldLabel>
-            <Input value={label} onChange={(event) => setLabel(event.currentTarget.value)} />
-          </Field>
-          <Field>
-            <FieldLabel>{t("description")}</FieldLabel>
-            <Input value={description} onChange={(event) => setDescription(event.currentTarget.value)} />
-          </Field>
-        </FieldGroup>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t("cancel")}</Button>
-          <Button type="button" onClick={submit} disabled={!key.trim() || !label.trim()}>{t("saveChanges")}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function EffortEditDialog({
-  open,
-  runtime,
-  effort,
-  onOpenChange,
-  onSave,
-}: {
-  open: boolean
-  runtime: string
-  effort: AgentCatalogEntry | null | undefined
-  onOpenChange: (open: boolean) => void
-  onSave: (effort: AgentCatalogEntry) => void
-}) {
-  const t = useTranslations("pages.settings")
-  const [key, setKey] = React.useState("")
-  const [label, setLabel] = React.useState("")
-  const [description, setDescription] = React.useState("")
-
-  React.useEffect(() => {
-    if (!open) return
-    setKey(effort?.key ?? "")
-    setLabel(effort?.displayLabel ?? "")
-    setDescription(effort?.description ?? "")
-  }, [effort, open])
-
-  const submit = () => {
-    const cleanKey = key.trim()
-    const cleanLabel = label.trim()
-    if (!cleanKey || !cleanLabel) return
-    onSave({
-      runtime,
-      key: cleanKey,
-      displayLabel: cleanLabel,
-      description: description.trim() || null,
-      isDefault: false,
-      sortOrder: effort?.sortOrder ?? 0,
-      efforts: [],
-    })
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{effort ? t("editEffort") : t("addEffort")}</DialogTitle>
-          <DialogDescription>{runtime}</DialogDescription>
-        </DialogHeader>
-        <FieldGroup>
-          <Field>
-            <FieldLabel>{t("effortId")}</FieldLabel>
-            <Input value={key} onChange={(event) => setKey(event.currentTarget.value)} spellCheck={false} />
-          </Field>
-          <Field>
-            <FieldLabel>{t("displayName")}</FieldLabel>
-            <Input value={label} onChange={(event) => setLabel(event.currentTarget.value)} />
-          </Field>
-          <Field>
-            <FieldLabel>{t("description")}</FieldLabel>
-            <Input value={description} onChange={(event) => setDescription(event.currentTarget.value)} />
-          </Field>
-        </FieldGroup>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t("cancel")}</Button>
-          <Button type="button" onClick={submit} disabled={!key.trim() || !label.trim()}>{t("saveChanges")}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function toAgentDefaultsPayloadByRuntime(modelsByRuntime: Record<string, AgentCatalogEntry[]>) {
-  return Object.fromEntries(
-    AGENT_RUNTIMES.map((runtime) => [runtime, toAgentDefaultsPayload(modelsByRuntime[runtime] ?? [])]),
-  )
-}
-
-function toAgentDefaultsPayload(models: AgentCatalogEntry[]) {
-  return models.map((model, modelIndex) => ({
-    key: model.key,
-    displayLabel: model.displayLabel,
-    description: model.description ?? null,
-    sortOrder: modelIndex + 1,
-    efforts: model.efforts.map((effort, effortIndex) => ({
-      key: effort.key,
-      displayLabel: effort.displayLabel,
-      description: effort.description ?? null,
-      sortOrder: effortIndex + 1,
-    })),
-  }))
-}
-
 const themes: { id: AppearanceMode; labelKey: string; descKey: string }[] = [
   { id: "light", labelKey: "light", descKey: "lightDescription" },
   { id: "dark", labelKey: "dark", descKey: "darkDescription" },
@@ -948,6 +499,7 @@ const themes: { id: AppearanceMode; labelKey: string; descKey: string }[] = [
 function AppearanceTab() {
   const t = useTranslations("pages.settings")
   const { theme, setTheme } = useTheme()
+  const { sidebarShowsSessions, setSidebarShowsSessions } = useWorkspace()
   const selected: AppearanceMode = theme === "light" || theme === "dark" ? theme : "auto"
 
   const handleThemeChange = (value: string) => {
@@ -957,11 +509,7 @@ function AppearanceTab() {
 
   return (
     <div className="flex flex-col gap-4">
-      <section className="rounded-xl border border-border bg-card">
-        <div className="px-6 py-5">
-          <h2 className="text-base font-semibold">{t("appearance")}</h2>
-        </div>
-        <Separator />
+      <SettingsSection title={t("appearance")} contentClassName="p-0">
         <RadioGroup value={selected} onValueChange={handleThemeChange} className="p-2">
           {themes.map((themeOption) => (
             <FieldLabel
@@ -980,27 +528,38 @@ function AppearanceTab() {
             </FieldLabel>
           ))}
         </RadioGroup>
-      </section>
+      </SettingsSection>
 
-      <section className="rounded-xl border border-border bg-card">
-        <div className="flex items-center justify-between gap-4 px-6 py-5">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold">{t("language")}</h2>
-            <p className="mt-0.5 text-sm text-muted-foreground">{t("languageDescription")}</p>
-          </div>
-          <LocaleSwitcher />
-        </div>
-      </section>
+      <SettingsSection title={t("desktopSidebar")} description={t("desktopSidebarDescription")}>
+        <FieldGroup>
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldLabel htmlFor="settings-sidebar-shows-sessions">
+                {t("desktopSidebarShowSessions")}
+              </FieldLabel>
+              <FieldDescription>{t("desktopSidebarShowSessionsDescription")}</FieldDescription>
+            </FieldContent>
+            <Switch
+              id="settings-sidebar-shows-sessions"
+              checked={sidebarShowsSessions}
+              onCheckedChange={setSidebarShowsSessions}
+            />
+          </Field>
+        </FieldGroup>
+      </SettingsSection>
+
+      <SettingsSection title={t("language")} description={t("languageDescription")} action={<LocaleSwitcher />} />
     </div>
   )
 }
 
 export function SettingsPage() {
-  const { navigate, settingsTab } = useWorkspace()
+  const { navigate, openSession, projects, sessions, isLoading, refreshData, settingsTab, upsertSession } = useWorkspace()
   const { session, me: authMe, refreshMe } = useAuth()
   const t = useTranslations("pages.settings")
-  const tCommon = useTranslations("common")
-  const [tab, setTab] = React.useState<SettingsTab>((settingsTab as SettingsTab) ?? "account")
+  const [tab, setTab] = React.useState<SettingsTab>(() => (
+    navItems.some((item) => item.id === settingsTab) ? settingsTab as SettingsTab : "account"
+  ))
   const [me, setMe] = React.useState<AuthMe | null>(authMe)
   const [loadingMe, setLoadingMe] = React.useState(!authMe)
   const [meError, setMeError] = React.useState<string | null>(null)
@@ -1038,8 +597,10 @@ export function SettingsPage() {
   }, [authMe, session?.accessToken, t])
 
   React.useEffect(() => {
-    if (settingsTab && ["account", "agent", "appearance"].includes(settingsTab)) {
+    if (settingsTab && navItems.some((item) => item.id === settingsTab)) {
       setTab(settingsTab as SettingsTab)
+    } else if (settingsTab) {
+      setTab("account")
     }
   }, [settingsTab])
 
@@ -1058,25 +619,28 @@ export function SettingsPage() {
     }
   }
 
+  const activeNavItem = navItems.find((item) => item.id === tab) ?? navItems[0]!
+  const ActiveNavIcon = activeNavItem.icon
+  const mobileUserId = me
+    ? accountDisplayName(me)
+    : authMe
+      ? accountDisplayName(authMe)
+      : session?.userId ?? ""
+
   return (
     <div className="flex h-full flex-col bg-background">
-      <div className="px-8 pb-0 pt-8">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => navigate("home")}
-          className="mb-6 -ml-2 gap-1.5 text-muted-foreground"
-        >
-          <ChevronLeft className="size-4" />
-          {tCommon("back")}
-        </Button>
-        <h1 className="text-2xl font-semibold">{t("title")}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{t("description")}</p>
+      <div className="px-5 pb-0 pt-14 sm:px-8">
+        <PageHeader title={t("title")} description={t("description")} onBack={() => navigate("home")} />
+        <SettingsCategoryDrawer
+          tab={tab}
+          activeIcon={ActiveNavIcon}
+          activeLabel={t(activeNavItem.labelKey)}
+          onTabChange={handleTabChange}
+        />
       </div>
 
-      <div className="flex min-h-0 flex-1 gap-8 overflow-hidden px-8 py-8">
-        <nav className="flex w-52 shrink-0 flex-col gap-0.5">
+      <div className="flex min-h-0 flex-1 gap-8 overflow-hidden px-5 py-5 sm:px-8 sm:py-8">
+        <nav className="hidden w-52 shrink-0 flex-col gap-0.5 lg:flex">
           {navItems.map((item) => {
             const Icon = item.icon
             return (
@@ -1098,7 +662,7 @@ export function SettingsPage() {
           })}
         </nav>
 
-        <ScrollArea className="h-full min-h-0 flex-1" viewportProps={{ className: "pb-8" }}>
+        <ScrollArea className="h-full min-h-0 min-w-0 flex-1" viewportProps={{ className: "pb-8" }}>
           {tab === "account" && (
             loadingMe ? (
               <LoadingState className="h-full" />
@@ -1112,11 +676,83 @@ export function SettingsPage() {
               </div>
             )
           )}
-          {tab === "agent" && <AgentTab token={session?.accessToken ?? ""} />}
           {tab === "appearance" && <AppearanceTab />}
+          {tab === "mobile-connections" && (
+            <MobileConnectionsTab
+              token={session?.accessToken ?? ""}
+              userId={mobileUserId}
+            />
+          )}
+          {tab === "archived-sessions" && (
+            <ArchivedSessionsTab
+              sessions={sessions}
+              loading={isLoading}
+              token={session?.accessToken ?? ""}
+              projects={projects}
+              onOpenSession={openSession}
+              onSessionUpdated={upsertSession}
+              onWorkspaceRefresh={refreshData}
+            />
+          )}
         </ScrollArea>
       </div>
     </div>
+  )
+}
+
+function SettingsCategoryDrawer({
+  tab,
+  activeIcon: ActiveIcon,
+  activeLabel,
+  onTabChange,
+}: {
+  tab: SettingsTab
+  activeIcon: typeof User
+  activeLabel: string
+  onTabChange: (tab: SettingsTab) => void
+}) {
+  const t = useTranslations("pages.settings")
+  const [open, setOpen] = React.useState(false)
+
+  return (
+    <Drawer open={open} onOpenChange={setOpen} direction="bottom">
+      <DrawerTrigger asChild>
+        <Button type="button" variant="outline" size="sm" className="mt-4 gap-2 lg:hidden">
+          <ActiveIcon className="size-4" />
+          {activeLabel}
+          <ChevronDown className="size-3.5 text-muted-foreground" />
+        </Button>
+      </DrawerTrigger>
+      <DrawerContent>
+        <DrawerHeader>
+          <DrawerTitle>{t("title")}</DrawerTitle>
+        </DrawerHeader>
+        <div className="flex flex-col gap-1 px-4 pb-4">
+          {navItems.map((item) => {
+            const Icon = item.icon
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  onTabChange(item.id)
+                  setOpen(false)
+                }}
+                className={cn(
+                  "flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm transition-colors",
+                  tab === item.id
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+                )}
+              >
+                <Icon className="size-4 shrink-0" />
+                <span className="font-medium">{t(item.labelKey)}</span>
+              </button>
+            )
+          })}
+        </div>
+      </DrawerContent>
+    </Drawer>
   )
 }
 

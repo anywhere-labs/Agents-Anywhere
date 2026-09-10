@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents-anywhere.dev/contracts/dsh-bridge/1.0/notice.schema.json",
+  "type": "object",
+  "required": ["noticeId", "sessionId", "runtime", "type", "title", "status", "responseRequired", "actions"],
+  "properties": {
+    "noticeId": { "type": "string", "minLength": 1 },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "runtime": { "const": "dsh" },
+    "type": { "enum": ["notification", "interaction"] },
+    "title": { "type": "string", "minLength": 1 },
+    "severity": { "enum": ["info", "success", "warning", "error"] },
+    "status": { "type": "string", "minLength": 1 },
+    "responseRequired": { "type": "boolean" },
+    "actions": { "type": "array", "items": { "type": "object" } },
+    "inputSchema": { "type": "object" }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,28 @@
+{
+  "$id": "urn:agents-anywhere:protocol:1.0:ws-ticket-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "expiresAt": {
+      "title": "Expiresat",
+      "type": "string"
+    },
+    "serverTime": {
+      "title": "Servertime",
+      "type": "string"
+    },
+    "ticket": {
+      "title": "Ticket",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ticket",
+    "expiresAt",
+    "serverTime"
+  ],
+  "title": "ProtocolWsTicketResponse",
+  "type": "object",
+  "x-direction": "egress",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "serialization"
+}

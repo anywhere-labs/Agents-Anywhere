@@ -1,43 +1,24 @@
 package com.agentsanywhere.app.ui.screens.home
 
-import android.graphics.Typeface
-import android.text.Editable
-import android.text.InputType
-import android.text.TextWatcher
-import android.util.TypedValue
-import android.view.Gravity
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputMethodManager
-import android.widget.EditText
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -58,35 +39,32 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.AuthMeResponse
+import com.agentsanywhere.app.api.ApiException
+import com.agentsanywhere.app.feature.devices.DeviceAgentPreviews
 import com.agentsanywhere.app.feature.sessions.SessionsState
-import com.agentsanywhere.app.feature.sessions.pinnedSessions
-import com.agentsanywhere.app.feature.sessions.recentSessions
+import com.agentsanywhere.app.feature.sessions.projectHasVisibleSessions
+import com.agentsanywhere.app.feature.sessions.projectSessionMatchesStatus
+import com.agentsanywhere.app.feature.sessions.ProjectSessionLoadKey
+import com.agentsanywhere.app.feature.sessions.ProjectSessionStatusFilter
+import com.agentsanywhere.app.feature.sessions.sessionListComparator
+import com.agentsanywhere.app.feature.sessions.availableProjectName
+import androidx.compose.runtime.LaunchedEffect
+import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.model.AgentDevice
+import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.AAToastHost
@@ -95,30 +73,19 @@ import com.agentsanywhere.app.ui.designsystem.AAWordmark
 import com.agentsanywhere.app.ui.designsystem.AuthErrorNotice
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.screens.common.AppEmptyState
-import com.agentsanywhere.app.ui.screens.devices.DeviceRow
-import com.agentsanywhere.app.ui.screens.devices.sortedForDevicesPage
 import com.agentsanywhere.app.ui.screens.profile.ProfileSettingsDrawer
-import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.Folder
-import com.composables.icons.lucide.List as ListIcon
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Monitor
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.Terminal
 import com.composables.icons.lucide.UserRound
-import com.valentinilk.shimmer.shimmer
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
+import kotlinx.coroutines.CancellationException
 
 enum class HomeTab { Active, Archived, Devices }
 
-private data class HomeSessionActionMenu(
-    val session: AgentSession,
-    val rowBounds: Rect,
-)
-
-private const val SESSION_TITLE_DISPLAY_MAX_CHARS = 15
 
 @Composable
 fun HomeScreen(
@@ -131,11 +98,25 @@ fun HomeScreen(
     serverUrl: String,
     appearanceMode: String,
     languageMode: String,
+    sidebarViewMode: String,
+    appUpdateViewModel: AppUpdateViewModel,
+    projectSessionsById: Map<String, List<AgentSession>>,
+    loadingProjectRequests: Set<ProjectSessionLoadKey>,
+    projectSessionErrors: Map<ProjectSessionLoadKey, String>,
     onRefresh: () -> Unit,
+    onLoadMore: (HomeTab) -> Unit,
     onTabSelected: (HomeTab) -> Unit,
     onAppearanceModeChange: (String) -> Unit,
     onLanguageModeChange: (String) -> Unit,
+    onSidebarViewModeChange: (String) -> Unit,
+    profileOpen: Boolean,
+    onProfileOpenChange: (Boolean) -> Unit,
+    onOpenArchivedSessions: () -> Unit,
     onLoadAccount: suspend () -> Result<AuthMeResponse>,
+    onLoadAccountAuthConfig: suspend () -> Result<com.agentsanywhere.app.api.AuthConfigResponse>,
+    onUpdateDisplayName: suspend (String) -> Result<com.agentsanywhere.app.api.AuthMeResponse>,
+    onSendEmailCode: suspend (String) -> Result<com.agentsanywhere.app.api.EmailCodeResponse>,
+    onBindEmail: suspend (String, String?) -> Result<com.agentsanywhere.app.api.AuthMeResponse>,
     onUpdateAvatar: suspend (String) -> Result<AuthMeResponse>,
     onClearAvatar: suspend () -> Result<AuthMeResponse>,
     onChangePassword: suspend (String) -> Result<Unit>,
@@ -143,8 +124,14 @@ fun HomeScreen(
     onRenameSession: suspend (String, String) -> Result<AgentSession>,
     onSetSessionPinned: suspend (String, Boolean) -> Result<AgentSession>,
     onSetSessionArchived: suspend (String, Boolean) -> Result<AgentSession>,
+    onLoadProjects: suspend () -> Result<List<AgentProject>>,
+    onLoadProjectSessions: (String, ProjectSessionStatusFilter) -> Unit,
+    onUpdateProject: suspend (String, String?, Boolean?) -> Result<AgentProject>,
+    onArchiveProjectSessions: suspend (String) -> Result<List<AgentSession>>,
+    onNewSessionInProject: (AgentProject) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
     onOpenDevice: (AgentDevice) -> Unit,
+    deviceAgentPreviews: DeviceAgentPreviews,
     onPairDevice: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -152,7 +139,37 @@ fun HomeScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var actionMenu by remember { mutableStateOf<HomeSessionActionMenu?>(null) }
     var renamingSession by remember { mutableStateOf<AgentSession?>(null) }
-    var profileOpen by remember { mutableStateOf(false) }
+    var renameErrorMessage by remember { mutableStateOf<String?>(null) }
+    var renameBusy by remember { mutableStateOf(false) }
+    var projectActionMenu by remember { mutableStateOf<HomeProjectActionMenu?>(null) }
+    val projectPreferences = rememberHomeProjectPreferences(serverUrl, userId)
+    val projectSessionStatus = projectPreferences.sessionStatus
+    val loadingProjectIds = loadingProjectRequests.filter { it.archived in projectSessionStatus.archiveStates }.mapTo(mutableSetOf()) { it.projectId }
+    val projectErrors = projectSessionErrors.filterKeys { it.archived in projectSessionStatus.archiveStates }
+        .entries.associate { it.key.projectId to it.value }
+    val expandedProjectIds = projectPreferences.expandedIds
+    val prefetchedProjectIds = remember(serverUrl, userId, projectSessionStatus) { mutableSetOf<String>() }
+    val loadedSessions = remember(projectSessionsById, state.sessions, state.archivedSessions) {
+        (projectSessionsById.values.flatten() + state.sessions + state.archivedSessions).associateBy { it.id }.values.toList()
+    }
+    LaunchedEffect(expandedProjectIds, state.projects, loadedSessions, state.hasLoaded, sidebarViewMode, projectSessionStatus) {
+        val targets = if (sidebarViewMode == HomeSidebarViewMode.Project) {
+            state.projects.filter { projectHasVisibleSessions(it, loadedSessions, projectSessionStatus) }
+                .sortedWith(compareByDescending<AgentProject> { it.id in expandedProjectIds }.thenByDescending { it.pinned })
+                .map { it.id }
+        } else emptyList()
+        prefetchedProjectIds.retainAll(targets.toSet())
+        if (state.hasLoaded) targets.filterNot { it in prefetchedProjectIds }.forEach { id ->
+            prefetchedProjectIds.add(id)
+            onLoadProjectSessions(id, projectSessionStatus)
+        }
+    }
+    var editingProject by remember { mutableStateOf<AgentProject?>(null) }
+    var projectEditBusy by remember { mutableStateOf(false) }
+    var projectEditError by remember { mutableStateOf<String?>(null) }
+    var projectEditName by remember { mutableStateOf("") }
+    var projectToArchive by remember { mutableStateOf<AgentProject?>(null) }
+    var projectArchiveBusy by remember { mutableStateOf(false) }
 
     fun showToast(message: String, isError: Boolean = false) {
         scope.launch {
@@ -181,14 +198,35 @@ fun HomeScreen(
                 navigate = navigate,
                 state = state,
                 selectedTab = selectedTab,
+                sidebarViewMode = sidebarViewMode,
                 isRefreshing = isRefreshing,
+                projectSessionsById = projectSessionsById,
+                loadingProjectIds = loadingProjectIds,
+                expandedProjectIds = expandedProjectIds,
+                projectPreferences = projectPreferences,
+                projectSessionStatus = projectSessionStatus,
+                onProjectSessionStatusChange = projectPreferences::selectSessionStatus,
+                projectErrors = projectErrors,
+                onRetryProject = { onLoadProjectSessions(it, projectSessionStatus) },
+                onCreateProject = {
+                    if (!projectPreferences.projectsExpanded) projectPreferences.toggleSection()
+                    navigate(AppDestination.NewProject)
+                },
                 onRefresh = onRefresh,
+                onLoadMore = onLoadMore,
                 onTabSelected = onTabSelected,
-                onProfile = { profileOpen = true },
+                onProfile = { onProfileOpenChange(true) },
                 onSearch = { showToast(context.getString(R.string.home_search_coming_soon)) },
-                onSessionLongPress = { session, bounds -> actionMenu = HomeSessionActionMenu(session, bounds) },
+                onSessionLongPress = { session, bounds -> actionMenu = HomeSessionActionMenu(session, bounds, projectView = sidebarViewMode == HomeSidebarViewMode.Project) },
+                onProjectMenu = { projectActionMenu = it },
+                onProjectExpandedChange = { project, expanded ->
+                    projectPreferences.setProjectExpanded(project.id, expanded)
+                    if (expanded) onLoadProjectSessions(project.id, projectSessionStatus)
+                },
+                onNewSessionInProject = onNewSessionInProject,
                 onOpenSession = onOpenSession,
                 onOpenDevice = onOpenDevice,
+                deviceAgentPreviews = deviceAgentPreviews,
                 onPairDevice = onPairDevice,
             )
             actionMenu?.let { menu ->
@@ -197,6 +235,7 @@ fun HomeScreen(
                     onDismiss = { actionMenu = null },
                     onRename = {
                         actionMenu = null
+                        renameErrorMessage = null
                         renamingSession = menu.session
                     },
                     onTogglePinned = {
@@ -226,6 +265,42 @@ fun HomeScreen(
                     },
                 )
             }
+            projectActionMenu?.let { menu ->
+                HomeProjectActionOverlay(
+                    menu = menu,
+                    onDismiss = { projectActionMenu = null },
+                    onEdit = {
+                        projectActionMenu = null
+                        projectEditError = null
+                        projectEditName = menu.project.name
+                        editingProject = menu.project
+                    },
+                    onTogglePinned = {
+                        val project = menu.project
+                        projectActionMenu = null
+                        scope.launch {
+                            onUpdateProject(project.id, null, !project.pinned)
+                                .onSuccess {
+                                    showToast(
+                                        context.getString(
+                                            if (it.pinned) R.string.home_project_pinned else R.string.home_project_unpinned,
+                                        ),
+                                    )
+                                }
+                                .onFailure {
+                                    showToast(
+                                        it.message ?: context.getString(R.string.home_project_update_failed),
+                                        isError = true,
+                                    )
+                                }
+                        }
+                    },
+                    onArchive = {
+                        projectActionMenu = null
+                        projectToArchive = menu.project
+                    },
+                )
+            }
             ProfileSettingsDrawer(
                 open = profileOpen,
                 userId = userId,
@@ -233,14 +308,22 @@ fun HomeScreen(
                 serverUrl = serverUrl,
                 appearanceMode = appearanceMode,
                 languageMode = languageMode,
+                sidebarViewMode = sidebarViewMode,
+                appUpdateViewModel = appUpdateViewModel,
                 onAppearanceModeChange = onAppearanceModeChange,
                 onLanguageModeChange = onLanguageModeChange,
+                onSidebarViewModeChange = onSidebarViewModeChange,
                 onLoadAccount = onLoadAccount,
+                onLoadAccountAuthConfig = onLoadAccountAuthConfig,
+                onUpdateDisplayName = onUpdateDisplayName,
+                onSendEmailCode = onSendEmailCode,
+                onBindEmail = onBindEmail,
                 onUpdateAvatar = onUpdateAvatar,
                 onClearAvatar = onClearAvatar,
                 onChangePassword = onChangePassword,
+                onOpenArchivedSessions = onOpenArchivedSessions,
                 onSignOut = onSignOut,
-                onClose = { profileOpen = false },
+                onClose = { onProfileOpenChange(false) },
                 onNotice = ::showToast,
             )
             AAToastHost(
@@ -255,413 +338,108 @@ fun HomeScreen(
     renamingSession?.let { session ->
         HomeRenameSessionDialog(
             session = session,
-            onDismiss = { renamingSession = null },
+            errorMessage = renameErrorMessage,
+            busy = renameBusy,
+            onDismiss = {
+                if (!renameBusy) {
+                    renamingSession = null
+                    renameErrorMessage = null
+                }
+            },
             onSave = { title ->
-                scope.launch {
-                    onRenameSession(session.id, title)
-                        .onSuccess {
-                            renamingSession = null
-                            showToast(context.getString(R.string.home_session_renamed))
-                        }
-                        .onFailure { showToast(it.message ?: context.getString(R.string.home_rename_failed), isError = true) }
+                if (!renameBusy) {
+                    renameBusy = true
+                    renameErrorMessage = null
+                    scope.launch {
+                        onRenameSession(session.id, title)
+                            .onSuccess {
+                                renamingSession = null
+                                renameErrorMessage = null
+                                showToast(context.getString(R.string.home_session_renamed))
+                            }
+                            .onFailure {
+                                renameErrorMessage = it.message ?: context.getString(R.string.home_rename_failed)
+                            }
+                        renameBusy = false
+                    }
+                }
+            },
+        )
+    }
+
+    editingProject?.let { project ->
+        HomeProjectEditSheet(
+            project = project,
+            deviceName = state.devices.firstOrNull { it.id == project.connectorId }?.name ?: project.connectorId,
+            name = projectEditName,
+            onNameChange = { projectEditName = it; projectEditError = null },
+            busy = projectEditBusy,
+            errorMessage = projectEditError,
+            onDismiss = {
+                if (!projectEditBusy) {
+                    editingProject = null
+                    projectEditError = null
+                }
+            },
+            onSave = {
+                if (!projectEditBusy) {
+                    projectEditBusy = true
+                    projectEditError = null
+                    val name = availableProjectName(projectEditName, state.projects, project.id)
+                    projectEditName = name
+                    scope.launch {
+                        try {
+                            onUpdateProject(project.id, name, null)
+                                .onSuccess {
+                                    editingProject = null
+                                    showToast(context.getString(R.string.home_project_updated))
+                                }
+                                .onFailure { error ->
+                                    if (error is CancellationException) throw error
+                                    if (error is ApiException && error.errorCode == "project_name_conflict") {
+                                        val latest = onLoadProjects().getOrDefault(state.projects)
+                                        projectEditName = availableProjectName(name, latest, project.id, setOf(name))
+                                        projectEditError = context.getString(R.string.project_name_adjusted)
+                                    } else {
+                                        projectEditError = error.message ?: context.getString(R.string.home_project_update_failed)
+                                    }
+                                }
+                        } finally { projectEditBusy = false }
+                    }
+                }
+            },
+        )
+    }
+
+    projectToArchive?.let { project ->
+        HomeArchiveProjectDialog(
+            project = project,
+            busy = projectArchiveBusy,
+            onDismiss = { if (!projectArchiveBusy) projectToArchive = null },
+            onConfirm = {
+                if (!projectArchiveBusy) {
+                    projectArchiveBusy = true
+                    scope.launch {
+                        onArchiveProjectSessions(project.id)
+                            .onSuccess {
+                                projectPreferences.setProjectExpanded(project.id, false)
+                                projectToArchive = null
+                                showToast(context.getString(R.string.home_project_archived))
+                            }
+                            .onFailure {
+                                showToast(
+                                    it.message ?: context.getString(R.string.home_project_archive_failed),
+                                    isError = true,
+                                )
+                            }
+                        projectArchiveBusy = false
+                    }
                 }
             },
         )
     }
 }
 
-@Composable
-private fun HomeSessionActionOverlay(
-    menu: HomeSessionActionMenu,
-    onDismiss: () -> Unit,
-    onRename: () -> Unit,
-    onTogglePinned: () -> Unit,
-    onToggleArchived: () -> Unit,
-) {
-    val colors = LocalAAColors.current
-    val darkMode = colors.canvas == Color(0xFF09090B)
-    val density = LocalDensity.current
-    val row = menu.rowBounds
-    val menuWidth = 252.dp
-    val menuHeight = 168.dp
-    val gap = 10.dp
-    val margin = 18.dp
-    val menuWidthPx = with(density) { menuWidth.toPx() }
-    val menuHeightPx = with(density) { menuHeight.toPx() }
-    val gapPx = with(density) { gap.toPx() }
-    val marginPx = with(density) { margin.toPx() }
-    val highlightShape = RoundedCornerShape(15.dp)
-    val highlightSurface = if (darkMode) Color(0xFF202020) else Color.White
-
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(if (darkMode) Color(0x99000000) else Color(0x66000000))
-            .pointerInput(Unit) { detectTapGestures(onTap = { onDismiss() }) },
-    ) {
-        val screenWidthPx = with(density) { maxWidth.toPx() }
-        val screenHeightPx = with(density) { maxHeight.toPx() }
-        val menuX = (row.left + 120f).coerceIn(marginPx, screenWidthPx - menuWidthPx - marginPx)
-        val belowY = row.bottom + gapPx
-        val aboveY = row.top - menuHeightPx - gapPx
-        val menuY = if (belowY + menuHeightPx + marginPx <= screenHeightPx) {
-            belowY
-        } else {
-            aboveY.coerceAtLeast(marginPx)
-        }
-
-        Box(
-            modifier = Modifier
-                .offset { IntOffset(row.left.roundToInt(), row.top.roundToInt()) }
-                .width(with(density) { row.width.toDp() })
-                .height(with(density) { row.height.toDp() })
-                .shadow(18.dp, highlightShape, ambientColor = Color(0x22000000), spotColor = Color(0x22000000))
-                .clip(highlightShape)
-                .background(highlightSurface),
-        ) {
-            HomeSessionHighlightRow(session = menu.session, darkMode = darkMode)
-        }
-        HomeSessionActionMenuCard(
-            session = menu.session,
-            modifier = Modifier.offset { IntOffset(menuX.roundToInt(), menuY.roundToInt()) },
-            onRename = onRename,
-            onTogglePinned = onTogglePinned,
-            onToggleArchived = onToggleArchived,
-        )
-    }
-}
-
-@Composable
-private fun HomeSessionHighlightRow(session: AgentSession, darkMode: Boolean) {
-    val subtitle = listOf(session.runtimeLabel, session.workspaceLabel)
-        .filter { it.isNotBlank() }
-        .joinToString("  ·  ")
-    val title = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF1F201D)
-    val meta = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF8E918A)
-
-    Row(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(Lucide.ListIcon, contentDescription = null, tint = meta, modifier = Modifier.size(14.dp))
-        if (session.pinned) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text(
-                    text = session.title.sessionDisplayTitle(),
-                    color = title,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    lineHeight = 20.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = subtitle,
-                    color = meta,
-                    fontSize = 11.2.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        } else {
-            Text(
-                text = session.title.sessionDisplayTitle(),
-                modifier = Modifier.weight(1f),
-                color = title,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                lineHeight = 20.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Text(
-            text = session.updatedAtLabel.ifBlank { "now" },
-            color = meta,
-            fontSize = 10.8.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-        )
-    }
-}
-
-@Composable
-private fun HomeSessionActionMenuCard(
-    session: AgentSession,
-    modifier: Modifier = Modifier,
-    onRename: () -> Unit,
-    onTogglePinned: () -> Unit,
-    onToggleArchived: () -> Unit,
-) {
-    val colors = LocalAAColors.current
-    val darkMode = colors.canvas == Color(0xFF09090B)
-    val surface = if (darkMode) Color(0xFF181818) else Color.White
-    val border = if (darkMode) Color(0xFF2D2D2F) else Color(0xFFEFEDE9)
-    val shadow = if (darkMode) Color(0x80000000) else Color(0x1A000000)
-    val text = if (darkMode) Color(0xFFF4F4F5) else Color(0xFF2F302D)
-
-    Column(
-        modifier = modifier
-            .width(252.dp)
-            .height(168.dp)
-            .shadow(34.dp, RoundedCornerShape(22.dp), ambientColor = shadow, spotColor = shadow)
-            .clip(RoundedCornerShape(22.dp))
-            .background(surface)
-            .border(1.dp, border, RoundedCornerShape(22.dp))
-            .padding(vertical = 7.dp),
-    ) {
-        HomeSessionActionMenuRow(
-            label = stringResource(R.string.home_rename),
-            iconRes = if (darkMode) R.drawable.ic_session_action_rename_white else R.drawable.ic_session_action_rename_black,
-            textColor = text,
-            onClick = onRename,
-        )
-        HomeSessionActionMenuRow(
-            label = stringResource(if (session.archived) R.string.home_unarchive else R.string.home_archive),
-            iconRes = if (darkMode) R.drawable.ic_session_action_archive_white else R.drawable.ic_session_action_archive_black,
-            textColor = text,
-            onClick = onToggleArchived,
-        )
-        HomeSessionActionMenuRow(
-            label = stringResource(if (session.pinned) R.string.home_unpin else R.string.home_pin),
-            iconRes = if (darkMode) R.drawable.ic_session_action_unpin_white else R.drawable.ic_session_action_unpin_black,
-            textColor = text,
-            onClick = onTogglePinned,
-        )
-    }
-}
-
-@Composable
-private fun HomeSessionActionMenuRow(
-    label: String,
-    iconRes: Int,
-    textColor: Color,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(50.dp)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick,
-            )
-            .padding(horizontal = 20.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            color = textColor,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Bold,
-            lineHeight = 20.sp,
-        )
-        Image(
-            painter = androidx.compose.ui.res.painterResource(iconRes),
-            contentDescription = null,
-            modifier = Modifier.size(22.dp),
-        )
-    }
-}
-
-@Composable
-private fun HomeRenameSessionDialog(
-    session: AgentSession,
-    onDismiss: () -> Unit,
-    onSave: (String) -> Unit,
-) {
-    val colors = LocalAAColors.current
-    val darkMode = colors.canvas == Color(0xFF09090B)
-    val shape = RoundedCornerShape(26.dp)
-    val surface = if (darkMode) Color(0xFF18181B) else Color.White
-    val fieldColor = if (darkMode) Color(0xFF09090B) else Color(0xFFF7F7F7)
-    val secondaryButton = if (darkMode) Color(0xFF27272A) else Color(0xFFF3F3F3)
-    var name by remember(session.id) { mutableStateOf(session.title) }
-    val trimmed = name.trim()
-    val canSave = trimmed.isNotEmpty() && trimmed != session.title.trim()
-
-    fun submit() {
-        if (canSave) onSave(trimmed)
-    }
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        Column(
-            modifier = Modifier
-                .padding(horizontal = 22.dp)
-                .widthIn(max = 380.dp)
-                .shadow(34.dp, shape, ambientColor = Color(0x33000000), spotColor = Color(0x33000000))
-                .clip(shape)
-                .background(surface)
-                .border(1.dp, colors.border, shape)
-                .padding(22.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
-        ) {
-            Text(
-                text = stringResource(R.string.home_rename_session),
-                color = colors.ink,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.ExtraBold,
-                lineHeight = 29.sp,
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(fieldColor)
-                    .border(1.dp, colors.border, RoundedCornerShape(16.dp))
-                    .padding(horizontal = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                AndroidView(
-                    factory = { viewContext ->
-                        EditText(viewContext).apply {
-                            configureRenameInput(colors.ink, onDone = { submit() })
-                            setText(name)
-                            setSelection(text.length)
-                            addTextChangedListener(
-                                object : TextWatcher {
-                                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
-                                    override fun afterTextChanged(s: Editable?) {
-                                        val next = s?.toString().orEmpty()
-                                        if (next != name) name = next
-                                    }
-                                },
-                            )
-                            post { focusAtTextEnd(viewContext) }
-                            postDelayed({ focusAtTextEnd(viewContext, forceKeyboard = true) }, 180L)
-                        }
-                    },
-                    update = { input ->
-                        input.configureRenameInput(colors.ink, onDone = { submit() })
-                        if (input.text.toString() != name) {
-                            input.setText(name)
-                            input.setSelection(input.text.length)
-                            input.bringPointIntoView(input.selectionEnd)
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                HomeDialogButton(
-                    label = stringResource(R.string.common_cancel),
-                    background = secondaryButton,
-                    content = colors.ink,
-                    modifier = Modifier.weight(1f),
-                    onClick = onDismiss,
-                )
-                HomeDialogButton(
-                    label = stringResource(R.string.common_save),
-                    background = colors.primaryAction.copy(alpha = if (canSave) 1f else 0.38f),
-                    content = colors.onPrimaryAction,
-                    modifier = Modifier.weight(1f),
-                    onClick = { submit() },
-                )
-            }
-        }
-    }
-}
-
-private fun String.sessionDisplayTitle(): String {
-    if (length <= SESSION_TITLE_DISPLAY_MAX_CHARS) return this
-    return "${take(SESSION_TITLE_DISPLAY_MAX_CHARS).trimEnd()}..."
-}
-
-private fun EditText.configureRenameInput(
-    textColor: Color,
-    onDone: () -> Unit,
-) {
-    isFocusable = true
-    isFocusableInTouchMode = true
-    setSingleLine(true)
-    setHorizontallyScrolling(true)
-    setBackgroundColor(android.graphics.Color.TRANSPARENT)
-    setTextColor(textColor.toArgb())
-    setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-    gravity = Gravity.CENTER_VERTICAL
-    includeFontPadding = false
-    minHeight = 0
-    minimumHeight = 0
-    setPadding(0, 0, 0, 0)
-    inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-    imeOptions = EditorInfo.IME_ACTION_DONE
-    setOnEditorActionListener { _, actionId, _ ->
-        if (actionId == EditorInfo.IME_ACTION_DONE) {
-            onDone()
-            true
-        } else {
-            false
-        }
-    }
-}
-
-@Suppress("DEPRECATION")
-private fun EditText.focusAtTextEnd(
-    context: android.content.Context,
-    forceKeyboard: Boolean = false,
-) {
-    requestFocus()
-    setSelection(text.length)
-    post {
-        setSelection(text.length)
-        bringPointIntoView(selectionEnd)
-        context.getSystemService(InputMethodManager::class.java)?.showSoftInput(
-            this,
-            if (forceKeyboard) InputMethodManager.SHOW_FORCED else InputMethodManager.SHOW_IMPLICIT,
-        )
-    }
-}
-
-@Composable
-private fun HomeDialogButton(
-    label: String,
-    background: Color,
-    content: Color,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = modifier
-            .height(50.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(background)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = label,
-            color = content,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Bold,
-            lineHeight = 19.sp,
-        )
-    }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -669,14 +447,29 @@ private fun HomeContent(
     navigate: (AppDestination) -> Unit,
     state: SessionsState,
     selectedTab: HomeTab,
+    sidebarViewMode: String,
     isRefreshing: Boolean,
+    projectSessionsById: Map<String, List<AgentSession>>,
+    loadingProjectIds: Set<String>,
+    expandedProjectIds: Set<String>,
+    projectPreferences: HomeProjectPreferences,
+    projectSessionStatus: ProjectSessionStatusFilter,
+    onProjectSessionStatusChange: (ProjectSessionStatusFilter) -> Unit,
+    projectErrors: Map<String, String>,
+    onRetryProject: (String) -> Unit,
+    onCreateProject: () -> Unit,
     onRefresh: () -> Unit,
+    onLoadMore: (HomeTab) -> Unit,
     onTabSelected: (HomeTab) -> Unit,
     onProfile: () -> Unit,
     onSearch: () -> Unit,
     onSessionLongPress: (AgentSession, Rect) -> Unit,
+    onProjectMenu: (HomeProjectActionMenu) -> Unit,
+    onProjectExpandedChange: (AgentProject, Boolean) -> Unit,
+    onNewSessionInProject: (AgentProject) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
     onOpenDevice: (AgentDevice) -> Unit,
+    deviceAgentPreviews: DeviceAgentPreviews,
     onPairDevice: () -> Unit,
 ) {
     val colors = LocalAAColors.current
@@ -698,7 +491,6 @@ private fun HomeContent(
             onTerminalClick = { navigate(AppDestination.Terminal) },
             onFilesClick = { navigate(AppDestination.Files) },
         )
-        HomeTabs(selectedTab = selectedTab, onTabSelected = onTabSelected)
         PullToRefreshBox(
             isRefreshing = isRefreshing,
             state = refreshState,
@@ -716,16 +508,39 @@ private fun HomeContent(
                 )
             },
         ) {
-            HomeList(
-                state = state,
-                tab = selectedTab,
-                darkMode = darkMode,
-                onSessionLongPress = onSessionLongPress,
-                onOpenSession = onOpenSession,
-                onOpenDevice = onOpenDevice,
-                onCreateSession = { navigate(AppDestination.NewSession) },
-                onPairDevice = onPairDevice,
-            )
+            if (sidebarViewMode == HomeSidebarViewMode.Project) {
+                HomeProjectModeList(
+                    state = state,
+                    projectSessionsById = projectSessionsById,
+                    loadingProjectIds = loadingProjectIds,
+                    expandedProjectIds = expandedProjectIds,
+                    projectPreferences = projectPreferences,
+                    projectSessionStatus = projectSessionStatus,
+                    onProjectSessionStatusChange = onProjectSessionStatusChange,
+                    projectErrors = projectErrors,
+                    onRetryProject = onRetryProject,
+                    onCreateProject = onCreateProject,
+                    onProjectExpandedChange = onProjectExpandedChange,
+                    onProjectMenu = onProjectMenu,
+                    onNewSessionInProject = onNewSessionInProject,
+                    onSessionLongPress = onSessionLongPress,
+                    onOpenSession = onOpenSession,
+                    onPairDevice = onPairDevice,
+                )
+            } else {
+                HomeList(
+                    state = state,
+                    tab = HomeTab.Active,
+                    darkMode = darkMode,
+                    onSessionLongPress = onSessionLongPress,
+                    onOpenSession = onOpenSession,
+                    onOpenDevice = onOpenDevice,
+                    deviceAgentPreviews = deviceAgentPreviews,
+                    onCreateSession = { navigate(AppDestination.NewSession) },
+                    onPairDevice = onPairDevice,
+                    onLoadMore = onLoadMore,
+                )
+            }
         }
     }
 
@@ -737,6 +552,73 @@ private fun HomeContent(
             onClick = { navigate(AppDestination.NewSession) },
             modifier = Modifier.padding(end = 18.dp, bottom = 32.dp),
         )
+    }
+}
+
+@Composable
+private fun HomeProjectModeList(
+    state: SessionsState,
+    projectSessionsById: Map<String, List<AgentSession>>,
+    loadingProjectIds: Set<String>,
+    expandedProjectIds: Set<String>,
+    projectPreferences: HomeProjectPreferences,
+    projectSessionStatus: ProjectSessionStatusFilter,
+    onProjectSessionStatusChange: (ProjectSessionStatusFilter) -> Unit,
+    projectErrors: Map<String, String>,
+    onRetryProject: (String) -> Unit,
+    onCreateProject: () -> Unit,
+    onProjectExpandedChange: (AgentProject, Boolean) -> Unit,
+    onProjectMenu: (HomeProjectActionMenu) -> Unit,
+    onNewSessionInProject: (AgentProject) -> Unit,
+    onSessionLongPress: (AgentSession, Rect) -> Unit,
+    onOpenSession: (AgentSession) -> Unit,
+    onPairDevice: () -> Unit,
+) {
+    when {
+        state.isLoading && !state.hasLoaded -> HomeLoadingState()
+        state.errorMessage != null && !state.hasLoaded -> AuthErrorNotice(
+            message = state.errorMessage,
+            modifier = Modifier.padding(top = 10.dp),
+        )
+        state.devices.isEmpty() -> AppEmptyState(
+            message = stringResource(R.string.home_pair_device_first),
+            buttonLabel = stringResource(R.string.home_pair_new_device),
+            buttonIcon = Lucide.Monitor,
+            onButtonClick = onPairDevice,
+            contentOffsetY = (-32).dp,
+        )
+        else -> {
+            val allSessions = remember(projectSessionsById, state.sessions, state.archivedSessions) {
+                (projectSessionsById.values.flatten() + state.sessions + state.archivedSessions)
+                    .associateBy { it.id }.values.toList()
+            }
+            val visibleSessions = remember(allSessions, projectSessionStatus) {
+                allSessions.filter { it.projectId != null && projectSessionMatchesStatus(it, projectSessionStatus) }
+                    .groupBy { it.projectId.orEmpty() }
+                    .mapValues { (_, sessions) -> sessions.sortedWith(sessionListComparator()) }
+            }
+            HomeProjectList(
+                projects = state.projects.filter { projectHasVisibleSessions(it, allSessions, projectSessionStatus) },
+                hasProjectsInOtherStatuses = state.projects.any { projectHasVisibleSessions(it, allSessions, ProjectSessionStatusFilter.All) },
+                allSessions = allSessions,
+                projectPreferences = projectPreferences,
+                projectSessionStatus = projectSessionStatus,
+                onProjectSessionStatusChange = onProjectSessionStatusChange,
+                projectErrors = projectErrors,
+                onRetryProject = onRetryProject,
+                onCreateProject = onCreateProject,
+                pinnedSessions = allSessions.filter { it.pinned && !it.archived }
+                    .sortedWith(sessionListComparator()),
+                sessionsByProject = visibleSessions,
+                loadingProjectIds = loadingProjectIds,
+                expandedProjectIds = expandedProjectIds,
+                onProjectExpandedChange = onProjectExpandedChange,
+                onProjectMenu = onProjectMenu,
+                onNewSession = onNewSessionInProject,
+                onSessionLongPress = onSessionLongPress,
+                onOpenSession = onOpenSession,
+            )
+        }
     }
 }
 
@@ -756,8 +638,8 @@ private fun HomeHeader(onProfile: () -> Unit, onSearch: () -> Unit) {
         RoundLucideButton(
             icon = Lucide.UserRound,
             iconColor = icon,
-            surface = if (darkMode) Color(0xFF18181B) else Color.White,
-            border = if (darkMode) Color(0xFF27272A) else Color(0xFFE7E6E2),
+            surface = colors.raisedSurface,
+            border = if (darkMode) colors.border else Color(0xFFE7E6E2),
             onClick = onProfile,
         )
         Box(
@@ -829,8 +711,8 @@ private fun QuickEntryCard(
     val pressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.975f else 1f, label = "quick-entry-scale")
     val shape = RoundedCornerShape(18.dp)
-    val surface = if (darkMode) Color(0xFF18181B) else Color.White
-    val border = if (darkMode) Color.White.copy(alpha = 0.12f) else Color(0xFFE7E6E2)
+    val surface = colors.raisedSurface
+    val border = if (darkMode) Color.Transparent else Color(0xFFE7E6E2)
 
     Column(
         modifier = modifier
@@ -941,429 +823,6 @@ private fun homeTabLabel(tab: HomeTab): String = stringResource(
     },
 )
 
-@Composable
-private fun HomeList(
-    state: SessionsState,
-    tab: HomeTab,
-    darkMode: Boolean,
-    onSessionLongPress: (AgentSession, Rect) -> Unit,
-    onOpenSession: (AgentSession) -> Unit,
-    onOpenDevice: (AgentDevice) -> Unit,
-    onCreateSession: () -> Unit,
-    onPairDevice: () -> Unit,
-) {
-    val devices = remember(state.devices) { state.devices.sortedForDevicesPage() }
-    val sessions = if (tab == HomeTab.Active) state.sessions else state.archivedSessions
-    val hasAnySessions = state.sessions.isNotEmpty() || state.archivedSessions.isNotEmpty()
-    when {
-        state.isLoading && !state.hasLoaded -> HomeLoadingState()
-        state.errorMessage != null && !state.hasLoaded -> AuthErrorNotice(
-            message = state.errorMessage,
-            modifier = Modifier.padding(top = 10.dp),
-        )
-        tab == HomeTab.Devices && devices.isEmpty() -> AppEmptyState(
-            message = stringResource(R.string.home_devices_empty),
-            buttonLabel = stringResource(R.string.home_pair_new_device),
-            buttonIcon = Lucide.Monitor,
-            onButtonClick = onPairDevice,
-            contentOffsetY = (-32).dp,
-        )
-        tab == HomeTab.Devices -> DeviceList(devices = devices, darkMode = darkMode, onOpenDevice = onOpenDevice)
-        devices.isEmpty() -> AppEmptyState(
-            message = stringResource(R.string.home_pair_device_first),
-            buttonLabel = stringResource(R.string.home_pair_new_device),
-            buttonIcon = Lucide.Monitor,
-            onButtonClick = onPairDevice,
-            contentOffsetY = (-32).dp,
-        )
-        sessions.isEmpty() && !hasAnySessions -> AppEmptyState(
-            message = stringResource(if (tab == HomeTab.Active) R.string.home_no_active_sessions_create else R.string.home_no_archived_sessions_yet),
-            buttonLabel = stringResource(R.string.home_create_new_session),
-            buttonIcon = Lucide.Plus,
-            onButtonClick = onCreateSession,
-        )
-        sessions.isEmpty() -> EmptyListText(
-            stringResource(if (tab == HomeTab.Active) R.string.home_no_active_sessions else R.string.home_no_archived_sessions)
-        )
-        else -> SessionList(
-            sessions = sessions,
-            onSessionLongPress = onSessionLongPress,
-            onOpenSession = onOpenSession,
-        )
-    }
-}
-
-@Composable
-private fun HomeLoadingState() {
-    val colors = LocalAAColors.current
-    val darkMode = colors.canvas == Color(0xFF09090B)
-    val baseColor = if (darkMode) Color(0xFF1E1E22) else Color(0xFFEDEBE6)
-
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .shimmer()
-            .padding(top = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        contentPadding = PaddingValues(bottom = 96.dp),
-    ) {
-        item(key = "loading-label") {
-            SkeletonLine(
-                modifier = Modifier
-                    .padding(horizontal = 24.dp)
-                    .width(84.dp)
-                    .height(16.dp),
-                baseColor = baseColor,
-                shape = CircleShape,
-            )
-        }
-        items(6, key = { "loading-session-$it" }) { index ->
-            SessionRowSkeleton(
-                index = index,
-                baseColor = baseColor,
-                modifier = Modifier.padding(horizontal = 24.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun SessionRowSkeleton(
-    index: Int,
-    baseColor: Color,
-    modifier: Modifier = Modifier,
-) {
-    val titleWidth = listOf(0.78f, 0.62f, 0.84f, 0.70f, 0.58f, 0.76f)[index % 6]
-    val summaryWidth = listOf(0.92f, 0.84f, 0.74f, 0.88f, 0.80f, 0.68f)[index % 6]
-    val metaWidth = listOf(0.50f, 0.42f, 0.56f, 0.46f, 0.38f, 0.52f)[index % 6]
-
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(82.dp),
-    ) {
-        SkeletonLine(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .fillMaxWidth(titleWidth)
-                .height(20.dp),
-            baseColor = baseColor,
-            shape = RoundedCornerShape(8.dp),
-        )
-        SkeletonLine(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .offset(y = 34.dp)
-                .fillMaxWidth(summaryWidth)
-                .height(15.dp),
-            baseColor = baseColor,
-            shape = RoundedCornerShape(7.dp),
-        )
-        SkeletonLine(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .offset(y = 62.dp)
-                .fillMaxWidth(metaWidth)
-                .height(13.dp),
-            baseColor = baseColor,
-            shape = RoundedCornerShape(7.dp),
-        )
-    }
-}
-
-@Composable
-private fun SkeletonLine(
-    modifier: Modifier,
-    baseColor: Color,
-    shape: androidx.compose.ui.graphics.Shape,
-) {
-    Box(
-        modifier = modifier
-            .clip(shape)
-            .background(baseColor),
-    )
-}
-
-@Composable
-private fun SessionList(
-    sessions: List<AgentSession>,
-    onSessionLongPress: (AgentSession, Rect) -> Unit,
-    onOpenSession: (AgentSession) -> Unit,
-) {
-    var pinnedExpanded by remember(sessions) { mutableStateOf(true) }
-    var recentExpanded by remember(sessions) { mutableStateOf(true) }
-    val pinned = remember(sessions) { SessionsState(sessions = sessions).pinnedSessions }
-    val recent = remember(sessions) { SessionsState(sessions = sessions).recentSessions }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 96.dp),
-    ) {
-        if (sessions.isEmpty()) {
-            item("empty") { EmptyListText(stringResource(R.string.home_no_sessions_yet)) }
-        }
-        item("pinned-title") {
-            HomeSectionHeader(
-                label = stringResource(R.string.home_pinned),
-                expanded = pinnedExpanded,
-                onClick = { pinnedExpanded = !pinnedExpanded },
-            )
-        }
-        if (pinnedExpanded) {
-            if (pinned.isEmpty()) {
-                item("pinned-empty") { SectionEmptyText(stringResource(R.string.home_no_pinned_sessions)) }
-            } else {
-                items(pinned, key = { "pinned-${it.id}" }) { session ->
-                    HomePinnedSessionRow(
-                        session = session,
-                        showDivider = session.id != pinned.lastOrNull()?.id,
-                        onClick = { onOpenSession(session) },
-                        onLongPress = { bounds -> onSessionLongPress(session, bounds) },
-                    )
-                }
-            }
-        }
-        item("recent-title") {
-            HomeSectionHeader(
-                label = stringResource(R.string.home_recents),
-                expanded = recentExpanded,
-                onClick = { recentExpanded = !recentExpanded },
-            )
-        }
-        if (recentExpanded) {
-            if (recent.isEmpty()) {
-                item("recent-empty") { SectionEmptyText(stringResource(R.string.home_no_recent_sessions)) }
-            } else {
-                items(recent, key = { "recent-${it.id}" }) { session ->
-                    HomeRecentSessionRow(
-                        session = session,
-                        onClick = { onOpenSession(session) },
-                        onLongPress = { bounds -> onSessionLongPress(session, bounds) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DeviceList(
-    devices: List<AgentDevice>,
-    darkMode: Boolean,
-    onOpenDevice: (AgentDevice) -> Unit,
-) {
-    val onlineDevices = remember(devices) { devices.filter { it.online } }
-    val offlineDevices = remember(devices) { devices.filterNot { it.online } }
-    var onlineExpanded by remember(devices) { mutableStateOf(true) }
-    var offlineExpanded by remember(devices) { mutableStateOf(true) }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-        contentPadding = PaddingValues(bottom = 96.dp),
-    ) {
-        if (onlineDevices.isNotEmpty()) {
-            item("online-title") {
-                HomeSectionHeader(
-                    label = stringResource(R.string.home_online),
-                    expanded = onlineExpanded,
-                    onClick = { onlineExpanded = !onlineExpanded },
-                )
-            }
-            if (onlineExpanded) {
-                items(onlineDevices, key = { "online-${it.id}" }) { device ->
-                    DeviceRow(
-                        device = device,
-                        darkMode = darkMode,
-                        onClick = { onOpenDevice(device) },
-                    )
-                }
-            }
-        }
-        if (offlineDevices.isNotEmpty()) {
-            item("offline-title") {
-                HomeSectionHeader(
-                    label = stringResource(R.string.home_offline),
-                    expanded = offlineExpanded,
-                    onClick = { offlineExpanded = !offlineExpanded },
-                )
-            }
-            if (offlineExpanded) {
-                items(offlineDevices, key = { "offline-${it.id}" }) { device ->
-                    DeviceRow(
-                        device = device,
-                        darkMode = darkMode,
-                        onClick = { onOpenDevice(device) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun HomeSectionHeader(
-    label: String,
-    expanded: Boolean,
-    onClick: () -> Unit,
-) {
-    val colors = LocalAAColors.current
-    val haptic = LocalHapticFeedback.current
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(41.dp)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-            ) {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                onClick()
-            },
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            modifier = Modifier.weight(1f),
-            color = colors.faint,
-            fontSize = 13.2.sp,
-            fontWeight = FontWeight.ExtraBold,
-            maxLines = 1,
-        )
-        Icon(
-            imageVector = Lucide.ChevronDown,
-            contentDescription = null,
-            tint = colors.faint,
-            modifier = Modifier
-                .size(16.dp)
-                .graphicsLayer { rotationZ = if (expanded) 0f else -90f },
-        )
-    }
-}
-
-@Composable
-private fun HomePinnedSessionRow(
-    session: AgentSession,
-    showDivider: Boolean,
-    onClick: () -> Unit,
-    onLongPress: (Rect) -> Unit,
-) {
-    val subtitle = listOf(session.runtimeLabel, session.workspaceLabel)
-        .filter { it.isNotBlank() }
-        .joinToString("  ·  ")
-
-    HomeSessionRowShell(
-        height = 66.dp,
-        showDivider = showDivider,
-        onClick = onClick,
-        onLongPress = onLongPress,
-    ) {
-        Icon(Lucide.ListIcon, contentDescription = null, tint = LocalAAColors.current.faint, modifier = Modifier.size(14.dp))
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(
-                text = session.title.sessionDisplayTitle(),
-                color = LocalAAColors.current.inkSoft,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                lineHeight = 20.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = subtitle,
-                color = LocalAAColors.current.faint,
-                fontSize = 11.2.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Text(
-            text = session.updatedAtLabel.ifBlank { "now" },
-            color = LocalAAColors.current.faint,
-            fontSize = 10.8.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-        )
-    }
-}
-
-@Composable
-private fun HomeRecentSessionRow(
-    session: AgentSession,
-    onClick: () -> Unit,
-    onLongPress: (Rect) -> Unit,
-) {
-    HomeSessionRowShell(height = 52.dp, onClick = onClick, onLongPress = onLongPress) {
-        Icon(Lucide.ListIcon, contentDescription = null, tint = LocalAAColors.current.faint, modifier = Modifier.size(14.dp))
-        Text(
-            text = session.title.sessionDisplayTitle(),
-            modifier = Modifier.weight(1f),
-            color = LocalAAColors.current.inkSoft,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Bold,
-            lineHeight = 20.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = session.updatedAtLabel.ifBlank { "now" },
-            color = LocalAAColors.current.faint,
-            fontSize = 10.8.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-        )
-    }
-}
-
-@Composable
-private fun HomeSessionRowShell(
-    height: androidx.compose.ui.unit.Dp,
-    showDivider: Boolean = true,
-    onClick: () -> Unit,
-    onLongPress: (Rect) -> Unit,
-    content: @Composable RowScope.() -> Unit,
-) {
-    val colors = LocalAAColors.current
-    val haptic = LocalHapticFeedback.current
-    var bounds by remember { mutableStateOf(Rect.Zero) }
-
-    Column {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(height)
-                .onGloballyPositioned { bounds = it.boundsInRoot() }
-                .pointerInput(onClick, onLongPress, bounds) {
-                    detectTapGestures(
-                        onTap = { onClick() },
-                        onLongPress = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onLongPress(bounds)
-                        },
-                    )
-                }
-                .padding(vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            content = content,
-        )
-        if (showDivider) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(if (colors.canvas == Color(0xFF09090B)) Color(0xFF27272A) else Color(0xFFE9E8E5)),
-            )
-        }
-    }
-}
 
 @Composable
 private fun RoundLucideButton(
@@ -1420,39 +879,5 @@ private fun FloatingHomeButton(
         contentAlignment = Alignment.Center,
     ) {
         Icon(Lucide.Plus, contentDescription = stringResource(R.string.home_new_session), tint = colors.onPrimaryAction, modifier = Modifier.size(24.dp))
-    }
-}
-
-@Composable
-private fun EmptyListText(message: String) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(180.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = message,
-            color = LocalAAColors.current.faint,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
-    }
-}
-
-@Composable
-private fun SectionEmptyText(message: String) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(42.dp),
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        Text(
-            text = message,
-            color = LocalAAColors.current.faint,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
     }
 }

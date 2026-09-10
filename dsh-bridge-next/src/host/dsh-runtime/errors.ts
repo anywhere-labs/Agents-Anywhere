@@ -1,0 +1,46 @@
+import { record } from './types.js'
+
+const codes = {
+  PARSE_ERROR: -32700, INVALID_REQUEST: -32600, METHOD_NOT_FOUND: -32601,
+  INVALID_PARAMS: -32602, INTERNAL_ERROR: -32603, UNSUPPORTED_OPERATION: -32001,
+  SESSION_NOT_FOUND: -32002, REQUEST_TIMEOUT: -32006, DSH_SERVICE_UNAVAILABLE: -32007,
+  SESSION_ARCHIVED: -32014,
+  PERSISTENCE_ERROR: -32008, PROTOCOL_VERSION_MISMATCH: -32009,
+  NOT_INITIALIZED: -32012, FRAME_TOO_LARGE: -32013,
+} as const
+
+export class BridgeError extends Error {
+  constructor(readonly code: keyof typeof codes, message: string, readonly retryable = false) {
+    super(message)
+  }
+  toJSON() {
+    return { code: codes[this.code], message: this.message, data: { code: this.code, retryable: this.retryable } }
+  }
+}
+
+export function publicError(error: unknown): BridgeError {
+  if (error instanceof BridgeError) return error
+  const nativeCode = record(error).code
+  if (record(error).isDSHRemoteError === true) {
+    if (nativeCode === 'session/attachment-invalid') {
+      const reason = record(record(error).details).reason
+      return new BridgeError('INVALID_PARAMS', reason === 'MODEL_DOES_NOT_SUPPORT_IMAGES'
+        ? 'The selected DSH model does not support images. Choose an image-capable model.'
+        : 'DSH rejected the image. Check its format, contents and size limits.')
+    }
+    if (nativeCode === 'session/model-unavailable') return new BridgeError('INVALID_PARAMS', 'DSH could not apply the selected provider, model or effort. Refresh and choose an available model.')
+    if (typeof nativeCode === 'string' && nativeCode.startsWith('agent-preset/')) return new BridgeError('INVALID_PARAMS', 'DSH could not load the selected Agent mode. Refresh the Runtime configuration.')
+    return new BridgeError('DSH_SERVICE_UNAVAILABLE', 'DSH could not complete this operation. Refresh the session state and retry.', true)
+  }
+  if (nativeCode === 'SESSION_QUERY_SESSION_NOT_FOUND') {
+    return new BridgeError('SESSION_NOT_FOUND', 'The DSH session no longer exists.')
+  }
+  if (error instanceof Error && error.name === 'AbortError') {
+    return new BridgeError('REQUEST_TIMEOUT', 'The request was cancelled or timed out.', true)
+  }
+  // Never serialize native exception messages: a parser error can contain prompts or credentials.
+  if (nativeCode === 'SESSION_QUERY_PERSISTENCE_FAILED') {
+    return new BridgeError('PERSISTENCE_ERROR', 'DSH could not safely read this session. Check the Bridge logs page.', true)
+  }
+  return new BridgeError('INTERNAL_ERROR', 'DSH could not complete this request. Check the Bridge logs page and retry.', true)
+}

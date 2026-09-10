@@ -5,14 +5,16 @@ import {
   Settings,
   Trash2,
   Plus,
+  RefreshCw,
+  Loader2,
   KeyRound,
   ChevronRight,
   FolderOpen,
   CheckCircle2,
-  Check,
   Circle,
   AlertCircle,
   Archive,
+  Pencil,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -20,7 +22,7 @@ import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Switch } from "@/components/ui/switch"
 import { LoadingState } from "@/components/loading-state"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
@@ -29,14 +31,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -47,20 +41,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import type {
-  AttachedAgent,
-  RuntimeReport,
-  RuntimeConfigSchema,
-  ConnectorRuntimeScanResponse,
-  RuntimeSettingsResponse,
+  DeviceRuntimeStatus,
+  DeviceRuntimeView,
+  ProjectView,
+  RuntimeTypeView,
   SessionView as RealSessionView,
 } from "@/features/dashboard/types"
 import { useWorkspace } from "@/components/workspace-context"
@@ -68,45 +54,47 @@ import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
 import type { ConnectorRevokeResponse } from "@/features/dashboard/types"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
+import { RuntimeAddDialog } from "@/components/runtime-add-dialog"
+import { RuntimeConfigDialog } from "@/components/runtime-config-dialog"
+import { RuntimeInstanceNameDialog } from "@/components/runtime-instance-name-dialog"
 import {
-  effortFieldForModel,
-  effectiveFieldValue,
-  optionLabel,
-  runtimeConfigFields,
-  validEffortValue,
-} from "@/features/dashboard/runtime-config"
-
-type DeviceConnector = ReturnType<typeof useWorkspace>["connectors"][number]
+  discoverConnectorRuntimeOverview,
+  loadConnectorRuntimeOverview,
+} from "@/features/dashboard/runtime-discovery"
+import {
+  addableRuntimeTypes,
+  configuredRuntimeInstances,
+  namedInstanceRequiredConfigFields,
+  runtimeInstanceName,
+  runtimeTypeName,
+} from "@/features/dashboard/runtime-instances"
+import {
+  runtimeErrorCode,
+  runtimeErrorReason,
+  runtimeIsNotStarted,
+  runtimeStatusTone,
+} from "@/features/dashboard/runtime-status-presentation"
 
 const DEVICE_STATUS_LABEL_KEYS = {
   online: "online",
   offline: "offline",
 } as const
 
-type AgentRow = {
-  runtime: string
-  agent: AttachedAgent
-  healthy: boolean
-  reason: string | null
-}
-
-const ADD_AGENT_RUNTIME_OPTIONS = [
-  { id: "codex", label: "Codex" },
-  { id: "claude", label: "Claude Code" },
-  { id: "gemini", label: "Gemini CLI" },
-  { id: "grok_build", label: "Grok Build" },
-  { id: "cursor", label: "Cursor" },
-  { id: "codebuddy", label: "CodeBuddy" },
-] as const
-
-type ConnectorWorkspace = {
-  path: string
-  name: string
-  sessionCount: number
-  lastActiveAt: string | null
-}
+const RUNTIME_STATUS_LABEL_KEYS = {
+  stopped: "runtimeStatus.stopped",
+  discovering: "runtimeStatus.discovering",
+  available: "runtimeStatus.available",
+  unavailable: "runtimeStatus.unavailable",
+  validating: "runtimeStatus.validating",
+  starting: "runtimeStatus.starting",
+  running: "runtimeStatus.running",
+  stopping: "runtimeStatus.stopping",
+  error: "runtimeStatus.error",
+  unknown: "runtimeStatus.unknown",
+} as const satisfies Record<DeviceRuntimeStatus, string>
 
 type DeviceSession = {
   id: string
@@ -115,7 +103,7 @@ type DeviceSession = {
   runtime: string
   title?: string | null
   cwd?: string | null
-  status: "idle" | "running" | "waiting_approval" | "error"
+  status: "idle" | "waiting" | "pending" | "running" | "stopping" | "waiting_approval" | "error" | "blocked"
   takeover: boolean
   pinned: boolean
   archived: boolean
@@ -130,299 +118,34 @@ type DeviceSession = {
   lastItemAt?: string | null
 }
 
-function isConfigurableField(
-  field: ReturnType<typeof effortFieldForModel>,
-): field is NonNullable<ReturnType<typeof effortFieldForModel>> {
-  return field !== null && field.type !== "object"
-}
+// ── ProjectCard ────────────────────────────────────────────────
 
-// ── AgentConfigDialog ──────────────────────────────────────────
-
-function AgentConfigDialog({
-  runtime,
-  schema,
-  settings,
-  error,
-  saving,
-  open,
-  onOpenChange,
-  onSave,
-}: {
-  runtime: string
-  schema: RuntimeConfigSchema | null
-  settings: Record<string, unknown> | null
-  error: string | null
-  saving: boolean
-  open: boolean
-  onOpenChange: (v: boolean) => void
-  onSave: (settings: Record<string, unknown>) => Promise<void>
-}) {
-  const t = useTranslations("dashboard.device")
-  const tCommon = useTranslations("common")
-  const [draft, setDraft] = React.useState<Record<string, unknown>>(settings ?? {})
-
-  React.useEffect(() => {
-    if (open) setDraft(settings ?? {})
-  }, [open, settings])
-
-  const fields = React.useMemo(() => runtimeConfigFields(schema, draft, "device"), [draft, schema])
-  const modelField = fields.find((field) => field.key === "model")
-  const visibleFields = fields
-    .map((field) => field.key === "effort" ? effortFieldForModel(modelField, field, draft.model) : field)
-    .filter(isConfigurableField)
-
-  const patch = (key: string, value: unknown) => {
-    setDraft((prev) => {
-      const next = { ...prev, [key]: value }
-      if (key === "model") {
-        const nextEffortField = effortFieldForModel(modelField, fields.find((field) => field.key === "effort"), value)
-        const nextEffort = validEffortValue(nextEffortField, prev.effort)
-        if (nextEffort) next.effort = nextEffort
-        else delete next.effort
-      }
-      return next
-    })
-  }
-
-  const submit = async () => {
-    await onSave(draft)
-    onOpenChange(false)
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{runtime}</DialogTitle>
-          <DialogDescription>{t("defaultConfiguration")}</DialogDescription>
-        </DialogHeader>
-
-        <div className="flex flex-col gap-4 py-2">
-          {error ? (
-            <Alert variant="destructive">
-              <AlertCircle />
-              <AlertTitle>{t("agentSettingsFailed")}</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
-          {visibleFields.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("noAgentSettings")}</p>
-          ) : (
-            visibleFields.map((field) => {
-              const value = draft[field.key]
-              if (field.type === "boolean") {
-                return (
-                  <label key={field.key} className="flex items-start gap-3 rounded-lg border border-border p-3">
-                    <Checkbox
-                      checked={Boolean(value)}
-                      onCheckedChange={(checked) => patch(field.key, checked === true)}
-                    />
-                    <span className="flex min-w-0 flex-col gap-1">
-                      <span className="text-sm font-medium">{field.label}</span>
-                      {field.description ? <span className="text-xs text-muted-foreground">{field.description}</span> : null}
-                    </span>
-                  </label>
-                )
-              }
-              if (field.type === "enum" && field.options?.length) {
-                const selectedValue = effectiveFieldValue(field, value)
-                const selectedLabel = optionLabel(field, value, field.label)
-                return (
-                  <div key={field.key} className="flex flex-col gap-2">
-                    <Label>{field.label}</Label>
-                    <DropdownMenu modal={false}>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="w-full min-w-0 justify-between"
-                        >
-                          <span className="min-w-0 flex-1 truncate text-left">{selectedLabel}</span>
-                          <ChevronRight className="size-3.5 shrink-0 rotate-90 opacity-60" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="start" className="w-(--radix-dropdown-menu-trigger-width) max-w-(--radix-dropdown-menu-trigger-width)">
-                        {field.options.map((option) => (
-                          <DropdownMenuItem
-                            key={String(option.value)}
-                            className="min-w-0 gap-2"
-                            onSelect={() => patch(field.key, String(option.value))}
-                          >
-                            <Check className={cn("size-3.5 shrink-0", selectedValue === String(option.value) ? "opacity-100" : "opacity-0")} />
-                            <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                          </DropdownMenuItem>
-                        ))}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                    {field.description ? <p className="text-xs text-muted-foreground">{field.description}</p> : null}
-                  </div>
-                )
-              }
-              return (
-                <div key={field.key} className="flex flex-col gap-2">
-                  <Label htmlFor={`agent-${runtime}-${field.key}`}>{field.label}</Label>
-                  <Input
-                    id={`agent-${runtime}-${field.key}`}
-                    value={typeof value === "string" ? value : ""}
-                    onChange={(event) => patch(field.key, event.currentTarget.value)}
-                    placeholder={field.description ?? field.label}
-                    spellCheck={false}
-                  />
-                </div>
-              )
-            })
-          )}
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {tCommon("cancel")}
-          </Button>
-          <Button onClick={() => void submit()} disabled={saving || visibleFields.length === 0}>
-            {saving ? t("saving") : tCommon("save")}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-// ── AddAgentDialog ────────────────────────────────────────────
-
-function AddAgentDialog({
-  open,
-  onOpenChange,
-  adding,
-  onAdd,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  adding: boolean
-  onAdd: (runtime: string, path: string) => Promise<ConnectorRuntimeScanResponse | null>
-}) {
-  const t = useTranslations("dashboard.device")
-  const tCommon = useTranslations("common")
-  const [runtime, setRuntime] = React.useState<(typeof ADD_AGENT_RUNTIME_OPTIONS)[number]["id"]>("codex")
-  const [path, setPath] = React.useState("")
-  const [scanIssue, setScanIssue] = React.useState<string | null>(null)
-
-  React.useEffect(() => {
-    if (!open) return
-    setRuntime("codex")
-    setPath("")
-    setScanIssue(null)
-  }, [open])
-
-  const submit = async () => {
-    setScanIssue(null)
-    const response = await onAdd(runtime, path)
-    if (!response) return
-    const scannedRuntime = response.scanned.runtime ?? runtime
-    const attachedAgent = response.runtimeCapabilities.attached[scannedRuntime]
-    if (attachedAgent && reportIsHealthy(attachedAgent)) {
-      onOpenChange(false)
-      return
-    }
-
-    const report = response.scanned.report ?? null
-    setScanIssue(report ? runtimeIssueReason(report) ?? t("addAgentNotFound") : t("addAgentNotFound"))
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{t("addAgent")}</DialogTitle>
-          <DialogDescription>{t("addAgentDescription")}</DialogDescription>
-        </DialogHeader>
-
-        <div className="flex flex-col gap-4 py-2">
-          <div className="flex flex-col gap-2">
-            <Label>{t("agent")}</Label>
-            <ToggleGroup
-              type="single"
-              value={runtime}
-              onValueChange={(value) => {
-                if (value) setRuntime(value as (typeof ADD_AGENT_RUNTIME_OPTIONS)[number]["id"])
-              }}
-              className="grid grid-cols-2 sm:grid-cols-3"
-            >
-              {ADD_AGENT_RUNTIME_OPTIONS.map((option) => (
-                <ToggleGroupItem key={option.id} value={option.id}>
-                  {option.label}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="add-agent-path">{t("agentPath")}</Label>
-            <Input
-              id="add-agent-path"
-              value={path}
-              onChange={(event) => setPath(event.currentTarget.value)}
-              placeholder={t("agentPathPlaceholder")}
-              spellCheck={false}
-            />
-            <p className="text-xs text-muted-foreground">{t("agentPathDescription")}</p>
-          </div>
-
-          {scanIssue ? (
-            <Alert variant="destructive">
-              <AlertCircle />
-              <AlertTitle>{t("addAgentFailed")}</AlertTitle>
-              <AlertDescription>{scanIssue}</AlertDescription>
-            </Alert>
-          ) : null}
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={adding}>
-            {tCommon("cancel")}
-          </Button>
-          <Button onClick={() => void submit()} disabled={adding}>
-            {adding ? t("addingAgent") : t("addAgentAction")}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-// ── WorkspaceCard ──────────────────────────────────────────────
-
-function WorkspaceCard({
-  workspace,
-  onOpen,
+function ProjectCard({
+  project,
   onNewSession,
 }: {
-  workspace: ConnectorWorkspace
-  onOpen: () => void
+  project: ProjectView
   onNewSession: () => void
 }) {
   const t = useTranslations("dashboard.device")
   return (
     <div className="group grid grid-cols-[1fr_auto] items-stretch rounded-lg border border-border bg-card transition-colors hover:bg-accent/40">
-      <button
-        type="button"
-        onClick={onOpen}
-        className="flex min-w-0 items-center gap-3 px-4 py-3 text-left"
-      >
+      <div className="flex min-w-0 items-center gap-3 px-4 py-3">
         <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{workspace.name}</p>
-          <p className="text-xs text-muted-foreground">
-            {t("sessionCount", { count: workspace.sessionCount })}
+          <p className="truncate text-sm font-medium">{project.name}</p>
+          <p className="truncate text-xs text-muted-foreground" title={project.workspacePath}>
+            {project.workspacePath}
           </p>
         </div>
-      </button>
+      </div>
       <Button
         type="button"
         variant="ghost"
         size="icon"
         onClick={onNewSession}
         aria-label={t("newSession")}
-        className="m-2 self-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+        className="m-2 self-center"
       >
         <Plus />
       </Button>
@@ -458,7 +181,7 @@ function SessionRow({
       {selectMode ? (
         <Checkbox
           checked={selected}
-          onCheckedChange={(checked) => onSelectChange(checked === true)}
+          onCheckedChange={(checked: boolean | "indeterminate") => onSelectChange(checked === true)}
           aria-label={t("selectSession", { title: session.title ?? t("untitled") })}
         />
       ) : null}
@@ -467,11 +190,13 @@ function SessionRow({
           "size-1.5 shrink-0 rounded-full border",
           session.status === "running"
             ? "border-emerald-500 bg-emerald-500"
-            : session.status === "error"
-              ? "border-red-500/70"
-              : session.status === "waiting_approval"
-                ? "border-amber-400/70"
-          : "border-muted-foreground/40",
+            : session.status === "waiting_approval" || session.status === "blocked"
+              ? "border-amber-400/70"
+              : session.status === "error"
+                ? "border-destructive bg-destructive"
+              : session.status === "waiting" || session.status === "pending" || session.status === "stopping"
+                ? "border-blue-400/70"
+                : "border-muted-foreground/40",
         )}
       />
       <button
@@ -488,11 +213,8 @@ function SessionRow({
 
 // ── DevicePage ─────────────────────────────────────────────────
 
-const WORKSPACE_PAGE_SIZE = 6
-
-function timeValue(value: string | null | undefined) {
-  return value ? new Date(value).getTime() : 0
-}
+const DESKTOP_PROJECT_PAGE_SIZE = 6
+const MOBILE_PROJECT_PAGE_SIZE = 4
 
 function sessionActivityAt(session: DeviceSession) {
   return session.sortAt ?? session.lastActivityAt ?? session.lastItemAt ?? session.updatedAt ?? null
@@ -543,108 +265,72 @@ function mergeRealSessions(prev: DeviceSession[], updates: RealSessionView[]) {
   return prev.map((session) => updated.get(session.id) ?? session)
 }
 
-function workspacesFromSessions(sessions: DeviceSession[]): ConnectorWorkspace[] {
-  const byPath = new Map<string, ConnectorWorkspace>()
-  for (const session of sessions) {
-    const path = session.cwd || "~"
-    const activeAt = sessionActivityAt(session)
-    const existing = byPath.get(path)
-    if (existing) {
-      existing.sessionCount += 1
-      if (timeValue(activeAt) > timeValue(existing.lastActiveAt)) existing.lastActiveAt = activeAt
-      continue
-    }
-    byPath.set(path, {
-      path,
-      name: path.split(/[\\/]/).filter(Boolean).at(-1) ?? path,
-      sessionCount: 1,
-      lastActiveAt: activeAt,
-    })
-  }
-  return Array.from(byPath.values()).sort((a, b) => timeValue(b.lastActiveAt) - timeValue(a.lastActiveAt))
+function runtimeStatusDot(runtime: DeviceRuntimeView) {
+  const tone = runtimeStatusTone(runtime)
+  if (tone === "ok") return "bg-emerald-500"
+  if (tone === "progress") return "bg-blue-500"
+  if (tone === "warning") return "bg-amber-500"
+  if (tone === "error") return "bg-destructive"
+  return "bg-muted-foreground/40"
 }
 
-function agentsFromConnector(connector: DeviceConnector | null): AgentRow[] {
-  if (!connector) return []
-  return Object.entries(connector.runtimeCapabilities.attached)
-    .map(([runtime, agent]) => {
-      const attached = agent as AttachedAgent
-      return {
-        runtime,
-        agent: attached,
-        healthy: reportIsHealthy(attached),
-        reason: runtimeIssueReason(attached.report),
-      }
-    })
-    .sort((a, b) => a.runtime.localeCompare(b.runtime))
+function runtimeErrorMessage(runtime: DeviceRuntimeView) {
+  return runtimeErrorReason(runtime) ?? ""
 }
 
-function allSupportedAgentsHealthy(connector: DeviceConnector) {
-  return ADD_AGENT_RUNTIME_OPTIONS.every(({ id }) => {
-    const agent = connector.runtimeCapabilities.attached[id] as AttachedAgent | undefined
-    return agent ? reportIsHealthy(agent) : false
-  })
-}
-
-function reportIsHealthy(agent: AttachedAgent) {
-  if (agent.report.error) return false
-  if (!agent.report.selected) return false
-  if (agent.report.execution === "ok") return true
-  return !(agent.report.checked ?? []).some((entry) => entry.status === "failed")
-}
-
-function runtimeIssueReason(report: RuntimeReport) {
-  if (report.error?.message) return report.error.message
-  if (report.authStatus === "required") {
-    return (
-      report.authHint ??
-      "ACP authentication required. Interactive TUI login may not satisfy headless ACP mode."
-    )
-  }
-  if (report.selected && report.execution === "ok") return null
-  return (
-    report.checked?.find((entry) => entry.status === "failed")?.reason ??
-    report.checked?.find((entry) => entry.status !== "ok")?.reason ??
-    null
-  )
-}
-
-function runtimeAuthRequired(report: RuntimeReport) {
-  return report.authStatus === "required"
+function runtimeListKey(runtimes: DeviceRuntimeView[]) {
+  return runtimes
+    .map((runtime) => [
+      runtime.runtimeId,
+      runtime.status,
+      runtime.active,
+      runtime.available,
+      runtime.updatedAt,
+      runtimeErrorCode(runtime) ?? "",
+    ].join(":"))
+    .sort()
+    .join("|")
 }
 
 export function DevicePage() {
   const t = useTranslations("dashboard.device")
   const tCommon = useTranslations("common")
+  const runtimeStatusLabel = (runtime: DeviceRuntimeView) => {
+    if (runtimeIsNotStarted(runtime)) return t("runtimeNotStarted")
+    const key = RUNTIME_STATUS_LABEL_KEYS[runtime.status]
+    return key ? t(key) : runtime.status
+  }
   const {
     activeConnectorId,
     connectors,
+    projects,
     sessions: allSessions,
-    navigateToWorkspace,
+    runtimes: liveRuntimes,
+    startProjectSession,
     openSession,
     goHome,
     refreshData,
   } = useWorkspace()
   const { session: authSession } = useAuth()
+  const isMobile = useIsMobile()
 
   const [connector, setConnector] = React.useState<(typeof connectors)[number] | null>(null)
-  const [workspaces, setWorkspaces] = React.useState<ConnectorWorkspace[]>([])
-  const [agents, setAgents] = React.useState<AgentRow[]>([])
+  const [runtimes, setRuntimes] = React.useState<DeviceRuntimeView[]>([])
+  const [runtimeTypes, setRuntimeTypes] = React.useState<RuntimeTypeView[]>([])
+  const [runtimesLoading, setRuntimesLoading] = React.useState(false)
+  const [discoveringRuntimes, setDiscoveringRuntimes] = React.useState(false)
   const [sessions, setSessions] = React.useState<DeviceSession[]>([])
   const [loading, setLoading] = React.useState(true)
 
-  const [showAllWorkspaces, setShowAllWorkspaces] = React.useState(false)
+  const [showAllProjects, setShowAllProjects] = React.useState(false)
   const [sessionTab, setSessionTab] = React.useState<SessionTabId>("active")
-  const [configAgent, setConfigAgent] = React.useState<AgentRow | null>(null)
-  const [addAgentOpen, setAddAgentOpen] = React.useState(false)
-  const [allAgentsAddedOpen, setAllAgentsAddedOpen] = React.useState(false)
-  const [addingAgent, setAddingAgent] = React.useState(false)
-  const [agentSettings, setAgentSettings] = React.useState<Record<string, RuntimeSettingsResponse | null>>({})
-  const [agentSchemas, setAgentSchemas] = React.useState<Record<string, RuntimeConfigSchema | null>>({})
-  const [agentSettingsError, setAgentSettingsError] = React.useState<Record<string, string | null>>({})
-  const [savingAgentRuntime, setSavingAgentRuntime] = React.useState<string | null>(null)
-  const [authenticatingRuntime, setAuthenticatingRuntime] = React.useState<string | null>(null)
-  const [removeAgentRuntime, setRemoveAgentRuntime] = React.useState<string | null>(null)
+  const [configRuntime, setConfigRuntime] = React.useState<DeviceRuntimeView | null>(null)
+  const [savingRuntimeId, setSavingRuntimeId] = React.useState<string | null>(null)
+  const [runtimeActionId, setRuntimeActionId] = React.useState<string | null>(null)
+  const [removeRuntime, setRemoveRuntime] = React.useState<DeviceRuntimeView | null>(null)
+  const [createRuntimeType, setCreateRuntimeType] = React.useState<RuntimeTypeView | null>(null)
+  const [renameRuntime, setRenameRuntime] = React.useState<DeviceRuntimeView | null>(null)
+  const [savingRuntimeName, setSavingRuntimeName] = React.useState(false)
   const [revokeOpen, setRevokeOpen] = React.useState(false)
   const [deleteOpen, setDeleteOpen] = React.useState(false)
   const [setupCredential, setSetupCredential] = React.useState<ConnectorRevokeResponse | null>(null)
@@ -667,16 +353,14 @@ export function DevicePage() {
     previousConnectorIdRef.current = activeConnectorId
     if (connectorChanged) {
       setLoading(true)
-      setShowAllWorkspaces(false)
+      setShowAllProjects(false)
       setSessionTab("active")
-      setAgentSettings({})
-      setAgentSchemas({})
-      setAgentSettingsError({})
-      setConfigAgent(null)
-      setAddAgentOpen(false)
-      setAllAgentsAddedOpen(false)
-      setAddingAgent(false)
-      setRemoveAgentRuntime(null)
+      setRuntimes([])
+      setRuntimeTypes([])
+      setConfigRuntime(null)
+      setRemoveRuntime(null)
+      setCreateRuntimeType(null)
+      setRenameRuntime(null)
       setSelectMode(false)
       setSelectedSessionIds(new Set())
     }
@@ -687,13 +371,46 @@ export function DevicePage() {
     setNameDraft(currentConnector?.name ?? "")
     setEditingName(false)
     setSessions(connectorSessions)
-    setWorkspaces(workspacesFromSessions(connectorSessions))
-    setAgents(agentsFromConnector(currentConnector))
     setLoading(false)
   }, [activeConnectorId, connectors, allSessions])
 
-  const visibleWorkspaces = showAllWorkspaces ? workspaces : workspaces.slice(0, WORKSPACE_PAGE_SIZE)
-  const hiddenCount = workspaces.length - WORKSPACE_PAGE_SIZE
+  React.useEffect(() => {
+    if (!authSession?.accessToken || !activeConnectorId) return
+    let cancelled = false
+    setRuntimesLoading(true)
+    loadConnectorRuntimeOverview(authSession.accessToken, activeConnectorId)
+      .then((overview) => {
+        if (!cancelled) {
+          setRuntimes(overview.runtimes)
+          setRuntimeTypes(overview.runtimeTypes)
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) toast.error(error instanceof Error ? error.message : t("loadRuntimesFailed"))
+      })
+      .finally(() => {
+        if (!cancelled) setRuntimesLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeConnectorId, authSession?.accessToken, t])
+
+  // The dashboard snapshot pushes runtime lifecycle, so a connector-side change
+  // (bridge lost, reconnect, reconciliation) lands without a manual refresh.
+  React.useEffect(() => {
+    if (!activeConnectorId) return
+    const scoped = liveRuntimes.filter((runtime) => runtime.connectorId === activeConnectorId)
+    // An empty push means the snapshot predates this device's runtimes; keep the
+    // locally loaded list instead of wiping it.
+    if (scoped.length === 0) return
+    setRuntimes((current) => (runtimeListKey(current) === runtimeListKey(scoped) ? current : scoped))
+  }, [activeConnectorId, liveRuntimes])
+
+  const connectorProjects = projects.filter((project) => project.connectorId === activeConnectorId)
+  const projectPageSize = isMobile ? MOBILE_PROJECT_PAGE_SIZE : DESKTOP_PROJECT_PAGE_SIZE
+  const visibleProjects = showAllProjects ? connectorProjects : connectorProjects.slice(0, projectPageSize)
+  const hiddenProjectCount = connectorProjects.length - projectPageSize
 
   const filteredSessions = sessions.filter((s) => {
     if (sessionTab === "active") return !s.archived
@@ -703,40 +420,8 @@ export function DevicePage() {
   const targetArchiveSelected = sessionTab !== "archived" || Array.from(selectedSessionIds).some((id) => !sessions.find((s) => s.id === id)?.archived)
   const targetArchiveAll = sessionTab !== "archived"
   const allVisibleSelected = filteredSessions.length > 0 && filteredSessions.every((session) => selectedSessionIds.has(session.id))
-
-  React.useEffect(() => {
-    if (!authSession?.accessToken || !connector) return
-    let cancelled = false
-    const runtimes = agents.map((agent) => agent.runtime)
-    if (runtimes.length === 0) return
-    for (const runtime of runtimes) {
-      setAgentSettings((prev) => ({ ...prev, [runtime]: prev[runtime] ?? null }))
-      Promise.all([
-        dashboardApi.getConnectorAgentSettings(authSession.accessToken, connector.id, runtime),
-        dashboardApi.getRuntimeConfigSchema(authSession.accessToken, runtime),
-      ])
-        .then(([settings, schema]) => {
-          if (cancelled) return
-          setAgentSettings((prev) => ({ ...prev, [runtime]: settings }))
-          // Prefer device-merged schema (live ACP modelOptions) when present.
-          setAgentSchemas((prev) => ({
-            ...prev,
-            [runtime]: settings.schema ?? schema.schema,
-          }))
-          setAgentSettingsError((prev) => ({ ...prev, [runtime]: null }))
-        })
-        .catch((err) => {
-          if (cancelled) return
-          setAgentSettingsError((prev) => ({
-            ...prev,
-            [runtime]: err instanceof Error ? err.message : t("agentSettingsFailed"),
-          }))
-        })
-    }
-    return () => {
-      cancelled = true
-    }
-  }, [agents, authSession?.accessToken, connector, t])
+  const configuredRuntimes = configuredRuntimeInstances(runtimes)
+  const availableRuntimeTypes = addableRuntimeTypes(runtimeTypes, runtimes)
 
   if (loading || !connector) {
     return (
@@ -793,116 +478,164 @@ export function DevicePage() {
     goHome()
   }
 
-  const saveAgentSettings = async (runtime: string, settings: Record<string, unknown>) => {
+  const replaceRuntime = (runtime: DeviceRuntimeView) => {
+    setRuntimes((current) => current.some((item) => item.runtimeId === runtime.runtimeId)
+      ? current.map((item) => item.runtimeId === runtime.runtimeId ? runtime : item)
+      : [...current, runtime])
+  }
+
+  const discoverRuntimes = async () => {
     if (!authSession?.accessToken) return
-    setSavingAgentRuntime(runtime)
-    setAgentSettingsError((prev) => ({ ...prev, [runtime]: null }))
+    setDiscoveringRuntimes(true)
     try {
-      const response = await dashboardApi.patchConnectorAgentSettings(authSession.accessToken, connector.id, runtime, settings)
-      setAgentSettings((prev) => ({ ...prev, [runtime]: response }))
-      if (response.schema) {
-        setAgentSchemas((prev) => ({ ...prev, [runtime]: response.schema ?? null }))
-      }
-      refreshData()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : t("saveAgentSettingsFailed")
-      toast.error(message)
-      throw err
-    } finally {
-      setSavingAgentRuntime(null)
-    }
-  }
-
-  const signInAgent = async (runtime: string, methodId?: string) => {
-    if (!authSession?.accessToken || !connector) return
-    setAuthenticatingRuntime(runtime)
-    try {
-      toast.message(t("agentSignInStarted", { name: runtime }), {
-        description: t("agentSignInStartedHint"),
-      })
-      const response = await dashboardApi.authenticateConnectorAgent(
+      const overview = await discoverConnectorRuntimeOverview(
         authSession.accessToken,
         connector.id,
-        runtime,
-        methodId,
       )
-      const nextConnector = { ...connector, runtimeCapabilities: response.runtimeCapabilities }
-      setConnector(nextConnector)
-      setAgents(agentsFromConnector(nextConnector))
-      // Refresh settings/schema so live modelOptions appear after auth.
-      try {
-        const settings = await dashboardApi.getConnectorAgentSettings(
-          authSession.accessToken,
-          connector.id,
-          runtime,
-        )
-        setAgentSettings((prev) => ({ ...prev, [runtime]: settings }))
-        if (settings.schema) {
-          setAgentSchemas((prev) => ({ ...prev, [runtime]: settings.schema ?? null }))
-        }
-      } catch {
-        /* best-effort */
-      }
-      refreshData()
-      if (response.authStatus === "ok") {
-        toast.success(response.message || t("agentSignInSuccess", { name: runtime }))
-      } else {
-        toast.error(response.message || response.authHint || t("agentSignInFailed", { name: runtime }))
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("agentSignInFailed", { name: runtime }))
+      setRuntimes(overview.runtimes)
+      setRuntimeTypes(overview.runtimeTypes)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("discoverRuntimesFailed"))
     } finally {
-      setAuthenticatingRuntime(null)
+      setDiscoveringRuntimes(false)
     }
   }
 
-  const addAgent = async (runtime: string, path: string) => {
-    if (!authSession?.accessToken) return null
-    setAddingAgent(true)
-    try {
-      const response = await dashboardApi.scanConnectorRuntime(
-        authSession.accessToken,
-        connector.id,
-        runtime,
-        path,
-      )
-      const nextConnector = { ...connector, runtimeCapabilities: response.runtimeCapabilities }
-      setConnector(nextConnector)
-      setAgents(agentsFromConnector(nextConnector))
-      refreshData()
-      const scannedRuntime = response.scanned.runtime ?? runtime
-      const attachedAgent = response.runtimeCapabilities.attached[scannedRuntime]
-      if (attachedAgent && reportIsHealthy(attachedAgent)) {
-        toast.success(t("addAgentSuccess", { name: scannedRuntime }))
-      }
-      return response
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("addAgentFailed"))
-      return null
-    } finally {
-      setAddingAgent(false)
-    }
-  }
-
-  const handleAddAgentClick = () => {
-    if (allSupportedAgentsHealthy(connector)) {
-      setAllAgentsAddedOpen(true)
+  const openRuntimeConfig = async (runtime: DeviceRuntimeView) => {
+    if (runtime.runtimeType !== "dsh" || !authSession?.accessToken || connector.status !== "online") {
+      setConfigRuntime(runtime)
       return
     }
-    setAddAgentOpen(true)
+    setDiscoveringRuntimes(true)
+    try {
+      const overview = await discoverConnectorRuntimeOverview(authSession.accessToken, connector.id)
+      setRuntimes(overview.runtimes)
+      setRuntimeTypes(overview.runtimeTypes)
+      setConfigRuntime(overview.runtimes.find((item) => item.runtimeId === runtime.runtimeId) ?? runtime)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("discoverRuntimesFailed"))
+      setConfigRuntime(runtime)
+    } finally {
+      setDiscoveringRuntimes(false)
+    }
   }
 
-  const removeAgent = async () => {
-    if (!authSession?.accessToken || !removeAgentRuntime) return
+  const submitRuntimeRename = async (name: string) => {
+    if (!authSession?.accessToken || !renameRuntime) return
+    setSavingRuntimeName(true)
     try {
-      const response = await dashboardApi.deleteConnectorRuntime(authSession.accessToken, connector.id, removeAgentRuntime)
-      setConnector((prev) => prev ? { ...prev, runtimeCapabilities: response.runtimeCapabilities } : prev)
-      setAgents((prev) => prev.filter((agent) => agent.runtime !== removeAgentRuntime))
-      setSessions((prev) => prev.filter((session) => session.runtime !== removeAgentRuntime))
-      setRemoveAgentRuntime(null)
-      refreshData()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("removeAgentFailed"))
+      const renamed = await dashboardApi.renameConnectorRuntime(
+        authSession.accessToken,
+        connector.id,
+        renameRuntime.runtimeId,
+        name,
+      )
+      replaceRuntime(renamed)
+      setRenameRuntime(null)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("renameRuntimeFailed"))
+      throw error
+    } finally {
+      setSavingRuntimeName(false)
+    }
+  }
+
+  const saveRuntimeConfig = async (runtime: DeviceRuntimeView, config: Record<string, unknown>) => {
+    if (!authSession?.accessToken) return
+    setSavingRuntimeId(runtime.runtimeId)
+    try {
+      const response = await dashboardApi.putConnectorRuntimeConfig(
+        authSession.accessToken,
+        connector.id,
+        runtime.runtimeId,
+        config,
+      )
+      replaceRuntime(response)
+      toast.success(t("runtimeConfigSaved", { name: runtimeInstanceName(runtime) }))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("saveRuntimeConfigFailed")
+      toast.error(message)
+      throw error
+    } finally {
+      setSavingRuntimeId(null)
+    }
+  }
+
+  const configureAndStartRuntime = async (runtime: DeviceRuntimeView, config: Record<string, unknown>) => {
+    if (!authSession?.accessToken) return
+    setSavingRuntimeId(runtime.runtimeId)
+    try {
+      const saved = await dashboardApi.putConnectorRuntimeConfig(
+        authSession.accessToken,
+        connector.id,
+        runtime.runtimeId,
+        config,
+      )
+      replaceRuntime(saved)
+      const started = await dashboardApi.setConnectorRuntimeActive(
+        authSession.accessToken,
+        connector.id,
+        runtime.runtimeId,
+        true,
+      )
+      replaceRuntime(started)
+      toast.success(t("runtimeConfiguredAndStarted", { name: runtimeInstanceName(runtime) }))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("configureAndStartRuntimeFailed")
+      toast.error(message)
+      throw error
+    } finally {
+      setSavingRuntimeId(null)
+    }
+  }
+
+  const toggleRuntime = async (runtime: DeviceRuntimeView, active: boolean) => {
+    if (!authSession?.accessToken) return
+    const previous = runtime
+    setRuntimeActionId(runtime.runtimeId)
+    // The server waits for the connector, so show the transition immediately
+    // instead of jumping straight from stopped to running.
+    replaceRuntime({ ...runtime, status: active ? "starting" : "stopping", error: null })
+    try {
+      const response = await dashboardApi.setConnectorRuntimeActive(
+        authSession.accessToken,
+        connector.id,
+        runtime.runtimeId,
+        active,
+      )
+      replaceRuntime(response)
+    } catch (error) {
+      // A failed start still records the reason on the instance, so refresh the
+      // authoritative row before reporting anything to the user.
+      const authoritative = await loadConnectorRuntimeOverview(
+        authSession.accessToken,
+        connector.id,
+      )
+        .then((overview) => overview.runtimes.find((item) => item.runtimeId === runtime.runtimeId) ?? null)
+        .catch(() => null)
+      replaceRuntime(authoritative ?? previous)
+      const reason = authoritative ? runtimeErrorReason(authoritative) : null
+      toast.error(reason ?? (error instanceof Error ? error.message : t("runtimeActionFailed")))
+    } finally {
+      setRuntimeActionId(null)
+    }
+  }
+
+  const deleteRuntimeConfig = async () => {
+    if (!authSession?.accessToken || !removeRuntime) return
+    setRuntimeActionId(removeRuntime.runtimeId)
+    try {
+      const response = await dashboardApi.deleteConnectorRuntimeConfig(
+        authSession.accessToken,
+        connector.id,
+        removeRuntime.runtimeId,
+      )
+      replaceRuntime(response)
+      setRemoveRuntime(null)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("deleteRuntimeConfigFailed"))
+    } finally {
+      setRuntimeActionId(null)
     }
   }
 
@@ -966,8 +699,8 @@ export function DevicePage() {
   }
 
   return (
-    <ScrollArea className="h-full min-h-0 w-full">
-      <div className="mx-auto w-full max-w-3xl px-6 py-8">
+    <ScrollArea className="@container/page h-full min-h-0 w-full">
+      <div className="mx-auto w-full max-w-3xl px-6 pb-8 pt-14 @min-[52rem]/page:pt-8">
 
         {/* Header */}
         <div className="flex items-center gap-3">
@@ -1009,6 +742,7 @@ export function DevicePage() {
             <span
               className={cn(
                 "font-medium",
+                "max-sm:sr-only",
                 connector.status === "online" ? "text-emerald-500" : "text-muted-foreground",
               )}
             >
@@ -1019,6 +753,7 @@ export function DevicePage() {
             <Button
               variant="outline"
               size="sm"
+              className="max-sm:size-8 max-sm:px-0"
               onClick={() => {
                 if (connector.status === "offline") {
                   void handleRevoke()
@@ -1027,9 +762,12 @@ export function DevicePage() {
                 }
               }}
               disabled={tokenActionBusy}
+              aria-label={tokenActionBusy ? t("preparing") : connector.status === "offline" ? t("setup") : t("revoke")}
             >
               <KeyRound />
-              {tokenActionBusy ? t("preparing") : connector.status === "offline" ? t("setup") : t("revoke")}
+              <span className="max-sm:sr-only">
+                {tokenActionBusy ? t("preparing") : connector.status === "offline" ? t("setup") : t("revoke")}
+              </span>
             </Button>
             <Button
               variant="ghost"
@@ -1045,206 +783,189 @@ export function DevicePage() {
 
         <Separator className="my-6" />
 
-        {/* Agents */}
+        {/* Runtime lifecycle */}
         <section className="mb-8">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-              {t("agents")}
+              {t("agentRuntimes")}
             </h2>
             <Button
               type="button"
               variant="outline"
               size="sm"
-              onClick={handleAddAgentClick}
+              onClick={() => void discoverRuntimes()}
               disabled={connector.status !== "online"}
             >
-              <Plus />
-              {t("addAgent")}
+              <RefreshCw className={cn(discoveringRuntimes && "animate-spin")} />
+              {discoveringRuntimes ? t("discoveringRuntimes") : t("refreshRuntimes")}
             </Button>
           </div>
 
-          {agents.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("noAgents")}</p>
-          ) : (
+          {runtimesLoading ? <LoadingState className="min-h-24" /> : (
             <TooltipProvider>
-              <div className="flex flex-col gap-0.5">
-                {agents.map((agent) => (
-                  <div
-                    key={agent.runtime}
-                    className="flex items-center gap-3 rounded-md px-2 py-2 transition-colors hover:bg-accent/30"
-                  >
-                    <span
-                      className={cn(
-                        "size-2 shrink-0 rounded-full",
-                        agent.healthy ? "bg-emerald-500" : "bg-destructive",
-                      )}
-                    />
-                    <span className="flex min-w-0 flex-1 items-center gap-2">
-                      <span className="truncate text-sm font-medium">
-                        {agent.agent.report.displayName || agent.runtime}
-                      </span>
-                      {runtimeAuthRequired(agent.agent.report) ? (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Badge variant="outline" className="shrink-0 gap-1 border-amber-500/50 text-amber-600 dark:text-amber-400">
-                              <AlertCircle className="size-3" />
-                              {t("authRequired")}
-                            </Badge>
-                          </TooltipTrigger>
-                          <TooltipContent side="top" className="max-w-sm">
-                            {agent.reason || agent.agent.report.authHint || t("authRequiredHint")}
-                            {agent.agent.report.authMethods?.length ? (
-                              <div className="mt-1 text-xs opacity-80">
-                                {t("authMethods")}: {agent.agent.report.authMethods.map((m) => m.name).join(", ")}
-                              </div>
-                            ) : null}
-                          </TooltipContent>
-                        </Tooltip>
-                      ) : agent.reason ? (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Badge variant="destructive" className="shrink-0 gap-1">
-                              <AlertCircle className="size-3" />
-                              {t("agentIssue")}
-                            </Badge>
-                          </TooltipTrigger>
-                          <TooltipContent side="top" className="max-w-sm">
-                            {agent.reason}
-                          </TooltipContent>
-                        </Tooltip>
-                      ) : null}
-                    </span>
-                    <div className="flex items-center gap-0.5">
-                      {runtimeAuthRequired(agent.agent.report) || agent.agent.report.authStatus === "unknown" ? (
-                        agent.agent.report.authMethods && agent.agent.report.authMethods.length > 1 ? (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-8 gap-1"
-                                disabled={
-                                  connector.status !== "online" ||
-                                  authenticatingRuntime === agent.runtime
-                                }
-                              >
-                                <KeyRound className="size-3.5" />
-                                {authenticatingRuntime === agent.runtime
-                                  ? t("signingIn")
-                                  : t("signInAgent")}
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              {agent.agent.report.authMethods.map((method) => (
-                                <DropdownMenuItem
-                                  key={method.id}
-                                  onClick={() => void signInAgent(agent.runtime, method.id)}
-                                >
-                                  {method.name || method.id}
-                                </DropdownMenuItem>
-                              ))}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        ) : (
+              <div className="flex flex-col gap-5">
+                <div>
+                  <h3 className="mb-2 text-sm font-medium">{t("configuredRuntimes")}</h3>
+                  {configuredRuntimes.length === 0 ? (
+                    <p className="px-2 py-3 text-sm text-muted-foreground">{t("noConfiguredRuntimes")}</p>
+                  ) : (
+                    <div className="flex flex-col gap-1">
+                      {configuredRuntimes.map((runtime) => (
+                        <div key={runtime.runtimeId} className="flex min-h-12 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/30">
+                          {runtimeActionId === runtime.runtimeId ? (
+                            <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                          ) : (
+                            <span className={cn("size-2 shrink-0 rounded-full", runtimeStatusDot(runtime))} />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span className="truncate text-sm font-medium">{runtimeInstanceName(runtime)}</span>
+                              <Badge variant="outline" className="shrink-0 font-normal">
+                                {runtimeStatusLabel(runtime)}
+                              </Badge>
+                              {runtime.error ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge
+                                      variant={runtimeStatusTone(runtime) === "warning" ? "outline" : "destructive"}
+                                      className={cn(
+                                        "shrink-0 gap-1",
+                                        runtimeStatusTone(runtime) === "warning" && "border-amber-500/60 text-amber-600",
+                                      )}
+                                    >
+                                      <AlertCircle className="size-3" />
+                                      {runtimeStatusTone(runtime) === "warning" ? t("runtimeNotReady") : t("runtimeIssue")}
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-sm">
+                                    {runtimeErrorMessage(runtime)}
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : null}
+                            </div>
+                            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                              {runtimeTypeName(runtime)}
+                              {!runtime.present ? ` · ${t("runtimeNotReported")}` : ""}
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setRenameRuntime(runtime)}
+                              aria-label={t("renameRuntime", { name: runtimeInstanceName(runtime) })}
+                            >
+                              <Pencil />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => void openRuntimeConfig(runtime)}
+                              disabled={discoveringRuntimes}
+                              aria-label={t("configureRuntime", { name: runtimeInstanceName(runtime) })}
+                            >
+                              <Settings />
+                            </Button>
+                            <Switch
+                              checked={runtime.active}
+                              onCheckedChange={(active: boolean) => void toggleRuntime(runtime, active)}
+                              disabled={runtimeActionId === runtime.runtimeId || (!runtime.active && connector.status !== "online")}
+                              aria-label={runtime.active ? t("deactivateRuntime", { name: runtimeInstanceName(runtime) }) : t("activateRuntime", { name: runtimeInstanceName(runtime) })}
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="text-muted-foreground hover:text-destructive"
+                              onClick={() => setRemoveRuntime(runtime)}
+                              disabled={runtimeActionId === runtime.runtimeId}
+                              aria-label={t("deleteRuntimeConfig", { name: runtimeInstanceName(runtime) })}
+                            >
+                              <Trash2 />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <Separator />
+
+                <div>
+                  <h3 className="mb-2 text-sm font-medium">{t("availableRuntimeTypes")}</h3>
+                  {availableRuntimeTypes.length === 0 ? (
+                    <p className="px-2 py-3 text-sm text-muted-foreground">{t("noRuntimeTypes")}</p>
+                  ) : (
+                    <div className="flex flex-col gap-1">
+                      {availableRuntimeTypes.map((runtimeType) => (
+                        <div key={runtimeType.runtimeType} className="flex min-h-12 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/30">
+                          {/* This list means "the connector supports this type", so it never carries a warning colour. */}
+                          <span className="size-2 shrink-0 rounded-full bg-muted-foreground/50" />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 items-center gap-1">
+                              <p className="truncate text-sm font-medium">{runtimeType.displayName}</p>
+                            </div>
+                            <p className="truncate text-xs text-muted-foreground">
+                              {runtimeType.reason || runtimeType.description || runtimeType.implementationType}
+                            </p>
+                          </div>
                           <Button
                             type="button"
                             variant="outline"
                             size="sm"
-                            className="h-8 gap-1"
-                            disabled={
-                              connector.status !== "online" ||
-                              authenticatingRuntime === agent.runtime
-                            }
-                            onClick={() =>
-                              void signInAgent(
-                                agent.runtime,
-                                agent.agent.report.authMethods?.[0]?.id,
-                              )
-                            }
+                            onClick={() => setCreateRuntimeType(runtimeType)}
                           >
-                            <KeyRound className="size-3.5" />
-                            {authenticatingRuntime === agent.runtime
-                              ? t("signingIn")
-                              : t("signInAgent")}
+                            <Plus data-icon="inline-start" />
+                            {t("addRuntime")}
                           </Button>
-                        )
-                      ) : null}
-                      <Button
-                        type="button"
-                        onClick={() => setConfigAgent(agent)}
-                        variant="ghost"
-                        size="icon"
-                        aria-label={t("configureAgent", { name: agent.runtime })}
-                      >
-                        <Settings />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="text-muted-foreground hover:text-destructive"
-                        onClick={() => {
-                          setRemoveAgentRuntime(agent.runtime)
-                        }}
-                        aria-label={t("removeAgent", { name: agent.runtime })}
-                      >
-                        <Trash2 />
-                      </Button>
+                        </div>
+                      ))}
                     </div>
-                  </div>
-                ))}
+                  )}
+                </div>
               </div>
             </TooltipProvider>
           )}
         </section>
 
-        {/* Workspaces */}
+        {/* Projects */}
         <section className="mb-8">
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-3 flex items-center">
             <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-              {t("workspaces")}
+              {t("projects")}
             </h2>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => navigateToWorkspace(connector.id, "~")}
-              aria-label={t("newSession")}
-            >
-              <Plus />
-            </Button>
           </div>
 
-          {workspaces.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("noWorkspaces")}</p>
+          {connectorProjects.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("noProjects")}</p>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-2">
-                {visibleWorkspaces.map((ws) => (
-                  <WorkspaceCard
-                    key={ws.path}
-                    workspace={ws}
-                    onOpen={() => navigateToWorkspace(connector.id, ws.path)}
-                    onNewSession={() => navigateToWorkspace(connector.id, ws.path)}
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {visibleProjects.map((project) => (
+                  <ProjectCard
+                    key={project.id}
+                    project={project}
+                    onNewSession={() => startProjectSession(project.id)}
                   />
                 ))}
               </div>
 
-              {(() => {
-                const nextWorkspace = workspaces[WORKSPACE_PAGE_SIZE]
-                if (showAllWorkspaces || hiddenCount <= 0 || !nextWorkspace) return null
-                return (
-                  <button
-                    type="button"
-                    onClick={() => navigateToWorkspace(connector.id, nextWorkspace.path)}
-                    className="mt-3 flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    <span className="mx-0.5 text-foreground">{t("showAllMore", { count: hiddenCount })}</span>
-                    <ChevronRight className="size-3.5" />
-                  </button>
-                )
-              })()}
+              {hiddenProjectCount > 0 && (
+                <button
+                  type="button"
+                  aria-expanded={showAllProjects}
+                  onClick={() => setShowAllProjects((current) => !current)}
+                  className="mt-3 flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <span className="mx-0.5 text-foreground">
+                    {showAllProjects ? t("showLess") : t("showAllMore", { count: hiddenProjectCount })}
+                  </span>
+                  <ChevronRight className={cn("size-3.5", showAllProjects && "-rotate-90")} />
+                </button>
+              )}
             </>
           )}
         </section>
@@ -1289,7 +1010,7 @@ export function DevicePage() {
           <ToggleGroup
             type="single"
             value={sessionTab}
-            onValueChange={(value) => {
+            onValueChange={(value: string) => {
               if (value) setSessionTab(value as SessionTabId)
             }}
             size="sm"
@@ -1309,7 +1030,7 @@ export function DevicePage() {
             <div className="mb-3 flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 text-sm">
               <Checkbox
                 checked={allVisibleSelected}
-                onCheckedChange={(checked) => toggleAllVisible(checked === true)}
+                onCheckedChange={(checked: boolean | "indeterminate") => toggleAllVisible(checked === true)}
                 aria-label={t("selectAllVisible")}
               />
               <span className="flex-1 text-muted-foreground">
@@ -1344,40 +1065,54 @@ export function DevicePage() {
         </section>
       </div>
 
-      {/* Agent config dialog */}
-      {configAgent && (
-        <AgentConfigDialog
-          runtime={configAgent.runtime}
-          schema={agentSchemas[configAgent.runtime] ?? null}
-          settings={agentSettings[configAgent.runtime]?.settings ?? agentSettings[configAgent.runtime]?.runtimeSettings ?? null}
-          error={agentSettingsError[configAgent.runtime] ?? null}
-          saving={savingAgentRuntime === configAgent.runtime}
-          open={!!configAgent}
-          onOpenChange={(v) => { if (!v) setConfigAgent(null) }}
-          onSave={(settings) => saveAgentSettings(configAgent.runtime, settings)}
+      {configRuntime ? (
+        <RuntimeConfigDialog
+          runtimeName={runtimeInstanceName(configRuntime)}
+          schema={configRuntime.schema}
+          uiSchema={configRuntime.uiSchema}
+          config={configRuntime.config}
+          defaults={configRuntime.defaults}
+          requiredFields={configRuntime.runtimeId === configRuntime.runtimeType
+            ? []
+            : namedInstanceRequiredConfigFields(configRuntime)}
+          saving={savingRuntimeId === configRuntime.runtimeId}
+          submitLabel={!configRuntime.configured ? t("configureAndStart") : undefined}
+          open
+          onOpenChange={(open) => { if (!open) setConfigRuntime(null) }}
+          onSave={(config) => configRuntime.configured
+            ? saveRuntimeConfig(configRuntime, config)
+            : configureAndStartRuntime(configRuntime, config)}
         />
-      )}
+      ) : null}
 
-      <AddAgentDialog
-        open={addAgentOpen}
-        onOpenChange={setAddAgentOpen}
-        adding={addingAgent}
-        onAdd={addAgent}
-      />
+      {createRuntimeType && authSession?.accessToken ? (
+        <RuntimeAddDialog
+          key={createRuntimeType.runtimeType}
+          runtimeType={createRuntimeType}
+          runtimes={runtimes}
+          token={authSession.accessToken}
+          connectorId={connector.id}
+          onRuntimeUpdated={replaceRuntime}
+          onOpenChange={(open) => { if (!open) setCreateRuntimeType(null) }}
+        />
+      ) : null}
 
-      <Dialog open={allAgentsAddedOpen} onOpenChange={setAllAgentsAddedOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t("allAgentsAddedTitle")}</DialogTitle>
-            <DialogDescription>{t("allAgentsAddedDescription")}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button onClick={() => setAllAgentsAddedOpen(false)}>
-              {tCommon("close")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {renameRuntime ? (
+        <RuntimeInstanceNameDialog
+          open
+          title={t("renameRuntimeTitle")}
+          description={t("renameRuntimeDescription", { type: runtimeTypeName(renameRuntime) })}
+          label={t("runtimeName")}
+          requiredMessage={t("runtimeNameRequired")}
+          placeholder={t("runtimeNamePlaceholder")}
+          submitLabel={t("saveRuntimeName")}
+          cancelLabel={tCommon("cancel")}
+          initialName={runtimeInstanceName(renameRuntime)}
+          saving={savingRuntimeName}
+          onOpenChange={(open) => { if (!open) setRenameRuntime(null) }}
+          onSubmit={submitRuntimeRename}
+        />
+      ) : null}
 
       <PairDeviceDialog
         open={setupOpen}
@@ -1428,23 +1163,26 @@ export function DevicePage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={removeAgentRuntime !== null} onOpenChange={(open) => {
-        if (!open) setRemoveAgentRuntime(null)
+      <AlertDialog open={removeRuntime !== null} onOpenChange={(open: boolean) => {
+        if (!open) setRemoveRuntime(null)
       }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("removeAgentTitle")}</AlertDialogTitle>
+            <AlertDialogTitle>{t("deleteRuntimeConfigTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t("removeAgentDescription", { name: removeAgentRuntime ?? "" })}
+              {t("deleteRuntimeConfigDescription", {
+                name: removeRuntime ? runtimeInstanceName(removeRuntime) : "",
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => void removeAgent()}
+              onClick={() => void deleteRuntimeConfig()}
+              disabled={Boolean(removeRuntime && runtimeActionId === removeRuntime.runtimeId)}
             >
-              {t("removeAgentAction")}
+              {t("deleteRuntimeConfigAction")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

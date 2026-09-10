@@ -2,6 +2,7 @@ export type UserRole = "admin" | "member";
 
 export type AuthConfig = {
   needsBootstrap: boolean;
+  emailVerificationRequired: boolean;
   registrationOpen: boolean;
   oauthRegistrationOpen: boolean;
   oauthEnabled: boolean;
@@ -12,6 +13,9 @@ export type AuthConfig = {
 
 export type AuthResponse = {
   userId: string;
+  email: string | null;
+  displayName: string;
+  emailVerified: boolean;
   role: UserRole;
   accessToken: string;
   tokenType: string;
@@ -20,6 +24,9 @@ export type AuthResponse = {
 
 export type AuthMe = {
   userId: string;
+  email: string | null;
+  displayName: string;
+  emailVerified: boolean;
   role: UserRole;
   disabled: boolean;
   avatar: string | null;
@@ -33,7 +40,9 @@ export type ChangePasswordRequest = {
 };
 
 export type AuthCredentials = {
-  userId: string;
+  email: string;
+  displayName?: string;
+  code?: string;
   password?: string;
   passwordVerifier?: string;
   passwordSalt?: string;
@@ -67,7 +76,9 @@ export type OAuthAuthorizeResponse = {
 
 export type OAuthFinalizePayload = {
   pendingToken: string;
-  userId?: string;
+  email?: string;
+  displayName?: string;
+  code?: string;
   password?: string;
   passwordVerifier?: string;
   passwordSalt?: string;
@@ -100,6 +111,9 @@ export type OAuthProviderConfigUpdate = OAuthProviderConfig & {
 
 export type AdminUser = {
   userId: string;
+  email: string | null;
+  displayName: string;
+  emailVerified: boolean;
   role: UserRole;
   disabled: boolean;
   avatar: string | null;
@@ -112,7 +126,21 @@ export type AdminUserListResponse = {
   serverTime: string;
 };
 
+export type EmailSettings = {
+  enabled: boolean;
+  fromAddress: string;
+  apiKeyConfigured: boolean;
+};
+
+export type EmailSettingsUpdate = {
+  enabled: boolean;
+  fromAddress: string;
+  apiKey?: string;
+  clearApiKey?: boolean;
+};
+
 export type InstanceSettings = {
+  email: EmailSettings;
   registrationOpen: boolean;
   oauthRegistrationOpen: boolean;
   oauth: OAuthProviderConfig | null;

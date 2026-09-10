@@ -1,0 +1,445 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@font-face {
+  font-family: "AA Caveat";
+  src: url("/fonts/caveat-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+--font-sans: var(--font-geist);
+--font-heading: var(--font-geist);
+--font-mono: var(--font-geist-mono);
+--font-serif: var(--font-instrument-serif);
+--font-brand: "AA Caveat", "Snell Roundhand", cursive;
+--color-background: var(--background);
+--color-foreground: var(--foreground);
+--color-card: var(--card);
+--color-card-foreground: var(--card-foreground);
+--color-popover: var(--popover);
+--color-popover-foreground: var(--popover-foreground);
+--color-primary: var(--primary);
+--color-primary-foreground: var(--primary-foreground);
+--color-secondary: var(--secondary);
+--color-secondary-foreground: var(--secondary-foreground);
+--color-muted: var(--muted);
+--color-muted-foreground: var(--muted-foreground);
+--color-accent: var(--accent);
+--color-accent-foreground: var(--accent-foreground);
+--color-destructive: var(--destructive);
+--color-destructive-foreground: var(--destructive-foreground);
+--color-border: var(--border);
+--color-input: var(--input);
+--color-ring: var(--ring);
+--color-chart-1: var(--chart-1);
+--color-chart-2: var(--chart-2);
+--color-chart-3: var(--chart-3);
+--color-chart-4: var(--chart-4);
+--color-chart-5: var(--chart-5);
+--color-sidebar: var(--sidebar);
+--color-sidebar-foreground: var(--sidebar-foreground);
+--color-sidebar-primary: var(--sidebar-primary);
+--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+--color-sidebar-accent: var(--sidebar-accent);
+--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+--color-sidebar-border: var(--sidebar-border);
+--color-sidebar-ring: var(--sidebar-ring);
+--radius-sm: calc(var(--radius) * 0.6);
+--radius-md: calc(var(--radius) * 0.8);
+--radius-lg: var(--radius);
+--radius-xl: calc(var(--radius) * 1.4);
+--radius-2xl: calc(var(--radius) * 1.8);
+--radius-3xl: calc(var(--radius) * 2.2);
+--radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --background: oklch(1 0 0);
+--foreground: oklch(0.145 0 0);
+--card: oklch(1 0 0);
+--card-foreground: oklch(0.145 0 0);
+--popover: oklch(1 0 0);
+--popover-foreground: oklch(0.145 0 0);
+--primary: oklch(0.205 0 0);
+--primary-foreground: oklch(0.985 0 0);
+--secondary: oklch(0.97 0 0);
+--secondary-foreground: oklch(0.205 0 0);
+--muted: oklch(0.97 0 0);
+--muted-foreground: oklch(0.556 0 0);
+--accent: oklch(0.97 0 0);
+--accent-foreground: oklch(0.205 0 0);
+--destructive: oklch(0.577 0.245 27.325);
+--border: oklch(0.922 0 0);
+--input: oklch(0.922 0 0);
+--ring: oklch(0.708 0 0);
+--chart-1: oklch(0.58 0.18 252);
+--chart-2: oklch(0.62 0.16 150);
+--chart-3: oklch(0.68 0.18 70);
+--chart-4: oklch(0.62 0.18 25);
+--chart-5: oklch(0.62 0.16 315);
+--radius: 0.625rem;
+--sidebar: oklch(0.985 0 0);
+--sidebar-foreground: oklch(0.145 0 0);
+--sidebar-primary: oklch(0.205 0 0);
+--sidebar-primary-foreground: oklch(0.985 0 0);
+--sidebar-accent: oklch(0.97 0 0);
+--sidebar-accent-foreground: oklch(0.205 0 0);
+--sidebar-border: oklch(0.922 0 0);
+--sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  color-scheme: dark;
+  --background: oklch(0.145 0 0);
+--foreground: oklch(0.985 0 0);
+--card: oklch(0.205 0 0);
+--card-foreground: oklch(0.985 0 0);
+--popover: oklch(0.205 0 0);
+--popover-foreground: oklch(0.985 0 0);
+--primary: oklch(0.922 0 0);
+--primary-foreground: oklch(0.205 0 0);
+--secondary: oklch(0.269 0 0);
+--secondary-foreground: oklch(0.985 0 0);
+--muted: oklch(0.269 0 0);
+--muted-foreground: oklch(0.708 0 0);
+--accent: oklch(0.269 0 0);
+--accent-foreground: oklch(0.985 0 0);
+--destructive: oklch(0.704 0.191 22.216);
+--border: oklch(1 0 0 / 10%);
+--input: oklch(1 0 0 / 15%);
+--ring: oklch(0.556 0 0);
+--chart-1: oklch(0.72 0.18 252);
+--chart-2: oklch(0.76 0.16 150);
+--chart-3: oklch(0.80 0.17 70);
+--chart-4: oklch(0.72 0.18 25);
+--chart-5: oklch(0.76 0.16 315);
+--sidebar: oklch(0.205 0 0);
+--sidebar-foreground: oklch(0.985 0 0);
+--sidebar-primary: oklch(0.488 0.243 264.376);
+--sidebar-primary-foreground: oklch(0.985 0 0);
+--sidebar-accent: oklch(0.269 0 0);
+--sidebar-accent-foreground: oklch(0.985 0 0);
+--sidebar-border: oklch(1 0 0 / 10%);
+--sidebar-ring: oklch(0.556 0 0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes composer-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes aa-attachment-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.aa-attachment-shimmer {
+  background-image: linear-gradient(
+    100deg,
+    color-mix(in oklch, var(--muted) 82%, transparent) 20%,
+    color-mix(in oklch, var(--foreground) 12%, var(--muted)) 40%,
+    color-mix(in oklch, var(--muted) 82%, transparent) 60%
+  );
+  background-size: 200% 100%;
+  animation: aa-attachment-shimmer 1.4s ease-in-out infinite;
+}
+
+@layer base {
+* {
+  @apply border-border outline-ring/50;
+}
+html {
+  @apply size-full overflow-hidden overscroll-none;
+  touch-action: manipulation;
+}
+body {
+  @apply size-full overflow-hidden overscroll-none bg-background text-foreground;
+  touch-action: manipulation;
+}
+}
+
+.aa-wordmark {
+  font-family: "AA Caveat", "Snell Roundhand", cursive;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.aa-window-drag {
+  -webkit-app-region: drag;
+}
+
+/* The native compositor supplies the sidebar glass. Keep content surfaces opaque. */
+html[data-window-material="transparent"],
+html[data-window-material="mica"],
+html:is([data-window-material="transparent"], [data-window-material="mica"]) body {
+  background: transparent;
+}
+
+html:is([data-window-material="transparent"], [data-window-material="mica"]) [data-slot="sidebar-wrapper"],
+html:is([data-window-material="transparent"], [data-window-material="mica"]) .aa-desktop-sidebar [data-slot="sidebar-inner"],
+html:is([data-window-material="transparent"], [data-window-material="mica"]) .aa-windows-title-bar {
+  background: transparent;
+}
+
+.aa-desktop-sidebar {
+  padding-top: 44px;
+  background: var(--sidebar);
+}
+
+html:is([data-window-material="transparent"], [data-window-material="mica"]) .aa-desktop-sidebar {
+  background: transparent;
+  --sidebar-accent: color-mix(in oklch, var(--sidebar-foreground) 10%, transparent);
+}
+
+/* Keep a neutral scrim over macOS vibrancy so wallpaper colors do not wash
+ * out sidebar labels. The sidebar token also follows the light theme. */
+html[data-desktop-platform="darwin"][data-window-material="transparent"] .aa-desktop-sidebar {
+  background: color-mix(in oklch, var(--sidebar) 65%, transparent);
+}
+
+.aa-desktop-main {
+  border-left: 1px solid var(--sidebar-border);
+}
+
+.aa-desktop-drag-region {
+  display: none;
+}
+
+/* macOS has no native title bar. Reserve a borderless drag area above page
+ * controls; session pages already provide their own draggable header. */
+html[data-desktop-platform="darwin"] .aa-desktop-main:not([data-page="session"]) {
+  padding-top: 28px;
+}
+
+html[data-desktop-platform="darwin"] .aa-desktop-main:not([data-page="session"]) .aa-desktop-drag-region {
+  display: block;
+  position: absolute;
+  inset: 0 12px auto 0;
+  height: 28px;
+  -webkit-app-region: drag;
+}
+
+html[data-windows-title-bar] .aa-desktop-main {
+  border-top: 1px solid var(--sidebar-border);
+  border-top-left-radius: 12px;
+}
+
+.aa-desktop-shell[data-sidebar-open="false"] .aa-desktop-main {
+  padding-top: 44px;
+}
+
+html[data-desktop-platform="darwin"] .aa-desktop-shell[data-sidebar-open="false"] .aa-desktop-main {
+  padding-top: 44px;
+}
+
+html[data-desktop-platform="darwin"] .aa-desktop-shell[data-sidebar-open="false"] .aa-desktop-drag-region {
+  display: block;
+  position: absolute;
+  inset: 0 12px auto 224px;
+  height: 44px;
+  -webkit-app-region: drag;
+}
+
+html[data-windows-title-bar] .aa-desktop-sidebar,
+html[data-windows-title-bar] .aa-desktop-shell[data-sidebar-open="false"] .aa-desktop-main {
+  padding-top: 0;
+}
+
+html[data-desktop-platform="linux"] .aa-traffic-light-spacer {
+  width: 12px;
+}
+
+html:not([data-windows-title-bar]):has(.aa-desktop-shell[data-sidebar-open="false"]) [data-slot="session-tool-sidebar"] {
+  top: 44px;
+}
+
+html[data-windows-title-bar] {
+  --aa-title-bar-height: 32px;
+}
+
+html[data-windows-title-bar] body {
+  padding-top: var(--aa-title-bar-height);
+}
+
+.aa-windows-title-bar {
+  position: fixed;
+  inset: 0 0 auto;
+  height: var(--aa-title-bar-height);
+  padding-right: calc(100vw - env(titlebar-area-width, calc(100vw - 138px)) + 12px);
+}
+
+html[data-windows-title-bar] .h-svh {
+  height: calc(100svh - var(--aa-title-bar-height));
+}
+
+html[data-windows-title-bar] .aa-auth-shell {
+  height: calc(100dvh - var(--aa-title-bar-height));
+}
+
+html[data-windows-title-bar] .min-h-screen {
+  min-height: calc(100vh - var(--aa-title-bar-height));
+}
+
+html[data-windows-title-bar] .aa-auth-shell > header {
+  top: var(--aa-title-bar-height);
+}
+
+html[data-windows-title-bar] [data-slot="sidebar-container"] {
+  top: var(--aa-title-bar-height);
+}
+
+html[data-windows-title-bar] [data-slot="session-tool-sidebar"] {
+  top: var(--aa-title-bar-height);
+}
+
+/* Hallmark · studied: yes · source: user login reference · existing Geist tokens
+ * Pre-emit critique: P5 H5 E4 S5 R5 V4. The native window owns the chrome.
+ */
+.dark .aa-auth-shell {
+  --background: oklch(0 0 0);
+}
+
+.aa-window-no-drag,
+.aa-window-no-drag * {
+  -webkit-app-region: no-drag;
+}
+
+.code-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.code-mono * {
+  font-family: inherit;
+}
+
+.aa-monaco-code-view,
+.aa-monaco-code-view .monaco-editor,
+.aa-monaco-code-view .overflow-guard,
+.aa-monaco-code-view .monaco-scrollable-element,
+.aa-monaco-code-view .monaco-editor-background,
+.aa-monaco-code-view .view-lines {
+  overscroll-behavior: contain;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-name,
+.hljs-tag {
+  color: #7c3aed;
+}
+
+.hljs-string,
+.hljs-attr,
+.hljs-symbol,
+.hljs-bullet {
+  color: #15803d;
+}
+
+.hljs-number,
+.hljs-literal {
+  color: #dc2626;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: #71717a;
+  font-style: italic;
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-function .hljs-title {
+  color: #2563eb;
+}
+
+.hljs-type,
+.hljs-class .hljs-title {
+  color: #a16207;
+}
+
+.hljs-property,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable {
+  color: #0891b2;
+}
+
+.hljs-meta,
+.hljs-operator,
+.hljs-punctuation {
+  color: #52525b;
+}
+
+.hljs-addition {
+  color: #15803d;
+}
+
+.hljs-deletion {
+  color: #dc2626;
+}
+
+.dark .hljs-keyword,
+.dark .hljs-selector-tag,
+.dark .hljs-built_in,
+.dark .hljs-name,
+.dark .hljs-tag {
+  color: #c084fc;
+}
+
+.dark .hljs-string,
+.dark .hljs-attr,
+.dark .hljs-symbol,
+.dark .hljs-bullet {
+  color: #86efac;
+}
+
+.dark .hljs-number,
+.dark .hljs-literal {
+  color: #fca5a5;
+}
+
+.dark .hljs-title,
+.dark .hljs-section,
+.dark .hljs-function .hljs-title {
+  color: #93c5fd;
+}
+
+.dark .hljs-type,
+.dark .hljs-class .hljs-title {
+  color: #facc15;
+}
+
+.dark .hljs-property,
+.dark .hljs-attribute,
+.dark .hljs-variable,
+.dark .hljs-template-variable {
+  color: #7dd3fc;
+}
+
+.dark .hljs-meta,
+.dark .hljs-operator,
+.dark .hljs-punctuation {
+  color: #a1a1aa;
+}

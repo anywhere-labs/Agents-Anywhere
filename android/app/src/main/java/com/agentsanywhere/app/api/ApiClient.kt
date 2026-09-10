@@ -1,13 +1,56 @@
 package com.agentsanywhere.app.api
 
+import org.json.JSONArray
 import org.json.JSONObject
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.FormBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.TimeUnit
+import org.json.JSONException
 
 class ApiClient(
     private val onUnauthorized: (accessToken: String) -> Unit = {},
 ) {
+    fun requireHtmlDocument(
+        serverUrl: String,
+        path: String = "/",
+    ) {
+        try {
+            val origin = requireNotNull(normalizeServerOrigin(serverUrl)) {
+                "Server URL must be an HTTP(S) origin."
+            }
+            val normalizedPath = if (path.startsWith('/')) path else "/$path"
+            val request = Request.Builder()
+                .url("$origin$normalizedPath")
+                .header("Accept", "text/html")
+                .header("ngrok-skip-browser-warning", "true")
+                .get()
+                .build()
+
+            JSON_HTTP_CLIENT.newCall(request).execute().use { response ->
+                val contentType = response.header("Content-Type").orEmpty()
+                if (!response.isSuccessful || !contentType.contains("text/html", ignoreCase = true)) {
+                    throw ApiException(
+                        message = "The web login is unavailable at $origin. Check the server's web login deployment.",
+                        statusCode = response.code,
+                    )
+                }
+            }
+        } catch (exc: ApiException) {
+            throw exc
+        } catch (exc: IllegalArgumentException) {
+            throw ApiException("The server URL is invalid.", cause = exc)
+        } catch (exc: IOException) {
+            throw ApiException("Could not reach the server. Check the URL and network.", cause = exc)
+        }
+    }
+
     fun getJson(
         serverUrl: String,
         path: String,
@@ -17,7 +60,7 @@ class ApiClient(
             serverUrl = serverUrl,
             path = path,
             method = "GET",
-            body = null,
+            bodyText = null,
             authorizationToken = authorizationToken,
         )
     }
@@ -27,12 +70,61 @@ class ApiClient(
         path: String,
         body: JSONObject,
         authorizationToken: String? = null,
+        readTimeoutSeconds: Long? = null,
     ): JSONObject {
         return requestJson(
             serverUrl = serverUrl,
             path = path,
             method = "POST",
-            body = body,
+            bodyText = body.toString(),
+            authorizationToken = authorizationToken,
+            readTimeoutSeconds = readTimeoutSeconds,
+        )
+    }
+
+    fun postForm(
+        serverUrl: String,
+        path: String,
+        fields: Map<String, String>,
+    ): JSONObject {
+        val body = FormBody.Builder().apply {
+            fields.forEach { (name, value) -> add(name, value) }
+        }.build()
+        return requestJson(
+            serverUrl = serverUrl,
+            path = path,
+            method = "POST",
+            bodyText = null,
+            authorizationToken = null,
+            requestBody = body,
+        )
+    }
+
+    fun postJson(
+        serverUrl: String,
+        path: String,
+        body: JSONArray,
+        authorizationToken: String? = null,
+    ): JSONObject {
+        return requestJson(
+            serverUrl = serverUrl,
+            path = path,
+            method = "POST",
+            bodyText = body.toString(),
+            authorizationToken = authorizationToken,
+        )
+    }
+
+    fun postJson(
+        serverUrl: String,
+        path: String,
+        authorizationToken: String? = null,
+    ): JSONObject {
+        return requestJson(
+            serverUrl = serverUrl,
+            path = path,
+            method = "POST",
+            bodyText = null,
             authorizationToken = authorizationToken,
         )
     }
@@ -47,7 +139,7 @@ class ApiClient(
             serverUrl = serverUrl,
             path = path,
             method = "PATCH",
-            body = body,
+            bodyText = body.toString(),
             authorizationToken = authorizationToken,
         )
     }
@@ -62,7 +154,7 @@ class ApiClient(
             serverUrl = serverUrl,
             path = path,
             method = "PUT",
-            body = body,
+            bodyText = body.toString(),
             authorizationToken = authorizationToken,
         )
     }
@@ -76,63 +168,9 @@ class ApiClient(
             serverUrl = serverUrl,
             path = path,
             method = "DELETE",
-            body = null,
+            bodyText = null,
             authorizationToken = authorizationToken,
         )
-    }
-
-    fun streamSse(
-        serverUrl: String,
-        path: String,
-        authorizationToken: String? = null,
-        onOpen: () -> Unit = {},
-        onEvent: (JSONObject) -> Unit,
-    ) {
-        val endpoint = URL("${serverUrl.trimEnd('/')}$path")
-        val connection = (endpoint.openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 10_000
-            readTimeout = 35_000
-            setRequestProperty("Accept", "text/event-stream")
-            setRequestProperty("Cache-Control", "no-cache")
-            setRequestProperty("ngrok-skip-browser-warning", "true")
-        }
-        try {
-            val responseCode = connection.responseCode
-            if (responseCode !in 200..299) {
-                val responseText = readResponseText(connection, responseCode)
-                notifyUnauthorized(responseCode, authorizationToken)
-                throw ApiException(
-                    message = parseErrorMessage(responseText) ?: defaultErrorMessage(responseCode),
-                    statusCode = responseCode,
-                )
-            }
-            onOpen()
-            connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
-                val data = StringBuilder()
-                while (!Thread.currentThread().isInterrupted) {
-                    val line = reader.readLine() ?: break
-                    when {
-                        line.isEmpty() -> {
-                            if (data.isNotEmpty()) {
-                                onEvent(JSONObject(data.toString()))
-                                data.clear()
-                            }
-                        }
-                        line.startsWith("data:") -> {
-                            if (data.isNotEmpty()) data.append('\n')
-                            data.append(line.removePrefix("data:").trimStart())
-                        }
-                    }
-                }
-            }
-        } catch (exc: ApiException) {
-            throw exc
-        } catch (exc: IOException) {
-            throw ApiException("Could not reach the server. Check the URL and network.", cause = exc)
-        } finally {
-            connection.disconnect()
-        }
     }
 
     fun postMultipart(
@@ -142,7 +180,7 @@ class ApiClient(
         authorizationToken: String? = null,
     ): JSONObject {
         return try {
-            val endpoint = URL("${serverUrl.trimEnd('/')}$path")
+            val endpoint = URL(apiUrl(serverUrl, path))
             val boundary = "AA-${System.currentTimeMillis()}"
             val connection = (endpoint.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -177,6 +215,7 @@ class ApiClient(
                     throw ApiException(
                         message = parseErrorMessage(responseText) ?: defaultErrorMessage(responseCode),
                         statusCode = responseCode,
+                        errorCode = parseErrorCode(responseText),
                     )
                 }
                 if (responseText.isBlank()) JSONObject() else JSONObject(responseText)
@@ -194,59 +233,82 @@ class ApiClient(
         serverUrl: String,
         path: String,
         method: String,
-        body: JSONObject?,
+        bodyText: String?,
         authorizationToken: String?,
+        readTimeoutSeconds: Long? = null,
+        requestBody: RequestBody? = null,
     ): JSONObject {
         return try {
-            val endpoint = URL("${serverUrl.trimEnd('/')}$path")
-            val bodyText = body?.toString()
-
-            val connection = (endpoint.openConnection() as HttpURLConnection).apply {
-                requestMethod = method
-                connectTimeout = 10_000
-                readTimeout = 15_000
-                doOutput = bodyText != null
-                setRequestProperty("Accept", "application/json")
-                setRequestProperty("ngrok-skip-browser-warning", "true")
-                if (bodyText != null) {
-                    setRequestProperty("Content-Type", "application/json")
-                }
-                if (!authorizationToken.isNullOrBlank()) {
-                    setRequestProperty("Authorization", "Bearer $authorizationToken")
-                }
+            val resolvedRequestBody = requestBody ?: when {
+                bodyText != null -> bodyText.toRequestBody(JSON_MEDIA_TYPE)
+                method == "POST" || method == "PUT" || method == "PATCH" -> EMPTY_JSON_BODY
+                else -> null
+            }
+            val httpClient = if (readTimeoutSeconds == null) {
+                JSON_HTTP_CLIENT
+            } else {
+                JSON_HTTP_CLIENT.newBuilder()
+                    .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
+                    .build()
             }
 
-            try {
-                if (bodyText != null) {
-                    connection.outputStream.use { output ->
-                        output.write(bodyText.toByteArray(Charsets.UTF_8))
+            val candidates = apiUrlCandidates(serverUrl, path)
+            candidates.forEachIndexed { index, url ->
+                val request = Request.Builder()
+                    .url(url)
+                    .header("Accept", "application/json")
+                    .header("ngrok-skip-browser-warning", "true")
+                    .method(method, resolvedRequestBody)
+                    .apply {
+                        if (!authorizationToken.isNullOrBlank()) {
+                            header("Authorization", "Bearer $authorizationToken")
+                        }
                     }
-                }
+                    .build()
 
-                val responseCode = connection.responseCode
-                val responseText = readResponseText(connection, responseCode)
-                if (responseCode !in 200..299) {
-                    notifyUnauthorized(responseCode, authorizationToken)
-                    throw ApiException(
-                        message = parseErrorMessage(responseText) ?: defaultErrorMessage(responseCode),
-                        statusCode = responseCode,
-                    )
-                }
+                httpClient.newCall(request).execute().use { response ->
+                    val responseText = response.body?.string().orEmpty()
+                    val contentType = response.header("Content-Type").orEmpty()
+                    val canTryLegacy = index < candidates.lastIndex &&
+                        shouldTryLegacyApi(response.code, response.isSuccessful, contentType, responseText)
+                    if (canTryLegacy) return@forEachIndexed
 
-                if (responseText.isBlank()) JSONObject() else JSONObject(responseText)
-            } finally {
-                connection.disconnect()
+                    if (!response.isSuccessful) {
+                        notifyUnauthorized(response.code, authorizationToken)
+                        throw ApiException(
+                            message = parseErrorMessage(responseText) ?: defaultErrorMessage(response.code),
+                            statusCode = response.code,
+                            errorCode = parseErrorCode(responseText),
+                        )
+                    }
+
+                    val json = parseJsonResponse(responseText)
+                    rememberApiUrl(serverUrl, url)
+                    return json
+                }
             }
+            throw ApiException("The server returned an invalid response.")
         } catch (exc: ApiException) {
             throw exc
+        } catch (exc: IllegalArgumentException) {
+            throw ApiException("The server URL is invalid.", cause = exc)
         } catch (exc: IOException) {
             throw ApiException("Could not reach the server. Check the URL and network.", cause = exc)
         }
     }
 
     internal fun notifyUnauthorized(statusCode: Int, authorizationToken: String?) {
-        if (statusCode != 401 || authorizationToken.isNullOrBlank()) return
-        runCatching { onUnauthorized(authorizationToken) }
+        if (!shouldNotifyUnauthorized(statusCode, authorizationToken)) return
+        runCatching { onUnauthorized(authorizationToken.orEmpty()) }
+    }
+
+    private companion object {
+        val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        val EMPTY_JSON_BODY = ByteArray(0).toRequestBody(JSON_MEDIA_TYPE)
+        val JSON_HTTP_CLIENT: OkHttpClient = OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .build()
     }
 
     private fun readResponseText(connection: HttpURLConnection, responseCode: Int): String {
@@ -258,6 +320,11 @@ class ApiClient(
         return stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
     }
 
+    private fun parseErrorCode(responseText: String): String? = runCatching {
+        val body = JSONObject(responseText)
+        (body.optJSONObject("detail") ?: body).optString("code").takeIf(String::isNotBlank)
+    }.getOrNull()
+
     private fun parseErrorMessage(responseText: String): String? {
         return runCatching {
             val detail = JSONObject(responseText).opt("detail")
@@ -266,9 +333,36 @@ class ApiClient(
                 is JSONObject -> detail.optString("message")
                     .ifBlank { detail.optString("code") }
                     .takeIf { it.isNotBlank() }
+                is JSONArray -> detail.optJSONObject(0)
+                    ?.optString("msg")
+                    ?.takeIf { it.isNotBlank() }
                 else -> detail?.toString()?.takeIf { it.isNotBlank() }
             }
         }.getOrNull()
+    }
+
+    private fun parseJsonResponse(responseText: String): JSONObject {
+        if (responseText.isBlank()) return JSONObject()
+        return try {
+            JSONObject(responseText)
+        } catch (exc: JSONException) {
+            throw ApiException("The server returned an invalid response.", cause = exc)
+        }
+    }
+
+    private fun shouldTryLegacyApi(
+        statusCode: Int,
+        successful: Boolean,
+        contentType: String,
+        responseText: String,
+    ): Boolean {
+        if (statusCode == 405) return true
+        if (contentType.isJsonContentType()) return false
+        if (statusCode == 404) return true
+        val looksLikeHtml = contentType.contains("text/html", ignoreCase = true) ||
+            responseText.trimStart().startsWith("<!DOCTYPE", ignoreCase = true) ||
+            responseText.trimStart().startsWith("<html", ignoreCase = true)
+        return successful && looksLikeHtml
     }
 
     private fun defaultErrorMessage(statusCode: Int): String {
@@ -282,6 +376,15 @@ class ApiClient(
     private fun String.httpQuoted(): String {
         return replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "").replace("\n", "")
     }
+
+    private fun String.isJsonContentType(): Boolean {
+        return contains("application/json", ignoreCase = true) ||
+            contains("+json", ignoreCase = true)
+    }
+}
+
+internal fun shouldNotifyUnauthorized(statusCode: Int, authorizationToken: String?): Boolean {
+    return statusCode == 401 && !authorizationToken.isNullOrBlank()
 }
 
 data class UploadFilePart(
@@ -294,4 +397,5 @@ class ApiException(
     override val message: String,
     val statusCode: Int? = null,
     cause: Throwable? = null,
+    val errorCode: String? = null,
 ) : Exception(message, cause)

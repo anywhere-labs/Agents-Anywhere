@@ -5,10 +5,15 @@ description = "Local runtime connector for Agents Anywhere"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "asyncer>=0.0.18",
     "claude-agent-sdk",
     "httpx[socks]>=0.28.1",
+    "jsonschema>=4.26.0",
     "loguru>=0.7.3",
+    "openai-codex>=0.144.4",
+    "openai-codex-cli-bin>=0.144.4",
     "pexpect>=4.9.0; sys_platform != 'win32'",
+    "psutil>=7.2.2",
     "ptyprocess>=0.7.0; sys_platform != 'win32'",
     "pydantic>=2.0.0",
     "pyte>=0.8.2",
@@ -31,18 +36,15 @@ dev = [
     "ruff>=0.15.13",
 ]
 
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
-markers = [
-    "contract: adapter/timeline contract tests (always CI)",
-    "live_agent: optional tests against real agent binaries",
-]
 
 [tool.hatch.build.targets.wheel]
 packages = ["connector"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"connector/acp/manifests" = "connector/acp/manifests"
 
 [tool.uv]
 package = true

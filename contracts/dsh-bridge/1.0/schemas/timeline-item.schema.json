@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents-anywhere.dev/contracts/dsh-bridge/1.0/timeline-item.schema.json",
+  "type": "object",
+  "required": ["id", "sessionId", "type", "status", "orderSeq", "revision", "contentHash", "content", "source"],
+  "properties": {
+    "id": { "pattern": "^dsh_[0-9a-f]{64}$" },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "type": { "enum": ["message", "tool", "artifact", "marker", "system", "turn.start", "turn.end"] },
+    "status": { "enum": ["pending", "inProgress", "running", "waiting_approval", "done", "failed", "cancelled", "interrupted", "hidden"] },
+    "role": { "type": ["string", "null"], "enum": ["user", "assistant", "system", "tool", null] },
+    "orderSeq": { "type": "integer", "minimum": 0 },
+    "revision": { "type": "integer", "minimum": 1 },
+    "contentHash": { "pattern": "^sha256:[0-9a-f]{64}$" },
+    "content": { "type": "object" },
+    "source": { "type": "object" }
+  },
+  "additionalProperties": true
+}

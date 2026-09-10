@@ -1,0 +1,24 @@
+{
+  "$id": "https://agents-anywhere.dev/contracts/runtime-control/2.0/schemas/runtime-discover-response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Provider descriptors for the single supported Runtime Control protocol.",
+  "properties": {
+    "runtimeTypes": {
+      "items": {
+        "$ref": "runtime-type-descriptor.schema.json"
+      },
+      "maxItems": 64,
+      "type": "array"
+    }
+  },
+  "required": [
+    "runtimeTypes"
+  ],
+  "title": "RuntimeDiscoverResponse",
+  "type": "object",
+  "x-direction": "egress",
+  "x-rpc-method": "runtime.discover",
+  "x-rpc-part": "result",
+  "x-runtime-control-version": "2.0"
+}
