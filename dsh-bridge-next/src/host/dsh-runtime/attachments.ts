@@ -24,7 +24,7 @@ export interface ImageReceipt {
   fingerprint: string
   attachments: ImageReference[]
 }
-export interface AttachmentSnapshot extends SessionLogSnapshot { attachmentReceipts?: Record<string, ImageReceipt> }
+export interface AttachmentSnapshot extends SessionLogSnapshot { bridgeRevision?: string, attachmentReceipts?: Record<string, ImageReceipt> }
 
 /** The Bridge accepts opaque staging IDs, never caller-selected filesystem paths. */
 export function parseImages(value: unknown): StagedImage[] {

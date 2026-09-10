@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
-import { createProjection, projectHistory } from '../../src/host/dsh-runtime/history.js'
+import { createProjection, projectHistory, replayHistory } from '../../src/host/dsh-runtime/history.js'
 import { contentHash, sessionId, itemId } from '../../src/host/dsh-runtime/identity.js'
 import { RuntimeRouter } from '../../src/host/dsh-runtime/router.js'
 import { readFile } from 'node:fs/promises'
@@ -168,4 +168,45 @@ test('read cursors capture one complete inventory and truncated snapshots are ne
   assert.equal(limited.items.length, 1)
   await assert.rejects(router.request('session.startTurn', params, new AbortController().signal), { code: 'UNSUPPORTED_OPERATION' })
   await assert.rejects(router.request('session.getSnapshot', { ...params, sessionId: 'foreign' }, new AbortController().signal), /namespace/)
+})
+
+
+test('streamed tool JSON is parsed once per drain, not once per token', () => {
+  const input = JSON.stringify({ command: 'x'.repeat(10_000) })
+  const snapshot = log([...start, ...Array.from(input, argumentsDelta => ({ type: 'assistant/chunk',
+    data: { turn: 1, step: 1, chunk: { type: 'tool-call-delta', index: 0, id: 'stream-call', name: 'bash', argumentsDelta } } }))])
+  const parse = JSON.parse
+  let parses = 0
+  JSON.parse = ((...args: Parameters<typeof JSON.parse>) => { parses++; return parse(...args) }) as typeof JSON.parse
+  try {
+    const projection = createProjection('native', 'platform')
+    for (const event of snapshot.events) projection.apply(event)
+    assert.equal(parses, 0)
+    assert.equal(projection.dirty, true)
+    const delta = projection.drain()
+    assert.equal(parses, 1)
+    assert.equal(delta.items.find(item => item.type === 'tool')?.content.command, 'x'.repeat(10_000))
+    projection.snapshot()
+    assert.equal(parses, 1)
+  } finally { JSON.parse = parse }
+})
+
+
+test('large replay yields to control work and observes cancellation before completing', async () => {
+  const snapshot = log(Array.from({ length: 1000 }, () => ({ type: 'internal/test', data: {} })))
+  const abort = new AbortController()
+  const projection = createProjection('native', 'platform')
+  let applied = 0
+  const apply = projection.apply
+  projection.apply = (...args) => {
+    applied++
+    const end = performance.now() + 0.05
+    while (performance.now() < end) { /* deterministic CPU load crossing the replay slice */ }
+    apply(...args)
+  }
+  const timer = setTimeout(() => abort.abort(), 0)
+  try {
+    await assert.rejects(replayHistory(projection, snapshot, abort.signal), { name: 'AbortError' })
+    assert.ok(applied < snapshot.events.length)
+  } finally { clearTimeout(timer) }
 })

@@ -174,12 +174,12 @@ async def main(home: Path) -> None:
                 assert any(i.id == "legacy-notice" for i in await stored("sess-new"))
                 count = completed_inventories()
                 transport.lose_snapshot_reply = True
-                await runtime.resynchronize()
+                await runtime.resynchronize("sess-new", external_id)
 
                 async def recovered():
                     return transport.lost and completed_inventories() > count
 
-                await until(recovered, "lost reply did not trigger complete recalibration")
+                await until(recovered, "lost reply did not trigger targeted recalibration")
                 assert runtime._client is initial_client and initial_client.connected, "a failed ingest must only replace the sync subscription"
                 assert await first_native_message(), "reconnection duplicated or lost the native first message"
                 assert "empty-native" not in {

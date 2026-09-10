@@ -14,9 +14,9 @@ type StateResult = { status: string, selections: Record<string, string>, metadat
 /** Count full-log reads so a cached answer is provable, not just plausible. */
 function countLogReads(ctx: Context) {
   const query = ctx.sessionQuery
-  const original = query.readSession.bind(query)
+  const original = query.observeSession.bind(query)
   let reads = 0
-  query.readSession = async (id: SessionId) => { reads += 1; return await original(id) }
+  query.observeSession = async (id, options) => { reads += 1; return await original(id, options) }
   return { count: () => reads }
 }
 
@@ -97,5 +97,42 @@ test('a blank visibility verdict is reused until that log changes', { timeout: 6
     await f.runtime.source.refresh()
 
     assert.equal(await f.runtime.visible('cold-empty'), true, 'a first message invalidates the blank verdict')
+  } finally { await f.close() }
+})
+
+
+test('warm single-session RPC and concurrent startup inventories never relist the corpus', { timeout: 60_000 }, async () => {
+  const f = await fixture('aa-dsh-no-poll-')
+  try {
+    const query = f.ctx.sessionQuery
+    const list = query.listSessions.bind(query)
+    let listings = 0
+    query.listSessions = async signal => { listings++; return list(signal) }
+    const reads = countLogReads(f.ctx)
+    await Promise.all([f.runtime.inventory(), f.runtime.inventory(), f.runtime.inventory()])
+    assert.equal(listings, 1)
+    const afterInventory = reads.count()
+    const params = { sessionId: sessionId('instance', 'persisted-only') }
+    for (let i = 0; i < 5; i++) {
+      await f.request('session.getState', params)
+      await f.runtime.read(SessionId('persisted-only'))
+    }
+    assert.equal(listings, 1, 'neither platform-ID resolution nor cache validation lists sessions')
+    assert.equal(reads.count(), afterInventory, 'visibility, state and snapshot share the observation')
+  } finally { await f.close() }
+})
+
+test('cold observation cache detects file changes without an inventory scan', { timeout: 60_000 }, async () => {
+  const f = await fixture('aa-dsh-cache-change-')
+  try {
+    await f.runtime.inventory()
+    const id = SessionId('persisted-only')
+    const first = await f.runtime.read(id)
+    const location = f.ctx.sessionPersistence.locate(first.session)!
+    await appendFile(location.path, JSON.stringify({ type: 'session/title', seq: first.events.length, time: Date.now(),
+      data: { title: 'changed outside the cache', source: { kind: 'user' }, messageSeqs: [] } }) + '\n')
+    const next = await f.runtime.read(id)
+    assert.equal(next.events.length, first.events.length + 1)
+    assert.equal(next.events.at(-1)?.type, 'session/title')
   } finally { await f.close() }
 })

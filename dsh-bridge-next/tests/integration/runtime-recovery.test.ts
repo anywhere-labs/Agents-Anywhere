@@ -102,7 +102,7 @@ test('a failed sync subscription leaves RPC connected and can be replaced on the
   const native = fixture.ctx.agentsAnywhereRuntime.native
   const inventory = native.inventory.bind(native)
   let broken = true
-  native.inventory = async signal => { if (broken) throw new Error('temporary inventory failure'); return inventory(signal) }
+  native.inventory = async (signal, visit) => { if (broken) throw new Error('temporary inventory failure'); return inventory(signal, visit) }
   const server = new RuntimeServer(join(home, 'rpc/endpoint.json'), { native,
     query: { listSessions: signal => native.inventory(signal), readSession: id => native.read(id),
       readTitleSnapshots: (...args) => fixture.ctx.sessionQuery.readTitleSnapshots(...args) }, status: id => native.status(id) })
