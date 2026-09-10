@@ -1,3 +1,4 @@
+import type { BridgeStatus } from './bridge-status.js'
 import type { ConnectorAction, ConnectorFolder, ConnectorManagement, ConnectorSettings } from './connector.js'
 import type { MobileLoginSnapshot } from './mobile.js'
 import type { BridgeLogSnapshot } from './logs.js'
@@ -42,6 +43,7 @@ export interface AccountProfile {
 
 /** Public snapshots never contain account or Connector credentials. */
 export interface OnboardingSnapshot {
+  bridge?: BridgeStatus
   ownership?: { status: 'owned' | 'conflict' | 'error'; message?: string | undefined } | null
   desktop: DesktopDetection
   settings: ConnectionSettings
@@ -57,6 +59,7 @@ export interface OnboardingSnapshot {
 }
 
 export interface OnboardingHostApi {
+  restartBridge(): Promise<BridgeStatus>
   readBridgeLogs(): Promise<BridgeLogSnapshot>
   inspect(): Promise<OnboardingSnapshot>
   /** Opens the Desktop app on its onboarding entry; no argument is accepted. */

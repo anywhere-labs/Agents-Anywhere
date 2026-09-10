@@ -210,7 +210,11 @@ export class RuntimeServer {
           const result = await Promise.race([router.request(request.method, params, abort.signal), cancelled])
           abort.signal.throwIfAborted()
           send({ jsonrpc: '2.0', id, result })
-          if (method !== 'runtime.sync.ack') this.diagnostics.log('debug', 'rpc.completed', { connectionId, method, elapsedMs: Math.round(performance.now() - start) })
+          if (method !== 'runtime.sync.ack') {
+            const rejected = record(result).ok === false
+            this.diagnostics.log(rejected ? 'warn' : 'debug', rejected ? 'rpc.rejected' : 'rpc.completed',
+              { connectionId, method, elapsedMs: Math.round(performance.now() - start) })
+          }
         } finally {
           clearTimeout(timeout)
           abort.signal.removeEventListener('abort', cancel)

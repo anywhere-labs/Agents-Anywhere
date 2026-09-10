@@ -8,10 +8,11 @@ import { AccountPanel } from './account-panel.js'
 import { useOnboardingState } from './state.js'
 import css from './entry.module.css'
 import { SettingsPanel } from './settings-panel.js'
+import { BridgeStatusNotice } from './bridge-status.js'
 import { BridgeLogsPanel } from './bridge-logs-panel.js'
 
 const tabs = ['connection', 'settings', 'logs'] as const
-const tabLabels = { connection: '登录和连接', settings: '设置', logs: '桥接日志' }
+const tabLabels = { connection: '登录和连接', settings: '设置', logs: '运行日志' }
 
 export interface ConnectionEntryProps {
   wide: boolean
@@ -29,7 +30,7 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
   const showLogin = standalone && !snapshot.account && tab === 'connection'
   const detectionError = snapshot?.desktop.status === 'error' ? snapshot.desktop.message : !snapshot ? state.readError : null
   const detectionMessage = detectionError ?? (snapshot?.desktop.status === 'installed'
-    ? '检测到本机已安装 Agents Anywhere 桌面端，请点击下面按钮在 Agents Anywhere 进行配置。' : '正在检查本机桌面端…')
+    ? '已安装 Agents Anywhere 桌面端。请打开桌面端完成连接设置。' : '正在检查连接方式…')
   const trigger = useRef<HTMLButtonElement | null>(null)
   const content = useRef<HTMLDivElement | null>(null)
   const close = useCallback(() => {
@@ -127,13 +128,15 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
                 setTab(next); document.getElementById(`${tabId}-${next}`)?.focus()
               }}>{tabLabels[value]}</Button>)}
           </div>
+          <BridgeStatusNotice status={snapshot?.bridge} busy={state.busy} error={state.error}
+            onRestart={() => void state.run(() => host.restartBridge())} onLogs={() => setTab('logs')} />
           <div id={`${tabId}-panel`} role="tabpanel" aria-labelledby={`${tabId}-${tab}`}>
         {tab === 'logs' ? <BridgeLogsPanel host={host} /> : ownershipError ? <p className={css.placeholder} role="alert">{ownershipError}</p> : !standalone ? <>
           <p className={css.placeholder} role={detectionError ? 'alert' : 'status'}>{detectionMessage}</p>
           {state.error ? <p className={css.placeholder} role="alert">{state.error}</p> : null}
           {detectionError
             ? <Button variant="outline" disabled={state.busy} onClick={() => void state.run(state.refresh)}>重新检查</Button>
-            : <Button disabled={state.busy} onClick={() => void state.run(() => host.openDesktop())}>打开 Agents Anywhere 进行配置</Button>}
+            : <Button disabled={state.busy} onClick={() => void state.run(() => host.openDesktop())}>打开 Agents Anywhere</Button>}
         </> : <>
             {tab === 'settings' ? <SettingsPanel host={host} state={state} snapshot={snapshot} onConnection={() => setTab('connection')} />
               : snapshot.account ? <AccountPanel key={`${snapshot.settings.apiBaseUrl}:${snapshot.account.userId}`} host={host} state={state} snapshot={snapshot} account={snapshot.account} />

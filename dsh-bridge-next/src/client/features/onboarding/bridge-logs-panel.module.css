@@ -6,10 +6,18 @@
 .status { margin: 12px 0; }
 .entries { padding: 0; margin: 0; list-style: none; max-height: 52dvh; min-height: 180px; overflow: auto; overscroll-behavior: contain; user-select: text; }
 .entries:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
-.entry { padding: 12px 0; border-top: 1px solid var(--dsw-alias-border-l2); }
-.meta { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; overflow-wrap: anywhere; }
-.meta time { color: var(--dsw-alias-label-secondary); }
-.meta strong { font-size: 10px; }
-.entry[data-level='error'] .meta strong, .error { color: var(--dsw-alias-state-error-primary); }
+.entry { border-top: 1px solid var(--dsw-alias-border-l2); }
+.summary { display: grid; grid-template-columns: 12px 78px minmax(0, 1fr) 48px; align-items: center; gap: 10px; min-height: 38px; cursor: pointer; list-style: none; white-space: nowrap; }
+.summary::-webkit-details-marker { display: none; }
+.summary::before { content: '›'; color: var(--dsw-alias-label-secondary); text-align: center; }
+details[open] > .summary::before { transform: rotate(90deg); }
+.summary:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; border-radius: 4px; }
+.summary time { color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; font-size: 11px; }
+.summary code { overflow: hidden; text-overflow: ellipsis; font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.outcome { text-align: right; font-size: 12px; color: var(--dsw-alias-label-secondary); }
+.entry[data-outcome='failure'] .outcome, .error { color: var(--dsw-alias-state-error-primary); }
+.entry[data-outcome='success'] .outcome { color: var(--dsw-alias-label-primary); }
+.detail { padding: 0 10px 12px 22px; }
+.detail p { margin: 0; font-size: 11px; color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; }
 .entry pre { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--dsw-alias-label-secondary); font: 11px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .empty { padding: 24px 0; color: var(--dsw-alias-label-secondary); line-height: 1.7; }
