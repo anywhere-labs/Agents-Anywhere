@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Button, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import { Smartphone } from 'lucide-react'
+import { Download, MessageCircle, Smartphone, Star } from 'lucide-react'
 import clsx from 'clsx'
 import type { OnboardingHostApi } from '../../../contracts/index.js'
 import { OnboardingSection } from './section.js'
@@ -10,6 +10,12 @@ import css from './entry.module.css'
 import { SettingsPanel } from './settings-panel.js'
 import { BridgeStatusNotice } from './bridge-status.js'
 import { BridgeLogsPanel } from './bridge-logs-panel.js'
+
+const homeLinks = [
+  { label: '下载 Agents Anywhere 桌面端', url: 'https://www.agents-anywhere.com', icon: Download },
+  { label: '加入内测交流群', url: 'https://github.com/anywhere-labs/Agents-Anywhere#%E4%BA%A4%E6%B5%81%E4%B8%8E%E5%8F%8D%E9%A6%88', icon: MessageCircle },
+  { label: '去 GitHub 点 Star', url: 'https://github.com/anywhere-labs/Agents-Anywhere', icon: Star },
+] as const
 
 const tabs = ['connection', 'settings', 'logs'] as const
 const tabLabels = { connection: '登录和连接', settings: '设置', logs: '运行日志' }
@@ -136,7 +142,7 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
           {state.error ? <p className={css.placeholder} role="alert">{state.error}</p> : null}
           {detectionError
             ? <Button variant="outline" disabled={state.busy} onClick={() => void state.run(state.refresh)}>重新检查</Button>
-            : <Button disabled={state.busy} onClick={() => void state.run(() => host.openDesktop())}>打开 Agents Anywhere</Button>}
+            : <Button variant="primary" disabled={state.busy} onClick={() => void state.run(() => host.openDesktop())}>打开 Agents Anywhere</Button>}
         </> : <>
             {tab === 'settings' ? <SettingsPanel host={host} state={state} snapshot={snapshot} onConnection={() => setTab('connection')} />
               : snapshot.account ? <AccountPanel key={`${snapshot.settings.apiBaseUrl}:${snapshot.account.userId}`} host={host} state={state} snapshot={snapshot} account={snapshot.account} />
@@ -145,6 +151,12 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
                   <OnboardingSection host={host} state={state} />
                 </>}
         </>}
+            {tab === 'connection' ? <nav className={css.homeLinks} aria-label="Agents Anywhere 相关链接">
+              {homeLinks.map(({ label, url, icon: Icon }) => <Button key={url} variant="outline"
+                icon={<Icon size={16} strokeWidth={1.5} />} onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}>
+                {label}
+              </Button>)}
+            </nav> : null}
           </div>
       </div>
     </Modal>

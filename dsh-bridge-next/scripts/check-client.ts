@@ -256,10 +256,9 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.deepEqual(JSON.parse(JSON.stringify(calls.filter(call => call.endpoint.endsWith('/begin')).at(-1)?.payload)), { args: { input: { target: 'cloud' } } })
     await act(async () => { button('取消本次连接').click() })
 
-    const connectButton = button('连接服务器')
     await act(async () => {
-      connectButton.focus()
-      connectButton.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
+      button('去 GitHub 点 Star').focus()
+      button('去 GitHub 点 Star').dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
     })
     assert.equal(document.activeElement, button('关闭手机连接'))
     await act(async () => { button('关闭手机连接').click() })
@@ -290,7 +289,15 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.match(dialog()!.textContent!, /Connector运行中/)
     assert.equal(dialog()!.querySelector('[data-state]')?.getAttribute('data-state'), 'done')
     assert.doesNotMatch(dialog()!.textContent!, /连接手机|继续设置|连接服务器|浏览器没有打开|登录 Agents Anywhere Cloud|OR/)
-    assert.deepEqual(Array.from(dialog()!.querySelectorAll('button')).map(element => element.textContent).filter(Boolean), ['登录和连接', '设置', '运行日志', '打开 Web', '手机连接', '退出登录'])
+    assert.deepEqual(Array.from(dialog()!.querySelectorAll('button')).map(element => element.textContent).filter(Boolean), ['登录和连接', '设置', '运行日志', '打开 Web', '手机连接', '退出登录', '下载 Agents Anywhere 桌面端', '加入内测交流群', '去 GitHub 点 Star'])
+    for (const [label, url] of [
+      ['下载 Agents Anywhere 桌面端', 'https://www.agents-anywhere.com'],
+      ['加入内测交流群', 'https://github.com/anywhere-labs/Agents-Anywhere#%E4%BA%A4%E6%B5%81%E4%B8%8E%E5%8F%8D%E9%A6%88'],
+      ['去 GitHub 点 Star', 'https://github.com/anywhere-labs/Agents-Anywhere'],
+    ]) {
+      await act(async () => { button(label!).click() })
+      assert.deepEqual(openedUrls.at(-1), { url, target: '_blank', features: 'noopener,noreferrer' })
+    }
     const avatarImage = dialog()!.querySelector('img')!
     assert.equal(avatarImage.getAttribute('src'), avatar)
     await act(async () => { avatarImage.dispatchEvent(new dom.window.Event('error')) })
@@ -456,7 +463,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       assert.match(dialog()!.textContent!, /已安装 Agents Anywhere 桌面端。请打开桌面端完成连接设置。/)
       assert.equal(dialog()!.querySelector('input, img, form, a'), null)
       assert.doesNotMatch(dialog()!.textContent!, /BensonWang|账号信息|Connector|打开 Web|退出登录|登录 Agents Anywhere Cloud/)
-      assert.equal(dialog()!.querySelectorAll('button').length, 5, 'Desktop handoff keeps the open action and bridge diagnostics')
+      assert.equal(dialog()!.querySelectorAll('button').length, 8, 'Desktop handoff keeps the open action and bridge diagnostics')
     }
     const openBefore = calls.filter(call => call.endpoint.endsWith('/openDesktop')).length
     await act(async () => { button('打开 Agents Anywhere').click() })

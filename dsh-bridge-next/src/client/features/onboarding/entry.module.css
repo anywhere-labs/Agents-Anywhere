@@ -102,3 +102,14 @@
   .dialogContent { padding: 8px 0; }
   .dialog:not(.wordmarkDialog) h2 { font: var(--dsw-font-l-20); font-weight: 600; }
 }
+
+.homeLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+.homeLinks > button { flex: 1 1 auto; font: var(--dsw-font-s-14); }
+.homeLinks > button:first-child { flex-basis: 100%; }
