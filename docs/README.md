@@ -1,6 +1,6 @@
-# Agents Anywhere v2 文档
+# Agents Anywhere 文档
 
-从使用、部署或开发的入口开始。当前稳定产品线是 2.0；API namespace 为 `/api/v2`，数据库修订号独立演进。
+选择要完成的任务，查看对应指南。首次使用可从安装客户端、登录和连接工作设备开始。
 
 | 目标 | 文档 |
 | --- | --- |
@@ -14,5 +14,7 @@
 | Android 构建 | [Android](../android/README.md) |
 | 架构和 API | [Server 架构](server-architecture.md)、[API](api/README.md) |
 | Runtime 和本机协议 | [Runtime protocol](runtime-protocol/README.md)、[本机协议](../contracts/local-machine/2.0/README.md) |
+
+当前产品版本为 2.0，开发主线为 `main`。API 路径使用 `/api/v2`，数据库修订号独立管理。已发布安装包的功能范围见发布说明。
 
 `docs/migrations/main-to-v2/` 保留早期迁移设计与历史基线。其旧版本号、移动端完成度和 Redis 策略不能替代当前升级指南。带 proposal、plan、target、gap 的文档描述设计或特定时间点的差距，使用前应与源码和契约核对。

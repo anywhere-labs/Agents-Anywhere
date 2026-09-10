@@ -1,0 +1,13 @@
+{
+  "name": "agents-anywhere-readme-artwork",
+  "private": true,
+  "type": "module",
+  "packageManager": "yarn@4.6.0",
+  "scripts": {
+    "render": "node --experimental-strip-types render.ts"
+  },
+  "devDependencies": {
+    "playwright": "^1.55.0",
+    "sharp": "0.35.4"
+  }
+}
