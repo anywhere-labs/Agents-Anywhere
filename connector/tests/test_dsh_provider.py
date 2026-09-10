@@ -309,7 +309,7 @@ def test_dsh_questions_forward_existing_notices_and_answers_without_reinterpreta
     asyncio.run(run())
 
 
-def test_stale_or_invalid_endpoint_cannot_be_added(tmp_path: Path, monkeypatch) -> None:
+def test_offline_endpoint_can_be_configured_for_background_recovery(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("DSH_HOME", str(tmp_path))
     path = tmp_path / "agents-anywhere/bridge/endpoint.json"
     path.parent.mkdir(parents=True)
@@ -320,7 +320,7 @@ def test_stale_or_invalid_endpoint_cannot_be_added(tmp_path: Path, monkeypatch) 
         assert supported.available is True
         assert supported.reason is None
 
-        # Reachability is a configuration/start check.
+        # Reachability is reported separately from configuration validity.
         assert not (await probe({})).available
         # A live process with a dead port is not an available runtime.
         path.write_text(
@@ -335,8 +335,9 @@ def test_stale_or_invalid_endpoint_cannot_be_added(tmp_path: Path, monkeypatch) 
             )
         )
         assert not (await probe({})).available
-        with pytest.raises(RuntimeUnavailableError):
-            await DshProvider().validate_config({})
+        config = await DshProvider().validate_config({})
+        assert config.runtime == "dsh"
+        assert config.metadata["configured"] is False
 
     asyncio.run(run())
 

@@ -281,7 +281,7 @@ async def _test_codex_provider_uses_configured_executable_path(
     tmp_path: Path,
 ) -> None:
     codex_bin = tmp_path / "codex-custom"
-    codex_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    codex_bin.write_text("#!/bin/sh\necho codex-cli 0.144.4\n", encoding="utf-8")
     codex_bin.chmod(0o755)
     provider = CodexProvider(sdk_checker=_available_sdk)
 

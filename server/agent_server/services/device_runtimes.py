@@ -726,14 +726,14 @@ class DeviceRuntimeService:
         }
         try:
             if connection is None:
-                await self._manager.request(
+                result = await self._manager.request(
                     runtime.connectorId,
                     "runtime.start",
                     params,
                     timeout=_runtime_rpc_timeout_seconds(),
                 )
             else:
-                await self._manager.request_on_connection(
+                result = await self._manager.request_on_connection(
                     connection,
                     "runtime.start",
                     params,
@@ -755,11 +755,18 @@ class DeviceRuntimeService:
                 error={"code": exc.code, "message": exc.message},
             )
             raise DeviceRuntimeUpstreamError(exc.message, detail=row["error"]) from exc
+        # A local service may be waiting for its Bridge while the switch stays on.
+        # Older connectors omit status on successful starts.
+        status = result.get("status", "running")
+        if status not in {"starting", "running", "error"}:
+            status = "running"
+        error = result.get("error")
         return DeviceRuntimeView.model_validate(
             await self._store.set_device_runtime_status(
                 runtime.connectorId,
                 runtime.runtimeId,
-                "running",
+                status,
+                error=error if isinstance(error, dict) else None,
             )
         )
 

@@ -289,7 +289,7 @@ def test_create_sdk_client_prefers_login_shell_codex_binary(
     tmp_path: Path,
 ) -> None:
     codex_bin = tmp_path / "codex"
-    codex_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    codex_bin.write_text("#!/bin/sh\necho codex-cli 0.144.4\n", encoding="utf-8")
     codex_bin.chmod(0o755)
 
     def runtime_environment(
@@ -326,7 +326,7 @@ def test_create_sdk_client_prefers_login_shell_codex_binary(
 
 def test_create_sdk_client_prefers_configured_codex_binary(tmp_path: Path) -> None:
     codex_bin = tmp_path / "codex-custom"
-    codex_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    codex_bin.write_text("#!/bin/sh\necho codex-cli 0.144.4\n", encoding="utf-8")
     codex_bin.chmod(0o755)
     config = RuntimeConfig(
         runtime="codex",
