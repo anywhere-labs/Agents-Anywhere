@@ -1,13 +1,15 @@
 # API Documentation
 
-Status: draft, API documentation home.
+API documentation index for the v2 mainline. Proposal, gap and migration
+documents below retain their design-time scope; check active routes and contracts
+when implementing a client.
 
 All Server HTTP, SSE, and WebSocket API documentation should live under this directory. Older API notes outside `docs/api/` should be moved here or marked deprecated when touched.
 
 ## Documents
 
-- [Main to v2 migration](../migrations/main-to-v2/README.md): coordinated
-  deployment and client migration from the current `main` contracts.
+- [Upgrading to v2](../upgrading.md): current deployment and client upgrade
+  guidance, including legacy v1 migrations.
 - [API v2 namespace](./namespace.md): `/api/v2` namespace and client/connector URL rules.
 - [Session API proposal](./session-api-proposal.md): authoritative target for the split `SessionMeta` / `SessionTimeline` / `RuntimeLive` client API.
 - [Session API current gap](./session-api-current-gap.md): current backend implementation gaps against the target session API.

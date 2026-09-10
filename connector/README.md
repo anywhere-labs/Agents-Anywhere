@@ -1,6 +1,7 @@
 # Anywhere CLI
 
-> Development note: this repository is currently under active local development.
+> v2 Connector. Use the source from the same release line as your Server. The
+> Python package version is independent of the 2.0.0 product version.
 
 Local runtime connector for Agents Anywhere. It runs on the machine that owns
 the workspace and agent runtimes, connects to the server over HTTP/WebSocket,
@@ -12,7 +13,7 @@ back to the backend.
 ```text
 connector/
   runtime_protocol/  AgentRuntime, RuntimeProvider, RuntimeHostClient contracts
-  runtimes/          Native Codex and Claude RuntimeProvider/AgentRuntime packages
+  runtimes/          Codex, Claude and DSH RuntimeProvider/AgentRuntime packages
   server/            Backend auth, ingest, RPC channel, request dispatch, host mapping
   core/              Connector config, JSON-RPC, runtime owner, runtime config storage
   local/             Local filesystem, shell, and terminal backends
@@ -26,7 +27,8 @@ run.sh          Local helper for saved-config startup
 
 ## Run
 
-Install dependencies:
+Run from this repository's `connector/` directory. This avoids depending on an
+unverified public package version when connecting to a v2 Server. Install dependencies:
 
 ```bash
 uv sync
@@ -35,7 +37,7 @@ uv sync
 Start with explicit credentials from the web pairing flow:
 
 ```bash
-uvx anywhere-cli start \
+uv run anywhere-cli start \
   --server-url http://127.0.0.1:8000 \
   --connector-id conn_xxx \
   --connector-token cxt_xxx
@@ -44,12 +46,12 @@ uvx anywhere-cli start \
 Or save the config locally and start without arguments:
 
 ```bash
-uvx anywhere-cli configure \
+uv run anywhere-cli configure \
   --server-url http://127.0.0.1:8000 \
   --connector-id conn_xxx \
   --connector-token cxt_xxx
 
-uvx anywhere-cli start
+uv run anywhere-cli start
 ```
 
 The default config path is `~/.agents-anywhere/connector.json`. Override it with
@@ -89,7 +91,7 @@ atomic file transactions and legacy migration.
 
 ## Runtime Discovery
 
-The connector discovers Codex and Claude locally and reports attached runtime
+The default providers are Codex, Claude and DSH. The connector reports attached runtime
 capabilities to the server. Codex is discovered through the official
 `openai-codex` SDK package; the connector does not use a Codex CLI/app-server
 path or IPC switch as an active runtime surface. If Claude Code is not on
@@ -98,6 +100,10 @@ path or IPC switch as an active runtime surface. If Claude Code is not on
 ```bash
 CLAUDE_BIN=/path/to/claude
 ```
+
+DSH requires the bridge integration described in
+[DSH Bridge Next](../dsh-bridge-next/README.md). Legacy ACP adapters are not part
+of the default provider registry.
 
 The connector uses local runtime credentials and local filesystem permissions.
 Agents Anywhere does not proxy Claude or Codex account credentials.
