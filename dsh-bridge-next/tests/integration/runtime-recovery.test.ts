@@ -69,7 +69,8 @@ test('RPC failures, oversized frames, cancellation and timeout preserve other re
     assert.equal(failed.error.data.retryable, true)
     assert.ok(!JSON.stringify(failed).includes('PRIVATE_NATIVE_CONTENT'))
     readFailed = false
-    assert.equal((await wire.rpc('session.getState', { externalSessionId: 'fail' })).result.status, 'idle')
+    const retried = await wire.rpc('session.getState', { externalSessionId: 'fail' })
+    assert.equal(retried.result?.status, 'idle', JSON.stringify(retried))
     assert.equal((await wire.rpc('unknown.method')).error.data.code, 'METHOD_NOT_FOUND')
     wire.socket.write('{broken json}\n')
     assert.equal((await wire.rpc('ping')).result.ok, true)

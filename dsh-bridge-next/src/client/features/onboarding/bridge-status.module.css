@@ -1,0 +1,5 @@
+.notice { margin: 12px 0 16px; padding: 12px 14px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; color: var(--dsw-alias-label-primary); font: var(--dsw-font-xs-13); }
+.notice[data-failed='true'] { border-color: var(--dsw-alias-state-error-primary); }
+.notice strong { font-weight: 600; }
+.notice p { margin: 6px 0 0; line-height: 1.6; color: var(--dsw-alias-label-secondary); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }

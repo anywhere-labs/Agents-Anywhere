@@ -176,6 +176,15 @@ def test_initially_offline_runtime_recovers_through_supervisor(monkeypatch):
             assert supervisor.entry("dsh").runtime is bound
             assert "running" not in statuses
             online = True
+            for _ in range(100):
+                if relay.start.called:
+                    break
+                await asyncio.sleep(0.01)
+            relay.start.assert_called_once()
+            assert supervisor.entry("dsh").status == "starting"
+            assert "running" not in statuses
+            # The real relay reports healthy only after inventory ingestion completes.
+            await bound.native_runtime.host.runtime_health_update("running")
             await asyncio.wait_for(recovered.wait(), timeout=1)
             assert supervisor.entry("dsh").status == "running"
             assert supervisor.entry("dsh").error is None

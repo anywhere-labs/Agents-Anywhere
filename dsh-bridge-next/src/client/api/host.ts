@@ -11,6 +11,7 @@ export function createHostApi(rpc: HostRpc): OnboardingHostApi {
     return result.value as T
   }
   return {
+    restartBridge: () => call('restartBridge'),
     readBridgeLogs: () => call('readBridgeLogs'),
     inspect: () => call('inspect'), openDesktop: () => call('openDesktop'), begin: input => call('begin', input ? { input } : {}),
     cancel: () => call('cancel'), logout: () => call('logout'),

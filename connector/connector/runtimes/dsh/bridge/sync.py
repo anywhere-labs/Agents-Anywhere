@@ -202,6 +202,8 @@ class SyncRelay:
             await self.host.permission_catalog_update(permission_catalog(params))
         elif method in {"session.inventory.begin", "session.inventory.complete"}:
             await self.host.publish_runtime_notifications("dsh", [notice])
+            if method == "session.inventory.complete" and params.get("complete") is True:
+                await self.host.runtime_health_update("running")
         else:
             raise ValueError(f"Unsupported runtime notification: {method}")
 
@@ -214,6 +216,9 @@ class SyncRelay:
                     raise
                 except Exception as error:  # noqa: BLE001 - isolate and recover a failed feed
                     logger.warning("DSH event sync interrupted; resubscribing for history calibration ({})", type(error).__name__)
+                    await self.host.runtime_health_update("starting", {
+                        "code": "runtime_sync_interrupted", "message": "DSH 会话同步中断，正在重试…", "retryable": True,
+                    })
                     if not self.client.connected:
                         return
                     self.clear_snapshot()
@@ -227,6 +232,9 @@ class SyncRelay:
         # Subscription replaces only this feed. Concurrent RPC requests keep
         # their connection and are never cancelled by an ingest/sync failure.
         try:
+            await self.host.runtime_health_update("starting", {
+                "code": "runtime_initializing", "message": "正在同步 DSH 会话…", "retryable": True,
+            })
             subscription = await self.client.request("runtime.sync.subscribe")
             if subscription.get("projectionVersion") != 2:
                 raise ValueError("Unsupported DSH projection version")

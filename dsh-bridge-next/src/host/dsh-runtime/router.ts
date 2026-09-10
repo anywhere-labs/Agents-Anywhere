@@ -1,6 +1,6 @@
 import { jsonBytes } from './json-size.js'
 import { randomUUID } from 'node:crypto'
-import { parseImages } from './attachments.js'
+import { parseAttachments } from './attachments.js'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionQueryEngine, SessionRecord } from '@deepseek-ai/dsh-session-query'
 import { capabilities } from './capabilities.js'
@@ -76,7 +76,7 @@ export class RuntimeRouter {
       case 'session.startTurn': {
         const native = this.reader.native
         if (!native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Text messaging is unavailable.')
-        const attachments = parseImages(params.attachments)
+        const attachments = parseAttachments(params.attachments)
         if (typeof params.sessionId !== 'string' || !params.sessionId || typeof params.content !== 'string' || typeof params.clientMessageId !== 'string') throw new BridgeError('INVALID_PARAMS', 'Session ID, text and clientMessageId are required.')
         const create = method === 'session.createAndStart'
         const id = create ? nativeSessionId(this.namespace, params.sessionId) as SessionId : await this.resolve(params, signal, true)

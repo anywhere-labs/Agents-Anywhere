@@ -1,3 +1,6 @@
+import type { BridgeStatus } from '../../contracts/bridge-status.js'
+import { RuntimeDiagnostics } from '../dsh-runtime/diagnostics.js'
+import { startupFailure, unavailableBridge } from '../dsh-runtime/startup-status.js'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { HOST_NAMESPACE, type DesktopLaunch, type DeviceRecoveryAction, type DeviceRecoveryResult, type LoginRequest, type OnboardingHostApi, type OnboardingSnapshot } from '../../contracts/index.js'
@@ -18,25 +21,60 @@ declare module '@deepseek-ai/cordis' {
 /** Uses the rc.1 public Typert Gateway; no Desktop IPC or DSH Agent services. */
 export class OnboardingService extends TypertRemoteService implements OnboardingHostApi {
   static Config = Config
-  private readonly manager: OnboardingManager
+  private manager: OnboardingManager
+  private readonly makeManager: () => OnboardingManager
+  private managerFailure: BridgeStatus | null = null
+  private recovery: Promise<BridgeStatus> | undefined
+  private disposed = false
+  private readonly diagnostics: RuntimeDiagnostics
   private readonly logsDirectory: string
 
   constructor(ctx: Context, config: Config) {
     super(ctx, HOST_NAMESPACE)
     this.logsDirectory = join(stateRoot(config), 'logs')
-    this.manager = new OnboardingManager(resolveConfig(config))
-    ctx.effect(() => () => this.manager.dispose(), 'agentsAnywhereOnboarding.dispose')
+    this.makeManager = () => new OnboardingManager(resolveConfig(config))
+    this.manager = this.makeManager()
+    this.diagnostics = new RuntimeDiagnostics(ctx.logger('agents-anywhere-onboarding'), this.logsDirectory)
+    ctx.effect(() => async () => {
+      this.disposed = true
+      await this.recovery
+      await this.manager.dispose()
+      await this.diagnostics.flush()
+    }, 'agentsAnywhereOnboarding.dispose')
   }
 
   async [Service.init](): Promise<void> {
-    await this.manager.initialize()
+    try { await this.manager.initialize(); this.managerFailure = null }
+    catch (error) {
+      this.managerFailure = startupFailure(error)
+      this.diagnostics.log('error', 'onboarding.start_failed', { code: this.managerFailure.code }, error)
+      return
+    }
     // Restoring an authorized connection must not prevent the settings page
     // from mounting while uv prepares its environment.
     void this.manager.resume().catch(() => undefined)
   }
 
   @Remote('inspect')
-  inspect(): Promise<OnboardingSnapshot> { return this.manager.inspect() }
+  async inspect(): Promise<OnboardingSnapshot> {
+    if (this.managerFailure) return { ...this.manager.unavailableSnapshot(this.managerFailure.message), bridge: this.managerFailure }
+    return { ...await this.manager.inspect(), bridge: this.ctx.get('agentsAnywhereRuntime')?.status() ?? unavailableBridge }
+  }
+  @Remote('restartBridge')
+  restartBridge(): Promise<BridgeStatus> {
+    if (this.recovery) return this.recovery
+    this.recovery = (async () => {
+      if (this.managerFailure) {
+        await this.manager.dispose()
+        if (this.disposed) return unavailableBridge
+        this.manager = this.makeManager()
+        await this[Service.init]()
+        if (this.managerFailure) return this.managerFailure
+      }
+      return this.ctx.get('agentsAnywhereRuntime')?.restart() ?? unavailableBridge
+    })().finally(() => { this.recovery = undefined })
+    return this.recovery
+  }
   @Remote('openDesktop')
   openDesktop(): Promise<DesktopLaunch> { return this.manager.openDesktop() }
   @Remote('readBridgeLogs')

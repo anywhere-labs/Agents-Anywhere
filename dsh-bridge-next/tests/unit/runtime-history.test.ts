@@ -210,3 +210,31 @@ test('large replay yields to control work and observes cancellation before compl
     assert.ok(applied < snapshot.events.length)
   } finally { clearTimeout(timer) }
 })
+
+test('rc.1 transient frames do not advance the durable cursor or reopen a settled reply', () => {
+  const projection = createProjection('native', 'platform')
+  const events = log([...start, assistant([{ type: 'text', text: 'hello' }])]).events
+  projection.apply(events[0]!)
+  projection.apply(events[1]!)
+  projection.stream(1, 1, { type: 'text-delta', index: 0, text: 'hel' }, 1002, 1)
+  assert.equal(projection.throughSeq, 1)
+  assert.ok(projection.drain().items.some(item => item.content.text === 'hel' && item.status === 'running'))
+  projection.apply(events[2]!)
+  projection.drain()
+  projection.stream(1, 1, { type: 'text-delta', index: 0, text: 'stale' }, 1002, 1)
+  assert.deepEqual(projection.drain(), { items: [], removed: [] })
+  assert.ok(projection.snapshot().some(item => item.content.text === 'hello' && item.status === 'done'))
+})
+
+test('rc.1 failed attempts discard provisional blocks before the next attempt', () => {
+  const projection = createProjection('native', 'platform')
+  const events = log([...start, { type: 'assistant/attempt', data: { turn: 1, step: 1, stream: [] } }]).events
+  projection.apply(events[0]!)
+  projection.apply(events[1]!)
+  projection.stream(1, 1, { type: 'text-delta', index: 0, text: 'failed prefix' }, 1002, 1)
+  projection.drain()
+  projection.apply(events[2]!)
+  assert.equal(projection.drain().removed.length, 1)
+  projection.stream(1, 1, { type: 'text-delta', index: 0, text: 'retry' }, 1003, 2)
+  assert.ok(projection.drain().items.some(item => item.content.text === 'retry'))
+})

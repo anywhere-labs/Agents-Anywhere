@@ -10,6 +10,8 @@ import SessionProjection from '@deepseek-ai/dsh-session-projection'
 import SessionController from '@deepseek-ai/dsh-api-session-controller'
 import Attachments from '@deepseek-ai/dsh-attachment-local'
 import AgentPresets from '@deepseek-ai/dsh-agent-presets'
+import { HostConnectionService } from '@deepseek-ai/dsh-client-connection'
+import FileUploads from '@deepseek-ai/dsh-client-file-upload'
 import Commands from '@deepseek-ai/dsh-commands'
 import PermissionPresets from '@deepseek-ai/dsh-permission-presets'
 import Approval from '@deepseek-ai/dsh-user-approval'
@@ -89,5 +91,8 @@ export async function mountAgents(ctx: Context, adapter: LlmAdapter): Promise<vo
   await ctx.plugin(UnusedShell).await()
   await ctx.plugin(Approval, { policy: 'ask' }).await()
   await ctx.plugin(PermissionPresets, { defaultPreset: 'danger-full-access' }).await()
+  // In-process route registry only; this fixture never serves browser HTTP requests.
+  new HostConnectionService(ctx, [], {} as ConstructorParameters<typeof HostConnectionService>[2])
+  await ctx.plugin(FileUploads).await()
   await ctx.plugin(SessionController).await()
 }

@@ -40,7 +40,7 @@ test('one corrupt persisted session does not break inventory, healthy streaming 
   const native = fixture.ctx.agentsAnywhereRuntime.native
   const id = SessionId('persisted-only')
   const entry = (await fixture.ctx.sessionQuery.listSessions()).find(item => item.header.id === id)!
-  const path = fixture.ctx.sessionPersistence.locate(entry.header)!.path
+  const path = ({ path: (await (fixture.ctx.sessionPersistence as import('@deepseek-ai/dsh-session-persistence-jsonl').default).resolveCurrentLog(entry.header.id))! }).path
   const original = await readFile(path)
   // A committed turn with a sequence gap reproduces the official reader failure.
   const corrupt = Buffer.concat([original, Buffer.from(`${JSON.stringify({ seq: 1004, time: Date.now(), type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } })}\n`)])

@@ -1,10 +1,15 @@
 import { setImmediate as yieldLoop } from 'node:timers/promises'
-import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import { receiptKey, type AttachmentSnapshot, type ImageReceipt } from './attachments.js'
+import type { ContentBlock, StreamChunk } from '@deepseek-ai/dsh-llm'
+import { receiptKey, type AttachmentSnapshot, type AttachmentReceipt } from './attachments.js'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { clientMessageId, contentHash, itemId } from './identity.js'
 import { enrichToolResult, parentToolItem, resultContent, toolContent } from './tools.js'
 import { json, record, type Data, type ItemStatus, type ItemType, type TimelineItem } from './types.js'
+
+// Older persisted logs and fixtures can still carry the pre-rc.1 chunk vocabulary.
+type LegacyChunk = { type: 'assistant/chunk', seq: SessionEvent['seq'], time: number,
+  data: { turn: number, step: number, chunk: StreamChunk } }
+type ProjectionEvent = SessionEvent | LegacyChunk
 
 /** One deterministic projector shared by snapshots and the live event feed. */
 export function createProjection(externalId: string, platformId: string) {
@@ -13,8 +18,8 @@ export function createProjection(externalId: string, platformId: string) {
   const removed = new Set<string>()
   const items = new Map<string, TimelineItem>()
   const steps = new Map<string, number>()
-  const drafts = new Map<string, Map<number, { block: ContentBlock, seq: number, event: SessionEvent }>>()
-  const pendingDrafts = new Map<string, Map<number, { block: ContentBlock, seq: number, event: SessionEvent }>>()
+  const drafts = new Map<string, Map<number, { block: ContentBlock, seq: number, event: ProjectionEvent }>>()
+  const pendingDrafts = new Map<string, Map<number, { block: ContentBlock, seq: number, event: ProjectionEvent }>>()
   function flushDrafts(): void {
     for (const [key, values] of pendingDrafts) for (const [index, value] of values) {
       block(value.block, key, index, value.event, 'assistant', 'running', value.seq)
@@ -38,7 +43,7 @@ export function createProjection(externalId: string, platformId: string) {
     needsHash.clear()
   }
 
-  function put(kind: string, key: string, event: SessionEvent, type: ItemType, status: ItemStatus,
+  function put(kind: string, key: string, event: ProjectionEvent, type: ItemType, status: ItemStatus,
     role: string | null, content: Data, _index = 0, anchor = Number(event.seq)): TimelineItem {
     const id = itemId(externalId, kind, key)
     const previous = items.get(id)
@@ -58,7 +63,7 @@ export function createProjection(externalId: string, platformId: string) {
     return value
   }
 
-  function tool(callId: string, name: string, args: unknown, event: SessionEvent, index = 0, anchor?: number) {
+  function tool(callId: string, name: string, args: unknown, event: ProjectionEvent, index = 0, anchor?: number) {
     const id = itemId(externalId, 'tool', callId)
     const old = items.get(id)
     return put('tool', callId, event, 'tool', old?.status ?? 'running', 'assistant', {
@@ -66,14 +71,14 @@ export function createProjection(externalId: string, platformId: string) {
     }, index, anchor)
   }
 
-  function result(callId: string, blocks: unknown, failed: boolean, event: SessionEvent, meta?: unknown, error?: unknown) {
+  function result(callId: string, blocks: unknown, failed: boolean, event: ProjectionEvent, meta?: unknown, error?: unknown) {
     const previous = items.get(itemId(externalId, 'tool', callId))
     put('tool', callId, event, 'tool', failed ? 'failed' : 'done', 'assistant',
       enrichToolResult({ ...(previous?.content ?? toolContent('tool', {})), callId, isError: failed,
         ...(error !== undefined ? { error: json(error) } : {}), ...resultContent(blocks) }, meta))
   }
 
-  function block(block: ContentBlock, key: string, index: number, event: SessionEvent,
+  function block(block: ContentBlock, key: string, index: number, event: ProjectionEvent,
     role: string, status: ItemStatus, anchor?: number) {
     switch (block.type) {
       case 'text':
@@ -97,10 +102,10 @@ export function createProjection(externalId: string, platformId: string) {
     if (items.delete(id)) { changed.delete(id); removed.add(id) }
   }
 
-  function apply(event: SessionEvent, receipt?: ImageReceipt): void {
-    if (Number(event.seq) <= throughSeq) return
-    if (throughSeq >= 0 && Number(event.seq) !== throughSeq + 1) throw new Error('DSH event sequence gap')
-    throughSeq = Number(event.seq)
+  function apply(event: ProjectionEvent, receipt?: AttachmentReceipt, transient = false): void {
+    if (!transient && Number(event.seq) <= throughSeq) return
+    if (!transient && throughSeq >= 0 && Number(event.seq) !== throughSeq + 1) throw new Error('DSH event sequence gap')
+    if (!transient) throughSeq = Number(event.seq)
     if (event.type !== 'assistant/chunk') flushDrafts()
     const data = record(event.data)
     const eventType: string = event.type
@@ -168,6 +173,13 @@ export function createProjection(externalId: string, platformId: string) {
         pending.set(chunk.index, { block: value, seq: anchor, event })
         pendingDrafts.set(key, pending)
       }
+    } else if (event.type === 'assistant/attempt') {
+      const key = `${turnStart}:${steps.get(stepKey) ?? stepKey}`
+      for (const [index, value] of drafts.get(key) ?? []) {
+        const kind = value.block.type === 'tool-call' ? 'tool' : value.block.type === 'reasoning' ? 'reasoning' : 'message'
+        remove(itemId(externalId, kind, value.block.type === 'tool-call' ? value.block.id : `${key}:${index}`))
+      }
+      drafts.delete(key)
     } else if (event.type === 'assistant/message') {
       const key = `${turnStart}:${steps.get(stepKey) ?? stepKey}`
       const values = drafts.get(key)
@@ -214,6 +226,11 @@ export function createProjection(externalId: string, platformId: string) {
   }
   return {
     apply,
+    stream(turn: number, step: number, chunk: StreamChunk, time: number, cursor: number) {
+      if (throughSeq > cursor) return // A baseline may already include the durable settlement.
+      apply({ type: 'assistant/chunk', seq: throughSeq as SessionEvent['seq'], time,
+        data: { turn, step, chunk } }, undefined, true)
+    },
     get throughSeq() { return throughSeq },
     get dirty() { return pendingDrafts.size > 0 || changed.size > 0 || removed.size > 0 },
     snapshot: () => {
