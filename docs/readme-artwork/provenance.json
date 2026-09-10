@@ -38,6 +38,21 @@
       "sha256": "163a2b400e16916ad3196296c946c526d0efce6baf22a2164269ffc62fb9f671",
       "sourceSha256": "1f9d81d094273d82f3898a1ee8b598a717d050ecbf5ff7bede105b704880157b",
       "transformation": "Trailing whitespace normalized; license wording unchanged."
+    },
+    {
+      "file": "agents/codex.svg",
+      "source": "public/agents/codex.svg",
+      "sha256": "95991c16f035d1759d1d24385aa87b2772bebc9c7091610712cf19013f3e869b"
+    },
+    {
+      "file": "agents/claude.svg",
+      "source": "public/agents/claude.svg",
+      "sha256": "39d451d3e373d33b81d69e9c62b1ea63bfbe936c702be3fdfc3747ddad05f943"
+    },
+    {
+      "file": "agents/deepseek.svg",
+      "source": "public/agents/deepseek.svg",
+      "sha256": "2822fcef001e6b0ad308988aa352bc9633c2bb1d8fad184379c031c1e08e3db6"
     }
   ]
 }

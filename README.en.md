@@ -1,10 +1,10 @@
 <p align="center">
-  <a href="https://www.agents-anywhere.com/en"><img src="docs/images/readme-hero-en.webp" alt="Agents Anywhere: Agents at work. You, anywhere. Real desktop and iPhone conversation interfaces." width="100%"></a>
+  <a href="https://www.agents-anywhere.com/en"><img src="docs/images/readme-hero-en.webp" alt="Agents Anywhere: an agent workbench across your devices. Supports Codex, Claude Code and DeepSeek Harness, with more agents coming soon." width="100%"></a>
 </p>
 
 <p align="center">
-  <strong>Manage your agents at your desk. Pick up the work on your phone.</strong><br>
-  Connect your computers, servers and workspaces. Keep conversations, files, terminals and decisions within reach.
+  <strong>Connect your work machines. Manage AI agents from desktop, mobile and Web.</strong><br>
+  Open source · Multiple runtimes · Sessions and workspaces · Self-hosting
 </p>
 
 <p align="center">
@@ -55,7 +55,7 @@ The macOS, Windows and Android files are **Agents Anywhere** installers hosted i
 
 </details>
 
-## One workbench. Multiple agents.
+## Agents and workspaces
 
 <p align="center">
   <img src="docs/images/readme-workbench.webp" alt="Windows workbench: devices, projects and sessions on the left; an agent's task result on the right." width="100%">
@@ -72,7 +72,7 @@ The macOS, Windows and Android files are **Agents Anywhere** installers hosted i
 
 Model accounts and usage charges follow the rules of the agent you use. Capabilities vary by runtime; follow the options shown in the client. [Connect DSH →](dsh-bridge-next/README.md)
 
-## Leave your desk. Keep your place.
+## Desktop, mobile and Web
 
 <p align="center">
   <img src="docs/images/readme-mobile.webp" alt="Real iPhone, iPad and Android clients: following conversations, continuing work and answering an agent's input request." width="100%">
@@ -91,7 +91,7 @@ Check progress and reply from your phone, open the workspace on your tablet, the
 
 See [Getting started](docs/getting-started.md) for pairing steps, login troubleshooting and background operation.
 
-## Your machines. Your choice of service.
+## Execution and self-hosting
 
 Agents use the workspace and permissions of the Connector machine. Use Cloud or deploy the control plane on your own infrastructure.
 

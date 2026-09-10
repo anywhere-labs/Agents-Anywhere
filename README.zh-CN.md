@@ -1,10 +1,10 @@
 <p align="center">
-  <a href="https://www.agents-anywhere.com"><img src="docs/images/readme-hero-zh.webp" alt="Agents Anywhere：Agent 在工作，你尽管自由。桌面工作台与 iPhone 上的真实会话界面。" width="100%"></a>
+  <a href="https://www.agents-anywhere.com"><img src="docs/images/readme-hero-zh.webp" alt="Agents Anywhere：跨设备的开源 Agent 工作台。支持 Codex、Claude Code 和 DeepSeek Harness，更多 Agent 即将支持。" width="100%"></a>
 </p>
 
 <p align="center">
-  <strong>在桌面统筹 Agent，在手机上接续任务。</strong><br>
-  连接你的电脑、服务器与工作区，把会话、文件、终端和需要你决定的事带在身边。
+  <strong>连接工作设备，在桌面、手机和 Web 管理 AI Agent。</strong><br>
+  开源 · 多 Runtime · 会话与工作区 · 自托管
 </p>
 
 <p align="center">
@@ -55,7 +55,7 @@ macOS、Windows 和 Android 的下载文件均为 **Agents Anywhere** 安装包�
 
 </details>
 
-## 一个工作台，多个 Agent
+## Agent 与工作区管理
 
 <p align="center">
   <img src="docs/images/readme-workbench.webp" alt="Windows 桌面工作台：左侧管理设备、项目和会话，右侧查看 Agent 的任务结果。" width="100%">
@@ -72,7 +72,7 @@ macOS、Windows 和 Android 的下载文件均为 **Agents Anywhere** 安装包�
 
 模型账号和调用费用仍遵循所使用 Agent 的规则。各 Runtime 的能力存在差异，具体操作以客户端显示为准。[DSH 接入说明 →](dsh-bridge-next/README.md)
 
-## 离开桌面，接着上次继续
+## 桌面、移动端与 Web
 
 <p align="center">
   <img src="docs/images/readme-mobile.webp" alt="iPhone、iPad 和 Android 的真实客户端截图：查看会话、继续对话，以及回复 Agent 的输入请求。" width="100%">
@@ -91,7 +91,7 @@ macOS、Windows 和 Android 的下载文件均为 **Agents Anywhere** 安装包�
 
 详细配对步骤、登录排查和后台运行说明见[安装与首次使用](docs/getting-started.md)。
 
-## 你的设备，也可以是你的服务
+## 执行位置与自托管
 
 Agent 使用 Connector 所在机器的工作区与权限。可以选择 Cloud，也可以把控制面部署在自己的基础设施上。
 

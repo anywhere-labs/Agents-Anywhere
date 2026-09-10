@@ -26,18 +26,26 @@ const [mac, phone, tablet, android, windows] = await Promise.all(
     "windows.webp",
   ].map(source),
 );
+const agentMarks = await Promise.all(
+  ["codex", "claude", "deepseek"].map(
+    async (name) =>
+      `data:image/svg+xml;base64,${(await readFile(resolve(root, "sources/agents", `${name}.svg`))).toString("base64")}`,
+  ),
+);
 const css = `
 @font-face { font-family:Caveat; src:url(data:font/woff2;base64,${font}); font-weight:400 700; }
 * { box-sizing: border-box; }
 html, body { margin:0; width:1800px; color:#fff; background:#080808; }
 body { font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
-.canvas { position:relative; overflow:hidden; width:1800px; background:radial-gradient(ellipse at 55% 80%, #232323 0%, #101010 43%, #080808 76%); }
+.canvas { position:relative; overflow:hidden; width:1800px; background:#080808; }
 img { display:block; position:absolute; height:auto; }
-.wordmark { position:absolute; left:105px; top:65px; font:500 65px/1 Caveat; letter-spacing:0; white-space:nowrap; }
-.eyebrow { position:absolute; top:98px; right:98px; color:#a7a7a7; font-size:20px; letter-spacing:3px; }
+.wordmark { position:absolute; left:105px; top:65px; font:500 46px/1 Caveat; letter-spacing:0; white-space:nowrap; }
 h1 { position:absolute; left:105px; top:212px; margin:0; font-size:88px; font-weight:600; line-height:1.16; letter-spacing:-4px; }
 h1 span { color:#a7a7a7; }
-.agents { position:absolute; right:105px; top:288px; border-left:1px solid #444; padding-left:30px; font-size:23px; line-height:1.9; color:#d0d0d0; }
+.agents { position:absolute; right:105px; top:211px; width:370px; display:flex; flex-direction:column; gap:20px; }
+.agent { display:flex; align-items:center; gap:20px; font-size:28px; line-height:40px; color:#e8e8e8; }
+.agent img { position:static; width:38px; height:38px; object-fit:contain; }
+.coming { margin:4px 0 0; color:#999; font-size:22px; line-height:1.4; }
 .mac { width:1340px; left:55px; top:455px; }
 .phone { width:285px; right:82px; top:610px; filter:drop-shadow(0 22px 28px #0009); }
 .label { position:absolute; color:#b7b7b7; font-size:22px; letter-spacing:2px; }
@@ -85,16 +93,20 @@ try {
   for (const locale of ["zh", "en"] as const) {
     const title =
       locale === "zh"
-        ? "Agent 在工作。<br><span>你，尽管自由。</span>"
-        : "Agents at work.<br><span>You, anywhere.</span>";
+        ? "跨设备的<br><span>开源 Agent 工作台。</span>"
+        : "An agent workbench.<br><span>Across your devices.</span>";
     await render(
       `readme-hero-${locale}`,
       1300,
       `
       <div class="wordmark">Agents Anywhere</div>
-      <div class="eyebrow">DESKTOP / MOBILE / WEB</div>
       <h1>${title}</h1>
-      <div class="agents">Codex<br>Claude Code<br>DeepSeek Harness</div>
+      <div class="agents">
+        <div class="agent"><img src="${agentMarks[0]}" alt="Codex">Codex</div>
+        <div class="agent"><img src="${agentMarks[1]}" alt="Claude Code">Claude Code</div>
+        <div class="agent"><img src="${agentMarks[2]}" alt="DeepSeek Harness">DeepSeek Harness</div>
+        <p class="coming">${locale === "zh" ? "更多 Agent，即将支持" : "More agents coming soon"}</p>
+      </div>
       <img class="mac" src="${mac}" alt="Desktop workbench on MacBook">
       <img class="phone" src="${phone}" alt="Conversation on iPhone">
 `,
@@ -105,7 +117,7 @@ try {
     "readme-mobile",
     1030,
     `
-    <div class="label" style="top:54px;left:80px">ONE WORKSPACE. EVERY SCREEN.</div>
+    <div class="label" style="top:54px;left:80px">MOBILE &amp; TABLET CLIENTS</div>
     <img src="${tablet}" alt="iPad workspace with a pending user response" style="width:1120px;left:340px;top:144px">
     <img src="${phone}" alt="iPhone conversation" style="width:295px;left:72px;top:225px;filter:drop-shadow(0 14px 25px #0008)">
     <img src="${android}" alt="Android conversation" style="width:285px;right:62px;top:227px;border-radius:22px;box-shadow:0 0 0 1px #444">
