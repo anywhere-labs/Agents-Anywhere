@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -326,7 +326,7 @@ def create_app(
 
     static_dir = os.environ.get("AGENT_SERVER_STATIC_DIR")
     if static_dir:
-        static_path = Path(static_dir)
+        static_path = Path(static_dir).resolve()
         if not static_path.is_dir():
             raise RuntimeError(f"AGENT_SERVER_STATIC_DIR does not exist: {static_path}")
         logger.info("serving web static files from {}", static_path)
@@ -339,29 +339,40 @@ def create_app(
                     name=f"web-{mount_name}",
                 )
 
+        def _static_file(candidate: Path) -> FileResponse:
+            try:
+                resolved = candidate.resolve()
+            except (OSError, RuntimeError):
+                raise HTTPException(status_code=404, detail="not found") from None
+            if not resolved.is_relative_to(static_path):
+                raise HTTPException(status_code=404, detail="not found")
+            return FileResponse(resolved)
+
         def _static_index(path: str = "") -> FileResponse:
             relative = path.strip("/")
+            if ".." in relative.replace("\\", "/").split("/"):
+                raise HTTPException(status_code=404, detail="not found")
             default_locale = os.environ.get("AGENT_SERVER_STATIC_DEFAULT_LOCALE", "en")
             if relative:
                 candidate = static_path / relative
                 if candidate.is_dir() and (candidate / "index.html").is_file():
-                    return FileResponse(candidate / "index.html")
+                    return _static_file(candidate / "index.html")
                 if candidate.is_file():
-                    return FileResponse(candidate)
+                    return _static_file(candidate)
                 html_candidate = static_path / f"{relative}.html"
                 if html_candidate.is_file():
-                    return FileResponse(html_candidate)
+                    return _static_file(html_candidate)
                 default_locale_candidate = static_path / default_locale / relative
                 if (
                     default_locale_candidate.is_dir()
                     and (default_locale_candidate / "index.html").is_file()
                 ):
-                    return FileResponse(default_locale_candidate / "index.html")
+                    return _static_file(default_locale_candidate / "index.html")
 
             default_index = static_path / default_locale / "index.html"
             if default_index.is_file():
-                return FileResponse(default_index)
-            return FileResponse(static_path / "index.html")
+                return _static_file(default_index)
+            return _static_file(static_path / "index.html")
 
         @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
         def web_index() -> FileResponse:

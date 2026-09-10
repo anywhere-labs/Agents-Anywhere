@@ -45,7 +45,7 @@ migration tests.
 The Server requires the database to be at its exact Alembic schema revision and
 does not mutate a production database during startup. `upgrade` fingerprints an
 unversioned v1 database, archives required legacy data, and applies every revision
-through the current schema (`v2_24`). Inspect the installed revision with:
+through the current schema (`v2_35`). Inspect the installed revision with:
 
 ```bash
 uv run python -m agent_server.infra.db.migrations current --verbose
@@ -71,7 +71,8 @@ by `v2_3`.
 
 Do not mix `v2.23` (or older) and `v2.24` writers against one database. Stop every old
 Server and other process that can write sessions or Timeline data, migrate the
-database to `v2_24`, and only then start the new writers. The PostgreSQL advisory
+database through `v2_24` to the current head (`v2_35`), and only then start the
+new writers. The PostgreSQL advisory
 lock serializes migration processes; it does not fence application writers that
 are already running.
 
@@ -188,15 +189,16 @@ cd ../web-next
 AGENTS_ANYWHERE_API=http://127.0.0.1:8000 yarn dev
 ```
 
-For production, run the `web-next` Next server separately and set
-`AGENTS_ANYWHERE_API` to the backend URL. Docker uses `http://server:8000`.
+The checked-in production Dockerfile exports `web-next` to static files and
+serves it from FastAPI using `AGENT_SERVER_STATIC_DIR=/app/web-static`.
+API, WebSocket and Web paths share one origin. See [Docker](../docker/README.md)
+for the supported Compose deployment and [Upgrading](../docs/upgrading.md) for
+migration ordering and backup requirements.
 
-Legacy static serving is still available for old built frontends by setting
-`AGENT_SERVER_STATIC_DIR`, but it is no longer the primary deployment path for
-`web-next`.
+A manually prepared static export can be served with:
 
 ```bash
-AGENT_SERVER_STATIC_DIR=/path/to/legacy/dist \
+AGENT_SERVER_STATIC_DIR=/path/to/web-next/out \
   uv run uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
@@ -215,7 +217,8 @@ with this value and use fixed download addresses from their own configuration.
 The `/client-releases/check` and `/admin/client-releases` APIs and the release
 management page have been retired.
 
-Apply schema migration `v2_32` before restarting an existing server:
+The release-table retirement was introduced in `v2_32`. Existing deployments
+must apply the full current chain through `v2_35` before restart:
 
 ```bash
 uv run python -m agent_server.infra.db.migrations upgrade

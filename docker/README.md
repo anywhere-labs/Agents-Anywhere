@@ -1,6 +1,9 @@
 # Docker
 
-Docker files for Agents Anywhere.
+Docker deployment for the Agents Anywhere v2 mainline. For existing databases,
+read [Upgrading](../docs/upgrading.md) before running Compose. The current
+schema revision is `v2_35`; historical migration notes below explain individual
+changes, not the latest target revision.
 
 The current Web console lives in `web-next/`. Production Docker builds export it
 as static files and the FastAPI backend serves those files and API/WebSocket

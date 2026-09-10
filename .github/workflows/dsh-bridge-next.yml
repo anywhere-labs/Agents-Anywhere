@@ -84,6 +84,7 @@ jobs:
         run: >-
           uv run --frozen pytest
           tests/test_attachment_mime_policy.py
+          tests/test_static_path_safety.py
           tests/test_session_refresh_lock.py
           tests/test_session_inventory.py
           tests/test_connector_deletion.py
