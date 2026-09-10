@@ -58,7 +58,7 @@ test('published Host + official SessionQuery/JSONL + actual Python adapter compl
       assert.equal(context.ctx.sessions.get('persisted-only' as never), undefined)
       assert.equal(context.ctx.get('agents'), undefined)
       const cold = (await context.ctx.sessionQuery.listSessions()).find(item => item.header.id === 'persisted-only')!
-      const location = context.ctx.sessionPersistence.locate(cold.header)!
+      const location = ({ path: (await (context.ctx.sessionPersistence as import('@deepseek-ai/dsh-session-persistence-jsonl').default).resolveCurrentLog(cold.header.id))! })
       const original = await readFile(location.path)
       const future = { seq: 1007, time: Date.now(), type: 'future/required', data: { message: 'future content' } }
       await appendFile(location.path, `${JSON.stringify(future)}\n`)

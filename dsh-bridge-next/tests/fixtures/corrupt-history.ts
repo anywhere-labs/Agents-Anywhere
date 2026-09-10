@@ -14,7 +14,7 @@ export async function corruptHistory(ctx: Context, cwd: string): Promise<void> {
   bad.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
   await ctx.sessions.flush(bad)
   detach()
-  const path = ctx.sessionPersistence.locate(bad.header)!.path
-  await writeFile(path, Buffer.concat([await readFile(path), Buffer.from(`${JSON.stringify({ seq: 1, time: Date.now(), type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } })}\n`)]))
+  const path = await (ctx.sessionPersistence as import('@deepseek-ai/dsh-session-persistence-jsonl').default).resolveCurrentLog(bad.id)
+  await writeFile(path!, Buffer.concat([await readFile(path!), Buffer.from(`${JSON.stringify({ seq: 1, time: Date.now(), type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } })}\n`)]))
   await assert.rejects(ctx.sessionQuery.readSession(bad.id))
 }

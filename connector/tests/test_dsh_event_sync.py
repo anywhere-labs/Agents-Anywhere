@@ -26,7 +26,7 @@ def item(item_id="one", session_id="session"):
 
 
 def host():
-    return SimpleNamespace(publish_runtime_notifications=AsyncMock(), sync_state_write=AsyncMock())
+    return SimpleNamespace(publish_runtime_notifications=AsyncMock(), sync_state_write=AsyncMock(), runtime_health_update=AsyncMock())
 
 
 def operation(kind, **values):
@@ -104,7 +104,7 @@ def test_relay_failure_resubscribes_without_closing_concurrent_rpc(reject):
             acknowledged.set()
 
         client = SimpleNamespace(request=request, writer=Mock(), connected=True)
-        relay = SyncRelay(client, SimpleNamespace(session_state_update=publish), retry_delay=0.01)
+        relay = SyncRelay(client, SimpleNamespace(session_state_update=publish, runtime_health_update=AsyncMock()), retry_delay=0.01)
         relay.start()
         try:
             op = {"kind": "notifications", "notifications": [{"method": "session.state.updated", "params": {"sessionId": "session", "status": "idle"}}]}
@@ -252,3 +252,20 @@ def test_snapshot_buffer_reuses_small_objects_and_spills_large_captures_without_
         finally:
             await relay.close()
     asyncio.run(exercise())
+
+
+def test_runtime_is_healthy_only_after_inventory_is_delivered():
+    async def run():
+        receiver = host()
+        relay = SyncRelay(Mock(), receiver)
+        await relay.publish_notification({"method": "session.inventory.begin", "params": {"scanToken": "scan"}})
+        receiver.runtime_health_update.assert_not_awaited()
+        receiver.publish_runtime_notifications.side_effect = RuntimeError("ingest unavailable")
+        complete = {"method": "session.inventory.complete", "params": {"scanToken": "scan", "complete": True, "sessions": []}}
+        with pytest.raises(RuntimeError):
+            await relay.publish_notification(complete)
+        receiver.runtime_health_update.assert_not_awaited()
+        receiver.publish_runtime_notifications.side_effect = None
+        await relay.publish_notification(complete)
+        receiver.runtime_health_update.assert_awaited_once_with("running")
+    asyncio.run(run())

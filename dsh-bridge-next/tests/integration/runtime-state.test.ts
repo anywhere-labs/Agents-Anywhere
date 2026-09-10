@@ -88,7 +88,7 @@ test('a blank visibility verdict is reused until that log changes', { timeout: 6
 
     // Another DSH writer appends the first message; only the changed log is reread.
     const header = (await f.ctx.sessionQuery.listSessions()).find(item => item.header.id === 'cold-empty')!.header
-    const location = f.ctx.sessionPersistence.locate(header)!
+    const location = ({ path: (await (f.ctx.sessionPersistence as import('@deepseek-ai/dsh-session-persistence-jsonl').default).resolveCurrentLog(header.id))! })
     const lines = (await readFile(location.path, 'utf8')).split('\n').filter(line => line.length > 0)
     const nextSeq = Number((JSON.parse(lines.at(-1)!) as { seq: number }).seq) + 1
     const message = { type: 'user/message', seq: nextSeq, time: Date.now(), surfaceOp: 'append',
@@ -128,7 +128,7 @@ test('cold observation cache detects file changes without an inventory scan', { 
     await f.runtime.inventory()
     const id = SessionId('persisted-only')
     const first = await f.runtime.read(id)
-    const location = f.ctx.sessionPersistence.locate(first.session)!
+    const location = ({ path: (await (f.ctx.sessionPersistence as import('@deepseek-ai/dsh-session-persistence-jsonl').default).resolveCurrentLog(first.session.id))! })
     await appendFile(location.path, JSON.stringify({ type: 'session/title', seq: first.events.length, time: Date.now(),
       data: { title: 'changed outside the cache', source: { kind: 'user' }, messageSeqs: [] } }) + '\n')
     const next = await f.runtime.read(id)

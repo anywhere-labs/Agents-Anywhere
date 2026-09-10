@@ -20,6 +20,16 @@ export async function nativeRuntime(home: string, beforeHost?: (ctx: Context) =>
   try {
     await ctx.plugin(SessionStore).await()
     await ctx.plugin(JsonlPersistence, { root: join(home, 'native-sessions'), compression: 'none' }).await()
+    // rc.1 persists through Agent-owned handles. Seed-only sessions have no Agent.
+    const flush = ctx.sessions.flush.bind(ctx.sessions)
+    ctx.sessions.flush = async session => {
+      await flush(session)
+      if (session && !await ctx.sessionPersistence.stat(session.id)) {
+        const handle = await ctx.sessionPersistence.create(session.header)
+        try { await handle.append(session.snapshotEvents()); await handle.flush() }
+        finally { await handle.close() }
+      }
+    }
     const query = ctx.plugin(SqliteQuery, { path: ':memory:', openAt: 'never' })
     await query.await()
     await ctx.plugin(Storage).await()

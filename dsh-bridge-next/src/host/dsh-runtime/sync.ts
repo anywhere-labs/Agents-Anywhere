@@ -300,6 +300,11 @@ export class SyncFeed {
         if (!this.published.has(id)) await this.baseline(id)
         if (!this.published.has(id)) return
         if (change.type === 'question') await this.notices(id)
+        if (change.type === 'stream') {
+          this.projections.get(id)?.stream(change.turn, change.step, change.chunk, change.time)
+          touched.add(id)
+          return
+        }
         if (change.type === 'event') {
           if (['model/selection', 'agent-preset/selected'].includes(change.event.type)) capabilities.add(id)
           if (change.event.type === 'turn/end') ended.push([id, {
@@ -315,7 +320,7 @@ export class SyncFeed {
           this.projections.delete(id); this.projections.set(id, projection)
           if (Number(change.event.seq) <= projection.throughSeq) return
           const key = receiptKey(change.event)
-          const receipt = key ? (await this.native.images.readReceipts(id))[key] : undefined
+          const receipt = key ? (await this.native.attachments.readReceipts(id))[key] : undefined
           try { projection.apply(change.event, receipt) } catch { await this.baseline(id); return }
           touched.add(id)
           this.checkpointDirty.add(id)

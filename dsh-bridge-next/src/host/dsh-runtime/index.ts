@@ -75,7 +75,7 @@ export class DshRuntimeService extends Service {
         await this.server.close()
         if (this.disposed) return this.status()
         this.server = this.makeServer()
-        await this.native.images.initialize()
+        await this.native.attachments.initialize()
         await this.server.start()
         this.currentStatus = { state: 'ready', message: '本机连接已就绪', hint: '', canRetry: false }
       } catch (error) {

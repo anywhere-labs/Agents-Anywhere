@@ -1,7 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
-import { stat } from 'node:fs/promises'
 import type { SessionObservation, SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
 import type { SessionRecord } from '@deepseek-ai/dsh-session-query'
 import { BridgeError } from '../errors.js'
@@ -134,12 +133,10 @@ export class NativeSessionSource {
   async freshRevisionOf(id: string): Promise<string | undefined> {
     const live = this.ctx.sessions.get(id as SessionId)
     if (live !== undefined) return `live:${Number(live.seq) - 1}`
-    const header = this.records.get(id)?.header
-    const location = header && this.ctx.get('sessionPersistence')?.locate(header)
-    if (!location) return undefined
     try {
-      const info = await stat(location.path, { bigint: true })
-      const revision = `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`
+      const snapshot = await this.ctx.get('sessionPersistence')?.stat(id as SessionId)
+      if (!snapshot) { this.revisions.delete(id); return undefined }
+      const revision = String(snapshot.revision)
       this.revisions.set(id, revision)
       return revision
     } catch { this.revisions.delete(id); return undefined }
