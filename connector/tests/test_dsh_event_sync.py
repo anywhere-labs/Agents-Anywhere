@@ -269,3 +269,32 @@ def test_runtime_is_healthy_only_after_inventory_is_delivered():
         await relay.publish_notification(complete)
         receiver.runtime_health_update.assert_awaited_once_with("running")
     asyncio.run(run())
+
+
+def test_inventory_does_not_report_healthy_while_delivery_is_pending_or_incomplete():
+    async def run():
+        receiver = host()
+        relay = SyncRelay(Mock(), receiver)
+        await relay.publish_notification({"method": "session.inventory.complete", "params": {"complete": False}})
+        receiver.runtime_health_update.assert_not_awaited()
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def deliver(*args):
+            entered.set()
+            await release.wait()
+
+        receiver.publish_runtime_notifications.side_effect = deliver
+        task = asyncio.create_task(relay.publish_notification({
+            "method": "session.inventory.complete", "params": {"complete": True, "sessions": []},
+        }))
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            receiver.runtime_health_update.assert_not_awaited()
+            release.set()
+            await asyncio.wait_for(task, 1)
+            receiver.runtime_health_update.assert_awaited_once_with("running")
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await relay.close()
+    asyncio.run(run())

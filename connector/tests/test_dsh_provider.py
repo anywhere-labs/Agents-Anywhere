@@ -394,10 +394,16 @@ def test_initial_catalog_error_does_not_close_other_runtime_requests(monkeypatch
         }))
         monkeypatch.setattr(runtime_module.discovery, "load_endpoint", lambda _values: None)
         monkeypatch.setattr(runtime_module, "BridgeClient", lambda **_kwargs: client)
-        host = SimpleNamespace(connector_id="test", runtime_capabilities_update=AsyncMock(), model_catalog_update=AsyncMock())
+        host = SimpleNamespace(
+            connector_id="test", runtime_capabilities_update=AsyncMock(),
+            model_catalog_update=AsyncMock(), runtime_health_update=AsyncMock(),
+        )
         runtime = DshRuntime(RuntimeConfig("dsh", 2), host)
         try:
             await runtime.start()
+            health = host.runtime_health_update.await_args_list
+            assert [call.args[0] for call in health] == ["starting", "running"]
+            assert health[0].args[1]["code"] == "runtime_initializing"
             assert await runtime._request("ping") == {"ok": True}
             client.close.assert_not_awaited()
             broken = False
