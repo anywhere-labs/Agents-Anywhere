@@ -6,12 +6,13 @@ import hashlib
 import pytest
 
 from connector.runtime_protocol import RuntimeAttachment, RuntimeAttachmentContent, RuntimeConfig, RuntimeInvalidRequestError
-from connector.runtimes.dsh.attachments import staged_images
+from connector.runtimes.dsh.attachments import staged_attachments
 from connector.runtimes.dsh.runtime import DshRuntime
 
 
 class Host:
-    def __init__(self, content=b"image", fail_on=None):
+    def __init__(self, content=b"image", fail_on=None, media_type="image/png"):
+        self.media_type = media_type
         self.content = content
         self.fail_on = fail_on
         self.downloads = []
@@ -20,23 +21,21 @@ class Host:
         self.downloads.append((session_id, file_id))
         if file_id == self.fail_on:
             raise OSError("download failed")
-        return RuntimeAttachmentContent(file_id, "image.png", "image/png", self.content)
+        return RuntimeAttachmentContent(file_id, "attachment", self.media_type, self.content)
 
 
 def image(file_id="file_image", content=b"image"):
     return RuntimeAttachment(file_id, "image.png", "image/png", len(content), hashlib.sha256(content).hexdigest())
 
 
-def test_only_supported_images_download_and_stage(tmp_path):
+@pytest.mark.parametrize("mime", ["image/png", "application/pdf", "text/plain", "application/octet-stream", "image/svg+xml"])
+def test_attachments_stage_without_bytes_in_rpc(tmp_path, mime):
     async def run():
-        host = Host()
-        for mime in ["application/pdf", "image/svg+xml", "image/avif", "application/octet-stream"]:
-            with pytest.raises(RuntimeInvalidRequestError, match="only accepts"):
-                async with staged_images(host, "session", (RuntimeAttachment("file_bad", media_type=mime),), tmp_path):
-                    pytest.fail("must reject before staging")
-        assert host.downloads == []
-        async with staged_images(host, "session", (image(),), tmp_path) as refs:
-            assert refs[0]["fileId"] == "file_image"
+        host = Host(media_type=mime)
+        attachment = RuntimeAttachment("file_upload", "attachment", mime, 5, hashlib.sha256(b"image").hexdigest())
+        async with staged_attachments(host, "session", (attachment,), tmp_path) as refs:
+            assert refs[0]["fileId"] == "file_upload"
+            assert refs[0]["mediaType"] == mime
             path = tmp_path / "attachments/staging" / refs[0]["uploadId"]
             assert path.read_bytes() == b"image"
             assert "contentBase64" not in refs[0] and "path" not in refs[0]
@@ -48,11 +47,11 @@ def test_failed_batch_and_checksum_mismatch_clean_up(tmp_path):
     async def run():
         host = Host(fail_on="file_second")
         with pytest.raises(OSError, match="download failed"):
-            async with staged_images(host, "session", (image(), image("file_second")), tmp_path):
+            async with staged_attachments(host, "session", (image(), image("file_second")), tmp_path):
                 pytest.fail("partial batches must not be submitted")
         assert list((tmp_path / "attachments/staging").iterdir()) == []
         with pytest.raises(RuntimeInvalidRequestError, match="content does not match"):
-            async with staged_images(Host(b"other"), "session", (image(),), tmp_path):
+            async with staged_attachments(Host(b"other"), "session", (image(),), tmp_path):
                 pytest.fail("corrupt download must be refused")
     asyncio.run(run())
 

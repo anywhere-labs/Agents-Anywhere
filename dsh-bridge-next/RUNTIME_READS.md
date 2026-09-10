@@ -19,7 +19,7 @@
 - `history.ts`、`tools.ts`：原始事件转换为统一 Timeline。Python 不解释 DSH 原始消息。
 - `identity.ts`：沿用共享协议的会话 ID、Timeline ID 和内容哈希算法；握手传入 runtime instance 的 `sessionNamespace`，区分平台归属。
 
-官方 API 与声明按 npm `0.1.2-rc.1` 验证。完整日志通过 `sessionQuery.readSession` 读取，不使用仅代表当前模型上下文的 `readSurface`。不创建新的会话内容数据库。
+官方 API 与声明按 npm `0.1.2-rc.1` 验证。Host 完整日志通过 `sessionQuery.observeSession(id, { projectionMode: 'none' })` 的不可变 observation 读取；无 Host 的兼容 reader 仍使用 `readSession`，不使用仅代表当前模型上下文的 `readSurface`。不创建新的会话内容数据库。
 
 ## 发现与添加
 
@@ -35,7 +35,7 @@ Connector 先验证发现文件、进程与回环地址，再执行限时鉴权�
 
 `session.getState` 返回 sourceState；归档时返回 blocked，不尝试加载 Agent。发送前再次检查来源。明确归档状态通过现有通知同步到 AA，AA 元数据操作不会修改 DSH。插件不推送 DSH 项目名称或分组，后端沿用 CWD 分类和末段命名。
 
-状态读取不再无条件重列会话清单，也不再每次重放整份日志：只有从未观察过的会话 ID 才触发一次清单刷新；配置与最后轮次结果按日志身份缓存（live 会话取内存事件末尾 seq，持久化会话取官方 revision），日志没变时直接复用。空白可见性判定同样只对它读取时的那份日志有效，日志变化即失效。大日志（数万事件）的一次完整读取约需两秒，缓存把它限制为“日志变化后的第一次”。
+状态读取、发送消息、配置修改和会话 ID 解析共享本次 Host 启动的会话清单，后续由原生事件维护，不为单个 RPC 重列整个 corpus。配置与最后轮次结果按日志身份缓存：live 会话使用 `session.seq`，冷会话使用官方 `locate(header)` 指向的单个文件的 stat 身份，不通过 `listSnapshots()` 扫描全部日志。空白可见性判断也随日志身份变化而失效。
 
 未实现功能的空占位目录已移除；`sessions/` 承载实际使用的来源状态模块，其余文件按当前职责保留，后续有实现再拆分目录。
 
@@ -81,3 +81,38 @@ uv run pytest tests/test_dsh_contracts.py tests/test_dsh_provider.py tests/test_
 链接安装的插件完成构建后，手动重启 DSH Host 以加载新后端；正在运行的旧 Connector 也需要重新启动以加载新的 Python 适配器。在 Web 设备页面或 onboarding 点击 DeepSeek Harness 的“一键配置”，然后查看该设备已有的 DSH 会话与历史。
 
 纯文本新建/续聊、实时消息、工具状态与中断已接入官方 Agent 服务。`ask_user_question` 已接入平台现有问答表单，包含回答、取消、多端收起和断线恢复，见 [用户问答](./USER_QUESTIONS.md)。下一阶段处理附件、模型/权限目录和权限审批。Windows 实机、长时间运行及真实模型界面验收仍需手动进行。
+
+
+## 性能优化（2026-09-10）
+
+- 首次订阅仍完整同步历史。并发初始化共享一次清单读取；同步逐个读取、投影和提交会话，使可见性检查与快照生成复用同一个 observation。
+- observation、配置结果和 feed 投影缓存暂不设置容量上限。原生事件使对应 observation 失效，冷会话目标文件变化使缓存失效；关闭 Host/feed 时释放缓存和 observation lease。缓存不持久化。
+- 同一 Host、同一 session namespace 的已确认同步 revision 在重订阅时复用：未变化会话只校准状态，变化会话补快照。显式单会话刷新先删除其 checkpoint，失败重试不会误判为已同步。新 Host 没有 checkpoint，仍完整导入。
+- 流式工具参数只在 drain/snapshot 或非 chunk 事件边界解析，避免每个 token 重复解析增长中的 JSON。历史投影以约 5 ms 为目标分片让出事件循环；单个原生读取、单个事件处理和最终内容哈希仍可能超过此时间。
+- 同步/RPC 字节预算直接遍历 JSON 数据计数，不再为计数分配完整 JSON 字符串。socket 写入仍序列化一次，跨语言内容哈希校验保留。
+- Connector 对小快照复用已解析对象；暂存数据超过约 8 MiB 才写内部二进制临时文件，文件读写在线程中完成。现有完整提交 API 在最终提交时仍会组装全部条目。
+
+### 可重复基准
+
+`tests/benchmarks/startup.ts <旧版 host/dsh-runtime 绝对路径>` 通过 tsx 运行。它创建真实 SessionStore、JSONL、SessionQuery 服务，写入 12 个包含约 3,000 个工具参数 chunk 的会话，加上 fixture 的两个持久化会话。每轮销毁并新建服务图和 NativeRuntime；只复用同一批磁盘数据，操作系统文件缓存是热的。接收端进行 JSON 编解码后立即 ACK，不包含 Python、实际网络或后端延迟。
+
+2026-09-10 本机交替运行三轮，结果如下：
+
+| 指标 | 修改前 | 修改后 |
+| --- | --- | --- |
+| 首次完整同步耗时中位数 | 5,146 ms | 2,154 ms |
+| 每轮最大事件循环延迟范围 | 241.6–265.4 ms | 9.8–13.6 ms |
+| 每轮持久化列表读取 | 29 | 1 |
+| 每轮 readSession / observation 调用 | 28 / 0 | 0 / 14 |
+| 每轮 JSON.parse 次数（含接收端帧解析） | 39,769 | 2,249 |
+| 完整快照 / Timeline 条目 / 批次 | 14 / 1,033 / 62 | 14 / 1,033 / 62 |
+
+`scripts/benchmark-history.ts` 可单独比较历史投影：3,003 个事件、180 KB 工具参数，五次运行中位数从 229.92 ms 降至 2.10 ms，JSON.parse 从 3,001 次降至 1 次。传入旧 checkout 的 `history.ts` 绝对路径即可对比相同输入。
+
+以上结果针对工具参数较多的合成历史，不代表所有用户历史或 DSH 界面的固定提速比例。验证包括插件 125 项测试、Connector 相关 37 项测试，以及 TypeScript 检查和 Connector 修改文件的 Ruff 检查；未启动用户的 DSH 或开发服务。
+
+## 本机连接启动失败与运行日志
+
+本机 RPC 或本机管理锁初始化失败时，管理 Gateway 保持可用。连接页面会显示原因和下一步：占用冲突提示退出其他 DSH，权限和磁盘错误提供对应处理建议；“尝试重启”会重建当前插件的本机服务，必要时重新初始化管理器，不会终止其他进程。并发重试合并为一次操作。
+
+“运行日志”默认每条只显示时间、方法名和结果，点击展开事件名、日志级别与诊断详情。结果区分成功、失败、进行中和普通记录；RPC 返回 `ok: false` 也标为失败。日志刷新保留已有条目的展开状态，继续使用原有最近 200 条及敏感信息过滤规则。

@@ -1,340 +1,153 @@
-<div align="center">
+<p align="center">
+  <a href="https://www.agents-anywhere.com/en"><img src="docs/images/readme-hero-en.webp" alt="Agents Anywhere: an agent workbench across your devices. Supports Codex, Claude Code and DeepSeek Harness, with more agents coming soon." width="100%"></a>
+</p>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/agents-anywhere-wordmark-dark.png">
-  <img src="docs/brand/agents-anywhere-wordmark-light.png" alt="Agents Anywhere" width="420">
-</picture>
+<p align="center">
+  <strong>Connect your work machines. Manage AI agents from desktop, mobile and Web.</strong><br>
+  Open source · Multiple agents · Sessions and workspaces · Self-hosting
+</p>
 
-<h3>Control any coding agent on any device from your phone.</h3>
+<p align="center">
+  <a href="https://www.agents-anywhere.com/en">Website</a> ·
+  <a href="#downloads-and-access">Download</a> ·
+  <a href="https://web.agents-anywhere.com">Open Web</a> ·
+  <a href="docs/README.md">Documentation</a> ·
+  <a href="README.md">简体中文</a>
+</p>
 
-Run Codex, Claude Code, and more agents on your Mac, Windows PC, Linux devbox, or cloud sandbox. Use the mobile app to chat with sessions, preview files and code, approve actions, and open a terminal on that device.
+<p align="center">
+  <a href="docs/releases/2.0.0.md"><img src="https://img.shields.io/badge/release-2.0.0-222222?style=flat" alt="Release 2.0.0"></a>
+  <a href="#license"><img src="https://img.shields.io/badge/license-MIT-222222?style=flat" alt="MIT"></a>
+  <a href="docker/README.md"><img src="https://img.shields.io/badge/self--hosted-Docker-222222?style=flat" alt="Self-host with Docker"></a>
+</p>
 
-![Python](https://img.shields.io/badge/Python-3.12+-3776AB)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.136+-009688)
-![Connector](https://img.shields.io/badge/anywhere--cli-0.1.6-111111)
-![Next.js](https://img.shields.io/badge/Next.js-16.2-000000)
-![Node](https://img.shields.io/badge/Node.js-22-5FA04E)
-![Yarn](https://img.shields.io/badge/Yarn-4.6-2C8EBB)
-![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
+**Agents Anywhere** is an open-source agent workbench across your devices. Connect a work machine running **Codex, Claude Code or DeepSeek Harness**, then view sessions, respond to requests, manage files and use terminals from desktop, mobile and Web. Agents execute tasks on the connected work machine.
 
-[Docker Quickstart](#quickstart-run-the-full-app-with-docker) · [Onboarding](#onboarding) · [Downloads](https://github.com/anywhere-labs/Agents-Anywhere/releases) · [Docker Docs](docker/README.md) · [简体中文](README.md)
+## Downloads and access
 
-</div>
+Install the desktop client on your work machine, then access it from your phone, tablet or Web. Use the Connector CLI to connect Linux and headless servers. Each client can connect to Cloud or a self-hosted service.
 
----
+**Use Web directly:** open [web.agents-anywhere.com](https://web.agents-anywhere.com) and sign up or sign in to get started. Servers are hosted in mainland China, where users can expect the best connection experience.
 
-> [!IMPORTANT]
-> 中国区线上服务已在 Beta 中，目前免费试用，仅对中国用户开放。想申请内测，请跳转到 [Beta Access And Contact](#beta-access-and-contact)，扫码进群并联系管理员。
+| Platform | Get the client |
+| --- | --- |
+| **macOS** | [Universal DMG · 2.0.0](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/Agents%20Anywhere-2.0.0-universal.dmg) |
+| **Windows** | [x64 installer · 2.0.0](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/Agents%20Anywhere%20Setup%202.0.0-x64.exe) |
+| **iOS / iPadOS** | [Join TestFlight](https://testflight.apple.com/join/GKGaut99) |
+| **Android** | [APK · 2.0.0](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/agents-anywhere-2.0.0-release.apk) |
+| **Web** | [Open Web](https://web.agents-anywhere.com) |
+| **Linux / headless** | [Run the Connector CLI](connector/README.md) |
 
-## What Is Agents Anywhere?
+See the [download page](https://www.agents-anywhere.com/en/download) for platform details. Read the [upgrade guide](docs/upgrading.md) before upgrading a legacy deployment.
 
-Agents Anywhere lets you control coding agents running on another device from your phone.
+<details>
+<summary>Platform requirements, installers and updates</summary>
 
-Run Codex, Claude Code, and more agents on a Mac, Windows PC, Linux server, remote devbox, or cloud sandbox. Agents Anywhere connects your phone to those devices, so you can view and control the agent sessions running there.
+- macOS: Universal for Apple Silicon / Intel; signed and notarized.
+- Windows: x64 desktop workbench with a managed Connector; the current installer is not code signed.
+- Android: Android 8.0 or later.
+- iOS / iPadOS: install the beta through TestFlight; availability is shown on the invitation page.
+- Linux / headless: run the Connector on the work machine and control it from another client.
 
-From your phone, you can:
+The macOS, Windows and Android files are **Agents Anywhere** installers hosted in the ModelScope repository `t4wefan/deepseek-harness-desktop`. Historical 0.1.x GitHub Releases are not the 2.0 download channel. In-app update addresses in the current released clients are still placeholders; download manually using the links above.
 
-- Talk to the running session and take over when it needs direction.
-- Preview files, code, logs, and runtime state from the remote device.
-- Approve, interrupt, continue, or sync long-running work.
-- Open a remote terminal on the device where the agent is actually running.
+`main` is the current development branch. New source fixes may not yet be included in the 2.0.0 installers. Product, Connector package and database schema versions are managed separately. See the [2.0.0 release notes](docs/releases/2.0.0.md) for release scope.
 
-Agents Anywhere is the remote, not a new agent host. Your code stays on the original device, your agent uses that device's local files and permissions, and your model accounts remain with your own Claude Code / Codex toolchain.
+</details>
 
-When you are at a desktop, you can also use the Web console. It provides the same session, device, approval, file, and terminal controls for browser-based and self-hosted team workflows.
+## Agents and workspaces
 
-## Product Preview
+<p align="center">
+  <img src="docs/images/readme-workbench.webp" alt="Windows workbench: devices, projects and sessions on the left; an agent's task result on the right." width="100%">
+</p>
 
-**Web**
+<a id="features"></a>
 
-![Web console](docs/screenshots/web-console.png)
+| What you want to do | In Agents Anywhere |
+| --- | --- |
+| **Manage projects and sessions** | Switch between devices, projects and sessions, and follow progress through live timelines. |
+| **Approve actions and respond to requests** | Respond to approvals and input requests; interrupt or continue tasks where the runtime supports it. |
+| **Browse files and use terminals** | Browse and preview files, upload and download attachments, and open remote shells and interactive terminals. |
+| **Configure agents** | Configure Codex, Claude Code and DSH; choose models, permissions and actions from the capabilities each runtime supports. |
 
-**Mobile**
+A runtime is the component that runs or connects an agent on your work machine. Model accounts and usage charges follow the rules of the agent you use. Capabilities vary by runtime; follow the options shown in the client. [Connect DSH →](dsh-bridge-next/README.md)
 
-![Mobile sessions](docs/screenshots/mobile-sessions.png)
+## Desktop, mobile and Web
 
-**Mobile: files and terminal**
+<p align="center">
+  <img src="docs/images/readme-mobile.webp" alt="Real iPhone, iPad and Android clients: following conversations, continuing work and answering an agent's input request." width="100%">
+</p>
 
-![Mobile files and terminal](docs/screenshots/mobile-files-terminal.png)
+Check progress and reply from your phone, open the workspace on your tablet, then continue at your computer. Sign in to the same service and account to access your devices and sessions from different clients.
 
-## Current Capabilities
+**Your phone controls the work; the connected machine runs it.** Keep that machine powered on and online, with its Connector and runtime running. The iPad capture shows an agent waiting for the user’s input. Screenshots retain their original interface language.
 
-- **Unified session workspace.** Create, inspect, pin, archive, mark read, take over, and manage sessions.
-- **Codex-first runtime integration.** The Connector discovers local Codex and Claude runtimes and reports capabilities. Codex is the best-supported adapter today; Claude has basic support and is still being expanded.
-- **Approvals and sync.** Supports interrupt, sync, approval resolution, and timeline polling/SSE.
-- **Local file access.** Browse workspaces, read/write files, upload content, and download content through an online Connector.
-- **Remote shell and terminal.** Run one-shot shell commands, shell tasks, and interactive terminals.
-- **Device pairing.** Pair the machine that owns your workspace through the Windows/macOS Connector app or the Linux Connector CLI.
-- **Self-hosted backend.** The FastAPI backend uses PostgreSQL, with Redis for cross-instance coordination and event delivery.
-- **Web and Android clients.** Use the Web console or Android app to manage sessions, devices, approvals, files, terminals, and remote control workflows.
+## First use
 
-## Supported Agents And Runtimes
+1. **Sign in to a service.** Install a client or open Web. Sign in to Cloud or enter your self-hosted service address.
+2. **Connect your work machine.** Desktop includes a managed local Connector; servers and headless machines use the [Connector CLI](connector/README.md).
+3. **Prepare your agent and project.** Configure the runtime, account and working directory on that machine, then open or create a session.
+4. **Access from another device.** Sign in to the same service and account from your phone, tablet or another computer.
 
-Agents Anywhere does not replace your agent. It runs next to an existing runtime through the Connector:
+See [Getting started](docs/getting-started.md) for pairing steps, login troubleshooting and background operation.
 
-![Codex](https://img.shields.io/badge/Codex-best%20supported-111111)
-![Claude](https://img.shields.io/badge/Claude-basic%20support-666666)
-![More agents](https://img.shields.io/badge/more%20agents-coming%20soon-lightgrey)
+## Execution and self-hosting
 
-| Runtime | Status | Notes |
-| --- | --- | --- |
-| Codex | ✅ | Supports runtime discovery, session sync, timeline updates, approvals, interrupt/takeover, filesystem access, shell tasks, interactive terminals, and runtime settings. |
-| Claude Code | ✅ | Supports discovery and the basic session/control flow. Deeper capabilities are still being improved. |
-| Cursor | Coming soon | Not yet available as a usable adapter. |
-| OpenCode | Coming soon | Not yet available as a usable adapter. |
-| Gemini CLI | Coming soon | Not yet available as a usable adapter. |
-
-Connector adapters are extensible. New runtimes should reuse the existing session, timeline, approval, filesystem, and terminal capabilities where possible.
-
-## Supported Client And Connector Platforms
-
-![Web](https://img.shields.io/badge/Web-primary%20client-111111)
-![iOS](https://img.shields.io/badge/iOS-in%20development-lightgrey)
-![Android](https://img.shields.io/badge/Android-available-3DDC84)
-![Desktop Connector](https://img.shields.io/badge/Desktop%20Connector-available-111111)
-
-| Platform / surface | Status | Notes |
-| --- | --- | --- |
-| Web console | ✅ | Supports sessions, devices, approvals, files, terminals, runtime settings, team/admin management, and session detail. |
-| Android | ✅ | Download the APK from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases). Supports sessions, devices, approvals, files, terminals, and mobile control workflows. |
-| iOS | Coming soon | In development. |
-| Windows / macOS Connector app | ✅ | Download from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases). Supports pairing, logs, tray behavior, and startup controls. |
-| Linux Connector CLI | ✅ | Use the Python CLI from `connector/` or `uvx anywhere-cli` for Linux servers, devboxes, and headless machines. |
-
-This repository currently includes the Web frontends, FastAPI backend, Connector CLI, Windows/macOS Connector app, the Android native client, and iOS work in progress. Web and Android are the main supported client surfaces today; the Connector app/CLI is what links your own machines into the control plane.
-
-Want to run it now? Jump to [Docker Quickstart](#quickstart-run-the-full-app-with-docker). After the server is running, continue to [Onboarding](#onboarding).
-
-## FAQ
-
-**Where does my code actually run?**
-On the machine running the Connector. The backend handles auth, state, file metadata, and RPC routing; it does not execute your code on the server.
-
-**What do I install on my dev machine?**
-Install the Connector on the machine that owns your workspace and local agent runtime. On Windows and macOS, use the Agents Anywhere Connector desktop app. On Linux, use the Python CLI in `connector/` or `uvx anywhere-cli`.
-
-**Do my model accounts go through Agents Anywhere?**
-No. The Connector uses the Codex / Claude runtime and login state already present on your machine. Agents Anywhere does not proxy model account credentials.
-
-**Codex and Claude already provide official remote control. Why use Agents Anywhere?**
-Official remote control is usually tied to each vendor's subscription account and product surface. Agents Anywhere does not need to bind to your model subscription account; it only needs the Connector to reach a runtime that is already logged in locally. The goal is one unified entry point for multiple agents: Codex, Claude, and more agents over time. More adapters are in development, and Connector adapter contributions are welcome.
-
-**Can I self-host it?**
-Yes. The Docker quickstart runs the Web console, FastAPI backend, and PostgreSQL together. For deployment variants and environment variables, see [docker/README.md](docker/README.md).
-
-**Which agents are supported today?**
-The current code focuses on Codex and Claude. Codex is the most complete adapter today. Claude supports the basic flow and is still being expanded. Other runtimes are coming soon and can be added by implementing Connector adapters.
-
-## Technical Guide
-
-The sections above describe the product: Agents Anywhere solves the problem of agents running elsewhere while humans still need to take over. The sections below cover the architecture, Docker quickstart, onboarding, and Connector platform choices. For detailed Docker deployment options, local development images, environment variables, and verification commands, see [docker/README.md](docker/README.md).
-
-## Architecture
+Agents use the workspace and permissions of the Connector machine. Connect to Cloud or deploy the Agents Anywhere service on your own server.
 
 ```mermaid
 flowchart LR
-    Web["Web Console<br/>browser client"]
-    Server["FastAPI Server<br/>auth / sessions / RPC broker / files"]
-    Connector["Connector<br/>desktop app or CLI"]
-    Runtime["Local Agent Runtime<br/>Codex / Claude today<br/>more coming soon"]
-    Workspace["Local Workspace<br/>files / shell / terminal"]
-
-    Web <-->|HTTP / WebSocket| Server
-    Server <-->|Connector WebSocket| Connector
-    Connector <-->|runtime adapter| Runtime
-    Connector <-->|local permissions| Workspace
-
-    classDef primary fill:#111,stroke:#555,color:#fff;
-    classDef local fill:#f5f5f5,stroke:#aaa,color:#111;
-    class Web,Server primary;
-    class Connector,Runtime,Workspace local;
+    Clients["Desktop · Mobile · Web"] <-->|"Access and control"| Server["Agents Anywhere Server"]
+    Server <-->|"Connector RPC"| Connector["Connector on your work machine"]
+    Connector <--> Agents["Codex · Claude Code · DSH"]
+    Connector <--> Workspace["Workspace · Files · Terminal"]
 ```
 
-Repository layout:
+Session content, timelines and uploaded attachments may pass through or be stored by Server. With self-hosting, your instance handles this server-side data.
 
-```text
-server/      FastAPI backend, PostgreSQL storage, Connector RPC broker
-connector/   Local daemon and CLI for Codex / Claude runtime integration
-desktop/     Windows/macOS Electron app for running the local Connector
-web-next/    Next.js + shadcn Web console
-web/         Legacy React + Vite frontend kept as a fallback/reference
-docker/      Development, production, and PostgreSQL compose deployment files
-docs/        Shared reference notes
-```
+<a id="self-hosting-quickstart"></a>
 
-Package-specific docs:
+### Deploy with Docker
 
-- [Server](server/README.md)
-- [Connector](connector/README.md)
-- [Desktop Connector](desktop/README.md)
-- [Web Next](web-next/)
-- [Docker](docker/README.md)
-
-## Quickstart: Run The Full App With Docker
-
-Run the PostgreSQL-backed stack from the repository root:
+After cloning the repository, run from its root. Replace the example password and secret first:
 
 ```bash
-POSTGRES_PASSWORD=change-me \
-AGENT_SERVER_SECRET=change-me-too \
+POSTGRES_PASSWORD=replace-with-a-strong-password \
+AGENT_SERVER_SECRET=replace-with-a-long-random-secret \
 docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 
-Open:
+Open `http://127.0.0.1:5174`, retrieve the setup token from Server logs and create the first administrator. Compose includes PostgreSQL, Redis, a migration job and the Server hosting the static Web client.
 
-```text
-http://127.0.0.1:5174
-```
+[Deployment guide](docker/README.md) · [Backups and upgrades](docs/upgrading.md) · [Server documentation](server/README.md)
 
-This starts four services:
+<a id="architecture-and-source"></a>
 
-- `postgres-next`: PostgreSQL 17 with a persistent Docker volume.
-- `redis-next`: cross-instance coordination and event delivery.
-- `migrate-next`: applies database migrations before Server startup.
-- `server-next`: FastAPI backend published on host port `5174`; it serves the statically exported `web-next` UI and handles API/WebSocket paths from the same origin.
+## For developers
 
-The first startup on an empty database logs a setup token. Use it in the Web UI to create the first admin user.
+Development uses **Python 3.12+ / uv / Node.js 22 / Corepack + Yarn**. Start with the [development guide](docs/development.md) for source setup and headless checks. Most detailed guides currently use Chinese.
 
-For custom ports, production secrets, manual Docker runs, mirrors, connector images, and local development containers, see [docker/README.md](docker/README.md).
+| What to explore | Start here |
+| --- | --- |
+| Architecture and API | [Server architecture](docs/server-architecture.md) · [API documentation](docs/api/README.md) |
+| Agent integrations and local execution | [Connector](connector/README.md) · [Runtime protocol](docs/runtime-protocol/README.md) |
+| Web and desktop clients | [Web source](web-next/) · [Desktop Workbench](desktop-workbench/README.md) |
+| Native mobile clients | [Android](android/README.md) · [iOS source](ios/) |
+| DSH integration | [DSH Bridge Next](dsh-bridge-next/README.md) |
+| More documentation | [Documentation index](docs/README.md) · [Protocol contracts](contracts/) |
 
-## Local Source Development
+Report problems in [Issues](https://github.com/anywhere-labs/Agents-Anywhere/issues) or contribute through [Pull Requests](https://github.com/anywhere-labs/Agents-Anywhere/pulls). Include the client version, operating system, runtime type and reproduction steps, with credentials removed from logs.
 
-After installing Docker, `uv`, Node.js, and Corepack, run this from the repository root:
+<a id="cloud-access-and-community"></a>
 
-```bash
-./local-up.sh
-```
+## Community and feedback
 
-`local-up.sh` is an independent foreground source launcher. It starts
-PostgreSQL and Redis with Docker Compose, applies migrations, and runs the
-FastAPI Server plus `web-next` in the current terminal with prefixed logs. The
-default addresses are Web `http://127.0.0.1:5174` and Server
-`http://127.0.0.1:8000`; PostgreSQL and Redis use ports `55432` and `56379`.
-Logs live under `.local-dev/`, while PostgreSQL/Redis data persists in Docker
-volumes. Press `Ctrl-C` to stop the source processes and the infrastructure
-started by this invocation. `local-up.sh` does not call or depend on
-`dev-control.sh`.
+Join the community to share your experience, report problems or contribute. Scan a code to join WeChat or QQ. Self-hosted accounts are managed by your own administrator.
 
-Connector is opt-in: pass `--with-connector` (and optionally
-`--connector-config PATH`) when debugging a local Codex/Claude Connector.
-Server hot reload is off by default so editing source or test files does not
-restart the Server and interrupt Connector/WebSocket connections. Pass
-`--reload` to enable it; `--no-reload` remains available to explicitly disable
-it. `--skip-install` skips dependency synchronization.
-`--reset-data` removes the local PostgreSQL/Redis
-volumes before applying migrations to an empty database. Use `--reset-data`
-only when the local data can be discarded.
-
-The default binding is loopback-only. To let phones or other devices on the
-same LAN connect, run `./local-up.sh --listen` (equivalent to
-`--listen 0.0.0.0`), or pass a specific listen address. The startup summary
-prints the detected LAN Web/Server addresses; set `AGENTS_ANYWHERE_LAN_HOST`
-when automatic detection is not suitable. This only enables LAN binding; it
-does not configure a public reverse proxy, TLS, or firewall. Configure access
-control and network boundaries before exposing the service to the public
-Internet.
-
-`dev-control.sh` is an optional, independent detached manager. After starting
-the stack, you can run `./dev-control.sh start` in another terminal to open
-its status page. While a foreground `local-up.sh` owns the stack, Dev Control
-shows status only and refuses to take over or restart those processes. Stop
-the foreground stack with `Ctrl-C` in its own terminal; do not use
-`./dev-control.sh down` for that stack. `./dev-control.sh bootstrap` starts a
-separate screen-managed stack only when no foreground `local-up.sh` is running.
-
-## Onboarding
-
-After the Docker stack or server is running, follow this first-run flow.
-
-### Step 0: Understand The Three Parts
-
-Agents Anywhere has three main parts:
-
-- **Client**: The entry point you use directly, including the Web console, iOS app, and Android app.
-- **Server**: The middle service that handles accounts, devices, session state, and command routing.
-- **Connector App**: The local app running on the controlled device, such as your Mac, Windows PC, Linux server, or devbox.
-
-In short: you send a command from a Client, the command goes to the Server first, and then the Server forwards it to the Connector App on the controlled device. The Connector App operates the local Codex / Claude Code runtime on that device to complete the task. Your code, terminal, and agent runtime all stay on the controlled device.
-
-### Step 1: Create The Admin Account
-
-Open the Web console, paste the setup token from the server logs, and create the first account. This account becomes the default administrator.
-
-> [!TIP]
-> What is a setup token?
->
-> On a new deployment, there are no users yet, and the first successful registration becomes the administrator. To prevent someone else from claiming a public instance before you do, Agents Anywhere requires the first registration to include the setup token printed by the backend.
->
-> Look for a log block like this in the backend service startup logs:
->
-> ```text
-> AGENT SERVER  ·  first-run setup required
-> Paste this token into the setup page to create the admin:
->
->   setup-token: xxxxxxxxxxxxxxxxxxxxxxxx
-> ```
->
-> Copy the value after `setup-token:` and paste it into the Web registration page.
-
-### Step 2: Prepare The Connector
-
-Prepare the Connector on the device that runs Codex / Claude Code.
-
-| OS | Version | Action |
-| --- | --- | --- |
-| Windows | 0.1.6 | Download the Connector App from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) |
-| macOS | 0.1.6 | Download the Connector App from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases) |
-
-### Step 3: Pair The Device
-
-Follow the Web UI to start pairing the device. You can also start pairing from the mobile app.
-
-#### Linux: Pair From The Command Line
-
-On Linux, choose **Use command-line pairing** in the Web pairing flow. Copy the command shown by the Web UI, then paste and run it in the Linux terminal.
-
-Keep that terminal session alive. If the terminal is closed, the `anywhere-cli` process exits and the Linux device goes offline. For a simple persistent session, run the pairing command inside `screen`:
-
-```bash
-screen -S anywhere
-# Paste and run the command from the Web pairing UI here.
-```
-
-After the Connector is online, detach from the session with `Ctrl-A`, then `D`. To return later:
-
-```bash
-screen -r anywhere
-```
-
-### Step 4: Start Chatting
-
-Once the Device is online, you can start chatting with the Agent from the Web console or the mobile app.
-
-For Android, download the APK from [GitHub Releases](https://github.com/anywhere-labs/Agents-Anywhere/releases). iOS is still in development.
-
-## Beta Access And Contact
-
-Agents Anywhere now provides a hosted beta service. The service is currently free, in beta, and open by application for users in China only.
-
-If you want to try it, scan the WeChat, Feishu, or QQ QR code below, join a group, and contact an admin.
-
-| WeChat | Feishu | QQ | Discord |
-| --- | --- | --- | --- |
-| <img src="docs/contact/wechat-beta.png" alt="WeChat beta access group QR code" width="180"> | <img src="docs/contact/feishu-beta.jpeg" alt="Feishu beta access group QR code" width="180"> | <img src="docs/contact/qq-beta.jpeg" alt="QQ beta access group QR code" width="180"> | <img src="docs/contact/discord-beta.jpeg" alt="Discord community QR code" width="180"> |
-| China beta access group | China beta access group | China beta access group | International community |
-
-For overseas users, the hosted beta is not open yet. Join Discord for community updates.
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=anywhere-labs%2FAgents-Anywhere&type=timeline&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=anywhere-labs/Agents-Anywhere&type=timeline&theme=dark&legend=top-left&sealed_token=SPETRwhaIk_DrwoTkhKh6IjCtLF2FYRqOJrHbR2sSTEl2zXb2IbOv7faUaN4gwckAO39WDYotDIiIjpB-vIAD9tc5CSsgN-9R6Ep5VUxYnn1JCmmcCUDcPvLHJnXL-Z1IRDACNbYw7vSLO-bSNdM5Aegroif3P5DGuV2O_Pb9uLXZ3Jgsx4GkMPocing" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=anywhere-labs/Agents-Anywhere&type=timeline&legend=top-left&sealed_token=SPETRwhaIk_DrwoTkhKh6IjCtLF2FYRqOJrHbR2sSTEl2zXb2IbOv7faUaN4gwckAO39WDYotDIiIjpB-vIAD9tc5CSsgN-9R6Ep5VUxYnn1JCmmcCUDcPvLHJnXL-Z1IRDACNbYw7vSLO-bSNdM5Aegroif3P5DGuV2O_Pb9uLXZ3Jgsx4GkMPocing" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=anywhere-labs/Agents-Anywhere&type=timeline&legend=top-left&sealed_token=SPETRwhaIk_DrwoTkhKh6IjCtLF2FYRqOJrHbR2sSTEl2zXb2IbOv7faUaN4gwckAO39WDYotDIiIjpB-vIAD9tc5CSsgN-9R6Ep5VUxYnn1JCmmcCUDcPvLHJnXL-Z1IRDACNbYw7vSLO-bSNdM5Aegroif3P5DGuV2O_Pb9uLXZ3Jgsx4GkMPocing" />
- </picture>
-</a>
+| WeChat | QQ |
+| --- | --- |
+| <img src="docs/contact/wechat-beta.png" alt="WeChat community QR code" width="160"> | <img src="docs/contact/qq-beta.png" alt="QQ community QR code" width="160"> |
 
 ## License
 
-[MIT](LICENSE)
+MIT. See [image sources and reproduction](docs/readme-artwork/README.md) for product screenshot and brand-asset notes.

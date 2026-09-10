@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from connector.runtime_protocol import RuntimeInstanceHost, RuntimeInstanceSpec, timeline_content_hash
+from connector.runtime_protocol import (
+    RuntimeInstanceHost,
+    RuntimeInstanceSpec,
+    timeline_content_hash,
+)
 from connector.runtimes.dsh.bridge.sync import SyncRelay
 from connector.runtimes.dsh.runtime import DshRuntime
 from connector.server.runtime_host import ConnectorRuntimeHost
@@ -22,7 +26,7 @@ def item(item_id="one", session_id="session"):
 
 
 def host():
-    return SimpleNamespace(publish_runtime_notifications=AsyncMock(), sync_state_write=AsyncMock())
+    return SimpleNamespace(publish_runtime_notifications=AsyncMock(), sync_state_write=AsyncMock(), runtime_health_update=AsyncMock())
 
 
 def operation(kind, **values):
@@ -100,7 +104,7 @@ def test_relay_failure_resubscribes_without_closing_concurrent_rpc(reject):
             acknowledged.set()
 
         client = SimpleNamespace(request=request, writer=Mock(), connected=True)
-        relay = SyncRelay(client, SimpleNamespace(session_state_update=publish), retry_delay=0.01)
+        relay = SyncRelay(client, SimpleNamespace(session_state_update=publish, runtime_health_update=AsyncMock()), retry_delay=0.01)
         relay.start()
         try:
             op = {"kind": "notifications", "notifications": [{"method": "session.state.updated", "params": {"sessionId": "session", "status": "idle"}}]}
@@ -226,3 +230,71 @@ def test_dsh_question_batches_use_existing_publishers_in_order_with_instance_bin
         assert forwarded[1]["params"]["blocking"]["targetId"] == "session"
         assert forwarded[2]["params"]["capabilities"][0]["runtimeId"] == "rti_phone"
     asyncio.run(exercise())
+
+
+def test_snapshot_buffer_reuses_small_objects_and_spills_large_captures_without_jsonl():
+    async def exercise():
+        relay = SyncRelay(Mock(), host())
+        try:
+            small = item()
+            await relay.store_items([small])
+            assert relay.file is None
+            assert (await relay.load_items())[0] is small
+            large = {"payload": "x" * (9 * 1024 * 1024)}
+            await relay.store_items([large])
+            assert relay.file is not None
+            assert relay.items == []
+            assert await relay.load_items() == [small, large]
+            relay.clear_snapshot()
+            assert relay.file is None
+            assert relay.items == []
+            assert relay.item_bytes == 0
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_runtime_is_healthy_only_after_inventory_is_delivered():
+    async def run():
+        receiver = host()
+        relay = SyncRelay(Mock(), receiver)
+        await relay.publish_notification({"method": "session.inventory.begin", "params": {"scanToken": "scan"}})
+        receiver.runtime_health_update.assert_not_awaited()
+        receiver.publish_runtime_notifications.side_effect = RuntimeError("ingest unavailable")
+        complete = {"method": "session.inventory.complete", "params": {"scanToken": "scan", "complete": True, "sessions": []}}
+        with pytest.raises(RuntimeError):
+            await relay.publish_notification(complete)
+        receiver.runtime_health_update.assert_not_awaited()
+        receiver.publish_runtime_notifications.side_effect = None
+        await relay.publish_notification(complete)
+        receiver.runtime_health_update.assert_awaited_once_with("running")
+    asyncio.run(run())
+
+
+def test_inventory_does_not_report_healthy_while_delivery_is_pending_or_incomplete():
+    async def run():
+        receiver = host()
+        relay = SyncRelay(Mock(), receiver)
+        await relay.publish_notification({"method": "session.inventory.complete", "params": {"complete": False}})
+        receiver.runtime_health_update.assert_not_awaited()
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def deliver(*args):
+            entered.set()
+            await release.wait()
+
+        receiver.publish_runtime_notifications.side_effect = deliver
+        task = asyncio.create_task(relay.publish_notification({
+            "method": "session.inventory.complete", "params": {"complete": True, "sessions": []},
+        }))
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            receiver.runtime_health_update.assert_not_awaited()
+            release.set()
+            await asyncio.wait_for(task, 1)
+            receiver.runtime_health_update.assert_awaited_once_with("running")
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await relay.close()
+    asyncio.run(run())

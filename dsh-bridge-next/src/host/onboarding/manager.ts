@@ -131,6 +131,10 @@ export class OnboardingManager {
     }
   }
 
+  unavailableSnapshot(message: string): OnboardingSnapshot {
+    return { ...this.snapshot(), stage: 'error', message, ownership: { status: 'error', message } }
+  }
+
   async inspect(): Promise<OnboardingSnapshot> {
     await this.initialize()
     await this.refreshRole()

@@ -156,7 +156,7 @@ class EmailAccountRepositoryMixin:
         return _user_from_row(row) if valid else None
 
     async def issue_email_code(
-        self, *, email: str, purpose: str, user_id: str = "", ip: str
+        self, *, email: str, purpose: str, user_id: str = ""
     ) -> str:
         email = normalize_email(email)
         if purpose not in {"register", "bind"} or (purpose == "bind" and not user_id):
@@ -171,34 +171,29 @@ class EmailAccountRepositoryMixin:
                 delete(limits_t).where(limits_t.c.window_start < now - 86400)
             )
             # Atomic database counters protect across workers, devices, and restarts.
-            for kind, value, maximum in (("email", email, 10), ("ip", ip, 30)):
-                key = f"{kind}:{hashlib.sha256(value.encode()).hexdigest()}"
-                upsert = (
-                    pg_insert if conn.dialect.name == "postgresql" else sqlite_insert
-                )
+            key = f"email:{hashlib.sha256(email.encode()).hexdigest()}"
+            upsert = pg_insert if conn.dialect.name == "postgresql" else sqlite_insert
+            await conn.execute(
+                upsert(limits_t)
+                .values(key=key, window_start=now, count=0)
+                .on_conflict_do_nothing()
+            )
+            reset = limits_t.c.window_start <= now - RATE_WINDOW
+            row = (
                 await conn.execute(
-                    upsert(limits_t)
-                    .values(key=key, window_start=now, count=0)
-                    .on_conflict_do_nothing()
+                    update(limits_t)
+                    .where(limits_t.c.key == key)
+                    .values(
+                        count=case((reset, 1), else_=limits_t.c.count + 1),
+                        window_start=case((reset, now), else_=limits_t.c.window_start),
+                    )
+                    .returning(limits_t.c.count)
                 )
-                reset = limits_t.c.window_start <= now - RATE_WINDOW
-                row = (
-                    await conn.execute(
-                        update(limits_t)
-                        .where(limits_t.c.key == key)
-                        .values(
-                            count=case((reset, 1), else_=limits_t.c.count + 1),
-                            window_start=case(
-                                (reset, now), else_=limits_t.c.window_start
-                            ),
-                        )
-                        .returning(limits_t.c.count)
-                    )
-                ).first()
-                if row[0] > maximum:
-                    raise EmailRateLimitError(
-                        "too many verification emails; try again later"
-                    )
+            ).first()
+            if row[0] > 10:
+                raise EmailRateLimitError(
+                    "too many verification emails; try again later"
+                )
             upsert = pg_insert if conn.dialect.name == "postgresql" else sqlite_insert
             await conn.execute(
                 upsert(codes_t)

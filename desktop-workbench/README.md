@@ -170,14 +170,14 @@ checks run headlessly without starting Electron or a development server.
 The release build bundles the Connector source and a platform-specific `uv`:
 
 ```bash
-yarn dist:mac               # macOS DMG for the host architecture
+yarn dist:mac               # universal macOS DMG (Apple Silicon + Intel)
 yarn dist:mac --universal   # one DMG for Apple Silicon and Intel
 yarn dist:win               # Windows NSIS installer (x64)
 yarn pack                   # unpacked Electron application
-yarn dist                   # host-platform build without credential handling
+yarn dist                   # host-platform release (universal on macOS)
 ```
 
-`dist:mac` and `dist:win` read the signing environment, run the `uv` bundle and
+`dist`, `dist:mac` and `dist:win` read the signing environment, run the `uv` bundle and
 the app build with those secrets stripped, and hand them to electron-builder
 only. The signing material is therefore never visible to a build or test
 subprocess. Add `--arm64`, `--x64` or `--universal` (macOS) to select the
@@ -356,3 +356,18 @@ expansion persistence, tool cards, file editing safeguards, and terminal restore
 See the [frontend/Desktop handoff](../docs/migrations/main-to-v2/frontend-desktop-follow-up.md)
 for scope and verification. Pairing and mobile login use the selected public
 server address; native renderer URLs are never shared as connection addresses.
+
+### Universal macOS installers
+
+On macOS, `yarn dist` and `yarn dist:mac` build a universal DMG for Apple Silicon
+and Intel by default, bundling uv for both architectures. Explicit `--arm64` or
+`--x64` builds remain available for diagnostics. Both commands use the same
+signing and notarization credential checks.
+
+Use `yarn dist:mac --skip-build` to retry packaging after a completed app build;
+it requires existing compiled output and both uv bundles. Run a full build after
+changing application source. Yarn installs both CPU variants of optional native
+dependencies for universal packaging.
+
+For an offline packaging retry, set `WORKBENCH_ELECTRON_DIST` to a directory
+containing the matching Electron ZIPs for both macOS architectures.

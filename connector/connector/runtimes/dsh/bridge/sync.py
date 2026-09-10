@@ -1,16 +1,29 @@
 from __future__ import annotations
 
 import asyncio
-import json
+import pickle
+import sys
 import tempfile
 from collections.abc import Mapping
+from contextlib import ExitStack
 from typing import Any
 
 from connector.logging import logger
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtime_protocol.models import SessionSourceObservation, SessionSourceState
+from connector.runtime_protocol.models import (
+    SessionSourceObservation,
+    SessionSourceState,
+)
 from connector.runtimes.dsh.bridge.client import BridgeClient
-from connector.runtimes.dsh.bridge.models import capability_set, model_catalog, permission_catalog, notice as session_notice, session_meta, session_state, timeline_item
+from connector.runtimes.dsh.bridge.models import (
+    capability_set,
+    model_catalog,
+    permission_catalog,
+    session_meta,
+    session_state,
+    timeline_item,
+)
+from connector.runtimes.dsh.bridge.models import notice as session_notice
 
 
 class SyncRelay:
@@ -29,6 +42,9 @@ class SyncRelay:
         self.task: asyncio.Task[None] | None = None
         self.snapshot: dict[str, Any] | None = None
         self.file = None
+        self.spool = ExitStack()
+        self.items: list[dict[str, Any]] = []
+        self.item_bytes = 0
         self.item_ids: set[str] = set()
 
     def start(self) -> None:
@@ -54,17 +70,18 @@ class SyncRelay:
         self.clear_snapshot()
 
     def clear_snapshot(self) -> None:
-        if self.file:
-            self.file.close()
+        self.spool.close()
         self.file, self.snapshot = None, None
         self.item_ids.clear()
+        self.items = []
+        self.item_bytes = 0
 
     async def operation(self, op: dict[str, Any]) -> None:
         kind = op.get("kind")
         if kind == "snapshot.begin":
             self.clear_snapshot()
             self.snapshot = op
-            self.file = tempfile.TemporaryFile(mode="w+t", encoding="utf-8")
+
         elif kind in {"snapshot.items", "snapshot.commit", "snapshot.abort"}:
             if not self.snapshot or any(op.get(k) != self.snapshot.get(k) for k in ("snapshotId", "sessionId")):
                 raise ValueError("Snapshot page has a different capture identity")
@@ -74,12 +91,11 @@ class SyncRelay:
                     if item.session_id != op["sessionId"] or item.id in self.item_ids:
                         raise ValueError("Invalid snapshot item identity")
                     self.item_ids.add(item.id)
-                    self.file.write(json.dumps(raw, ensure_ascii=False) + "\n")
+                await self.store_items(op["items"])
             elif kind == "snapshot.commit":
                 if len(self.item_ids) != op.get("totalItems") or op.get("throughSeq") != self.snapshot["throughSeq"]:
                     raise ValueError("Incomplete snapshot; previous backend history remains intact")
-                self.file.seek(0)
-                items = [json.loads(line) for line in self.file]
+                items = await self.load_items()
                 meta = self.snapshot["meta"]
                 # Reuse the existing complete snapshot API only after every page is received.
                 await self.host.publish_runtime_notifications("dsh", [
@@ -100,10 +116,49 @@ class SyncRelay:
         else:
             raise ValueError(f"Unsupported bridge operation: {kind}")
 
+    async def store_items(self, items: list[dict[str, Any]]) -> None:
+        self.item_bytes += object_bytes(items)
+        if self.file is None and self.item_bytes <= 8 * 1024 * 1024:
+            self.items.extend(items)
+            return
+        # Keep only one capture in RAM. Pickle is internal, never accepted from a peer.
+        # Wait for disk work even on cancellation before close_snapshot can close the file.
+        def write() -> None:
+            if self.file is None:
+                self.file = self.spool.enter_context(tempfile.TemporaryFile(mode="w+b"))  # noqa: SIM115 - capture lifetime spans pages
+                pickle.dump(self.items, self.file, protocol=pickle.HIGHEST_PROTOCOL)
+                self.items = []
+            pickle.dump(items, self.file, protocol=pickle.HIGHEST_PROTOCOL)
+        task = asyncio.create_task(asyncio.to_thread(write))
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
+
+    async def load_items(self) -> list[dict[str, Any]]:
+        if self.file is None:
+            return self.items
+        task = asyncio.create_task(asyncio.to_thread(self.read_spool))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
+
+    def read_spool(self) -> list[dict[str, Any]]:
+        self.file.seek(0)
+        items: list[dict[str, Any]] = []
+        while True:
+            try:
+                items.extend(pickle.load(self.file))
+            except EOFError:
+                return items
+
     async def publish_notification(self, notice: dict[str, Any]) -> None:
         method, params = notice.get("method"), notice.get("params")
         if not isinstance(params, dict):
-            raise ValueError("Invalid runtime notification")
+            raise ValueError("Invalid runtime notification")  # noqa: TRY004 - protocol validation error
         # Use the existing typed Host API, just like Codex and Claude. The Host
         # owns instance binding, coalescing, WebSocket delivery and HTTP fallback.
         if method == "timeline.itemUpsert":
@@ -147,6 +202,8 @@ class SyncRelay:
             await self.host.permission_catalog_update(permission_catalog(params))
         elif method in {"session.inventory.begin", "session.inventory.complete"}:
             await self.host.publish_runtime_notifications("dsh", [notice])
+            if method == "session.inventory.complete" and params.get("complete") is True:
+                await self.host.runtime_health_update("running")
         else:
             raise ValueError(f"Unsupported runtime notification: {method}")
 
@@ -157,8 +214,11 @@ class SyncRelay:
                     await self.consume()
                 except asyncio.CancelledError:
                     raise
-                except Exception as error:
-                    logger.warning("DSH event sync interrupted; resubscribing for complete history calibration ({})", type(error).__name__)
+                except Exception as error:  # noqa: BLE001 - isolate and recover a failed feed
+                    logger.warning("DSH event sync interrupted; resubscribing for history calibration ({})", type(error).__name__)
+                    await self.host.runtime_health_update("starting", {
+                        "code": "runtime_sync_interrupted", "message": "DSH 会话同步中断，正在重试…", "retryable": True,
+                    })
                     if not self.client.connected:
                         return
                     self.clear_snapshot()
@@ -172,6 +232,9 @@ class SyncRelay:
         # Subscription replaces only this feed. Concurrent RPC requests keep
         # their connection and are never cancelled by an ingest/sync failure.
         try:
+            await self.host.runtime_health_update("starting", {
+                "code": "runtime_initializing", "message": "正在同步 DSH 会话…", "retryable": True,
+            })
             subscription = await self.client.request("runtime.sync.subscribe")
             if subscription.get("projectionVersion") != 2:
                 raise ValueError("Unsupported DSH projection version")
@@ -193,3 +256,12 @@ class SyncRelay:
                 expected += 1
         finally:
             self.clear_snapshot()
+
+
+def object_bytes(value: Any) -> int:
+    """Conservative retained size for decoded JSON, without serializing it again."""
+    if isinstance(value, dict):
+        return sys.getsizeof(value) + sum(sys.getsizeof(key) + object_bytes(item) for key, item in value.items())
+    if isinstance(value, list):
+        return sys.getsizeof(value) + sum(object_bytes(item) for item in value)
+    return sys.getsizeof(value)

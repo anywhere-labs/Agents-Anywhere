@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
+import type { SessionObservation, SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
 import type { SessionRecord } from '@deepseek-ai/dsh-session-query'
 import { BridgeError } from '../errors.js'
 import { isUserMessage, sessionVisible } from '../visibility.js'
@@ -21,12 +22,64 @@ export class NativeSessionSource {
   private readonly failedReads = new Set<string>()
   readonly records = new Map<string, SessionRecord>()
   private revisions = new Map<string, string>()
+  private initialized = false
+  private refreshing: Promise<void> | undefined
+  private readonly logs = new Map<string, { revision: string, observation: SessionObservation }>()
+  private readonly reads = new Map<string, Promise<SessionLogSnapshot & { bridgeRevision?: string }>>()
+  private closed = false
+
+  async initialize(signal?: AbortSignal): Promise<void> {
+    if (!this.initialized) await this.refresh(signal)
+    signal?.throwIfAborted()
+  }
+
+  private evict(id: string): void {
+    const cached = this.logs.get(id)
+    if (!cached) return
+    this.logs.delete(id)
+    cached.observation[Symbol.dispose]()
+  }
+
+  close(): void {
+    this.closed = true
+    for (const id of this.logs.keys()) this.evict(id)
+  }
+
+  /** Borrow an immutable SDK cut: no corpus preflight, replay clone or JSON round trip. */
+  async readLog(id: SessionId): Promise<SessionLogSnapshot & { bridgeRevision?: string }> {
+    const pending = this.reads.get(id)
+    if (pending) return pending
+    const task = this.loadLog(id)
+    this.reads.set(id, task)
+    try { return await task }
+    finally { if (this.reads.get(id) === task) this.reads.delete(id) }
+  }
+
+  private async loadLog(id: SessionId): Promise<SessionLogSnapshot & { bridgeRevision?: string }> {
+    const revision = await this.freshRevisionOf(id)
+    let cached = this.logs.get(id)
+    if (cached && cached.revision !== revision) { this.evict(id); cached = undefined }
+    let observation = cached?.observation
+    if (!observation) observation = await this.ctx.sessionQuery.observeSession(id, { projectionMode: 'none' })
+    try {
+      // Shallow array ownership only; SDK observation events are immutable.
+      const actualRevision = observation.source === 'live' ? `live:${observation.cursor}` : revision
+      const log = { ...(actualRevision === undefined ? {} : { bridgeRevision: actualRevision }), session: observation.header, inheritedEventCount: observation.inheritedEventCount,
+        events: [...observation.events] }
+      if (!cached && !this.closed && actualRevision !== undefined) {
+        // Do not associate a newer live cut with an older event cursor.
+        this.logs.set(id, { revision: actualRevision, observation: observation.retain() })
+      }
+      return log
+    } finally { if (!cached) observation[Symbol.dispose]() }
+  }
 
   constructor(private ctx: Context, private diagnostics: RuntimeDiagnostics = quietDiagnostics) {
     this.archived = new Set(ctx.workspaceRegistry.archivedSessionIds)
   }
 
   observe(session: Session, event?: SessionEvent): void {
+    this.evict(session.id)
     this.retry(session.id)
     // Retain the identity even if the session leaves memory before the feed consumes it.
     this.records.set(session.id, { header: session.header, live: true, persisted: this.records.get(session.id)?.persisted ?? false })
@@ -37,12 +90,19 @@ export class NativeSessionSource {
   }
 
   async refresh(signal?: AbortSignal): Promise<void> {
+    // All callers share one refresh; one caller's cancellation cannot cancel other readers.
+    this.refreshing ??= this.refreshRecords().finally(() => { this.refreshing = undefined })
+    await this.refreshing
+    signal?.throwIfAborted()
+  }
+
+  private async refreshRecords(signal?: AbortSignal): Promise<void> {
     const previous = new Map(this.records)
     const entries = await this.diagnostics.measure('inventory.query', {}, () => this.ctx.sessionQuery.listSessions(signal))
     signal?.throwIfAborted()
-    // Cheap per-log identities keep repeated visibility checks from re-reading
-    // histories that did not change.
-    this.revisions = await this.logRevisions(signal)
+    // Explicit refresh invalidates retained observations; routine reads use initialize().
+    this.revisions.clear()
+    for (const id of this.logs.keys()) this.evict(id)
     // A new inventory is an explicit opportunity to retry transient failures.
     this.failedReads.clear()
     const listed = new Set<string>(entries.map(entry => entry.header.id))
@@ -59,34 +119,27 @@ export class NativeSessionSource {
       if (!current || current === previous.get(entry.header.id)) this.records.set(entry.header.id, entry)
     }
     this.archived = new Set(this.ctx.workspaceRegistry.archivedSessionIds)
+    this.initialized = true
   }
 
   /** Identity of one log as observed by the last inventory; absent when it is not persisted. */
   revisionOf(id: string): string | undefined {
     const live = this.ctx.sessions.get(id as SessionId)
-    if (live !== undefined) return `live:${live.snapshotEvents().at(-1)?.seq ?? -1}`
+    if (live !== undefined) return `live:${Number(live.seq) - 1}`
     return this.revisions.get(id)
   }
 
   /** Fresh identity of one log, including work that happened after the last inventory. */
   async freshRevisionOf(id: string): Promise<string | undefined> {
     const live = this.ctx.sessions.get(id as SessionId)
-    if (live !== undefined) return `live:${live.snapshotEvents().at(-1)?.seq ?? -1}`
-    return (await this.logRevisions()).get(id)
-  }
-
-  private async logRevisions(signal?: AbortSignal): Promise<Map<string, string>> {
-    const persistence = this.ctx.get('sessionPersistence')
-    if (persistence === undefined) return new Map()
+    if (live !== undefined) return `live:${Number(live.seq) - 1}`
     try {
-      const snapshots = await persistence.listSnapshots(signal)
-      return new Map(snapshots.map(snapshot => [snapshot.header.id, String(snapshot.revision)]))
-    } catch (error) {
-      if (signal?.aborted) signal.throwIfAborted()
-      // Revisions only accelerate reads; an unavailable backend must not fail inventory.
-      this.diagnostics.log('warn', 'inventory.revision_failed', {}, error)
-      return new Map()
-    }
+      const snapshot = await this.ctx.get('sessionPersistence')?.stat(id as SessionId)
+      if (!snapshot) { this.revisions.delete(id); return undefined }
+      const revision = String(snapshot.revision)
+      this.revisions.set(id, revision)
+      return revision
+    } catch { this.revisions.delete(id); return undefined }
   }
 
   candidates(): string[] { return [...new Set([...this.records.keys(), ...this.archived])] }
@@ -103,13 +156,13 @@ export class NativeSessionSource {
     if (this.failedReads.has(id)) return false
     if (!this.withUserMessages.has(id)) {
       if (!live && this.records.get(id)?.persisted === false) return false
-      const revision = this.revisionOf(id)
+      const revision = await this.freshRevisionOf(id)
       // A blank verdict is cached only for the exact log it was read from: a
       // later first message changes that identity and forces a fresh read.
       if (revision === undefined || this.emptyLogs.get(id) !== revision) {
         let events: readonly SessionEvent[]
         try {
-          events = live?.snapshotEvents() ?? (await this.diagnostics.measure('session.visibility_read', { sessionId: id }, () => this.ctx.sessionQuery.readSession(id as SessionId))).events
+          events = live?.snapshotEvents() ?? (await this.diagnostics.measure('session.visibility_read', { sessionId: id }, () => this.readLog(id as SessionId))).events
         } catch (error) {
           if (error instanceof Error && error.name === 'AbortError') throw error
           // One unreadable history must not take down inventory or the event stream.

@@ -40,7 +40,7 @@ test('one corrupt persisted session does not break inventory, healthy streaming 
   const native = fixture.ctx.agentsAnywhereRuntime.native
   const id = SessionId('persisted-only')
   const entry = (await fixture.ctx.sessionQuery.listSessions()).find(item => item.header.id === id)!
-  const path = fixture.ctx.sessionPersistence.locate(entry.header)!.path
+  const path = ({ path: (await (fixture.ctx.sessionPersistence as import('@deepseek-ai/dsh-session-persistence-jsonl').default).resolveCurrentLog(entry.header.id))! }).path
   const original = await readFile(path)
   // A committed turn with a sequence gap reproduces the official reader failure.
   const corrupt = Buffer.concat([original, Buffer.from(`${JSON.stringify({ seq: 1004, time: Date.now(), type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } })}\n`)])
@@ -448,4 +448,26 @@ test('official native loop crosses Python and backend despite corrupt history, i
     })
     assert.match(result.stdout, /DSH event pipeline passed/)
   } finally { closed = true; adapter.release?.(); await mutations; await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+
+test('a replacement feed reuses startup checkpoints and snapshots only offline changes', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-checkpoints-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  let stream = follow(native)
+  try {
+    await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'first inventory')
+    assert.equal(stream.ops().filter(op => op.kind === 'snapshot.commit').length, 2)
+    stream.feed.close()
+    stream = follow(native)
+    await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'unchanged reconnect')
+    assert.equal(stream.ops().filter(op => op.kind === 'snapshot.begin').length, 0)
+    stream.feed.close()
+    fixture.session.append('session/title', { title: 'changed offline', source: { kind: 'user' }, messageSeqs: [] })
+    stream = follow(native)
+    await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'changed reconnect')
+    assert.deepEqual(stream.ops().filter(op => op.kind === 'snapshot.commit').map(op => op.sessionId), [sessionId('test', 'native-main')])
+    assert.deepEqual(stream.errors, [])
+  } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })

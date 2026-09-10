@@ -68,6 +68,9 @@ jobs:
           uv sync --project server
       - name: Install plugin dependencies
         working-directory: dsh-bridge-next
+        env:
+          # Validate explicitly pinned DSH release candidates immediately after publication.
+          YARN_NPM_MINIMAL_AGE_GATE: "0"
         run: corepack yarn install
       - name: Typecheck, build and test plugin
         working-directory: dsh-bridge-next
@@ -84,6 +87,7 @@ jobs:
         run: >-
           uv run --frozen pytest
           tests/test_attachment_mime_policy.py
+          tests/test_static_path_safety.py
           tests/test_session_refresh_lock.py
           tests/test_session_inventory.py
           tests/test_connector_deletion.py

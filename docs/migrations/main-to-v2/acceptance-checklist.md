@@ -1,5 +1,7 @@
 # v2 迁移验收 Checklist
 
+> 历史迁移资料：本文描述早期 v2 基线，不代表 2.0.0 当前状态。文中的 `main` 指旧版主线；当前数据库、Redis、客户端状态及升级步骤以[当前升级指南](../../upgrading.md)和[发布说明](../../releases/2.0.0.md)为准。
+
 每个必需项都必须为 release candidate 提供证据。只有写清 owner 和原因时，才能把某一项标记为不适用。
 
 ## 基线和 artifacts

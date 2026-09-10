@@ -216,7 +216,6 @@ async def send_email_code(
         user_id = user.userId if payload.purpose == "bind" else ""
         code = await db.issue_email_code(
             email=email, purpose=payload.purpose, user_id=user_id,
-            ip=request.client.host if request.client else "unknown",
         )
     except ValueError as exc:
         raise _value_error_to_http(exc) from exc

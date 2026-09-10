@@ -20,6 +20,16 @@ export async function nativeRuntime(home: string, beforeHost?: (ctx: Context) =>
   try {
     await ctx.plugin(SessionStore).await()
     await ctx.plugin(JsonlPersistence, { root: join(home, 'native-sessions'), compression: 'none' }).await()
+    // rc.1 persists through Agent-owned handles. Seed-only sessions have no Agent.
+    const flush = ctx.sessions.flush.bind(ctx.sessions)
+    ctx.sessions.flush = async session => {
+      await flush(session)
+      if (session && !await ctx.sessionPersistence.stat(session.id)) {
+        const handle = await ctx.sessionPersistence.create(session.header)
+        try { await handle.append(session.snapshotEvents()); await handle.flush() }
+        finally { await handle.close() }
+      }
+    }
     const query = ctx.plugin(SqliteQuery, { path: ':memory:', openAt: 'never' })
     await query.await()
     await ctx.plugin(Storage).await()
@@ -32,7 +42,7 @@ export async function nativeRuntime(home: string, beforeHost?: (ctx: Context) =>
     const user = session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: '读取当前目录' }] }), { surfaceOp: 'append' })
     session.append('session/title', { title: '官方原生会话', source: { kind: 'user' }, messageSeqs: [user.seq] })
     const callId = ToolCallId('native-bash')
-    session.append('assistant/message', { turn: 1, step: 1, message: createAssistantMessage({
+    session.append('assistant/message', { turn: 1, step: 1, stream: [], message: createAssistantMessage({
       source: { provider: 'test', model: 'test' },
       content: [{ type: 'reasoning', text: '先查看目录' }, { type: 'text', text: '我来读取。' }, { type: 'tool-call', id: callId, name: 'bash', arguments: '{"command":"pwd"}' }],
     }) }, { surfaceOp: 'append' })

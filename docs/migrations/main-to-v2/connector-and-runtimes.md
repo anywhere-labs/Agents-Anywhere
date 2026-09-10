@@ -1,5 +1,7 @@
 # 连接器和运行时迁移
 
+> 历史迁移资料：本文描述早期 v2 基线，不代表 2.0.0 当前状态。文中的 `main` 指旧版主线；当前数据库、Redis、客户端状态及升级步骤以[当前升级指南](../../upgrading.md)和[发布说明](../../releases/2.0.0.md)为准。
+
 v2 Connector 用 typed runtime 协议替换了 `main` 的 adapter registry，并把 transport、runtime 和 local operation 代码拆成单向依赖的层。
 
 ## 架构映射

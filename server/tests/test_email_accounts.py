@@ -241,15 +241,15 @@ def test_incorrect_attempt_budget_survives_resend(email_env):
     assert email_register(client, email, code=sent[-1][1]).status_code == 200
 
 
-def test_send_limits_cover_email_and_client_ip(email_env):
+def test_send_limits_are_per_email_not_shared_client_ip(email_env):
     client, _admin, _sent, clock = email_env
     for _ in range(10):
         assert code_request(client, "repeated@example.test").status_code == 200
         clock[0] += 61
     assert code_request(client, "repeated@example.test").status_code == 429
-    for index in range(20):
+    for index in range(35):
         assert code_request(client, f"person{index}@example.test").status_code == 200
-    assert code_request(client, "over-limit@example.test").status_code == 429
+    assert code_request(client, "over-limit@example.test").status_code == 200
 
 
 def test_delivery_failure_never_leaves_usable_code(email_env, monkeypatch):

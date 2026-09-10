@@ -53,3 +53,22 @@ test('bridge log rotation and bounded reads retain recent entries and tolerate p
     assert.equal(JSON.parse(result.entries.at(-1)!.details).seq, 209)
   } finally { await rm(root, { recursive: true, force: true }) }
 })
+
+test('log summaries expose the RPC method and distinguish rejection from completion', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'aa-log-summary-'))
+  try {
+    const log = new RuntimeDiagnostics(undefined, root)
+    log.log('debug', 'rpc.completed', { method: 'session.getState' })
+    log.log('warn', 'rpc.rejected', { method: 'session.send' })
+    log.log('debug', 'session.read.started')
+    await log.flush()
+    const first = await readBridgeLogs(root)
+    assert.deepEqual(first.entries.map(entry => [entry.method, entry.outcome]), [
+      ['session.getState', 'success'], ['session.send', 'failure'], ['session.read', 'pending'],
+    ])
+    log.log('info', 'bridge.listening')
+    await log.flush()
+    const second = await readBridgeLogs(root)
+    assert.deepEqual(second.entries.slice(0, 3).map(entry => entry.id), first.entries.map(entry => entry.id))
+  } finally { await rm(root, { recursive: true, force: true }) }
+})

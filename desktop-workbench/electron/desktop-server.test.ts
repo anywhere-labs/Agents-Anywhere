@@ -35,6 +35,7 @@ test("health checks the selected backend without sending credentials", async () 
   await checkDesktopServer(server, async (url, init) => {
     assert.equal(url, "https://self.example/api/v2/health");
     assert.equal(init?.credentials, "omit");
+    assert.equal(init?.cache, "no-store");
     assert.equal(init?.redirect, "error");
     assert.equal(new Headers(init?.headers).has("authorization"), false);
     return Response.json({ status: "ok" });

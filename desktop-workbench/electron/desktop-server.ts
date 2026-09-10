@@ -72,6 +72,7 @@ export async function checkDesktopServer(
     const response = await fetcher(`${server.serverUrl}${server.apiNamespace}/health`, {
       headers: { accept: "application/json" },
       credentials: "omit",
+      cache: "no-store",
       redirect: "error",
       signal: controller.signal,
     });

@@ -69,7 +69,8 @@ test('RPC failures, oversized frames, cancellation and timeout preserve other re
     assert.equal(failed.error.data.retryable, true)
     assert.ok(!JSON.stringify(failed).includes('PRIVATE_NATIVE_CONTENT'))
     readFailed = false
-    assert.equal((await wire.rpc('session.getState', { externalSessionId: 'fail' })).result.status, 'idle')
+    const retried = await wire.rpc('session.getState', { externalSessionId: 'fail' })
+    assert.equal(retried.result?.status, 'idle', JSON.stringify(retried))
     assert.equal((await wire.rpc('unknown.method')).error.data.code, 'METHOD_NOT_FOUND')
     wire.socket.write('{broken json}\n')
     assert.equal((await wire.rpc('ping')).result.ok, true)
@@ -102,7 +103,7 @@ test('a failed sync subscription leaves RPC connected and can be replaced on the
   const native = fixture.ctx.agentsAnywhereRuntime.native
   const inventory = native.inventory.bind(native)
   let broken = true
-  native.inventory = async signal => { if (broken) throw new Error('temporary inventory failure'); return inventory(signal) }
+  native.inventory = async (signal, visit) => { if (broken) throw new Error('temporary inventory failure'); return inventory(signal, visit) }
   const server = new RuntimeServer(join(home, 'rpc/endpoint.json'), { native,
     query: { listSessions: signal => native.inventory(signal), readSession: id => native.read(id),
       readTitleSnapshots: (...args) => fixture.ctx.sessionQuery.readTitleSnapshots(...args) }, status: id => native.status(id) })

@@ -26,10 +26,13 @@ from connector.runtime_protocol import (
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.logging import logger
 from connector.runtimes.dsh import discovery, provider_config
-from connector.runtimes.dsh.attachments import staged_images
+from connector.runtimes.dsh.attachments import staged_attachments
 from connector.runtimes.dsh.bridge import models
 from connector.runtimes.dsh.bridge.client import BridgeClient, BridgeRpcError
 from connector.runtimes.dsh.bridge.sync import SyncRelay
+
+
+BRIDGE_POLL_INTERVAL_SECONDS = 5.0
 
 
 class DshRuntime(AgentRuntime):
@@ -76,7 +79,22 @@ class DshRuntime(AgentRuntime):
 
     async def start(self) -> None:
         self._stopping = False
-        await self._ensure_client()
+        await self.host.runtime_health_update("starting", {
+            "code": "runtime_initializing", "message": "正在连接 DSH 并同步会话…", "retryable": True,
+        })
+        try:
+            await self._ensure_client()
+        except (OSError, RuntimeError, ValueError):
+            with suppress(Exception):
+                await self.host.runtime_health_update(
+                    "starting",
+                    {
+                        "code": "runtime_unavailable",
+                        "message": "正在等待本地 DSH Bridge；请启动 DSH 并启用手机连接插件。",
+                        "retryable": True,
+                    },
+                )
+            self._schedule_restart()
 
     async def stop(self) -> None:
         self._stopping = True
@@ -316,9 +334,9 @@ class DshRuntime(AgentRuntime):
         if attachments:
             capability_set = _object(await self._request("runtime.getCapabilities"))
             if not provider_config.dsh_capabilities(capability_set)["attachments"]:
-                raise RuntimeUnsupportedError("This DSH Bridge does not support image attachments")
+                raise RuntimeUnsupportedError("This DSH Bridge does not support attachments")
         directory = provider_config.endpoint_path(dict(self.config.values)).parent
-        async with staged_images(self.host, session_id, attachments, directory) as images:
+        async with staged_attachments(self.host, session_id, attachments, directory) as images:
             if images:
                 params["attachments"] = images
             payload = _object(await self._request(method, params))
@@ -381,13 +399,14 @@ class DshRuntime(AgentRuntime):
             self._client = client
             self._sync_mode = "events" if result.get("features", {}).get("syncMode") == "events" else "polling"
             if self._sync_mode == "events":
+                await self.host.runtime_health_update("starting", {
+                    "code": "runtime_initializing", "message": "正在同步 DSH 会话…", "retryable": True,
+                })
                 self._sync = SyncRelay(client, self.host)
                 self._sync.start()
-            # Recovery after a dropped bridge: the first start is already
-            # reported by the supervisor, and an instance without a live
-            # runtime ignores this hint.
-            with suppress(Exception):
-                await self.host.runtime_health_update("running")
+            else:
+                with suppress(Exception):
+                    await self.host.runtime_health_update("running")
         except BaseException:
             await client.close()
             raise
@@ -472,25 +491,36 @@ class DshRuntime(AgentRuntime):
                 "error",
                 {
                     "code": "runtime_unavailable",
-                    "message": "DSH 已断开，请重新启动 DSH 并启用手机连接插件。",
+                    "message": "DSH 已断开，正在等待本地 Bridge 恢复；请确认 DSH 和手机连接插件已启动。",
                     "retryable": True,
                 },
             )
-        if self._restart_task is None or self._restart_task.done():
+        self._schedule_restart()
+
+    def _schedule_restart(self) -> None:
+        if not self._stopping and (self._restart_task is None or self._restart_task.done()):
             self._restart_task = asyncio.create_task(self._restart_loop())
 
     async def _restart_loop(self) -> None:
         values = provider_config.normalized_config_values(dict(self.config.values))
-        for attempt in range(int(values["maxRestartAttempts"])):
+        fast_attempts = int(values["maxRestartAttempts"])
+        attempt = 0
+        while not self._stopping:
+            if self._client is not None and self._client.connected:
+                return
+            delay = BRIDGE_POLL_INTERVAL_SECONDS
+            if attempt < fast_attempts:
+                delay = min(int(values["restartBackoffMs"]) / 1000 * 2**attempt, delay)
+            await asyncio.sleep(delay)
             if self._stopping:
                 return
-            await asyncio.sleep(int(values["restartBackoffMs"]) / 1000 * 2**attempt)
             try:
+                # Re-read endpoint.json on every attempt: DSH can restart on a new port.
                 await self._ensure_client()
                 return
-            except (
-                Exception
-            ):  # A later user request can retry after this bounded recovery loop.
+            except Exception:
+                attempt = min(attempt + 1, fast_attempts)
+                # Stay quiet while offline; the exit handler already published health.
                 continue
 
 
