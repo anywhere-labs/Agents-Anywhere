@@ -54,6 +54,13 @@ export class NativeRuntime {
   private closed = false
   private creations: CreationIntents
   readonly images: RuntimeImages
+  // Successful feed checkpoints live only for this Host process. A new Host imports everything.
+  private readonly syncCheckpoints = new Map<string, Map<string, string>>()
+  checkpoints(namespace: string): Map<string, string> {
+    let checkpoints = this.syncCheckpoints.get(namespace)
+    if (!checkpoints) { checkpoints = new Map(); this.syncCheckpoints.set(namespace, checkpoints) }
+    return checkpoints
+  }
   private readonly facts = new Map<string, { revision: string, value: SessionFacts }>()
 
   constructor(readonly ctx: Context, creationDirectory: string,
@@ -69,7 +76,7 @@ export class NativeRuntime {
         child.effect(() => () => this.emit({ type: 'capabilities' }), 'runtime.configuration-capabilities')
       })
     }
-    this.presence = new ClientPresence(() => this.emit({ type: 'visibility' }))
+    this.presence = new ClientPresence(() => {})
     this.source = new NativeSessionSource(ctx, diagnostics)
     this.questions = new UserQuestions(ctx, id => this.visible(id), id => this.emit(id ? { type: 'question', id } : { type: 'capabilities' }))
     ctx.on('session/created', session => {
@@ -102,7 +109,10 @@ export class NativeRuntime {
     this.listeners.add(callback)
     return () => this.listeners.delete(callback)
   }
-  refresh(id: string): void { this.source.retry(id); this.emit({ type: 'refresh', id }) }
+  refresh(id: string): void {
+    for (const checkpoints of this.syncCheckpoints.values()) checkpoints.delete(id)
+    this.source.retry(id); this.emit({ type: 'refresh', id })
+  }
   private emit(change: NativeChange): void {
     for (const listener of this.listeners) {
       try { listener(change) } catch { /* Feed owns its error/recovery channel. */ }
@@ -129,23 +139,26 @@ export class NativeRuntime {
       ...(catalog ? { modelCatalogFailures: catalog.metadata.failures } : {}) } }
   }
   candidates(): string[] { return this.source.candidates() }
-  async inventory(signal?: AbortSignal): Promise<SessionRecord[]> {
-    await this.source.refresh(signal)
+  async inventory(signal?: AbortSignal, visit?: (entry: SessionRecord) => Promise<void>): Promise<SessionRecord[]> {
+    await this.source.initialize(signal)
     const result: SessionRecord[] = []
     // Concurrent detail reads may refresh the source map while visibility awaits I/O.
     // Capture this inventory once so pagination cannot repeat reinserted records.
     for (const entry of [...this.source.records.values()]) {
       signal?.throwIfAborted()
-      if (await this.visible(entry.header.id)) result.push(entry)
+      if (await this.visible(entry.header.id)) {
+        result.push(entry)
+        await visit?.(entry)
+      }
     }
     this.diagnostics.log('info', 'inventory.completed', { candidates: this.source.records.size, visible: result.length, archived: this.source.archived.size })
     return result
   }
   visible(id: string): Promise<boolean> { return this.source.visible(id) }
-  /** Refresh the corpus only when this identity was never observed. */
+  /** Resolve the startup inventory once; native events maintain it afterwards. */
   async ensureKnown(id: string, signal?: AbortSignal): Promise<void> {
     if (this.source.records.has(id) || this.ctx.sessions.get(id as SessionId) !== undefined) return
-    await this.source.refresh(signal)
+    await this.source.initialize(signal)
   }
   /**
    * Read the configuration facts of one session.
@@ -161,14 +174,16 @@ export class NativeRuntime {
       if (cached !== undefined && cached.revision === revision) return cached.value
     }
     const live = this.ctx.sessions.get(id)
-    const snapshot = live !== undefined ? undefined : await this.ctx.sessionQuery.readSession(id)
+    const snapshot = live !== undefined ? undefined : await this.source.readLog(id)
     const configuration = await this.configuration.state(id, snapshot)
     const events = live?.snapshotEvents() ?? snapshot!.events
     const value: SessionFacts = {
       configuration,
       lastTurnEndKind: lastTurnEndKind(events),
     }
-    if (revision !== undefined) this.facts.set(id, { revision, value })
+    if (revision !== undefined) {
+      this.facts.delete(id); this.facts.set(id, { revision, value })
+    }
     return value
   }
   async read(id: SessionId): Promise<AttachmentSnapshot> {
@@ -176,7 +191,7 @@ export class NativeRuntime {
     let snapshot: AttachmentSnapshot
     try {
       snapshot = await this.diagnostics.measure('session.read', { sessionId: id }, async () => ({
-        ...await this.ctx.sessionQuery.readSession(id), attachmentReceipts: await this.images.readReceipts(id),
+        ...await this.source.readLog(id), attachmentReceipts: await this.images.readReceipts(id),
       }))
     } catch (error) {
       if (!(error instanceof Error && error.name === 'AbortError')) this.source.markReadFailed(id)
@@ -193,12 +208,12 @@ export class NativeRuntime {
       throw new BridgeError('INVALID_PARAMS', 'A text message and stable client message ID are required.')
     }
     await this.write(id, signal, async () => {
-      await this.source.refresh()
+      await this.source.initialize(signal)
       if (!create || this.source.archived.has(id)) await this.source.requireAvailable(id)
       const live = this.ctx.get('agents')?.get(id)
-      const exists = live || !create || (await this.ctx.sessionQuery.listSessions()).some(r => r.header.id === id)
+      const exists = live || !create || this.source.records.has(id)
       const log = live ? { session: live.session.header, events: live.session.snapshotEvents() }
-        : exists ? await this.ctx.sessionQuery.readSession(id) : undefined
+        : exists ? await this.source.readLog(id) : undefined
       if (create && log && (log.session.origin === 'subagent' || this.source.archived.has(id))) throw new BridgeError('SESSION_NOT_FOUND', 'The session is not visible in DSH.')
       if (!create && !await this.visible(id)) throw new BridgeError('SESSION_NOT_FOUND', 'The session is not visible in DSH.')
       const messageId = userMessageId(id, requestId)
@@ -258,7 +273,7 @@ export class NativeRuntime {
 
   async updateSelections(id: SessionId, selections: Selections, signal: AbortSignal) {
     return this.write(id, signal, async () => {
-      await this.source.refresh()
+      await this.source.initialize(signal)
       await this.source.requireAvailable(id)
       await this.configuration.validate(selections)
       const agent = await this.configuration.agent(id)
@@ -286,8 +301,11 @@ export class NativeRuntime {
   async close(): Promise<void> {
     this.closed = true
     this.presence.close()
+    this.source.close()
     await this.questions.close()
     this.listeners.clear()
     await Promise.allSettled([...this.writes.values()])
+    this.facts.clear()
+    this.syncCheckpoints.clear()
   }
 }

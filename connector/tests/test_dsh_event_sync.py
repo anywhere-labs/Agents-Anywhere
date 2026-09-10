@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from connector.runtime_protocol import RuntimeInstanceHost, RuntimeInstanceSpec, timeline_content_hash
+from connector.runtime_protocol import (
+    RuntimeInstanceHost,
+    RuntimeInstanceSpec,
+    timeline_content_hash,
+)
 from connector.runtimes.dsh.bridge.sync import SyncRelay
 from connector.runtimes.dsh.runtime import DshRuntime
 from connector.server.runtime_host import ConnectorRuntimeHost
@@ -225,4 +229,26 @@ def test_dsh_question_batches_use_existing_publishers_in_order_with_instance_bin
         assert forwarded[1]["params"]["source"]["runtimeId"] == "rti_phone"
         assert forwarded[1]["params"]["blocking"]["targetId"] == "session"
         assert forwarded[2]["params"]["capabilities"][0]["runtimeId"] == "rti_phone"
+    asyncio.run(exercise())
+
+
+def test_snapshot_buffer_reuses_small_objects_and_spills_large_captures_without_jsonl():
+    async def exercise():
+        relay = SyncRelay(Mock(), host())
+        try:
+            small = item()
+            await relay.store_items([small])
+            assert relay.file is None
+            assert (await relay.load_items())[0] is small
+            large = {"payload": "x" * (9 * 1024 * 1024)}
+            await relay.store_items([large])
+            assert relay.file is not None
+            assert relay.items == []
+            assert await relay.load_items() == [small, large]
+            relay.clear_snapshot()
+            assert relay.file is None
+            assert relay.items == []
+            assert relay.item_bytes == 0
+        finally:
+            await relay.close()
     asyncio.run(exercise())

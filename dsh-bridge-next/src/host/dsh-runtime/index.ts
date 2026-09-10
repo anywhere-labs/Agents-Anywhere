@@ -1,3 +1,4 @@
+import { foldSessionTitle } from '@deepseek-ai/dsh-session-title'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session-query'
@@ -29,7 +30,19 @@ export class DshRuntimeService extends Service {
     this.server = new RuntimeServer(join(home, 'agents-anywhere', 'bridge', 'endpoint.json'), {
       native: this.native,
       query: { listSessions: signal => this.native.inventory(signal), readSession: id => this.native.read(id),
-        readTitleSnapshots: (...args) => ctx.sessionQuery.readTitleSnapshots(...args) },
+        readTitleSnapshots: async (ids, signal) => {
+          const results: Awaited<ReturnType<typeof ctx.sessionQuery.readTitleSnapshots>> = []
+          for (const id of new Set(ids)) {
+            signal?.throwIfAborted()
+            try {
+              const log = await this.native.source.readLog(id)
+              const title = foldSessionTitle(log.events)
+              results.push({ sessionId: id, status: 'fulfilled', value: { session: log.session, ...(title ? { title } : {}) } })
+            } catch (reason) { results.push({ sessionId: id, status: 'rejected', reason }) }
+          }
+          signal?.throwIfAborted()
+          return results
+        } },
       status: id => this.native.status(id),
     }, this.diagnostics)
     ctx.effect(() => async () => {

@@ -449,3 +449,25 @@ test('official native loop crosses Python and backend despite corrupt history, i
     assert.match(result.stdout, /DSH event pipeline passed/)
   } finally { closed = true; adapter.release?.(); await mutations; await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })
+
+
+test('a replacement feed reuses startup checkpoints and snapshots only offline changes', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-checkpoints-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  let stream = follow(native)
+  try {
+    await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'first inventory')
+    assert.equal(stream.ops().filter(op => op.kind === 'snapshot.commit').length, 2)
+    stream.feed.close()
+    stream = follow(native)
+    await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'unchanged reconnect')
+    assert.equal(stream.ops().filter(op => op.kind === 'snapshot.begin').length, 0)
+    stream.feed.close()
+    fixture.session.append('session/title', { title: 'changed offline', source: { kind: 'user' }, messageSeqs: [] })
+    stream = follow(native)
+    await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'changed reconnect')
+    assert.deepEqual(stream.ops().filter(op => op.kind === 'snapshot.commit').map(op => op.sessionId), [sessionId('test', 'native-main')])
+    assert.deepEqual(stream.errors, [])
+  } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})

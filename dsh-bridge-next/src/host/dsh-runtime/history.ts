@@ -1,3 +1,4 @@
+import { setImmediate as yieldLoop } from 'node:timers/promises'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { receiptKey, type AttachmentSnapshot, type ImageReceipt } from './attachments.js'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
@@ -13,6 +14,13 @@ export function createProjection(externalId: string, platformId: string) {
   const items = new Map<string, TimelineItem>()
   const steps = new Map<string, number>()
   const drafts = new Map<string, Map<number, { block: ContentBlock, seq: number, event: SessionEvent }>>()
+  const pendingDrafts = new Map<string, Map<number, { block: ContentBlock, seq: number, event: SessionEvent }>>()
+  function flushDrafts(): void {
+    for (const [key, values] of pendingDrafts) for (const [index, value] of values) {
+      block(value.block, key, index, value.event, 'assistant', 'running', value.seq)
+    }
+    pendingDrafts.clear()
+  }
   let turnId: string | null = null
   let turnStart = -1
   let nextOrder = 0
@@ -93,6 +101,7 @@ export function createProjection(externalId: string, platformId: string) {
     if (Number(event.seq) <= throughSeq) return
     if (throughSeq >= 0 && Number(event.seq) !== throughSeq + 1) throw new Error('DSH event sequence gap')
     throughSeq = Number(event.seq)
+    if (event.type !== 'assistant/chunk') flushDrafts()
     const data = record(event.data)
     const eventType: string = event.type
     const stepKey = `${String(data.turn)}:${String(data.step)}`
@@ -155,7 +164,9 @@ export function createProjection(externalId: string, platformId: string) {
       if (value) {
         const anchor = previous?.seq ?? Number(event.seq)
         values.set(chunk.index, { block: value, seq: anchor, event })
-        block(value, key, chunk.index, event, 'assistant', 'running', anchor)
+        const pending = pendingDrafts.get(key) ?? new Map()
+        pending.set(chunk.index, { block: value, seq: anchor, event })
+        pendingDrafts.set(key, pending)
       }
     } else if (event.type === 'assistant/message') {
       const key = `${turnStart}:${steps.get(stepKey) ?? stepKey}`
@@ -204,12 +215,14 @@ export function createProjection(externalId: string, platformId: string) {
   return {
     apply,
     get throughSeq() { return throughSeq },
-    get dirty() { return changed.size > 0 || removed.size > 0 },
+    get dirty() { return pendingDrafts.size > 0 || changed.size > 0 || removed.size > 0 },
     snapshot: () => {
+      flushDrafts()
       flushHashes()
       return [...items.values()].sort((a, b) => a.orderSeq - b.orderSeq || a.id.localeCompare(b.id))
     },
     drain() {
+      flushDrafts()
       flushHashes()
       const delta = { items: [...changed.values()], removed: [...removed] }
       changed.clear(); removed.clear()
@@ -223,5 +236,25 @@ export type SessionProjection = ReturnType<typeof createProjection>
 export function projectHistory(snapshot: AttachmentSnapshot, platformId: string): TimelineItem[] {
   const projection = createProjection(snapshot.session.id, platformId)
   for (const event of snapshot.events) projection.apply(event, snapshot.attachmentReceipts?.[receiptKey(event) ?? ''])
+  return projection.snapshot()
+}
+
+/** Bound replay slices so timers, control RPC and cancellation can run between them. */
+export async function replayHistory(projection: SessionProjection, snapshot: AttachmentSnapshot, signal?: AbortSignal): Promise<void> {
+  let deadline = performance.now() + 5
+  for (let index = 0; index < snapshot.events.length; index++) {
+    if (index % 128 === 0 && performance.now() >= deadline) {
+      await yieldLoop(undefined, { signal })
+      deadline = performance.now() + 5
+    }
+    signal?.throwIfAborted()
+    const event = snapshot.events[index]!
+    projection.apply(event, snapshot.attachmentReceipts?.[receiptKey(event) ?? ''])
+  }
+}
+
+export async function projectHistoryAsync(snapshot: AttachmentSnapshot, platformId: string, signal?: AbortSignal): Promise<TimelineItem[]> {
+  const projection = createProjection(snapshot.session.id, platformId)
+  await replayHistory(projection, snapshot, signal)
   return projection.snapshot()
 }

@@ -1,3 +1,4 @@
+import { jsonBytes } from './json-size.js'
 import { randomUUID } from 'node:crypto'
 import { parseImages } from './attachments.js'
 import type { SessionId } from '@deepseek-ai/dsh-session'
@@ -5,7 +6,7 @@ import type { SessionQueryEngine, SessionRecord } from '@deepseek-ai/dsh-session
 import { capabilities } from './capabilities.js'
 import { BridgeError, publicError } from './errors.js'
 import { parseSelections } from './selections.js'
-import { projectHistory } from './history.js'
+import { projectHistoryAsync } from './history.js'
 import { sessionId, nativeSessionId } from './identity.js'
 import type { NativeRuntime } from './native.js'
 import { lastTurnEndKind } from './native.js'
@@ -185,14 +186,15 @@ export class RuntimeRouter {
         throw new BridgeError('INVALID_PARAMS', 'The session does not belong to this runtime namespace.')
       }
       if (this.reader.native && !includeUnavailable) {
+        await this.reader.native.ensureKnown(externalId, signal)
         this.reader.native.source.retry(externalId)
         await this.reader.native.source.requireAvailable(externalId)
       }
       return externalId as SessionId
     }
     if (typeof params.sessionId !== 'string' || !params.sessionId) throw new BridgeError('INVALID_PARAMS', 'A session identity is required.')
-    if (includeUnavailable && this.reader.native) await this.reader.native.source.refresh(signal)
-    const ids = includeUnavailable && this.reader.native ? this.reader.native.candidates()
+    if (this.reader.native) await this.reader.native.source.initialize(signal)
+    const ids = this.reader.native ? this.reader.native.candidates()
       : (await this.reader.query.listSessions(signal)).map(item => item.header.id)
     const id = ids.find(id => sessionId(this.namespace, id) === params.sessionId)
     if (!id) throw new BridgeError('SESSION_NOT_FOUND', 'The DSH session is not visible.')
@@ -264,7 +266,7 @@ export class RuntimeRouter {
       const log = this.reader.native ? await this.reader.native.read(id) : await this.reader.query.readSession(id)
       signal.throwIfAborted()
       const platformId = sessionId(this.namespace, id)
-      const all = projectHistory(log, platformId)
+      const all = await projectHistoryAsync(log, platformId, signal)
       const limit = integer(params.limit, Math.max(all.length, 1), 1_000_000)
       const values = all.slice(-limit)
       const seq = Number(log.events.at(-1)?.seq ?? -1)
@@ -275,7 +277,7 @@ export class RuntimeRouter {
     const items: TimelineItem[] = []
     let bytes = 0
     for (const item of page.values.slice(offset, offset + 1000)) {
-      const size = Buffer.byteLength(JSON.stringify(item)) + 1
+      const size = jsonBytes(item) + 1
       if (size > 7 * 1024 * 1024) throw new BridgeError('FRAME_TOO_LARGE', 'One DSH history item exceeds the transport limit.')
       if (bytes + size > 7 * 1024 * 1024) break
       bytes += size
