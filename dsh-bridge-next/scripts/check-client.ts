@@ -101,7 +101,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
         assert.equal(channel, '/api')
         calls.push({ endpoint, payload })
         if (endpoint.endsWith('/readBridgeLogs')) return failLogs ? { ok: false, error: { message: 'read failed' } } : {
-          ok: true, value: { updatedAt: new Date().toISOString(), entries: [{ time: new Date().toISOString(),
+          ok: true, value: { updatedAt: new Date().toISOString(), entries: [{ id: 'fixture-read-failure', outcome: 'failed', time: new Date().toISOString(),
             level: 'error', event: 'session.visibility_read.failed', details: '{"sessionId":"native-test","errorCode":"PERSISTENCE_ERROR"}' }] },
         }
         if (endpoint.endsWith('/inspect')) {
@@ -290,7 +290,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.match(dialog()!.textContent!, /Connector运行中/)
     assert.equal(dialog()!.querySelector('[data-state]')?.getAttribute('data-state'), 'done')
     assert.doesNotMatch(dialog()!.textContent!, /连接手机|继续设置|连接服务器|浏览器没有打开|登录 Agents Anywhere Cloud|OR/)
-    assert.deepEqual(Array.from(dialog()!.querySelectorAll('button')).map(element => element.textContent).filter(Boolean), ['登录和连接', '设置', '桥接日志', '打开 Web', '手机连接', '退出登录'])
+    assert.deepEqual(Array.from(dialog()!.querySelectorAll('button')).map(element => element.textContent).filter(Boolean), ['登录和连接', '设置', '运行日志', '打开 Web', '手机连接', '退出登录'])
     const avatarImage = dialog()!.querySelector('img')!
     assert.equal(avatarImage.getAttribute('src'), avatar)
     await act(async () => { avatarImage.dispatchEvent(new dom.window.Event('error')) })
@@ -423,10 +423,10 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang|打开 Web|退出登录|登录 Agents Anywhere Cloud/)
     assert.ok(button('重新检查'))
     // Diagnostics must stay accessible when installation/ownership inspection fails.
-    await act(async () => { button('桥接日志').click() })
+    await act(async () => { button('运行日志').click() })
     assert.match(dialog()!.textContent!, /session.visibility_read.failed/)
     assert.match(dialog()!.textContent!, /native-test/)
-    assert.equal(dialog()!.querySelector('[role="tabpanel"]')?.getAttribute('aria-labelledby'), button('桥接日志').id)
+    assert.equal(dialog()!.querySelector('[role="tabpanel"]')?.getAttribute('aria-labelledby'), button('运行日志').id)
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang|benson@example/)
     await act(async () => { button('暂停刷新').click() })
     const pausedReads = calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length
@@ -434,7 +434,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length, pausedReads)
     failLogs = true
     await act(async () => { button('刷新').click() })
-    assert.match(dialog()!.textContent!, /暂时无法读取桥接日志/)
+    assert.match(dialog()!.textContent!, /运行日志读取失败/)
     assert.match(dialog()!.textContent!, /native-test/, 'Failed refresh keeps the last successful logs')
     failLogs = false
     await act(async () => { button('刷新').click(); button('继续刷新').click() })
@@ -453,16 +453,16 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       await reopen()
       assert.ok(calls.filter(call => call.endpoint.endsWith('/inspect')).length > readsBefore, 'Every opening must perform a fresh detection')
       assert.equal(dialog()!.getAttribute('aria-label'), '手机连接')
-      assert.match(dialog()!.textContent!, /检测到本机已安装 Agents Anywhere 桌面端，请点击下面按钮在 Agents Anywhere 进行配置。/)
+      assert.match(dialog()!.textContent!, /已安装 Agents Anywhere 桌面端。请打开桌面端完成连接设置。/)
       assert.equal(dialog()!.querySelector('input, img, form, a'), null)
       assert.doesNotMatch(dialog()!.textContent!, /BensonWang|账号信息|Connector|打开 Web|退出登录|登录 Agents Anywhere Cloud/)
       assert.equal(dialog()!.querySelectorAll('button').length, 5, 'Desktop handoff keeps the open action and bridge diagnostics')
     }
     const openBefore = calls.filter(call => call.endpoint.endsWith('/openDesktop')).length
-    await act(async () => { button('打开 Agents Anywhere 进行配置').click() })
+    await act(async () => { button('打开 Agents Anywhere').click() })
     assert.equal(calls.filter(call => call.endpoint.endsWith('/openDesktop')).length, openBefore + 1)
     failOpenDesktop = true
-    await act(async () => { button('打开 Agents Anywhere 进行配置').click() })
+    await act(async () => { button('打开 Agents Anywhere').click() })
     assert.match(dialog()!.textContent!, /无法打开 Agents Anywhere 桌面端/)
     failOpenDesktop = false
     assert.equal(calls.filter(call => /\/(begin|logout|cancel)$/.test(call.endpoint)).length, actionsBeforeDesktop)
@@ -474,22 +474,22 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     inspectGate = new Promise(resolve => { releaseInspection = resolve })
     snapshot = { ...signedInSnapshot, desktop: installed }
     await reopen()
-    assert.match(dialog()!.textContent!, /正在检查本机桌面端/)
+    assert.match(dialog()!.textContent!, /正在检查连接方式/)
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang|登录 Agents Anywhere Cloud|已安装桌面端/)
     await act(async () => { releaseInspection() })
     inspectGate = null
-    assert.match(dialog()!.textContent!, /检测到本机已安装 Agents Anywhere 桌面端/)
+    assert.match(dialog()!.textContent!, /已安装 Agents Anywhere 桌面端/)
 
     // A response from an earlier, closed opening must not overwrite the current mode.
     inspectGate = new Promise(resolve => { releaseInspection = resolve })
     snapshot = signedInSnapshot
     await reopen()
-    assert.match(dialog()!.textContent!, /正在检查本机桌面端/)
+    assert.match(dialog()!.textContent!, /正在检查连接方式/)
     inspectGate = null
     snapshot = { ...signedInSnapshot, desktop: installed }
     await reopen()
     await act(async () => { releaseInspection() })
-    assert.match(dialog()!.textContent!, /检测到本机已安装 Agents Anywhere 桌面端/)
+    assert.match(dialog()!.textContent!, /已安装 Agents Anywhere 桌面端/)
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang/)
 
     snapshot = { ...signedInSnapshot, desktop: { status: 'error', message: '安装记录无法读取。' } }
