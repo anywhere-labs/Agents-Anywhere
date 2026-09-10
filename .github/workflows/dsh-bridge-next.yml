@@ -68,6 +68,9 @@ jobs:
           uv sync --project server
       - name: Install plugin dependencies
         working-directory: dsh-bridge-next
+        env:
+          # Validate explicitly pinned DSH release candidates immediately after publication.
+          YARN_NPM_MINIMAL_AGE_GATE: "0"
         run: corepack yarn install
       - name: Typecheck, build and test plugin
         working-directory: dsh-bridge-next
