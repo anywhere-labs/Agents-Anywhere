@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>连接工作设备，在桌面、手机和 Web 管理 AI Agent。</strong><br>
-  开源 · 多 Runtime · 会话与工作区 · 自托管
+  开源 · 多种 Agent · 会话与工作区 · 自托管
 </p>
 
 <p align="center">
@@ -21,11 +21,11 @@
   <a href="docker/README.md"><img src="https://img.shields.io/badge/self--hosted-Docker-222222?style=flat" alt="Self-host with Docker"></a>
 </p>
 
-**Agents Anywhere** 是连接多个 Agent 与设备的开源工作台。继续使用熟悉的 **Codex、Claude Code 和 DeepSeek Harness**，在同一处管理项目、跟进会话、查看工作区，并在关键步骤接管。任务在连接的工作设备上执行，手机、平板和浏览器让你随时回到现场。
+**Agents Anywhere** 是跨设备的开源 Agent 工作台。连接运行 **Codex、Claude Code 或 DeepSeek Harness** 的工作设备，在桌面、手机和 Web 查看会话、回复请求、管理文件与终端。Agent 在连接的工作设备上执行任务。
 
 ## 下载与入口
 
-选择工作设备上的桌面客户端，再带上手机端。也可以直接使用 Web，或连接自己的服务。
+在工作设备上安装桌面客户端，再通过手机、平板或 Web 访问。Linux 和无图形界面的服务器可使用 Connector CLI 接入。各客户端均可连接 Cloud 或自托管服务。
 
 **直接使用 Web：** 打开 [web.agents-anywhere.com](https://web.agents-anywhere.com)，注册或登录，开始使用。服务器位于中国大陆，在中国大陆使用可获得最佳体验。
 
@@ -65,12 +65,12 @@ macOS、Windows 和 Android 的下载文件均为 **Agents Anywhere** 安装包�
 
 | 你想做的事 | 在 Agents Anywhere 中 |
 | --- | --- |
-| **让多个项目一起推进** | 在设备、项目和会话之间切换，查看运行进度与实时 Timeline。 |
-| **关键步骤亲自决定** | 响应工具审批和输入请求；按 Runtime 能力打断或继续任务。 |
-| **回到任务发生的现场** | 浏览与预览文件、上传下载附件，打开远程 shell 和交互式终端。 |
-| **沿用熟悉的 Agent** | 配置 Codex、Claude Code 和 DSH；按各 Runtime 的有效能力选择模型、权限与操作。 |
+| **管理项目与会话** | 在设备、项目和会话之间切换，通过时间线（Timeline）查看运行进度。 |
+| **审批操作与回复请求** | 响应工具审批和输入请求；按 Runtime 能力打断或继续任务。 |
+| **查看文件与使用终端** | 浏览与预览文件、上传下载附件，打开远程 shell 和交互式终端。 |
+| **配置 Agent** | 配置 Codex、Claude Code 和 DSH；根据对应 Runtime 支持的能力选择模型、权限与操作。 |
 
-模型账号和调用费用仍遵循所使用 Agent 的规则。各 Runtime 的能力存在差异，具体操作以客户端显示为准。[DSH 接入说明 →](dsh-bridge-next/README.md)
+Runtime 是工作设备上运行和连接 Agent 的组件。模型账号和调用费用遵循所使用 Agent 的规则。各 Runtime 的能力存在差异，具体操作以客户端显示为准。[DSH 接入说明 →](dsh-bridge-next/README.md)
 
 ## 桌面、移动端与 Web
 
@@ -84,16 +84,16 @@ macOS、Windows 和 Android 的下载文件均为 **Agents Anywhere** 安装包�
 
 ## 首次使用
 
-1. **选一个入口。** 安装客户端或打开 Web，登录 Cloud，或填写自托管服务地址。
+1. **登录服务。** 安装客户端或打开 Web，登录 Cloud，或填写自托管服务地址。
 2. **连接工作设备。** Desktop 集成本机 Connector；服务器与无图形环境使用 [Connector CLI](connector/README.md)。
 3. **准备 Agent 和项目。** 在工作设备上配置 Runtime、账号与工作目录，创建或打开会话。
-4. **换一块屏幕继续。** 在手机、平板或另一台电脑登录同一服务和账号，访问自己的设备与任务。
+4. **从其他设备访问。** 在手机、平板或另一台电脑登录同一服务和账号，访问自己的设备与任务。
 
 详细配对步骤、登录排查和后台运行说明见[安装与首次使用](docs/getting-started.md)。
 
 ## 执行位置与自托管
 
-Agent 使用 Connector 所在机器的工作区与权限。可以选择 Cloud，也可以把控制面部署在自己的基础设施上。
+Agent 使用 Connector 所在机器的工作区与权限。可以连接 Cloud，也可以在自己的服务器上部署 Agents Anywhere 服务。
 
 ```mermaid
 flowchart LR
@@ -103,7 +103,7 @@ flowchart LR
     Connector <--> Workspace["工作区 · 文件 · 终端"]
 ```
 
-本地执行不等于所有数据都留在设备上。会话内容、Timeline 和上传附件等数据会按功能流经或存储在 Server。
+会话内容、Timeline 和上传附件等数据会按功能经过或存储在 Server。自托管时，这些服务端数据由你部署的实例处理。
 
 <a id="自托管快速开始"></a>
 
@@ -123,7 +123,7 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 
 <a id="架构与源码"></a>
 
-## 为开发者准备的入口
+## 开发与贡献
 
 开发环境使用 **Python 3.12+ / uv / Node.js 22 / Corepack + Yarn**。从[开发指南](docs/development.md)开始，查看源码运行方式与 headless 检查。
 
@@ -148,7 +148,7 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 | --- | --- | --- | --- |
 | <img src="docs/contact/wechat-beta.png" alt="微信群二维码" width="160"> | <img src="docs/contact/feishu-beta.jpeg" alt="飞书群二维码" width="160"> | <img src="docs/contact/qq-beta.jpeg" alt="QQ 群二维码" width="160"> | <img src="docs/contact/discord-beta.jpeg" alt="Discord 社区二维码" width="160"> |
 
-Cloud 服务器位于中国大陆，在中国大陆使用可获得最佳体验。也欢迎通过 Discord 参与国际社区交流。
+也欢迎通过 Discord 参与国际社区交流。
 
 ## 开源许可
 

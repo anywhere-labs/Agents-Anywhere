@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>Connect your work machines. Manage AI agents from desktop, mobile and Web.</strong><br>
-  Open source · Multiple runtimes · Sessions and workspaces · Self-hosting
+  Open source · Multiple agents · Sessions and workspaces · Self-hosting
 </p>
 
 <p align="center">
@@ -21,11 +21,11 @@
   <a href="docker/README.md"><img src="https://img.shields.io/badge/self--hosted-Docker-222222?style=flat" alt="Self-host with Docker"></a>
 </p>
 
-**Agents Anywhere** is an open-source workbench for your agents and devices. Keep using **Codex, Claude Code and DeepSeek Harness** while managing projects, following conversations, inspecting workspaces and taking over when needed. Tasks run on the connected work machine; your phone, tablet and browser keep you close to the work.
+**Agents Anywhere** is an open-source agent workbench across your devices. Connect a work machine running **Codex, Claude Code or DeepSeek Harness**, then view sessions, respond to requests, manage files and use terminals from desktop, mobile and Web. Agents execute tasks on the connected work machine.
 
 ## Downloads and access
 
-Choose a desktop client for your work machine, then take the mobile client with you. You can also use Web or connect to a self-hosted service.
+Install the desktop client on your work machine, then access it from your phone, tablet or Web. Use the Connector CLI to connect Linux and headless servers. Each client can connect to Cloud or a self-hosted service.
 
 **Use Web directly:** open [web.agents-anywhere.com](https://web.agents-anywhere.com) and sign up or sign in to get started. Servers are hosted in mainland China, where users can expect the best connection experience.
 
@@ -65,12 +65,12 @@ The macOS, Windows and Android files are **Agents Anywhere** installers hosted i
 
 | What you want to do | In Agents Anywhere |
 | --- | --- |
-| **Move several projects forward** | Switch between devices, projects and sessions, and follow progress through live timelines. |
-| **Make the important decisions** | Respond to approvals and input requests; interrupt or continue tasks where the runtime supports it. |
-| **Inspect the work itself** | Browse and preview files, upload and download attachments, and open remote shells and interactive terminals. |
-| **Keep your familiar agents** | Configure Codex, Claude Code and DSH; choose models, permissions and actions from each runtime's effective capabilities. |
+| **Manage projects and sessions** | Switch between devices, projects and sessions, and follow progress through live timelines. |
+| **Approve actions and respond to requests** | Respond to approvals and input requests; interrupt or continue tasks where the runtime supports it. |
+| **Browse files and use terminals** | Browse and preview files, upload and download attachments, and open remote shells and interactive terminals. |
+| **Configure agents** | Configure Codex, Claude Code and DSH; choose models, permissions and actions from the capabilities each runtime supports. |
 
-Model accounts and usage charges follow the rules of the agent you use. Capabilities vary by runtime; follow the options shown in the client. [Connect DSH →](dsh-bridge-next/README.md)
+A runtime is the component that runs or connects an agent on your work machine. Model accounts and usage charges follow the rules of the agent you use. Capabilities vary by runtime; follow the options shown in the client. [Connect DSH →](dsh-bridge-next/README.md)
 
 ## Desktop, mobile and Web
 
@@ -84,16 +84,16 @@ Check progress and reply from your phone, open the workspace on your tablet, the
 
 ## First use
 
-1. **Choose an entry point.** Install a client or open Web. Sign in to Cloud or enter your self-hosted service address.
+1. **Sign in to a service.** Install a client or open Web. Sign in to Cloud or enter your self-hosted service address.
 2. **Connect your work machine.** Desktop includes a managed local Connector; servers and headless machines use the [Connector CLI](connector/README.md).
 3. **Prepare your agent and project.** Configure the runtime, account and working directory on that machine, then open or create a session.
-4. **Continue on another screen.** Sign in to the same service and account from your phone, tablet or another computer.
+4. **Access from another device.** Sign in to the same service and account from your phone, tablet or another computer.
 
 See [Getting started](docs/getting-started.md) for pairing steps, login troubleshooting and background operation.
 
 ## Execution and self-hosting
 
-Agents use the workspace and permissions of the Connector machine. Use Cloud or deploy the control plane on your own infrastructure.
+Agents use the workspace and permissions of the Connector machine. Connect to Cloud or deploy the Agents Anywhere service on your own server.
 
 ```mermaid
 flowchart LR
@@ -103,7 +103,7 @@ flowchart LR
     Connector <--> Workspace["Workspace · Files · Terminal"]
 ```
 
-Local execution does not mean that all data stays on the device. Session content, timelines and uploaded attachments may pass through or be stored by Server.
+Session content, timelines and uploaded attachments may pass through or be stored by Server. With self-hosting, your instance handles this server-side data.
 
 <a id="self-hosting-quickstart"></a>
 
@@ -148,7 +148,7 @@ Join the community to share your experience, report problems or contribute. Scan
 | --- | --- | --- | --- |
 | <img src="docs/contact/wechat-beta.png" alt="WeChat community QR code" width="160"> | <img src="docs/contact/feishu-beta.jpeg" alt="Feishu community QR code" width="160"> | <img src="docs/contact/qq-beta.jpeg" alt="QQ community QR code" width="160"> | <img src="docs/contact/discord-beta.jpeg" alt="Discord community QR code" width="160"> |
 
-Cloud servers are hosted in mainland China, where users can expect the best connection experience. Discord is also available for international community discussion.
+Discord is also available for international community discussion.
 
 ## License
 
