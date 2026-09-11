@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import os
 import time
 from dataclasses import dataclass, field
@@ -23,7 +24,6 @@ from starlette.requests import HTTPConnection
 from agent_server.core.auth import (
     DEFAULT_EXPIRES_IN,
     create_connector_access_token,
-    verify_connector_access_token,
 )
 from agent_server.core.models import (
     ConnectorAuthResponse,
@@ -325,7 +325,10 @@ async def connector_auth(
     if not await db.verify_connector_token(connector_id, token):
         raise HTTPException(status_code=401, detail="invalid connector credential")
     return ConnectorAuthResponse(
-        accessToken=create_connector_access_token(connector_id),
+        accessToken=create_connector_access_token(
+            connector_id,
+            credential_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+        ),
         expiresIn=DEFAULT_EXPIRES_IN,
     )
 
@@ -341,8 +344,7 @@ async def connector_ingest(
     db: Store = Depends(get_store),
     ingest_service: ConnectorIngestService = Depends(get_connector_ingest_service),
 ) -> ConnectorIngestResponse:
-    connector_id = _connector_id_from_bearer(authorization)
-    await _require_active_connector(connector_id, db)
+    connector_id = await _require_active_connector(authorization, db)
     try:
         return await ingest_service.ingest(connector_id=connector_id, payload=payload)
     except NotificationValidationError as exc:
@@ -369,8 +371,7 @@ async def connector_attachment_content(
       X-File-Name      original upload filename
       X-File-Sha256    sha256 hex of the bytes in the body
     """
-    connector_id = _connector_id_from_bearer(authorization)
-    await _require_active_connector(connector_id, db)
+    connector_id = await _require_active_connector(authorization, db)
     await db.record_connector_activity(connector_id)
     try:
         data, metadata = await attachments.read_connector_attachment(
@@ -401,8 +402,7 @@ async def connector_fs_transfer_upload(
     db: Store = Depends(get_store),
     downloads: FsDownloadRelayManager = Depends(get_fs_downloads),
 ) -> dict[str, str]:
-    connector_id = _connector_id_from_bearer(authorization)
-    await _require_active_connector(connector_id, db)
+    connector_id = await _require_active_connector(authorization, db)
     await db.record_connector_activity(connector_id)
     transfer = await downloads.get(transfer_id, token)
     if transfer is None or transfer.connector_id != connector_id:
@@ -437,13 +437,9 @@ async def connector_ws(
     ),
 ) -> None:
     auth_header = websocket.headers.get("authorization")
-    connector_id = _connector_id_from_bearer(auth_header)
-    if connector_id is None:
-        await websocket.close(code=1008)
-        return
     try:
-        await db.get_connector(connector_id)
-    except KeyError:
+        connector_id = await _require_active_connector(auth_header, db)
+    except HTTPException:
         await websocket.close(code=1008, reason="invalid connector access token")
         return
 
@@ -835,20 +831,11 @@ def _parse_connector_authorization(authorization: str) -> tuple[str, str]:
     return connector_id, token
 
 
-def _connector_id_from_bearer(authorization: str | None) -> str | None:
+async def _require_active_connector(authorization: str | None, db: Store) -> str:
     prefix = "Bearer "
     if authorization is None or not authorization.startswith(prefix):
-        return None
-    return verify_connector_access_token(authorization[len(prefix) :])
-
-
-async def _require_active_connector(connector_id: str | None, db: Store) -> str:
+        raise HTTPException(status_code=401, detail="invalid connector access token")
+    connector_id = await db.authenticate_connector_access(authorization[len(prefix) :])
     if connector_id is None:
         raise HTTPException(status_code=401, detail="invalid connector access token")
-    try:
-        await db.get_connector(connector_id)
-    except KeyError:
-        raise HTTPException(
-            status_code=401, detail="invalid connector access token"
-        ) from None
     return connector_id

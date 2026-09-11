@@ -19,15 +19,26 @@ def _secret() -> bytes:
     return value.encode("utf-8")
 
 
-def create_connector_access_token(connector_id: str, expires_in: int = DEFAULT_EXPIRES_IN) -> str:
+def create_connector_access_token(
+    connector_id: str,
+    expires_in: int = DEFAULT_EXPIRES_IN,
+    *,
+    credential_hash: str,
+) -> str:
     expires_at = int(time.time()) + expires_in
-    payload = f"{connector_id}:{expires_at}"
+    payload = f"{connector_id}:{expires_at}:{credential_hash}"
     sig = hmac.new(_secret(), payload.encode("utf-8"), hashlib.sha256).digest()
     encoded_sig = base64.urlsafe_b64encode(sig).decode("ascii").rstrip("=")
     return f"{connector_id}.{expires_at}.{encoded_sig}"
 
 
-def verify_connector_access_token(token: str) -> str | None:
+def connector_access_token_id(token: str) -> str | None:
+    """Read the lookup key only; callers must authenticate against its credential."""
+    parts = token.split(".")
+    return parts[0] if len(parts) == 3 and parts[0] else None
+
+
+def verify_connector_access_token(token: str, *, credential_hash: str) -> str | None:
     try:
         connector_id, expires_at_text, received_sig = token.split(".", 2)
         expires_at = int(expires_at_text)
@@ -37,7 +48,7 @@ def verify_connector_access_token(token: str) -> str | None:
     if expires_at < int(time.time()):
         return None
 
-    payload = f"{connector_id}:{expires_at}"
+    payload = f"{connector_id}:{expires_at}:{credential_hash}"
     expected_sig = base64.urlsafe_b64encode(
         hmac.new(_secret(), payload.encode("utf-8"), hashlib.sha256).digest()
     ).decode("ascii").rstrip("=")
