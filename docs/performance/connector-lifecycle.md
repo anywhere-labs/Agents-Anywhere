@@ -1,164 +1,151 @@
-# Connector lifecycle repair
+# 连接端生命周期修复与会话性能验证报告
 
-Baseline: `06f1f241`. Work continues on `codex/session-pipeline-performance`.
+本轮修复位于 `codex/session-pipeline-performance` 分支，生命周期问题的对照基线为 `06f1f241`，修复代码和 PostgreSQL 验证材料截至 `20d2c808`。代码已提交并推送，尚未部署线上。前一阶段的连接端、服务端、进程池和网页优化见[会话处理全链路性能报告](session-pipeline.md)。
 
-Local replay against the real services and private SQLite databases confirmed:
+本轮已修复删除、撤销凭证、运行配置清理和断线恢复中的旧任务问题，并减少未变化会话的重复处理。**这些结果不能证明线上 CPU 问题已经全部解决：空标题会话的逐条补查、工作台全量快照和逐会话能力发布仍有成本。**
 
-- Deleting a connector with 500 queued source observations still ran all 500
-  handlers, executed 4,500 SELECTs and formatted 500 tracebacks.
-- After revocation and reconnection, an old queued `idle` event overwrote the
-  new connection's `running` state and removed its active run.
-- Clearing a runtime configuration deleted its sessions, but queued metadata
-  recreated a session while that runtime remained stopped and unconfigured.
-- A disconnect timeout after database deletion skipped buffer/cache cleanup;
-  retrying deletion returned 404. The existing timeline sweeper reclaimed the
-  orphaned pending write, but did not remove the runtime-state cache entry.
-- A previously issued access token still performed a successful HTTP ingest
-  after credential rotation. Tokens did not bind to the rotated credential.
+本次中文修订参考了用户提供的修复前报告，并按用户要求调整八核部署连接预算：保留每个服务进程默认 `10 + 20` 的连接池，将 PostgreSQL 连接上限默认配置为 200。下文性能数字仍是此前实测记录，此次配置调整没有经过新的系统压测或线上部署。
 
-Repair order:
+## 一、与修复前外部报告的对照
 
-1. Bind access tokens to the current credential and invalidate old connection
-   work, including queued and running notification tasks.
-2. Coordinate runtime cleanup with notification admission and session creation.
-3. Make deletion cleanup retryable and preserve recovery of accepted writes.
-4. Remove unchanged per-session scanner observations where complete inventory
-   already records them; then optimize remaining repeated session work.
+参考材料为用户提供的《Agents Anywhere 压测 CPU 100% 故障定位与系统级优化测试方案（修订版）》。其中的生产数据量、15 秒采样百分比、291 次查询及延迟数字属于外部记录；本轮没有取得对应的原始采样文件、完整慢查询记录和生产配置，不把这些数字当作当前版本实测。
 
-The baseline unchanged scan of 200 imported sessions executed 1,802 SQL
-statements and constructed 600 SessionViews. Replaying only the existing
-inventory begin/complete protocol executed three SQL statements, constructed no
-SessionViews and produced identical persisted session rows. This is evidence
-for the scanner change, not a production throughput estimate.
+| 外部报告提出的问题或方案 | 当前代码与配置的核对结果 | 状态 |
+| --- | --- | --- |
+| 多个服务进程放大数据库连接池 | 此前八核覆盖配置把应用连接预算收紧为 32；本次按用户要求保留每进程默认 10 + 20，4 个进程合计最多 120，并把 PostgreSQL 默认上限配置为 200 | 已调整仓库配置，实际连接占用及数据库承载能力待压测 |
+| 空标题会话逐条查询首条用户消息 | 完整清单仍逐条构造会话；标题为空时单独补查，查无结果时没有记录已查状态 | **尚未修复，静态代码确认仍有重复查询风险** |
+| 工作台全量快照重复构造 | 同一服务进程内，同一次通知的订阅者已共享快照构造，积压的刷新请求合并为最新一次 | 部分完成，没有固定 500～1,000 毫秒防抖窗口 |
+| 每个心跳都触发工作台全量广播 | 当前普通心跳处理记录活跃状态后返回空处理结果；是否广播根据具体处理结果决定 | 不能直接把修复前的触发频率套用到当前版本 |
+| 完整会话清单只加载最近 50 条 | 完整清单仍用于整个工作区分组；另有独立分页接口，但完整清单没有被截断 | 未采用直接截断，需要配套分页或增量协议 |
+| 每次重连遍历全部会话发布能力 | 已共享能力正文解析与索引，仍有逐会话版本屏障、在线状态及版本标记检查 | 部分完成；200 个会话的 PostgreSQL 回放仍有 803 次 SELECT |
+| 旧连接清理慢导致重连冲突 | 已增加任务取消、有限时间内处理已接收消息、连接所有权校验，并让两端先启动消息读取 | 已修复并回归；生产重连频率与拒绝比例待观测 |
+| 新增首条用户消息复合索引 | 当前已有会话排序等索引，本轮没有新增报告建议的索引 | 待采集对应计划并比较读取收益、索引大小及写入成本 |
+| 开启 uvloop | 本轮没有新增 `uvicorn[standard]` 依赖或强制切换事件循环 | 未作为本轮优化采用 |
+| 接入延迟低于 20 毫秒、整机负载 40%～60% | 属于外部报告的预期目标，与本地会话扫描回放不是同一口径 | 尚未验证 |
 
-Normal connection shutdown must retain accepted timeline persistence/recovery.
-Explicit deletion, revocation and replacement must prevent old work from
-overwriting the new owner. Equal-version stored-content comparison remains
-required. Process counts and a passing ordinary deletion test do not establish
-these race guarantees; targeted interleaving and cross-worker tests are needed.
+### “空标题”与“空对话”的区别
 
-No production deployment is part of this repair checkpoint.
+这里准确描述的是**标题字段为空的会话**，不能据此判定它没有聊天记录。
 
+[会话数据访问代码](../../server/agent_server/infra/repositories/sessions.py)中的 `_session_from_row` 遇到空标题，就调用 `_derive_title_from_first_user_message` 查询第一条用户消息。如果取得可用文本，会生成标题并尝试保存；如果没有用户消息或没有可用文本，就继续保留空标题，后续读取时再查一次。
 
-## Implemented behavior
+因此，有消息但尚未生成标题的会话，以及确实还没有用户消息的会话，都可能走这条路径。外部报告中“734 个空标题会话”不能直接改写为“734 个空对话”。具体分布需要查询数据库，本次没有重新统计生产数据。
 
-The follow-up remains on `codex/session-pipeline-performance`.
+静态核对还发现，读取时会把纯空白字符串视为空标题，写回条件却只匹配 `NULL` 或空字符串。这种判空差异也可能导致派生标题未能保存，后续继续补查，应与批量查询一起处理。
 
-- Access-token signatures are bound to the current long-lived credential hash.
-  Rotation immediately invalidates already-issued HTTP and WebSocket tokens.
-- HTTP admission, WebSocket registration, deletion and rotation share a Connector
-  lifecycle lock across workers. WebSocket session lanes still run concurrently.
-- A connection owns its notification consumer. Deletion/revocation cancels and
-  awaits active handlers and queued lanes before releasing ownership. Cancellation
-  while waiting for a concurrency slot also retires the pending counter.
-- An ordinary disconnect with a valid lease stops RPC routing, reserves the lease
-  while accepted work drains (up to 10 seconds), then releases it. Shutdown uses
-  the same bounded drain. Expired/lost ownership cancels old work and triggers
-  reconnect recovery; old cleanup cannot unregister a replacement connection.
-- Both sides start the WebSocket reader before noncritical capability/recovery
-  work. The Connector watches heartbeat failure and invalidates a failed sender,
-  so the next notification cannot wait forever on an abandoned send queue.
-- The Connector keeps failed HTTP batches across transient network errors,
-  408/429/5xx and cancellation of the flush worker. Later live notifications and
-  scanner snapshots do not overtake the fallback backlog. The waiting queue has
-  capacity 1,024, plus a batch of up to 64; producers wait when it fills.
-- RPC responses are bound to the connection generation that admitted the request.
-  A late old response cannot be sent through a replacement socket.
-- Reconnect requests event-runtime resynchronization and one recovery scan for
-  polling runtimes, including sessions whose local marker is unchanged. Failed
-  scans remain eligible for retry; active snapshots merge instead of replacing
-  the live timeline. Ordinary subsequent scans return to the unchanged fast path.
-- Connector deletion retains a revoked tombstone until external cleanup finishes.
-  A bounded background sweep retries explicit pending deletions every 30 seconds,
-  including after restart. It does not purge legacy revoked credentials.
-- Runtime configuration deletion first stops the native runtime, then quiesces
-  its notifications. A persisted runtime epoch fences old WebSocket jobs and HTTP
-  fallback batches even after reconfiguration. The Connector binds that epoch to
-  the immutable runtime host; reusing the same config with a new epoch creates a
-  fresh native runtime. Other runtimes on the connection remain available.
-- Runtime deletion attempts file cleanup before clearing terminal/cache state;
-  pending timeline work is flushed before discard so a later database failure
-  does not lose accepted content. The database and cleanup IDs remain retryable.
+### 需要校正的推断
 
-## Measured source-update improvements
+1. `4 × (10 + 20) = 120` 是应用连接池上限，不是启动后立即建立 120 个连接。连接池按需创建连接，实际使用量取决于并发请求。[SQLAlchemy 连接池说明](https://docs.sqlalchemy.org/en/20/core/pooling.html)
+2. PostgreSQL 的连接上限通常默认为 100，但生产有效值需要实际查询。增加上限可以扩大连接容量，同时也会提高部分资源分配；是否足够承载查询，需要结合真实占用与数据库负载判断。[PostgreSQL 连接配置说明](https://www.postgresql.org/docs/17/runtime-config-connection.html)
+3. 若一次请求串行产生 291 条查询，8 次请求可以合计产生 2,328 条查询；总数不能直接等同于 2,328 条 SQL 同时执行，也不能仅凭表大小认定每次都是全表扫描。应结合活动查询、连接数、等待事件和执行计划判断。
+4. 进程数不等于 CPU 专属配额。当前 4 个服务进程加 4 个计算子进程共享宿主机资源，容器上限为 8 核，没有给数据库和 Redis 预留固定核心。
+5. `statement_timeout` 超时会中止语句，`idle_in_transaction_session_timeout` 处理事务中空闲过久的连接。两者不能替代查询优化和死锁分析；本轮没有照搬外部报告中的全局超时和内存参数。[PostgreSQL 超时参数说明](https://www.postgresql.org/docs/17/runtime-config-client.html)
 
-The isolated headless replay uses real repository, ingest, queue and delete code
-against temporary SQLite, with 200 unchanged imported sessions. The source state,
-reason and observation origin are unchanged. Timing is a warm median of three
-runs, not a production throughput estimate. SQL counts here exclude HTTP admission
-and authentication, which run once per request/batch.
+调用栈采样百分比可能包含嵌套调用，不能简单相加为互斥的 CPU 占比。本文对剩余工作的判断来自当前代码和已有回放，生产影响比例需要新的采样确认。
 
-| Path | SQL statements | SessionView constructions | Event-loop CPU | Wall time |
+## 二、修复前已复现的问题
+
+使用真实服务代码和独立 SQLite 测试库，确认了以下问题：
+
+- 删除连接端时，积压的 500 条来源状态通知仍全部执行，产生 4,500 次 SELECT 和 500 个异常堆栈。
+- 撤销凭证并重连后，旧队列的 `idle` 状态覆盖新连接的 `running` 状态，并移除正在运行的任务记录。
+- 删除运行配置后，积压的会话元数据会重新创建会话，即使运行实例仍然停止且未配置。
+- 数据库删除后若断开连接超时，缓冲和缓存清理被跳过，再次删除却返回 404。原有后台清理只会回收部分孤立待写数据，不会一并移除运行状态缓存。
+- 撤销长期凭证后，之前签发的短期访问令牌仍可提交 HTTP 消息，因为签名没有绑定当前凭证。
+
+修复先处理权限和连接所有权，再处理删除与断线恢复，最后减少重复会话处理。已接收正文的恢复、版本顺序和同版本内容校验均继续保留。
+
+## 三、已经落地的修复
+
+### 1. 删除、撤销凭证与旧连接任务
+
+短期访问令牌签名现在绑定当前长期凭证的哈希。撤销或轮换凭证后，之前签发的 HTTP 和 WebSocket 令牌立即失效。
+
+HTTP 接入、WebSocket 注册、删除和凭证轮换共用跨服务进程的生命周期锁。每个连接拥有自己的通知任务；删除或撤销时，取消并等待执行中及排队任务结束，再释放连接所有权。等待并发名额时取消，也会正确减少待处理计数。
+
+删除先保存禁止访问的待删除记录，再断开连接并清理终端、缓冲、缓存和关联数据。清理失败时保留重试所需记录；后台每 30 秒继续处理明确请求过的删除，重启后也能继续。仅撤销凭证的历史记录不会被当成删除请求。
+
+### 2. 意外断线与恢复
+
+普通断线时，若连接仍持有有效所有权，服务端停止向它发送远程调用，最多保留 10 秒处理已接收通知，再释放所有权。服务关闭采用同样的有限等待。所有权过期或丢失时取消旧任务，由重连同步恢复；旧连接清理不能注销新连接。
+
+两端都先启动 WebSocket 消息读取，再做能力发布和恢复扫描。连接端监测心跳任务失败，废弃失效发送器，避免后续消息永久等待在没有消费者的发送队列中。
+
+HTTP 批次在临时网络故障、408、429、5xx 或发送任务取消时保留。新消息和扫描快照不能越过旧批次。等待队列最多容纳 1,024 条通知，另有最多 64 条正在处理；满时生产者等待。
+
+远程调用响应绑定接收请求时的连接代次，旧连接的迟到响应不能通过新连接发出。
+
+重连后，事件驱动的运行实例重新同步；轮询实例进行一次恢复扫描，包括本地变化标记未改变的会话。失败可重试，运行中会话采用合并快照，避免覆盖实时新增消息。后续普通扫描恢复无变化快速路径。
+
+### 3. 运行配置删除与代次隔离
+
+删除配置先停止本地运行实例，再暂停其通知处理。数据库保存运行实例代次，连接端把代次绑定到该实例的消息出口。重新配置后，删除前积压的 WebSocket 任务和 HTTP 批次仍会被识别为过期消息。配置相同但代次变化时，也会创建新的本地运行实例；同连接的其他实例继续工作。
+
+清理先尝试删除文件，再处理终端和缓存。丢弃待写缓冲前先写入数据库，使后续数据库步骤失败时，已接收正文仍有恢复依据。记录和清理标识保留到重试完成。外部文件存储无法与数据库一起回滚，这套流程不承诺跨存储原子性。
+
+### 4. 未变化会话的快速处理
+
+支持完整清单的运行实例，使用已有 `session.inventory.begin` / `session.inventory.complete` 批量路径记录未变化会话，省去重复的逐条 `session.source.updated`。
+
+仍到达服务端的重复来源通知，只有会话身份、可用状态、原因和观察来源都匹配时，才通过按主键定位的条件 UPDATE 完成，省去完整会话对象构造和版本屏障。真实变化仍走原有带版本保护的更新与发布流程。
+
+快速路径保留较新的时间戳、旧观察不应清除的扫描标记、版本计数，以及用户主动恢复归档会话的选择。**同版本正文校验保持不变，空标题补查也没有在这条优化中消除。**
+
+## 四、SQLite 本地回放结果
+
+回放使用真实的数据访问、消息接入、队列和删除代码，测试库独立且临时创建，不启动应用监听端口或真实运行实例。数据为 200 个来源状态、原因和观察来源均未变化的导入会话，时间取三次预热后运行的中位数。SQL 计数不含每次请求或批次入口的鉴权与接入检查。
+
+| 处理路径 | SQL 数量 | 完整会话对象构造 | 事件循环 CPU 时间 | 总耗时 |
 | --- | ---: | ---: | ---: | ---: |
-| Original individual observations plus inventory | 1,802 | 600 | 639.263 ms | 1,298.615 ms |
-| Individual observations with Server fast path | 602 | 0 | 181.523 ms | 415.670 ms |
-| Connector uses inventory for unchanged sessions | 3 | 0 | 4.099 ms | 7.731 ms |
+| 原有逐条通知加完整清单 | 1,802 | 600 次 | 639.263 毫秒 | 1,298.615 毫秒 |
+| 逐条通知使用服务端快速路径 | 602 | 0 次 | 181.523 毫秒 | 415.670 毫秒 |
+| 连接端使用批量清单 | 3 | 0 次 | 4.099 毫秒 | 7.731 毫秒 |
 
-The final persisted session rows are identical in the replay. The single-session
-fast path uses a conditional primary-key UPDATE only when availability, reason,
-origin and identity match. It preserves newer timestamps, inventory scan tokens
-for stale observations, revision counters and the user's archive choice. Actual
-changes still use the existing fenced update and event publication.
+最终持久化的会话数据完全一致。该结果支持减少重复扫描工作的结论，不能换算为线上整体吞吐提升。
 
-For the 500-message deletion backlog, the original run made 4,500 SELECTs and
-formatted 500 tracebacks (4,585,555 bytes). After the fix, the old backlog performs
-zero SQL and emits zero tracebacks; all pending counters return to zero. The
-actual delete/cancel operation in this replay used eight SQL statements and
-16.372 ms wall time, including deletion of the 200 synthetic sessions.
+原始删除回放产生 500 个异常堆栈，格式化日志共 4,585,555 字节。修复后，500 条旧消息执行 0 条 SQL、输出 0 个异常堆栈，待处理计数回到零。实际删除和取消操作用了 8 条 SQL、16.372 毫秒，其中包含删除 200 个合成会话。
 
-Reproduce from the repository root with dev dependencies installed:
+原始结果见 [SQLite 回放结果](connector-lifecycle-result.json)。从仓库根目录、安装开发依赖后运行：
 
 ```sh
 uv run --project server python server/scripts/benchmark_connector_lifecycle.py --output /tmp/connector-lifecycle.json
 ```
 
-The script clears application database environment overrides and uses its own
-private temporary database. It starts no listeners and contacts no native runtime.
-The measured result is checked in beside this document.
+默认模式清除应用数据库环境变量覆盖，使用自己的临时 SQLite 数据库。
 
-## PostgreSQL verification
+## 五、PostgreSQL 验证结果
 
-The same replay was then run against an isolated PostgreSQL 17.10 container,
-using loopback TCP, temporary storage and the normal SQLAlchemy connection pool.
-No application listener or native runtime was started. The controlled baseline
-disables only the new no-change shortcut so the same service code takes its
-existing full, revision-fenced path. The result is in
-[connector-lifecycle-postgres-result.json](connector-lifecycle-postgres-result.json),
-including the actual statements and EXPLAIN output.
+同一回放使用独立 PostgreSQL 17.10 容器复测，采用本机回环连接、临时存储和正常 SQLAlchemy 连接池。对照组只关闭新增的无变化快速路径，使同一份服务代码走原有完整版本保护流程，减少其他版本差异的影响。
 
-| Path, 200 unchanged imported sessions | SQL statements | SessionViews | Event-loop CPU | Wall time |
+实际 SQL 和执行计划见 [PostgreSQL 回放结果](connector-lifecycle-postgres-result.json)。
+
+| 处理路径，200 个未变化会话 | SQL 数量 | 完整会话对象构造 | 事件循环 CPU 时间 | 总耗时 |
 | --- | ---: | ---: | ---: | ---: |
-| Individual observations through the full fenced path | 1,802 | 600 | 846.790 ms | 1,841.434 ms |
-| Individual observations with the no-change shortcut | 602 | 0 | 198.947 ms | 473.898 ms |
-| Inventory begin/complete without redundant individual observations | 3 | 0 | 4.749 ms | 10.150 ms |
+| 逐条通知走完整版本保护流程 | 1,802 | 600 次 | 846.790 毫秒 | 1,841.434 毫秒 |
+| 逐条通知走无变化快速路径 | 602 | 0 次 | 198.947 毫秒 | 473.898 毫秒 |
+| 完整清单批量处理 | 3 | 0 次 | 4.749 毫秒 | 10.150 毫秒 |
 
-All three paths produced identical persisted session rows. Timings are warm
-medians of three local runs, with uncontrolled host load; event-loop CPU excludes
-the database container's CPU. The deletion replay again applied zero SQL and
-formatted zero tracebacks for the 500 obsolete queued messages. The actual
-delete/cancel operation used eight SQL statements and 27.979 ms wall time.
+三条路径保存的数据完全一致。时间为本地三次预热后运行的中位数，宿主机其他负载没有严格控制。**事件循环 CPU 时间不包括数据库容器消耗；约 10 毫秒是合成扫描回放耗时，不能等同于生产消息接入延迟低于 20 毫秒。**
 
-EXPLAIN (ANALYZE, BUFFERS) on 10,000 synthetic rows confirmed:
+删除后 500 条旧消息再次验证为 0 条 SQL、0 个异常堆栈，会话没有被重新创建。实际删除和取消操作用了 8 条 SQL、27.979 毫秒。
 
-- The conditional source UPDATE uses `sessions_pkey`, reads one candidate row
-  and took 0.042 ms execution time in this warm run.
-- Inventory begin marks every session belonging to this Connector/runtime;
-  because the fixture contains only this runtime, a sequential scan is expected.
-  Updating the 10,000 markers took 193.745 ms. Batching removes round trips and
-  Python work; the database work still grows with inventory size.
-- The inventory refresh UPDATE used the primary-key index for the 200 supplied
-  session IDs. These are individual statement plans on a larger table, not an
-  end-to-end benchmark of a complete 10,000-session inventory.
+### 执行计划
 
-The PostgreSQL regression harness passed 21 lifecycle/inventory cases, including
-credential rotation, failed cleanup followed by retry, pending deletion recovery,
-old-runtime WebSocket/HTTP rejection and two real row-lock interleavings. The
-latter observe the UPDATE waiting in `pg_stat_activity`, commit either a semantic
-change or deletion in another transaction, and confirm that the waiting UPDATE
-returns false without changing or recreating the row.
+在 10,000 条合成会话记录上执行 `EXPLAIN (ANALYZE, BUFFERS)`：
 
-Reproduce with two disposable databases (the regression harness truncates its
-test database; the benchmark requires empty application tables):
+- 条件来源更新使用 `sessions_pkey` 主键索引，只读取一个候选行，本次预热运行执行时间为 0.042 毫秒。
+- 扫描开始时需要标记该连接端和运行实例下的所有会话。测试表只包含这一个实例，顺序扫描符合数据分布；更新 10,000 个标记用了 193.745 毫秒。批量化减少往返和 Python 工作，数据库成本仍随会话数增长。
+- 清单刷新使用主键索引更新传入的 200 个会话。这是在更大表上验证单条语句，尚未构成完整扫描 10,000 个会话的端到端测试。
+
+这些计划针对来源更新和清单标记，**没有覆盖空标题首条用户消息查询，也没有覆盖生产大规模消息表**。
+
+### 并发回归与复现
+
+PostgreSQL 专项 21 个用例通过，覆盖凭证撤销、清理失败重试、后台继续删除、过期运行实例通知，以及两个真实行锁并发场景。
+
+行锁用例通过 `pg_stat_activity` 确认快速 UPDATE 正在等待锁，再由另一个事务分别提交状态变化或删除。等待结束后，快速路径返回未匹配，不覆盖新状态，也不重建已删除的行。
+
+复现使用两个可丢弃数据库：回归脚本在用例间清空测试表；性能脚本要求应用表为空。脚本只接受回环地址和指定测试库名称前缀。
 
 ```sh
 docker run -d --rm --name aa-session-check-pg -p 127.0.0.1:55439:5432 \
@@ -175,41 +162,43 @@ uv run --project server python server/scripts/check_postgres_lifecycle.py \
 docker stop aa-session-check-pg
 ```
 
-Wait for `pg_isready` to report accepting connections before creating the second
-database. The scripts reject non-loopback URLs and require the documented test
-database prefixes. The regression adapter uses NullPool because legacy sync test
-helpers open several event loops; performance measurements use the normal pool.
+等待 `pg_isready` 报告可接收连接后再创建第二个数据库。回归脚本使用 `NullPool` 适配同步测试工具的多个事件循环；性能回放使用正常连接池。本轮临时容器已回收，结果保留在仓库。
 
-The completed local checks for this repair are Server: 854 passed / 16 skipped,
-Connector: 766 passed, PostgreSQL lifecycle: 21 passed, Web: 265 passed and
-`tsc --noEmit` passed. Two of the Server skips are the PostgreSQL-only row-lock
-cases that were run successfully by the separate PostgreSQL harness. A later
-focused run of 22 Server cases and 25 Connector supervisor cases also passed
-after final style/test-assertion cleanup. The new scripts and modules pass Ruff;
-existing findings elsewhere were not expanded into unrelated cleanup.
+## 六、已完成的验证范围
 
-## Remaining limits and rollout
+| 检查 | 结果 | 说明 |
+| --- | --- | --- |
+| 服务端完整回归 | 854 通过，16 跳过 | 两个跳过项为 PostgreSQL 专用行锁用例，已在专项实际运行通过 |
+| 连接端完整回归 | 766 通过 | 包含断线、重试、扫描恢复和运行实例行为 |
+| PostgreSQL 专项 | 21 通过 | 独立本地容器 |
+| 网页测试 | 265 通过 | TypeScript 类型检查 `tsc --noEmit` 同时通过 |
+| 最后整理后的复查 | 服务端 22 通过，连接端运行实例管理 25 通过 | 覆盖格式和断言调整 |
+| 新增脚本与模块静态检查 | Ruff 通过 | 既有其他问题未扩展为本轮清理范围 |
 
-- Deploy the updated Connector before the Server runtime-epoch feature is used.
-  The Server requires migration `v2_36` before workers accept traffic. Existing
-  runtime epochs start at zero. Older Connector versions cannot restart a runtime
-  with a nonzero epoch because they reject the additional control field.
-- HTTP retry is at least once after a lost response. The in-memory outbox is not
-  a durable exactly-once journal across process death. Native snapshots provide
-  reconnect repair where the runtime can still supply the source data.
-- Queue capacity above is a notification-count bound, not a global byte bound.
-  The Server notification queue has no new hard capacity limit in this patch.
-  Arbitrarily dropping a received WebSocket notification or blocking its RPC
-  reader would require an acknowledgement/replay or flow-control contract.
-- Capability publication still has per-session revision/presence/stamp work
-  (803 SELECTs for 200 sessions in this replay). The shared capability index from
-  the earlier commits remains; this patch does not remove its cross-worker
-  consistency checks or change the Web invalidation protocol.
-- Equal-version timeline content validation remains unchanged. The previously
-  rejected conditional old-body-read prototypes are not adopted.
-- The four-worker / one compute-child per worker ceiling remains unchanged.
-  PostgreSQL query plans above validate the changed source/inventory paths.
-  Real timeline-version distributions, production load and CPU saturation on
-  the eight-core host have not been measured by this replay. It is not evidence
-  for changing equal-version timeline validation. No production deployment is
-  performed by these commits.
+这些是修复提交的既有验证记录。中文修订核对了代码、结果文件和外部建议，没有重新运行完整压测或更新线上服务。本次 Compose 合并验证确认默认应用连接上限 120、数据库上限 200；自定义环境变量场景为 144／300，同样正确解析。报告的复现命令与修订前一致，本地文件链接和既有测量数字也已检查。
+
+## 七、剩余问题与后续优先级
+
+1. **优先处理空标题逐条补查。** 先量化真实空标题分布和 SQL 次数，再比较批量预取、持久化派生状态等方案。若记录“暂无首条用户消息”，后续消息到达时必须使该状态失效，避免永久保留默认标题。
+2. **降低工作台全量快照成本。** 已有同次构造共享和积压合并，下一步评估按用户限制刷新频率，并核对完整清单消费方。直接截断为 50 条可能漏掉历史、归档和离线会话，需要配套协议。
+3. **减少能力发布的逐会话查询。** 保留跨进程更新和同版本替换语义，再评估批量读取或连接端级失效通知。共享正文解析后，版本、在线状态和一致性检查仍然有成本。
+4. **依据实际计划选择索引。** 优先测量空标题补查和大规模完整清单，比较完整索引、部分索引和写入成本。来源更新的主键计划不能替代这些查询的验证。
+5. **八核环境受控扩容对照。** 同时覆盖单个高流量连接端与多个连接端，观察事件循环延迟、数据库 CPU、磁盘等待、活动连接、锁等待、队列深度、重连次数及请求延迟分位数。增加连接容量与消除重复查询分别验证。
+
+以下限制继续保留：
+
+- HTTP 响应丢失后可能重复提交，属于至少一次投递。内存待发队列无法保证进程退出后保存全部消息；恢复依赖运行实例仍能提供的原始快照。
+- 连接端队列按通知数量限制，不是全局字节预算；服务端通知队列尚未新增硬容量上限。后续限流需要设计确认、重放或流量控制，避免丢弃已收到的数据或阻塞远程调用读取。
+- 同版本正文校验不变。此前按版本决定是否读取旧正文的原型，在重复版本场景退化，未采用；本轮来源更新测试不构成采用该原型的依据。
+
+## 八、部署顺序与连接预算
+
+先升级连接端，再在服务进程接收流量前完成数据库迁移 `v2_36`，最后启动新版服务端。已有实例代次从零开始；旧连接端不认识新增控制字段，不能正确重启代次非零的实例，需要配套升级。
+
+八核起始配置保持 **4 个服务进程，每个服务进程 1 个计算子进程**。根据用户要求，[八核部署配置](../../docker/docker-compose.8cpu.yml)保留每进程默认 10 个基础连接和 20 个临时额外连接，合计最多 120 个应用连接；PostgreSQL 的默认连接上限配置为 200，可通过 `POSTGRES_MAX_CONNECTIONS` 调整。应用池也继续接受已有环境变量配置。
+
+此前每进程 4 + 4、合计 32 的设置只是保守方案，本次已撤回。120 与 200 的差额还要容纳数据库保留连接、迁移、管理和其他客户端，并不代表 80 个连接全部可供新增业务使用。若环境变量覆盖了默认值，应重新计算实际预算。
+
+PostgreSQL 连接上限变更需要重启数据库进程；这次只修改仓库配置，没有重启线上数据库。覆盖配置中的数据库启动命令会替换基础 Compose 的命令，若生产基础定义含其他自定义 PostgreSQL 参数，需要一并合并保留。
+
+单条连接端长连接始终由同一个服务进程处理。增加服务进程分担的是不同连接，不能自动把同一条连接内的消息均匀分配到全部核心。整机 CPU 分配、真实正文版本分布和生产延迟仍需部署后的对照观测。

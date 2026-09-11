@@ -1,7 +1,12 @@
-# Apply after docker-compose.postgres.yml or the production Compose file.
-# Pin per-worker budgets so an older .env with 10+20 DB connections does not
-# silently multiply the PostgreSQL connection budget across workers.
+# 在基础 PostgreSQL Compose 配置之后应用。
+# 保留每个服务进程的连接池配置，同时为四进程提高数据库连接容量。
 services:
+  postgres-next:
+    command:
+      - postgres
+      - -c
+      - max_connections=${POSTGRES_MAX_CONNECTIONS:-200}
+
   server-next:
     cpus: "8.0"
     environment:
@@ -11,5 +16,5 @@ services:
       AGENT_SERVER_EVENT_THRESHOLD_BYTES: "262144"
       AGENT_SERVER_EVENT_QUEUE_ITEMS: "16"
       AGENT_SERVER_EVENT_QUEUE_BYTES: "16777216"
-      AGENT_SERVER_DB_POOL_SIZE: "4"
-      AGENT_SERVER_DB_MAX_OVERFLOW: "4"
+      AGENT_SERVER_DB_POOL_SIZE: ${AGENT_SERVER_DB_POOL_SIZE:-10}
+      AGENT_SERVER_DB_MAX_OVERFLOW: ${AGENT_SERVER_DB_MAX_OVERFLOW:-20}

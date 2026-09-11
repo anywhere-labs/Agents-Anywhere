@@ -1,209 +1,136 @@
-# Session pipeline performance
+# 会话处理全链路性能报告
 
-Baseline: `0601e668` (the production branch including main). Changes are isolated
-on `codex/session-pipeline-performance`. They have been tested locally and have
-not been deployed. Raw measurements are in
-[session-pipeline-results.json](session-pipeline-results.json).
+性能对照基线为 `0601e668`，即当时包含主线代码的生产分支提交。改动位于 `codex/session-pipeline-performance`，已在本地验证，尚未部署线上。原始数据见[会话处理测量结果](session-pipeline-results.json)。
 
-The investigated path is Runtime -> Connector projection/coalescing -> WebSocket
-or HTTP ingest -> Server sequencing/buffering -> persistence and broker fanout
--> Web event application and reconnect recovery.
+本报告记录前一阶段的连接端、服务端、计算进程池和网页优化。后续删除竞态、意外断线、运行配置代次隔离、未变化会话批量扫描及真实 PostgreSQL 验证，见[连接端生命周期修复报告](connector-lifecycle.md)。其中也补充了与用户提供的修复前报告的对照，明确空标题补查等未解决问题。
 
-## Deployment decision
+调查链路为：
 
-The production constraint is **at most eight CPUs and at most four Server
-workers**. The supplied [Compose override](../../docker/docker-compose.8cpu.yml)
-therefore starts with four Uvicorn workers and one compute child per worker.
-The Uvicorn supervisor is separate and does not perform request processing.
+运行实例 → 连接端数据转换与消息合并 → WebSocket 或 HTTP 消息接入 → 服务端版本分配与缓冲 → 数据持久化与事件广播 → 网页事件应用与断线恢复。
 
-| Resource | Per Server worker | Deployment total |
+## 一、部署配置与八核约束
+
+生产约束为 **最多 8 核 CPU、最多 4 个服务进程**。[八核 Compose 覆盖配置](../../docker/docker-compose.8cpu.yml)采用 4 个 Uvicorn 服务进程，每个服务进程配置 1 个计算子进程。Uvicorn 的主监控进程单独存在，不参与请求处理。
+
+| 资源 | 每个服务进程 | 整体默认预算 |
 | --- | ---: | ---: |
-| Uvicorn workers | — | 4 |
-| Compute subprocesses | 1 | 4 |
-| PostgreSQL base / overflow connections | 4 / 4 | At most 32 |
-| Admitted large-event jobs, including running jobs | 16 | At most 64 |
-| Admitted large-event input bytes | 16 MiB | At most 64 MiB |
+| 服务进程 | — | 4 个 |
+| 计算子进程 | 1 个 | 4 个 |
+| 数据库基础连接数／临时额外连接数 | 10／20 | 最多 120 个应用连接 |
+| PostgreSQL 连接上限 | — | 200，可通过 POSTGRES_MAX_CONNECTIONS 调整 |
+| 接纳的大事件任务，包含排队和执行中 | 16 个 | 最多 64 个 |
+| 接纳的大事件输入数据 | 16 MiB | 最多 64 MiB |
 
-The container CPU ceiling is eight. This is a limit, not a reservation: Redis,
-PostgreSQL, the operating system and other colocated services still share the
-machine. The admission budget is not total memory; application state, outgoing
-buffers, worker memory and IPC copies also consume memory. The existing general
-database default of 10 base + 20 overflow connections is explicitly overridden,
-so it cannot silently become 120 connections with four workers.
+此前八核配置曾把应用连接预算收紧为每进程 4 + 4、整体 32。本次按用户要求保留每进程默认 10 + 20，并提高 PostgreSQL 默认连接上限到 200。该调整只做仓库配置验证，下面的组件性能数字沿用既有测量，没有因修改连接预算重新压测。
 
-The Docker entry point now uses `agent_server.main`, which reads
-`AGENT_SERVER_WORKERS`, `AGENT_SERVER_EVENT_WORKERS`, host and port. It rejects
-multiple workers without Redis and with the single-instance Timeline shortcut.
-Configured RPC instance-name prefixes receive a process-ID suffix; unset names
-remain randomly generated per worker. All workers need the same auth secret,
-database, Redis prefix and upload volume/S3 backend. The first-run setup token
-remains process-local: bootstrap an empty database with one worker before
-applying the multi-worker profile.
+容器 CPU 上限为 8，它没有预留 8 个核心。数据库、Redis、操作系统和其他同机服务仍共享 CPU。任务接纳预算也不是应用总内存上限，应用状态、发送缓冲、进程本身和进程间复制仍占用内存。
 
-Four workers with two compute children each remain a **capacity experiment**,
-not the production default. The 8x1 layout exceeds the worker constraint and is
-included below only to describe the local scaling experiment. Process counts
-alone do not establish eight-core production utilization.
+应用池参数继续接受环境变量覆盖，实际连接总预算应按渲染后的配置计算。120 个应用连接之外，还要考虑数据库保留连接、迁移、管理和其他客户端；提高数据库上限能够扩大容量，但不替代减少重复查询和测量数据库负载。
 
-## Implemented changes
+Docker 入口使用 `agent_server.main`，读取服务进程数、计算进程数、监听地址和端口。多服务进程要求配置 Redis，并关闭只适用于单实例的消息时间线快捷模式。远程调用实例标识若使用固定前缀，会追加进程编号；未指定时随机生成。
 
-### Connector
+各进程必须共享鉴权密钥、数据库、Redis 前缀，以及上传卷或对象存储。首次安装的初始化令牌仍保存在进程内，因此空数据库应先用一个服务进程完成初始化，再应用多进程配置。
 
-The existing 100 ms assistant-message coalescer discarded superseded snapshots
-only after every input had recursively copied its body to remove runtime-owned
-turn data. The production Host now marks owned snapshots for deferred
-projection. Only survivors are recursively projected, immediately before the
-existing WebSocket or HTTP transport. Terminal/status/source/snapshot barriers
-keep their previous order. `session.turnEnded` retains its boundary data.
+`4 × 2` 仅作为容量实验，`8 × 1` 超过用户允许的服务进程数，仅作为实验对照。进程数量不能证明线上已经利用 8 个核心，也不能证明数据库得到固定核心配额。
 
-Content hashing still occurs when the runtime creates each platform item. This
-patch does not defer hashing or assume that hashes identify the entire stored
-Server row. Producers must continue publishing owned snapshots rather than
-mutating nested content after publication.
+本轮没有新增 `uvicorn[standard]` 依赖或强制指定 `uvloop`。数据库上限变更需要重启数据库进程；本次未对线上执行该操作。若生产基础 Compose 已自定义数据库启动参数，应用覆盖文件时应合并保留，不能只留下新的连接数参数。
 
-Debug log argument sanitization is now lazy. When DEBUG is disabled, RPC
-responses and notifications no longer traverse their full bodies just to
-prepare unused log arguments. Enabled logs retain the existing sanitization.
+## 二、已经完成的改动
 
-### Server
+### 1. 连接端：减少被合并消息的重复处理
 
-- Capability batches parse/index one unchanged capability set for many sessions.
-  Inside each session revision fence, a small `(revision, updated_at)` database
-  stamp checks whether another worker replaced that set. A change refreshes the
-  index, including equal-revision replacements. A newer local batch also stops
-  unfinished work from the older local batch. Single-session projection filters
-  unrelated session records before indexing.
-- Session summaries validate only the latest item's metadata rather than
-  constructing its complete body model. The SQL still fetches that item's JSON;
-  this does not remove all database transfer of message bodies. Dashboard
-  notification ownership uses a small join instead of loading a full session.
-  The latest-item sort uses a literal matching the existing SQLite expression
-  index. No PostgreSQL query-plan improvement is claimed without a live plan.
-- Empty ingestion effect buckets skip the second publication fence. Failed
-  publication recovery probes at most 101 IDs; a larger history requests a
-  snapshot instead of decoding the whole history to make that decision.
-- Subscribers in one worker share event conversion, event-ID computation,
-  capability fingerprinting and JSON encoding for the same broker publication.
-  Dashboard subscribers in one worker share the current snapshot build for one
-  invalidation. Queued Dashboard invalidations collapse to the latest request.
-  Different publications, users and Server workers have separate preparation.
-- Session runtime state is stored in Redis when distributed coordination is
-  enabled. Dashboard reads use one `MGET`, rather than one Redis round trip per
-  session. Older sequences cannot replace newer cached state, while equal-
-  sequence A -> B -> A transitions remain valid. These reconstructible cache
-  entries have a 24-hour TTL; pending Timeline writes retain their separate
-  non-expiring storage and persistence rules.
-- Background runtime-state refreshes share a renewable Redis lease across
-  workers. Duplicate refreshes skip the expensive runtime RPC rather than
-  repeating it once per process. This lease does not hold the session write
-  fence across a runtime RPC, so runtime callbacks can still update the session.
+原有 100 毫秒助手消息合并器，会先为每个输入递归复制正文并移除运行实例自有的回合数据，再丢弃被后续版本覆盖的快照。现在消息出口把自己持有的快照标记为延迟转换，仅在最终发送前，对合并后保留的版本进行递归处理。
 
-Outbound event transformations above 256 KiB use a warmed process pool. The
-worker function only receives immutable raw JSON and returns prepared wire
-events. Database connections, Redis clients and mutable session objects remain
-in the Server worker. Small events stay inline to avoid IPC overhead.
+终端、状态、来源和完整快照通知之间的顺序边界保持不变，`session.turnEnded` 仍保留回合结束所需的数据。
 
-Admission counts both waiting and running jobs, by count and bytes. Cancelling
-a subscriber does not cancel preparation needed by other subscribers. A
-cancelled running process job retains its capacity slot until it actually
-finishes. Shutdown rejects queued work instead of accidentally using the default
-thread executor. Capacity exhaustion closes the session WebSocket with code
-1013; the existing Web reconnect/recovery path retrieves accepted content.
+内容哈希仍在运行实例构造每个消息项时计算。本阶段没有延迟哈希，也没有把哈希视为整条数据库记录完全一致的证明。发布后，生产者仍须保证已交出的嵌套正文不再被修改。
 
-### Web
+调试日志脱敏改为按需执行。关闭调试日志时，远程调用响应和通知不会为了最终不输出的日志，再遍历一次完整正文；开启日志时保留原有脱敏。
 
-Capability comparison canonicalizes each record once, then sorts the canonical
-strings. Previously the sort comparator repeatedly traversed parameters and
-metadata. The comparison still includes extension fields, preserves duplicate
-records, ignores ordering and accepts equal-sequence live state transitions.
+### 2. 服务端：共享计算，减少完整对象构造
 
-## Local measurements
+- **能力发布共享解析结果。** 一批会话共用同一份能力正文解析和索引。每个会话在版本屏障内仍查询小型版本标记，检查其他进程是否替换了能力集合；同版本号但更新时间变化，也会刷新。较新的本地批次停止旧批次未完成的工作。单会话接口先过滤无关记录，再建立索引。
+- **摘要只校验最新消息的必要元数据。** 不再为摘要构造完整正文模型；SQL 仍会获取该消息的 JSON，没有消除全部正文传输。工作台通知查询所属用户时使用小型关联查询，省去完整会话对象。最新消息排序表达式与既有 SQLite 表达式索引一致；这不构成 PostgreSQL 对应查询变快的证明。
+- **跳过空发布批次。** 没有事件的处理结果不再进入第二次发布屏障。发布失败后的恢复判断最多查询 101 个标识；历史更长时要求快照，避免为了决定恢复方式而解码全部历史。
+- **同次广播共享准备结果。** 同一服务进程内的订阅者共享事件转换、事件标识、能力指纹和 JSON 编码。工作台同次刷新共享快照构造，积压刷新合并为最新一次。不同用户、发布事件和服务进程仍分别准备。这里没有增加固定时间窗口防抖。
+- **共享会话运行状态。** 启用分布式协调时，状态存入 Redis，工作台用一次 `MGET` 批量读取。旧版本不能覆盖新缓存，同版本下合法的 A → B → A 实时状态变化仍成立。可重建缓存保留 24 小时，待写消息继续使用独立且不自动过期的持久化规则。
+- **后台刷新共用租约。** 通过可续期的 Redis 租约避免多个进程重复发起昂贵的运行实例调用。等待远程响应期间不占用会话写入屏障，使运行实例回调仍能更新会话。
 
-Environment: Python 3.12.13, macOS arm64, 12 logical CPUs. Each pipeline workload
-was warmed once and measured three times; values below are median event-loop
-thread CPU time. Baseline sources were exported from `0601e668`, and the same
-script measured both checkouts. No network/database latency is included.
+这些优化没有消除全部逐会话查询。空标题仍可能触发单独的首条用户消息补查，能力发布也保留逐会话版本和在线检查。后续 PostgreSQL 回放中，200 个会话的能力发布仍执行 803 次 SELECT。共享能力正文解析没有把整个发布过程变成一次数据库查询。
 
-| Workload | Baseline | Candidate | CPU reduction |
+### 3. 计算进程池：移出较大的发送事件转换
+
+超过 256 KiB 的发送事件使用已预热的计算进程池。计算函数只接收不可变原始 JSON，返回可发送事件；数据库连接、Redis 客户端和可变会话对象留在服务进程。小事件继续在服务进程处理，避免进程间传输成本超过计算收益。
+
+任务接纳同时限制排队和执行中的数量及字节数。一个订阅者取消，不会取消其他订阅者仍需要的共享准备。已开始执行的进程任务即使调用方取消，也要等真正结束后才归还容量。服务关闭时拒绝排队任务，避免意外转交默认线程执行器。
+
+容量耗尽时，会话 WebSocket 用状态码 1013 关闭，由网页既有重连恢复流程重新获取已接收内容。这里限制的是大事件计算任务，不能当作所有接入通知队列都已有容量上限。
+
+### 4. 网页：减少能力比较时的重复遍历
+
+能力比较先为每条记录生成一次规范化字符串，再对字符串排序。原实现会在排序比较器中反复遍历参数和元数据。比较仍包含扩展字段、保留重复记录、忽略顺序，并接受相同版本下合法的实时状态变化。
+
+## 三、本地组件 CPU 测量
+
+环境为 Python 3.12.13、macOS arm64、12 个逻辑核心。每个负载预热一次再测三次，下表为事件循环线程 CPU 时间中位数。基线从 `0601e668` 导出，两份代码使用同一脚本。该组实验不包含真实网络和数据库延迟。
+
+| 负载 | 基线 | 优化后 | CPU 时间降低 |
 | --- | ---: | ---: | ---: |
-| Connector: 96 revisions of one approximately 64 KiB structured message | 29.570 ms | 18.168 ms | 38.6% |
-| Publish capabilities: 200 sessions, 2,000 capability records | 1,064.334 ms | 16.164 ms | 98.5% |
-| Single-session capability API: 200 projections over 2,000 records | 51.608 ms | 24.961 ms | 51.6% |
-| Fanout: 24 large notifications, four subscribers | 155.433 ms | 48.291 ms | 68.9% |
+| 连接端：约 64 KiB 结构化消息，连续更新 96 个版本 | 29.570 毫秒 | 18.168 毫秒 | 38.6% |
+| 能力发布：200 个会话、2,000 条能力记录 | 1,064.334 毫秒 | 16.164 毫秒 | 98.5% |
+| 单会话能力接口：对 2,000 条记录做 200 次转换 | 51.608 毫秒 | 24.961 毫秒 | 51.6% |
+| 广播：24 条大通知、4 个订阅者 | 155.433 毫秒 | 48.291 毫秒 | 68.9% |
 
-The Connector emitted exactly one final item in both versions, with the same
-content hash and 72,616 wire bytes. Capability body reads/parses fell from 200 to
-one; the candidate additionally made 200 small stamp reads through the in-memory
-repository port. Fanout prepared 96 deliveries in both versions. These are
-component CPU comparisons, not an end-to-end request latency claim.
+两版连接端最终都只发送一条消息项，内容哈希相同，传输格式数据均为 72,616 字节。能力正文读取与解析从 200 次降为 1 次；优化版仍通过内存测试仓储做了 200 次小型版本标记读取。广播两版均准备 96 次投递。
 
-For four concurrent sessions, 24 notifications and four subscribers per
-session, the shared inline path used 50.659 ms of event-loop CPU. Two warmed
-compute children reduced that to 18.590 ms; wall time changed from 53.226 ms to
-34.797 ms. The median maximum delay of a 2 ms timer changed from 6.959 ms to
-0.787 ms. Pool startup was measured separately at about 259 ms.
+这些数字衡量组件计算成本，不是端到端请求延迟。特别是能力发布的 98.5% 降幅不包含真实 SQL、Redis 和跨进程锁等待，不能据此推导生产能力发布同样降低 98.5%。
 
-All rows in the following scaling experiment use the **optimized code**, with
-the same total 2,304 notifications and 9,216 subscriber preparations. Each
-layout ran three times with warmed pools. The harness launches independent
-Python worker-shaped processes and their real compute children; it does not
-launch Uvicorn listeners or simulate load-balancer connection placement.
+### 进程池与事件循环延迟
 
-| Server-shaped workers x compute children each | Wall time | Notifications/s | Average active CPU cores |
+4 个并发会话、每个会话 24 条通知及 4 个订阅者的负载下，共享但不使用计算子进程的路径消耗 50.659 毫秒事件循环 CPU。启用 2 个已预热计算子进程后降为 18.590 毫秒，总耗时从 53.226 毫秒变为 34.797 毫秒。
+
+2 毫秒定时器的最大延迟中位数从 6.959 毫秒降为 0.787 毫秒。进程池启动时间约 259 毫秒，单独测量，未计入预热后的比较。
+
+### 多服务进程容量实验
+
+每组使用优化后代码，总工作量相同：2,304 条通知、9,216 次订阅者准备；预热后运行三次。脚本启动独立 Python 进程模拟服务进程，并实际创建计算子进程，没有启动 Uvicorn 监听，也没有模拟网关分配连接。
+
+| 服务进程数 × 每进程计算子进程数 | 总耗时 | 每秒通知数 | 平均实际使用核心数 |
 | --- | ---: | ---: | ---: |
-| 1 x 0 | 5.1500 s | 447.4 | 0.952 |
-| **4 x 1: production starting profile** | **1.5409 s** | **1,495.2** | **4.230** |
-| 4 x 2: capacity experiment | 1.0022 s | 2,298.9 | 7.325 |
-| 8 x 1: outside the production worker constraint | 0.9567 s | 2,408.3 | 8.196 |
+| 1 × 0 | 5.1500 秒 | 447.4 | 0.952 |
+| **4 × 1：八核部署起始配置** | **1.5409 秒** | **1,495.2** | **4.230** |
+| 4 × 2：容量实验 | 1.0022 秒 | 2,298.9 | 7.325 |
+| 8 × 1：超出生产服务进程数约束 | 0.9567 秒 | 2,408.3 | 8.196 |
 
-Active cores are measured parent-plus-compute CPU seconds divided by common
-wall time, not inferred from process count. This 12-core-host result cannot
-establish performance on an eight-core production host. In particular, 4x1 did
-not consume eight cores in this outbound-only workload. Full ingress, database,
-Redis and HTTP work changes the CPU balance and still needs production-shaped
-load verification before tuning the pool upward.
+实际核心数由父进程和计算子进程 CPU 时间之和除以共同运行时间得到，不是按进程数推算。实验机有 12 核，不能直接代表生产八核机器。`4 × 1` 在只测发送转换的负载中约使用 4.23 核，没有吃满 8 核。
 
-A Connector's live WebSocket remains attached to one Server worker. Additional
-Uvicorn workers distribute different connections, not the messages inside one
-connection. A single hot Connector can still bottleneck its ingress worker;
-this patch does not add an unmeasured cross-process ingestion/sharding protocol.
+完整接入、数据库、Redis 和 HTTP 工作会改变 CPU 分配。提高计算进程数前，仍需做接近生产的全链路压测，核对数据库是否成为新的瓶颈。
 
-## Verification and reproduction
+一个连接端的长连接固定由一个服务进程处理。增加 Uvicorn 服务进程分担不同连接，不会拆分同一连接内的消息。单个高流量连接端仍可能占满其接入进程，本阶段没有增加跨进程拆分消息的协议。
 
-- Server: 347 passed, 14 pre-existing skips for removed persisted-notice behavior.
-  Coverage includes sequencing/fences, buffered recovery, complete snapshots,
-  capability concurrency, shared state, Redis cross-instance routing and tickets,
-  background-refresh callback safety, process admission/cancellation, and the
-  complete MVP test module.
-- Connector: 146 passed, including runtime/architecture, DSH event transport,
-  lazy RPC logs and the production projection/coalescing/transport path.
-- Web: 265 passed; TypeScript type checking passed.
-- A headless integration replay runs Connector Host/coalescer -> HTTP ingest ->
-  Server WebSocket -> reconnect -> snapshot. Cases cover inline processing,
-  an actual spawned compute process and capacity rejection/recovery. Final body,
-  content hash and assigned sequence are retained.
-- Compose configuration merges passed against both the tracked PostgreSQL file
-  and the existing production definition, using placeholder credentials for
-  interpolation only. No containers, development servers or external runtimes
-  were started. No production database plan or production CPU profile was taken.
+## 四、验证记录与复现
 
-Run the portable benchmarks from the repository root:
+以下是前一阶段的验证记录；后续完整回归和 PostgreSQL 专项以[生命周期修复报告](connector-lifecycle.md)为准。
+
+- 服务端 347 个用例通过，14 个既有用例因旧通知持久化行为移除而跳过。覆盖版本与屏障、缓冲恢复、完整快照、能力并发、共享状态、Redis 跨实例路由与票据、后台刷新回调、进程任务接纳与取消，以及完整基础功能测试模块。
+- 连接端 146 个用例通过，覆盖运行实例与架构、DSH 事件传输、按需准备远程调用日志，以及实际数据转换、合并和传输路径。
+- 网页 265 个用例通过，TypeScript 类型检查通过。
+- 无界面集成回放覆盖“连接端消息出口与合并器 → HTTP 接入 → 服务端 WebSocket → 重连 → 快照”，分别测试进程内处理、真实计算子进程、容量拒绝及恢复，最终正文、哈希和分配的版本序号保持一致。
+- Compose 与仓库 PostgreSQL 定义及当时已有生产定义的合并检查通过，只用占位凭证完成变量替换。该阶段没有启动容器、开发服务或真实运行实例，没有采集生产数据库计划或 CPU 样本；后续独立 PostgreSQL 容器验证记录在另一份报告。
+
+从仓库根目录运行可移植基准脚本：
 
 ```bash
 uv run --project server python server/scripts/bench_session_pipeline.py --offload-workers 2
 uv run --project server python server/scripts/bench_worker_scaling.py --layouts 1x0,4x1,4x2 --repeats 3
 ```
 
-`bench_session_pipeline.py --repo /path/to/baseline` selects another checkout
-without replacing the candidate. Do not run CPU comparisons alongside tests or
-builds. Keep the Uvicorn connection-placement and database workload tests separate
-from these pure CPU measurements.
+`bench_session_pipeline.py --repo /path/to/baseline` 可指定另一份对照代码，无需替换当前工作区。CPU 对照不应与测试或编译同时运行。真实 Uvicorn 连接分配和数据库负载应单独验证，避免与纯 CPU 测试混为一谈。
 
-## Persistence boundary
+## 五、持久化与测试边界
 
-Equal-version stored-content comparison is unchanged. Existing sequence leases,
-reset fences, flush/publish repair and same-sequence live transitions are retained.
-The earlier prototype that conditionally read old item bodies is not included:
-its repeated-version regression and lack of a production PostgreSQL plan did
-not justify changing the persistence path. Adding processes does not remove
-these ordering and content-consistency requirements.
+同版本正文内容校验不变。既有版本号租约、重置屏障、刷盘与发布恢复，以及同版本实时状态变化语义均保留。增加进程后仍须满足顺序和内容一致性要求。
+
+此前“按版本决定是否读取旧正文”的原型在重复版本场景出现退化，当时也没有对应生产 PostgreSQL 计划，因此未采用。后续 PostgreSQL 验证针对来源更新与清单扫描，不能作为修改正文持久化路径的依据。
+
+外部报告提示的完整清单空标题补查、全量快照刷新频率和大消息表查询仍值得继续调查。当前静态代码确认空标题逐条补查尚存，不能把空标题直接称为空对话；它的实际计划和生产占比仍需测量。本文只记录已落地且有证据的优化，不承诺整机 CPU、生产延迟或连接使用量达到外部报告的预期值。
