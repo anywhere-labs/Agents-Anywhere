@@ -195,6 +195,8 @@ class BackendRpcClient:
                     )
                     await asyncio.sleep(self.config.reconnect_seconds)
                 except Exception:
+                    if ingest_flush_task.done():
+                        raise
                     logger.exception(
                         "connector loop failed; reconnecting in {}s",
                         self.config.reconnect_seconds,
@@ -205,8 +207,17 @@ class BackendRpcClient:
             for task in relay_tasks:
                 task.cancel()
             await asyncio.gather(*relay_tasks, return_exceptions=True)
-            self._ingest.close()
-            await self._timeline_notifications.abort()
+            if self._runtime_sync_task is not None:
+                self._runtime_sync_task.cancel()
+            try:
+                async with asyncio.timeout(2):
+                    await self._timeline_notifications.close()
+                    await self._ingest.post_batch([])
+            except Exception as exc:  # noqa: BLE001 - shutdown is bounded even when offline
+                logger.warning("connector final notification flush incomplete error={}", exc)
+            finally:
+                self._ingest.close()
+                await self._timeline_notifications.abort()
             ingest_flush_task.cancel()
             sync_state_flush_task.cancel()
             if self._runtime_sync_task is not None:
@@ -252,6 +263,7 @@ class BackendRpcClient:
             )
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             recovery_task = asyncio.create_task(self._runtime_sync.reconnect_event_runtimes())
+            reader_task = asyncio.create_task(self._read_backend_messages(ws, request_session))
             try:
                 if self._runtime_sync_task is None or self._runtime_sync_task.done():
                     self._runtime_sync_task = asyncio.create_task(
@@ -260,17 +272,25 @@ class BackendRpcClient:
                 logger.info(
                     "connector startup complete; runtime sync started in background"
                 )
-                async for raw_message in ws:
-                    message = json.loads(raw_message)
-                    self.start_message(message, request_session=request_session)
+                done, _ = await asyncio.wait({reader_task, heartbeat_task}, return_when=asyncio.FIRST_COMPLETED)
+                if reader_task in done:
+                    await reader_task
+                else:
+                    await heartbeat_task
+                    raise ConnectorNetworkError("backend heartbeat stopped")
             finally:
                 capabilities_task.cancel()
                 heartbeat_task.cancel()
                 recovery_task.cancel()
+                reader_task.cancel()
                 await asyncio.gather(
-                    capabilities_task, heartbeat_task, recovery_task, return_exceptions=True
+                    capabilities_task, heartbeat_task, recovery_task, reader_task, return_exceptions=True
                 )
                 await self._rpc.close_connection()
+
+    async def _read_backend_messages(self, ws, request_session) -> None:
+        async for raw_message in ws:
+            self.start_message(json.loads(raw_message), request_session=request_session)
 
     async def _publish_runtime_capabilities(
         self, request_session: ConnectorRequestSession
@@ -398,6 +418,9 @@ class BackendRpcClient:
         }
         if error is not None:
             payload["error"] = error
+        entry = self.agent_runtime_supervisor.entry_or_none(runtime_id)
+        if entry is not None and entry.instance.runtime_epoch:
+            payload["runtimeEpoch"] = entry.instance.runtime_epoch
         await self.send_notification("runtime.statusChanged", payload)
 
     async def _publish_agent_runtime_status(
@@ -495,8 +518,11 @@ class BackendRpcClient:
 
 
 def _is_auth_close(exc: ConnectionClosed) -> bool:
+    reason = _close_reason(exc).lower()
     return (
-        _close_code(exc) in {1008, 4001} and "connector" in _close_reason(exc).lower()
+        _close_code(exc) in {1008, 4001}
+        and "connector" in reason
+        and any(marker in reason for marker in ("invalid", "revok", "delet", "credential"))
     )
 
 

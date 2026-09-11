@@ -5,7 +5,6 @@ from collections.abc import Mapping
 from typing import Any
 
 import pytest
-
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeConfig,
@@ -819,3 +818,24 @@ def test_runtime_protocol_supervisor_enforces_single_policy() -> None:
 
 async def _append(target: list[Any], value: Any) -> None:
     target.append(value)
+
+
+def test_new_runtime_epoch_recreates_native_runtime_with_same_configuration():
+    async def run():
+        from dataclasses import replace
+        provider = FakeProvider()
+        supervisor = RuntimeSupervisor((provider,), FakeHost())
+        spec = RuntimeInstanceSpec(runtime_id="fake", runtime_type="fake", name="Fake")
+        old = await supervisor.start(spec, {})
+        new = await supervisor.start(replace(spec, runtime_epoch=1), {})
+        assert new is not old
+        assert old.native_runtime.stopped
+        assert new.instance.runtime_epoch == 1
+        assert provider.hosts[0].instance.runtime_epoch == 0
+        assert provider.hosts[1].instance.runtime_epoch == 1
+        assert (await supervisor.ensure_legacy_instance("fake")).instance.runtime_epoch == 1
+        with pytest.raises(RuntimeConflictError, match="epoch"):
+            await supervisor.start(spec, {})
+        assert supervisor.entry("fake").runtime is new
+
+    asyncio.run(run())

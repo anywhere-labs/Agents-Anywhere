@@ -1134,6 +1134,34 @@ class SessionRepositoryMixin:
                 )
             return changed
 
+    async def refresh_unchanged_session_source(
+        self, session_id: str, *, connector_id: str, runtime: str, runtime_id: str,
+        availability: str, reason: str | None, observed_at: str | None,
+        observation_origin: str,
+    ) -> bool:
+        """Refresh observation bookkeeping only when semantic fields still match.
+
+        One conditional primary-key UPDATE avoids a SessionView and a revision
+        fence for the common unchanged observation. A mismatch takes the normal
+        fenced path, including archive transitions and publication.
+        """
+        observed = observed_at or utc_now()
+        stale = sessions_t.c.source_state_at > observed
+        async with self._engine.begin() as conn:
+            result = await conn.execute(update(sessions_t).where(
+                sessions_t.c.id == session_id,
+                sessions_t.c.connector_id == connector_id,
+                sessions_t.c.runtime == runtime,
+                sessions_t.c.runtime_id == runtime_id,
+                sessions_t.c.source_state == availability,
+                sessions_t.c.source_state_reason == reason,
+                sessions_t.c.source_observation_origin == observation_origin,
+            ).values(
+                source_state_at=case((stale, sessions_t.c.source_state_at), else_=observed),
+                source_scan_token=case((stale, sessions_t.c.source_scan_token), else_=None),
+            ))
+            return result.rowcount == 1
+
     @session_revision_fenced
     async def update_session_source_state(
         self,

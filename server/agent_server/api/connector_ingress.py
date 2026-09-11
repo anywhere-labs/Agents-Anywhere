@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from anyio import CancelScope
 from fastapi import (
     APIRouter,
     Depends,
@@ -20,7 +21,6 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from loguru import logger
-from anyio import CancelScope
 from starlette.requests import HTTPConnection
 
 from agent_server.core.auth import (
@@ -67,6 +67,10 @@ from agent_server.services.device_runtimes import (
 from agent_server.services.effective_capabilities import (
     publish_connector_session_capabilities,
 )
+from agent_server.services.runtime_ingress import (
+    notification_runtime_id,
+    runtime_notification_is_current,
+)
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
 router = APIRouter(tags=["connector-ingress"])
@@ -112,11 +116,15 @@ class _ConnectorNotificationPump:
         connection_id: str | None = None,
         max_concurrency: int = DEFAULT_NOTIFICATION_CONCURRENCY,
         is_current: Callable[[], bool] | None = None,
+        runtime_epochs: dict[str, int] | None = None,
     ) -> None:
         self._connector_id = connector_id
         self._connection_id = connection_id
         self._ingest_service = ingest_service
         self._is_current = is_current
+        self._runtime_epochs = dict(runtime_epochs or {})
+        self._blocked_runtimes: set[str] = set()
+        self._inflight_tasks: dict[asyncio.Task[None], str | None] = {}
         self._accepting = True
         self._abort_task: asyncio.Task[None] | None = None
         self._lane_tasks: set[asyncio.Task[None]] = set()
@@ -132,6 +140,20 @@ class _ConnectorNotificationPump:
         self._idle = asyncio.Event()
         self._idle.set()
         self.coalesced = 0
+        self.obsolete = 0
+
+    async def update_runtime_epoch(self, runtime_id: str, epoch: int | None) -> None:
+        self._blocked_runtimes.add(runtime_id)
+        tasks = [task for task, target in self._inflight_tasks.items() if target == runtime_id]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if epoch is not None:
+            self._runtime_epochs[runtime_id] = epoch
+            self._blocked_runtimes.discard(runtime_id)
+
+    def _runtime_current(self, params: dict[str, Any]) -> bool:
+        return notification_runtime_id(params) not in self._blocked_runtimes and runtime_notification_is_current(params, self._runtime_epochs)
 
     @property
     def task(self) -> asyncio.Task[None]:
@@ -283,8 +305,20 @@ class _ConnectorNotificationPump:
                             continue
                         lane.latest.pop(item_key, None)
                     async with self._slots:
+                        if not self._runtime_current(params):
+                            self.obsolete += 1
+                            continue
                         if self._is_current is None or self._is_current():
-                            await self._handle(method, params)
+                            task = asyncio.create_task(self._handle(method, params))
+                            self._inflight_tasks[task] = notification_runtime_id(params)
+                            try:
+                                await task
+                            except asyncio.CancelledError:
+                                if asyncio.current_task().cancelling():
+                                    raise
+                                self.obsolete += 1
+                            finally:
+                                self._inflight_tasks.pop(task, None)
                 finally:
                     # Includes cancellation while waiting for a concurrency slot.
                     self._mark_pending(-1)
@@ -391,7 +425,6 @@ async def connector_ingest(
     authorization: str = Header(..., alias="Authorization"),
     db: Store = Depends(get_store),
     ingest_service: ConnectorIngestService = Depends(get_connector_ingest_service),
-    manager: ConnectorRpcManager = Depends(get_rpc),
 ) -> ConnectorIngestResponse:
     connector_id = _access_token_connector_id(authorization)
     async with db.connector_lifecycle(connector_id):
@@ -503,10 +536,13 @@ async def connector_ws(
                 connector_id, ingest_service,
                 connection_id=connection.connection_id,
                 is_current=lambda: manager.accepts_notifications(connection),
+                runtime_epochs=await db.get_runtime_ingress_epochs(connector_id),
                 max_concurrency=int(os.environ.get("AGENT_SERVER_NOTIFICATION_CONCURRENCY", "4")),
             )
             notification_pump.start()
             connection.abort_notifications = notification_pump.abort
+            connection.drain_notifications = notification_pump.close
+            connection.update_runtime_epoch = notification_pump.update_runtime_epoch
             try:
                 if not await db.record_connector_connection(
                     connector_id,
@@ -565,6 +601,8 @@ async def connector_ws(
             return_when=asyncio.FIRST_COMPLETED,
         )
         if notification_pump.task in done:
+            if connection.invalidated:
+                return
             await notification_pump.task
             raise RuntimeError("connector notification worker stopped unexpectedly")
         if reader_task in done:
@@ -581,6 +619,8 @@ async def connector_ws(
             return_when=asyncio.FIRST_COMPLETED,
         )
         if notification_pump.task in done:
+            if connection.invalidated:
+                return
             await notification_pump.task
             raise RuntimeError("connector notification worker stopped unexpectedly")
         if reader_task in done:
@@ -604,6 +644,8 @@ async def connector_ws(
             await reader_task
             return
         if notification_pump.task in done:
+            if connection.invalidated:
+                return
             await notification_pump.task
             raise RuntimeError("connector notification worker stopped unexpectedly")
     except WebSocketDisconnect:
@@ -666,7 +708,7 @@ async def _publish_connection_presence(db, manager, broker, connector_id: str) -
             db, broker, connector_id=connector_id, reason="connector.online",
         )
         await publish_connector_session_capabilities(db, manager, broker, connector_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - background publication must not stop the reader
         logger.exception("connector presence publication failed connector_id={}", connector_id)
 
 

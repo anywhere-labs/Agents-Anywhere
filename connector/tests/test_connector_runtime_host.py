@@ -638,3 +638,29 @@ async def _exercise_attachment_download() -> None:
     assert content.content == b"data"
     assert content.name == "example.txt"
     assert content.media_type == "text/plain"
+
+
+def test_bound_host_keeps_old_runtime_epoch_on_late_notifications():
+    from connector.runtime_protocol import RuntimeInstanceSpec
+    from connector.server.runtime_rpc_payloads import DeferredServerPayload
+
+    async def run():
+        sent = []
+
+        async def notify(method, params):
+            sent.append((method, params))
+
+        async def download(*args):
+            raise AssertionError("no downloads")
+
+        host = ConnectorRuntimeHost("conn", notify, download, defer_payload_projection=True)
+        old = host.bind_instance(RuntimeInstanceSpec("codex", "codex", "Codex", runtime_epoch=1))
+        new = host.bind_instance(RuntimeInstanceSpec("codex", "codex", "Codex", runtime_epoch=2))
+        await new.session_meta_upsert("session", "codex", title="new")
+        await old.session_meta_upsert("session", "codex", title="late old")
+        assert [params["runtimeEpoch"] for _, params in sent] == [2, 1]
+        await old._notifier("timeline.itemUpsert", DeferredServerPayload({"sessionId": "session"}))
+        assert isinstance(sent[-1][1], DeferredServerPayload)
+        assert sent[-1][1]["runtimeEpoch"] == 1
+
+    asyncio.run(run())

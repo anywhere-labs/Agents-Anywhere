@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import time
 from collections.abc import Awaitable, Callable, Mapping
+from copy import copy
 from typing import Any
 
 from connector.logging import logger
 from connector.runtime_protocol import (
     RuntimeAttachmentContent,
     RuntimeCapabilitySet,
+    RuntimeInstanceSpec,
     RuntimeModelCatalog,
     RuntimePermissionCatalog,
     RuntimeStatus,
@@ -51,6 +53,30 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         self._memory_sync_state: dict[str, Mapping[str, Any]] = {}
         self._ingest_notifications = ingest_notifications
         self._defer_payload_projection = defer_payload_projection
+
+    def bind_instance(self, instance: RuntimeInstanceSpec) -> ConnectorRuntimeHost:
+        bound = copy(self)
+
+        def scoped(params):
+            result = type(params)(params)
+            result["runtimeId"] = instance.runtime_id
+            if instance.runtime_epoch:
+                result["runtimeEpoch"] = instance.runtime_epoch
+            return result
+
+        async def notify(method, params):
+            await self._notifier(method, scoped(params))
+
+        async def ingest(notifications):
+            if self._ingest_notifications is None:
+                raise RuntimeError("Synchronous notification ingestion is unavailable")
+            await self._ingest_notifications([
+                {"method": row["method"], "params": scoped(row["params"])} for row in notifications
+            ])
+
+        bound._notifier = notify
+        bound._ingest_notifications = ingest
+        return bound
 
     async def publish_runtime_notifications(
         self, runtime: str, notifications: list[dict[str, Any]], *, runtime_id: str | None = None

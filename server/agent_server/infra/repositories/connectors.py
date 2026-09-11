@@ -476,6 +476,13 @@ class ConnectorRepositoryMixin:
         return await self.get_connector(connector_id)
 
 
+    async def pending_connector_deletions(self) -> list[tuple[str, str]]:
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(select(connectors_t.c.id, connectors_t.c.user_id)
+                .where(connectors_t.c.revoked == 2)
+                .order_by(connectors_t.c.updated_at).limit(50))).all()
+        return [(str(row.id), str(row.user_id)) for row in rows]
+
     async def begin_connector_deletion(
         self, connector_id: str, *, user_id: str
     ) -> list[str]:

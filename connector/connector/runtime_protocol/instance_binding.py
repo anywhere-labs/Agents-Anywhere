@@ -42,6 +42,7 @@ def _instance_metadata(
         **dict(metadata or {}),
         "runtimeType": instance.runtime_type,
         "runtimeId": instance.runtime_id,
+        **({"runtimeEpoch": instance.runtime_epoch} if instance.runtime_epoch else {}),
     }
 
 

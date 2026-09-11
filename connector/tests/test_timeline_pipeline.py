@@ -84,7 +84,7 @@ def test_deferred_projection_preserves_websocket_path_and_unrelated_notification
             sent.append((method, params))
 
         transport = SimpleNamespace(
-            _rpc=SimpleNamespace(connected=True), send_notification=send
+            _rpc=SimpleNamespace(connected=True), _ingest=SimpleNamespace(has_pending=False), send_notification=send
         )
         await client_module.BackendRpcClient._send_backend_notification_now(
             transport,

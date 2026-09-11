@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-import os
 from typing import Any
 
 from loguru import logger
@@ -31,7 +31,6 @@ from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.repository_ports import DeviceRuntimeRepository
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
-
 
 
 def _runtime_rpc_timeout_seconds() -> float:
@@ -561,19 +560,33 @@ class DeviceRuntimeService:
                     connector_id, runtime_id, False
                 )
                 runtime = await self._stop_locked(runtime, allow_offline=False)
-            session_ids = await self._store.clear_device_runtime_config(
-                connector_id, runtime_id
-            )
-            for session_id in session_ids:
-                if self._terminal_broker is not None:
-                    for terminal in await self._terminal_broker.get_for_session(
-                        session_id
-                    ):
-                        await self._terminal_broker.remove(terminal.id)
-                if self._timeline_write_buffer is not None:
-                    await self._timeline_write_buffer.discard_session(session_id)
-                if self._runtime_state_cache is not None:
-                    await self._runtime_state_cache.discard(session_id)
+        # Stop may await Connector HTTP ingestion. Acquire admission only after
+        # the RPC completes, then recheck under the normal lock order.
+        async with self._store.connector_lifecycle(connector_id), self._runtime_lock(connector_id, runtime_id):
+            runtime = await self._get_owned(connector_id, runtime_id, user_id=user_id)
+            if runtime.active or runtime.status in {"starting", "running", "stopping", "unknown"}:
+                raise DeviceRuntimeConflictError("runtime changed while deleting configuration; retry deletion")
+            await self._manager.update_runtime_epoch(connector_id, runtime_id, None)
+            try:
+                session_ids = await self._store.runtime_session_ids(connector_id, runtime_id)
+                # A storage failure leaves the database, pending timeline,
+                # terminals and cache available for the same deletion retry.
+                await self._store.delete_runtime_session_files(session_ids)
+                for session_id in session_ids:
+                    if self._terminal_broker is not None:
+                        for terminal in await self._terminal_broker.get_for_session(
+                            session_id
+                        ):
+                            await self._terminal_broker.remove(terminal.id)
+                    if self._timeline_write_buffer is not None:
+                        await self._timeline_write_buffer.flush_session(session_id)
+                        await self._timeline_write_buffer.discard_session(session_id)
+                    if self._runtime_state_cache is not None:
+                        await self._runtime_state_cache.discard(session_id)
+                await self._store.clear_device_runtime_config(connector_id, runtime_id, cleanup_files=False)
+            finally:
+                epochs = await self._store.get_runtime_ingress_epochs(connector_id)
+                await self._manager.update_runtime_epoch(connector_id, runtime_id, epochs.get(runtime_id, 0))
             runtime = await self._get_owned(connector_id, runtime_id, user_id=user_id)
             await self._publish(connector_id, "runtime.config_deleted")
             return runtime
@@ -723,6 +736,7 @@ class DeviceRuntimeService:
             "name": runtime.name,
             "config": runtime.config,
             "configRevision": _config_revision(runtime),
+            **({"runtimeEpoch": runtime.ingressEpoch} if runtime.ingressEpoch else {}),
         }
         try:
             if connection is None:
@@ -889,6 +903,7 @@ class DeviceRuntimeService:
             "name": runtime.name,
             "config": config,
             "configRevision": _config_revision(runtime),
+            **({"runtimeEpoch": runtime.ingressEpoch} if runtime.ingressEpoch else {}),
         }
         try:
             await self._manager.request(

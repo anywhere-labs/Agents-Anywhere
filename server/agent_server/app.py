@@ -55,6 +55,7 @@ from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.ws_tickets import ClientWsTicketManager
+from agent_server.services.connector_deletion import ConnectorDeletionRecovery
 from agent_server.services.connector_rpc import ConnectorServiceError
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_runtimes import DeviceRuntimeService
@@ -115,6 +116,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         presence_task: asyncio.Task[None] | None = None
+        deletion_task: asyncio.Task[None] | None = None
         try:
             logger.info(
                 "server concurrency pid={} workers={} event_workers={}",
@@ -131,11 +133,15 @@ def create_app(
             await app.state.terminal_broker.start()
             await app.state.rpc.start()
             presence_task = asyncio.create_task(_connector_presence_watchdog(app))
+            deletion_task = asyncio.create_task(app.state.connector_deletion_recovery.run())
             # Generate the bootstrap token early so operators see it in logs.
             if await app.state.store.count_users() == 0:
                 app.state.setup_token.snapshot()
             yield
         finally:
+            if deletion_task is not None:
+                deletion_task.cancel()
+                await asyncio.gather(deletion_task, return_exceptions=True)
             if presence_task is not None:
                 presence_task.cancel()
                 try:
@@ -252,6 +258,10 @@ def create_app(
         app.state.session_runtime_state_cache,
         timeline_write_buffer=app.state.timeline_write_buffer,
         terminal_broker=app.state.terminal_broker,
+    )
+    app.state.connector_deletion_recovery = ConnectorDeletionRecovery(
+        app.state.store, app.state.rpc, app.state.terminal_broker,
+        app.state.timeline_write_buffer, app.state.session_runtime_state_cache, app.state.timeline_broker,
     )
     app.state.ws_tickets = ClientWsTicketManager(app.state.redis)
     app.state.setup_token = SetupToken()

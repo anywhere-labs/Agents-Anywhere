@@ -3,21 +3,22 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from runtime_fixtures import describe_inventory, seed_runtime_inventory
-
-from conftest import ApiV2TestClient as TestClient
-
 from agent_server.app import create_app
 from agent_server.infra.connector_rpc import ConnectorRpcError
 from agent_server.services.connector_ingest import ConnectorIngestService
 from agent_server.services.connector_notifications import ConnectorNotificationService
 from agent_server.services.device_runtimes import DeviceRuntimeService
+from conftest import ApiV2TestClient as TestClient
+from runtime_fixtures import describe_inventory, seed_runtime_inventory
 
 ADMIN_USER = "user1"
 ADMIN_PASSWORD = "secret"
 
 
 class FakeRpc:
+    async def update_runtime_epoch(self, connector_id, runtime_id, epoch):
+        pass
+
     def __init__(self, inventory: dict[str, Any]) -> None:
         self.inventory = inventory
         self.online = True

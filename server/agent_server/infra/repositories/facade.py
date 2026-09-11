@@ -9,15 +9,19 @@ from agent_server.infra.repositories.active_runs_facade import ActiveRunReposito
 from agent_server.infra.repositories.attachments import AttachmentRepositoryMixin
 from agent_server.infra.repositories.connectors import ConnectorRepositoryMixin
 from agent_server.infra.repositories.device_runtimes import DeviceRuntimeRepositoryMixin
-from agent_server.infra.repositories.instance_settings_facade import InstanceSettingsRepositoryMixin
+from agent_server.infra.repositories.instance_settings_facade import (
+    InstanceSettingsRepositoryMixin,
+)
 from agent_server.infra.repositories.oauth import OAuthRepositoryMixin
-from agent_server.infra.repositories.protocol_catalogs import ProtocolCatalogRepositoryMixin
 from agent_server.infra.repositories.projects import ProjectRepositoryMixin
+from agent_server.infra.repositories.protocol_catalogs import (
+    ProtocolCatalogRepositoryMixin,
+)
 from agent_server.infra.repositories.sessions import SessionRepositoryMixin
 from agent_server.infra.repositories.shares import SessionShareRepositoryMixin
+from agent_server.infra.repositories.store_support import *
 from agent_server.infra.repositories.timeline import TimelineRepositoryMixin
 from agent_server.infra.repositories.users import UserRepositoryMixin
-from agent_server.infra.repositories.store_support import *
 
 _MAX_TRACKED_LOCKS = 4096
 _TRACKED_LOCK_IDLE_SECONDS = 900.0

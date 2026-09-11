@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-
 from agent_server.api.connector_ingress import (
     _ConnectorNotificationPump,
     _read_connector_messages,
@@ -455,8 +454,8 @@ def test_invalidation_cancels_running_waiting_and_queued_notifications():
 
 
 def test_accidental_disconnect_drains_before_replacement_can_register():
-    from agent_server.infra.connector_rpc import DuplicateConnectorConnectionError
     import pytest
+    from agent_server.infra.connector_rpc import DuplicateConnectorConnectionError
 
     async def run():
         manager = ConnectorRpcManager()

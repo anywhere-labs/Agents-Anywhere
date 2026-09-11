@@ -9,7 +9,6 @@ import secrets
 import time
 from typing import Any
 
-
 DEFAULT_EXPIRES_IN = 900
 DEFAULT_USER_EXPIRES_IN = 60 * 60 * 24 * 7
 

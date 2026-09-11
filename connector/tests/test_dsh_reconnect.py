@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-
 from connector.runtime_protocol import RuntimeConfig
 from connector.runtimes.dsh import runtime as runtime_module
 from connector.runtimes.dsh.runtime import DshRuntime
@@ -148,6 +147,7 @@ def test_initially_offline_runtime_recovers_through_supervisor(monkeypatch):
         host = SimpleNamespace(
             connector_id="test", runtime_capabilities_update=AsyncMock()
         )
+        host.bind_instance = lambda instance: host
         supervisor = RuntimeSupervisor(
             (DshProvider(prober=offline_probe),), host, status_sink
         )
@@ -215,10 +215,13 @@ def test_initially_offline_runtime_can_be_stopped(monkeypatch):
             raise FileNotFoundError("offline")
 
         monkeypatch.setattr(runtime_module.discovery, "load_endpoint", load_endpoint)
-        supervisor = RuntimeSupervisor(
-            (DshProvider(prober=offline_probe),),
-            SimpleNamespace(connector_id="test"),
-        )
+        from connector.runtime_protocol.host import RuntimeHostClient
+        class Host(RuntimeHostClient):
+            @property
+            def connector_id(self):
+                return "test"
+
+        supervisor = RuntimeSupervisor((DshProvider(prober=offline_probe),), Host())
         bound = await supervisor.start("dsh", {})
         task = bound.native_runtime._restart_task
         assert supervisor.entry("dsh").status == "starting"

@@ -103,6 +103,7 @@ device_runtimes = Table(
     # NULL means the runtime has not been configured. An empty JSON object is
     # a valid configured value and means "use every provider default".
     Column("config_json", Text),
+    Column("ingress_epoch", Integer, nullable=False, server_default="0"),
     Column("active", Integer, nullable=False, server_default="0"),
     Column("status", Text, nullable=False, server_default="stopped"),
     Column("error_json", Text),

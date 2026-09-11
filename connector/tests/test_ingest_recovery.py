@@ -4,7 +4,6 @@ import asyncio
 
 import httpx
 import pytest
-
 from connector.server.auth import ConnectorAuthenticationError
 from connector.server.ingest import ConnectorIngestClient
 from connector.server.rpc import ConnectorRpcChannel
@@ -20,6 +19,7 @@ def test_network_failure_and_server_503_keep_fifo_for_recovery():
 
         async def transport(request):
             import json
+
             batch = json.loads(request.content)["notifications"]
             attempts.append(batch)
             if len(attempts) == 1:
@@ -30,7 +30,9 @@ def test_network_failure_and_server_503_keep_fifo_for_recovery():
             return httpx.Response(200, json={"accepted": len(batch), "rejected": []})
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-            ingest = ConnectorIngestClient("https://server.test", token, lambda: http, lambda timeout: http)
+            ingest = ConnectorIngestClient(
+                "https://server.test", token, lambda: http, lambda timeout: http
+            )
             ingest._retry_delay = 0.001
             await ingest.enqueue("session.state.updated", {"status": "running"})
             await ingest.enqueue("session.state.updated", {"status": "idle"})
@@ -39,7 +41,10 @@ def test_network_failure_and_server_503_keep_fifo_for_recovery():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
             assert attempts[0] == attempts[1] == attempts[2]
-            assert [row["params"]["status"] for row in attempts[2]] == ["running", "idle"]
+            assert [row["params"]["status"] for row in attempts[2]] == [
+                "running",
+                "idle",
+            ]
             assert not ingest.has_pending
 
     asyncio.run(run())
@@ -63,7 +68,9 @@ def test_cancelled_http_batch_survives_flush_worker_restart():
             return httpx.Response(200, json={"accepted": 1, "rejected": []})
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-            ingest = ConnectorIngestClient("https://server.test", token, lambda: http, lambda timeout: http)
+            ingest = ConnectorIngestClient(
+                "https://server.test", token, lambda: http, lambda timeout: http
+            )
             await ingest.enqueue("timeline.sync", {"sessionId": "session", "items": []})
             task = asyncio.create_task(ingest.flush_loop())
             await started.wait()
@@ -84,7 +91,9 @@ def test_revoked_credentials_stop_retry_and_reject_new_admission():
         async def token(force):
             raise ConnectorAuthenticationError("revoked")
 
-        ingest = ConnectorIngestClient("https://server.test", token, lambda: None, lambda timeout: None)
+        ingest = ConnectorIngestClient(
+            "https://server.test", token, lambda: None, lambda timeout: None
+        )
         await ingest.enqueue("connector.heartbeat", {})
         with pytest.raises(ConnectorAuthenticationError):
             await asyncio.wait_for(ingest.flush_loop(), 1)
@@ -117,13 +126,35 @@ def test_old_rpc_completion_cannot_reply_on_replacement_socket():
                 await release.wait()
             return {"status": "stopped"}
 
-        channel.start_request({"type": "request", "id": "old", "method": "runtime.stop"}, dispatch)
+        channel.start_request(
+            {"type": "request", "id": "old", "method": "runtime.stop"}, dispatch
+        )
         await entered.wait()
         old_tasks = list(channel._request_tasks)
         channel.set_connection(new)
         release.set()
         await asyncio.gather(*old_tasks)
         assert not old.frames and not new.frames
+        await channel.close_connection()
+
+    asyncio.run(run())
+
+
+def test_failed_websocket_sender_stops_admission_instead_of_hanging_next_send():
+    async def run():
+        class Socket:
+            async def send(self, payload):
+                raise ConnectionError("link lost")
+
+        channel = ConnectorRpcChannel()
+        channel.set_connection(Socket())
+        with pytest.raises(ConnectionError):
+            await channel.send_notification("connector.heartbeat", {})
+        assert not channel.connected
+        with pytest.raises(RuntimeError, match="not connected"):
+            await asyncio.wait_for(
+                channel.send_notification("connector.heartbeat", {}), 1
+            )
         await channel.close_connection()
 
     asyncio.run(run())

@@ -351,6 +351,9 @@ class ConnectorRpcChannel:
                     if not current_item.future.done():
                         current_item.future.set_exception(exc)
                     self._fail_pending_send_queue(queue, exc)
+                    if self._ws is ws:
+                        self._ws = None
+                        self._send_queue = None
                     return
                 current_item = None
         except asyncio.CancelledError:

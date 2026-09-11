@@ -41,6 +41,8 @@ class ConnectorConnection:
     draining: bool = False
     invalidated: bool = False
     abort_notifications: Callable[[], Awaitable[None]] | None = None
+    drain_notifications: Callable[[], Awaitable[None]] | None = None
+    update_runtime_epoch: Callable[[str, int | None], Awaitable[None]] | None = None
     pending: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -89,13 +91,12 @@ class ConnectorRpcManager:
         previous = self._lease_value(connection)
         connection.draining = True
         self._fail_pending(connection, "connector disconnected")
-        if self._coordinator.distributed:
-            if not await self._coordinator.replace_if_value(
-                self._lease_key(connection.connector_id), previous, self._lease_value(connection),
-                ttl_seconds=self._heartbeat_timeout_seconds,
-            ):
-                await self._invalidate(connection, "connector ownership was lost")
-                return False
+        if self._coordinator.distributed and not await self._coordinator.replace_if_value(
+            self._lease_key(connection.connector_id), previous, self._lease_value(connection),
+            ttl_seconds=self._heartbeat_timeout_seconds,
+        ):
+            await self._invalidate(connection, "connector ownership was lost")
+            return False
         connection.last_seen_monotonic = self._clock()
         return True
 
@@ -185,8 +186,12 @@ class ConnectorRpcManager:
                     "connector is already connected"
                 )
             await self._invalidate(old, "connector heartbeat timed out")
-            self._connections.pop(connector_id, None)
+            if self._connections.get(connector_id) is old:
+                self._connections.pop(connector_id, None)
             await self._release_lease(old)
+            await self._close_socket(old, code=1012, reason="connector heartbeat timed out")
+            if connector_id in self._connections:
+                raise DuplicateConnectorConnectionError("connector is already connected")
 
         connection = ConnectorConnection(
             connector_id=connector_id,
@@ -287,6 +292,20 @@ class ConnectorRpcManager:
         )
         return bool(result)
 
+    async def update_runtime_epoch(self, connector_id: str, runtime_id: str, epoch: int | None) -> None:
+        connection = self._connections.get(connector_id)
+        if connection is not None:
+            if connection.update_runtime_epoch is not None:
+                await connection.update_runtime_epoch(runtime_id, epoch)
+            return
+        if self._coordinator.distributed:
+            lease = await self._get_lease(connector_id)
+            if lease is not None:
+                await self._route(lease, {
+                    "type": "runtimeEpoch", "connectorId": connector_id,
+                    "runtimeId": runtime_id, "epoch": epoch,
+                }, timeout=10)
+
     async def touch(
         self,
         connector_id: str,
@@ -307,6 +326,7 @@ class ConnectorRpcManager:
             if self._connections.get(connector_id) is current:
                 self._connections.pop(connector_id, None)
             await self._invalidate(current, "connector ownership was lost")
+            await self._close_socket(current, code=1012, reason="connector ownership was lost")
         return refreshed
 
     async def expire_stale(self) -> list[ConnectorConnection]:
@@ -318,8 +338,10 @@ class ConnectorRpcManager:
             if self._connections.get(connector_id) is not connection:
                 continue
             await self._invalidate(connection, "connector heartbeat timed out")
-            self._connections.pop(connector_id, None)
+            if self._connections.get(connector_id) is connection:
+                self._connections.pop(connector_id, None)
             await self._release_lease(connection)
+            await self._close_socket(connection, code=1012, reason="connector heartbeat timed out")
             stale.append(connection)
         return stale
 
@@ -570,6 +592,13 @@ class ConnectorRpcManager:
                     reason=str(payload.get("reason") or "connector disconnected"),
                     expected_connection_id=connection_id,
                 )
+            elif payload.get("type") == "runtimeEpoch":
+                runtime_id, epoch = payload.get("runtimeId"), payload.get("epoch")
+                if not isinstance(runtime_id, str) or (epoch is not None and type(epoch) is not int):
+                    raise ConnectorRpcError("invalid_route", "invalid runtime epoch")
+                if connection.update_runtime_epoch is not None:
+                    await connection.update_runtime_epoch(runtime_id, epoch)
+                result = True
             elif payload.get("type") == "request":
                 method = payload.get("method")
                 params = payload.get("params")
@@ -631,15 +660,27 @@ class ConnectorRpcManager:
             and connection.connection_id != expected_connection_id
         ):
             return False
+        if reason == "server shutting down" and connection.drain_notifications is not None:
+            try:
+                if await self.begin_drain(connection):
+                    async with asyncio.timeout(10):
+                        await connection.drain_notifications()
+            except TimeoutError:
+                logger.warning("connector shutdown drain timed out connector_id={}", connector_id)
         await self._invalidate(connection, reason)
         if self._connections.get(connector_id) is connection:
             self._connections.pop(connector_id, None)
         await self._release_lease(connection)
+        code = 4001 if reason in {"connector deleted", "connector token revoked"} else 1012
+        await self._close_socket(connection, code=code, reason=reason)
+        return True
+
+    @staticmethod
+    async def _close_socket(connection: ConnectorConnection, *, code: int, reason: str) -> None:
         try:
-            await connection.websocket.close(code=4001, reason=reason)
+            await connection.websocket.close(code=code, reason=reason)
         except (RuntimeError, OSError):
             pass
-        return True
 
     async def _get_lease(self, connector_id: str) -> ConnectorLease | None:
         raw = await self._coordinator.client.get(self._lease_key(connector_id))

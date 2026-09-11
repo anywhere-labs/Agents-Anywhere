@@ -34,6 +34,7 @@ from agent_server.services.effective_capabilities import (
 )
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.repository_ports import ConnectorIngestRepository
+from agent_server.services.runtime_ingress import runtime_notification_is_current
 from agent_server.services.session_runtime_state_cache import (
     SessionRuntimeStateCache,
 )
@@ -87,7 +88,14 @@ class ConnectorIngestService:
         rejected: list[ConnectorIngestRejectedNotification] = []
         protocol_capabilities_changed = False
         runtime_scoped_capabilities_changed = False
+        runtime_epochs = await self._store.get_runtime_ingress_epochs(connector_id)
         for index, notification in enumerate(payload.notifications):
+            if not runtime_notification_is_current(notification.params, runtime_epochs):
+                rejected.append(ConnectorIngestRejectedNotification(
+                    index=index, method=notification.method, code="obsolete_runtime",
+                    message="runtime configuration was deleted or replaced", errorType="ObsoleteRuntimeNotification",
+                ))
+                continue
             try:
                 effect = await self.apply_ingest_notification(
                     connector_id,

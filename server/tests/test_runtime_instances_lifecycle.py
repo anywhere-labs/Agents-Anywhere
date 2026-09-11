@@ -3,20 +3,22 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from conftest import ApiV2TestClient as TestClient
-from sqlalchemy import insert
-
 from agent_server.app import create_app
 from agent_server.infra.db import device_runtimes
 from agent_server.services.device_runtimes import (
     DeviceRuntimeService,
 )
+from conftest import ApiV2TestClient as TestClient
+from sqlalchemy import insert
 
 ADMIN_USER = "user1"
 ADMIN_PASSWORD = "secret"
 
 
 class FakeRuntimeRpc:
+    async def update_runtime_epoch(self, connector_id, runtime_id, epoch):
+        pass
+
     def __init__(self, discovery: dict[str, Any]) -> None:
         self.discovery = discovery
         self.online = True
