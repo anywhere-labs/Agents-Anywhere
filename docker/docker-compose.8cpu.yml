@@ -1,0 +1,15 @@
+# Apply after docker-compose.postgres.yml or the production Compose file.
+# Pin per-worker budgets so an older .env with 10+20 DB connections does not
+# silently multiply the PostgreSQL connection budget across workers.
+services:
+  server-next:
+    cpus: "8.0"
+    environment:
+      AGENT_SERVER_WORKERS: "4"
+      AGENT_SERVER_EVENT_WORKERS: "1"
+      AGENT_SERVER_TIMELINE_SINGLE_INSTANCE: "false"
+      AGENT_SERVER_EVENT_THRESHOLD_BYTES: "262144"
+      AGENT_SERVER_EVENT_QUEUE_ITEMS: "16"
+      AGENT_SERVER_EVENT_QUEUE_BYTES: "16777216"
+      AGENT_SERVER_DB_POOL_SIZE: "4"
+      AGENT_SERVER_DB_MAX_OVERFLOW: "4"

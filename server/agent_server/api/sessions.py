@@ -288,9 +288,6 @@ async def read_runtime_state_snapshot(
     return await db.get_session_runtime_state(session.id, user_id=user_id)
 
 
-_runtime_state_refreshes: set[str] = set()
-
-
 async def refresh_runtime_state_in_background(
     *,
     db: Store,
@@ -304,39 +301,37 @@ async def refresh_runtime_state_in_background(
 
     Side effects:
     - may perform connector RPC to the owning runtime;
-    - persists the runtime-owned status and updates the process cache;
+    - persists the runtime-owned status and updates the shared runtime cache;
     - publishes a protocol update to session subscribers on a real change.
     """
 
-    if session_id in _runtime_state_refreshes:
-        return
-    _runtime_state_refreshes.add(session_id)
     try:
-        session = await db.get_session(session_id)
-        if not await manager.is_online(session.connectorId):
-            return
-        state = await read_runtime_state_from_connector(manager, session)
-        if state is None:
-            return
-        persisted_session = await db.set_session_status(session.id, state.status)
-        state = state.model_copy(update={"updatedSeq": persisted_session.updatedSeq})
-        await runtime_state_cache.put(state)
-        if runtime_state_semantically_equal(previous_state, state):
-            return
-        await _publish_session_runtime_state_update(
-            db,
-            broker,
-            manager,
-            runtime_state_cache,
-            session_id,
-            state,
-        )
+        async with runtime_state_cache.refresh_guard(session_id) as acquired:
+            if not acquired:
+                return
+            session = await db.get_session(session_id)
+            if not await manager.is_online(session.connectorId):
+                return
+            state = await read_runtime_state_from_connector(manager, session)
+            if state is None:
+                return
+            persisted_session = await db.set_session_status(session.id, state.status)
+            state = state.model_copy(update={"updatedSeq": persisted_session.updatedSeq})
+            await runtime_state_cache.put(state)
+            if runtime_state_semantically_equal(previous_state, state):
+                return
+            await _publish_session_runtime_state_update(
+                db,
+                broker,
+                manager,
+                runtime_state_cache,
+                session_id,
+                state,
+            )
     except Exception:
         logger.opt(exception=True).debug(
             "background runtime state refresh failed session_id={}", session_id
         )
-    finally:
-        _runtime_state_refreshes.discard(session_id)
 
 
 def _session_rpc_timeout_seconds() -> float:

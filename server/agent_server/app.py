@@ -39,6 +39,7 @@ from agent_server.api import (
     shares,
 )
 from agent_server.core.api_namespace import API_V2_PREFIX
+from agent_server.core.process_settings import ProcessSettings
 from agent_server.core.setup_token import SetupToken
 from agent_server.core.utc import utc_now
 from agent_server.infra.connector_rpc import ConnectorRpcManager
@@ -105,10 +106,20 @@ def create_app(
     migrate_database: bool | None = None,
     redis_url: str | None = None,
 ) -> FastAPI:
+    process_settings = ProcessSettings.from_environment()
+    resolved_redis_url = redis_url
+    if resolved_redis_url is None and db_path is None:
+        resolved_redis_url = os.environ.get("AGENT_SERVER_REDIS_URL")
+    process_settings.validate_shared_state(redis_configured=bool(resolved_redis_url))
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         presence_task: asyncio.Task[None] | None = None
         try:
+            logger.info(
+                "server concurrency pid={} workers={} event_workers={}",
+                os.getpid(), process_settings.workers, process_settings.event_workers,
+            )
             await require_current_database(app.state.store.engine)
             app.state.database_schema_version = await database_schema_version(
                 app.state.store.engine
@@ -178,9 +189,6 @@ def create_app(
         upgrade_database(sqlite_path=db_path)
     app.state.store = Store(db_path)
     app.state.database_schema_version = "unknown"
-    resolved_redis_url = redis_url
-    if resolved_redis_url is None and db_path is None:
-        resolved_redis_url = os.environ.get("AGENT_SERVER_REDIS_URL")
     app.state.redis = RedisCoordinator(
         resolved_redis_url,
         prefix=os.environ.get("AGENT_SERVER_REDIS_PREFIX", "agents-anywhere"),
@@ -194,7 +202,7 @@ def create_app(
     )
     app.state.rpc = ConnectorRpcManager(
         app.state.redis,
-        instance_id=os.environ.get("AGENT_SERVER_INSTANCE_ID"),
+        instance_id=process_settings.instance_id(),
     )
     app.state.fs_downloads = FsDownloadRelayManager(app.state.redis)
     app.state.shell_tasks = ShellTaskManager(app.state.redis)
@@ -205,7 +213,7 @@ def create_app(
     app.state.terminal_stream_hub = TerminalStreamHub(app.state.redis)
     app.state.timeline_broker = TimelineBroker(
         app.state.redis,
-        event_workers=int(os.getenv("AGENT_SERVER_EVENT_WORKERS", "2")),
+        event_workers=process_settings.event_workers,
         event_threshold_bytes=int(os.getenv("AGENT_SERVER_EVENT_THRESHOLD_BYTES", str(256 * 1024))),
         event_queue_items=int(os.getenv("AGENT_SERVER_EVENT_QUEUE_ITEMS", "32")),
         event_queue_bytes=int(os.getenv("AGENT_SERVER_EVENT_QUEUE_BYTES", str(32 * 1024 * 1024))),
@@ -228,16 +236,13 @@ def create_app(
         profile_min_ms=float(
             os.environ.get("AGENT_SERVER_TIMELINE_PROFILE_MIN_MS", "0")
         ),
-        single_instance=os.environ.get(
-            "AGENT_SERVER_TIMELINE_SINGLE_INSTANCE", ""
-        ).strip().lower()
-        in {"1", "true", "yes"},
+        single_instance=process_settings.single_instance,
         lane_idle_seconds=float(
             os.environ.get("AGENT_SERVER_TIMELINE_LANE_IDLE_SECONDS", "900")
         ),
         max_lanes=int(os.environ.get("AGENT_SERVER_TIMELINE_MAX_LANES", "4096")),
     )
-    app.state.session_runtime_state_cache = SessionRuntimeStateCache()
+    app.state.session_runtime_state_cache = SessionRuntimeStateCache(app.state.redis)
     app.state.device_runtime_service = DeviceRuntimeService(
         app.state.store,
         app.state.rpc,
@@ -398,10 +403,15 @@ def create_app(
 
 
 def main() -> None:
+    settings = ProcessSettings.from_environment()
+    settings.validate_shared_state(
+        redis_configured=bool(os.environ.get("AGENT_SERVER_REDIS_URL"))
+    )
     uvicorn.run(
         "agent_server.app:create_app",
         factory=True,
-        host="127.0.0.1",
-        port=8000,
+        host=settings.host,
+        port=settings.port,
+        workers=settings.workers,
         reload=False,
     )

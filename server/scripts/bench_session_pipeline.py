@@ -26,7 +26,7 @@ parser.add_argument(
     type=int,
     help="Also compare concurrent fanout with inline and N warmed process workers",
 )
-args = parser.parse_args()
+args = parser.parse_args() if __name__ == "__main__" else parser.parse_args([])
 for key in tuple(os.environ):
     if key.startswith("AGENT_SERVER_"):
         os.environ.pop(key)
@@ -291,7 +291,7 @@ async def main():
             startup_ms = (time.perf_counter() - started) * 1000
             try:
                 result["results"][f"concurrent_fanout_{workers}_workers"] = {
-                    **await measure(lambda: concurrent_fanout(broker)),
+                    **await measure(lambda broker=broker: concurrent_fanout(broker)),
                     "pool_startup_ms": round(startup_ms, 3),
                 }
             finally:
