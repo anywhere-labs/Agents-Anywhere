@@ -2668,11 +2668,14 @@ async def _exercise_websocket_close_reconnect(monkeypatch) -> None:
         calls += 1
         if calls == 1:
             close = Close(1012, "service restart")
-            raise ConnectionClosedError(close, close, None)
+            raise ConnectionClosedError(close, close, True)
         raise asyncio.CancelledError
 
     async def fake_sleep(seconds: float) -> None:
-        sleeps.append(seconds)
+        if seconds == 0:
+            sleeps.append(seconds)
+        else:
+            await asyncio.Event().wait()
 
     monkeypatch.setattr(client, "run_once", fake_run_once)
     monkeypatch.setattr(asyncio, "sleep", fake_sleep)

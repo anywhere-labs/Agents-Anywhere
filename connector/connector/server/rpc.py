@@ -83,6 +83,7 @@ class ConnectorRpcChannel:
     """
 
     def __init__(self) -> None:
+        self._generation = 0
         self._ws: WebSocketSender | None = None
         self._send_queue: asyncio.Queue[_QueuedSend] | None = None
         self._send_worker_task: asyncio.Task[None] | None = None
@@ -91,6 +92,7 @@ class ConnectorRpcChannel:
         self._critical_request_semaphore = asyncio.Semaphore(2)
 
     def set_connection(self, ws: WebSocketSender) -> None:
+        self.clear_connection()
         if self._send_worker_task is not None:
             self._send_worker_task.cancel()
         self._ws = ws
@@ -101,6 +103,7 @@ class ConnectorRpcChannel:
         )
 
     def clear_connection(self) -> None:
+        self._generation += 1
         self._ws = None
         if self._send_worker_task is not None:
             self._send_worker_task.cancel()
@@ -117,6 +120,13 @@ class ConnectorRpcChannel:
         self._request_semaphore = asyncio.Semaphore(8)
         self._critical_request_semaphore = asyncio.Semaphore(2)
 
+    async def close_connection(self) -> None:
+        tasks = list(self._request_tasks)
+        if self._send_worker_task is not None:
+            tasks.append(self._send_worker_task)
+        self.clear_connection()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
     @property
     def connected(self) -> bool:
         return self._ws is not None
@@ -125,8 +135,11 @@ class ConnectorRpcChannel:
         self,
         message: dict[str, Any],
         dispatch: ConnectorDispatcher,
+        *,
+        generation: int | None = None,
     ) -> None:
-        if message.get("type") != "request":
+        generation = self._generation if generation is None else generation
+        if generation != self._generation or message.get("type") != "request":
             return
         request_id = message.get("id")
         method = message.get("method")
@@ -147,7 +160,8 @@ class ConnectorRpcChannel:
                 lambda: request_id,
                 lambda: sanitize_rpc_log_value(result),
             )
-            await self.send_response(request_id, ok=True, result=result)
+            if generation == self._generation:
+                await self.send_response(request_id, ok=True, result=result)
         except RuntimeProtocolError as exc:
             logger.warning(
                 "connector runtime request failed method={} id={} code={} message={}",
@@ -162,11 +176,11 @@ class ConnectorRpcChannel:
                 lambda: request_id,
                 lambda exc=exc: sanitize_rpc_log_value({"code": exc.code, "message": str(exc)}),
             )
-            await self.send_response(
-                request_id,
-                ok=False,
-                error={"code": exc.code, "message": str(exc)},
-            )
+            if generation == self._generation:
+                await self.send_response(
+                    request_id, ok=False,
+                    error={"code": exc.code, "message": str(exc)},
+                )
         except Exception as exc:  # noqa: BLE001
             logger.exception("connector request failed method={} id={}", method, request_id)
             code = getattr(exc, "code", None) or exc.__class__.__name__
@@ -176,11 +190,11 @@ class ConnectorRpcChannel:
                 lambda: request_id,
                 lambda exc=exc: sanitize_rpc_log_value({"code": code, "message": str(exc)}),
             )
-            await self.send_response(
-                request_id,
-                ok=False,
-                error={"code": code, "message": str(exc)},
-            )
+            if generation == self._generation:
+                await self.send_response(
+                    request_id, ok=False,
+                    error={"code": code, "message": str(exc)},
+                )
 
     def start_request(
         self,
@@ -202,7 +216,7 @@ class ConnectorRpcChannel:
         method = message.get("method")
         if not isinstance(request_id, str) or not isinstance(method, str):
             return
-        task = asyncio.create_task(self.process_request(message, dispatch))
+        task = asyncio.create_task(self.process_request(message, dispatch, generation=self._generation))
         self._request_tasks.add(task)
         task.add_done_callback(self.handle_request_task_done)
 
@@ -210,6 +224,8 @@ class ConnectorRpcChannel:
         self,
         message: dict[str, Any],
         dispatch: ConnectorDispatcher,
+        *,
+        generation: int | None = None,
     ) -> None:
         method = message.get("method")
         semaphore = (
@@ -218,7 +234,7 @@ class ConnectorRpcChannel:
             else self._request_semaphore
         )
         async with semaphore:
-            await self.handle_message(message, dispatch)
+            await self.handle_message(message, dispatch, generation=generation)
 
     def handle_request_task_done(self, task: asyncio.Task[None]) -> None:
         self._request_tasks.discard(task)

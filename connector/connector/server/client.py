@@ -143,7 +143,19 @@ class BackendRpcClient:
         try:
             while True:
                 try:
-                    await self.run_once()
+                    connection_task = asyncio.create_task(self.run_once())
+                    try:
+                        done, _ = await asyncio.wait(
+                            {connection_task, ingest_flush_task},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if ingest_flush_task in done:
+                            await ingest_flush_task
+                            raise RuntimeError("connector ingest worker stopped")
+                        await connection_task
+                    finally:
+                        connection_task.cancel()
+                        await asyncio.gather(connection_task, return_exceptions=True)
                 except asyncio.CancelledError:
                     raise
                 except ConnectorAuthenticationError as exc:
@@ -193,7 +205,8 @@ class BackendRpcClient:
             for task in relay_tasks:
                 task.cancel()
             await asyncio.gather(*relay_tasks, return_exceptions=True)
-            await self._timeline_notifications.close()
+            self._ingest.close()
+            await self._timeline_notifications.abort()
             ingest_flush_task.cancel()
             sync_state_flush_task.cancel()
             if self._runtime_sync_task is not None:
@@ -238,8 +251,8 @@ class BackendRpcClient:
                 self._publish_runtime_capabilities(request_session)
             )
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+            recovery_task = asyncio.create_task(self._runtime_sync.reconnect_event_runtimes())
             try:
-                await self._runtime_sync.reconnect_event_runtimes()
                 if self._runtime_sync_task is None or self._runtime_sync_task.done():
                     self._runtime_sync_task = asyncio.create_task(
                         self._runtime_sync.sync_existing_loop()
@@ -253,10 +266,11 @@ class BackendRpcClient:
             finally:
                 capabilities_task.cancel()
                 heartbeat_task.cancel()
+                recovery_task.cancel()
                 await asyncio.gather(
-                    capabilities_task, heartbeat_task, return_exceptions=True
+                    capabilities_task, heartbeat_task, recovery_task, return_exceptions=True
                 )
-                self._rpc.clear_connection()
+                await self._rpc.close_connection()
 
     async def _publish_runtime_capabilities(
         self, request_session: ConnectorRequestSession
@@ -319,12 +333,13 @@ class BackendRpcClient:
         if notification_requires_ingest(method):
             await self._ingest.enqueue(method, params)
             return
-        if self._rpc.connected:
+        if self._rpc.connected and not self._ingest.has_pending:
             try:
                 await self.send_notification(method, params)
                 return
             except (
                 RuntimeError,
+                ConnectionError,
                 ConnectionClosed,
                 ConnectorWebSocketFrameTooLarge,
             ) as exc:
