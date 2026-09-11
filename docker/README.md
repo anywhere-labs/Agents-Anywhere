@@ -136,6 +136,34 @@ AGENT_SERVER_SECRET=change-me-too \
 docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 
+For an initialized deployment on a machine with up to eight CPUs, use the
+conservative four-worker starting profile:
+
+```bash
+docker compose \
+  -f docker/docker-compose.postgres.yml \
+  -f docker/docker-compose.8cpu.yml \
+  up -d --build server-next
+```
+
+The same override can follow a production Compose file whose server service is
+named `server-next`. It uses four Uvicorn workers and one compute child per
+worker, caps the Server container at eight CPUs, and pins each worker's database
+pool to four base plus four overflow connections (32 total). Event preparation
+admits at most 16 jobs / 16 MiB per worker, including running jobs. These are
+input-admission budgets; process memory also includes application state, output
+buffers and IPC copies. The image starts through `agent_server.main`, which
+reads these settings and rejects multi-worker use without Redis or with the
+single-instance Timeline shortcut enabled.
+
+On an empty database, complete the existing bootstrap flow with one worker
+before applying this profile: the initial setup token remains process-local.
+Use a shared upload volume or S3 and the same auth secret for all workers.
+Per-worker RPC identities remain unique even if an instance-name prefix is set.
+
+The profile's measured scaling and its single-connection limit are documented
+in [the session performance report](../docs/performance/session-pipeline.md).
+
 Use a non-default `AGENT_SERVER_SECRET` and database password outside local
 development. Put HTTPS in front of the Web service for production.
 

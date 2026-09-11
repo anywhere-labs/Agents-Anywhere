@@ -34,6 +34,7 @@ from agent_server.services.effective_capabilities import (
 )
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.repository_ports import ConnectorIngestRepository
+from agent_server.services.runtime_ingress import runtime_notification_is_allowed
 from agent_server.services.session_runtime_state_cache import (
     SessionRuntimeStateCache,
 )
@@ -87,7 +88,14 @@ class ConnectorIngestService:
         rejected: list[ConnectorIngestRejectedNotification] = []
         protocol_capabilities_changed = False
         runtime_scoped_capabilities_changed = False
+        unconfigured_runtimes = await self._store.get_unconfigured_runtime_ids(connector_id)
         for index, notification in enumerate(payload.notifications):
+            if not runtime_notification_is_allowed(notification.method, notification.params, unconfigured_runtimes):
+                rejected.append(ConnectorIngestRejectedNotification(
+                    index=index, method=notification.method, code="runtime_not_configured",
+                    message="runtime must be configured before accepting session notifications", errorType="RuntimeNotConfigured",
+                ))
+                continue
             try:
                 effect = await self.apply_ingest_notification(
                     connector_id,
@@ -426,6 +434,17 @@ class ConnectorIngestService:
             return status_changed
 
         for session_id, bucket in by_session.items():
+            if not (
+                bucket["items"]
+                or bucket["runtime_state"] is not None
+                or bucket["timeline_reset"]
+                or bucket["session"]
+                or bucket["capability_changed"]
+                or bucket["notices"]
+                or bucket["catalogs"]
+                or bucket["refetch"]
+            ):
+                continue
             if bucket["deferred_timeline_only"]:
                 dashboard_changed = (
                     await publish_bucket(session_id, bucket)

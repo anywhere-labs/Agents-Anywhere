@@ -4,7 +4,7 @@ import asyncio
 import json
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -38,6 +38,11 @@ class ConnectorConnection:
     connected_at_monotonic: float
     last_seen_monotonic: float
     ready: bool = False
+    draining: bool = False
+    invalidated: bool = False
+    abort_notifications: Callable[[], Awaitable[None]] | None = None
+    drain_notifications: Callable[[], Awaitable[None]] | None = None
+    set_runtime_ingress_enabled: Callable[[str, bool], Awaitable[None]] | None = None
     pending: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -60,6 +65,40 @@ class ConnectorRpcManager:
         self._clock = clock
         self._pubsub = None
         self._listener_task: asyncio.Task[None] | None = None
+
+    def lifecycle_guard(self, connector_id: str):
+        """Serialize rare credential/deletion transitions with HTTP admission."""
+        return self._coordinator.lock(f"connector-lifecycle:{connector_id}")
+
+    def accepts_notifications(self, connection: ConnectorConnection) -> bool:
+        return (
+            self._connections.get(connection.connector_id) is connection
+            and not connection.invalidated
+            and self._is_local_live(connection)
+        )
+
+    async def _invalidate(self, connection: ConnectorConnection, reason: str) -> None:
+        connection.invalidated = True
+        self._fail_pending(connection, reason)
+        if connection.abort_notifications is not None:
+            await connection.abort_notifications()
+
+    async def begin_drain(self, connection: ConnectorConnection) -> bool:
+        """Keep the lease until accepted work finishes, but stop routing RPCs."""
+        if not self.accepts_notifications(connection):
+            await self._invalidate(connection, "connector ownership was lost")
+            return False
+        previous = self._lease_value(connection)
+        connection.draining = True
+        self._fail_pending(connection, "connector disconnected")
+        if self._coordinator.distributed and not await self._coordinator.replace_if_value(
+            self._lease_key(connection.connector_id), previous, self._lease_value(connection),
+            ttl_seconds=self._heartbeat_timeout_seconds,
+        ):
+            await self._invalidate(connection, "connector ownership was lost")
+            return False
+        connection.last_seen_monotonic = self._clock()
+        return True
 
     async def start(self) -> None:
         if not self._coordinator.distributed or self._listener_task is not None:
@@ -142,13 +181,17 @@ class ConnectorRpcManager:
         now = self._clock()
         old = self._connections.get(connector_id)
         if old is not None:
-            if self._is_local_live(old):
+            if self._is_local_live(old) or old.draining:
                 raise DuplicateConnectorConnectionError(
                     "connector is already connected"
                 )
-            self._connections.pop(connector_id, None)
-            self._fail_pending(old, "connector heartbeat timed out")
+            await self._invalidate(old, "connector heartbeat timed out")
+            if self._connections.get(connector_id) is old:
+                self._connections.pop(connector_id, None)
             await self._release_lease(old)
+            await self._close_socket(old, code=1012, reason="connector heartbeat timed out")
+            if connector_id in self._connections:
+                raise DuplicateConnectorConnectionError("connector is already connected")
 
         connection = ConnectorConnection(
             connector_id=connector_id,
@@ -198,14 +241,14 @@ class ConnectorRpcManager:
             if not promoted:
                 if self._connections.get(connector_id) is connection:
                     self._connections.pop(connector_id, None)
-                self._fail_pending(connection, "connector ownership was lost")
+                await self._invalidate(connection, "connector ownership was lost")
                 return False
             if self._connections.get(connector_id) is not connection:
                 await self._coordinator.delete_if_value(
                     self._lease_key(connector_id),
                     self._lease_value(connection, ready=True),
                 )
-                self._fail_pending(connection, "connector ownership was lost")
+                await self._invalidate(connection, "connector ownership was lost")
                 return False
         connection.ready = True
         return True
@@ -218,8 +261,9 @@ class ConnectorRpcManager:
         current = self._connections.get(connector_id)
         if current is not connection:
             return False
-        self._connections.pop(connector_id, None)
-        self._fail_pending(connection, "connector disconnected")
+        await self._invalidate(connection, "connector disconnected")
+        if self._connections.get(connector_id) is connection:
+            self._connections.pop(connector_id, None)
         await self._release_lease(connection)
         return True
 
@@ -248,13 +292,27 @@ class ConnectorRpcManager:
         )
         return bool(result)
 
+    async def set_runtime_ingress_enabled(self, connector_id: str, runtime_id: str, enabled: bool) -> None:
+        connection = self._connections.get(connector_id)
+        if connection is not None:
+            if connection.set_runtime_ingress_enabled is not None:
+                await connection.set_runtime_ingress_enabled(runtime_id, enabled)
+            return
+        if self._coordinator.distributed:
+            lease = await self._get_lease(connector_id)
+            if lease is not None:
+                await self._route(lease, {
+                    "type": "runtimeIngress", "connectorId": connector_id,
+                    "runtimeId": runtime_id, "enabled": enabled,
+                }, timeout=10)
+
     async def touch(
         self,
         connector_id: str,
         connection: ConnectorConnection | None = None,
     ) -> bool:
         current = self._connections.get(connector_id)
-        if current is None or (connection is not None and current is not connection):
+        if current is None or current.invalidated or current.draining or (connection is not None and current is not connection):
             return False
         current.last_seen_monotonic = self._clock()
         if not self._coordinator.distributed:
@@ -267,7 +325,8 @@ class ConnectorRpcManager:
         if not refreshed:
             if self._connections.get(connector_id) is current:
                 self._connections.pop(connector_id, None)
-            self._fail_pending(current, "connector ownership was lost")
+            await self._invalidate(current, "connector ownership was lost")
+            await self._close_socket(current, code=1012, reason="connector ownership was lost")
         return refreshed
 
     async def expire_stale(self) -> list[ConnectorConnection]:
@@ -278,9 +337,11 @@ class ConnectorRpcManager:
                 continue
             if self._connections.get(connector_id) is not connection:
                 continue
-            self._connections.pop(connector_id, None)
-            self._fail_pending(connection, "connector heartbeat timed out")
+            await self._invalidate(connection, "connector heartbeat timed out")
+            if self._connections.get(connector_id) is connection:
+                self._connections.pop(connector_id, None)
             await self._release_lease(connection)
+            await self._close_socket(connection, code=1012, reason="connector heartbeat timed out")
             stale.append(connection)
         return stale
 
@@ -359,16 +420,14 @@ class ConnectorRpcManager:
     ) -> bool:
         connection = self._connections.get(connector_id)
         if connection is not None:
-            if connection.connection_id != connection_id or not self._is_local_online(
-                connection
-            ):
+            if connection.connection_id != connection_id or not self.accepts_notifications(connection):
                 return False
             if not self._coordinator.distributed:
                 return True
             lease = await self._get_lease(connector_id)
             return (
                 lease is not None
-                and lease.ready
+                and (lease.ready or connection.draining)
                 and lease.instance_id == self.instance_id
                 and lease.connection_id == connection_id
             )
@@ -533,6 +592,13 @@ class ConnectorRpcManager:
                     reason=str(payload.get("reason") or "connector disconnected"),
                     expected_connection_id=connection_id,
                 )
+            elif payload.get("type") == "runtimeIngress":
+                runtime_id, enabled = payload.get("runtimeId"), payload.get("enabled")
+                if not isinstance(runtime_id, str) or type(enabled) is not bool:
+                    raise ConnectorRpcError("invalid_route", "invalid runtime ingress state")
+                if connection.set_runtime_ingress_enabled is not None:
+                    await connection.set_runtime_ingress_enabled(runtime_id, enabled)
+                result = True
             elif payload.get("type") == "request":
                 method = payload.get("method")
                 params = payload.get("params")
@@ -594,14 +660,27 @@ class ConnectorRpcManager:
             and connection.connection_id != expected_connection_id
         ):
             return False
-        self._connections.pop(connector_id, None)
-        self._fail_pending(connection, reason)
+        if reason == "server shutting down" and connection.drain_notifications is not None:
+            try:
+                if await self.begin_drain(connection):
+                    async with asyncio.timeout(10):
+                        await connection.drain_notifications()
+            except TimeoutError:
+                logger.warning("connector shutdown drain timed out connector_id={}", connector_id)
+        await self._invalidate(connection, reason)
+        if self._connections.get(connector_id) is connection:
+            self._connections.pop(connector_id, None)
         await self._release_lease(connection)
+        code = 4001 if reason in {"connector deleted", "connector token revoked"} else 1012
+        await self._close_socket(connection, code=code, reason=reason)
+        return True
+
+    @staticmethod
+    async def _close_socket(connection: ConnectorConnection, *, code: int, reason: str) -> None:
         try:
-            await connection.websocket.close(code=4001, reason=reason)
+            await connection.websocket.close(code=code, reason=reason)
         except (RuntimeError, OSError):
             pass
-        return True
 
     async def _get_lease(self, connector_id: str) -> ConnectorLease | None:
         raw = await self._coordinator.client.get(self._lease_key(connector_id))
@@ -639,7 +718,7 @@ class ConnectorRpcManager:
         )
 
     def _is_local_online(self, connection: ConnectorConnection) -> bool:
-        return connection.ready and self._is_local_live(connection)
+        return connection.ready and not connection.draining and not connection.invalidated and self._is_local_live(connection)
 
     def _is_local_live(self, connection: ConnectorConnection) -> bool:
         return (
@@ -660,7 +739,7 @@ class ConnectorRpcManager:
             {
                 "instanceId": self.instance_id,
                 "connectionId": connection.connection_id,
-                "ready": connection.ready if ready is None else ready,
+                "ready": (connection.ready and not connection.draining) if ready is None else ready,
             },
             separators=(",", ":"),
             sort_keys=True,

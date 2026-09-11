@@ -11,13 +11,14 @@ async def project_session_meta_for_dashboard(
     sessions: list[SessionView],
 ) -> list[SessionView]:
     connector_statuses = await connector_online_statuses(presence, sessions)
+    runtime_states = await runtime_state_cache.get_many([session.id for session in sessions])
     projected_sessions: list[SessionView] = []
     for session in sessions:
         connector_status = (
             "online" if connector_statuses.get(session.connectorId, False) else "offline"
         )
         projected = session.model_copy(update={"connectorStatus": connector_status})
-        runtime_state = await runtime_state_cache.get(session.id)
+        runtime_state = runtime_states.get(session.id)
         if runtime_state is not None:
             projected = projected.model_copy(
                 update={

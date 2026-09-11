@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import delete, insert
+from sqlalchemy import delete, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
@@ -36,6 +36,22 @@ class SqlTimelineStore:
                 )
             ).mappings().all()
         return [TimelineItem.model_validate_json(row["payload_json"]) for row in rows]
+
+    async def recovery_items(
+        self, session_id: str, *, limit: int = 100,
+    ) -> tuple[list[TimelineItem], bool]:
+        """Probe IDs first; caller holds the session revision fence."""
+        async with self._engine.connect() as conn:
+            ids = (await conn.execute(
+                select(timeline_items.c.id)
+                .where(timeline_items.c.session_id == session_id)
+                .limit(limit + 1)
+            )).scalars().all()
+        if len(ids) > limit:
+            return [], True
+        items = await self.read_many(session_id, set(ids))
+        items.sort(key=lambda item: (item.orderSeq, item.updatedSeq, item.id))
+        return items, False
 
     async def replace(self, session_id: str, items: list[TimelineItem]) -> None:
         async with self._engine.begin() as conn:

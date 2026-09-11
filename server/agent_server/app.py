@@ -19,6 +19,7 @@ from agent_server.api import (
     admin,
     admin_dashboard,
     agents,
+    announcements,
     auth,
     client_ws,
     connector_files,
@@ -39,6 +40,7 @@ from agent_server.api import (
     shares,
 )
 from agent_server.core.api_namespace import API_V2_PREFIX
+from agent_server.core.process_settings import ProcessSettings
 from agent_server.core.setup_token import SetupToken
 from agent_server.core.utc import utc_now
 from agent_server.infra.connector_rpc import ConnectorRpcManager
@@ -54,6 +56,7 @@ from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.ws_tickets import ClientWsTicketManager
+from agent_server.services.connector_deletion import ConnectorDeletionRecovery
 from agent_server.services.connector_rpc import ConnectorServiceError
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_runtimes import DeviceRuntimeService
@@ -61,6 +64,7 @@ from agent_server.services.effective_capabilities import (
     publish_connector_session_capabilities,
 )
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
+from agent_server.services.setup_tokens import SetupTokenService
 from agent_server.services.shell_tasks import ShellTaskManager
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 from agent_server.services.workspace import WorkspaceServiceError
@@ -105,10 +109,21 @@ def create_app(
     migrate_database: bool | None = None,
     redis_url: str | None = None,
 ) -> FastAPI:
+    process_settings = ProcessSettings.from_environment()
+    resolved_redis_url = redis_url
+    if resolved_redis_url is None and db_path is None:
+        resolved_redis_url = os.environ.get("AGENT_SERVER_REDIS_URL")
+    process_settings.validate_shared_state(redis_configured=bool(resolved_redis_url))
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         presence_task: asyncio.Task[None] | None = None
+        deletion_task: asyncio.Task[None] | None = None
         try:
+            logger.info(
+                "server concurrency pid={} workers={} event_workers={}",
+                os.getpid(), process_settings.workers, process_settings.event_workers,
+            )
             await require_current_database(app.state.store.engine)
             app.state.database_schema_version = await database_schema_version(
                 app.state.store.engine
@@ -120,11 +135,15 @@ def create_app(
             await app.state.terminal_broker.start()
             await app.state.rpc.start()
             presence_task = asyncio.create_task(_connector_presence_watchdog(app))
+            deletion_task = asyncio.create_task(app.state.connector_deletion_recovery.run())
             # Generate the bootstrap token early so operators see it in logs.
             if await app.state.store.count_users() == 0:
-                app.state.setup_token.snapshot()
+                await SetupTokenService(app.state.setup_token, app.state.redis).snapshot()
             yield
         finally:
+            if deletion_task is not None:
+                deletion_task.cancel()
+                await asyncio.gather(deletion_task, return_exceptions=True)
             if presence_task is not None:
                 presence_task.cancel()
                 try:
@@ -178,9 +197,6 @@ def create_app(
         upgrade_database(sqlite_path=db_path)
     app.state.store = Store(db_path)
     app.state.database_schema_version = "unknown"
-    resolved_redis_url = redis_url
-    if resolved_redis_url is None and db_path is None:
-        resolved_redis_url = os.environ.get("AGENT_SERVER_REDIS_URL")
     app.state.redis = RedisCoordinator(
         resolved_redis_url,
         prefix=os.environ.get("AGENT_SERVER_REDIS_PREFIX", "agents-anywhere"),
@@ -194,8 +210,9 @@ def create_app(
     )
     app.state.rpc = ConnectorRpcManager(
         app.state.redis,
-        instance_id=os.environ.get("AGENT_SERVER_INSTANCE_ID"),
+        instance_id=process_settings.instance_id(),
     )
+    app.state.store.bind_connector_lifecycle(app.state.rpc.lifecycle_guard)
     app.state.fs_downloads = FsDownloadRelayManager(app.state.redis)
     app.state.shell_tasks = ShellTaskManager(app.state.redis)
     app.state.terminal_broker = TerminalBroker(
@@ -203,7 +220,13 @@ def create_app(
         instance_id=app.state.rpc.instance_id,
     )
     app.state.terminal_stream_hub = TerminalStreamHub(app.state.redis)
-    app.state.timeline_broker = TimelineBroker(app.state.redis)
+    app.state.timeline_broker = TimelineBroker(
+        app.state.redis,
+        event_workers=process_settings.event_workers,
+        event_threshold_bytes=int(os.getenv("AGENT_SERVER_EVENT_THRESHOLD_BYTES", str(256 * 1024))),
+        event_queue_items=int(os.getenv("AGENT_SERVER_EVENT_QUEUE_ITEMS", "32")),
+        event_queue_bytes=int(os.getenv("AGENT_SERVER_EVENT_QUEUE_BYTES", str(32 * 1024 * 1024))),
+    )
     app.state.timeline_write_buffer = TimelineWriteBuffer(
         app.state.store,
         app.state.timeline_broker,
@@ -222,16 +245,13 @@ def create_app(
         profile_min_ms=float(
             os.environ.get("AGENT_SERVER_TIMELINE_PROFILE_MIN_MS", "0")
         ),
-        single_instance=os.environ.get(
-            "AGENT_SERVER_TIMELINE_SINGLE_INSTANCE", ""
-        ).strip().lower()
-        in {"1", "true", "yes"},
+        single_instance=process_settings.single_instance,
         lane_idle_seconds=float(
             os.environ.get("AGENT_SERVER_TIMELINE_LANE_IDLE_SECONDS", "900")
         ),
         max_lanes=int(os.environ.get("AGENT_SERVER_TIMELINE_MAX_LANES", "4096")),
     )
-    app.state.session_runtime_state_cache = SessionRuntimeStateCache()
+    app.state.session_runtime_state_cache = SessionRuntimeStateCache(app.state.redis)
     app.state.device_runtime_service = DeviceRuntimeService(
         app.state.store,
         app.state.rpc,
@@ -240,6 +260,10 @@ def create_app(
         app.state.session_runtime_state_cache,
         timeline_write_buffer=app.state.timeline_write_buffer,
         terminal_broker=app.state.terminal_broker,
+    )
+    app.state.connector_deletion_recovery = ConnectorDeletionRecovery(
+        app.state.store, app.state.rpc, app.state.terminal_broker,
+        app.state.timeline_write_buffer, app.state.session_runtime_state_cache, app.state.timeline_broker,
     )
     app.state.ws_tickets = ClientWsTicketManager(app.state.redis)
     app.state.setup_token = SetupToken()
@@ -305,6 +329,8 @@ def create_app(
 
     app.include_router(auth.router, prefix=API_V2_PREFIX)
     app.include_router(admin.router, prefix=API_V2_PREFIX)
+    app.include_router(announcements.router, prefix=API_V2_PREFIX)
+    app.include_router(announcements.admin_router, prefix=API_V2_PREFIX)
     app.include_router(admin_dashboard.router, prefix=API_V2_PREFIX)
     app.include_router(dashboard_stream.router, prefix=API_V2_PREFIX)
     app.include_router(service.router, prefix=API_V2_PREFIX)
@@ -368,6 +394,12 @@ def create_app(
                     and (default_locale_candidate / "index.html").is_file()
                 ):
                     return _static_file(default_locale_candidate / "index.html")
+                # 静态导出无法预生成的动态路由（例如 /share/<id>）回退到父目录外壳。
+                parts = Path(relative).parts
+                for depth in range(len(parts) - 1, 0, -1):
+                    parent_index = static_path.joinpath(*parts[:depth], "index.html")
+                    if parent_index.is_file():
+                        return _static_file(parent_index)
 
             default_index = static_path / default_locale / "index.html"
             if default_index.is_file():
@@ -386,10 +418,15 @@ def create_app(
 
 
 def main() -> None:
+    settings = ProcessSettings.from_environment()
+    settings.validate_shared_state(
+        redis_configured=bool(os.environ.get("AGENT_SERVER_REDIS_URL"))
+    )
     uvicorn.run(
         "agent_server.app:create_app",
         factory=True,
-        host="127.0.0.1",
-        port=8000,
+        host=settings.host,
+        port=settings.port,
+        workers=settings.workers,
         reload=False,
     )

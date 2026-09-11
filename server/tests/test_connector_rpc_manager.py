@@ -4,9 +4,6 @@ import asyncio
 from typing import Any
 
 import pytest
-from fakeredis import FakeServer
-from fakeredis.aioredis import FakeRedis
-
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
     ConnectorRpcError,
@@ -14,6 +11,8 @@ from agent_server.infra.connector_rpc import (
     DuplicateConnectorConnectionError,
 )
 from agent_server.infra.redis_coordinator import RedisCoordinator
+from fakeredis import FakeServer
+from fakeredis.aioredis import FakeRedis
 
 
 class FakeWebSocket:
@@ -118,10 +117,10 @@ class PausingRefreshCoordinator(RedisCoordinator):
 def test_connector_rpc_manager_rejects_duplicate_online_connection() -> None:
     async def exercise() -> None:
         manager = ConnectorRpcManager(heartbeat_timeout_seconds=60, clock=lambda: 10)
-        await manager.register("conn_1", object())  # type: ignore[arg-type]
+        await manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
 
         with pytest.raises(DuplicateConnectorConnectionError):
-            await manager.register("conn_1", object())  # type: ignore[arg-type]
+            await manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
 
     asyncio.run(exercise())
 
@@ -135,10 +134,10 @@ def test_connector_rpc_manager_replaces_stale_connection() -> None:
     async def exercise() -> None:
         nonlocal now
         manager = ConnectorRpcManager(heartbeat_timeout_seconds=5, clock=clock)
-        old = await manager.register("conn_1", object())  # type: ignore[arg-type]
+        old = await manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
         now = 20
 
-        new = await manager.register("conn_1", object())  # type: ignore[arg-type]
+        new = await manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
 
         assert new is not old
         assert await manager.is_online("conn_1") is True

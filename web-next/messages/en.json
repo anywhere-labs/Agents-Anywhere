@@ -1724,5 +1724,29 @@
     "discardDescription": "Your edits to this file have not been saved. Discard them to continue.",
     "keepEditing": "Keep editing",
     "discardChanges": "Discard changes"
+  },
+  "announcement": {
+    "title": "Announcement",
+    "publishedAt": "Published {time}",
+    "acknowledge": "Got it",
+    "admin": {
+      "title": "Announcement",
+      "description": "Show an announcement on the login, registration, and main screens.",
+      "enabled": "Show announcement",
+      "enabledHint": "Turning this off hides the announcement and keeps the content.",
+      "content": "Announcement content",
+      "placeholder": "## Service announcement\n\nWrite your announcement here.",
+      "contentHint": "Markdown supported, up to 20,000 characters. Editing a published announcement or enabling it again notifies readers again.",
+      "contentRequired": "Enter some content before enabling the announcement.",
+      "preview": "Preview",
+      "save": "Save announcement",
+      "saved": "Announcement saved",
+      "saveFailed": "Could not save the announcement. Please try again.",
+      "loadFailed": "Could not load announcement settings.",
+      "loading": "Loading announcement",
+      "retry": "Reload",
+      "publishedAt": "Last published: {time}",
+      "notPublished": "Not published yet"
+    }
   }
 }

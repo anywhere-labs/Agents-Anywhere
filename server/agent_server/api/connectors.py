@@ -30,6 +30,7 @@ from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.timeline_broker import TimelineBroker
+from agent_server.services.connector_deletion import delete_connector_data
 from agent_server.services.connector_presence import (
     with_effective_connector_status,
     with_effective_connector_statuses,
@@ -173,14 +174,9 @@ async def delete_connector(
     runtime_state_cache: SessionRuntimeStateCache = Depends(get_session_runtime_state_cache),
 ) -> None:
     try:
-        session_ids = await store.delete_connector(connector_id, user_id=user_id)
+        await delete_connector_data(connector_id, user_id, store, manager, terminals, timeline_buffer, runtime_state_cache)
     except KeyError:
         raise HTTPException(status_code=404, detail="connector not found") from None
-    await terminals.remove_for_connector(connector_id)
-    await manager.disconnect(connector_id, reason="connector deleted")
-    for session_id in session_ids:
-        await timeline_buffer.discard_session(session_id)
-        await runtime_state_cache.discard(session_id)
     await publish_dashboard_changed(
         store,
         broker,
@@ -199,15 +195,16 @@ async def revoke_connector_token(
     broker: TimelineBroker = Depends(get_timeline_broker),
     terminals: TerminalBroker = Depends(get_terminal_broker),
 ) -> ConnectorRevokeResponse:
-    try:
-        connector, token, prefix = await store.rotate_connector_token(
-            connector_id,
-            user_id=user_id,
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="connector not found") from None
-    await terminals.remove_relays_for_connector(connector_id)
-    await manager.disconnect(connector_id, reason="connector token revoked")
+    async with store.connector_lifecycle(connector_id):
+        try:
+            connector, token, prefix = await store.rotate_connector_token(
+                connector_id,
+                user_id=user_id,
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="connector not found") from None
+        await manager.disconnect(connector_id, reason="connector token revoked")
+        await terminals.remove_relays_for_connector(connector_id)
     await publish_dashboard_changed(
         store,
         broker,
