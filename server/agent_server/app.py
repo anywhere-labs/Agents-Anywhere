@@ -19,6 +19,7 @@ from agent_server.api import (
     admin,
     admin_dashboard,
     agents,
+    announcements,
     auth,
     client_ws,
     connector_files,
@@ -327,6 +328,8 @@ def create_app(
 
     app.include_router(auth.router, prefix=API_V2_PREFIX)
     app.include_router(admin.router, prefix=API_V2_PREFIX)
+    app.include_router(announcements.router, prefix=API_V2_PREFIX)
+    app.include_router(announcements.admin_router, prefix=API_V2_PREFIX)
     app.include_router(admin_dashboard.router, prefix=API_V2_PREFIX)
     app.include_router(dashboard_stream.router, prefix=API_V2_PREFIX)
     app.include_router(service.router, prefix=API_V2_PREFIX)

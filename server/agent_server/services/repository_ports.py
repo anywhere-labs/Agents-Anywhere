@@ -21,6 +21,12 @@ from agent_server.core.timeline import (
 )
 
 
+class InstanceSettingsRepository(Protocol):
+    async def get_setting(self, key: str, default: str | None = None) -> str | None: ...
+
+    async def set_setting(self, key: str, value: str) -> None: ...
+
+
 class SessionLookupRepository(Protocol):
     async def get_session(
         self,

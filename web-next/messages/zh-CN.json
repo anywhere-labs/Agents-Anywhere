@@ -1724,5 +1724,29 @@
     "discardDescription": "此文件的修改尚未保存，继续操作会放弃这些修改。",
     "keepEditing": "继续编辑",
     "discardChanges": "放弃修改"
+  },
+  "announcement": {
+    "title": "公告",
+    "publishedAt": "发布于 {time}",
+    "acknowledge": "我知道了",
+    "admin": {
+      "title": "公告",
+      "description": "在登录、注册和主界面向用户展示公告。",
+      "enabled": "显示公告",
+      "enabledHint": "关闭后不再展示，已填写的内容会保留。",
+      "content": "公告内容",
+      "placeholder": "## 服务公告\n\n填写需要告知用户的内容。",
+      "contentHint": "支持 Markdown，最多 20,000 个字符。启用后修改内容或重新启用，会再次提醒用户。",
+      "contentRequired": "请填写公告内容后再启用。",
+      "preview": "预览",
+      "save": "保存公告",
+      "saved": "公告已保存",
+      "saveFailed": "保存失败，请稍后重试。",
+      "loadFailed": "无法加载公告设置。",
+      "loading": "正在加载公告",
+      "retry": "重新加载",
+      "publishedAt": "上次发布：{time}",
+      "notPublished": "尚未发布"
+    }
   }
 }
