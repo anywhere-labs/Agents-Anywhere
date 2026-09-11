@@ -172,15 +172,19 @@ async def delete_connector(
     timeline_buffer: TimelineWriteBuffer = Depends(get_timeline_write_buffer),
     runtime_state_cache: SessionRuntimeStateCache = Depends(get_session_runtime_state_cache),
 ) -> None:
-    try:
-        session_ids = await store.delete_connector(connector_id, user_id=user_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="connector not found") from None
-    await terminals.remove_for_connector(connector_id)
-    await manager.disconnect(connector_id, reason="connector deleted")
-    for session_id in session_ids:
-        await timeline_buffer.discard_session(session_id)
-        await runtime_state_cache.discard(session_id)
+    async with store.connector_lifecycle(connector_id):
+        try:
+            session_ids = await store.begin_connector_deletion(connector_id, user_id=user_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="connector not found") from None
+        # Keep the tombstone and sessions discoverable if any cleanup fails;
+        # retrying DELETE can finish the same operation without re-enabling auth.
+        await manager.disconnect(connector_id, reason="connector deleted")
+        await terminals.remove_for_connector(connector_id)
+        for session_id in session_ids:
+            await timeline_buffer.discard_session(session_id)
+            await runtime_state_cache.discard(session_id)
+        await store.delete_connector(connector_id, user_id=user_id)
     await publish_dashboard_changed(
         store,
         broker,
@@ -199,15 +203,16 @@ async def revoke_connector_token(
     broker: TimelineBroker = Depends(get_timeline_broker),
     terminals: TerminalBroker = Depends(get_terminal_broker),
 ) -> ConnectorRevokeResponse:
-    try:
-        connector, token, prefix = await store.rotate_connector_token(
-            connector_id,
-            user_id=user_id,
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="connector not found") from None
-    await terminals.remove_relays_for_connector(connector_id)
-    await manager.disconnect(connector_id, reason="connector token revoked")
+    async with store.connector_lifecycle(connector_id):
+        try:
+            connector, token, prefix = await store.rotate_connector_token(
+                connector_id,
+                user_id=user_id,
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="connector not found") from None
+        await manager.disconnect(connector_id, reason="connector token revoked")
+        await terminals.remove_relays_for_connector(connector_id)
     await publish_dashboard_changed(
         store,
         broker,

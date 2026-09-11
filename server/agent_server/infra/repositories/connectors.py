@@ -476,6 +476,23 @@ class ConnectorRepositoryMixin:
         return await self.get_connector(connector_id)
 
 
+    async def begin_connector_deletion(
+        self, connector_id: str, *, user_id: str
+    ) -> list[str]:
+        """Revoke admission first and retain IDs until external cleanup succeeds."""
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                update(connectors_t).where(
+                    connectors_t.c.id == connector_id,
+                    connectors_t.c.user_id == user_id,
+                ).values(revoked=2, updated_at=utc_now())
+            )
+            if result.rowcount == 0:
+                raise KeyError(connector_id)
+            return list((await conn.execute(
+                select(sessions_t.c.id).where(sessions_t.c.connector_id == connector_id)
+            )).scalars())
+
     async def delete_connector(
         self, connector_id: str, *, user_id: str | None = None
     ) -> list[str]:

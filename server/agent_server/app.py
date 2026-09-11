@@ -204,6 +204,7 @@ def create_app(
         app.state.redis,
         instance_id=process_settings.instance_id(),
     )
+    app.state.store.bind_connector_lifecycle(app.state.rpc.lifecycle_guard)
     app.state.fs_downloads = FsDownloadRelayManager(app.state.redis)
     app.state.shell_tasks = ShellTaskManager(app.state.redis)
     app.state.terminal_broker = TerminalBroker(

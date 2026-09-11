@@ -43,3 +43,38 @@ def test_access_token_cannot_be_retargeted_to_another_connector(tmp_path):
         "Authorization": f"Bearer {forged}",
     }, json={"notifications": [{"method": "connector.heartbeat", "params": {}}]})
     assert response.status_code == 401
+
+
+def test_failed_delete_keeps_revoked_tombstone_and_can_finish_on_retry(tmp_path):
+    from agent_server.api.connectors import delete_connector
+
+    client = make_client(tmp_path)
+    connector_id, _, session_id, _ = create_connector_and_session(client)
+    state = client.app.state
+
+    async def run():
+        owner = (await state.store.get_connector(connector_id)).userId
+        original_disconnect = state.rpc.disconnect
+
+        async def fail(*args, **kwargs):
+            raise TimeoutError("owner did not acknowledge disconnect")
+
+        kwargs = dict(user_id=owner, store=state.store, manager=state.rpc,
+                      broker=state.timeline_broker, terminals=state.terminal_broker,
+                      timeline_buffer=state.timeline_write_buffer,
+                      runtime_state_cache=state.session_runtime_state_cache)
+        state.rpc.disconnect = fail
+        with pytest.raises(TimeoutError):
+            await delete_connector(connector_id, **kwargs)
+        with pytest.raises(KeyError):
+            await state.store.get_connector(connector_id)
+        # Pending deletion retains the session IDs needed to retry all cleanup.
+        assert await state.store.begin_connector_deletion(connector_id, user_id=owner) == [session_id]
+        state.rpc.disconnect = original_disconnect
+        await delete_connector(connector_id, **kwargs)
+        with pytest.raises(KeyError):
+            await state.store.get_session(session_id)
+        with pytest.raises(KeyError):
+            await state.store.begin_connector_deletion(connector_id, user_id=owner)
+
+    asyncio.run(run())

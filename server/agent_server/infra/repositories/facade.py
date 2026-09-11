@@ -62,6 +62,17 @@ class Store(
         self._session_revision_fence_factory: Any | None = None
         self._session_revision_publisher: Any | None = None
         self._session_revision_range_sealer: Any | None = None
+        self._connector_lifecycle_factory: Any | None = None
+
+    def bind_connector_lifecycle(self, factory: Any) -> None:
+        self._connector_lifecycle_factory = factory
+
+    @asynccontextmanager
+    async def connector_lifecycle(self, connector_id: str) -> AsyncIterator[None]:
+        factory = self._connector_lifecycle_factory
+        guard = factory(connector_id) if factory else await self.timeline_lock(f"connector:{connector_id}")
+        async with guard:
+            yield
 
     def bind_session_revision_fence(self, factory: Any) -> None:
         """Bind the app-scoped coordinator used by revision-producing writes."""

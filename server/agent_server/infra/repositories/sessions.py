@@ -435,7 +435,7 @@ class SessionRepositoryMixin:
                         connectors_t.c.status,
                         connectors_t.c.user_id,
                         connectors_t.c.device_os,
-                    ).where(connectors_t.c.id == connector_id)
+                    ).where(connectors_t.c.id == connector_id, connectors_t.c.revoked == 0)
                 )
             ).first()
             if connector is None:
