@@ -58,6 +58,10 @@ class SessionCapabilityRepository(Protocol):
 
     async def get_session_seq(self, session_id: str) -> int: ...
 
+    async def get_protocol_capabilities_stamp(
+        self, connector_id: str,
+    ) -> tuple[int, str] | None: ...
+
     async def list_sessions_for_connector(
         self,
         connector_id: str,
@@ -127,15 +131,22 @@ async def publish_connector_session_capabilities(
         sessions = await store.list_sessions_for_connector(connector_id)
         if not sessions:
             return
-        runtime_capabilities = ProtocolCapabilitySet.model_validate(
-            await store.get_protocol_capabilities(connector_id)
-        )
-        index = SessionCapabilityIndex(runtime_capabilities)
+        stamp: tuple[int, str] | None = None
+        index: SessionCapabilityIndex | None = None
         for session in sessions:
             if active.get(connector_id) is not token:
                 return
             async with store.session_revision_fence(session.id):
                 session = await with_effective_session_connector_status(presence, session)
+                # Other server processes can publish newer facts while this
+                # batch waits for a session fence. Check only the small stamp;
+                # deserialize and index again only when the stored set changes.
+                current_stamp = await store.get_protocol_capabilities_stamp(connector_id)
+                if index is None or current_stamp != stamp:
+                    index = SessionCapabilityIndex(ProtocolCapabilitySet.model_validate(
+                        await store.get_protocol_capabilities(connector_id)
+                    ))
+                    stamp = current_stamp
                 effective_capabilities = index.project(session)
                 next_seq = await store.get_session_seq(session.id)
                 if active.get(connector_id) is not token:
@@ -159,10 +170,19 @@ async def publish_connector_session_capabilities(
 class SessionCapabilityIndex:
     """Index one validated capability snapshot for many session projections."""
 
-    def __init__(self, capability_set: ProtocolCapabilitySet) -> None:
+    def __init__(
+        self, capability_set: ProtocolCapabilitySet, *, session: SessionView | None = None,
+    ) -> None:
         self.source = capability_set
         self.groups: dict[tuple, dict[str, ProtocolCapability]] = {}
         for capability in capability_set.capabilities:
+            # A single-session request must not build every other session's
+            # groups. The batch publisher passes no session and shares one index.
+            if session is not None and (
+                capability.runtime != session.runtime
+                or (capability.scope == "session" and capability.sessionId != session.id)
+            ):
+                continue
             key = (
                 capability.runtime,
                 capability.scope,
@@ -197,7 +217,7 @@ def derive_session_effective_capabilities(
     session: SessionView,
     runtime_capabilities: ProtocolCapabilitySet,
 ) -> ProtocolCapabilitySet:
-    return SessionCapabilityIndex(runtime_capabilities).project(session)
+    return SessionCapabilityIndex(runtime_capabilities, session=session).project(session)
 
 
 def platform_scoped_session_capability(

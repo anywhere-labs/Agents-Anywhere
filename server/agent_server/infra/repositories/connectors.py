@@ -620,6 +620,33 @@ class ConnectorRepositoryMixin:
                 )
         return True
 
+    async def get_protocol_capabilities_stamp(
+        self, connector_id: str,
+    ) -> tuple[int, str] | None:
+        """Check one stored snapshot without loading its capability body.
+
+        Include the write timestamp because equal protocol revisions may be
+        replaced. This stamp is only reused within one publication batch.
+        """
+        query = (
+            select(
+                connector_protocol_capabilities_t.c.revision,
+                connector_protocol_capabilities_t.c.updated_at,
+            )
+            .select_from(connectors_t.outerjoin(
+                connector_protocol_capabilities_t,
+                connector_protocol_capabilities_t.c.connector_id == connectors_t.c.id,
+            ))
+            .where(connectors_t.c.id == connector_id, connectors_t.c.revoked == 0)
+        )
+        async with self._engine.connect() as conn:
+            row = (await conn.execute(query)).first()
+        if row is None:
+            raise KeyError(connector_id)
+        if row.revision is None:
+            return None
+        return int(row.revision), row.updated_at
+
     async def get_protocol_capabilities(
         self,
         connector_id: str,

@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from starlette.websockets import WebSocketDisconnect
 from test_backend_mvp import (
     create_connector_and_session,
     dashboard_ws_ticket,
@@ -31,19 +32,21 @@ from connector.server.runtime_rpc_payloads import (
 )
 
 
-@pytest.mark.parametrize("event_workers", [0, 1])
+@pytest.mark.parametrize("event_workers, overload", [(0, False), (1, False), (1, True)])
 def test_connector_coalescing_server_persistence_and_web_recovery(
-    tmp_path, monkeypatch, event_workers
+    tmp_path, monkeypatch, event_workers, overload
 ):
     monkeypatch.setenv("AGENT_SERVER_EVENT_WORKERS", str(event_workers))
+    if overload:
+        monkeypatch.setenv("AGENT_SERVER_EVENT_QUEUE_BYTES", "1")
     with make_client(tmp_path) as client:
         # The worker-enabled replay exceeds the default offload threshold.
         _replay_connector_notifications(
-            client, text_repeats=2048 if event_workers else 1
+            client, text_repeats=2048 if event_workers else 1, overload=overload
         )
 
 
-def _replay_connector_notifications(client, *, text_repeats):
+def _replay_connector_notifications(client, *, text_repeats, overload):
     _, access_token, session_id, headers = create_connector_and_session(client)
     ticket = ws_ticket(client, session_id, headers)
     connector_headers = {"Authorization": f"Bearer {access_token}"}
@@ -97,17 +100,28 @@ def _replay_connector_notifications(client, *, text_repeats):
     with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
         assert ws.receive_json()["type"] == "session.subscribed"
         asyncio.run(produce())
-        event = receive_session_ws_event(ws, event_type="timeline.item_updated")
-        item = event["payload"]["item"]
+        if overload:
+            with pytest.raises(WebSocketDisconnect) as disconnected:
+                receive_session_ws_event(ws, event_type="timeline.item_updated")
+            assert disconnected.value.code == 1013
+            item = delivered[0][1]["item"]
+        else:
+            event = receive_session_ws_event(ws, event_type="timeline.item_updated")
+            item = event["payload"]["item"]
         assert item["revision"] == 32
         assert item["content"]["text"] == "正文 " * 32 * text_repeats
-        sequence = item["updatedSeq"]
+        sequence = item.get("updatedSeq")
 
     assert [method for method, _ in delivered] == [
         "timeline.itemUpsert",
         "session.turnEnded",
     ]
-    response = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    reconnect_ticket = ws_ticket(client, session_id, headers)
+    with client.websocket_connect(
+        f"/sessions/{session_id}/ws?ticket={reconnect_ticket}"
+    ) as reconnected:
+        assert reconnected.receive_json()["type"] == "session.subscribed"
+        response = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
     assert response.status_code == 200, response.text
     # The HTTP snapshot is the recovery path after the WebSocket disconnects.
     snapshot = response.json()
@@ -118,7 +132,9 @@ def _replay_connector_notifications(client, *, text_repeats):
     )
     assert stored["content"] == item["content"]
     assert stored["contentHash"] == item["contentHash"]
-    assert stored["updatedSeq"] == sequence
+    assert stored["updatedSeq"] > 0
+    if sequence is not None:
+        assert stored["updatedSeq"] == sequence
 
 
 def test_dashboard_subscribers_share_one_snapshot_build(tmp_path, monkeypatch):
