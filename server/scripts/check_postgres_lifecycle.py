@@ -76,6 +76,7 @@ def main():
             "--tb=short",
             "tests/test_connector_lifecycle.py",
             "tests/test_announcements.py",
+            "tests/test_shared_setup_tokens.py",
             "tests/test_connector_deletion.py",
             "tests/test_session_inventory.py",
             "tests/test_session_source_postgres.py",

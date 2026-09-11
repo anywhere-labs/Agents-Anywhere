@@ -64,6 +64,7 @@ from agent_server.services.effective_capabilities import (
     publish_connector_session_capabilities,
 )
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
+from agent_server.services.setup_tokens import SetupTokenService
 from agent_server.services.shell_tasks import ShellTaskManager
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 from agent_server.services.workspace import WorkspaceServiceError
@@ -137,7 +138,7 @@ def create_app(
             deletion_task = asyncio.create_task(app.state.connector_deletion_recovery.run())
             # Generate the bootstrap token early so operators see it in logs.
             if await app.state.store.count_users() == 0:
-                app.state.setup_token.snapshot()
+                await SetupTokenService(app.state.setup_token, app.state.redis).snapshot()
             yield
         finally:
             if deletion_task is not None:

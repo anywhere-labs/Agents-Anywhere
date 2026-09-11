@@ -88,6 +88,8 @@ jobs:
           uv run --frozen pytest
           tests/test_announcements.py
           tests/test_architecture_boundaries.py
+          tests/test_auth.py
+          tests/test_shared_setup_tokens.py
           tests/test_attachment_mime_policy.py
           tests/test_static_path_safety.py
           tests/test_session_refresh_lock.py
