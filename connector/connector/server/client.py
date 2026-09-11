@@ -418,9 +418,6 @@ class BackendRpcClient:
         }
         if error is not None:
             payload["error"] = error
-        entry = self.agent_runtime_supervisor.entry_or_none(runtime_id)
-        if entry is not None and entry.instance.runtime_epoch:
-            payload["runtimeEpoch"] = entry.instance.runtime_epoch
         await self.send_notification("runtime.statusChanged", payload)
 
     async def _publish_agent_runtime_status(

@@ -1,4 +1,4 @@
-"""Fence notifications from runtime instances whose configuration was deleted."""
+"""Guard session ingress without extending the Connector wire protocol."""
 
 from __future__ import annotations
 
@@ -14,18 +14,17 @@ def notification_runtime_id(params: dict[str, Any]) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def notification_runtime_epoch(params: dict[str, Any]) -> int:
-    metadata = params.get("metadata")
-    metadata = metadata if isinstance(metadata, dict) else {}
-    value = params.get("runtimeEpoch", metadata.get("runtimeEpoch", 0))
-    return value if type(value) is int and value >= 0 else -1
-
-
-def runtime_notification_is_current(
-    params: dict[str, Any], epochs: dict[str, int]
+def runtime_notification_is_allowed(
+    method: str, params: dict[str, Any], unconfigured_runtimes: set[str]
 ) -> bool:
+    """Block session writes until the runtime is configured, using the old protocol.
+
+    This cannot distinguish delayed HTTP messages after reconfiguration. Local
+    WebSocket queues separately invalidate work accepted before deletion.
+    """
+    if not method.startswith(("session.", "timeline.")):
+        return True
     runtime_id = notification_runtime_id(params)
     if runtime_id is None:
-        # Connector-level control/presence notifications have no runtime binding.
-        return not (isinstance(params.get("sessionId"), str) and any(epochs.values()))
-    return notification_runtime_epoch(params) == epochs.get(runtime_id, 0)
+        return not unconfigured_runtimes
+    return runtime_id not in unconfigured_runtimes

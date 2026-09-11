@@ -69,7 +69,7 @@ from agent_server.services.effective_capabilities import (
 )
 from agent_server.services.runtime_ingress import (
     notification_runtime_id,
-    runtime_notification_is_current,
+    runtime_notification_is_allowed,
 )
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
@@ -83,7 +83,7 @@ DEFAULT_NOTIFICATION_CONCURRENCY = 4
 class _NotificationLane:
     """FIFO work for one ordering key, with superseded entries dropped."""
 
-    queue: asyncio.Queue[tuple[str, dict[str, Any], str | None, int]] = field(
+    queue: asyncio.Queue[tuple[str, dict[str, Any], str | None, int, int]] = field(
         default_factory=asyncio.Queue
     )
     # Highest queued version per stable item ID. A queued entry whose version is
@@ -116,19 +116,19 @@ class _ConnectorNotificationPump:
         connection_id: str | None = None,
         max_concurrency: int = DEFAULT_NOTIFICATION_CONCURRENCY,
         is_current: Callable[[], bool] | None = None,
-        runtime_epochs: dict[str, int] | None = None,
+        unconfigured_runtimes: set[str] | None = None,
     ) -> None:
         self._connector_id = connector_id
         self._connection_id = connection_id
         self._ingest_service = ingest_service
         self._is_current = is_current
-        self._runtime_epochs = dict(runtime_epochs or {})
-        self._blocked_runtimes: set[str] = set()
+        self._runtime_generations: dict[str | None, int] = {}
+        self._blocked_runtimes = set(unconfigured_runtimes or ())
         self._inflight_tasks: dict[asyncio.Task[None], str | None] = {}
         self._accepting = True
         self._abort_task: asyncio.Task[None] | None = None
         self._lane_tasks: set[asyncio.Task[None]] = set()
-        self._queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = (
+        self._queue: asyncio.Queue[tuple[str, dict[str, Any], int] | None] = (
             asyncio.Queue()
         )
         self._task: asyncio.Task[None] | None = None
@@ -142,18 +142,22 @@ class _ConnectorNotificationPump:
         self.coalesced = 0
         self.obsolete = 0
 
-    async def update_runtime_epoch(self, runtime_id: str, epoch: int | None) -> None:
+    async def set_runtime_ingress_enabled(self, runtime_id: str, enabled: bool) -> None:
+        if enabled:
+            self._blocked_runtimes.discard(runtime_id)
+            return
         self._blocked_runtimes.add(runtime_id)
+        self._runtime_generations[runtime_id] = self._runtime_generations.get(runtime_id, 0) + 1
         tasks = [task for task, target in self._inflight_tasks.items() if target == runtime_id]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        if epoch is not None:
-            self._runtime_epochs[runtime_id] = epoch
-            self._blocked_runtimes.discard(runtime_id)
 
-    def _runtime_current(self, params: dict[str, Any]) -> bool:
-        return notification_runtime_id(params) not in self._blocked_runtimes and runtime_notification_is_current(params, self._runtime_epochs)
+    def _runtime_current(self, method: str, params: dict[str, Any], generation: int) -> bool:
+        return (
+            generation == self._runtime_generations.get(notification_runtime_id(params), 0)
+            and runtime_notification_is_allowed(method, params, self._blocked_runtimes)
+        )
 
     @property
     def task(self) -> asyncio.Task[None]:
@@ -178,8 +182,12 @@ class _ConnectorNotificationPump:
         method = message.get("method")
         params = message.get("params") or {}
         if isinstance(method, str) and isinstance(params, dict):
+            if not runtime_notification_is_allowed(method, params, self._blocked_runtimes):
+                self.obsolete += 1
+                return
+            generation = self._runtime_generations.get(notification_runtime_id(params), 0)
             self._mark_pending(1)
-            self._queue.put_nowait((method, params))
+            self._queue.put_nowait((method, params, generation))
 
     async def close(self) -> None:
         self._accepting = False
@@ -252,8 +260,8 @@ class _ConnectorNotificationPump:
                 notification = await self._queue.get()
                 if notification is None:
                     return
-                method, params = notification
-                await self._dispatch(method, params)
+                method, params, generation = notification
+                await self._dispatch(method, params, generation)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -263,7 +271,7 @@ class _ConnectorNotificationPump:
             )
             raise
 
-    async def _dispatch(self, method: str, params: dict[str, Any]) -> None:
+    async def _dispatch(self, method: str, params: dict[str, Any], generation: int) -> None:
         key = self._lane_key(params)
         item_key = self._item_key(method, params)
         async with self._lane_guard:
@@ -276,7 +284,7 @@ class _ConnectorNotificationPump:
                 lane.version += 1
                 version = lane.version
                 lane.latest[item_key] = version
-            lane.queue.put_nowait((method, params, item_key, version))
+            lane.queue.put_nowait((method, params, item_key, version, generation))
             if key not in self._active_lanes:
                 self._active_lanes.add(key)
                 task = asyncio.create_task(
@@ -290,7 +298,7 @@ class _ConnectorNotificationPump:
         try:
             while True:
                 try:
-                    method, params, item_key, version = lane.queue.get_nowait()
+                    method, params, item_key, version, generation = lane.queue.get_nowait()
                 except asyncio.QueueEmpty:
                     async with self._lane_guard:
                         if lane.queue.empty():
@@ -305,7 +313,7 @@ class _ConnectorNotificationPump:
                             continue
                         lane.latest.pop(item_key, None)
                     async with self._slots:
-                        if not self._runtime_current(params):
+                        if not self._runtime_current(method, params, generation):
                             self.obsolete += 1
                             continue
                         if self._is_current is None or self._is_current():
@@ -536,13 +544,13 @@ async def connector_ws(
                 connector_id, ingest_service,
                 connection_id=connection.connection_id,
                 is_current=lambda: manager.accepts_notifications(connection),
-                runtime_epochs=await db.get_runtime_ingress_epochs(connector_id),
+                unconfigured_runtimes=await db.get_unconfigured_runtime_ids(connector_id),
                 max_concurrency=int(os.environ.get("AGENT_SERVER_NOTIFICATION_CONCURRENCY", "4")),
             )
             notification_pump.start()
             connection.abort_notifications = notification_pump.abort
             connection.drain_notifications = notification_pump.close
-            connection.update_runtime_epoch = notification_pump.update_runtime_epoch
+            connection.set_runtime_ingress_enabled = notification_pump.set_runtime_ingress_enabled
             try:
                 if not await db.record_connector_connection(
                     connector_id,

@@ -42,7 +42,7 @@ class ConnectorConnection:
     invalidated: bool = False
     abort_notifications: Callable[[], Awaitable[None]] | None = None
     drain_notifications: Callable[[], Awaitable[None]] | None = None
-    update_runtime_epoch: Callable[[str, int | None], Awaitable[None]] | None = None
+    set_runtime_ingress_enabled: Callable[[str, bool], Awaitable[None]] | None = None
     pending: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -292,18 +292,18 @@ class ConnectorRpcManager:
         )
         return bool(result)
 
-    async def update_runtime_epoch(self, connector_id: str, runtime_id: str, epoch: int | None) -> None:
+    async def set_runtime_ingress_enabled(self, connector_id: str, runtime_id: str, enabled: bool) -> None:
         connection = self._connections.get(connector_id)
         if connection is not None:
-            if connection.update_runtime_epoch is not None:
-                await connection.update_runtime_epoch(runtime_id, epoch)
+            if connection.set_runtime_ingress_enabled is not None:
+                await connection.set_runtime_ingress_enabled(runtime_id, enabled)
             return
         if self._coordinator.distributed:
             lease = await self._get_lease(connector_id)
             if lease is not None:
                 await self._route(lease, {
-                    "type": "runtimeEpoch", "connectorId": connector_id,
-                    "runtimeId": runtime_id, "epoch": epoch,
+                    "type": "runtimeIngress", "connectorId": connector_id,
+                    "runtimeId": runtime_id, "enabled": enabled,
                 }, timeout=10)
 
     async def touch(
@@ -592,12 +592,12 @@ class ConnectorRpcManager:
                     reason=str(payload.get("reason") or "connector disconnected"),
                     expected_connection_id=connection_id,
                 )
-            elif payload.get("type") == "runtimeEpoch":
-                runtime_id, epoch = payload.get("runtimeId"), payload.get("epoch")
-                if not isinstance(runtime_id, str) or (epoch is not None and type(epoch) is not int):
-                    raise ConnectorRpcError("invalid_route", "invalid runtime epoch")
-                if connection.update_runtime_epoch is not None:
-                    await connection.update_runtime_epoch(runtime_id, epoch)
+            elif payload.get("type") == "runtimeIngress":
+                runtime_id, enabled = payload.get("runtimeId"), payload.get("enabled")
+                if not isinstance(runtime_id, str) or type(enabled) is not bool:
+                    raise ConnectorRpcError("invalid_route", "invalid runtime ingress state")
+                if connection.set_runtime_ingress_enabled is not None:
+                    await connection.set_runtime_ingress_enabled(runtime_id, enabled)
                 result = True
             elif payload.get("type") == "request":
                 method = payload.get("method")

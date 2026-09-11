@@ -159,7 +159,6 @@ class RuntimeTypeListResponse(BaseModel):
 
 
 class DeviceRuntimeView(BaseModel):
-    ingressEpoch: int = Field(default=0, exclude=True)
     connectorId: str
     runtimeId: str
     runtimeType: str

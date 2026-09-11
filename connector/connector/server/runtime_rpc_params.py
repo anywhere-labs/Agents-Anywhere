@@ -13,7 +13,7 @@ from connector.runtime_protocol import (
 
 _RUNTIME_SCOPE_FIELDS = frozenset({"runtime", "runtimeId"})
 _RUNTIME_CONFIG_FIELDS = frozenset(
-    {"runtime", "runtimeId", "name", "config", "configRevision", "runtimeEpoch"}
+    {"runtime", "runtimeId", "name", "config", "configRevision"}
 )
 
 
@@ -250,7 +250,6 @@ class RuntimeConfigParams:
                 runtime_id=scope.runtime_id,
                 runtime_type=scope.runtime_type,
                 name=required_name(params),
-                runtime_epoch=int_param(params, "runtimeEpoch", 0),
             ),
             config=runtime_config(params),
             config_revision=required_safe_int(params, "configRevision"),

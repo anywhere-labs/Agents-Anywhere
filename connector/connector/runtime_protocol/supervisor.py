@@ -125,9 +125,6 @@ class RuntimeSupervisor:
         runtime_type: str,
     ) -> RuntimeSupervisorEntry:
         scope = legacy_runtime_scope(runtime_type)
-        existing = self._entries.get(scope.runtime_id)
-        if existing is not None:
-            return existing
         provider = self.provider(scope.runtime_type)
         return await self.ensure_instance(
             RuntimeInstanceSpec(
@@ -150,11 +147,9 @@ class RuntimeSupervisor:
                         f"runtime instance {instance.runtime_id!r} is already bound "
                         f"to type {existing.runtime_type!r}"
                     )
-                if instance.runtime_epoch < existing.instance.runtime_epoch:
-                    raise RuntimeConflictError("runtime notification epoch regressed")
                 if existing.instance != instance:
                     runtime = existing.runtime
-                    if isinstance(runtime, RuntimeInstance) and runtime.instance.runtime_epoch == instance.runtime_epoch:
+                    if isinstance(runtime, RuntimeInstance):
                         runtime = replace(runtime, instance=instance)
                     self._entries[instance.runtime_id] = replace(
                         existing,
@@ -250,7 +245,6 @@ class RuntimeSupervisor:
         if (
             entry.status == "running"
             and entry.runtime is not None
-            and (not isinstance(entry.runtime, RuntimeInstance) or entry.runtime.instance.runtime_epoch == instance.runtime_epoch)
             and dict(entry.requested_values or {}) == requested_values
         ):
             config = (
@@ -288,7 +282,6 @@ class RuntimeSupervisor:
         if (
             was_running
             and entry.runtime is not None
-            and (not isinstance(entry.runtime, RuntimeInstance) or entry.runtime.instance.runtime_epoch == instance.runtime_epoch)
             and same_effective_config(entry.config, config)
         ):
             await self._set_entry(
@@ -328,15 +321,13 @@ class RuntimeSupervisor:
             if not startup_complete:
                 startup_status, startup_error = status, error
                 return
-            current = self._entry(runtime_id)
-            if isinstance(current.runtime, RuntimeInstance) and current.runtime.instance.runtime_epoch == instance.runtime_epoch:
-                await self.report_status(runtime_id, status, error)
+            await self.report_status(runtime_id, status, error)
 
         native_runtime: AgentRuntime | None = None
         bound_runtime: RuntimeInstance | None = None
         try:
             scoped_host = RuntimeInstanceHost(
-                base=self._host.bind_instance(instance),
+                base=self._host,
                 instance=instance,
                 source_key=_provider_source_key(entry.provider, config),
                 status_reporter=report_health,

@@ -109,7 +109,7 @@ def test_failed_delete_keeps_revoked_tombstone_and_can_finish_on_retry(tmp_path)
     asyncio.run(run())
 
 
-def test_runtime_deletion_fences_queued_and_retried_notifications(tmp_path):
+def test_runtime_deletion_cancels_old_queue_and_allows_legacy_reconfiguration(tmp_path):
     from agent_server.api.connector_ingress import _ConnectorNotificationPump
     from agent_server.core.models import ConnectorIngestRequest
     from agent_server.services.connector_ingest import ConnectorIngestService
@@ -158,10 +158,10 @@ def test_runtime_deletion_fences_queued_and_retried_notifications(tmp_path):
 
         connection = await state.rpc.register(connector_id, Socket())
         pump = _ConnectorNotificationPump(
-            connector_id, Blocked(), runtime_epochs={"codex": 0}
+            connector_id, Blocked()
         )
         connection.abort_notifications = pump.abort
-        connection.update_runtime_epoch = pump.update_runtime_epoch
+        connection.set_runtime_ingress_enabled = pump.set_runtime_ingress_enabled
         pump.start()
         notification = {
             "method": "session.meta.upsert",
@@ -182,19 +182,20 @@ def test_runtime_deletion_fences_queued_and_retried_notifications(tmp_path):
             ),
             2,
         )
-        assert not runtime.configured and runtime.ingressEpoch == 1
+        assert not runtime.configured
         await pump.flush()
         assert pump.obsolete == 1
         with pytest.raises(KeyError):
             await state.store.get_session(session_id)
-        await state.store.set_device_runtime_config(connector_id, "codex", {})
-        # An HTTP outbox from before deletion remains obsolete after reconfiguration.
+        # Old clients carry no generation. Reject writes while unconfigured.
         result = await service.ingest(
             connector_id=connector_id,
             payload=ConnectorIngestRequest(notifications=[notification]),
         )
-        assert result.accepted == 0 and result.rejected[0].code == "obsolete_runtime"
-        notification["params"]["runtimeEpoch"] = 1
+        assert result.accepted == 0 and result.rejected[0].code == "runtime_not_configured"
+        await state.store.set_device_runtime_config(connector_id, "codex", {})
+        await state.rpc.set_runtime_ingress_enabled(connector_id, "codex", True)
+        # After reconfiguration, the original wire format is accepted again.
         notification["params"]["title"] = "new runtime"
         result = await service.ingest(
             connector_id=connector_id,
@@ -234,5 +235,39 @@ def test_pending_deletion_is_resumed_without_purging_legacy_revoked_rows(tmp_pat
             await state.store.get_session(session_id)
         # The recovery worker must never reinterpret an old credential state as deletion consent.
         await state.store.delete_connector(legacy_id, user_id=owner)
+
+    asyncio.run(run())
+
+
+def test_runtime_pause_discards_queued_work_after_reconfiguration():
+    from agent_server.api.connector_ingress import _ConnectorNotificationPump
+
+    async def run():
+        entered, release = asyncio.Event(), asyncio.Event()
+        handled = []
+
+        class Ingest:
+            async def handle_notification_message(self, **kwargs):
+                session_id = kwargs["params"]["sessionId"]
+                if session_id == "other":
+                    entered.set()
+                    await release.wait()
+                handled.append(session_id)
+
+        pump = _ConnectorNotificationPump("connector", Ingest(), max_concurrency=1)
+        pump.start()
+        def enqueue(runtime, session):
+            pump.enqueue_message({"method": "session.source.updated", "params": {"runtime": runtime, "sessionId": session}})
+        enqueue("claude", "other")
+        await entered.wait()
+        enqueue("codex", "old")
+        await pump.set_runtime_ingress_enabled("codex", False)
+        await pump.set_runtime_ingress_enabled("codex", True)
+        enqueue("codex", "new")
+        release.set()
+        await asyncio.wait_for(pump.flush(), 2)
+        assert handled == ["other", "new"]
+        assert pump.obsolete == 1
+        await pump.close()
 
     asyncio.run(run())

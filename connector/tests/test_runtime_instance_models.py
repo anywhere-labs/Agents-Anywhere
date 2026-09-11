@@ -5,6 +5,7 @@ from dataclasses import FrozenInstanceError, fields
 from typing import Any, cast
 
 import pytest
+
 from connector.runtime_protocol import (
     MAX_CONFIG_REVISION,
     RuntimeConfigSchema,
@@ -371,7 +372,6 @@ def test_runtime_instance_spec_is_a_frozen_identity_and_name_value() -> None:
         "runtime_id",
         "runtime_type",
         "name",
-        "runtime_epoch",
     ]
     with pytest.raises(FrozenInstanceError):
         _set_attribute(spec, "runtime_id", "rti_changed")

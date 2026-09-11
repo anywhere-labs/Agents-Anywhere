@@ -40,12 +40,15 @@ class DeviceRuntimeRepositoryMixin:
                 sessions_t.c.connector_id == connector_id, sessions_t.c.runtime_id == runtime_id,
             ))).scalars())
 
-    async def get_runtime_ingress_epochs(self, connector_id: str) -> dict[str, int]:
+    async def get_unconfigured_runtime_ids(self, connector_id: str) -> set[str]:
         async with self._engine.connect() as conn:
-            rows = (await conn.execute(select(
-                device_runtimes_t.c.runtime_id, device_runtimes_t.c.ingress_epoch,
-            ).where(device_runtimes_t.c.connector_id == connector_id))).all()
-        return {str(row.runtime_id): int(row.ingress_epoch) for row in rows}
+            result = await conn.execute(
+                select(device_runtimes_t.c.runtime_id).where(
+                    device_runtimes_t.c.connector_id == connector_id,
+                    device_runtimes_t.c.config_json.is_(None),
+                )
+            )
+            return set(result.scalars())
 
     async def replace_connector_runtime_types(
         self,
@@ -484,7 +487,6 @@ class DeviceRuntimeRepositoryMixin:
                 )
                 .values(
                     config_json=None,
-                    ingress_epoch=device_runtimes_t.c.ingress_epoch + 1,
                     active=0,
                     status="stopped",
                     error_json=None,
@@ -616,7 +618,6 @@ def _runtime_row(row: Any) -> dict[str, Any]:
     error = _json_loads(row["error_json"])
     return {
         "connectorId": str(row["connector_id"]),
-        "ingressEpoch": int(row["ingress_epoch"]),
         "runtimeId": str(row["runtime_id"]),
         "runtimeType": str(row["runtime_type"]),
         "name": name,

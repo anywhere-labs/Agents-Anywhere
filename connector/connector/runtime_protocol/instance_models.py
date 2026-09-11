@@ -234,11 +234,8 @@ class RuntimeInstanceSpec:
     runtime_id: str
     runtime_type: str
     name: str
-    runtime_epoch: int = 0
 
     def __post_init__(self) -> None:
-        if type(self.runtime_epoch) is not int or self.runtime_epoch < 0:
-            raise ValueError("runtime epoch must be a nonnegative integer")
         _validate_identity_pair(self.runtime_type, self.runtime_id)
         _validate_runtime_instance_name(self.name)
 

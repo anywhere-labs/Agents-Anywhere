@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from connector.runtime_protocol.models import (
     RuntimeAttachmentContent,
@@ -15,16 +15,9 @@ from connector.runtime_protocol.models import (
     SessionSourceObservation,
 )
 
-if TYPE_CHECKING:
-    from connector.runtime_protocol.instance_models import RuntimeInstanceSpec
-
 
 class RuntimeHostClient(ABC):
     """Runtime -> Connector."""
-
-    def bind_instance(self, instance: RuntimeInstanceSpec) -> RuntimeHostClient:
-        """Bind transport metadata without changing provider-owned runtime data."""
-        return self
 
     async def publish_runtime_notifications(
         self, runtime: str, notifications: list[dict[str, Any]], runtime_id: str | None = None

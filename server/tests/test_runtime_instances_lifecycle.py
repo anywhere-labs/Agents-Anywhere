@@ -16,7 +16,7 @@ ADMIN_PASSWORD = "secret"
 
 
 class FakeRuntimeRpc:
-    async def update_runtime_epoch(self, connector_id, runtime_id, epoch):
+    async def set_runtime_ingress_enabled(self, connector_id, runtime_id, enabled):
         pass
 
     def __init__(self, discovery: dict[str, Any]) -> None:

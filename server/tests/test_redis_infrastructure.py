@@ -746,7 +746,7 @@ def test_store_pending_script_stages_projection_and_dirty_marker() -> None:
     asyncio.run(exercise())
 
 
-def test_runtime_epoch_and_disconnect_wait_for_the_remote_notification_owner():
+def test_runtime_ingress_pause_and_disconnect_wait_for_the_remote_notification_owner():
     from agent_server.api.connector_ingress import _ConnectorNotificationPump
     from agent_server.infra.connector_rpc import ConnectorRpcManager
 
@@ -770,16 +770,17 @@ def test_runtime_epoch_and_disconnect_wait_for_the_remote_notification_owner():
         connection = await owner.register("conn", Socket())
         pump = _ConnectorNotificationPump("conn", Blocking())
         connection.abort_notifications = pump.abort
-        connection.update_runtime_epoch = pump.update_runtime_epoch
+        connection.set_runtime_ingress_enabled = pump.set_runtime_ingress_enabled
         pump.start()
         pump.enqueue_message({"method": "session.source.updated", "params": {"runtime": "codex", "sessionId": "session"}})
         await entered.wait()
-        await asyncio.wait_for(caller.update_runtime_epoch("conn", "codex", None), 2)
+        await asyncio.wait_for(caller.set_runtime_ingress_enabled("conn", "codex", False), 2)
         assert not pump._inflight_tasks or all(task.done() for task in pump._inflight_tasks)
-        await caller.update_runtime_epoch("conn", "codex", 1)
         pump.enqueue_message({"method": "session.source.updated", "params": {"runtime": "codex", "sessionId": "session"}})
         await asyncio.wait_for(pump.flush(), 1)
         assert pump.obsolete == 2
+        await caller.set_runtime_ingress_enabled("conn", "codex", True)
+        assert "codex" not in pump._blocked_runtimes
         assert await caller.disconnect("conn", reason="connector deleted")
         assert not await caller.is_online("conn")
         assert pump._pending == 0
