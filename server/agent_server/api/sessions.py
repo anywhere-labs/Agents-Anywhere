@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import time
 from collections import deque
@@ -35,9 +34,7 @@ from agent_server.core.capabilities import (
 )
 from agent_server.core.events import (
     EventCursorError,
-    capability_event_semantic_fingerprint,
     event_cursor,
-    events_from_invalidation,
     protocol_event,
 )
 from agent_server.core.models import (
@@ -95,6 +92,7 @@ from agent_server.infra.connector_rpc import (
     ConnectorRpcError,
     ConnectorRpcManager,
 )
+from agent_server.infra.event_preparation import EventPreparationCapacityError
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.ws_tickets import ClientWsTicketManager
@@ -1098,47 +1096,44 @@ async def session_ws(
                 )
                 continue
             try:
-                invalidation = json.loads(message)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(invalidation, dict):
-                continue
-            for event in events_from_invalidation(invalidation):
-                capability_fingerprint = capability_event_semantic_fingerprint(
-                    event
-                )
+                prepared_events = await message.prepared_events()
+            except EventPreparationCapacityError:
+                await websocket.close(code=1013, reason="server busy; reconnect to recover")
+                return
+            for event in prepared_events:
+                capability_fingerprint = event.capability_fingerprint
                 if capability_fingerprint is not None:
                     if capability_fingerprint == last_capability_fingerprint:
                         continue
-                    await websocket.send_json(event.model_dump(mode="json"))
+                    await websocket.send_text(event.encoded_json)
                     # Only mark the projection after it was delivered.  Keep
                     # capability events outside the event-id cache so an actual
                     # A -> B -> A transition remains observable even if all
                     # three projections share one durable session sequence.
                     last_capability_fingerprint = capability_fingerprint
                     continue
-                if event.type in _SESSION_WS_LIVE_PROJECTION_EVENT_TYPES:
-                    projection_key = event.type
-                    if event.type == "runtime.catalog.updated":
+                if event.event_type in _SESSION_WS_LIVE_PROJECTION_EVENT_TYPES:
+                    projection_key = event.event_type
+                    if event.event_type == "runtime.catalog.updated":
                         projection_key = (
-                            f"{event.type}:{event.payload.get('catalogType')}"
+                            f"{event.event_type}:{event.catalog_type}"
                         )
                     if (
                         last_live_projection_event_ids.get(projection_key)
-                        == event.eventId
+                        == event.event_id
                     ):
                         continue
-                    await websocket.send_json(event.model_dump(mode="json"))
+                    await websocket.send_text(event.encoded_json)
                     # These are current-state projections rather than durable
                     # changes.  Adjacent duplicates are redundant, while an
                     # A -> B -> A transition at one session sequence is real.
-                    last_live_projection_event_ids[projection_key] = event.eventId
+                    last_live_projection_event_ids[projection_key] = event.event_id
                     continue
-                if event.eventId in sent_event_ids:
+                if event.event_id in sent_event_ids:
                     continue
-                await websocket.send_json(event.model_dump(mode="json"))
-                sent_event_ids.add(event.eventId)
-                sent_event_order.append(event.eventId)
+                await websocket.send_text(event.encoded_json)
+                sent_event_ids.add(event.event_id)
+                sent_event_order.append(event.event_id)
                 if len(sent_event_order) > _SESSION_WS_EVENT_DEDUP_LIMIT:
                     sent_event_ids.discard(sent_event_order.popleft())
 

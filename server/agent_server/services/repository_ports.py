@@ -33,6 +33,8 @@ class SessionLookupRepository(Protocol):
 class DashboardEventRepository(SessionLookupRepository, Protocol):
     async def get_connector(self, connector_id: str) -> ConnectorView: ...
 
+    async def get_session_user_id(self, session_id: str) -> str: ...
+
 
 class ProjectLookupRepository(Protocol):
     async def get_project(

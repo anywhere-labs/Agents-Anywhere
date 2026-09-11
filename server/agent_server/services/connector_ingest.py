@@ -426,6 +426,17 @@ class ConnectorIngestService:
             return status_changed
 
         for session_id, bucket in by_session.items():
+            if not (
+                bucket["items"]
+                or bucket["runtime_state"] is not None
+                or bucket["timeline_reset"]
+                or bucket["session"]
+                or bucket["capability_changed"]
+                or bucket["notices"]
+                or bucket["catalogs"]
+                or bucket["refetch"]
+            ):
+                continue
             if bucket["deferred_timeline_only"]:
                 dashboard_changed = (
                     await publish_bucket(session_id, bucket)

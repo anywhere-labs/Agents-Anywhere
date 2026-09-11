@@ -133,19 +133,19 @@ class ConnectorRpcChannel:
         params = message.get("params") if isinstance(message.get("params"), dict) else {}
         if not isinstance(request_id, str) or not isinstance(method, str):
             return
-        logger.debug(
+        logger.opt(lazy=True).debug(
             "connector rpc request received method={} id={} payload={}",
-            method,
-            request_id,
-            sanitize_rpc_log_value(params),
+            lambda: method,
+            lambda: request_id,
+            lambda: sanitize_rpc_log_value(params),
         )
         try:
             result = await dispatch(method, params)
-            logger.debug(
+            logger.opt(lazy=True).debug(
                 "connector rpc request completed method={} id={} result={}",
-                method,
-                request_id,
-                sanitize_rpc_log_value(result),
+                lambda: method,
+                lambda: request_id,
+                lambda: sanitize_rpc_log_value(result),
             )
             await self.send_response(request_id, ok=True, result=result)
         except RuntimeProtocolError as exc:
@@ -156,11 +156,11 @@ class ConnectorRpcChannel:
                 exc.code,
                 str(exc),
             )
-            logger.debug(
+            logger.opt(lazy=True).debug(
                 "connector rpc request failed method={} id={} error={}",
-                method,
-                request_id,
-                sanitize_rpc_log_value({"code": exc.code, "message": str(exc)}),
+                lambda: method,
+                lambda: request_id,
+                lambda exc=exc: sanitize_rpc_log_value({"code": exc.code, "message": str(exc)}),
             )
             await self.send_response(
                 request_id,
@@ -170,11 +170,11 @@ class ConnectorRpcChannel:
         except Exception as exc:  # noqa: BLE001
             logger.exception("connector request failed method={} id={}", method, request_id)
             code = getattr(exc, "code", None) or exc.__class__.__name__
-            logger.debug(
+            logger.opt(lazy=True).debug(
                 "connector rpc request failed method={} id={} error={}",
-                method,
-                request_id,
-                sanitize_rpc_log_value({"code": code, "message": str(exc)}),
+                lambda: method,
+                lambda: request_id,
+                lambda exc=exc: sanitize_rpc_log_value({"code": code, "message": str(exc)}),
             )
             await self.send_response(
                 request_id,
@@ -230,10 +230,10 @@ class ConnectorRpcChannel:
             logger.exception("connector rpc request task failed")
 
     async def send_notification(self, method: str, params: dict[str, Any]) -> None:
-        logger.debug(
+        logger.opt(lazy=True).debug(
             "connector rpc notification sending method={} payload={}",
-            method,
-            sanitize_rpc_log_value(params),
+            lambda: method,
+            lambda: sanitize_rpc_log_value(params),
         )
         await self.send_json(
             {"type": "notification", "method": method, "params": params},
@@ -254,11 +254,11 @@ class ConnectorRpcChannel:
         else:
             payload["error"] = error or {"code": "error", "message": "connector request failed"}
         response_body = payload.get("result") if ok else payload.get("error")
-        logger.debug(
+        logger.opt(lazy=True).debug(
             "connector rpc response sending id={} ok={} payload={}",
-            request_id,
-            ok,
-            sanitize_rpc_log_value(response_body),
+            lambda: request_id,
+            lambda: ok,
+            lambda: sanitize_rpc_log_value(response_body),
         )
         await self.send_json(payload)
 

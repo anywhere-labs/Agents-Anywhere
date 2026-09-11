@@ -21,9 +21,7 @@ async def publish_dashboard_changed(
             return
     if user_id is None and session_id is not None:
         try:
-            session = await store.get_session(session_id)
-            connector = await store.get_connector(session.connectorId)
-            user_id = connector.userId
+            user_id = await store.get_session_user_id(session_id)
         except KeyError:
             return
     if user_id is None:

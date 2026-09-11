@@ -38,6 +38,10 @@ from connector.server.notification_coalescer import (
 from connector.server.protocol_revision import ProtocolRevisionClock
 from connector.server.rpc import ConnectorRpcChannel, ConnectorWebSocketFrameTooLarge
 from connector.server.runtime_host import ConnectorRuntimeHost
+from connector.server.runtime_rpc_payloads import (
+    DeferredServerPayload,
+    server_payload_without_turn_data,
+)
 from connector.server.runtime_sync import RuntimeSyncRunner
 from connector.server.sync_state import JsonSyncStateStore, SyncStateStore
 from connector.server.terminal_relay import TerminalRelayRunner
@@ -78,6 +82,7 @@ class BackendRpcClient:
             attachment_downloader=self.download_attachment,
             sync_state_store=self.sync_state_store,
             ingest_notifications=self.ingest_notifications,
+            defer_payload_projection=True,
         )
         if agent_runtime_providers is None:
             agent_runtime_providers = default_runtime_providers()
@@ -307,6 +312,10 @@ class BackendRpcClient:
     async def _send_backend_notification_now(
         self, method: str, params: dict[str, Any]
     ) -> None:
+        # Project only snapshots that survive coalescing. Doing this in the
+        # Host recursively copied every intermediate message's entire body.
+        if isinstance(params, DeferredServerPayload):
+            params = server_payload_without_turn_data(params)
         if notification_requires_ingest(method):
             await self._ingest.enqueue(method, params)
             return

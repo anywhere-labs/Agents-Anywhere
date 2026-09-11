@@ -203,7 +203,13 @@ def create_app(
         instance_id=app.state.rpc.instance_id,
     )
     app.state.terminal_stream_hub = TerminalStreamHub(app.state.redis)
-    app.state.timeline_broker = TimelineBroker(app.state.redis)
+    app.state.timeline_broker = TimelineBroker(
+        app.state.redis,
+        event_workers=int(os.getenv("AGENT_SERVER_EVENT_WORKERS", "2")),
+        event_threshold_bytes=int(os.getenv("AGENT_SERVER_EVENT_THRESHOLD_BYTES", str(256 * 1024))),
+        event_queue_items=int(os.getenv("AGENT_SERVER_EVENT_QUEUE_ITEMS", "32")),
+        event_queue_bytes=int(os.getenv("AGENT_SERVER_EVENT_QUEUE_BYTES", str(32 * 1024 * 1024))),
+    )
     app.state.timeline_write_buffer = TimelineWriteBuffer(
         app.state.store,
         app.state.timeline_broker,

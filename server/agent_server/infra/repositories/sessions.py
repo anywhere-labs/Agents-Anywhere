@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
-from sqlalchemy import case
+from sqlalchemy import case, literal_column
+from pydantic import BaseModel
 
 from agent_server.infra.repositories.store_support import *
 from agent_server.infra.repositories.projects import _clean_workspace_path
-from agent_server.core.models import ConnectorSessionResolution, TimelineItem
+from agent_server.core.models import ConnectorSessionResolution
 
 
 SESSION_CURSOR_VERSION = 1
 _SESSION_INVENTORY_UPDATE_CHUNK_SIZE = 4_000
+
+
+class _LatestTimelineMetadata(BaseModel):
+    """Read already-validated metadata without rebuilding the message body."""
+
+    orderSeq: int
+    createdAt: str
+    updatedAt: str
+    completedAt: str | None = None
 
 
 def _normalized_source_availability(value: Any) -> str:
@@ -73,7 +83,7 @@ def _latest_timeline_item_source() -> tuple[Any, Any]:
         select(timeline_items_t.c.id)
         .where(timeline_items_t.c.session_id == sessions_t.c.id)
         .order_by(
-            func.coalesce(timeline_items_t.c.item_time, "").desc(),
+            func.coalesce(timeline_items_t.c.item_time, literal_column("''")).desc(),
             timeline_items_t.c.order_seq.desc(),
             timeline_items_t.c.updated_seq.desc(),
         )
@@ -1234,6 +1244,17 @@ class SessionRepositoryMixin:
         return [await self._session_from_row(row) for row in rows]
 
 
+    async def get_session_user_id(self, session_id: str) -> str:
+        """Resolve notification ownership without reading timeline bodies."""
+        query = select(connectors_t.c.user_id).select_from(
+            sessions_t.join(connectors_t, sessions_t.c.connector_id == connectors_t.c.id)
+        ).where(sessions_t.c.id == session_id, connectors_t.c.revoked == 0)
+        async with self._engine.connect() as conn:
+            row = (await conn.execute(query)).first()
+        if row is None:
+            raise KeyError(session_id)
+        return row.user_id
+
     async def get_session(self, session_id: str, *, user_id: str | None = None) -> SessionView:
         query = (
             _session_view_query()
@@ -1816,7 +1837,7 @@ class SessionRepositoryMixin:
         session_id = row["id"]
         latest_payload = row.get("latest_item_payload_json")
         latest = (
-            TimelineItem.model_validate_json(latest_payload)
+            _LatestTimelineMetadata.model_validate_json(latest_payload)
             if latest_payload
             else None
         )

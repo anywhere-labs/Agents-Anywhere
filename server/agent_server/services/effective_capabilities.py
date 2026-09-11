@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
+from weakref import WeakKeyDictionary
 
 from agent_server.core.capabilities import (
     CATALOG_EFFORT,
@@ -22,6 +23,11 @@ from agent_server.services.connector_presence import (
     ConnectorPresencePort,
     with_effective_session_connector_status,
 )
+
+# A newer local publication supersedes unfinished work for the same connector.
+# Entries live only while a publication is active; no capability payload is cached.
+_ACTIVE_PUBLICATIONS: WeakKeyDictionary[Any, dict[str, object]] = WeakKeyDictionary()
+
 
 _INHERITED_RUNTIME_CAPABILITY_IDS = (
     SESSION_SEND_MESSAGE,
@@ -114,20 +120,76 @@ async def publish_connector_session_capabilities(
     publisher: SessionCapabilityPublisher,
     connector_id: str,
 ) -> None:
-    for session in await store.list_sessions_for_connector(connector_id):
-        async with store.session_revision_fence(session.id):
-            session, _runtime_capabilities, effective_capabilities = (
-                await project_session_capabilities(store, presence, session)
+    active = _ACTIVE_PUBLICATIONS.setdefault(publisher, {})
+    token = object()
+    active[connector_id] = token
+    try:
+        sessions = await store.list_sessions_for_connector(connector_id)
+        if not sessions:
+            return
+        runtime_capabilities = ProtocolCapabilitySet.model_validate(
+            await store.get_protocol_capabilities(connector_id)
+        )
+        index = SessionCapabilityIndex(runtime_capabilities)
+        for session in sessions:
+            if active.get(connector_id) is not token:
+                return
+            async with store.session_revision_fence(session.id):
+                session = await with_effective_session_connector_status(presence, session)
+                effective_capabilities = index.project(session)
+                next_seq = await store.get_session_seq(session.id)
+                if active.get(connector_id) is not token:
+                    return
+                await publisher.publish(
+                    session.id,
+                    {
+                        "sessionId": session.id,
+                        "nextSeq": next_seq,
+                        "session": session.model_dump(mode="json"),
+                        "capabilitySet": effective_capabilities.model_dump(mode="json"),
+                    },
+                )
+    finally:
+        if active.get(connector_id) is token:
+            active.pop(connector_id)
+        if not active:
+            _ACTIVE_PUBLICATIONS.pop(publisher, None)
+
+
+class SessionCapabilityIndex:
+    """Index one validated capability snapshot for many session projections."""
+
+    def __init__(self, capability_set: ProtocolCapabilitySet) -> None:
+        self.source = capability_set
+        self.groups: dict[tuple, dict[str, ProtocolCapability]] = {}
+        for capability in capability_set.capabilities:
+            key = (
+                capability.runtime,
+                capability.scope,
+                capability.sessionId if capability.scope == "session" else None,
+                _capability_runtime_id(capability),
             )
-            await publisher.publish(
-                session.id,
-                {
-                    "sessionId": session.id,
-                    "nextSeq": await store.get_session_seq(session.id),
-                    "session": session.model_dump(mode="json"),
-                    "capabilitySet": effective_capabilities.model_dump(mode="json"),
-                },
-            )
+            self.groups.setdefault(key, {})[capability.capabilityId] = capability
+
+    def project(self, session: SessionView) -> ProtocolCapabilitySet:
+        groups = [self.groups.get(key, {}) for key in (
+            (session.runtime, "session", session.id, session.runtimeId),
+            (session.runtime, "session", session.id, None),
+            (session.runtime, "runtime", None, session.runtimeId),
+            (session.runtime, "runtime", None, None),
+        )]
+        capabilities = []
+        for capability_id in _INHERITED_RUNTIME_CAPABILITY_IDS:
+            source = next((group[capability_id] for group in groups
+                           if capability_id in group), None)
+            capabilities.append(platform_scoped_session_capability(
+                session, capability_id, source,
+                online=session.connectorStatus == "online",
+            ))
+        return ProtocolCapabilitySet(
+            revision=effective_capability_revision(session, self.source),
+            capabilities=capabilities,
+        )
 
 
 def derive_session_effective_capabilities(
@@ -135,58 +197,7 @@ def derive_session_effective_capabilities(
     session: SessionView,
     runtime_capabilities: ProtocolCapabilitySet,
 ) -> ProtocolCapabilitySet:
-    session_by_id = {
-        capability.capabilityId: capability
-        for capability in runtime_capabilities.capabilities
-        if capability.runtime == session.runtime
-        and capability.scope == "session"
-        and capability.sessionId == session.id
-        and _capability_runtime_id(capability) is None
-    }
-    session_by_id.update(
-        {
-            capability.capabilityId: capability
-            for capability in runtime_capabilities.capabilities
-            if capability.runtime == session.runtime
-            and capability.scope == "session"
-            and capability.sessionId == session.id
-            and _capability_runtime_id(capability) == session.runtimeId
-        }
-    )
-    runtime_by_id = {
-        capability.capabilityId: capability
-        for capability in runtime_capabilities.capabilities
-        if capability.runtime == session.runtime
-        and capability.scope == "runtime"
-        and _capability_runtime_id(capability) is None
-    }
-    runtime_by_id.update(
-        {
-            capability.capabilityId: capability
-            for capability in runtime_capabilities.capabilities
-            if capability.runtime == session.runtime
-            and capability.scope == "runtime"
-            and _capability_runtime_id(capability) == session.runtimeId
-        }
-    )
-    online = session.connectorStatus == "online"
-    capabilities: list[ProtocolCapability] = []
-    for capability_id in _INHERITED_RUNTIME_CAPABILITY_IDS:
-        source_capability = session_by_id.get(capability_id)
-        if source_capability is None:
-            source_capability = runtime_by_id.get(capability_id)
-        capabilities.append(
-            platform_scoped_session_capability(
-                session,
-                capability_id,
-                source_capability,
-                online=online,
-            )
-        )
-    return ProtocolCapabilitySet(
-        revision=effective_capability_revision(session, runtime_capabilities),
-        capabilities=capabilities,
-    )
+    return SessionCapabilityIndex(runtime_capabilities).project(session)
 
 
 def platform_scoped_session_capability(

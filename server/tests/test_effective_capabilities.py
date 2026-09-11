@@ -307,3 +307,63 @@ def _session(*, takeover: bool) -> SessionView:
         takeover=takeover,
         updatedSeq=1,
     )
+
+
+def test_capability_batch_reads_once_and_newer_batch_supersedes_old_work():
+    async def exercise():
+        started, release = asyncio.Event(), asyncio.Event()
+
+        class Repository:
+            reads = 0
+            allowed = True
+            pause = True
+
+            async def list_sessions_for_connector(self, connector_id):
+                return [_session(takeover=True).model_copy(update={"id": f"session-{i}"})
+                        for i in range(3)]
+
+            async def get_protocol_capabilities(self, connector_id, *, user_id=None):
+                self.reads += 1
+                return {"revision": self.reads, "capabilities": [{
+                    "capabilityId": SESSION_SEND_MESSAGE, "scope": "runtime",
+                    "runtime": "codex", "allowed": self.allowed,
+                }]}
+
+            @asynccontextmanager
+            async def session_revision_fence(self, session_id):
+                yield
+
+            async def get_session_seq(self, session_id):
+                if self.pause:
+                    self.pause = False
+                    started.set()
+                    await release.wait()
+                return 7
+
+        class Presence:
+            async def is_online(self, connector_id):
+                return True
+
+        class Publisher:
+            def __init__(self):
+                self.sent = []
+
+            async def publish(self, session_id, payload):
+                self.sent.append(payload)
+
+        repository, publisher = Repository(), Publisher()
+        old = asyncio.create_task(publish_connector_session_capabilities(
+            repository, Presence(), publisher, "connector-1",
+        ))
+        await started.wait()
+        repository.allowed = False
+        await publish_connector_session_capabilities(repository, Presence(), publisher, "connector-1")
+        release.set()
+        await old
+        assert repository.reads == 2
+        assert len(publisher.sent) == 3
+        assert all(next(cap for cap in payload["capabilitySet"]["capabilities"]
+                        if cap["capabilityId"] == SESSION_SEND_MESSAGE)["allowed"] is False
+                   for payload in publisher.sent)
+
+    asyncio.run(exercise())
