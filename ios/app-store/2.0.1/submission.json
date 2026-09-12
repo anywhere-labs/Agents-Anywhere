@@ -3,6 +3,7 @@
   "build": "9",
   "buildCommit": "a01cb7d020e1d453ded80d4eef98f503b6da76eb",
   "appStoreConnectAppID": "6787125178",
+  "appStoreConnectBuildID": "12600b69-90dd-4dea-aa93-3d454716f873",
   "toolchain": {
     "xcode": "27.0",
     "build": "27A266a",
@@ -22,10 +23,17 @@
   "status": {
     "uploaded": true,
     "uploadedAt": "2026-09-12T14:52:49+08:00",
-    "processing": "awaiting App Store Connect verification",
-    "testFlight": "not submitted",
-    "appReview": "not submitted",
+    "processing": "complete",
+    "exportCompliance": "completed; Apple operating system encryption only",
+    "testFlight": "external beta review submitted; waiting for review",
+    "testFlightInternalGroup": "AA; 2 testers",
+    "testFlightExternalGroup": "AA; 183 testers at submission",
+    "testFlightReviewAccountSaved": true,
+    "appReview": "ready for review; final submission pending",
     "appStoreVersion": "2.0.1",
+    "appStoreBuildSelected": "9",
+    "appStoreReviewAccountSaved": true,
+    "localizationsSaved": ["en-US", "zh-Hans"],
     "reviewAccountLoginVerified": true
   },
   "validation": {
