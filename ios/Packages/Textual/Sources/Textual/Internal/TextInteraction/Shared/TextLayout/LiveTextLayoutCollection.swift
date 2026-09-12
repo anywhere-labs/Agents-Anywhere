@@ -2,6 +2,14 @@
   import SwiftUI
 
   final class LiveTextLayoutCollection: TextLayoutCollection {
+    // Hit testing and UIKit's hasText query must not materialize attributed
+    // strings through Mirror/CoreText merely to discover a nonempty paragraph.
+    private(set) lazy var hasText: Bool = base.contains { anchored in
+      anchored.layout.isTextFragment && anchored.layout.contains { line in
+        line.contains { !$0.isEmpty }
+      }
+    }
+
     private(set) lazy var layouts: [any TextLayout] = makeLayouts()
 
     private let base: Text.LayoutKey.Value

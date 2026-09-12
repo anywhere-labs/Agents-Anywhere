@@ -26,3 +26,23 @@ struct MarkdownBlockSizing {
         return CGSize(width: width, height: height)
     }
 }
+
+/// Cache actual child measurements separately from the monotonic height reservation.
+/// Layout.updateCache invalidates these when subviews or their environment change.
+struct MarkdownMeasurementCache {
+    private struct Measurement {
+        let width: CGFloat?
+        let size: CGSize
+    }
+    private var measurements: [Measurement] = []
+
+    mutating func size(proposedWidth: CGFloat?, measure: () -> CGSize) -> CGSize {
+        if let cached = measurements.first(where: { $0.width == proposedWidth }) { return cached.size }
+        let result = measure()
+        measurements.append(Measurement(width: proposedWidth, size: result))
+        if measurements.count > 8 { measurements.removeFirst() }
+        return result
+    }
+
+    mutating func invalidate() { measurements.removeAll(keepingCapacity: true) }
+}

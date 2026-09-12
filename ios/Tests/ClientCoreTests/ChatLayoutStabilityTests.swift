@@ -3,6 +3,36 @@ import Testing
 @testable import ClientCore
 
 @Suite struct ChatLayoutStabilityTests {
+    @Test func repeatedLayoutQueriesReuseMeasurementUntilContentChanges() {
+        var cache = MarkdownMeasurementCache()
+        var calls = 0
+        for _ in 0..<120 {
+            let size = cache.size(proposedWidth: 354) {
+                calls += 1
+                return CGSize(width: 354, height: 800)
+            }
+            #expect(size.height == 800)
+        }
+        #expect(calls == 1)
+        cache.invalidate()
+        let appended = cache.size(proposedWidth: 354) {
+            calls += 1
+            return CGSize(width: 354, height: 840)
+        }
+        #expect(calls == 2)
+        #expect(appended.height == 840)
+    }
+
+    @Test func measurementProbesAndRotationCannotReuseAnotherWidthsHeight() {
+        var cache = MarkdownMeasurementCache()
+        for (width, height): (CGFloat?, CGFloat) in [(354, 800), (nil, 40), (0, 2000), (700, 400)] {
+            #expect(cache.size(proposedWidth: width) { CGSize(width: width ?? 1000, height: height) }.height == height)
+        }
+        #expect(cache.size(proposedWidth: 354) { Issue.record("Lost the measured phone width"); return .zero }.height == 800)
+        cache.invalidate()
+        #expect(cache.size(proposedWidth: 354) { CGSize(width: 354, height: 1000) }.height == 1000)
+    }
+
     @Test func intrinsicWidthOscillationCannotChangeTheColumnOrItsHeightReservation() {
         var sizing = MarkdownBlockSizing()
         let width = CGFloat(1063) / 3

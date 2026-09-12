@@ -2,11 +2,16 @@
   import SwiftUI
 
   protocol TextLayoutCollection {
+    var hasText: Bool { get }
     var layouts: [any TextLayout] { get }
 
     func isEqual(to other: any TextLayoutCollection) -> Bool
     func needsPositionReconciliation(with other: any TextLayoutCollection) -> Bool
     func index(of layout: Text.Layout) -> Int?
+  }
+
+  extension TextLayoutCollection {
+    var hasText: Bool { layouts.contains { $0.attributedString.length > 0 } }
   }
 
   struct AnyTextLayoutCollection: TextLayoutCollection, Equatable {
@@ -19,6 +24,8 @@
     var layouts: [any TextLayout] {
       base.layouts
     }
+
+    var hasText: Bool { base.hasText }
 
     func isEqual(to other: any TextLayoutCollection) -> Bool {
       base.isEqual(to: other)

@@ -89,11 +89,11 @@
 
   extension TextSelectionModel {
     var hasText: Bool {
-      layoutCollection.stringLength > 0
+      layoutCollection.hasText
     }
 
     func acceptsInteraction(at point: CGPoint, excluding rects: [CGRect]) -> Bool {
-      hasText && !rects.contains { $0.contains(point) }
+      !rects.contains { $0.contains(point) } && hasText
     }
 
     var startPosition: TextPosition {

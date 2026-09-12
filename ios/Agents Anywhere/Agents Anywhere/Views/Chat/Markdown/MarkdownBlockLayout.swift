@@ -12,6 +12,7 @@ struct MarkdownBlockLayout: Layout {
         var displayScale: CGFloat
         var direction: LayoutDirection
         var sizing = MarkdownBlockSizing()
+        var measurements = MarkdownMeasurementCache()
     }
 
     func makeCache(subviews: Subviews) -> Cache {
@@ -22,6 +23,9 @@ struct MarkdownBlockLayout: Layout {
         if cache.dynamicType != dynamicType || cache.displayScale != displayScale || cache.direction != direction {
             cache = makeCache(subviews: subviews)
         }
+        // A subview change (including asynchronous attachments/highlighting)
+        // invalidates actual measurements, while scroll/translation alone does not.
+        cache.measurements.invalidate()
         // Appends and Textual's asynchronous highlighter/attachment updates
         // retain the last real height. Authoritative replacements recreate the
         // enclosing row's layout generation, and therefore this cache as well.
@@ -30,7 +34,9 @@ struct MarkdownBlockLayout: Layout {
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         guard let content = subviews.first else { return .zero }
         let width = proposal.width.flatMap { $0.isFinite ? max(0, $0) : nil }
-        let natural = content.sizeThatFits(.init(width: width, height: nil))
+        let natural = cache.measurements.size(proposedWidth: width) {
+            content.sizeThatFits(.init(width: width, height: nil))
+        }
         return cache.sizing.size(proposedWidth: width, naturalSize: natural, displayScale: displayScale)
     }
 

@@ -49,8 +49,9 @@
     }
 
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-      model.acceptsInteraction(at: point, excluding: exclusionRects)
-        && super.point(inside: point, with: event)
+      // Reject offscreen/out-of-bounds overlays before touching text layouts.
+      super.point(inside: point, with: event)
+        && model.acceptsInteraction(at: point, excluding: exclusionRects)
     }
 
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {

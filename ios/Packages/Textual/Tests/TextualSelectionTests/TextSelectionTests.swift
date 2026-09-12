@@ -4,6 +4,25 @@ import Testing
 
 @Suite @MainActor
 struct TextSelectionTests {
+    @Test func hitTestingDoesNotMaterializeTheDocument() {
+        let collection = HitTestCollection()
+        let model = TextSelectionModel(layoutCollection: collection)
+        for _ in 0..<120 {
+            #expect(model.acceptsInteraction(at: .zero, excluding: []))
+            #expect(model.hasText)
+        }
+        #expect(collection.layoutReads == 0)
+    }
+
+    @Test func excludedControlsDoNotQueryTextAtAll() {
+        let collection = HitTestCollection()
+        let model = TextSelectionModel(layoutCollection: collection)
+        #expect(!model.acceptsInteraction(at: CGPoint(x: 10, y: 10),
+            excluding: [CGRect(x: 0, y: 0, width: 100, height: 100)]))
+        #expect(collection.presenceReads == 0)
+        #expect(collection.layoutReads == 0)
+    }
+
     @Test func emptySelectionOverlayDoesNotInterceptControls() {
         let model = TextSelectionModel()
         #expect(!model.acceptsInteraction(at: .zero, excluding: []))
@@ -196,4 +215,15 @@ private struct SampleSlice: TextRunSlice {
     var typographicBounds: CGRect {
         CGRect(x: characterRange.lowerBound * 10, y: 0, width: characterRange.count * 10, height: 20)
     }
+}
+
+/// A layout snapshot with a cheap presence query and an expensive contents path.
+private final class HitTestCollection: TextLayoutCollection {
+    var layoutReads = 0
+    var presenceReads = 0
+    var hasText: Bool { presenceReads += 1; return true }
+    var layouts: [any TextLayout] { layoutReads += 1; return [] }
+    func isEqual(to other: any TextLayoutCollection) -> Bool { self === (other as? HitTestCollection) }
+    func needsPositionReconciliation(with other: any TextLayoutCollection) -> Bool { false }
+    func index(of layout: Text.Layout) -> Int? { nil }
 }

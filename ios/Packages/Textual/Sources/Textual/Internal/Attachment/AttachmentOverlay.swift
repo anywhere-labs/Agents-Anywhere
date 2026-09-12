@@ -17,17 +17,23 @@ struct AttachmentOverlay: ViewModifier {
   }
 
   func body(content: Content) -> some View {
-    content
-      .overlayPreferenceValue(Text.LayoutKey.self) { value in
-        if let anchoredLayout = value.first {
-          GeometryReader { geometry in
-            AttachmentView(
-              attachments: attachments,
-              origin: geometry[anchoredLayout.origin],
-              layout: anchoredLayout.layout
-            )
+    if attachments.isEmpty {
+      // Plain text has no attachment bodies; do not walk every line and run
+      // in AttachmentView whenever geometry or the containing card changes.
+      content
+    } else {
+      content
+        .overlayPreferenceValue(Text.LayoutKey.self) { value in
+          if let anchoredLayout = value.first {
+            GeometryReader { geometry in
+              AttachmentView(
+                attachments: attachments,
+                origin: geometry[anchoredLayout.origin],
+                layout: anchoredLayout.layout
+              )
+            }
           }
         }
-      }
+    }
   }
 }
