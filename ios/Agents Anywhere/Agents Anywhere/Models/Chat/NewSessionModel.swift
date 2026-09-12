@@ -77,7 +77,7 @@ final class NewSessionModel {
         guard let homePath else { return false }
         return ProjectWorkspacePath.key(workspace, deviceOS: connector?.deviceOs) == ProjectWorkspacePath.key(homePath, deviceOS: connector?.deviceOs)
     }
-    var availableProjects: [V2Project] { projects.filter { $0.connectorId == connectorID }.sorted { $0.name < $1.name } }
+    var availableProjects: [V2Project] { WorkspaceSelectionOrder.projects(projects, connectorID: connectorID) }
     var refreshKey: NewSessionRefreshKey {
         .init(connectorID: connectorID, isOnline: connector?.status == .online, network: network)
     }

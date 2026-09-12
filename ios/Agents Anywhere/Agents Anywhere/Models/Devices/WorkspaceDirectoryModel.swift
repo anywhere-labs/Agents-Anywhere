@@ -53,6 +53,6 @@ final class WorkspaceDirectoryModel {
         if left.isDirectory != right.isDirectory {
             return left.isDirectory
         }
-        return left.name.localizedStandardCompare(right.name) == .orderedAscending
+        return left.name.localizedCompare(right.name) == .orderedAscending
     }
 }
