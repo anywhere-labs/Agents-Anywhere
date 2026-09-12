@@ -36,6 +36,35 @@ struct MarkdownMathTests {
     #expect(result.runs.allSatisfy { $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true })
   }
 
+  @Test func ordinaryMarkdownKeepsIdenticalContentAndStructureWithMathEnabled() throws {
+    let source = """
+    # 长会话 🙂
+
+    **格式**、普通文本、[链接](https://example.com)与 `inline code`。
+
+    > 引用中的普通文字
+
+    ```swift
+    let path = "src/main.swift"
+    ```
+    """
+    let normal = try AttributedStringMarkdownParser.parse(source)
+    let enabled = try AttributedStringMarkdownParser.parse(source, syntaxExtensions: [.math])
+    #expect(normal == enabled)
+  }
+
+  @Test func repeatedMathParsingKeepsTheExactSameSnapshot() throws {
+    let source = #"## Heading $x_1$"# + "\n\n" + #"Text \(a+b\) and \[\frac{1}{2}\]."#
+    let original = try parse(source)
+    for _ in 0..<20 { #expect(try parse(source) == original) }
+  }
+
+  @Test func userTextThatLooksLikeAPlaceholderIsNeverReplaced() throws {
+    let literal = "AAMATH0123456789ABCDEF0123456789ABCDEFX0Z"
+    let result = try parse(literal + " and $x$")
+    #expect(String(result.characters) == literal + " and \u{FFFC}")
+  }
+
   @Test func mathRemainsOptIn() throws {
     let result = try AttributedStringMarkdownParser(baseURL: nil).attributedString(for: "$x$")
     #expect(String(result.characters) == "$x$")

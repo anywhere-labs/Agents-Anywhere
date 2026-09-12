@@ -12,7 +12,7 @@ import SwiftUI
 // On macOS, when text selection is enabled, object-style attachments are dimmed when they fall
 // inside the selected range. Inline-style attachments (for example, emoji) are not dimmed.
 
-struct AttachmentView: View {
+struct AttachmentView: View, Equatable {
   #if TEXTUAL_ENABLE_TEXT_SELECTION && canImport(AppKit)
     @Environment(TextSelectionModel.self) private var textSelectionModel: TextSelectionModel?
   #endif
@@ -30,20 +30,40 @@ struct AttachmentView: View {
     self.layout = layout
   }
 
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.origin == rhs.origin && lhs.attachments == rhs.attachments && lhs.layout == rhs.layout
+  }
+
+  private struct Placement: Identifiable {
+    let line: Int
+    let run: Int
+    let attachment: AnyAttachment
+    let rect: CGRect
+    var id: IndexPath { IndexPath(indexes: [line, run]) }
+  }
+
+  private var placements: [Placement] {
+    var result: [Placement] = []
+    for lineIndex in layout.indices {
+      let line = layout[lineIndex]
+      for runIndex in line.indices {
+        let run = line[runIndex]
+        guard let attachment = run.attachment, attachments.contains(attachment) else { continue }
+        result.append(Placement(line: lineIndex, run: runIndex, attachment: attachment,
+          rect: run.typographicBounds.rect))
+      }
+    }
+    return result
+  }
+
   var body: some View {
     ZStack(alignment: .topLeading) {
-      ForEach(Array(layout.indices), id: \.self) { lineIndex in
-        let line = layout[lineIndex]
-        ForEach(Array(line.indices), id: \.self) { runIndex in
-          let run = line[runIndex]
-          if let attachment = run.attachment, attachments.contains(attachment) {
-            let rect = run.typographicBounds.rect
-            attachment.body
-              .frame(width: rect.width, height: rect.height)
-              .opacity(opacity(for: attachment, lineIndex: lineIndex, runIndex: runIndex))
-              .offset(x: origin.x + rect.minX, y: origin.y + rect.minY)
-          }
-        }
+      // Build views only for real attachments, not empty nodes for every text run.
+      ForEach(placements) { placement in
+        placement.attachment.body
+          .frame(width: placement.rect.width, height: placement.rect.height)
+          .opacity(opacity(for: placement.attachment, lineIndex: placement.line, runIndex: placement.run))
+          .offset(x: origin.x + placement.rect.minX, y: origin.y + placement.rect.minY)
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

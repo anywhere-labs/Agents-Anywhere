@@ -38,7 +38,7 @@ public struct AttributedStringMarkdownParser: MarkupParser {
     let processor = PatternProcessor(syntaxExtensions: syntaxExtensions.filter {
       !$0.patterns.contains { $0.tokenType == .mathBlock }
     })
-    let protected = parsesMath ? MathMarkdownSource(input) : nil
+    let protected = parsesMath && MathMarkdownSource.mayContainMath(input) ? MathMarkdownSource(input) : nil
     let document = try processor.expand(
       AttributedString(
         markdown: protected?.source ?? input,

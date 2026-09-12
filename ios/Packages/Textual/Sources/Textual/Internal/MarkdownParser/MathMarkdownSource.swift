@@ -5,7 +5,19 @@ import Foundation
 struct MathMarkdownSource {
   let source: String
   private let expressions: [String: Expression]
-  private let placeholderPattern: NSRegularExpression
+  private let prefix: String
+
+  /// A byte scan avoids regex/token allocation for ordinary prose and code.
+  static func mayContainMath(_ input: String) -> Bool {
+    var previous: UInt8 = 0
+    for byte in input.utf8 {
+      if byte == 36 || previous == 92 && (byte == 40 || byte == 91) { return true }
+      previous = byte
+    }
+    return false
+  }
+
+  private static let placeholderPattern = try! NSRegularExpression(pattern: "AAMATH[A-F0-9]{32}X[0-9]+Z")
 
   private struct Expression {
     let source: String
@@ -13,17 +25,20 @@ struct MathMarkdownSource {
     let block: Bool
   }
 
-  init(_ input: String) {
+  private static let expressionPattern: NSRegularExpression = {
     // Consume code and link destinations before considering math delimiters.
     // Unclosed fences remain literal while a response is streaming.
     let pattern = #"(?m:^[ ]{0,3}(`{3,}|~{3,})[^\n]*\n(?s:.*?)(?:^[ ]{0,3}\1[ \t]*(?:\n|$)|\z))|(`+)(?s:.*?)\2(?!`)|\]\([^\n]*\)|\\\\|\\\$|(?<block>\$\$(?s:.+?)\$\$)|(?<bracket>\\\[(?s:.+?)\\\])|(?<paren>\\\([^\n]+?\\\))|(?<inline>\$(?!\$|\s)(?:\\.|[^$\n])*?[^\s\\]\$(?!\d)|\$[^\s$\\]\$(?!\d))"#
-    let regex = try! NSRegularExpression(pattern: pattern)
+    return try! NSRegularExpression(pattern: pattern)
+  }()
+
+  init(_ input: String) {
     let prefix = "AAMATH" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
     let text = input as NSString
     var output = ""
     var expressions: [String: Expression] = [:]
     var cursor = 0
-    for match in regex.matches(in: input, range: NSRange(location: 0, length: text.length)) {
+    for match in Self.expressionPattern.matches(in: input, range: NSRange(location: 0, length: text.length)) {
       output += text.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
       let original = text.substring(with: match.range)
       let kind = ["block", "bracket", "paren", "inline"].first {
@@ -44,7 +59,7 @@ struct MathMarkdownSource {
     output += text.substring(from: cursor)
     self.source = output
     self.expressions = expressions
-    self.placeholderPattern = try! NSRegularExpression(pattern: prefix + "X[0-9]+Z")
+    self.prefix = prefix
   }
 
   func restore(_ document: AttributedString) -> AttributedString {
@@ -52,11 +67,18 @@ struct MathMarkdownSource {
     var result = AttributedString()
     for run in document.runs {
       let text = String(document[run.range].characters)
-      // Keys share a random prefix, so ordinary text and user content cannot collide.
-      let matches = placeholderPattern.matches(in: text, range: NSRange(text.startIndex..., in: text))
+      // Most runs contain no formula. Preserve them without regex or rebuilding.
+      guard text.contains(prefix) else {
+        result.append(document[run.range])
+        continue
+      }
+      // Match the shared token shape, but restore only this parse's random keys.
+      let matches = Self.placeholderPattern.matches(in: text, range: NSRange(text.startIndex..., in: text))
         .compactMap { match -> (String, Range<String.Index>)? in
           guard let range = Range(match.range, in: text) else { return nil }
-          return (String(text[range]), range)
+          let key = String(text[range])
+          guard expressions[key] != nil else { return nil }
+          return (key, range)
         }
       var cursor = text.startIndex
       for (key, range) in matches {
