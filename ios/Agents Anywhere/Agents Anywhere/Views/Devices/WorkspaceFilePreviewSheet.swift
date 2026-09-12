@@ -16,7 +16,9 @@ struct WorkspaceFilePreviewSheet: View {
     @State private var attempt = 0
     @State private var downloadedFile: WorkspaceDownloadedFile?
     @State private var isDownloading = false
-    @State private var downloadToasts = ChatToastStore()
+    @State private var browserRequest = 0
+    @State private var isOpeningBrowser = false
+    @State private var toasts = ChatToastStore()
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     private var name: String { (path.replacingOccurrences(of: "\\", with: "/") as NSString).lastPathComponent }
@@ -51,12 +53,22 @@ struct WorkspaceFilePreviewSheet: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(String(localized: "重新加载"), appSymbol: "arrow.clockwise") { attempt += 1 }.disabled(!canRead || loading)
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    if isOpeningBrowser {
+                        ProgressView().accessibilityLabel(String(localized: "正在打开浏览器"))
+                    } else {
+                        Button(String(localized: "在浏览器中打开"), appSymbol: "arrow.up.right.square") {
+                            guard !isOpeningBrowser else { return }
+                            isOpeningBrowser = true; browserRequest += 1
+                        }.disabled(!canRead)
+                    }
+                }
                 SheetCloseToolbar { dismiss() }
             }
         }
         .appSheetPresentation(.expanded)
         .overlay(alignment: .top) {
-            ChatErrorToasts(store: downloadToasts, isRetrying: false, onRetry: { _ in })
+            ChatErrorToasts(store: toasts, isRetrying: false, onRetry: { _ in })
         }
         .sheet(item: $downloadedFile) { file in
             WorkspaceFileActivitySheet(file: file) { error in
@@ -69,16 +81,42 @@ struct WorkspaceFilePreviewSheet: View {
             // Reload needs a fresh entry token; the previous token may be consumed.
             loading = true; error = nil; url = nil; isDownloading = false
             do {
-                let entry = V2WorkspaceEntry(name: name, path: path, type: "file", size: nil, modifiedAt: nil)
-                let prepared = try await service.previewURL(connectorId: connectorId, root: root, entry: entry, location: location)
+                let prepared = try await preparePreviewURL()
                 try Task.checkCancellation()
                 guard canRead else { return }
                 url = prepared
             } catch { if !Task.isCancelled { loading = false; self.error = error.localizedDescription } }
         }
+        .task(id: browserRequest) {
+            guard isOpeningBrowser else { return }
+            await openInBrowser()
+        }
+    }
+    private func preparePreviewURL() async throws -> URL {
+        let entry = V2WorkspaceEntry(name: name, path: path, type: "file", size: nil, modifiedAt: nil)
+        return try await service.previewURL(connectorId: connectorId, root: root, entry: entry, location: location)
+    }
+    private func openInBrowser() async {
+        defer { isOpeningBrowser = false }
+        guard canRead else { return }
+        toasts.update(source: "browser", failure: nil)
+        do {
+            // The embedded preview already consumed its token. The browser needs
+            // a fresh entry for the same file and source location.
+            let prepared = try await preparePreviewURL()
+            try Task.checkCancellation()
+            guard canRead else { return }
+            let opened = await UIApplication.shared.open(prepared)
+            if !opened, !Task.isCancelled {
+                browserFailed(String(localized: "无法打开浏览器，请重试。"))
+            }
+        } catch { if !Task.isCancelled { browserFailed(error.localizedDescription) } }
+    }
+    private func browserFailed(_ message: String) {
+        toasts.update(source: "browser", failure: V2ClientFailure(kind: .rejected, message: message))
     }
     private func downloadFailed(_ message: String) {
-        downloadToasts.update(source: "download", failure: V2ClientFailure(kind: .rejected, message: message))
+        toasts.update(source: "download", failure: V2ClientFailure(kind: .rejected, message: message))
     }
 }
 
