@@ -12,6 +12,7 @@ struct ChatTimelineView: View {
     @State private var hasRequestedOlder = false
     @State private var position = ScrollPosition()
     @State private var scrolling = TimelineScrollState()
+    @State private var viewportSample = ChatViewportSample()
     @State private var viewportUpdates = ChatLayoutUpdate<TimelineViewport>()
     @State private var historyUpdates = ChatLayoutUpdate<TimelineHistoryLayout>()
     @State private var latestPull = TimelineHistoryPull()
@@ -32,7 +33,7 @@ struct ChatTimelineView: View {
     private var hasInteractions: Bool {
         model.session.notices.notices.contains { $0.isVisible && $0.notice.type == "interaction" }
     }
-    private var viewport: TimelineViewport { scrolling.viewport }
+    private var viewport: TimelineViewport { viewportSample.value ?? scrolling.viewport }
     private var navigationIsSuspended: Bool { sidebarIsTransitioning || sidebarObscuresDetail }
     var body: some View {
         // A sibling overlay receives taps independently of the scroll view's
@@ -75,6 +76,7 @@ struct ChatTimelineView: View {
                 }
                 let current = TimelineViewport(geometry: context.geometry)
                 let wasInteracting = scrolling.phase == .interacting
+                viewportSample.value = current
                 scrolling.geometryChanged(current)
                 nativePhase = mapped
                 // The drawer owns horizontal navigation. Do not interpret its
@@ -114,9 +116,19 @@ struct ChatTimelineView: View {
                 }
 #endif
                 viewportUpdates.submit(value) { value in
-                    if viewport != value { scrolling.geometryChanged(value) }
+                    // Offset samples are needed for restoration, but do not change
+                    // the rendered page. Publish only dimensions used by following.
+                    viewportSample.value = value
+                    let previous = scrolling.viewport
+                    if previous.contentHeight != value.contentHeight || previous.visibleHeight != value.visibleHeight
+                        || previous.topInset != value.topInset {
+                        scrolling.geometryChanged(value)
+                    }
                     if !navigationIsSuspended && scrolling.phase == .interacting {
-                        latestPull.update(value); olderPull.update(value)
+                        var latest = latestPull, older = olderPull
+                        latest.update(value); older.update(value)
+                        if latest != latestPull { latestPull = latest }
+                        if older != olderPull { olderPull = older }
                     }
                 }
             }
@@ -425,4 +437,9 @@ private extension TimelineViewport {
         self.init(contentHeight: geometry.contentSize.height, containerHeight: geometry.containerSize.height,
             topInset: geometry.contentInsets.top, bottomInset: geometry.contentInsets.bottom, offsetY: geometry.contentOffset.y)
     }
+}
+
+/// Native offset storage deliberately does not invalidate the SwiftUI view tree.
+@MainActor private final class ChatViewportSample {
+    var value: TimelineViewport?
 }

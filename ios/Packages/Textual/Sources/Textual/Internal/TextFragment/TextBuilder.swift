@@ -20,6 +20,7 @@ extension TextFragment {
   @MainActor @Observable final class TextBuilder {
     var text: Text
 
+    @ObservationIgnored private var currentAttachmentSizes: [AttachmentKey: CGSize]
     @ObservationIgnored private let content: Content
     @ObservationIgnored private let cache: NSCache<KeyBox<[AttachmentKey: CGSize]>, Box<Text>>
 
@@ -31,6 +32,7 @@ extension TextFragment {
         attachmentSizes: attachmentSizes,
         in: environment
       )
+      self.currentAttachmentSizes = attachmentSizes
       self.content = content
       self.cache = NSCache()
       self.cache.countLimit = 10
@@ -39,7 +41,11 @@ extension TextFragment {
     }
 
     func sizeChanged(_ size: CGSize, environment: TextEnvironmentValues) {
+      // Plain text cannot change when the attachment container resizes.
+      guard !currentAttachmentSizes.isEmpty else { return }
       let attachmentSizes = content.attachmentSizes(for: .init(size), in: environment)
+      guard attachmentSizes != currentAttachmentSizes else { return }
+      currentAttachmentSizes = attachmentSizes
       let cacheKey = KeyBox(attachmentSizes)
 
       if let text = cache.object(forKey: cacheKey) {

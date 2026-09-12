@@ -19,27 +19,45 @@ struct ChatMarkdownView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .onChange(of: text, initial: true) { _, source in
-            let parser = AttributedStringMarkdownParser(baseURL: nil, syntaxExtensions: [.math])
-            guard var document = try? parser.attributedString(for: source) else { return }
-            if resolvesFileReferences {
-                // Web also makes inline code such as src/main.swift:42 a file
-                // reference. Preserve code styling while adding its scoped link.
-                for run in document.runs {
-                    if run.link == nil, run.inlinePresentationIntent?.contains(.code) == true,
-                       let reference = SessionFileReference.inlineReference(String(document[run.range].characters)) {
-                        document[run.range].link = reference.link
-                    }
-                }
+        .task(id: ParseRequest(text: text, resolvesFileReferences: resolvesFileReferences)) {
+            let request = ParseRequest(text: text, resolvesFileReferences: resolvesFileReferences)
+            // Parsing a long response must not block scroll and drawer gestures.
+            // Cancelled requests cannot publish an older snapshot over a new reply.
+            let worker = Task.detached(priority: .userInitiated) { try Self.parse(request) }
+            let result = await withTaskCancellationHandler {
+                await worker.result
+            } onCancel: {
+                worker.cancel()
             }
-            document = GitDirectiveParser.enrich(document) { directives, attributes in
-                var badge = AttributedString(directives.map(\.label).joined(separator: " · "), attributes: attributes)
-                badge.textual.attachment = AnyAttachment(ChatGitBadgeAttachment(directives: directives))
-                return badge
-            }
-            let next = MarkdownBlockSnapshot.split(document)
+            guard !Task.isCancelled, case .success(let next) = result else { return }
             if blocks != next { blocks = next }
         }
+    }
+
+    nonisolated private struct ParseRequest: Equatable, Sendable {
+        let text: String
+        let resolvesFileReferences: Bool
+    }
+
+    nonisolated private static func parse(_ request: ParseRequest) throws -> [MarkdownBlockSnapshot] {
+        try Task.checkCancellation()
+        var document = try AttributedStringMarkdownParser.parse(request.text, syntaxExtensions: [.math])
+        try Task.checkCancellation()
+        if request.resolvesFileReferences {
+            for run in document.runs {
+                if run.link == nil, run.inlinePresentationIntent?.contains(.code) == true,
+                   let reference = SessionFileReference.inlineReference(String(document[run.range].characters)) {
+                    document[run.range].link = reference.link
+                }
+            }
+        }
+        document = GitDirectiveParser.enrich(document) { directives, attributes in
+            var badge = AttributedString(directives.map(\.label).joined(separator: " · "), attributes: attributes)
+            badge.textual.attachment = AnyAttachment(ChatGitBadgeAttachment(directives: directives))
+            return badge
+        }
+        try Task.checkCancellation()
+        return MarkdownBlockSnapshot.split(document)
     }
 }
 

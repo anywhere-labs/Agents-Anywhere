@@ -2,8 +2,8 @@ import Foundation
 
 /// One fresh pull beyond a visible history edge loads one page on release.
 /// Inertia, automatic scrolling and resizing cannot arm either edge.
-nonisolated struct TimelineHistoryPull {
-    enum Edge { case older, latest }
+nonisolated struct TimelineHistoryPull: Equatable {
+    enum Edge: Equatable { case older, latest }
     var edge = Edge.latest
     private var origin: TimelineViewport?
     private(set) var isReady = false

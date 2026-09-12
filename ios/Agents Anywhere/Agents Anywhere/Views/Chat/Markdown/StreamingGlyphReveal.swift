@@ -37,9 +37,14 @@ struct StreamingGlyphReveal: ViewModifier {
         let enabled = isStreaming && !reduceMotion
         // Text flushes at 30 Hz. Drawing can use the display's refresh cadence
         // to interpolate between flushes without reparsing or appending text.
-        TimelineView(.animation(paused: !enabled)) { timeline in
-            content.textRenderer(GlyphRevealRenderer(ledger: ledger, now: timeline.date.timeIntervalSinceReferenceDate,
-                enabled: enabled, revealedPhraseCount: revealedPhraseCount))
+        if !enabled && revealedPhraseCount == nil {
+            // Settled history uses native Text drawing with no clock or glyph walk.
+            content
+        } else {
+            TimelineView(.animation(paused: !enabled)) { timeline in
+                content.textRenderer(GlyphRevealRenderer(ledger: ledger, now: timeline.date.timeIntervalSinceReferenceDate,
+                    enabled: enabled, revealedPhraseCount: revealedPhraseCount))
+            }
         }
     }
 

@@ -10,7 +10,7 @@ import Foundation
 public struct AttributedStringMarkdownParser: MarkupParser {
   private let baseURL: URL?
   private let options: AttributedString.MarkdownParsingOptions
-  private let processor: PatternProcessor
+  private let syntaxExtensions: [SyntaxExtension]
 
   public init(
     baseURL: URL?,
@@ -19,18 +19,36 @@ public struct AttributedStringMarkdownParser: MarkupParser {
   ) {
     self.baseURL = baseURL
     self.options = options
-    self.processor = PatternProcessor(syntaxExtensions: syntaxExtensions)
+    self.syntaxExtensions = syntaxExtensions
   }
 
   public func attributedString(for input: String) throws -> AttributedString {
-    try processor.expand(
+    try Self.parse(input, baseURL: baseURL, options: options, syntaxExtensions: syntaxExtensions)
+  }
+
+  /// Parse on the caller's executor without constructing a main-actor UI parser.
+  nonisolated public static func parse(
+    _ input: String,
+    baseURL: URL? = nil,
+    options: AttributedString.MarkdownParsingOptions = .init(),
+    syntaxExtensions: [SyntaxExtension] = []
+  ) throws -> AttributedString {
+    try Task.checkCancellation()
+    let parsesMath = syntaxExtensions.contains { $0.patterns.contains { $0.tokenType == .mathBlock } }
+    let processor = PatternProcessor(syntaxExtensions: syntaxExtensions.filter {
+      !$0.patterns.contains { $0.tokenType == .mathBlock }
+    })
+    let protected = parsesMath ? MathMarkdownSource(input) : nil
+    let document = try processor.expand(
       AttributedString(
-        markdown: input,
+        markdown: protected?.source ?? input,
         including: \.textual,
         options: options,
         baseURL: baseURL
       )
     )
+    try Task.checkCancellation()
+    return protected?.restore(document) ?? document
   }
 }
 
