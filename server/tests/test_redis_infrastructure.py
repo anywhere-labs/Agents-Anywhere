@@ -3,9 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fakeredis import FakeServer
-from fakeredis.aioredis import FakeRedis
-
 from agent_server.core.events import events_from_invalidation, revisions_are_complete
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.redis_coordinator import RedisCoordinator
@@ -14,6 +11,8 @@ from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.ws_tickets import ClientWsTicketManager
 from agent_server.services.shell_tasks import ShellTaskManager
+from fakeredis import FakeServer
+from fakeredis.aioredis import FakeRedis
 
 
 def _coordinator(server: FakeServer) -> RedisCoordinator:
@@ -745,3 +744,49 @@ def test_store_pending_script_stages_projection_and_dirty_marker() -> None:
         assert await client.smembers("dirty") == {"sess_1"}
 
     asyncio.run(exercise())
+
+
+def test_runtime_ingress_pause_and_disconnect_wait_for_the_remote_notification_owner():
+    from agent_server.api.connector_ingress import _ConnectorNotificationPump
+    from agent_server.infra.connector_rpc import ConnectorRpcManager
+
+    async def run():
+        fake_server = FakeServer()
+        owner = ConnectorRpcManager(_coordinator(fake_server), instance_id="owner")
+        caller = ConnectorRpcManager(_coordinator(fake_server), instance_id="caller")
+        await owner.start()
+        await caller.start()
+        entered = asyncio.Event()
+
+        class Socket:
+            async def close(self, **kwargs):
+                pass
+
+        class Blocking:
+            async def handle_notification_message(self, **kwargs):
+                entered.set()
+                await asyncio.Event().wait()
+
+        connection = await owner.register("conn", Socket())
+        pump = _ConnectorNotificationPump("conn", Blocking())
+        connection.abort_notifications = pump.abort
+        connection.set_runtime_ingress_enabled = pump.set_runtime_ingress_enabled
+        pump.start()
+        pump.enqueue_message({"method": "session.source.updated", "params": {"runtime": "codex", "sessionId": "session"}})
+        await entered.wait()
+        await asyncio.wait_for(caller.set_runtime_ingress_enabled("conn", "codex", False), 2)
+        assert not pump._inflight_tasks or all(task.done() for task in pump._inflight_tasks)
+        pump.enqueue_message({"method": "session.source.updated", "params": {"runtime": "codex", "sessionId": "session"}})
+        await asyncio.wait_for(pump.flush(), 1)
+        assert pump.obsolete == 2
+        await caller.set_runtime_ingress_enabled("conn", "codex", True)
+        assert "codex" not in pump._blocked_runtimes
+        assert await caller.disconnect("conn", reason="connector deleted")
+        assert not await caller.is_online("conn")
+        assert pump._pending == 0
+        await caller.close()
+        await owner.close()
+        await caller._coordinator.close()
+        await owner._coordinator.close()
+
+    asyncio.run(run())

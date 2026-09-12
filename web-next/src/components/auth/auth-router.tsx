@@ -13,6 +13,7 @@ import { PluginOnboardingPage } from "@/components/onboarding/plugin-onboarding-
 import { Demo } from "@/components/demo"
 import { FilePreviewPage } from "@/components/file-preview-page"
 import { LoadingState } from "@/components/loading-state"
+import { AnnouncementGate } from "@/components/announcements/announcement-gate"
 
 function AuthRouterInner() {
   const { screen, loading, isAuthenticated } = useAuth()
@@ -45,7 +46,12 @@ function AuthRouterInner() {
 export function AuthRouter() {
   return (
     <AuthProvider>
-      <AuthRouterInner />
+      <AuthRouterContent />
     </AuthProvider>
   )
+}
+
+function AuthRouterContent() {
+  const { screen, loading } = useAuth()
+  return <><AuthRouterInner /><AnnouncementGate page={loading ? null : screen} /></>
 }

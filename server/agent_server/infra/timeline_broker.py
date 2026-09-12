@@ -17,7 +17,9 @@ import asyncio
 import json
 from contextlib import suppress
 
+from agent_server.infra.event_preparation import EventPreparationPool
 from agent_server.infra.redis_coordinator import RedisCoordinator
+from agent_server.infra.shared_message import SharedMessage
 
 
 def timeline_envelope_message(
@@ -50,18 +52,29 @@ class TimelineBroker:
         coordinator: RedisCoordinator | None = None,
         *,
         dashboard_debounce_seconds: float = 0.0,
+        event_workers: int = 0,
+        event_threshold_bytes: int = 256 * 1024,
+        event_queue_items: int = 32,
+        event_queue_bytes: int = 32 * 1024 * 1024,
     ) -> None:
         self._coordinator = coordinator or RedisCoordinator()
-        self._subs: dict[str, set[asyncio.Queue[str]]] = {}
-        self._dashboard_subs: dict[str, set[asyncio.Queue[str]]] = {}
+        self._subs: dict[str, set[asyncio.Queue[SharedMessage]]] = {}
+        self._dashboard_subs: dict[str, set[asyncio.Queue[SharedMessage]]] = {}
         self._dashboard_pending: dict[str, dict] = {}
         self._dashboard_tasks: dict[str, asyncio.Task[None]] = {}
         self._dashboard_debounce_seconds = dashboard_debounce_seconds
         self._lock = asyncio.Lock()
         self._pubsub = None
         self._listener_task: asyncio.Task[None] | None = None
+        self._preparation_tasks: set[asyncio.Task] = set()
+        self._event_pool = EventPreparationPool(
+            workers=event_workers, threshold_bytes=event_threshold_bytes,
+            max_pending=event_queue_items, max_pending_bytes=event_queue_bytes,
+        ) if event_workers > 0 else None
 
     async def start(self) -> None:
+        if self._event_pool is not None:
+            await self._event_pool.start()
         if not self._coordinator.distributed or self._listener_task is not None:
             return
         self._pubsub = self._coordinator.client.pubsub()
@@ -74,7 +87,7 @@ class TimelineBroker:
         )
 
     async def close(self) -> None:
-        tasks = list(self._dashboard_tasks.values())
+        tasks = [*self._dashboard_tasks.values(), *self._preparation_tasks]
         if self._listener_task is not None:
             self._listener_task.cancel()
             tasks.append(self._listener_task)
@@ -86,9 +99,12 @@ class TimelineBroker:
         self._listener_task = None
         self._dashboard_tasks.clear()
         self._dashboard_pending.clear()
+        self._preparation_tasks.clear()
         if self._pubsub is not None:
             await self._pubsub.aclose()
             self._pubsub = None
+        if self._event_pool is not None:
+            await self._event_pool.close()
 
     async def publish(self, session_id: str, payload: dict) -> None:
         message = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
@@ -111,13 +127,13 @@ class TimelineBroker:
             return
         await self._fan_out(self._subs, session_id, message)
 
-    async def register(self, session_id: str) -> asyncio.Queue[str]:
-        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=256)
+    async def register(self, session_id: str) -> asyncio.Queue[SharedMessage]:
+        queue: asyncio.Queue[SharedMessage] = asyncio.Queue(maxsize=256)
         async with self._lock:
             self._subs.setdefault(session_id, set()).add(queue)
         return queue
 
-    async def unregister(self, session_id: str, queue: asyncio.Queue[str]) -> None:
+    async def unregister(self, session_id: str, queue: asyncio.Queue[SharedMessage]) -> None:
         async with self._lock:
             pool = self._subs.get(session_id)
             if pool is not None:
@@ -195,7 +211,7 @@ class TimelineBroker:
 
     async def _fan_out(
         self,
-        subscriptions: dict[str, set[asyncio.Queue[str]]],
+        subscriptions: dict[str, set[asyncio.Queue[SharedMessage]]],
         key: str,
         message: str,
     ) -> None:
@@ -204,8 +220,11 @@ class TimelineBroker:
             queues = list(subscriptions.get(key, ()))
         self._fan_out_queues(queues, message)
 
-    @staticmethod
-    def _fan_out_queues(queues: list[asyncio.Queue[str]], message: str) -> None:
+    def _fan_out_queues(self, queues: list[asyncio.Queue[SharedMessage]], message: str) -> None:
+        message = SharedMessage(
+            message, self._preparation_tasks,
+            self._event_pool.prepare if self._event_pool is not None else None,
+        )
         for queue in queues:
             try:
                 queue.put_nowait(message)
@@ -225,14 +244,14 @@ class TimelineBroker:
             return value.decode("utf-8")
         return str(value)
 
-    async def register_dashboard(self, user_id: str) -> asyncio.Queue[str]:
-        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=256)
+    async def register_dashboard(self, user_id: str) -> asyncio.Queue[SharedMessage]:
+        queue: asyncio.Queue[SharedMessage] = asyncio.Queue(maxsize=256)
         async with self._lock:
             self._dashboard_subs.setdefault(user_id, set()).add(queue)
         return queue
 
     async def unregister_dashboard(
-        self, user_id: str, queue: asyncio.Queue[str]
+        self, user_id: str, queue: asyncio.Queue[SharedMessage]
     ) -> None:
         async with self._lock:
             pool = self._dashboard_subs.get(user_id)

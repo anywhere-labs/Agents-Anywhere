@@ -10,11 +10,6 @@ from typing import Any
 
 import anyio
 import pytest
-from conftest import ApiV2TestClient as TestClient, make_test_client
-from runtime_fixtures import seed_runtime_inventory
-from sqlalchemy import text
-from starlette.websockets import WebSocketDisconnect
-
 from agent_server.api.sessions_terminal import _send_terminal_ws_error
 from agent_server.app import create_app
 from agent_server.core.models import SessionRuntimeState, TimelineItemIn
@@ -30,6 +25,11 @@ from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.services.effective_capabilities import (
     publish_connector_session_capabilities,
 )
+from conftest import ApiV2TestClient as TestClient
+from conftest import make_test_client
+from runtime_fixtures import seed_runtime_inventory
+from sqlalchemy import text
+from starlette.websockets import WebSocketDisconnect
 
 
 def make_client(tmp_path):
@@ -11952,6 +11952,9 @@ def test_archive_all_forbidden_for_other_user(tmp_path):
 
 
 class FakeWebSocket:
+    async def close(self, **kwargs):
+        pass
+
     def __init__(self) -> None:
         self.sent: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 

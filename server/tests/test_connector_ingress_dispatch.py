@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-
 from agent_server.api.connector_ingress import (
     _ConnectorNotificationPump,
     _read_connector_messages,
@@ -412,3 +411,82 @@ def test_notification_pump_keeps_distinct_items_and_other_methods() -> None:
         assert pump.coalesced == 0
 
     asyncio.run(exercise())
+
+
+def test_invalidation_cancels_running_waiting_and_queued_notifications():
+    async def run():
+        class Socket(FakeWebSocket):
+            async def close(self, **kwargs):
+                pass
+
+        class Blocking(RecordingIngestService):
+            async def handle_notification_message(self, **kwargs):
+                await super().handle_notification_message(**kwargs)
+                started.set()
+                await asyncio.Event().wait()
+
+        started = asyncio.Event()
+        manager = ConnectorRpcManager()
+        connection = await manager.register("conn", Socket())
+        ingest = Blocking()
+        pump = _ConnectorNotificationPump(
+            "conn", ingest, max_concurrency=1,
+            is_current=lambda: manager.accepts_notifications(connection),
+        )
+        connection.abort_notifications = pump.abort
+        pump.start()
+        for index in range(500):
+            pump.enqueue_message({"method": "session.source.updated", "params": {
+                "sessionId": f"session-{index % 10}",
+            }})
+        await asyncio.wait_for(started.wait(), 1)
+        await asyncio.wait_for(manager.disconnect("conn"), 1)
+        await asyncio.wait_for(pump.close(), 1)
+        assert pump._pending == 0
+        assert not pump._lanes and not pump._lane_tasks
+        assert len(ingest.methods) == 1
+        replacement = await manager.register("conn", Socket())
+        assert not await manager.unregister("conn", connection)
+        assert await manager.is_connection_id_current("conn", replacement.connection_id)
+        await manager.unregister("conn", replacement)
+
+    asyncio.run(run())
+
+
+def test_accidental_disconnect_drains_before_replacement_can_register():
+    import pytest
+    from agent_server.infra.connector_rpc import DuplicateConnectorConnectionError
+
+    async def run():
+        manager = ConnectorRpcManager()
+        connection = await manager.register("conn", FakeWebSocket())
+        entered, release = asyncio.Event(), asyncio.Event()
+        applied = []
+
+        class Ingest:
+            async def handle_notification_message(self, **kwargs):
+                entered.set()
+                await release.wait()
+                applied.append(kwargs["method"])
+
+        pump = _ConnectorNotificationPump("conn", Ingest(), is_current=lambda: manager.accepts_notifications(connection))
+        connection.abort_notifications = pump.abort
+        pump.start()
+        pump.enqueue_message({"method": "timeline.itemUpsert", "params": {}})
+        await entered.wait()
+        assert await manager.begin_drain(connection)
+        assert not await manager.is_online("conn")
+        with pytest.raises(DuplicateConnectorConnectionError):
+            await manager.register("conn", FakeWebSocket())
+        closing = asyncio.create_task(pump.close())
+        await asyncio.sleep(0)
+        assert not closing.done()
+        release.set()
+        await asyncio.wait_for(closing, 1)
+        assert applied == ["timeline.itemUpsert"]
+        await manager.unregister("conn", connection)
+        replacement = await manager.register("conn", FakeWebSocket())
+        assert manager.accepts_notifications(replacement)
+        await manager.unregister("conn", replacement)
+
+    asyncio.run(run())

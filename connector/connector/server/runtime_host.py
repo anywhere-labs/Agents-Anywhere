@@ -17,6 +17,7 @@ from connector.runtime_protocol import (
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.server.runtime_rpc_payloads import (
+    DeferredServerPayload,
     capability_set_payload,
     model_catalog_payload,
     permission_catalog_payload,
@@ -40,6 +41,8 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         attachment_downloader: AttachmentDownloader,
         sync_state_store: SyncStateStore | None = None,
         ingest_notifications: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
+        *,
+        defer_payload_projection: bool = False,
     ) -> None:
         self._connector_id = connector_id
         self._notifier = notifier
@@ -47,6 +50,7 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         self._sync_state_store = sync_state_store
         self._memory_sync_state: dict[str, Mapping[str, Any]] = {}
         self._ingest_notifications = ingest_notifications
+        self._defer_payload_projection = defer_payload_projection
 
     async def publish_runtime_notifications(
         self, runtime: str, notifications: list[dict[str, Any]], *, runtime_id: str | None = None
@@ -311,11 +315,12 @@ class ConnectorRuntimeHost(RuntimeHostClient):
     async def _notify_server(self, method: str, payload: Mapping[str, Any]) -> None:
         """Send a notification after enforcing the Server session-only boundary."""
 
-        server_payload = (
-            dict(payload)
-            if method == "session.turnEnded"
-            else server_payload_without_turn_data(payload)
-        )
+        if method == "session.turnEnded":
+            server_payload = dict(payload)
+        elif self._defer_payload_projection:
+            server_payload = DeferredServerPayload(payload)
+        else:
+            server_payload = server_payload_without_turn_data(payload)
         await self._notifier(method, server_payload)
 
     async def attachment_download(

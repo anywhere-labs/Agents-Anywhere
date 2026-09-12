@@ -21,6 +21,12 @@ from agent_server.core.timeline import (
 )
 
 
+class InstanceSettingsRepository(Protocol):
+    async def get_setting(self, key: str, default: str | None = None) -> str | None: ...
+
+    async def set_setting(self, key: str, value: str) -> None: ...
+
+
 class SessionLookupRepository(Protocol):
     async def get_session(
         self,
@@ -32,6 +38,18 @@ class SessionLookupRepository(Protocol):
 
 class DashboardEventRepository(SessionLookupRepository, Protocol):
     async def get_connector(self, connector_id: str) -> ConnectorView: ...
+
+    async def get_session_user_id(self, session_id: str) -> str: ...
+
+
+class ConnectorDeletionRepository(DashboardEventRepository, Protocol):
+    def connector_lifecycle(self, connector_id: str) -> AbstractAsyncContextManager[None]: ...
+
+    async def begin_connector_deletion(self, connector_id: str, *, user_id: str) -> list[str]: ...
+
+    async def pending_connector_deletions(self) -> list[tuple[str, str]]: ...
+
+    async def delete_connector(self, connector_id: str, *, user_id: str) -> list[str]: ...
 
 
 class ProjectLookupRepository(Protocol):
@@ -190,6 +208,8 @@ class InteractionResolutionRepository(
 
 
 class ConnectorIngestRepository(DashboardEventRepository, Protocol):
+    async def get_unconfigured_runtime_ids(self, connector_id: str) -> set[str]: ...
+
     def session_revision_fence(
         self,
         session_id: str,
@@ -226,6 +246,12 @@ class ConnectorNotificationRepository(
     TimelineEffectRepository,
     Protocol,
 ):
+    async def refresh_unchanged_session_source(
+        self, session_id: str, *, connector_id: str, runtime: str, runtime_id: str,
+        availability: str, reason: str | None, observed_at: str | None,
+        observation_origin: str,
+    ) -> bool: ...
+
     async def clear_active_run(self, session_id: str) -> None: ...
 
     async def resolve_connector_session_binding(
@@ -346,6 +372,14 @@ class DeviceRuntimeRepository(
     SessionStateRepository,
     Protocol,
 ):
+    def connector_lifecycle(self, connector_id: str) -> AbstractAsyncContextManager[None]: ...
+
+    async def get_unconfigured_runtime_ids(self, connector_id: str) -> set[str]: ...
+
+    async def runtime_session_ids(self, connector_id: str, runtime_id: str) -> list[str]: ...
+
+    async def delete_runtime_session_files(self, session_ids: list[str]) -> None: ...
+
     def session_revision_fence(
         self,
         session_id: str,
@@ -357,6 +391,8 @@ class DeviceRuntimeRepository(
         self,
         connector_id: str,
         runtime_id: str,
+        *,
+        cleanup_files: bool = True,
     ) -> list[str]: ...
 
     async def create_device_runtime(

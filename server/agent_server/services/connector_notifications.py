@@ -23,9 +23,9 @@ from agent_server.core.protocol import (
     ProtocolPermissionCatalog,
 )
 from agent_server.core.runtime_identity import RuntimeIdentity, RuntimeIdentityError
+from agent_server.infra.repositories.projects import MissingWorkspaceError
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
-from agent_server.infra.repositories.projects import MissingWorkspaceError
 from agent_server.services.repository_ports import ConnectorNotificationRepository
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
@@ -403,6 +403,11 @@ class SessionSourceNotificationHandler:
                 )
             except KeyError:
                 pass
+        if await self._store.refresh_unchanged_session_source(
+            session_id, connector_id=connector_id, runtime=runtime,
+            runtime_id=runtime_id, **observation,
+        ):
+            return IngestEffect()
         try:
             session = await self._store.get_session(session_id)
             _require_session_binding(
