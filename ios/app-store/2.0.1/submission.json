@@ -1,6 +1,7 @@
 {
   "version": "2.0.1",
   "build": "9",
+  "buildCommit": "a01cb7d020e1d453ded80d4eef98f503b6da76eb",
   "appStoreConnectAppID": "6787125178",
   "toolchain": {
     "xcode": "27.0",
@@ -19,9 +20,25 @@
     }
   },
   "status": {
-    "uploaded": false,
-    "processing": "not started",
+    "uploaded": true,
+    "uploadedAt": "2026-09-12T14:52:49+08:00",
+    "processing": "awaiting App Store Connect verification",
     "testFlight": "not submitted",
-    "appReview": "not submitted"
+    "appReview": "not submitted",
+    "appStoreVersion": "2.0.1",
+    "reviewAccountLoginVerified": true
+  },
+  "validation": {
+    "clientCoreTests": 230,
+    "clientCoreSuites": 28,
+    "backendContractFixtures": "current; added the existing sessions/list route",
+    "contractTestsAfterFixtureRefresh": 8,
+    "webCopyTests": 4,
+    "localizedCatalogEntries": 867,
+    "extractedKeys": 763,
+    "compiledLocalizationChecks": 58,
+    "archiveSignature": "verified",
+    "privacyManifests": "both match committed sources",
+    "manualDeviceValidation": "not performed for this release"
   }
 }
