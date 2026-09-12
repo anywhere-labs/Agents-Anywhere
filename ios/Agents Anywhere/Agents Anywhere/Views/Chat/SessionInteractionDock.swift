@@ -35,17 +35,32 @@ struct SessionInteractionDock: View {
                     }
                 }.scrollTargetLayout()
             }
+            // Put the gutter inside the scroll viewport. Outer padding makes
+            // the clipping boundary coincide with the glass card's side edges.
+            .contentMargins(.horizontal, 24, for: .scrollContent)
             .contentMargins(.vertical, peek, for: .scrollContent)
             .scrollTargetBehavior(.viewAligned(limitBehavior: .alwaysByOne))
             .scrollPosition(id: $selectedID, anchor: .center)
             .scrollIndicators(.hidden).scrollBounceBehavior(.basedOnSize)
-            .frame(height: pageHeight + peek * 2).clipped()
+            .scrollClipDisabled()
+            .frame(height: pageHeight + peek * 2)
+            // Preserve the existing dock footprint and hide adjacent pages at
+            // its vertical edges without a hard cut through the glass shadow.
+            // The centered card itself lies entirely in the opaque region.
+            .mask {
+                let edge = peek / (pageHeight + peek * 2)
+                LinearGradient(stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black, location: edge),
+                    .init(color: .black, location: 1 - edge),
+                    .init(color: .clear, location: 1),
+                ], startPoint: .top, endPoint: .bottom)
+            }
             .onChange(of: items.map(\.id), initial: true) { old, next in
                 if let selectedID, next.contains(selectedID) { return }
                 let index = old.firstIndex(of: selectedID ?? "") ?? 0
                 selectedID = next.isEmpty ? nil : next[min(index, next.count - 1)]
             }
-            .padding(.horizontal, 24)
         }
     }
     private func step(_ delta: Int) {
