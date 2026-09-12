@@ -1,5 +1,15 @@
 # DSH Bridge Next 验证记录
 
+## 陈旧 endpoint 的 pid 复用误判（2026-09-12）
+
+Windows 实机报告「本机连接被占用，无法启动」。`<DSH_HOME>/agents-anywhere/bridge/endpoint.json` 残留了当天 15:03 首次启动写入的记录（`pid 7444`），该 pid 随后被系统复用为无关系统进程；`processExists()` 只执行 `process.kill(pid, 0)`，因此每次重试都在 `RuntimeServer.open` 抛 `Another DSH bridge owns this DSH_HOME endpoint`（`BRIDGE_IN_USE`），只有手工删除该文件后重启才恢复。删除后 18:45 重新发布端点，Connector 随后接入并完成 10 个会话的首次同步。
+
+管理租约（由 endpoint 目录 realpath 推导的确定性回环端口）才是归属权威：活着的桥接会持有该端口，因此能进入 `open()` 就已证明本路径没有活着的桥接，文件里记录的 pid 不构成证据。现已移除该存活门并始终接管陈旧发布；`dispose()` 仍按 token 与 pid 匹配后才删除端点。
+
+新增回归用例：以另一个存活但无关的进程 pid 伪造陈旧 endpoint，断言桥接仍能启动、端点被替换且可完成 RPC。该用例在未修改的 `b4133309` 上以与实机相同的错误失败，修复后通过。
+
+插件全量 133 项、通过 112 项（含新增 1 项）；未修改的 main 为 132 项、通过 111 项，两边失败集合完全相同（21 项，均为 Windows 本地的 `ERR_INVALID_URL_SCHEME` 等既有环境问题，CI 在 ubuntu 上运行）。类型检查的三处错误（TS2344、两处 TS2717）在未修改的 `b4133309` 上同样复现，与本改动无关。
+
 ## 桥接日志页与实机定位（2026-09-08）
 
 插件新增「手机连接 → 桥接日志」：固定读取本插件两份运行日志，最近 200 条，每两秒刷新，可暂停；不依赖 Connector 所有权、账号或安装检测成功。DSH 日志分类与文件均记录错误码、读取阶段、会话 ID 和去除异常正文后的堆栈，Python 同时记录插件发出的 `runtime.error`。

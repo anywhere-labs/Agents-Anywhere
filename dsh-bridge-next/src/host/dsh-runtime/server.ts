@@ -16,11 +16,6 @@ async function endpointAt(path: string): Promise<Record<string, unknown> | undef
   catch (error) { if (record(error).code === 'ENOENT') return undefined; throw error }
 }
 
-function processExists(pid: unknown): boolean {
-  if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid < 1) return false
-  try { process.kill(pid, 0); return true } catch (error) { return record(error).code !== 'ESRCH' }
-}
-
 /** Private loopback transport. Discovery probes can coexist with a Connector connection. */
 export class RuntimeServer {
   private server: Server | undefined
@@ -74,10 +69,12 @@ export class RuntimeServer {
     try {
       await mkdir(dirname(this.endpointPath), { recursive: true, mode: 0o700 })
       const existing = await endpointAt(this.endpointPath)
-      if (existing) {
-        if (processExists(existing.pid)) throw new Error('Another DSH bridge owns this DSH_HOME endpoint')
-        await unlink(this.endpointPath)
-      }
+      // The manager lease is the ownership authority. A live bridge holds the
+      // directory-derived lease port, so reaching this point already proves no
+      // live bridge owns this path. A recorded pid is not evidence either way:
+      // the OS can hand a crashed bridge's pid to an unrelated process, which
+      // used to block startup until the stale file was deleted by hand.
+      if (existing) await unlink(this.endpointPath)
       // Link publishes a complete file atomically and refuses to overwrite a competing owner.
       const temporary = `${this.endpointPath}.${token}.tmp`
       try {
