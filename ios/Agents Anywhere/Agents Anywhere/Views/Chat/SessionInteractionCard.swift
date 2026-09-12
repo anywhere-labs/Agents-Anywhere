@@ -56,6 +56,11 @@ struct SessionInteractionCard: View {
             .frame(height: height ?? metrics.compactHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
             .glassEffect(.regular, in: .rect(cornerRadius: 24))
+            // Keep the glass surface, but contain its system shadow at the
+            // card's own rounded edge. Otherwise the dock's rectangular scroll
+            // clip cuts the shadow into a grey box around the approval card.
+            // Clipping changes drawing only, not the dock's reserved height.
+            .clipShape(.rect(cornerRadius: 24))
         }
         .sheet(item: $destination) { target in
             switch target {
