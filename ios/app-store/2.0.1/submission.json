@@ -1,0 +1,27 @@
+{
+  "version": "2.0.1",
+  "build": "9",
+  "appStoreConnectAppID": "6787125178",
+  "toolchain": {
+    "xcode": "27.0",
+    "build": "27A266a",
+    "developerDirectory": "/Applications/Xcode.app/Contents/Developer"
+  },
+  "screenshotDirectory": "../2.0.0/screenshots",
+  "localizations": {
+    "en-US": {
+      "whatsNew": "• A refreshed native experience for iPhone and iPad.\n• Follow agent conversations, manage sessions, and respond to requests from your devices.\n• Open Web file previews in your default browser.\n• Project and directory pickers now follow the same ordering as the Web app.\n• Improved approval card appearance and Markdown table layout.",
+      "testDetails": "Test opening a Web file preview in the default browser, and check that project and directory picker ordering matches the Web app. This build also includes the approval card and Markdown table fixes from build 8."
+    },
+    "zh-Hans": {
+      "whatsNew": "• 全新的 iPhone 和 iPad 原生体验。\n• 查看 Agent 对话、管理会话，并在移动设备上回应操作请求。\n• Web 文件预览现在支持在默认浏览器中打开。\n• 修复项目和目录选择器排序与 Web 端不一致的问题。\n• 改善批准卡片外观和 Markdown 表格布局。",
+      "testDetails": "请测试从 Web 文件预览中打开默认浏览器，并检查项目和目录选择器的排序是否与 Web 端一致。本次构建也保留了构建 8 中的批准卡片和 Markdown 表格修复。"
+    }
+  },
+  "status": {
+    "uploaded": false,
+    "processing": "not started",
+    "testFlight": "not submitted",
+    "appReview": "not submitted"
+  }
+}

@@ -892,6 +892,10 @@
     },
     {
       "method": "GET",
+      "path": "/api/v2/sessions/list"
+    },
+    {
+      "method": "GET",
       "path": "/api/v2/sessions/local/{session_id}/{file_id}"
     },
     {
