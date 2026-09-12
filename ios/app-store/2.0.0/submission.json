@@ -1,0 +1,37 @@
+{
+  "version": "2.0.0",
+  "build": "8",
+  "buildCommit": "c69be820",
+  "appStoreConnectAppID": "6787125178",
+  "screenshotSource": {
+    "repository": "AA-landingpage",
+    "commit": "87e2e78",
+    "directory": "assets/screens",
+    "conversion": "Proportional contain resize, opaque PNG, no content cropping"
+  },
+  "localizations": {
+    "en-US": {
+      "whatsNew": "• A refreshed native experience for iPhone and iPad.\n• Follow agent conversations, manage sessions, and respond to requests from your devices.\n• Improved approval card appearance and Markdown table layout."
+    },
+    "zh-Hans": {
+      "description": "Agents Anywhere 是一款面向开发者的远程工作应用。连接你的电脑，在 iPhone 和 iPad 上查看 Agent 会话、跟进编码任务、发送消息并回应需要你确认的操作。\n\n电脑端需安装并连接 Agents Anywhere Connector。",
+      "whatsNew": "• 全新的 iPhone 和 iPad 原生体验。\n• 查看 Agent 对话、管理会话，并在移动设备上回应操作请求。\n• 改善批准卡片外观和 Markdown 表格布局。",
+      "keywords": "远程开发,编程,AI,Agent,代码,开发工具,终端,会话",
+      "supportUrl": "https://github.com/anywhere-labs/Agents-Anywhere/issues",
+      "privacyPolicyUrl": "https://privacy.agents-anywhere.com"
+    }
+  },
+  "status": {
+    "uploaded": true,
+    "processing": "complete",
+    "exportCompliance": "completed; Apple operating system encryption only",
+    "appStoreBuildSelected": "8",
+    "appReview": "blocked before submission",
+    "blocker": "Apple rejects this build for App Store review because it was built with Xcode Beta. A new build using public GM Xcode and SDK is required.",
+    "screenshotsSaved": true,
+    "localizationsSaved": [
+      "en-US",
+      "zh-Hans"
+    ]
+  }
+}
