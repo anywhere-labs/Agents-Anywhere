@@ -216,6 +216,7 @@ export struct ProfileSettingsDrawer {
           colors: this.colors,
           currentEmail: this.account === null
             ? '' : ((this.account as ParsedAuthMe).email ?? ''),
+          emailVerified: this.account !== null && (this.account as ParsedAuthMe).emailVerified,
           onDismiss: () => {
             this.emailOpen = false;
           },

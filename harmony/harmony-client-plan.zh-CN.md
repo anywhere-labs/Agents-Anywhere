@@ -523,6 +523,24 @@ iOS 把这三个界面都做成 **sheet**，其 chrome 是 `.navigationBarTitleD
 
 **验证**：`clean` 后全量 `assembleHap` 0 error / 0 ArkTS warning；三个脚本 620 / 175 / 154 全过；15 个逻辑用例全过。
 
+## 设备 / Agent 行不可点击与邮箱表单（第 45 轮）
+
+### 1. 新建会话页的"设备""Agent"两行点不动
+
+`NewSessionConfigurationCard` 的行只有 `field.active()` 时才响应点击，而它要求 `enabled` 为真：设备行的 `enabled` 原来是 `devicePool().length > 0`——`devicePool()` 只包含**已经报告有可用 Agent**的设备。于是"有在线设备、但清单还没回来（或那台设备上 Agent 没在跑）"时，行里显示着设备名却完全点不动（iOS 不是这样：`NewSessionView` 的目标按钮只在创建中禁用，任何时候都能点开去换设备）。
+
+改法：设备行的选项改成 `onlineDevices()`、启用条件改成 `online.length > 0`，即"有在线设备就能点"。选中一台没有可用 Agent 的设备后，页面下方的说明行（`runtimeError()`）会讲缺什么，并给出"重试"✓，与 iOS 的"选择一个已就绪的 Agent + 选择 Agent"是同一个意思。Agent 行仍然只在有可选项时可点（否则菜单是空的），没有可选项时由同一行说明负责解释。
+
+### 2. 邮箱表单里那个被拉长的大圆角框
+
+`ProfileDialogButton` 用 `layoutWeight(1)` 来分宽度——在 `Row` 里它分的是行宽 ✓，但作为 `Column` 的直接子节点时它争的是**剩余高度**，于是"发送验证码"和"重试"两个单独按钮被拉成整屏高的圆角框（截图里那个大空框），把表单顶得又高又空。
+
+改法：把这两个单独按钮包进 `Row()`（`.width('100%')`），`layoutWeight(1)` 于是在行内撑满宽度 ✓，按钮回到 50dp 胶囊。
+
+顺带补上 iOS 的那一行状态：字段里还是原邮箱时显示「邮箱状态 / 已验证·未验证」（`LabeledContent("Email status", …)`），用的是本工程一直没被引用的 `profile_email_status` / `profile_email_verified` / `profile_email_unverified` 三条文案（`emailVerified` 由设置抽屉从账号里传入）。
+
+**验证**：`clean` 后全量 `assembleHap` 0 error / 0 ArkTS warning；三个脚本 623 / 175 / 154 全过；15 个逻辑用例全过。
+
 ## 待确认问题
 
 - **签名配置需要用户决策**：本机 `harmony/build-profile.json5` 现在带有 DevEco Studio 自动生成的 `signingConfigs`（`material` 指向 `C:\Users\Administrator\.ohos\config\...`，并含 `keyPassword`/`storePassword` 字段）。这既是好事（能产出可安装的 `entry-default-signed.hap`），也是隐患：绝对路径换机即失效、口令字段不应入库。提交前建议二选一：删掉 `signingConfigs` 与 `"signingConfig": "default"` 回到"未签名但到处能构建"，或改成从环境变量/本地未入库的 profile 读取。`harmony/README.md` 的签名一节已如实说明。

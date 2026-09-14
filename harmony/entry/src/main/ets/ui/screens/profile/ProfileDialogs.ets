@@ -371,6 +371,8 @@ export struct ChangePasswordDialog {
 export struct EmailBindingDialog {
   colors: AAColors = AA_LIGHT_COLORS;
   currentEmail: string = '';
+  /** Whether the bound address is confirmed; iOS shows it as a status row. */
+  emailVerified: boolean = false;
   onDismiss: () => void = () => {};
   onLoadConfig: () => Promise<ParsedAuthConfig> = () =>
     Promise.reject(new Error('The auth config is not connected.'));
@@ -467,18 +469,43 @@ export struct EmailBindingDialog {
           },
         })
 
+        // iOS puts the bound address's state on its own row while the field still
+        // holds that address (`LabeledContent("Email status", …)`).
+        if (this.currentEmail.length > 0 && this.email.trim() === this.currentEmail.trim()) {
+          Row() {
+            Text($r('app.string.profile_email_status'))
+              .fontSize(15)
+              .fontColor(this.colors.muted)
+              .layoutWeight(1)
+
+            Text(this.emailVerified
+              ? $r('app.string.profile_email_verified')
+              : $r('app.string.profile_email_unverified'))
+              .fontSize(15)
+              .fontColor(this.colors.ink)
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+        }
+
         if (this.configLoading) {
           Text($r('app.string.profile_loading_email_policy'))
             .fontSize(14)
             .fontColor(this.colors.muted)
         } else if (this.config === null) {
-          ProfileDialogButton({
-            colors: this.colors,
-            label: $r('app.string.profile_retry'),
-            onTap: () => {
-              void this.loadConfig();
-            },
-          })
+          // The button sizes itself with `layoutWeight`, which splits a row's
+          // width — as a bare column child it would claim the leftover *height*,
+          // which drew it as a tall outlined box, so it sits in a row of its own.
+          Row() {
+            ProfileDialogButton({
+              colors: this.colors,
+              label: $r('app.string.profile_retry'),
+              onTap: () => {
+                void this.loadConfig();
+              },
+            })
+          }
+          .width('100%')
         } else if (this.verificationRequired()) {
           ProfileTextField({
             colors: this.colors,
@@ -490,16 +517,19 @@ export struct EmailBindingDialog {
               }
             },
           })
-          ProfileDialogButton({
-            colors: this.colors,
-            label: this.cooldown > 0
-              ? $r('app.string.profile_resend_in', this.cooldown)
-              : $r('app.string.profile_send_code'),
-            buttonEnabled: this.validEmail() && !this.busy && this.cooldown === 0,
-            onTap: () => {
-              void this.sendCode();
-            },
-          })
+          Row() {
+            ProfileDialogButton({
+              colors: this.colors,
+              label: this.cooldown > 0
+                ? $r('app.string.profile_resend_in', this.cooldown)
+                : $r('app.string.profile_send_code'),
+              buttonEnabled: this.validEmail() && !this.busy && this.cooldown === 0,
+              onTap: () => {
+                void this.sendCode();
+              },
+            })
+          }
+          .width('100%')
           if (this.codeSent) {
             Text($r('app.string.profile_code_sent'))
               .fontSize(14)

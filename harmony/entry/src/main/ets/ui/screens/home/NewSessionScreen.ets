@@ -664,7 +664,12 @@ export struct NewSessionScreen {
     const device: AgentDevice | null = this.selectedDevice();
 
     const deviceOptions: NewSessionConfigurationOption[] = [];
-    for (const entry of this.devicePool()) {
+    // iOS's target button offers every connector and is live whenever one is
+    // online (`NewSessionView` disables it only while creating), so a device
+    // without a running Agent can still be picked — the page then explains what
+    // that device is missing instead of leaving the row inert.
+    const online: AgentDevice[] = this.onlineDevices();
+    for (const entry of online) {
       deviceOptions.push(new NewSessionConfigurationOption(entry.id, entry.name));
     }
     const fields: NewSessionConfigurationField[] = [new NewSessionConfigurationField(
@@ -673,7 +678,7 @@ export struct NewSessionScreen {
       device === null ? resolveString($r('app.string.new_session_no_device')) : device.name,
       device === null ? '' : device.id,
       deviceOptions,
-      deviceOptions.length > 0,
+      online.length > 0,
       checkingDevices,
     )];
 
