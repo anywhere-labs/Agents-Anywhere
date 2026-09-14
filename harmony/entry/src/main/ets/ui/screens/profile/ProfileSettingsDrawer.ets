@@ -365,170 +365,182 @@ export struct ProfileSettingsDrawer {
 
   @Builder
   IndexContent() {
-    // iOS's `AccountSettingsSheet`: one inset-grouped list, section captions above
-    // borderless cards, the identity as a plain header row, and the version in the
-    // footer instead of a row of its own.
-    List({ space: 28 }) {
-      ListItem() {
-        this.IdentityHeader()
-      }
+    // iOS's `AccountSettingsSheet`: an inline navigation bar carrying the title
+    // and the sheet's leading close glyph, then one inset-grouped list — section
+    // captions above borderless cards, the identity as a plain header row, and the
+    // version in the footer instead of a row of its own.
+    Column() {
+      ProfileHeader({
+        colors: this.colors,
+        title: $r('app.string.profile_settings'),
+        closeGlyph: true,
+        onClose: () => this.onClose(),
+      })
 
-      ListItem() {
-        SettingsGroup({ colors: this.colors, title: $r('app.string.profile_account') }) {
-          ProfileRow({
-            colors: this.colors,
-            commands: AA_ICONS.PENCIL,
-            title: $r('app.string.profile_nickname'),
-            trailing: this.account === null ? '' : this.account.displayName,
-            onTap: () => {
-              this.nicknameOpen = true;
-            },
-          })
-          ProfileDivider({ colors: this.colors })
-          ProfileRow({
-            colors: this.colors,
-            commands: AA_ICONS.ENVELOPE,
-            title: $r('app.string.profile_email'),
-            trailing: this.emailText(),
-            onTap: () => {
-              this.emailOpen = true;
-            },
-          })
-          ProfileDivider({ colors: this.colors })
-          ProfileRow({
-            colors: this.colors,
-            commands: AA_ICONS.USER_ROUND,
-            title: $r('app.string.profile_avatar_change'),
-            showChevron: false,
-            onTap: () => {
-              void this.pickAvatar();
-            },
-          })
-          ProfileDivider({ colors: this.colors })
-          ProfileRow({
-            colors: this.colors,
-            commands: AA_ICONS.KEY_ROUND,
-            title: $r('app.string.profile_change_password'),
-            showChevron: false,
-            onTap: () => {
-              this.passwordOpen = true;
-            },
-          })
+      List({ space: 28 }) {
+        ListItem() {
+          this.IdentityHeader()
         }
-      }
 
-      ListItem() {
-        SettingsGroup({ colors: this.colors, title: $r('app.string.settings_section_app') }) {
-          ProfileRow({
-            colors: this.colors,
-            commands: AA_ICONS.MOON,
-            title: $r('app.string.profile_appearance'),
-            trailing: resolveText(labelForAppearance(this.appearanceMode)),
-            // The two popup rows keep the up-down chevrons that mark a picker.
-            trailingIcon: AA_ICONS.CHEVRONS_UP_DOWN,
-            showChevron: false,
-            onTap: () => {
-              this.appearanceMenuOpen = true;
-            },
-          })
-            .bindMenu(this.appearanceMenuOpen, this.AppearanceMenu(), {
-              placement: Placement.BottomRight,
-              enableArrow: false,
-              onDisappear: () => {
-                this.appearanceMenuOpen = false;
-              },
-            })
-          ProfileDivider({ colors: this.colors })
-          ProfileRow({
-            colors: this.colors,
-            commands: AA_ICONS.GLOBE,
-            title: $r('app.string.profile_language'),
-            trailing: resolveText(labelForLanguage(this.languageMode)),
-            onTap: () => {
-              this.detailPage = ProfileDetailPage.Language;
-            },
-          })
-          ProfileDivider({ colors: this.colors })
-          ProfileRow({
-            colors: this.colors,
-            commands: AA_ICONS.LIST,
-            title: $r('app.string.profile_sidebar_display'),
-            trailing: resolveText(labelForSidebarView(this.sidebarViewMode)),
-            trailingIcon: AA_ICONS.CHEVRONS_UP_DOWN,
-            showChevron: false,
-            onTap: () => {
-              this.sidebarMenuOpen = true;
-            },
-          })
-            .bindMenu(this.sidebarMenuOpen, this.SidebarMenu(), {
-              placement: Placement.BottomRight,
-              enableArrow: false,
-              onDisappear: () => {
-                this.sidebarMenuOpen = false;
-              },
-            })
-        }
-      }
-
-      ListItem() {
-        SettingsGroup({ colors: this.colors }) {
-          ProfileRow({
-            colors: this.colors,
-            commands: AA_ICONS.ARCHIVE,
-            title: $r('app.string.profile_archived_sessions'),
-            onTap: () => this.onOpenArchivedSessions(),
-          })
-          ProfileDivider({ colors: this.colors })
-          // Android's row opens the Updates page, or the prompt when a release is
-          // already known; the download step is "open the download page" here.
-          ProfileRow({
-            colors: this.colors,
-            commands: AA_ICONS.SERVER,
-            title: $r('app.string.profile_check_updates'),
-            trailingIcon: this.appUpdate.release !== null ? AA_ICONS.DOWNLOAD : '',
-            trailingAttention: this.appUpdate.release !== null,
-            showChevron: this.appUpdate.release === null,
-            onTap: () => {
-              if (this.appUpdate.release !== null) {
-                this.onUpdateNow();
-              } else {
-                this.detailPage = ProfileDetailPage.Updates;
-                this.onCheckForUpdates();
-              }
-            },
-          })
-        }
-      }
-
-      ListItem() {
-        Column({ space: 16 }) {
-          SettingsGroup({ colors: this.colors }) {
-            SignOutCard({
+        ListItem() {
+          SettingsGroup({ colors: this.colors, title: $r('app.string.profile_account') }) {
+            ProfileRow({
               colors: this.colors,
-              label: $r('app.string.profile_sign_out'),
+              commands: AA_ICONS.PENCIL,
+              title: $r('app.string.profile_nickname'),
+              trailing: this.account === null ? '' : this.account.displayName,
               onTap: () => {
-                this.signOutOpen = true;
+                this.nicknameOpen = true;
+              },
+            })
+            ProfileDivider({ colors: this.colors })
+            ProfileRow({
+              colors: this.colors,
+              commands: AA_ICONS.ENVELOPE,
+              title: $r('app.string.profile_email'),
+              trailing: this.emailText(),
+              onTap: () => {
+                this.emailOpen = true;
+              },
+            })
+            ProfileDivider({ colors: this.colors })
+            ProfileRow({
+              colors: this.colors,
+              commands: AA_ICONS.USER_ROUND,
+              title: $r('app.string.profile_avatar_change'),
+              showChevron: false,
+              onTap: () => {
+                void this.pickAvatar();
+              },
+            })
+            ProfileDivider({ colors: this.colors })
+            ProfileRow({
+              colors: this.colors,
+              commands: AA_ICONS.KEY_ROUND,
+              title: $r('app.string.profile_change_password'),
+              showChevron: false,
+              onTap: () => {
+                this.passwordOpen = true;
               },
             })
           }
-
-          // iOS's list footer: the app name and the version, centred.
-          Text(`Agents Anywhere · v${this.appVersion}`)
-            .fontSize(13)
-            .fontColor(this.colors.muted)
-            .textAlign(TextAlign.Center)
-            .width('100%')
         }
-        .width('100%')
-      }
 
-      ListItem() {
-        Column().height(28)
+        ListItem() {
+          SettingsGroup({ colors: this.colors, title: $r('app.string.settings_section_app') }) {
+            ProfileRow({
+              colors: this.colors,
+              commands: AA_ICONS.MOON,
+              title: $r('app.string.profile_appearance'),
+              trailing: resolveText(labelForAppearance(this.appearanceMode)),
+              // The two popup rows keep the up-down chevrons that mark a picker.
+              trailingIcon: AA_ICONS.CHEVRONS_UP_DOWN,
+              showChevron: false,
+              onTap: () => {
+                this.appearanceMenuOpen = true;
+              },
+            })
+              .bindMenu(this.appearanceMenuOpen, this.AppearanceMenu(), {
+                placement: Placement.BottomRight,
+                enableArrow: false,
+                onDisappear: () => {
+                  this.appearanceMenuOpen = false;
+                },
+              })
+            ProfileDivider({ colors: this.colors })
+            ProfileRow({
+              colors: this.colors,
+              commands: AA_ICONS.GLOBE,
+              title: $r('app.string.profile_language'),
+              trailing: resolveText(labelForLanguage(this.languageMode)),
+              onTap: () => {
+                this.detailPage = ProfileDetailPage.Language;
+              },
+            })
+            ProfileDivider({ colors: this.colors })
+            ProfileRow({
+              colors: this.colors,
+              commands: AA_ICONS.LIST,
+              title: $r('app.string.profile_sidebar_display'),
+              trailing: resolveText(labelForSidebarView(this.sidebarViewMode)),
+              trailingIcon: AA_ICONS.CHEVRONS_UP_DOWN,
+              showChevron: false,
+              onTap: () => {
+                this.sidebarMenuOpen = true;
+              },
+            })
+              .bindMenu(this.sidebarMenuOpen, this.SidebarMenu(), {
+                placement: Placement.BottomRight,
+                enableArrow: false,
+                onDisappear: () => {
+                  this.sidebarMenuOpen = false;
+                },
+              })
+          }
+        }
+
+        ListItem() {
+          SettingsGroup({ colors: this.colors }) {
+            ProfileRow({
+              colors: this.colors,
+              commands: AA_ICONS.ARCHIVE,
+              title: $r('app.string.profile_archived_sessions'),
+              onTap: () => this.onOpenArchivedSessions(),
+            })
+            ProfileDivider({ colors: this.colors })
+            // Android's row opens the Updates page, or the prompt when a release is
+            // already known; the download step is "open the download page" here.
+            ProfileRow({
+              colors: this.colors,
+              commands: AA_ICONS.SERVER,
+              title: $r('app.string.profile_check_updates'),
+              trailingIcon: this.appUpdate.release !== null ? AA_ICONS.DOWNLOAD : '',
+              trailingAttention: this.appUpdate.release !== null,
+              showChevron: this.appUpdate.release === null,
+              onTap: () => {
+                if (this.appUpdate.release !== null) {
+                  this.onUpdateNow();
+                } else {
+                  this.detailPage = ProfileDetailPage.Updates;
+                  this.onCheckForUpdates();
+                }
+              },
+            })
+          }
+        }
+
+        ListItem() {
+          Column({ space: 16 }) {
+            SettingsGroup({ colors: this.colors }) {
+              SignOutCard({
+                colors: this.colors,
+                label: $r('app.string.profile_sign_out'),
+                onTap: () => {
+                  this.signOutOpen = true;
+                },
+              })
+            }
+
+            // iOS's list footer: the app name and the version, centred.
+            Text(`Agents Anywhere · v${this.appVersion}`)
+              .fontSize(13)
+              .fontColor(this.colors.muted)
+              .textAlign(TextAlign.Center)
+              .width('100%')
+          }
+          .width('100%')
+        }
+
+        ListItem() {
+          Column().height(28)
+        }
       }
+      .width('100%')
+      .layoutWeight(1)
+      .scrollBar(BarState.Off)
     }
     .width('100%')
-    .layoutWeight(1)
-    .scrollBar(BarState.Off)
+    .height('100%')
   }
 
   @Builder

@@ -2228,6 +2228,12 @@ export struct AgentsAnywhereApp {
    * untouched and returning `false` from the ability.
    */
   onBackRequested(): void {
+    if (this.profileOpen) {
+      // The account page is the shell's topmost surface; back returns to whatever
+      // was underneath, which is what Android's dialog dismissal does.
+      this.closeProfile();
+      return;
+    }
     if (this.drawerVisible()) {
       // Android closes an open drawer with back before anything else; the drawer
       // is the compact layout's session list, so this is its dismissal.
@@ -2350,6 +2356,18 @@ export struct AgentsAnywhereApp {
   }
 
   /**
+   * Leaves the account page.
+   *
+   * The connection is re-read on the way out: the page may have renamed the
+   * account or changed its picture, and the sidebar's avatar shows both.
+   */
+  private closeProfile(): void {
+    this.profileOpen = false;
+    this.publishBackGesture();
+    void this.loadShellAccount();
+  }
+
+  /**
    * iOS's `.interpolatingSpring(response: 0.34, dampingRatio: 0.9)` — the spring
    * every drawer settle runs on, whether it came from a button, a tap or a pan.
    */
@@ -2359,6 +2377,22 @@ export struct AgentsAnywhereApp {
     }, () => {
       this.drawerProgress = target;
     });
+  }
+
+  /**
+   * The progress the content card's presentation uses.
+   *
+   * It is clamped to zero whenever the drawer cannot be on screen — the settings
+   * page covers the shell, the window became wide, a sign-in page is showing.
+   * Reading `drawerProgress` raw put the whole page off-centre in those states:
+   * opening the account page from the drawer left the card translated by the full
+   * 75% with nothing behind it, and there was no way back.
+   */
+  private cardProgress(): number {
+    if (this.isSplitLayout() || this.profileOpen || !this.hasSidebarContent()) {
+      return 0;
+    }
+    return this.drawerProgress;
   }
 
   /**
@@ -2404,12 +2438,13 @@ export struct AgentsAnywhereApp {
   /**
    * Publishes whether the system back gesture belongs to the app.
    *
-   * An open drawer counts as a step back — Android closes it with back — so the
-   * gesture stays with the app even on a root destination while it is showing.
+   * An open drawer or the account page counts as a step back — Android closes
+   * both with back — so the gesture stays with the app even on a root destination
+   * while either is showing.
    */
   private publishBackGesture(): void {
     AppStorage.setOrCreate('canNavigateBack',
-      this.drawerVisible() || canNavigateBackFrom(this.destination));
+      this.profileOpen || this.drawerVisible() || canNavigateBackFrom(this.destination));
   }
 
   /**
@@ -2528,9 +2563,12 @@ export struct AgentsAnywhereApp {
       onNewProject: () => this.navigate(AppDestination.NewProject),
       onOpenDevice: (device: AgentDevice) => this.openDevice(device),
       onOpenProfile: () => {
-        // The account page replaces the shell, so the drawer gets out of its way.
-        this.sidebarOpen = false;
+        // The account page replaces the shell, so the drawer gets out of its way
+        // through the same settle the buttons and the pan use — setting the flag
+        // alone left the content card translated with nothing behind it.
+        this.settleDrawer(false);
         this.profileOpen = true;
+        this.publishBackGesture();
       },
       onPairDevice: () => this.openPairingWizard(AppDestination.Sessions),
       onRefresh: () => this.loadSessions(),
@@ -2594,7 +2632,7 @@ export struct AgentsAnywhereApp {
 
   /** How far the content card has slid to reveal the drawer. */
   private cardOffsetX(): number {
-    return this.drawerWidth() * this.drawerProgress;
+    return this.drawerWidth() * this.cardProgress();
   }
 
   build() {
@@ -2645,7 +2683,7 @@ export struct AgentsAnywhereApp {
               this.services?.uiPreferences.setSidebarViewMode(mode);
             },
             onOpenArchivedSessions: () => {
-              this.profileOpen = false;
+              this.closeProfile();
               this.navigate(AppDestination.ArchivedSessions);
             },
             onSignOut: () => {
@@ -2653,11 +2691,7 @@ export struct AgentsAnywhereApp {
               this.services?.authController.signOut();
               this.returnToLogin();
             },
-            onClose: () => {
-              this.profileOpen = false;
-              // The drawer may have renamed the account or changed its picture.
-              void this.loadShellAccount();
-            },
+            onClose: () => this.closeProfile(),
             onLoadAccount: () => this.loadAccount(),
             onUpdateDisplayName: (displayName: string) => this.updateDisplayName(displayName),
             onChangePassword: (password: string) => this.changePassword(password),
@@ -3021,15 +3055,15 @@ export struct AgentsAnywhereApp {
         .padding({ top: this.statusBarHeight })
         .backgroundColor(this.colors().canvas)
 
-        if (!this.isSplitLayout() && this.drawerProgress > 0.001) {
+        if (this.cardProgress() > 0.001) {
           Column()
             .width('100%')
             .height('100%')
-            .backgroundColor(withAlpha('#FFFFFF', 0.14 * this.drawerProgress))
+            .backgroundColor(withAlpha('#FFFFFF', 0.14 * this.cardProgress()))
             .border({
               width: 1,
               color: withAlpha(this.colors().isDark ? '#FFFFFF' : '#000000',
-                0.2 * this.drawerProgress),
+                0.2 * this.cardProgress()),
             })
             .onClick(() => this.settleDrawer(false))
             .gesture(
@@ -3043,12 +3077,12 @@ export struct AgentsAnywhereApp {
       .width('100%')
       .height('100%')
       .translate({ x: this.cardOffsetX() })
-      .borderRadius(DRAWER_CARD_RADIUS * this.drawerProgress)
+      .borderRadius(DRAWER_CARD_RADIUS * this.cardProgress())
       .clip(true)
       .shadow({
-        radius: 18 * this.drawerProgress,
-        color: withAlpha('#000000', 0.28 * this.drawerProgress),
-        offsetX: -3 * this.drawerProgress,
+        radius: 18 * this.cardProgress(),
+        color: withAlpha('#000000', 0.28 * this.cardProgress()),
+        offsetX: -3 * this.cardProgress(),
         offsetY: 0,
       })
 

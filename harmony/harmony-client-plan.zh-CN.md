@@ -541,6 +541,27 @@ iOS 把这三个界面都做成 **sheet**，其 chrome 是 `.navigationBarTitleD
 
 **验证**：`clean` 后全量 `assembleHap` 0 error / 0 ArkTS warning；三个脚本 623 / 175 / 154 全过；15 个逻辑用例全过。
 
+## 设置页卡死、返回与 iOS 图标（第 46 轮）
+
+### 1. 侧滑打开抽屉后点头像，页面整体右移且回不去
+
+两处叠加：
+
+- **卡片没有归位**：打开设置时只把 `sidebarOpen` 置了假，没有把 `drawerProgress` 收回去。卡片的位置/圆角/阴影/白纱都读 `drawerProgress`，于是设置页带着 75% 的平移画出来——截图里左侧那片空白就是抽屉该在的位置，而侧栏因为 `profileOpen` 已经不画了。现在统一走新的 `cardProgress()`：分栏、设置页、登录页时一律为 0；打开设置也改成走 `settleDrawer(false)`（与按钮、点纱、拖拽同一个收法）。
+- **设置首页没有关闭控件**：子页有返回箭头，但首页只有身份头部和分组，没有任何关闭入口（iOS 的 `AccountSettingsSheet` 是带 `xmark` 的 sheet）。现在首页加了 inline 导航栏：标题「设置」+ 前置 `xmark`（`ProfileHeader` 新增 `closeGlyph`，并给出「关闭」的无障碍文案）。
+- **返回手势**：`publishBackGesture()` 现在把 `profileOpen` 也算作"可以返回"，`onBackRequested()` 先关设置页；关闭统一走 `closeProfile()`（置假 + 重发手气势 + 重新拉一次账号，让侧栏头像跟着改名/换图）。
+
+### 2. 应用图标改成 iOS 的那张
+
+`tools/generate-app-icons.mjs` 原来拿 Android 的自适应图标前景（字形只有画布 50%），看起来比 iOS 的小一圈。现在直接从 iOS 的 1024 资源取图（`AppIcon.appiconset/ios-dark-iOS-Dark-1024@1x.png`，也就是 iOS 客户端默认外观用的那张）：
+
+- **背景层**：读图里方块的底色（`rgb(53,53,53)`），铺满整块画布——iOS 那张自带的圆角是系统的事，不搬过来。
+- **前景层**：把白色字形从底色上按绿通道的覆盖度解出来（`(pixel - background) / (glyph - background)` × alpha），并丢掉 iOS 图自带的那圈高光描边与柔和阴影（裁掉外边 8% 并抬高阈值），字形保持 iOS 的约 66% 比例。
+- **启动图**：两层在 144×144 上合成、25% 圆角，与 DevEco 模板一致。
+- PNG 读取器补了 **16 位通道**支持：iOS 那张是 16-bit RGBA，原来只认 8 位。
+
+**验证**：`clean` 后全量 `assembleHap` 0 error / 0 ArkTS warning；三个脚本 625 / 175 / 154 全过；15 个逻辑用例全过。图标用 System.Drawing 渲染预览核对过：启动图是深灰圆角块 + 白色字形（6335 个字形像素），前景是纯字形（无描边）。
+
 ## 待确认问题
 
 - **签名配置需要用户决策**：本机 `harmony/build-profile.json5` 现在带有 DevEco Studio 自动生成的 `signingConfigs`（`material` 指向 `C:\Users\Administrator\.ohos\config\...`，并含 `keyPassword`/`storePassword` 字段）。这既是好事（能产出可安装的 `entry-default-signed.hap`），也是隐患：绝对路径换机即失效、口令字段不应入库。提交前建议二选一：删掉 `signingConfigs` 与 `"signingConfig": "default"` 回到"未签名但到处能构建"，或改成从环境变量/本地未入库的 profile 读取。`harmony/README.md` 的签名一节已如实说明。

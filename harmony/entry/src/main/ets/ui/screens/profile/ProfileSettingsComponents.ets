@@ -26,17 +26,26 @@ import { profileCardBackground, profileDividerColor } from './ProfileSettingsSup
 export struct ProfileHeader {
   colors: AAColors = AA_LIGHT_COLORS;
   title: ResourceStr = '';
+  /**
+   * True for the sheet's own root page: iOS's `SheetCloseToolbar` puts an `xmark`
+   * there and keeps the back chevron for pushed pages only.
+   */
+  closeGlyph: boolean = false;
   onClose: () => void = () => {};
 
   build() {
     Row() {
       Column() {
-        AAIcon({ commands: AA_ICONS.CHEVRON_LEFT, iconSize: 22, color: this.colors.ink })
+        AAIcon({
+          commands: this.closeGlyph ? AA_ICONS.X : AA_ICONS.CHEVRON_LEFT,
+          iconSize: 22,
+          color: this.colors.ink,
+        })
       }
       .width(44)
       .height(44)
       .justifyContent(FlexAlign.Center)
-      .accessibilityText($r('app.string.common_back'))
+      .accessibilityText(this.closeGlyph ? $r('app.string.common_close') : $r('app.string.common_back'))
       .onClick(() => this.onClose())
 
       Row() {
