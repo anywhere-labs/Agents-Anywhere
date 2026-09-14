@@ -1,0 +1,56 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\Administrator\\.ohos\\config\\default_harmony_vHWTUt3Y-EnJW0_KvrrXsD05k7HKP4iUzFnrvFN-uPI=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B32C4F2B475D5C16399E7FD08B92E2A3C23D8EAFB0D589057EEE3B3295A31B122352A9F84C443A9",
+          "profile": "C:\\Users\\Administrator\\.ohos\\config\\default_harmony_vHWTUt3Y-EnJW0_KvrrXsD05k7HKP4iUzFnrvFN-uPI=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\Administrator\\.ohos\\config\\default_harmony_vHWTUt3Y-EnJW0_KvrrXsD05k7HKP4iUzFnrvFN-uPI=.p12",
+          "storePassword": "0000001BD72FD518F6EC238BB50A053536B495AE1CA679D4AF47432A8F2B9A7A3BC26556381C8FA499FD6F"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        /*
+         * Minimum supported OS is HarmonyOS NEXT 5.0.0 (API 12). The local
+         * toolchain ships the 6.1.0 (API 23) SDK, so the compiler does not
+         * reject newer-only APIs on its own: every API used by this module is
+         * checked against the API 12 availability notes by hand.
+         */
+        "compatibleSdkVersion": "5.0.0(12)",
+        "targetSdkVersion": "6.1.0(23)",
+        "runtimeOS": "HarmonyOS"
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

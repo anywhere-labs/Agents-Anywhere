@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "qr_scan_frame_hint",
+      "value": "Scan Agents Anywhere QR"
+    },
+    {
+      "name": "qr_scan_caption",
+      "value": "Point the camera at the web QR code"
+    },
+    {
+      "name": "settings_section_app",
+      "value": "App"
+    }
+  ]
+}

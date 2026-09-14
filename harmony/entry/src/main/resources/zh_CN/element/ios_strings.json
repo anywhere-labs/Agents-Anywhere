@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "qr_scan_frame_hint",
+      "value": "扫描 Agents Anywhere 二维码"
+    },
+    {
+      "name": "qr_scan_caption",
+      "value": "将摄像头对准 Web 上的二维码"
+    },
+    {
+      "name": "settings_section_app",
+      "value": "应用"
+    }
+  ]
+}
