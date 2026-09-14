@@ -2261,7 +2261,6 @@ export struct AgentsAnywhereApp {
       onOpenSession: (session: AgentSession) => this.openSession(session),
       onNewSession: () => this.navigate(AppDestination.NewSession),
       onNewProject: () => this.navigate(AppDestination.NewProject),
-      onOpenDevices: () => this.navigate(AppDestination.Devices),
       onOpenDevice: (device: AgentDevice) => this.openDevice(device),
       onOpenTerminal: () => this.navigate(AppDestination.Terminal),
       onOpenFiles: () => {
@@ -2553,6 +2552,11 @@ export struct AgentsAnywhereApp {
                 deviceNotice: this.deviceNotice,
                 deviceNoticeRequest: this.deviceNoticeRequest,
                 onBack: () => this.navigate(AppDestination.Devices),
+                // A device row in the sidebar opens this page, so in the split
+                // layout its leading glyph is the sidebar toggle (iOS's
+                // `DeviceManagementView(onMenu:)`).
+                sidebarToggle: this.isSplitLayout(),
+                onToggleSidebar: () => this.toggleSidebar(),
                 onOpenSession: (session: AgentSession) => {
                   this.openSession(session);
                 },

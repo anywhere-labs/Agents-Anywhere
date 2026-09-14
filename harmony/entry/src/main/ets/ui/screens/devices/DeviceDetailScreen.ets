@@ -54,6 +54,12 @@ export struct DeviceDetailScreen {
   deviceNotice: ResourceStr = '';
   @Prop @Watch('onDeviceNoticeChanged') deviceNoticeRequest: number;
   onBack: () => void = () => {};
+  /**
+   * Split layout: the leading glyph folds the shell's sidebar, because this page
+   * is what a device row in the sidebar opens (iOS's `DeviceManagementView`).
+   */
+  sidebarToggle: boolean = false;
+  onToggleSidebar: () => void = () => {};
   onOpenSession: (session: AgentSession) => void = () => {};
   onRetryRuntimes: () => void = () => {};
   onSetRuntimeActive: (runtime: RemoteDeviceRuntime, active: boolean) => void = () => {};
@@ -277,6 +283,8 @@ export struct DeviceDetailScreen {
       title: this.detail().device === null ? '' : (this.detail().device as AgentDevice).name,
       subtitle: this.deviceStatusText(),
       onBack: () => this.onBack(),
+      sidebarToggle: this.sidebarToggle,
+      onToggleSidebar: () => this.onToggleSidebar(),
       trailingSlots: 1,
     }) {
       this.HeaderGlyphButton(AA_ICONS.ELLIPSIS, $r('app.string.device_detail_device_actions'),

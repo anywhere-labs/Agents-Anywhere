@@ -11,7 +11,7 @@ import { AA_ICONS } from '../../designsystem/AAIcons';
 import { AAFontSize, AAHeight, AASpacing } from '../../designsystem/AAMetrics';
 import { AAIosPrimaryButton } from '../../designsystem/AAIosChrome';
 import { AAWordmark } from '../../designsystem/AAWordmark';
-import { AASectionHeader, AppEmptyState } from '../common/AppEmptyState';
+import { AASectionHeader } from '../common/AppEmptyState';
 import { AAToastHost, AAToastState } from '../../designsystem/AAToast';
 import { HomeProjectSessionRow, HomeSessionRow } from './HomeSessionRow';
 import { AARowArea, RenameSessionDialog, SessionActionOverlay } from './HomeSessionActions';
@@ -67,7 +67,6 @@ export struct HomeScreen {
   onNewSession: () => void = () => {};
   /** Android's `onCreateProject`: the project editor, not the session picker. */
   onNewProject: () => void = () => {};
-  onOpenDevices: () => void = () => {};
   /** Opens one device's page, which is what the sidebar's device rows do. */
   onOpenDevice: (device: AgentDevice) => void = () => {};
   onOpenTerminal: () => void = () => {};
@@ -379,11 +378,12 @@ export struct HomeScreen {
         .padding({ left: 10, right: 0 })
         .alignItems(VerticalAlign.Center)
 
-        // 2. Quick entries. iOS has no equivalent cards — devices live in the
-        // sidebar's own section there — so they keep this app's structure with the
-        // iOS card language: a 12dp radius surface with no border.
+        // 2. Quick entries. iOS has no cards at all: devices live in the sidebar
+        // section above and their own page carries the rest, so this row keeps
+        // only the two entries this app has no other top-level route to — the
+        // terminal and the device-less file browser — in the iOS card language:
+        // a 12dp radius surface with no border.
         Row({ space: 10 }) {
-          this.QuickEntryCard($r('app.string.devices_title'), AA_ICONS.MONITOR, () => this.onOpenDevices())
           this.QuickEntryCard($r('app.string.common_terminal'), AA_ICONS.TERMINAL, () => this.onOpenTerminal())
           this.QuickEntryCard($r('app.string.common_files'), AA_ICONS.FOLDER, () => this.onOpenFiles())
         }
@@ -587,130 +587,43 @@ export struct HomeScreen {
 
   @Builder
   ProjectModeList() {
-    if (this.state.devices.length === 0) {
-      Column() {
-        AppEmptyState({
-          colors: this.colors,
-          message: $r('app.string.home_pair_device_first'),
-          buttonLabel: $r('app.string.home_pair_new_device'),
-          buttonIconCommands: AA_ICONS.MONITOR,
-          contentOffsetY: -32,
-          onButtonClick: () => this.onPairDevice(),
-        })
+    // iOS draws the sidebar whatever the account holds: an empty device list is
+    // a caption under its heading, an empty project tree a caption under the
+    // projects heading. Android's full-page empty states — each with its own
+    // pair/create button — are gone with them; the pair row under the device
+    // section and the projects heading's "+" carry those two actions.
+    List({ space: 6 }) {
+      ListItem() {
+        this.DeviceSection()
       }
-      .width('100%')
-      .layoutWeight(1)
-      .justifyContent(FlexAlign.Center)
-    } else if (this.state.projects.length === 0) {
-      Column() {
-        AppEmptyState({
-          colors: this.colors,
-          message: $r('app.string.home_no_projects_create'),
-          buttonLabel: $r('app.string.new_session_create_project'),
-          buttonIconCommands: AA_ICONS.PLUS,
-          onButtonClick: () => this.onNewProject(),
-        })
+
+      ListItem() {
+        this.PairDeviceRow()
       }
-      .width('100%')
-      .layoutWeight(1)
-      .justifyContent(FlexAlign.Center)
-    } else {
-      // iOS spaces its sidebar rows by 6dp instead of ruling them.
-      List({ space: 6 }) {
-        // iOS's sidebar opens with the device list and the pair entry
-        // (`ChatSidebarDeviceSection`, `ChatSidebarPairDeviceButton`); the pinned
-        // section, the project tree and the ungrouped tail follow it.
+
+      if (this.hasPinnedItems()) {
         ListItem() {
-          this.DeviceSection()
-        }
-
-        ListItem() {
-          this.PairDeviceRow()
-        }
-
-        if (this.hasPinnedItems()) {
-          ListItem() {
-            AASectionHeader({
-              colors: this.colors,
-              label: $r('app.string.home_pinned'),
-              expanded: this.pinnedSectionExpanded,
-              onToggle: () => {
-                this.pinnedSectionExpanded = !this.pinnedSectionExpanded;
-              },
-            })
-          }
-          if (this.pinnedSectionExpanded) {
-            ForEach(this.pinnedProjects(), (project: AgentProject) => {
-              ListItem() {
-                this.ProjectTreeItem(project)
-              }
-            }, (project: AgentProject) => `pinned-project-${project.id}`)
-
-            ForEach(this.pinnedSessions(), (session: AgentSession) => {
-              ListItem() {
-                // Android lists pinned sessions in the project view with
-                // `HomeProjectSessionRow(inset = false)`: a 44dp row with the
-                // indicator on the trailing side.
-                HomeProjectSessionRow({
-                  colors: this.colors,
-                  session: session,
-                  inset: false,
-                  onOpen: (opened: AgentSession) => this.onOpenSession(opened),
-                  onLongPress: (pressed: AgentSession, area: AARowArea) =>
-                    this.openSessionActions(pressed, area),
-                })
-              }
-            }, (session: AgentSession) => `pinned-session-${session.id}`)
-          }
-        }
-
-        ListItem() {
-          // Android gives the Projects header its two icon buttons: the ellipsis
-          // opens the session-status filter, the plus creates a project. The
-          // filter belongs here, not on a project row.
           AASectionHeader({
             colors: this.colors,
-            label: $r('app.string.home_projects'),
-            expanded: this.sectionsExpanded,
-            showFilter: true,
-            onFilter: () => {
-              this.filterMenuOpen = true;
-            },
-            showCreate: true,
-            onCreate: () => this.onNewProject(),
+            label: $r('app.string.home_pinned'),
+            expanded: this.pinnedSectionExpanded,
             onToggle: () => {
-              this.sectionsExpanded = !this.sectionsExpanded;
-              this.persistSidebarState();
+              this.pinnedSectionExpanded = !this.pinnedSectionExpanded;
             },
           })
         }
-
-        if (this.sectionsExpanded) {
-          if (this.regularProjects().length === 0) {
+        if (this.pinnedSectionExpanded) {
+          ForEach(this.pinnedProjects(), (project: AgentProject) => {
             ListItem() {
-              this.EmptyListText($r('app.string.home_no_projects'))
+              this.ProjectTreeItem(project)
             }
-          } else {
-            ForEach(this.regularProjects(), (project: AgentProject) => {
-              ListItem() {
-                this.ProjectTreeItem(project)
-              }
-            }, (project: AgentProject) => `project-${project.id}`)
-          }
-        }
+          }, (project: AgentProject) => `pinned-project-${project.id}`)
 
-        if (this.ungroupedSessions().length > 0) {
-          // iOS's "未分组会话" section (`ChatSidebarProjects.swift`): the active
-          // sessions that belong to no listed project, listed at the tree's foot.
-          ListItem() {
-            AASectionHeader({
-              colors: this.colors,
-              label: $r('app.string.home_ungrouped_sessions'),
-              collapsible: false,
-            })
-          }
-          ForEach(this.ungroupedSessions(), (session: AgentSession) => {
+          ForEach(this.pinnedSessions(), (session: AgentSession) => {
             ListItem() {
+              // Android lists pinned sessions in the project view with
+              // `HomeProjectSessionRow(inset = false)`: a 42dp row with the
+              // indicator on the trailing side.
               HomeProjectSessionRow({
                 colors: this.colors,
                 session: session,
@@ -720,22 +633,81 @@ export struct HomeScreen {
                   this.openSessionActions(pressed, area),
               })
             }
-          }, (session: AgentSession) => `ungrouped-session-${session.id}`)
-        }
-
-        ListItem() {
-          // A trailing spacer keeps the last row clear of the FAB.
-          // iOS keeps 82dp of clearance under the sidebar list for its bottom bar.
-          Column().height(82)
+          }, (session: AgentSession) => `pinned-session-${session.id}`)
         }
       }
-      .width('100%')
-      .layoutWeight(1)
-      .scrollBar(BarState.Off)
-      // No list-level divider: Android draws its hairline inside session rows
-      // only, so project rows and section headers stay open.
-      .onReachEnd(() => this.onLoadMore())
+
+      ListItem() {
+        // Android gives the Projects header its two icon buttons: the ellipsis
+        // opens the session-status filter, the plus creates a project. The
+        // filter belongs here, not on a project row.
+        AASectionHeader({
+          colors: this.colors,
+          label: $r('app.string.home_projects'),
+          expanded: this.sectionsExpanded,
+          showFilter: true,
+          onFilter: () => {
+            this.filterMenuOpen = true;
+          },
+          showCreate: true,
+          onCreate: () => this.onNewProject(),
+          onToggle: () => {
+            this.sectionsExpanded = !this.sectionsExpanded;
+            this.persistSidebarState();
+          },
+        })
+      }
+
+      if (this.sectionsExpanded) {
+        if (this.regularProjects().length === 0) {
+          ListItem() {
+            this.EmptyListText($r('app.string.home_no_projects'))
+          }
+        } else {
+          ForEach(this.regularProjects(), (project: AgentProject) => {
+            ListItem() {
+              this.ProjectTreeItem(project)
+            }
+          }, (project: AgentProject) => `project-${project.id}`)
+        }
+      }
+
+      if (this.ungroupedSessions().length > 0) {
+        // iOS's "未分组会话" section (`ChatSidebarProjects.swift`): the active
+        // sessions that belong to no listed project, listed at the tree's foot.
+        ListItem() {
+          AASectionHeader({
+            colors: this.colors,
+            label: $r('app.string.home_ungrouped_sessions'),
+            collapsible: false,
+          })
+        }
+        ForEach(this.ungroupedSessions(), (session: AgentSession) => {
+          ListItem() {
+            HomeProjectSessionRow({
+              colors: this.colors,
+              session: session,
+              inset: false,
+              onOpen: (opened: AgentSession) => this.onOpenSession(opened),
+              onLongPress: (pressed: AgentSession, area: AARowArea) =>
+                this.openSessionActions(pressed, area),
+            })
+          }
+        }, (session: AgentSession) => `ungrouped-session-${session.id}`)
+      }
+
+      ListItem() {
+        // A trailing spacer keeps the last row clear of the FAB.
+        // iOS keeps 82dp of clearance under the sidebar list for its bottom bar.
+        Column().height(82)
+      }
     }
+    .width('100%')
+    .layoutWeight(1)
+    .scrollBar(BarState.Off)
+    // No list-level divider: Android draws its hairline inside session rows
+    // only, so project rows and section headers stay open.
+    .onReachEnd(() => this.onLoadMore())
   }
 
   @Builder
@@ -830,46 +802,18 @@ export struct HomeScreen {
 
   @Builder
   SessionModeList() {
-    if (this.state.devices.length === 0) {
-      Column() {
-        AppEmptyState({
-          colors: this.colors,
-          message: $r('app.string.home_pair_device_first'),
-          buttonLabel: $r('app.string.home_pair_new_device'),
-          buttonIconCommands: AA_ICONS.MONITOR,
-          contentOffsetY: -32,
-          onButtonClick: () => this.onPairDevice(),
-        })
+    // The same iOS sidebar as the project mode with the flat session list in
+    // place of the tree; an empty account gets the caption iOS draws there.
+    List({ space: 6 }) {
+      ListItem() {
+        this.DeviceSection()
       }
-      .width('100%')
-      .layoutWeight(1)
-      .justifyContent(FlexAlign.Center)
-    } else if (this.state.sessions.length === 0) {
-      Column() {
-        AppEmptyState({
-          colors: this.colors,
-          message: $r('app.string.home_no_active_sessions_create'),
-          buttonLabel: $r('app.string.home_create_new_session'),
-          buttonIconCommands: AA_ICONS.PLUS,
-          onButtonClick: () => this.onNewSession(),
-        })
+
+      ListItem() {
+        this.PairDeviceRow()
       }
-      .width('100%')
-      .layoutWeight(1)
-      .justifyContent(FlexAlign.Center)
-    } else {
-      // iOS spaces its sidebar rows by 6dp instead of ruling them.
-      List({ space: 6 }) {
-        // The device section and the pair entry lead the sidebar in both list
-        // modes; only the section below them changes with the view mode.
-        ListItem() {
-          this.DeviceSection()
-        }
 
-        ListItem() {
-          this.PairDeviceRow()
-        }
-
+      if (this.pinnedSessions().length > 0) {
         ListItem() {
           AASectionHeader({
             colors: this.colors,
@@ -881,69 +825,63 @@ export struct HomeScreen {
           })
         }
         if (this.pinnedSectionExpanded) {
-          if (this.pinnedSessions().length === 0) {
+          ForEach(this.pinnedSessions(), (session: AgentSession) => {
             ListItem() {
-              this.EmptyListText($r('app.string.home_no_pinned_sessions'))
+              HomeSessionRow({
+                colors: this.colors,
+                session: session,
+                showSubtitle: true,
+                onOpen: (opened: AgentSession) => this.onOpenSession(opened),
+                onLongPress: (pressed: AgentSession, area: AARowArea) =>
+                  this.openSessionActions(pressed, area),
+              })
             }
-          } else {
-            ForEach(this.pinnedSessions(), (session: AgentSession) => {
-              ListItem() {
-                HomeSessionRow({
-                  colors: this.colors,
-                  session: session,
-                  showSubtitle: true,
-                  onOpen: (opened: AgentSession) => this.onOpenSession(opened),
-                  onLongPress: (pressed: AgentSession, area: AARowArea) =>
-                    this.openSessionActions(pressed, area),
-                })
-              }
-            }, (session: AgentSession) => `session-pinned-${session.id}`)
-          }
-        }
-
-        ListItem() {
-          AASectionHeader({
-            colors: this.colors,
-            label: $r('app.string.home_recents'),
-            expanded: this.sectionsExpanded,
-            onToggle: () => {
-              this.sectionsExpanded = !this.sectionsExpanded;
-              this.persistSidebarState();
-            },
-          })
-        }
-        if (this.sectionsExpanded) {
-          if (this.recentSessions().length === 0) {
-            ListItem() {
-              this.EmptyListText($r('app.string.home_no_recent_sessions'))
-            }
-          } else {
-            ForEach(this.recentSessions(), (session: AgentSession) => {
-              ListItem() {
-                HomeSessionRow({
-                  colors: this.colors,
-                  session: session,
-                  showSubtitle: false,
-                  onOpen: (opened: AgentSession) => this.onOpenSession(opened),
-                  onLongPress: (pressed: AgentSession, area: AARowArea) =>
-                    this.openSessionActions(pressed, area),
-                })
-              }
-            }, (session: AgentSession) => `session-recent-${session.id}`)
-          }
-        }
-
-        ListItem() {
-          // iOS keeps 82dp of clearance under the sidebar list for its bottom bar.
-          Column().height(82)
+          }, (session: AgentSession) => `session-pinned-${session.id}`)
         }
       }
-      .width('100%')
-      .layoutWeight(1)
-      .scrollBar(BarState.Off)
-      // Session rows carry their own hairline, as Android's row shell does.
-      .onReachEnd(() => this.onLoadMore())
+
+      ListItem() {
+        AASectionHeader({
+          colors: this.colors,
+          label: $r('app.string.home_recents'),
+          expanded: this.sectionsExpanded,
+          onToggle: () => {
+            this.sectionsExpanded = !this.sectionsExpanded;
+            this.persistSidebarState();
+          },
+        })
+      }
+      if (this.sectionsExpanded) {
+        if (this.recentSessions().length === 0) {
+          ListItem() {
+            this.EmptyListText($r('app.string.home_no_sessions_yet'))
+          }
+        } else {
+          ForEach(this.recentSessions(), (session: AgentSession) => {
+            ListItem() {
+              HomeSessionRow({
+                colors: this.colors,
+                session: session,
+                showSubtitle: false,
+                onOpen: (opened: AgentSession) => this.onOpenSession(opened),
+                onLongPress: (pressed: AgentSession, area: AARowArea) =>
+                  this.openSessionActions(pressed, area),
+              })
+            }
+          }, (session: AgentSession) => `session-recent-${session.id}`)
+        }
+      }
+
+      ListItem() {
+        // iOS keeps 82dp of clearance under the sidebar list for its bottom bar.
+        Column().height(82)
+      }
     }
+    .width('100%')
+    .layoutWeight(1)
+    .scrollBar(BarState.Off)
+    // Session rows carry their own hairline, as Android's row shell does.
+    .onReachEnd(() => this.onLoadMore())
   }
 
   // ------------------------------------------------------------- small pieces
@@ -953,9 +891,10 @@ export struct HomeScreen {
    *
    * `ChatSidebarDeviceSection` draws a 7dp presence dot — green online, the
    * secondary colour at 45% offline — and the name in the subheadline size in a
-   * monospaced face, on a 10dp inset. Only the rows are reachable here; the
-   * section's own "No devices" / "Loading devices" rows are Android's empty
-   * states, which this screen still shows in place of the whole list.
+   * monospaced face, on a 10dp inset. An account without devices gets the
+   * section's own caption row ("No devices") and nothing else; iOS's loading row
+   * is not needed here because the whole list is a skeleton until the first load
+   * lands.
    */
   @Builder
   DeviceSection() {
@@ -966,9 +905,15 @@ export struct HomeScreen {
         collapsible: false,
       })
 
-      ForEach(this.state.devices, (device: AgentDevice) => {
-        this.DeviceRow(device)
-      }, (device: AgentDevice) => `sidebar-device-${device.id}`)
+      if (this.state.devices.length === 0) {
+        // iOS's `ChatSidebarEmptyRow`: the caption says so instead of the
+        // sidebar being replaced by a full-page empty state.
+        this.EmptyListText($r('app.string.devices_empty'))
+      } else {
+        ForEach(this.state.devices, (device: AgentDevice) => {
+          this.DeviceRow(device)
+        }, (device: AgentDevice) => `sidebar-device-${device.id}`)
+      }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
@@ -1023,13 +968,22 @@ export struct HomeScreen {
     .onClick(() => this.onPairDevice())
   }
 
+  /**
+   * iOS's `ChatSidebarEmptyRow`: a caption row inset 10dp in a 38dp box, in
+   * the secondary colour. The sidebar never draws a full-page empty state.
+   */
   @Builder
   EmptyListText(label: ResourceStr) {
-    Text(label)
-      .fontSize(15)
-      .fontWeight(FontWeight.Bold)
-      .fontColor(this.colors.faint)
-      .padding({ left: 4, top: 8, bottom: 8 })
+    Row() {
+      Text(label)
+        .fontSize(AAFontSize.CAPTION)
+        .fontColor(this.colors.muted)
+        .maxLines(2)
+    }
+    .width('100%')
+    .height(38)
+    .padding({ left: 10, right: 10 })
+    .alignItems(VerticalAlign.Center)
   }
 
   @Builder

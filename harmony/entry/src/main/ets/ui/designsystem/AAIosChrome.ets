@@ -68,6 +68,12 @@ export struct AAIosInlineBar {
   /** iOS's `navigationSubtitle`: a 12sp secondary line under the title. */
   subtitle: ResourceStr = '';
   onBack: () => void = () => {};
+  /**
+   * Split layout: the leading glyph folds the shell's sidebar instead of going
+   * back, which is iOS's `DeviceManagementView(onMenu: toggleSidebar)`.
+   */
+  sidebarToggle: boolean = false;
+  onToggleSidebar: () => void = () => {};
   /** How many 44dp trailing items the caller draws in the content slot. */
   trailingSlots: number = 0;
   @BuilderParam trailing: () => void = this.NoTrailing;
@@ -75,13 +81,23 @@ export struct AAIosInlineBar {
   build() {
     Row() {
       Column() {
-        AAIcon({ commands: AA_ICONS.CHEVRON_LEFT, iconSize: 22, color: this.colors.ink })
+        AAIcon({
+          commands: this.sidebarToggle ? AA_ICONS.PANEL_LEFT : AA_ICONS.CHEVRON_LEFT,
+          iconSize: 22,
+          color: this.colors.ink,
+        })
       }
       .width(44)
       .height(44)
       .justifyContent(FlexAlign.Center)
-      .accessibilityText($r('app.string.common_back'))
-      .onClick(() => this.onBack())
+      .accessibilityText(this.leadingLabel())
+      .onClick(() => {
+        if (this.sidebarToggle) {
+          this.onToggleSidebar();
+        } else {
+          this.onBack();
+        }
+      })
 
       Column({ space: 1 }) {
         Text(this.title)
@@ -117,6 +133,14 @@ export struct AAIosInlineBar {
     .height(44)
     .padding({ left: 6, right: 6 })
     .alignItems(VerticalAlign.Center)
+  }
+
+  /**
+   * The leading glyph's label: iOS labels its sidebar toolbar item "打开侧栏" /
+   * "Expand sidebar", a back button's is the app's own "返回".
+   */
+  private leadingLabel(): Resource {
+    return this.sidebarToggle ? $r('app.string.sidebar_toggle') : $r('app.string.common_back');
   }
 
   @Builder

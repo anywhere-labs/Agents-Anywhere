@@ -446,26 +446,31 @@ iOS 把这三个界面都做成 **sheet**，其 chrome 是 `.navigationBarTitleD
 
 ## 首页分组顺序与侧栏折叠（第 42 轮）
 
-用户反馈"首页页面布局不对，并且项目是通过左侧按钮有折叠隐藏效果的"，随后确认两点：首页内容顺序要照 iOS 侧栏（**设备分组（含「配对设备」行）→ 置顶 → 项目 → 未分组会话**），以及**详情页左上角那个按钮要把整条左侧栏收起/展开**（iOS 的 `toggleSidebar`）。
+用户反馈"首页页面布局不对，并且项目是通过左侧按钮有折叠隐藏效果的"，随后确认："首页内容顺序照 iOS 侧栏、详情页左上角按钮收起/展开侧栏、卡片与空状态都改成和 iOS 那样一致"。iOS 侧栏的顺序是**设备分组（含「配对设备」行）→ 置顶 → 项目 → 未分组会话**。
 
 ### 首页：补上 iOS 侧栏缺的两段
 
 对照 `Views/ChatShell/ChatSidebarView.swift` 与 `ChatSidebarProjects.swift`，原来的列表只有「置顶 → 项目」，缺了 iOS 的**设备分组**、**「配对设备」行**和**「未分组会话」**：
 
-- **设备分组**（`DeviceSection()` / `DeviceRow()`，新增 `HomeScreen.onOpenDevice`）：区块标题用 `devices_title`（iOS 的 `ChatSidebarSectionLabel`，普通标题；`AASectionHeader` 因此新增 `collapsible: false` 的形态：无箭头、无热区），每台设备一行——7dp 在线点（在线 `#10B981`、离线为次要色 45%）+ 等宽 15sp 名称、42dp 高、左右 10dp。点一行进该设备页（`openDevice`），与 iOS 选中设备后进 `DeviceManagementView` 一致。iOS 的 "No devices" / "Loading devices" 行没有照搬：本工程在这两种情况下整页仍是原有的空状态（`home_pair_device_first`），不重复画两遍。
+- **设备分组**（`DeviceSection()` / `DeviceRow()`，新增 `HomeScreen.onOpenDevice`）：区块标题用 `devices_title`（iOS 的 `ChatSidebarSectionLabel`，普通标题；`AASectionHeader` 因此新增 `collapsible: false` 的形态：无箭头、无热区），每台设备一行——7dp 在线点（在线 `#10B981`、离线为次要色 45%）+ 等宽 15sp 名称、42dp 高、左右 10dp。点一行进该设备页（`openDevice`），与 iOS 选中设备后进 `DeviceManagementView` 一致。
 - **「配对设备」行**（`PairDeviceRow()`）：`ChatSidebarPairDeviceButton` 的 46dp 行，`+` 18dp + 17sp/600 文案，无底色，调用原有的 `onPairDevice`（配对向导）。
 - **「未分组会话」**（`ungroupedSessions()`）：iOS `ProjectSidebarPresentation.unassignedSessions` 的等价物——活跃、未置顶、且 `projectId` 不在项目列表里的会话，排在项目树之后，行用 `HomeProjectSessionRow(inset = false)`（与 iOS 传 `inset: false` 相同）。新增文案 `home_ungrouped_sessions`（iOS 的 "Ungrouped sessions" / "未分组会话"）放 `ios_strings.json`。
-- 设备分组与配对行在**两种列表模式**（按项目 / 全部会话）都在最前，与 iOS 一致；「置顶」段落仍是原有的一段（把置顶项目与置顶会话放在一起，Android 的形状），未按 iOS 拆成「置顶项目 + Pinned 两段」——用户列的顺序里两者都属于"置顶"。
-- **未动**：三张快捷入口卡片（设备 / 终端 / 文件）保留在顶栏下方（Android 的入口，终端与文件没有别处可进），因此"设备"现在有两个入口（卡片 + 分组）；空状态、下拉刷新、长按操作卡、筛选菜单与加载逻辑也都没改。
+- 设备分组与配对行在**两种列表模式**（按项目 / 全部会话）都在最前，与 iOS 一致；「置顶」段落仍是原有的一段（把置顶项目与置顶会话放在一起，Android 的形状），未按 iOS 拆成「置顶项目 + Pinned 两段」；不过「全部会话」模式下没有置顶会话时整段不再显示（iOS 也只在有置顶内容时才画这一段）。
+
+### 空状态与卡片：去掉 Android 的整页形态
+
+- **空状态**：原来"没有设备 / 没有项目 / 没有会话"会把整个列表换成一页 `AppEmptyState`（带一个配对或建项目的按钮）。iOS 侧栏从不这么做——它在所属标题下画一行说明（`ChatSidebarEmptyRow`）。现在照此：设备分组下用 `devices_empty`，项目标题下用 `home_no_projects`，最近标题下用 `home_no_sessions_yet`；`EmptyListText` 也随之改成 iOS 的说明行（13sp、次要色、10dp 缩进、38dp 高）。原来那两个按钮的动作仍在（设备分组的「配对设备」行、项目标题右侧的 `+`），所以没有丢入口；`AppEmptyState` 在首页不再使用（该组件仍被其它页面使用）。
+- **卡片**：三张快捷入口里的「设备」卡片删除——设备入口就是侧栏的设备分组（iOS 没有这种卡片）。「终端」「文件」两张**保留**：iOS 客户端根本没有终端页面，设备的文件浏览也是从设备页进的，删掉这两张卡片会让这两个入口在鸿蒙端消失（与"功能与 Android 一致"冲突）。若要把它们也移走，做法是在设备详情页加 iOS `DeviceManagementView` 那样的"工作区 / 文件"入口，再把卡片删掉。
 
 ### 侧栏折叠：`ChatSidebarState` 的 toggle
 
 - 外壳新增 `@State sidebarOpen` 与 `@Watch` 的 `onWindowWidthChanged()`，对应 iOS `ChatSidebarState.setLayout`：**只有布局切换时才重置**（宽 → 开、窄 → 关），同一布局内的缩放不动用户手动收起的状态；首次布局（`onAreaChange`）即把宽窗口置为打开。
 - `showsSidebar()` 现在 = 分栏 && `sidebarOpen` && 非登录页。收起后「会话列表」这个 destination 的右栏不再是空白页，而是**铺满整窗的会话列表**（否则收起侧栏会剩下一个空屏）；再点同一个按钮即恢复分栏。
-- 右上角按钮改为切换的页面（iOS 里带 `onMenu: toggleSidebar` 的那几个）：**会话详情**（`SessionDetailScreen`）、**新建会话 / 新建项目**（`NewSessionHeader` → `NewSessionScreen`）、以及**会话列表自己**（`HomeScreen` 顶栏 wordmark 左侧，这是收起后重新展开的唯一入口）。语法是新增的 `sidebarToggle` + `onToggleSidebar` 两个属性：`true` 时前导字形换成新图标 `AA_ICONS.PANEL_LEFT`（lucide `panel-left`，对应 iOS 的 `sidebar.left`）并调用切换，`false` 时保持原来的返回箭头——**手机（< 840vp）因此完全不变**。无障碍文案 `sidebar_toggle`（"Toggle sidebar" / "切换侧栏"）也放在 `ios_strings.json`：iOS 自己的标签是"打开侧栏"，但这里按钮是双向的，所以用了中性的说法。
-- **其余页面**（设备列表、设备详情、文件、终端、归档、配对向导）在分栏下仍是返回箭头：它们是二级页面，去掉返回键会让人出不去。若希望这些页面也变成收起侧栏，再统一改。
+- 前导按钮改为切换的页面，对应 iOS 里带 `onMenu: toggleSidebar` 的那几个：**会话详情**（`ChatPageToolbar` → `SessionDetailScreen`）、**新建会话 / 新建项目**（`NewSessionView` → `NewSessionHeader`）、**设备详情**（`DeviceManagementView` → `DeviceDetailScreen`，也是从侧栏设备行打开的那一页）、以及**会话列表自己**（`HomeScreen` 顶栏 wordmark 左侧，这是收起后重新展开的唯一入口）。
+- 语法是新增的 `sidebarToggle` + `onToggleSidebar` 两个属性（`AAIosInlineBar`、`NewSessionHeader`、两个页面各自接收）：`true` 时前导字形换成新图标 `AA_ICONS.PANEL_LEFT`（lucide `panel-left`，对应 iOS 的 `sidebar.left`）并调用切换，`false` 时保持原来的返回箭头——**手机（< 840vp）因此完全不变**。无障碍文案 `sidebar_toggle`（"Toggle sidebar" / "切换侧栏"）也放在 `ios_strings.json`：iOS 自己的标签是"打开侧栏"，但这里按钮是双向的，所以用了中性的说法。
+- **其余页面**（设备列表、文件、终端、归档、配对向导）在分栏下仍是返回箭头：iOS 把文件、归档、配对都放在带关闭按钮的 sheet 里，设备列表这一页 iOS 根本没有（设备就列在侧栏），所以它们照各自的 iOS 形态保留返回/关闭。
 
-**验证**：同上一节——`clean` 后全量 `assembleHap` 0 error / 0 ArkTS warning；资源脚本 629（+6 处新引用）/ 175 / 154 全过；逻辑用例全过；构建产物仍不入库。
+**验证**：同上一节——`clean` 后全量 `assembleHap` 0 error / 0 ArkTS warning；资源脚本 621 / 175 / 154 全过（引用数因首页删掉四处空状态而减少）；逻辑用例全过；构建产物仍不入库。
 
 ## 待确认问题
 
@@ -473,5 +478,5 @@ iOS 把这三个界面都做成 **sheet**，其 chrome 是 `.navigationBarTitleD
 - 是否需要发布签名与上架流程（当前产物含一个本机调试签名）。
 - 应用内更新在鸿蒙上是否改为引导至应用市场，或只做版本提示（当前按差异表实现为"打开下载页"）。
 - 平板 / 2in1 的多列布局已按 iOS 的 `NavigationSplitView` 实现（见第 41 节），断点 840vp、左栏 320vp、侧栏折叠（第 42 节）是否需要调整，仍待实机确认。
-- 首页现在"设备"有两个入口（顶部的快捷卡片 + iOS 侧栏式的设备分组）。是否去掉「设备」卡片（只留终端 / 文件两张），或把三张卡片整体移到列表底部？
-- 分栏下只有会话详情、新建会话、会话列表三处的前导按钮是"收起侧栏"，设备 / 文件 / 终端 / 归档 / 配对向导仍是返回箭头（二级页面）。要不要统一成收起侧栏？
+- 首页只剩「终端」「文件」两张卡片（「设备」已并入侧栏的设备分组）。是否也把它们移走、改成设备详情页里的"工作区 / 文件"入口（iOS 的做法）？
+- 分栏下的前导按钮已按 iOS 分工：会话详情、新建会话、设备详情、会话列表是"收起侧栏"；文件 / 终端 / 归档 / 配对向导仍是返回或关闭（iOS 里它们是 sheet，设备列表 iOS 没有）。若希望这几页也换成收起侧栏，需要先确认返回路径。
