@@ -22,6 +22,12 @@ export struct NewSessionHeader {
   editable: boolean = true;
   draftTitle: string = '';
   onClose: () => void = () => {};
+  /**
+   * Split layout: the leading glyph folds the shell's sidebar instead of closing
+   * the page, which is iOS's `NewSessionView(onMenu: toggleSidebar)`.
+   */
+  sidebarToggle: boolean = false;
+  onToggleSidebar: () => void = () => {};
   onEditToggle: () => void = () => {};
   onSubmitTitle: () => void = () => {};
   onTitleChange: (title: string) => void = () => {};
@@ -32,6 +38,14 @@ export struct NewSessionHeader {
 
   aboutToAppear(): void {
     this.field = this.draftTitle;
+  }
+
+  /**
+   * The leading glyph's label: iOS labels the toolbar item "打开侧栏" / "Expand
+   * sidebar", a back button's is the app's own "返回".
+   */
+  private leadingLabel(): Resource {
+    return this.sidebarToggle ? $r('app.string.sidebar_toggle') : $r('app.string.common_back');
   }
 
   onEditingChanged(): void {
@@ -50,13 +64,23 @@ export struct NewSessionHeader {
   build() {
     Row() {
       Column() {
-        AAIcon({ commands: AA_ICONS.CHEVRON_LEFT, iconSize: 22, color: this.colors.ink })
+        AAIcon({
+          commands: this.sidebarToggle ? AA_ICONS.PANEL_LEFT : AA_ICONS.CHEVRON_LEFT,
+          iconSize: 22,
+          color: this.colors.ink,
+        })
       }
       .width(44)
       .height(44)
       .justifyContent(FlexAlign.Center)
-      .accessibilityText($r('app.string.common_back'))
-      .onClick(() => this.onClose())
+      .accessibilityText(this.leadingLabel())
+      .onClick(() => {
+        if (this.sidebarToggle) {
+          this.onToggleSidebar();
+        } else {
+          this.onClose();
+        }
+      })
 
       if (this.headerEditing) {
         Column({ space: 1 }) {

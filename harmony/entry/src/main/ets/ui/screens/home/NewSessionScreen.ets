@@ -72,6 +72,9 @@ export struct NewSessionScreen {
   devicesRefreshing: boolean = false;
 
   onBack: () => void = () => {};
+  /** Split layout: the header's leading glyph folds the shell's sidebar. */
+  sidebarToggle: boolean = false;
+  onToggleSidebar: () => void = () => {};
   onOpenDevices: () => void = () => {};
   onRefreshDevices: () => void = () => {};
   onListDirectory: (deviceId: string, root: string, path: string) => Promise<NewSessionDirectory> =
@@ -1200,6 +1203,8 @@ export struct NewSessionScreen {
           editable: false,
           draftTitle: resolveString($r('app.string.new_session_title')),
           onClose: () => this.onBack(),
+          sidebarToggle: this.sidebarToggle,
+          onToggleSidebar: () => this.onToggleSidebar(),
         })
 
         NewSessionSetupPanel({
@@ -1226,6 +1231,8 @@ export struct NewSessionScreen {
         editable: true,
         draftTitle: this.title,
         onClose: () => this.onBack(),
+        sidebarToggle: this.sidebarToggle,
+        onToggleSidebar: () => this.onToggleSidebar(),
         onEditToggle: () => {
           if (this.editingTitle) {
             this.submitTitle();

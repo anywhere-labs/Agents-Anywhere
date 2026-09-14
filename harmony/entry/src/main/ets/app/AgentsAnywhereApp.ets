@@ -136,7 +136,17 @@ export struct AgentsAnywhereApp {
   /** True while the settings drawer covers the shell. */
   @State private profileOpen: boolean = false;
   /** Window width in vp, published by the root and read by the split test. */
-  @State private windowWidth: number = 0;
+  @State @Watch('onWindowWidthChanged') private windowWidth: number = 0;
+  /**
+   * Whether the split layout's sidebar is on screen.
+   *
+   * iOS's `ChatSidebarState.isOpen`: open whenever the layout is a regular-width
+   * split, closed in the drawer layout, and afterwards whatever the user's last
+   * toggle left it as.
+   */
+  @State private sidebarOpen: boolean = false;
+  /** The layout `sidebarOpen` was last seeded for; see `onWindowWidthChanged`. */
+  private lastSplitLayout: boolean = false;
   /** The update check's state; drives the prompt and the drawer's version card. */
   @State private appUpdate: AppUpdateState = AppUpdateState.empty();
   @State private pendingQr: MobileLoginQrPayload | null = null;
@@ -2179,13 +2189,34 @@ export struct AgentsAnywhereApp {
    * to show before an account exists.
    */
   showsSidebar(): boolean {
-    if (!this.isSplitLayout()) {
+    if (!this.isSplitLayout() || !this.sidebarOpen) {
       return false;
     }
     return this.destination !== AppDestination.LoginMethods
       && this.destination !== AppDestination.ServerSetup
       && this.destination !== AppDestination.QrLogin
       && this.destination !== AppDestination.QrWaiting;
+  }
+
+  /**
+   * Re-seeds the sidebar's open state, the way `ChatSidebarState.setLayout` does.
+   *
+   * Only a change of layout moves the sidebar: `setLayout` returns early while
+   * the layout is the same, so a drag to 900vp and back to 880vp does not
+   * overwrite what the user toggled.
+   */
+  onWindowWidthChanged(): void {
+    const split: boolean = this.isSplitLayout();
+    if (split === this.lastSplitLayout) {
+      return;
+    }
+    this.lastSplitLayout = split;
+    this.sidebarOpen = split;
+  }
+
+  /** iOS's `toggleSidebar`: the detail pages' leading button flips this. */
+  private toggleSidebar(): void {
+    this.sidebarOpen = !this.sidebarOpen;
   }
 
   /**
@@ -2222,6 +2253,8 @@ export struct AgentsAnywhereApp {
         }
       },
       sidebarViewMode: this.sidebarViewMode,
+      sidebarToggle: this.isSplitLayout(),
+      onToggleSidebar: () => this.toggleSidebar(),
       onStateChange: (next: SessionsState) => {
         this.sessionsState = next;
       },
@@ -2229,6 +2262,7 @@ export struct AgentsAnywhereApp {
       onNewSession: () => this.navigate(AppDestination.NewSession),
       onNewProject: () => this.navigate(AppDestination.NewProject),
       onOpenDevices: () => this.navigate(AppDestination.Devices),
+      onOpenDevice: (device: AgentDevice) => this.openDevice(device),
       onOpenTerminal: () => this.navigate(AppDestination.Terminal),
       onOpenFiles: () => {
         // The plain Files destination browses a device, not a session.
@@ -2401,6 +2435,11 @@ export struct AgentsAnywhereApp {
                   this.leavePreparedDraft();
                   this.navigate(AppDestination.Sessions);
                 },
+                // In the split layout this page's leading glyph is iOS's
+                // `SidebarMenuIcon` instead: it folds the sidebar away rather
+                // than going back to a list that is already on screen.
+                sidebarToggle: this.isSplitLayout(),
+                onToggleSidebar: () => this.toggleSidebar(),
                 onLoadOlder: () => {
                   void this.loadOlderDetail();
                 },
@@ -2640,6 +2679,10 @@ export struct AgentsAnywhereApp {
                 projectOnly: this.destination === AppDestination.NewProject,
                 sidebarViewMode: this.sidebarViewMode,
                 onBack: () => this.navigate(AppDestination.Sessions),
+                // iOS's `NewSessionView` is the split layout's empty-selection
+                // content and carries the sidebar toggle for the same reason.
+                sidebarToggle: this.isSplitLayout(),
+                onToggleSidebar: () => this.toggleSidebar(),
                 onOpenDevices: () => this.navigate(AppDestination.Devices),
                 onRefreshDevices: () => this.loadSessions(),
                 onCreateProject: (name: string, connectorId: string, path: string) =>

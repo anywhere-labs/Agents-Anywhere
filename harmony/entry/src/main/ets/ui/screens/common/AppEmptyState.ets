@@ -86,6 +86,10 @@ export struct AppEmptyState {
  * rotates to -90 degrees when collapsed, plus the two 44dp icon buttons the
  * Projects section carries (the ellipsis for the session-status filter and the
  * plus for creating a project).
+ *
+ * `collapsible` is false for the sidebar sections iOS labels with a bare
+ * `ChatSidebarSectionLabel` — the device list and the ungrouped sessions — which
+ * carry neither a chevron nor a tap target.
  */
 @Component
 export struct AASectionHeader {
@@ -93,6 +97,8 @@ export struct AASectionHeader {
   label: ResourceStr = '';
   expanded: boolean = true;
   onToggle: () => void = () => {};
+  /** False for a plain caption: no chevron, no tap target. */
+  collapsible: boolean = true;
   /** The status-filter button is only drawn when the caller asks for it. */
   showFilter: boolean = false;
   onFilter: () => void = () => {};
@@ -109,18 +115,24 @@ export struct AASectionHeader {
           .fontColor(this.colors.muted)
           .maxLines(1)
 
-        AAIcon({
-          commands: AA_ICONS.CHEVRON_DOWN,
-          iconSize: 12,
-          color: this.colors.muted,
-          strokeWidth: 2.4,
-        })
-          .rotate({ angle: this.expanded ? 0 : -90 })
+        if (this.collapsible) {
+          AAIcon({
+            commands: AA_ICONS.CHEVRON_DOWN,
+            iconSize: 12,
+            color: this.colors.muted,
+            strokeWidth: 2.4,
+          })
+            .rotate({ angle: this.expanded ? 0 : -90 })
+        }
       }
       .layoutWeight(1)
       .height(44)
       .alignItems(VerticalAlign.Center)
-      .onClick(() => this.onToggle())
+      .onClick(() => {
+        if (this.collapsible) {
+          this.onToggle();
+        }
+      })
 
       if (this.showFilter) {
         this.IconButton(

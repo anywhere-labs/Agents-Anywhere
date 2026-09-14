@@ -1,11 +1,11 @@
-import { AgentProject, AgentSession } from '../../../model/AgentSession';
+import { AgentDevice, AgentProject, AgentSession } from '../../../model/AgentSession';
 import { SessionsState } from '../../../feature/sessions/SessionsState';
 import { SessionsController } from '../../../feature/sessions/SessionsController';
 import {
   ProjectSessionsState, ProjectSessionStatusFilter,
 } from '../../../feature/sessions/ProjectSessionsState';
 import { SIDEBAR_VIEW_SESSION } from '../../../storage/UiPreferences';
-import { AAColors, AA_LIGHT_COLORS } from '../../designsystem/AAColors';
+import { AAColors, AA_LIGHT_COLORS, withAlpha } from '../../designsystem/AAColors';
 import { AAIcon } from '../../designsystem/AAIcon';
 import { AA_ICONS } from '../../designsystem/AAIcons';
 import { AAFontSize, AAHeight, AASpacing } from '../../designsystem/AAMetrics';
@@ -56,12 +56,20 @@ export struct HomeScreen {
   onSidebarStateChange: (expandedProjectIds: string[], sectionExpanded: boolean) => void = () => {};
   /** `"project"` or `"session"`; anything else normalizes to project. */
   sidebarViewMode: string = 'project';
+  /**
+   * The split layout's leading glyph: shown only while the shell draws two
+   * columns, where it toggles the sidebar instead of sitting beside a back button.
+   */
+  sidebarToggle: boolean = false;
+  onToggleSidebar: () => void = () => {};
   onStateChange: (next: SessionsState) => void = () => {};
   onOpenSession: (session: AgentSession) => void = () => {};
   onNewSession: () => void = () => {};
   /** Android's `onCreateProject`: the project editor, not the session picker. */
   onNewProject: () => void = () => {};
   onOpenDevices: () => void = () => {};
+  /** Opens one device's page, which is what the sidebar's device rows do. */
+  onOpenDevice: (device: AgentDevice) => void = () => {};
   onOpenTerminal: () => void = () => {};
   onOpenFiles: () => void = () => {};
   onOpenProfile: () => void = () => {};
@@ -345,8 +353,15 @@ export struct HomeScreen {
         // 1. Header. iOS's `ChatSidebarHeaderView` is the wordmark alone, 24sp and
         // leading-aligned in a 44dp row; the profile and search entries stay —
         // they are this app's navigation — but as bare iOS toolbar glyphs rather
-        // than Android's bordered circles.
+        // than Android's bordered circles. In the split layout the same row leads
+        // with the sidebar toggle, which is otherwise missing from the blank
+        // detail column this list occupies.
         Row() {
+          if (this.sidebarToggle) {
+            this.ToolbarGlyphButton(AA_ICONS.PANEL_LEFT, $r('app.string.sidebar_toggle'),
+              () => this.onToggleSidebar())
+          }
+
           AAWordmark({
             colors: this.colors,
             fontSize: 24,
@@ -602,6 +617,17 @@ export struct HomeScreen {
     } else {
       // iOS spaces its sidebar rows by 6dp instead of ruling them.
       List({ space: 6 }) {
+        // iOS's sidebar opens with the device list and the pair entry
+        // (`ChatSidebarDeviceSection`, `ChatSidebarPairDeviceButton`); the pinned
+        // section, the project tree and the ungrouped tail follow it.
+        ListItem() {
+          this.DeviceSection()
+        }
+
+        ListItem() {
+          this.PairDeviceRow()
+        }
+
         if (this.hasPinnedItems()) {
           ListItem() {
             AASectionHeader({
@@ -671,6 +697,30 @@ export struct HomeScreen {
               }
             }, (project: AgentProject) => `project-${project.id}`)
           }
+        }
+
+        if (this.ungroupedSessions().length > 0) {
+          // iOS's "未分组会话" section (`ChatSidebarProjects.swift`): the active
+          // sessions that belong to no listed project, listed at the tree's foot.
+          ListItem() {
+            AASectionHeader({
+              colors: this.colors,
+              label: $r('app.string.home_ungrouped_sessions'),
+              collapsible: false,
+            })
+          }
+          ForEach(this.ungroupedSessions(), (session: AgentSession) => {
+            ListItem() {
+              HomeProjectSessionRow({
+                colors: this.colors,
+                session: session,
+                inset: false,
+                onOpen: (opened: AgentSession) => this.onOpenSession(opened),
+                onLongPress: (pressed: AgentSession, area: AARowArea) =>
+                  this.openSessionActions(pressed, area),
+              })
+            }
+          }, (session: AgentSession) => `ungrouped-session-${session.id}`)
         }
 
         ListItem() {
@@ -810,6 +860,16 @@ export struct HomeScreen {
     } else {
       // iOS spaces its sidebar rows by 6dp instead of ruling them.
       List({ space: 6 }) {
+        // The device section and the pair entry lead the sidebar in both list
+        // modes; only the section below them changes with the view mode.
+        ListItem() {
+          this.DeviceSection()
+        }
+
+        ListItem() {
+          this.PairDeviceRow()
+        }
+
         ListItem() {
           AASectionHeader({
             colors: this.colors,
@@ -887,6 +947,81 @@ export struct HomeScreen {
   }
 
   // ------------------------------------------------------------- small pieces
+
+  /**
+   * iOS's device section: a plain caption over one 42dp row per device.
+   *
+   * `ChatSidebarDeviceSection` draws a 7dp presence dot — green online, the
+   * secondary colour at 45% offline — and the name in the subheadline size in a
+   * monospaced face, on a 10dp inset. Only the rows are reachable here; the
+   * section's own "No devices" / "Loading devices" rows are Android's empty
+   * states, which this screen still shows in place of the whole list.
+   */
+  @Builder
+  DeviceSection() {
+    Column({ space: 4 }) {
+      AASectionHeader({
+        colors: this.colors,
+        label: $r('app.string.devices_title'),
+        collapsible: false,
+      })
+
+      ForEach(this.state.devices, (device: AgentDevice) => {
+        this.DeviceRow(device)
+      }, (device: AgentDevice) => `sidebar-device-${device.id}`)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  DeviceRow(device: AgentDevice) {
+    Row({ space: 10 }) {
+      Column()
+        .width(7)
+        .height(7)
+        .borderRadius(999)
+        .backgroundColor(device.online ? '#10B981' : withAlpha(this.colors.muted, 0.45))
+
+      Text(device.name)
+        .fontSize(15)
+        .fontFamily('monospace')
+        .fontColor(device.online ? this.colors.ink : this.colors.muted)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .height(42)
+    .padding({ left: 10, right: 10 })
+    .alignItems(VerticalAlign.Center)
+    .accessibilityText(device.name)
+    .onClick(() => this.onOpenDevice(device))
+  }
+
+  /**
+   * iOS's `ChatSidebarPairDeviceButton`: a plus glyph and a semibold label on the
+   * leading edge of a 46dp row, with no surface of its own.
+   */
+  @Builder
+  PairDeviceRow() {
+    Row({ space: 8 }) {
+      AAIcon({ commands: AA_ICONS.PLUS, iconSize: 18, color: this.colors.ink })
+
+      Text($r('app.string.home_pair_new_device'))
+        .fontSize(17)
+        .fontWeight(600)
+        .fontColor(this.colors.ink)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .height(46)
+    .padding({ left: 10, right: 10 })
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => this.onPairDevice())
+  }
 
   @Builder
   EmptyListText(label: ResourceStr) {
@@ -1020,6 +1155,16 @@ export struct HomeScreen {
 
   private recentSessions(): AgentSession[] {
     return this.state.recentSessions();
+  }
+
+  /**
+   * The sessions iOS lists under "未分组会话": active, unpinned sessions whose
+   * project is absent from the project list, in the sidebar's own order.
+   */
+  private ungroupedSessions(): AgentSession[] {
+    const projectIds: string[] = this.state.projects.map((project: AgentProject) => project.id);
+    return this.state.sortedSessions().filter((session: AgentSession) => !session.pinned
+      && (session.projectId === null || !projectIds.includes(session.projectId)));
   }
 }
 

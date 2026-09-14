@@ -88,6 +88,15 @@ export class AA_ICONS {
   static readonly LIST: string =
     'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01';
 
+  /**
+   * lucide `panel-left` — the shell's sidebar toggle.
+   *
+   * The iOS client's toolbar item is `SidebarMenuIcon()` (`sidebar.left`) and
+   * always calls `toggleSidebar` (`Views/Chat/ChatPageToolbar.swift`); this is the
+   * same frame with a dividing line, which is what the Lucide set draws.
+   */
+  static readonly PANEL_LEFT: string = 'M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2ZM9 3v18';
+
   static readonly TERMINAL: string = 'm4 17 6-6-6-6M12 19h8';
 
   /** lucide `cloud` — the Cloud sign-in entry, which iOS draws with SF `cloud`. */

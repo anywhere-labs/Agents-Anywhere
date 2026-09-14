@@ -92,6 +92,12 @@ export struct SessionDetailScreen {
   session: AgentSession | null = null;
   deviceOnline: boolean = true;
   onBack: () => void = () => {};
+  /**
+   * Split layout: the leading glyph folds the shell's sidebar instead of going
+   * back, which is iOS's `SessionChatView(onMenu: toggleSidebar)`.
+   */
+  sidebarToggle: boolean = false;
+  onToggleSidebar: () => void = () => {};
   onLoadOlder: () => void = () => {};
   onSend: (content: string) => void = () => {};
   onInterrupt: () => void = () => {};
@@ -1037,14 +1043,22 @@ export struct SessionDetailScreen {
    * puts the title at `.headline` with a `.caption` subtitle line carrying the
    * status — "no header view sits in the timeline". Android's floating pill,
    * circular buttons and 88dp veil are replaced by that: a 44dp bar on the
-   * canvas, the back glyph on the leading edge, the title and its status line in
-   * the middle, and this app's two entry points (runtime settings, agent files)
-   * as bare 44dp glyphs on the trailing side.
+   * canvas, the back glyph on the leading edge — the sidebar toggle while the
+   * shell is split — the title and its status line in the middle, and this app's
+   * two entry points (runtime settings, agent files) as bare 44dp glyphs on the
+   * trailing side.
    */
   @Builder
   Header() {
     Row({ space: 10 }) {
-      this.HeaderGlyphButton(AA_ICONS.CHEVRON_LEFT, $r('app.string.common_back'), () => this.onBack())
+      if (this.sidebarToggle) {
+        // iOS's toolbar item here is `SidebarMenuIcon()`, not a back chevron:
+        // the conversation lives in a split view whose sidebar is on screen.
+        this.HeaderGlyphButton(AA_ICONS.PANEL_LEFT, $r('app.string.sidebar_toggle'),
+          () => this.onToggleSidebar())
+      } else {
+        this.HeaderGlyphButton(AA_ICONS.CHEVRON_LEFT, $r('app.string.common_back'), () => this.onBack())
+      }
 
       Column({ space: 1 }) {
         Text(this.title())

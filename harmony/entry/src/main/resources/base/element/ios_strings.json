@@ -11,6 +11,14 @@
     {
       "name": "settings_section_app",
       "value": "App"
+    },
+    {
+      "name": "home_ungrouped_sessions",
+      "value": "Ungrouped sessions"
+    },
+    {
+      "name": "sidebar_toggle",
+      "value": "Toggle sidebar"
     }
   ]
 }
