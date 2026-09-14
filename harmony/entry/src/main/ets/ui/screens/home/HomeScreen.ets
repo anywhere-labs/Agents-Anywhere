@@ -8,11 +8,12 @@ import { SIDEBAR_VIEW_SESSION } from '../../../storage/UiPreferences';
 import { AAColors, AA_LIGHT_COLORS, withAlpha } from '../../designsystem/AAColors';
 import { AAIcon } from '../../designsystem/AAIcon';
 import { AA_ICONS } from '../../designsystem/AAIcons';
-import { AAFontSize, AAHeight, AASpacing } from '../../designsystem/AAMetrics';
-import { AAIosPrimaryButton } from '../../designsystem/AAIosChrome';
+import { AAFontSize, AASpacing } from '../../designsystem/AAMetrics';
 import { AAWordmark } from '../../designsystem/AAWordmark';
 import { AASectionHeader } from '../common/AppEmptyState';
 import { AAToastHost, AAToastState } from '../../designsystem/AAToast';
+import { ParsedAuthMe } from '../../../api/AuthDtos';
+import { ProfileAvatar } from '../profile/ProfileAccountPage';
 import { HomeProjectSessionRow, HomeSessionRow } from './HomeSessionRow';
 import { AARowArea, RenameSessionDialog, SessionActionOverlay } from './HomeSessionActions';
 import {
@@ -56,12 +57,8 @@ export struct HomeScreen {
   onSidebarStateChange: (expandedProjectIds: string[], sectionExpanded: boolean) => void = () => {};
   /** `"project"` or `"session"`; anything else normalizes to project. */
   sidebarViewMode: string = 'project';
-  /**
-   * The split layout's leading glyph: shown only while the shell draws two
-   * columns, where it toggles the sidebar instead of sitting beside a back button.
-   */
-  sidebarToggle: boolean = false;
-  onToggleSidebar: () => void = () => {};
+  /** The signed-in account, for the bottom bar's avatar control. */
+  account: ParsedAuthMe | null = null;
   onStateChange: (next: SessionsState) => void = () => {};
   onOpenSession: (session: AgentSession) => void = () => {};
   onNewSession: () => void = () => {};
@@ -69,8 +66,6 @@ export struct HomeScreen {
   onNewProject: () => void = () => {};
   /** Opens one device's page, which is what the sidebar's device rows do. */
   onOpenDevice: (device: AgentDevice) => void = () => {};
-  onOpenTerminal: () => void = () => {};
-  onOpenFiles: () => void = () => {};
   onOpenProfile: () => void = () => {};
   onPairDevice: () => void = () => {};
   /** Resolves when the refresh finished, so the indicator can be cleared. */
@@ -79,7 +74,6 @@ export struct HomeScreen {
 
   /** Expanded project ids; an array so a toggle replaces the reference. */
   @State private expandedProjectIds: string[] = [];
-  @State private pinnedSectionExpanded: boolean = true;
   @State private sectionsExpanded: boolean = true;
   /** Session whose long-press action card is open, with its measured bounds. */
   @State private actionSession: AgentSession | null = null;
@@ -349,49 +343,24 @@ export struct HomeScreen {
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
       Column() {
-        // 1. Header. iOS's `ChatSidebarHeaderView` is the wordmark alone, 24sp and
-        // leading-aligned in a 44dp row; the profile and search entries stay —
-        // they are this app's navigation — but as bare iOS toolbar glyphs rather
-        // than Android's bordered circles. In the split layout the same row leads
-        // with the sidebar toggle, which is otherwise missing from the blank
-        // detail column this list occupies.
+        // 1. Header. iOS's `ChatSidebarHeaderView`: the wordmark alone, 24sp and
+        // leading-aligned in a 44dp row inset 18dp. Android's profile and search
+        // glyphs are gone with the rest of its chrome — the account control is the
+        // bottom bar's avatar, and search was only ever a "coming soon" toast.
         Row() {
-          if (this.sidebarToggle) {
-            this.ToolbarGlyphButton(AA_ICONS.PANEL_LEFT, $r('app.string.sidebar_toggle'),
-              () => this.onToggleSidebar())
-          }
-
           AAWordmark({
             colors: this.colors,
             fontSize: 24,
             lineHeight: 30,
           })
-
-          Blank().layoutWeight(1)
-
-          this.ToolbarGlyphButton(AA_ICONS.SEARCH, $r('app.string.files_search'), () => {
-            this.showToast($r('app.string.home_search_coming_soon'));
-          })
         }
         .width('100%')
         .height(44)
-        .padding({ left: 10, right: 0 })
+        // The list's own inset is 14dp, so 4dp here puts the wordmark at iOS's 18.
+        .padding({ left: 4, right: 10 })
         .alignItems(VerticalAlign.Center)
 
-        // 2. Quick entries. iOS has no cards at all: devices live in the sidebar
-        // section above and their own page carries the rest, so this row keeps
-        // only the two entries this app has no other top-level route to — the
-        // terminal and the device-less file browser — in the iOS card language:
-        // a 12dp radius surface with no border.
-        Row({ space: 10 }) {
-          this.QuickEntryCard($r('app.string.common_terminal'), AA_ICONS.TERMINAL, () => this.onOpenTerminal())
-          this.QuickEntryCard($r('app.string.common_files'), AA_ICONS.FOLDER, () => this.onOpenFiles())
-        }
-        .width('100%')
-        .height(AAHeight.QUICK_ENTRY)
-        .margin({ top: 10 })
-
-        // 3. List area, in the active view mode. Pull-to-refresh uses the same
+        // 2. List area, in the active view mode. Pull-to-refresh uses the same
         // indicator colours Android does.
         Refresh({ refreshing: $$this.refreshing }) {
           Column() {
@@ -428,21 +397,15 @@ export struct HomeScreen {
       .alignItems(HorizontalAlign.Start)
       .padding({ left: 14, right: 14, top: AASpacing.HOME_TOP })
 
-      // 4. Bottom controls, as iOS's `ChatSidebarBottomControls`: a prominent
-      // "New session" capsule on the leading edge and a 38dp circular account
-      // button on the trailing one. Android's circular FAB and the header's
-      // profile button are gone with it; the actions are unchanged.
+      // 3. Bottom controls, as iOS's `ChatSidebarBottomControls`: a prominent
+      // "New session" capsule hugging the leading edge and a 50dp glass circle
+      // around the account's 38dp avatar on the trailing one — both the sizes and
+      // the hugging capsule come from `AppGlassButton` and `AccountAvatarView`.
+      // Android's circular FAB and the header's profile button are gone; the
+      // actions are unchanged.
       Column() {
         Row({ space: 10 }) {
-          Column() {
-            AAIosPrimaryButton({
-              colors: this.colors,
-              label: $r('app.string.home_new_session'),
-              iconCommands: AA_ICONS.SQUARE_PEN,
-              onTap: () => this.onNewSession(),
-            })
-          }
-          .constraintSize({ maxWidth: 220 })
+          this.NewSessionCapsule()
 
           Blank().layoutWeight(1)
 
@@ -456,12 +419,12 @@ export struct HomeScreen {
       .justifyContent(FlexAlign.End)
       // ArkUI's default hit test mode blocks every node this one masks, and this
       // wrapper covers the whole screen although only the controls inside it are
-      // drawn. Without `Transparent` the header, the quick entries and every list
-      // row underneath stop receiving taps — the screen looks fine and is inert.
+      // drawn. Without `Transparent` the header and every list row underneath stop
+      // receiving taps — the screen looks fine and is inert.
       .hitTestBehavior(HitTestMode.Transparent)
       .padding({ left: 18, right: 18, bottom: 12 })
 
-      // 5. Toasts sit above everything else. The wrapper is transparent to the
+      // 4. Toasts sit above everything else. The wrapper is transparent to the
       // hit test for the same reason as the button overlay above: it spans the
       // full width, so a visible toast would otherwise swallow the taps beside
       // and beneath it.
@@ -478,7 +441,7 @@ export struct HomeScreen {
       .hitTestBehavior(HitTestMode.Transparent)
       .padding({ left: 22, right: 22, top: 86 })
 
-      // 6. Long-press action card and the rename dialog sit above the list.
+      // 5. Long-press action card and the rename dialog sit above the list.
       if (this.actionSession !== null && !this.renaming) {
         SessionActionOverlay({
           colors: this.colors,
@@ -602,39 +565,36 @@ export struct HomeScreen {
       }
 
       if (this.hasPinnedItems()) {
+        // iOS labels "Pinned" with the plain section caption, not a disclosure:
+        // the section is drawn only while something is pinned.
         ListItem() {
           AASectionHeader({
             colors: this.colors,
             label: $r('app.string.home_pinned'),
-            expanded: this.pinnedSectionExpanded,
-            onToggle: () => {
-              this.pinnedSectionExpanded = !this.pinnedSectionExpanded;
-            },
+            collapsible: false,
           })
         }
-        if (this.pinnedSectionExpanded) {
-          ForEach(this.pinnedProjects(), (project: AgentProject) => {
-            ListItem() {
-              this.ProjectTreeItem(project)
-            }
-          }, (project: AgentProject) => `pinned-project-${project.id}`)
+        ForEach(this.pinnedProjects(), (project: AgentProject) => {
+          ListItem() {
+            this.ProjectTreeItem(project)
+          }
+        }, (project: AgentProject) => `pinned-project-${project.id}`)
 
-          ForEach(this.pinnedSessions(), (session: AgentSession) => {
-            ListItem() {
-              // Android lists pinned sessions in the project view with
-              // `HomeProjectSessionRow(inset = false)`: a 42dp row with the
-              // indicator on the trailing side.
-              HomeProjectSessionRow({
-                colors: this.colors,
-                session: session,
-                inset: false,
-                onOpen: (opened: AgentSession) => this.onOpenSession(opened),
-                onLongPress: (pressed: AgentSession, area: AARowArea) =>
-                  this.openSessionActions(pressed, area),
-              })
-            }
-          }, (session: AgentSession) => `pinned-session-${session.id}`)
-        }
+        ForEach(this.pinnedSessions(), (session: AgentSession) => {
+          ListItem() {
+            // Android lists pinned sessions in the project view with
+            // `HomeProjectSessionRow(inset = false)`: a 42dp row with the
+            // indicator on the trailing side.
+            HomeProjectSessionRow({
+              colors: this.colors,
+              session: session,
+              inset: false,
+              onOpen: (opened: AgentSession) => this.onOpenSession(opened),
+              onLongPress: (pressed: AgentSession, area: AARowArea) =>
+                this.openSessionActions(pressed, area),
+            })
+          }
+        }, (session: AgentSession) => `pinned-session-${session.id}`)
       }
 
       ListItem() {
@@ -818,26 +778,21 @@ export struct HomeScreen {
           AASectionHeader({
             colors: this.colors,
             label: $r('app.string.home_pinned'),
-            expanded: this.pinnedSectionExpanded,
-            onToggle: () => {
-              this.pinnedSectionExpanded = !this.pinnedSectionExpanded;
-            },
+            collapsible: false,
           })
         }
-        if (this.pinnedSectionExpanded) {
-          ForEach(this.pinnedSessions(), (session: AgentSession) => {
-            ListItem() {
-              HomeSessionRow({
-                colors: this.colors,
-                session: session,
-                showSubtitle: true,
-                onOpen: (opened: AgentSession) => this.onOpenSession(opened),
-                onLongPress: (pressed: AgentSession, area: AARowArea) =>
-                  this.openSessionActions(pressed, area),
-              })
-            }
-          }, (session: AgentSession) => `session-pinned-${session.id}`)
-        }
+        ForEach(this.pinnedSessions(), (session: AgentSession) => {
+          ListItem() {
+            HomeSessionRow({
+              colors: this.colors,
+              session: session,
+              showSubtitle: true,
+              onOpen: (opened: AgentSession) => this.onOpenSession(opened),
+              onLongPress: (pressed: AgentSession, area: AARowArea) =>
+                this.openSessionActions(pressed, area),
+            })
+          }
+        }, (session: AgentSession) => `session-pinned-${session.id}`)
       }
 
       ListItem() {
@@ -1007,51 +962,29 @@ export struct HomeScreen {
   }
 
   /**
-   * One quick entry card.
+   * The sidebar's "New session" control.
    *
-   * Android's `QuickEntryCard` geometry — top-left content, 12x13dp padding, a
-   * 6dp gap and the hardcoded `#8E8E8E`/`#9A9A9A` symbol grey — in the iOS card
-   * language the settings groups use: a 12dp radius surface with no border.
+   * iOS's `AppGlassButton(style: .prominent, maxWidth: nil)`: a capsule that
+   * hugs its label instead of filling the bar, which is why this is not the
+   * shared full-width `AAIosPrimaryButton`.
    */
   @Builder
-  QuickEntryCard(label: ResourceStr, iconCommands: string, action: () => void) {
-    Column({ space: 6 }) {
-      AAIcon({
-        commands: iconCommands,
-        iconSize: 22,
-        color: this.colors.isDark ? '#9A9A9A' : '#8E8E8E',
-      })
-      Text(label)
-        .fontSize(AAFontSize.LABEL)
+  NewSessionCapsule() {
+    Row({ space: 10 }) {
+      AAIcon({ commands: AA_ICONS.SQUARE_PEN, iconSize: 18, color: this.colors.onPrimaryAction })
+
+      Text($r('app.string.home_new_session'))
+        .fontSize(AAFontSize.HEADER)
         .fontWeight(600)
-        .fontColor(this.colors.ink)
-        .lineHeight(17)
+        .fontColor(this.colors.onPrimaryAction)
         .maxLines(1)
     }
-    .layoutWeight(1)
-    .height('100%')
-    .justifyContent(FlexAlign.Start)
-    .alignItems(HorizontalAlign.Start)
-    .padding({ left: 12, right: 12, top: 13, bottom: 13 })
-    .borderRadius(12)
-    .backgroundColor(this.colors.raisedSurface)
-    .onClick(() => action())
-  }
-
-  /**
-   * iOS's `ChatSidebarIconControlStyle`: a 44dp square around an 18dp glyph with
-   * no surface of its own.
-   */
-  @Builder
-  ToolbarGlyphButton(iconCommands: string, label: Resource, action: () => void) {
-    Column() {
-      AAIcon({ commands: iconCommands, iconSize: 18, color: this.colors.ink })
-    }
-    .width(44)
-    .height(44)
-    .justifyContent(FlexAlign.Center)
-    .accessibilityText(label)
-    .onClick(() => action())
+    .height(50)
+    .padding({ left: 20, right: 20 })
+    .borderRadius(25)
+    .backgroundColor(this.colors.primaryAction)
+    .accessibilityText($r('app.string.home_new_session'))
+    .onClick(() => this.onNewSession())
   }
 
   /** iOS's `ChatSidebarIconControlStyle`: a 44dp square around an 18dp glyph. */
@@ -1068,19 +1001,26 @@ export struct HomeScreen {
   }
 
   /**
-   * The account control of iOS's bottom bar: a 38dp circular button in the glass
-   * material's flat form. iOS shows the account photo inside it; this app has no
-   * avatar in the shell, so the account glyph stands in.
+   * The account control of iOS's bottom bar.
+   *
+   * `Button { AccountAvatarView(size: 38) }.buttonStyle(.glass)
+   * .buttonBorderShape(.circle)`: a 50dp glass circle around the account's 38dp
+   * avatar, which falls back to the label's first letter — the shared
+   * `ProfileAvatar` draws both.
    */
   @Builder
   BottomAccountButton() {
     Column() {
-      AAIcon({ commands: AA_ICONS.USER_ROUND, iconSize: 18, color: this.colors.ink })
+      ProfileAvatar({
+        colors: this.colors,
+        account: this.account,
+        avatarSize: 38,
+      })
     }
-    .width(38)
-    .height(38)
+    .width(50)
+    .height(50)
     .justifyContent(FlexAlign.Center)
-    .borderRadius(19)
+    .borderRadius(25)
     .backgroundColor(this.colors.isDark ? '#0FFFFFFF' : '#0A000000')
     .border({ width: 1, color: this.colors.isDark ? '#38FFFFFF' : '#24000000' })
     .accessibilityText($r('app.string.profile_settings'))

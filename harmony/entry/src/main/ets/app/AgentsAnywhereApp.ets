@@ -1,4 +1,5 @@
-import { AAColors, resolveAAColors } from '../ui/designsystem/AAColors';
+import { AAColors, resolveAAColors, withAlpha } from '../ui/designsystem/AAColors';
+import { curves } from '@kit.ArkUI';
 import { AppDestination, canNavigateBackFrom } from '../navigation/AppDestination';
 import { LoginMethodsScreen } from '../ui/screens/auth/LoginMethodsScreen';
 import { ServerSetupScreen } from '../ui/screens/auth/ServerSetupScreen';
@@ -110,6 +111,28 @@ const SPLIT_BREAKPOINT: number = 840;
 const SIDEBAR_WIDTH: number = 320;
 
 /**
+ * How much of the window the compact layout's drawer reveals.
+ *
+ * iOS's `SidebarDrawerConfiguration.revealFraction`; the wide layout's column
+ * is the fixed `SIDEBAR_WIDTH` above instead.
+ */
+const DRAWER_REVEAL: number = 0.75;
+
+/**
+ * How far in from the leading edge a drag may start to open the closed drawer.
+ *
+ * iOS's `SidebarDrawerConfiguration.edgeActivationWidth`: a pan that begins on
+ * the edge opens the sidebar, one that begins on the card closes it.
+ */
+const DRAWER_EDGE_WIDTH: number = 44;
+
+/** iOS's `sidebarClosedScale`: the sidebar grows to its full size as it opens. */
+const DRAWER_CLOSED_SCALE: number = 0.95;
+
+/** iOS's card corner radius while the drawer is open (`ConcentricRectangle`). */
+const DRAWER_CARD_RADIUS: number = 10;
+
+/**
  * Composition root.
  *
  * Port of the destination switching in
@@ -135,6 +158,13 @@ export struct AgentsAnywhereApp {
   @State private sidebarViewMode: string = 'project';
   /** True while the settings drawer covers the shell. */
   @State private profileOpen: boolean = false;
+  /**
+   * The signed-in account, for the sidebar's bottom avatar.
+   *
+   * iOS reads `appState.me`; this port has no such store, so the one request
+   * the settings drawer makes anyway is issued at sign-in as well.
+   */
+  @State private account: ParsedAuthMe | null = null;
   /** Window width in vp, published by the root and read by the split test. */
   @State @Watch('onWindowWidthChanged') private windowWidth: number = 0;
   /**
@@ -147,6 +177,18 @@ export struct AgentsAnywhereApp {
   @State private sidebarOpen: boolean = false;
   /** The layout `sidebarOpen` was last seeded for; see `onWindowWidthChanged`. */
   private lastSplitLayout: boolean = false;
+  /**
+   * How far the compact drawer has been dragged, 0 closed … 1 open.
+   *
+   * iOS's `SidebarDrawerInteractive.progress`: the card follows the finger while
+   * a pan is in flight and springs to 0 or 1 when it ends, so this is separate
+   * from the committed `sidebarOpen`.
+   */
+  @State private drawerProgress: number = 0;
+  /** Whether the pan in flight is driving the drawer at all. */
+  private drawerDragActive: boolean = false;
+  /** The progress the pan started from, added to its translation. */
+  private drawerDragStart: number = 0;
   /** The update check's state; drives the prompt and the drawer's version card. */
   @State private appUpdate: AppUpdateState = AppUpdateState.empty();
   @State private pendingQr: MobileLoginQrPayload | null = null;
@@ -262,6 +304,10 @@ export struct AgentsAnywhereApp {
   @StorageProp('backRequest') @Watch('onBackRequested') private backRequest: number = 0;
   /** Where the pairing wizard returns to; Android tracks the same value. */
   private deviceSetupReturn: AppDestination = AppDestination.Devices;
+  /** Device the standalone terminal opens on, when a page chose one. */
+  @State private terminalDeviceId: string = '';
+  /** Where the terminal returns to; its entry point is the device page now. */
+  private terminalReturn: AppDestination = AppDestination.Sessions;
 
   private services: AppServices | null = null;
   /** Per-account project sidebar state; rebuilt whenever the account changes. */
@@ -319,6 +365,7 @@ export struct AgentsAnywhereApp {
     if (services === null) {
       return;
     }
+    void this.loadShellAccount();
     void this.loadSessions();
     services.dashboardRealtime.start(
       (snapshot: DashboardSnapshot) => this.applyDashboardSnapshot(snapshot),
@@ -1169,6 +1216,21 @@ export struct AgentsAnywhereApp {
   }
 
   // ------------------------------------------------------------ device detail
+
+  /** iOS's device page opens the device's workspace files from here. */
+  private openDeviceFiles(): void {
+    this.filesSession = null;
+    this.filesDeviceId = this.selectedDeviceId;
+    this.filesReturn = AppDestination.DeviceDetail;
+    this.navigate(AppDestination.Files);
+  }
+
+  /** The same page opens the standalone terminal, which only Android has. */
+  private openDeviceTerminal(): void {
+    this.terminalDeviceId = this.selectedDeviceId;
+    this.terminalReturn = AppDestination.DeviceDetail;
+    this.navigate(AppDestination.Terminal);
+  }
 
   /** Opens a device: show the page, then load its runtime inventory. */
   private openDevice(device: AgentDevice): void {
@@ -2031,6 +2093,20 @@ export struct AgentsAnywhereApp {
     return resolveAAColors(this.appearanceMode, this.systemDark);
   }
 
+  /**
+   * The account behind the sidebar's avatar.
+   *
+   * A failure is not worth a message: the control falls back to the label's
+   * first letter, which is what iOS shows without a picture too.
+   */
+  private async loadShellAccount(): Promise<void> {
+    try {
+      this.account = await this.loadAccount();
+    } catch (error) {
+      AALog.debug(`Sidebar account load failed: ${error instanceof Error ? error.message : 'unknown'}`);
+    }
+  }
+
   /** The signed-in account, for the drawer's identity card. */
   private async loadAccount(): Promise<ParsedAuthMe> {
     const services: AppServices = this.requireServices('Sign in again to load the account.');
@@ -2133,10 +2209,15 @@ export struct AgentsAnywhereApp {
       this.shareItemIds = null;
       this.shareBusy = false;
     }
+    if (!this.isSplitLayout()) {
+      // iOS's `selectDestination`: picking content closes the drawer, while a
+      // regular-width split keeps its sidebar.
+      this.settleDrawer(false);
+    }
     this.destination = destination;
     // The ability reads this to decide whether the system back gesture belongs
     // to the app or to the platform.
-    AppStorage.setOrCreate('canNavigateBack', canNavigateBackFrom(destination));
+    this.publishBackGesture();
   }
 
   /**
@@ -2147,6 +2228,12 @@ export struct AgentsAnywhereApp {
    * untouched and returning `false` from the ability.
    */
   onBackRequested(): void {
+    if (this.drawerVisible()) {
+      // Android closes an open drawer with back before anything else; the drawer
+      // is the compact layout's session list, so this is its dismissal.
+      this.settleDrawer(false);
+      return;
+    }
     if (this.destination === AppDestination.ServerSetup
       || this.destination === AppDestination.QrLogin) {
       this.navigate(AppDestination.LoginMethods);
@@ -2192,10 +2279,39 @@ export struct AgentsAnywhereApp {
     if (!this.isSplitLayout() || !this.sidebarOpen) {
       return false;
     }
+    return this.hasSidebarContent();
+  }
+
+  /** Whether this destination has a session list to show at all. */
+  private hasSidebarContent(): boolean {
     return this.destination !== AppDestination.LoginMethods
       && this.destination !== AppDestination.ServerSetup
       && this.destination !== AppDestination.QrLogin
       && this.destination !== AppDestination.QrWaiting;
+  }
+
+  /**
+   * Whether the compact layout's drawer exists here.
+   *
+   * iOS's drawer presentation is the compact counterpart of the split's sidebar;
+   * the settings page replaces the shell, so it takes the drawer with it.
+   */
+  private compactDrawerAvailable(): boolean {
+    return !this.isSplitLayout() && !this.profileOpen && this.hasSidebarContent();
+  }
+
+  /**
+   * Whether the drawer is committed open, which is what `back` dismisses.
+   *
+   * iOS's `ChatSidebarState.obscuresDetail`.
+   */
+  drawerVisible(): boolean {
+    return this.compactDrawerAvailable() && this.sidebarOpen;
+  }
+
+  /** Whether the drawer's layer has to be drawn: open, or on its way there. */
+  private drawerLayerVisible(): boolean {
+    return this.compactDrawerAvailable() && (this.sidebarOpen || this.drawerProgress > 0.001);
   }
 
   /**
@@ -2212,15 +2328,137 @@ export struct AgentsAnywhereApp {
     }
     this.lastSplitLayout = split;
     this.sidebarOpen = split;
+    // The drawer belongs to one layout only, so a rotation never leaves it half open.
+    this.drawerProgress = 0;
   }
 
-  /** iOS's `toggleSidebar`: the detail pages' leading button flips this. */
+  /** iOS's `toggleSidebar`: the leading button of the detail pages flips this. */
   private toggleSidebar(): void {
-    this.sidebarOpen = !this.sidebarOpen;
+    const open: boolean = !this.sidebarOpen;
+    this.sidebarOpen = open;
+    if (!this.isSplitLayout()) {
+      this.animateDrawerProgress(open ? 1 : 0);
+    }
+    this.publishBackGesture();
+  }
+
+  /** iOS's `settle`: commit the drawer and spring the progress to match. */
+  private settleDrawer(open: boolean): void {
+    this.sidebarOpen = open;
+    this.animateDrawerProgress(open ? 1 : 0);
+    this.publishBackGesture();
   }
 
   /**
-   * The session list, shared by the sidebar and the compact layout's page.
+   * iOS's `.interpolatingSpring(response: 0.34, dampingRatio: 0.9)` — the spring
+   * every drawer settle runs on, whether it came from a button, a tap or a pan.
+   */
+  private animateDrawerProgress(target: number): void {
+    this.getUIContext().animateTo({
+      curve: curves.springMotion(0.34, 0.9),
+    }, () => {
+      this.drawerProgress = target;
+    });
+  }
+
+  /**
+   * Starts the pan that drives the drawer.
+   *
+   * The handlers below are wired to the two nodes that carry the gesture — the
+   * leading edge strip and the card's veil — and both use
+   * `PanDirection.Horizontal`, so a vertical drag is never recognised and lists
+   * and terminals keep scrolling.
+   */
+  private beginDrawerDrag(): void {
+    // The commit waits for the release: the layer appears as soon as progress
+    // moves, and the edge strip that owns the gesture has to stay mounted for as
+    // long as the finger is down.
+    this.drawerDragActive = true;
+    this.drawerDragStart = this.drawerProgress;
+  }
+
+  private updateDrawerDrag(event: GestureEvent): void {
+    if (!this.drawerDragActive) {
+      return;
+    }
+    const width: number = this.drawerWidth();
+    if (width <= 0) {
+      return;
+    }
+    const next: number = this.drawerDragStart + event.offsetX / width;
+    this.drawerProgress = next < 0 ? 0 : (next > 1 ? 1 : next);
+  }
+
+  private endDrawerDrag(event: GestureEvent): void {
+    if (!this.drawerDragActive) {
+      return;
+    }
+    this.drawerDragActive = false;
+    const width: number = this.drawerWidth();
+    // iOS projects the fling: translation plus a fifth of the release velocity.
+    const projected: number = this.drawerProgress
+      + (width > 0 ? (event.velocityX * 0.2) / width : 0);
+    this.settleDrawer(projected >= 0.5);
+  }
+
+  /**
+   * Publishes whether the system back gesture belongs to the app.
+   *
+   * An open drawer counts as a step back — Android closes it with back — so the
+   * gesture stays with the app even on a root destination while it is showing.
+   */
+  private publishBackGesture(): void {
+    AppStorage.setOrCreate('canNavigateBack',
+      this.drawerVisible() || canNavigateBackFrom(this.destination));
+  }
+
+  /**
+   * The empty selection's content, and the new-session destination's.
+   *
+   * iOS resolves the chat shell's `ChatShellSelection.newSession` to
+   * `NewSessionView` in the detail column, which is what both of those states
+   * are here; its leading glyph is the sidebar toggle in either layout.
+   */
+  @Builder
+  NewSessionContent() {
+    NewSessionScreen({
+      colors: this.colors(),
+      state: this.sessionsState,
+      devicesSignature: this.devicesSignature(),
+      serverUrl: this.services?.serverUrl() ?? '',
+      userId: this.accountUserId(),
+      devicesRefreshing: this.sessionsState.isLoading,
+      // Android opens the same screen in project-only mode for NewProject.
+      projectOnly: this.destination === AppDestination.NewProject,
+      sidebarViewMode: this.sidebarViewMode,
+      onBack: () => this.navigate(AppDestination.Sessions),
+      // iOS's `NewSessionView` carries the sidebar toggle, in both layouts.
+      sidebarToggle: true,
+      onToggleSidebar: () => this.toggleSidebar(),
+      onOpenDevices: () => this.navigate(AppDestination.Devices),
+      onRefreshDevices: () => this.loadSessions(),
+      onCreateProject: (name: string, connectorId: string, path: string) =>
+        this.createProject(name, connectorId, path),
+      onLoadProjects: () => this.reloadProjects(),
+      onListRuntimes: (deviceId: string) => this.listNewSessionRuntimes(deviceId),
+      onListDirectory: (deviceId: string, root: string, path: string) =>
+        this.listNewSessionDirectory(deviceId, root, path),
+      onLoadRuntimeCapabilities: (deviceId: string, runtimeId: string) =>
+        this.loadNewSessionCapabilities(deviceId, runtimeId),
+      onLoadModelCatalog: (deviceId: string, runtimeId: string) =>
+        this.loadNewSessionModelCatalog(deviceId, runtimeId),
+      onLoadPermissionCatalog: (deviceId: string, runtimeId: string) =>
+        this.loadNewSessionPermissionCatalog(deviceId, runtimeId),
+      onPrepareSession: (draft: NewSessionDraft) => {
+        // Android hands the draft to the conversation screen, which creates
+        // the Server session on the first send.
+        this.openPreparedDraft(draft);
+      },
+    })
+  }
+
+  /**
+   * The session list, shared by the wide layout's column and the compact drawer.
    *
    * Both columns draw the same component with the same callbacks, so a selection
    * behaves identically at either width.
@@ -2253,8 +2491,7 @@ export struct AgentsAnywhereApp {
         }
       },
       sidebarViewMode: this.sidebarViewMode,
-      sidebarToggle: this.isSplitLayout(),
-      onToggleSidebar: () => this.toggleSidebar(),
+      account: this.account,
       onStateChange: (next: SessionsState) => {
         this.sessionsState = next;
       },
@@ -2262,13 +2499,9 @@ export struct AgentsAnywhereApp {
       onNewSession: () => this.navigate(AppDestination.NewSession),
       onNewProject: () => this.navigate(AppDestination.NewProject),
       onOpenDevice: (device: AgentDevice) => this.openDevice(device),
-      onOpenTerminal: () => this.navigate(AppDestination.Terminal),
-      onOpenFiles: () => {
-        // The plain Files destination browses a device, not a session.
-        this.filesSession = null;
-        this.navigate(AppDestination.Files);
-      },
       onOpenProfile: () => {
+        // The account page replaces the shell, so the drawer gets out of its way.
+        this.sidebarOpen = false;
         this.profileOpen = true;
       },
       onPairDevice: () => this.openPairingWizard(AppDestination.Sessions),
@@ -2291,454 +2524,516 @@ export struct AgentsAnywhereApp {
   }
 
   /**
-   * The split layout's empty detail.
+   * The compact layout's sidebar, behind the content card.
    *
-   * iOS's `ChatShellPlaceholderPage` is a blank system-background page until a
-   * session or a device is selected. The compact layout never shows it, because
-   * the session list is a page of its own there.
+   * iOS's `SidebarDrawerSidebar`: it sits at the leading edge at 75% of the
+   * window, grows from `sidebarClosedScale` to its full size as the drawer opens,
+   * and loses its `systemBackground` veil — which is what keeps it from looking
+   * finished while the card still covers it.
    */
   @Builder
-  EmptyDetail() {
-    Column() {
+  SidebarDrawerLayer() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column() {
+        this.SessionsList()
+      }
+      .width(this.drawerWidth())
+      .height('100%')
+      .padding({ top: this.statusBarHeight })
+      .backgroundColor(this.colors().canvas)
+
+      if (this.drawerProgress < 0.999) {
+        Column()
+          .width(this.drawerWidth())
+          .height('100%')
+          .backgroundColor(withAlpha(this.colors().canvas, 0.5 * (1 - this.drawerProgress)))
+      }
     }
-    .width('100%')
+    .width(this.drawerWidth())
     .height('100%')
-    .backgroundColor(this.colors().canvas)
+    .scale({
+      x: DRAWER_CLOSED_SCALE + (1 - DRAWER_CLOSED_SCALE) * this.drawerProgress,
+      y: DRAWER_CLOSED_SCALE + (1 - DRAWER_CLOSED_SCALE) * this.drawerProgress,
+      centerX: 0,
+      centerY: '50%',
+    })
+  }
+
+  /** iOS sizes the drawer from the window: `revealFraction` of its width. */
+  private drawerWidth(): number {
+    return Math.round(this.windowWidth * DRAWER_REVEAL);
+  }
+
+  /** How far the content card has slid to reveal the drawer. */
+  private cardOffsetX(): number {
+    return this.drawerWidth() * this.drawerProgress;
   }
 
   build() {
     Stack() {
-      Column() {
-      if (this.profileOpen) {
-        // Android slides the drawer over the current screen; this port's shell
-        // swaps the page instead, which is the same choice the session pager
-        // makes, and the drawer fades in so the change is not a hard cut.
-        ProfileSettingsDrawer({
-          colors: this.colors(),
-          userId: this.accountUserId(),
-          role: this.services?.sessionStore.readRole() ?? '',
-          serverUrl: this.services?.serverUrl() ?? '',
-          appearanceMode: this.appearanceMode,
-          languageMode: this.languageMode,
-          sidebarViewMode: this.sidebarViewMode,
-          appVersion: AppConfig.CLIENT_VERSION_NAME,
-          onAppearanceModeChange: (mode: string) => {
-            this.appearanceMode = mode;
-            this.services?.uiPreferences.setAppearanceMode(mode);
-          },
-          onLanguageModeChange: (mode: string) => {
-            this.languageMode = mode;
-            this.services?.uiPreferences.setLanguageMode(mode);
-            this.applyLanguageMode(mode);
-          },
-          onSidebarViewModeChange: (mode: string) => {
-            this.sidebarViewMode = mode;
-            this.services?.uiPreferences.setSidebarViewMode(mode);
-          },
-          onOpenArchivedSessions: () => {
-            this.profileOpen = false;
-            this.navigate(AppDestination.ArchivedSessions);
-          },
-          onSignOut: () => {
-            this.profileOpen = false;
-            this.services?.authController.signOut();
-            this.returnToLogin();
-          },
-          onClose: () => {
-            this.profileOpen = false;
-          },
-          onLoadAccount: () => this.loadAccount(),
-          onUpdateDisplayName: (displayName: string) => this.updateDisplayName(displayName),
-          onChangePassword: (password: string) => this.changePassword(password),
-          onLoadAuthConfig: () => this.loadAuthConfig(),
-          onSendEmailCode: (email: string) => this.sendEmailCode(email),
-          onBindEmail: (email: string, code: string | null) => this.bindEmail(email, code),
-          onPickAvatar: () => this.pickAvatarDataUrl(),
-          onUpdateAvatar: (dataUrl: string) => this.updateAvatar(dataUrl),
-          appUpdate: this.appUpdate,
-          onUpdateNow: () => this.showUpdatePrompt(),
-          onCheckForUpdates: () => {
-            void this.services?.appUpdates.checkForUpdate(false, false);
-          },
-        })
-          .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
-      } else {
-        // iOS's `NavigationSplitView`: on a regular-width window the session
-        // list keeps its place beside the content instead of being a page of
-        // its own, and every other destination renders in the detail column.
-        Row() {
-          if (this.showsSidebar()) {
-            this.SidebarColumn()
-          }
+      // The compact layout draws the sidebar behind this card, as iOS does; in
+      // the wide layout the same builder is the fixed column in the row below.
+      if (this.drawerLayerVisible()) {
+        this.SidebarDrawerLayer()
+      }
 
-          Column() {
-            if (this.destination === AppDestination.LoginMethods) {
-              LoginMethodsScreen({
-                colors: this.colors(),
-                onOpenQrLogin: () => this.navigate(AppDestination.QrLogin),
-                onOpenServerSetup: () => this.navigate(AppDestination.ServerSetup),
-              })
-            } else if (this.destination === AppDestination.ServerSetup) {
-              ServerSetupScreen({
-                colors: this.colors(),
-                controller: this.services?.authController ?? null,
-                onBack: () => this.navigate(AppDestination.LoginMethods),
-                onSignedIn: () => this.onSignedIn(),
-              })
-            } else if (this.destination === AppDestination.QrLogin) {
-              QrLoginScreen({
-                colors: this.colors(),
-                controller: this.services?.authController ?? null,
-                onBack: () => this.navigate(AppDestination.LoginMethods),
-                onScanned: (payload: MobileLoginQrPayload) => {
-                  this.pendingQr = payload;
-                  this.navigate(AppDestination.QrWaiting);
-                },
-              })
-            } else if (this.destination === AppDestination.QrWaiting) {
-              QrWaitingScreen({
-                colors: this.colors(),
-                controller: this.services?.authController ?? null,
-                payload: this.pendingQr,
-                onBack: () => this.navigate(AppDestination.QrLogin),
-                onSignedIn: () => this.onSignedIn(),
-              })
-            } else if (this.destination === AppDestination.Sessions) {
-              // This is the sidebar's own destination: the list is drawn there,
-              // so the detail column stays empty until something is selected.
-              if (!this.showsSidebar()) {
-                this.SessionsList()
-              } else {
-                this.EmptyDetail()
-              }
-            } else if (this.destination === AppDestination.SessionDetail) {
-              SessionDetailScreen({
-                colors: this.colors(),
-                state: this.detailState,
-                runtimeSettings: this.runtimeSettings,
-                forceLatestRequest: this.forceLatestRequest,
-                streamLatestRequest: this.streamLatestRequest,
-                initialized: this.detailState.initialized,
-                loadingOlder: this.detailState.loadingOlder,
-                session: this.detailSession(),
-                deviceOnline: this.sessionDeviceOnline(this.selectedSessionId),
-                draftMode: this.preparedDraft !== null,
-                // Android asks the draft whether its runtime accepts attachments
-                // (`preparedSession.attachmentsEnabled`); outside a draft the screen
-                // reads the loaded capability set instead.
-                draftAttachmentsEnabled: this.draftAttachmentsEnabled(),
-                composerRestoreText: this.composerRestoreText,
-                composerRestoreRequest: this.composerRestoreRequest,
-                onBack: () => {
-                  this.stopSessionRealtime();
-                  this.leavePreparedDraft();
-                  this.navigate(AppDestination.Sessions);
-                },
-                // In the split layout this page's leading glyph is iOS's
-                // `SidebarMenuIcon` instead: it folds the sidebar away rather
-                // than going back to a list that is already on screen.
-                sidebarToggle: this.isSplitLayout(),
-                onToggleSidebar: () => this.toggleSidebar(),
-                onLoadOlder: () => {
-                  void this.loadOlderDetail();
-                },
-                onSend: (content: string) => {
-                  void this.sendDetailMessage(content);
-                },
-                onInterrupt: () => {
-                  void this.interruptDetailTurn();
-                },
-                onToggleTakeover: (enabled: boolean) => {
-                  void this.toggleDetailTakeover(enabled);
-                },
-                onRetry: () => {
-                  void this.loadSessionDetail(this.selectedSessionId);
-                },
-                onOpenRuntimeSettings: () => this.loadRuntimeCatalogs(),
-                onRetryRuntimeCatalogs: () => this.loadRuntimeCatalogs(),
-                onSelectRuntime: (scope: string, selectionId: string) => {
-                  void this.selectRuntimeOption(scope, selectionId);
-                },
-                onOpenAgentFiles: () => {
-                  // Android swaps to the session's files/terminal pager page; the port
-                  // opens the same page, with the session that turns on the pager header
-                  // and the workspace-rooted browser.
-                  const session: AgentSession | null = this.findSession(this.selectedSessionId);
-                  this.filesSession = session;
-                  this.filesDeviceId = session === null ? '' : session.connectorId;
-                  this.filesReturn = AppDestination.SessionDetail;
-                  this.navigate(AppDestination.Files);
-                },
-                blockingNotices: this.services?.sessionDetailController.blockingNotices(this.detailState)
-                  ?? [],
-                detachedNotices: this.services?.sessionDetailController.detachedNotices(this.detailState)
-                  ?? [],
-                attachedNotices: this.attachedDetailNotices(),
-                noticeBusy: this.noticeBusy,
-                noticeError: this.noticeError,
-                onRespondNotice: (noticeId: string, actionId: string, input: Object | null) => {
-                  void this.respondToDetailNotice(noticeId, actionId, input);
-                },
-                attachments: this.composerAttachments,
-                composerNotice: this.composerNotice,
-                composerNoticeRequest: this.composerNoticeRequest,
-                infoNotice: this.infoNotice,
-                infoNoticeRequest: this.infoNoticeRequest,
-                onCopyReply: (text: string) => this.copyReplyText(text),
-                onShareReply: (itemIds: string[]) => this.requestShare(itemIds),
-                onDraftChange: (text: string) => this.persistComposerDraft(text),
-                onLoadCommands: () => this.loadSessionCommands(),
-                onExecuteCommand: (commandId: string, args: string[], raw: string) =>
-                  this.executeSessionCommand(commandId, args, raw),
-                sessionImages: this.conversationImages(),
-                previewAttachment: this.previewAttachment,
-                previewPending: this.previewPending,
-                previewToast: this.previewToast,
-                previewToastRequest: this.previewToastRequest,
-                statusBarHeight: this.statusBarHeight,
-                loadAttachment: (attachment: TimelineAttachment) => this.loadAttachmentBytes(attachment),
-                onPreviewMessageAttachment: (attachment: TimelineAttachment) => {
-                  this.previewAttachment = attachment;
-                },
-                onClosePreview: () => {
-                  this.previewAttachment = null;
-                  this.previewPending = null;
-                },
-                onDownloadAttachment: (attachment: TimelineAttachment) => {
-                  void this.saveAttachment(attachment);
-                },
-                onOpenAttachment: (attachment: TimelineAttachment) => {
-                  this.openMessageAttachment(attachment);
-                },
-                onPickPhoto: () => this.pickComposerPhotos(),
-                onOpenCamera: () => this.openComposerCamera(),
-                onPickFile: () => this.pickComposerFiles(),
-                onRemoveAttachment: (attachment: PendingAttachment) => {
-                  this.removeComposerAttachment(attachment);
-                },
-                onRetryAttachment: (attachment: PendingAttachment) => {
-                  this.retryComposerAttachment(attachment);
-                },
-                onPreviewComposerAttachment: (attachment: PendingAttachment) => {
-                  // A local image opens in its own surface: it has no file id yet, so
-                  // the conversation pager cannot hold it.
-                  if (isImageAttachment(attachment.mediaType)) {
-                    this.previewPending = attachment;
-                  }
-                },
-              })
-            } else if (this.destination === AppDestination.Devices) {
-              DevicesScreen({
-                colors: this.colors(),
-                state: this.sessionsState,
-                isRefreshing: this.sessionsState.isLoading,
-                agentPreviews: this.deviceAgentPreviews,
-                onRefresh: () => this.loadSessions(),
-                onOpenDevice: (device: AgentDevice) => {
-                  this.openDevice(device);
-                },
-                onBack: () => this.navigate(AppDestination.Sessions),
-                onAddDevice: () => {
-                  this.openPairingWizard(AppDestination.Devices);
-                },
-              })
-            } else if (this.destination === AppDestination.DeviceDetail) {
-              DeviceDetailScreen({
-                colors: this.colors(),
-                state: this.sessionsState,
-                deviceId: this.selectedDeviceId,
-                runtimes: this.deviceRuntimes,
-                bulkBusy: this.deviceBulkBusy,
-                deviceNotice: this.deviceNotice,
-                deviceNoticeRequest: this.deviceNoticeRequest,
-                onBack: () => this.navigate(AppDestination.Devices),
-                // A device row in the sidebar opens this page, so in the split
-                // layout its leading glyph is the sidebar toggle (iOS's
-                // `DeviceManagementView(onMenu:)`).
-                sidebarToggle: this.isSplitLayout(),
-                onToggleSidebar: () => this.toggleSidebar(),
-                onOpenSession: (session: AgentSession) => {
-                  this.openSession(session);
-                },
-                onRetryRuntimes: () => {
-                  void this.loadDeviceRuntimes(this.selectedDeviceId);
-                },
-                onSetRuntimeActive: (runtime: RemoteDeviceRuntime, active: boolean) => {
-                  void this.setDeviceRuntimeActive(runtime, active);
-                },
-                onDeleteRuntimeConfig: (runtime: RemoteDeviceRuntime) => {
-                  this.deviceActionError = '';
-                  this.deviceConfirmAction = DeviceConfirmAction.deleteRuntimeConfig(runtime);
-                },
-                onBulkSetArchived: (sessionIds: string[], archived: boolean) => {
-                  void this.bulkSetDeviceSessionsArchived(sessionIds, archived);
-                },
-                onArchiveAll: (archived: boolean, scope: string, scopeLabel: string) => {
-                  this.deviceActionError = '';
-                  this.deviceConfirmAction = DeviceConfirmAction.archiveAllSessions(
-                    this.deviceName(), archived, scope, scopeLabel,
-                  );
-                },
-                actionsOpen: this.deviceActionsOpen,
-                actionBusy: this.deviceActionBusy,
-                actionError: this.deviceActionError,
-                onOpenActions: () => {
-                  this.deviceActionError = '';
-                  this.deviceActionsOpen = true;
-                },
-                onCloseActions: () => {
-                  this.deviceActionsOpen = false;
-                  this.deviceActionError = '';
-                },
-                onRenameDevice: (name: string) => {
-                  void this.renameOpenDevice(name);
-                },
-                onDeleteDevice: () => {
-                  this.deviceActionsOpen = false;
-                  this.deviceActionError = '';
-                  this.deviceConfirmAction = DeviceConfirmAction.deleteDevice();
-                },
-                onPrepareDeviceSetup: () => {
-                  // Android's Revoke row rotates the token and shows the replacement;
-                  // the wizard's token step is that sheet.
-                  void this.revokeDeviceForSetup(this.selectedDeviceId);
-                },
-                confirmAction: this.deviceConfirmAction,
-                onDismissConfirm: () => {
-                  if (!this.deviceActionBusy) {
-                    this.deviceConfirmAction = undefined;
-                    this.deviceActionError = '';
-                  }
-                },
-                onConfirmAction: () => {
-                  void this.confirmDeviceAction();
-                },
-              })
-            } else if (this.destination === AppDestination.DeviceSetup) {
-              AddDeviceScreen({
-                colors: this.colors(),
-                step: this.pairingStep,
-                credential: this.pairingCredential,
-                createdThisFlow: this.pairingCreatedThisFlow,
-                busy: this.pairingBusy,
-                waitingOnline: this.pairingWaitingOnline,
-                deviceOnline: this.pairingCredential === undefined
-                  ? false
-                  : pairingDeviceOnline(
-                    this.pairingMonitor, this.sessionsState.devices, this.pairingCredential.device.id,
-                  ),
-                exitConfirmation: this.pairingExitConfirm,
-                pairingNotice: this.pairingNotice,
-                pairingNoticeRequest: this.pairingNoticeRequest,
-                onBack: () => this.goBackPairingStep(),
-                onLeave: () => this.leavePairing(),
-                onStep: (step: DevicePairingStep) => this.showPairingStep(step),
-                onCreateCredential: (name: string) => {
-                  void this.createPairingCredential(name);
-                },
-                onClaimCode: (code: string) => {
-                  void this.claimPairingCode(code);
-                },
-                onCopyError: () => this.showPairingError($r('app.string.device_pairing_errors_copy_failed')),
-                onOpenDownload: () => {
-                  void this.openDesktopDownload();
-                },
-                onDismissExit: () => {
-                  this.pairingExitConfirm = false;
-                },
-                onConfirmExit: () => {
-                  this.pairingExitConfirm = false;
-                  this.navigate(this.deviceSetupReturn);
-                },
-              })
-            } else if (this.destination === AppDestination.Files) {
-              FilesScreen({
-                colors: this.colors(),
-                state: this.sessionsState,
-                controller: this.services?.filesController ?? null,
-                initialDeviceId: this.filesDeviceId,
-                session: this.filesSession,
-                pool: this.services?.terminalPool ?? null,
-                onBack: () => this.navigate(this.filesReturn),
-                onPairDevice: () => this.openPairingWizard(AppDestination.Files),
-              })
-            } else if (this.destination === AppDestination.Terminal) {
-              TerminalScreen({
-                colors: this.colors(),
-                state: this.sessionsState,
-                pool: this.services?.terminalPool ?? null,
-                onBack: () => this.navigate(AppDestination.Sessions),
-                onPairDevice: () => this.openPairingWizard(AppDestination.Terminal),
-              })
-            } else if (this.destination === AppDestination.NewSession
-              || this.destination === AppDestination.NewProject) {
-              NewSessionScreen({
-                colors: this.colors(),
-                state: this.sessionsState,
-                devicesSignature: this.devicesSignature(),
-                serverUrl: this.services?.serverUrl() ?? '',
-                userId: this.accountUserId(),
-                devicesRefreshing: this.sessionsState.isLoading,
-                // Android opens the same screen in project-only mode for NewProject.
-                projectOnly: this.destination === AppDestination.NewProject,
-                sidebarViewMode: this.sidebarViewMode,
-                onBack: () => this.navigate(AppDestination.Sessions),
-                // iOS's `NewSessionView` is the split layout's empty-selection
-                // content and carries the sidebar toggle for the same reason.
-                sidebarToggle: this.isSplitLayout(),
-                onToggleSidebar: () => this.toggleSidebar(),
-                onOpenDevices: () => this.navigate(AppDestination.Devices),
-                onRefreshDevices: () => this.loadSessions(),
-                onCreateProject: (name: string, connectorId: string, path: string) =>
-                  this.createProject(name, connectorId, path),
-                onLoadProjects: () => this.reloadProjects(),
-                onListRuntimes: (deviceId: string) => this.listNewSessionRuntimes(deviceId),
-                onListDirectory: (deviceId: string, root: string, path: string) =>
-                  this.listNewSessionDirectory(deviceId, root, path),
-                onLoadRuntimeCapabilities: (deviceId: string, runtimeId: string) =>
-                  this.loadNewSessionCapabilities(deviceId, runtimeId),
-                onLoadModelCatalog: (deviceId: string, runtimeId: string) =>
-                  this.loadNewSessionModelCatalog(deviceId, runtimeId),
-                onLoadPermissionCatalog: (deviceId: string, runtimeId: string) =>
-                  this.loadNewSessionPermissionCatalog(deviceId, runtimeId),
-                onPrepareSession: (draft: NewSessionDraft) => {
-                  // Android hands the draft to the conversation screen, which creates
-                  // the Server session on the first send.
-                  this.openPreparedDraft(draft);
-                },
-              })
-            } else if (this.destination === AppDestination.ArchivedSessions) {
-              ArchivedSessionsScreen({
-                colors: this.colors(),
-                state: this.sessionsState,
-                controller: this.services?.sessionsController ?? null,
-                onStateChange: (next: SessionsState) => {
-                  this.sessionsState = next;
-                },
-                onBack: () => this.navigate(AppDestination.Sessions),
-                onOpenSession: (session: AgentSession) => {
-                  AALog.debug(`Open archived session ${session.id}`);
-                },
-              })
-            } else {
-              PhasePlaceholder({ colors: this.colors(), destination: this.destination })
+      // iOS's `SidebarDrawerMainCard`: the content slides right by the revealed
+      // width, rounds its leading corners, veils itself white, takes a hairline
+      // and casts a shadow while the drawer is open. The veil is also the tap
+      // target that closes the drawer and the surface that drags it shut.
+      Stack() {
+        Column() {
+        if (this.profileOpen) {
+          // Android slides the drawer over the current screen; this port's shell
+          // swaps the page instead, which is the same choice the session pager
+          // makes, and the drawer fades in so the change is not a hard cut.
+          ProfileSettingsDrawer({
+            colors: this.colors(),
+            userId: this.accountUserId(),
+            role: this.services?.sessionStore.readRole() ?? '',
+            serverUrl: this.services?.serverUrl() ?? '',
+            appearanceMode: this.appearanceMode,
+            languageMode: this.languageMode,
+            sidebarViewMode: this.sidebarViewMode,
+            appVersion: AppConfig.CLIENT_VERSION_NAME,
+            onAppearanceModeChange: (mode: string) => {
+              this.appearanceMode = mode;
+              this.services?.uiPreferences.setAppearanceMode(mode);
+            },
+            onLanguageModeChange: (mode: string) => {
+              this.languageMode = mode;
+              this.services?.uiPreferences.setLanguageMode(mode);
+              this.applyLanguageMode(mode);
+            },
+            onSidebarViewModeChange: (mode: string) => {
+              this.sidebarViewMode = mode;
+              this.services?.uiPreferences.setSidebarViewMode(mode);
+            },
+            onOpenArchivedSessions: () => {
+              this.profileOpen = false;
+              this.navigate(AppDestination.ArchivedSessions);
+            },
+            onSignOut: () => {
+              this.profileOpen = false;
+              this.services?.authController.signOut();
+              this.returnToLogin();
+            },
+            onClose: () => {
+              this.profileOpen = false;
+              // The drawer may have renamed the account or changed its picture.
+              void this.loadShellAccount();
+            },
+            onLoadAccount: () => this.loadAccount(),
+            onUpdateDisplayName: (displayName: string) => this.updateDisplayName(displayName),
+            onChangePassword: (password: string) => this.changePassword(password),
+            onLoadAuthConfig: () => this.loadAuthConfig(),
+            onSendEmailCode: (email: string) => this.sendEmailCode(email),
+            onBindEmail: (email: string, code: string | null) => this.bindEmail(email, code),
+            onPickAvatar: () => this.pickAvatarDataUrl(),
+            onUpdateAvatar: (dataUrl: string) => this.updateAvatar(dataUrl),
+            appUpdate: this.appUpdate,
+            onUpdateNow: () => this.showUpdatePrompt(),
+            onCheckForUpdates: () => {
+              void this.services?.appUpdates.checkForUpdate(false, false);
+            },
+          })
+            .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
+        } else {
+          // iOS's `NavigationSplitView`: on a regular-width window the session
+          // list keeps its place beside the content instead of being a page of
+          // its own, and every other destination renders in the detail column.
+          Row() {
+            if (this.showsSidebar()) {
+              this.SidebarColumn()
             }
+
+            Column() {
+              if (this.destination === AppDestination.LoginMethods) {
+                LoginMethodsScreen({
+                  colors: this.colors(),
+                  onOpenQrLogin: () => this.navigate(AppDestination.QrLogin),
+                  onOpenServerSetup: () => this.navigate(AppDestination.ServerSetup),
+                })
+              } else if (this.destination === AppDestination.ServerSetup) {
+                ServerSetupScreen({
+                  colors: this.colors(),
+                  controller: this.services?.authController ?? null,
+                  onBack: () => this.navigate(AppDestination.LoginMethods),
+                  onSignedIn: () => this.onSignedIn(),
+                })
+              } else if (this.destination === AppDestination.QrLogin) {
+                QrLoginScreen({
+                  colors: this.colors(),
+                  controller: this.services?.authController ?? null,
+                  onBack: () => this.navigate(AppDestination.LoginMethods),
+                  onScanned: (payload: MobileLoginQrPayload) => {
+                    this.pendingQr = payload;
+                    this.navigate(AppDestination.QrWaiting);
+                  },
+                })
+              } else if (this.destination === AppDestination.QrWaiting) {
+                QrWaitingScreen({
+                  colors: this.colors(),
+                  controller: this.services?.authController ?? null,
+                  payload: this.pendingQr,
+                  onBack: () => this.navigate(AppDestination.QrLogin),
+                  onSignedIn: () => this.onSignedIn(),
+                })
+              } else if (this.destination === AppDestination.Sessions) {
+                // Nothing selected: iOS shows the new-session page here, in both
+                // layouts, and leaves the session list to the sidebar.
+                this.NewSessionContent()
+              } else if (this.destination === AppDestination.SessionDetail) {
+                SessionDetailScreen({
+                  colors: this.colors(),
+                  state: this.detailState,
+                  runtimeSettings: this.runtimeSettings,
+                  forceLatestRequest: this.forceLatestRequest,
+                  streamLatestRequest: this.streamLatestRequest,
+                  initialized: this.detailState.initialized,
+                  loadingOlder: this.detailState.loadingOlder,
+                  session: this.detailSession(),
+                  deviceOnline: this.sessionDeviceOnline(this.selectedSessionId),
+                  draftMode: this.preparedDraft !== null,
+                  // Android asks the draft whether its runtime accepts attachments
+                  // (`preparedSession.attachmentsEnabled`); outside a draft the screen
+                  // reads the loaded capability set instead.
+                  draftAttachmentsEnabled: this.draftAttachmentsEnabled(),
+                  composerRestoreText: this.composerRestoreText,
+                  composerRestoreRequest: this.composerRestoreRequest,
+                  onBack: () => {
+                    this.stopSessionRealtime();
+                    this.leavePreparedDraft();
+                    this.navigate(AppDestination.Sessions);
+                  },
+                  // iOS's `SidebarMenuIcon`: the conversation's leading glyph opens
+                  // the session list — the drawer on a phone, the column when split.
+                  sidebarToggle: true,
+                  onToggleSidebar: () => this.toggleSidebar(),
+                  onLoadOlder: () => {
+                    void this.loadOlderDetail();
+                  },
+                  onSend: (content: string) => {
+                    void this.sendDetailMessage(content);
+                  },
+                  onInterrupt: () => {
+                    void this.interruptDetailTurn();
+                  },
+                  onToggleTakeover: (enabled: boolean) => {
+                    void this.toggleDetailTakeover(enabled);
+                  },
+                  onRetry: () => {
+                    void this.loadSessionDetail(this.selectedSessionId);
+                  },
+                  onOpenRuntimeSettings: () => this.loadRuntimeCatalogs(),
+                  onRetryRuntimeCatalogs: () => this.loadRuntimeCatalogs(),
+                  onSelectRuntime: (scope: string, selectionId: string) => {
+                    void this.selectRuntimeOption(scope, selectionId);
+                  },
+                  onOpenAgentFiles: () => {
+                    // Android swaps to the session's files/terminal pager page; the port
+                    // opens the same page, with the session that turns on the pager header
+                    // and the workspace-rooted browser.
+                    const session: AgentSession | null = this.findSession(this.selectedSessionId);
+                    this.filesSession = session;
+                    this.filesDeviceId = session === null ? '' : session.connectorId;
+                    this.filesReturn = AppDestination.SessionDetail;
+                    this.navigate(AppDestination.Files);
+                  },
+                  blockingNotices: this.services?.sessionDetailController.blockingNotices(this.detailState)
+                    ?? [],
+                  detachedNotices: this.services?.sessionDetailController.detachedNotices(this.detailState)
+                    ?? [],
+                  attachedNotices: this.attachedDetailNotices(),
+                  noticeBusy: this.noticeBusy,
+                  noticeError: this.noticeError,
+                  onRespondNotice: (noticeId: string, actionId: string, input: Object | null) => {
+                    void this.respondToDetailNotice(noticeId, actionId, input);
+                  },
+                  attachments: this.composerAttachments,
+                  composerNotice: this.composerNotice,
+                  composerNoticeRequest: this.composerNoticeRequest,
+                  infoNotice: this.infoNotice,
+                  infoNoticeRequest: this.infoNoticeRequest,
+                  onCopyReply: (text: string) => this.copyReplyText(text),
+                  onShareReply: (itemIds: string[]) => this.requestShare(itemIds),
+                  onDraftChange: (text: string) => this.persistComposerDraft(text),
+                  onLoadCommands: () => this.loadSessionCommands(),
+                  onExecuteCommand: (commandId: string, args: string[], raw: string) =>
+                    this.executeSessionCommand(commandId, args, raw),
+                  sessionImages: this.conversationImages(),
+                  previewAttachment: this.previewAttachment,
+                  previewPending: this.previewPending,
+                  previewToast: this.previewToast,
+                  previewToastRequest: this.previewToastRequest,
+                  statusBarHeight: this.statusBarHeight,
+                  loadAttachment: (attachment: TimelineAttachment) => this.loadAttachmentBytes(attachment),
+                  onPreviewMessageAttachment: (attachment: TimelineAttachment) => {
+                    this.previewAttachment = attachment;
+                  },
+                  onClosePreview: () => {
+                    this.previewAttachment = null;
+                    this.previewPending = null;
+                  },
+                  onDownloadAttachment: (attachment: TimelineAttachment) => {
+                    void this.saveAttachment(attachment);
+                  },
+                  onOpenAttachment: (attachment: TimelineAttachment) => {
+                    this.openMessageAttachment(attachment);
+                  },
+                  onPickPhoto: () => this.pickComposerPhotos(),
+                  onOpenCamera: () => this.openComposerCamera(),
+                  onPickFile: () => this.pickComposerFiles(),
+                  onRemoveAttachment: (attachment: PendingAttachment) => {
+                    this.removeComposerAttachment(attachment);
+                  },
+                  onRetryAttachment: (attachment: PendingAttachment) => {
+                    this.retryComposerAttachment(attachment);
+                  },
+                  onPreviewComposerAttachment: (attachment: PendingAttachment) => {
+                    // A local image opens in its own surface: it has no file id yet, so
+                    // the conversation pager cannot hold it.
+                    if (isImageAttachment(attachment.mediaType)) {
+                      this.previewPending = attachment;
+                    }
+                  },
+                })
+              } else if (this.destination === AppDestination.Devices) {
+                DevicesScreen({
+                  colors: this.colors(),
+                  state: this.sessionsState,
+                  isRefreshing: this.sessionsState.isLoading,
+                  agentPreviews: this.deviceAgentPreviews,
+                  onRefresh: () => this.loadSessions(),
+                  onOpenDevice: (device: AgentDevice) => {
+                    this.openDevice(device);
+                  },
+                  onBack: () => this.navigate(AppDestination.Sessions),
+                  onAddDevice: () => {
+                    this.openPairingWizard(AppDestination.Devices);
+                  },
+                })
+              } else if (this.destination === AppDestination.DeviceDetail) {
+                DeviceDetailScreen({
+                  colors: this.colors(),
+                  state: this.sessionsState,
+                  deviceId: this.selectedDeviceId,
+                  runtimes: this.deviceRuntimes,
+                  bulkBusy: this.deviceBulkBusy,
+                  deviceNotice: this.deviceNotice,
+                  deviceNoticeRequest: this.deviceNoticeRequest,
+                  // iOS reaches a device's files from the device page
+                  // (`WorkspaceFilesSheet`); the terminal is this app's own page.
+                  onOpenFiles: () => this.openDeviceFiles(),
+                  onOpenTerminal: () => this.openDeviceTerminal(),
+                  onBack: () => this.navigate(AppDestination.Devices),
+                  // A device row in the sidebar opens this page, so its leading
+                  // glyph is the sidebar toggle (iOS's `DeviceManagementView(onMenu:)`).
+                  sidebarToggle: true,
+                  onToggleSidebar: () => this.toggleSidebar(),
+                  onOpenSession: (session: AgentSession) => {
+                    this.openSession(session);
+                  },
+                  onRetryRuntimes: () => {
+                    void this.loadDeviceRuntimes(this.selectedDeviceId);
+                  },
+                  onSetRuntimeActive: (runtime: RemoteDeviceRuntime, active: boolean) => {
+                    void this.setDeviceRuntimeActive(runtime, active);
+                  },
+                  onDeleteRuntimeConfig: (runtime: RemoteDeviceRuntime) => {
+                    this.deviceActionError = '';
+                    this.deviceConfirmAction = DeviceConfirmAction.deleteRuntimeConfig(runtime);
+                  },
+                  onBulkSetArchived: (sessionIds: string[], archived: boolean) => {
+                    void this.bulkSetDeviceSessionsArchived(sessionIds, archived);
+                  },
+                  onArchiveAll: (archived: boolean, scope: string, scopeLabel: string) => {
+                    this.deviceActionError = '';
+                    this.deviceConfirmAction = DeviceConfirmAction.archiveAllSessions(
+                      this.deviceName(), archived, scope, scopeLabel,
+                    );
+                  },
+                  actionsOpen: this.deviceActionsOpen,
+                  actionBusy: this.deviceActionBusy,
+                  actionError: this.deviceActionError,
+                  onOpenActions: () => {
+                    this.deviceActionError = '';
+                    this.deviceActionsOpen = true;
+                  },
+                  onCloseActions: () => {
+                    this.deviceActionsOpen = false;
+                    this.deviceActionError = '';
+                  },
+                  onRenameDevice: (name: string) => {
+                    void this.renameOpenDevice(name);
+                  },
+                  onDeleteDevice: () => {
+                    this.deviceActionsOpen = false;
+                    this.deviceActionError = '';
+                    this.deviceConfirmAction = DeviceConfirmAction.deleteDevice();
+                  },
+                  onPrepareDeviceSetup: () => {
+                    // Android's Revoke row rotates the token and shows the replacement;
+                    // the wizard's token step is that sheet.
+                    void this.revokeDeviceForSetup(this.selectedDeviceId);
+                  },
+                  confirmAction: this.deviceConfirmAction,
+                  onDismissConfirm: () => {
+                    if (!this.deviceActionBusy) {
+                      this.deviceConfirmAction = undefined;
+                      this.deviceActionError = '';
+                    }
+                  },
+                  onConfirmAction: () => {
+                    void this.confirmDeviceAction();
+                  },
+                })
+              } else if (this.destination === AppDestination.DeviceSetup) {
+                AddDeviceScreen({
+                  colors: this.colors(),
+                  step: this.pairingStep,
+                  credential: this.pairingCredential,
+                  createdThisFlow: this.pairingCreatedThisFlow,
+                  busy: this.pairingBusy,
+                  waitingOnline: this.pairingWaitingOnline,
+                  deviceOnline: this.pairingCredential === undefined
+                    ? false
+                    : pairingDeviceOnline(
+                      this.pairingMonitor, this.sessionsState.devices, this.pairingCredential.device.id,
+                    ),
+                  exitConfirmation: this.pairingExitConfirm,
+                  pairingNotice: this.pairingNotice,
+                  pairingNoticeRequest: this.pairingNoticeRequest,
+                  onBack: () => this.goBackPairingStep(),
+                  onLeave: () => this.leavePairing(),
+                  onStep: (step: DevicePairingStep) => this.showPairingStep(step),
+                  onCreateCredential: (name: string) => {
+                    void this.createPairingCredential(name);
+                  },
+                  onClaimCode: (code: string) => {
+                    void this.claimPairingCode(code);
+                  },
+                  onCopyError: () => this.showPairingError($r('app.string.device_pairing_errors_copy_failed')),
+                  onOpenDownload: () => {
+                    void this.openDesktopDownload();
+                  },
+                  onDismissExit: () => {
+                    this.pairingExitConfirm = false;
+                  },
+                  onConfirmExit: () => {
+                    this.pairingExitConfirm = false;
+                    this.navigate(this.deviceSetupReturn);
+                  },
+                })
+              } else if (this.destination === AppDestination.Files) {
+                FilesScreen({
+                  colors: this.colors(),
+                  state: this.sessionsState,
+                  controller: this.services?.filesController ?? null,
+                  initialDeviceId: this.filesDeviceId,
+                  session: this.filesSession,
+                  pool: this.services?.terminalPool ?? null,
+                  onBack: () => this.navigate(this.filesReturn),
+                  onPairDevice: () => this.openPairingWizard(AppDestination.Files),
+                })
+              } else if (this.destination === AppDestination.Terminal) {
+                TerminalScreen({
+                  colors: this.colors(),
+                  state: this.sessionsState,
+                  pool: this.services?.terminalPool ?? null,
+                  onBack: () => this.navigate(this.terminalReturn),
+                  initialDeviceId: this.terminalDeviceId,
+                  onPairDevice: () => this.openPairingWizard(AppDestination.Terminal),
+                })
+              } else if (this.destination === AppDestination.NewSession
+                || this.destination === AppDestination.NewProject) {
+                this.NewSessionContent()
+              } else if (this.destination === AppDestination.ArchivedSessions) {
+                ArchivedSessionsScreen({
+                  colors: this.colors(),
+                  state: this.sessionsState,
+                  controller: this.services?.sessionsController ?? null,
+                  onStateChange: (next: SessionsState) => {
+                    this.sessionsState = next;
+                  },
+                  onBack: () => this.navigate(AppDestination.Sessions),
+                  onOpenSession: (session: AgentSession) => {
+                    AALog.debug(`Open archived session ${session.id}`);
+                  },
+                })
+              } else {
+                PhasePlaceholder({ colors: this.colors(), destination: this.destination })
+              }
+            }
+            .layoutWeight(1)
+            .height('100%')
           }
-          .layoutWeight(1)
+          .width('100%')
           .height('100%')
+        }
         }
         .width('100%')
         .height('100%')
-      }
+        // Android's `ScreenScaffold` applies `WindowInsets.statusBars` as padding,
+        // which shrinks the box its screens lay out in; the inset is applied once
+        // here so no screen has to know about window metrics. A spacer child would
+        // instead push a `100%`-tall screen down and clip its bottom by the inset.
+        .padding({ top: this.statusBarHeight })
+        .backgroundColor(this.colors().canvas)
+
+        if (!this.isSplitLayout() && this.drawerProgress > 0.001) {
+          Column()
+            .width('100%')
+            .height('100%')
+            .backgroundColor(withAlpha('#FFFFFF', 0.14 * this.drawerProgress))
+            .border({
+              width: 1,
+              color: withAlpha(this.colors().isDark ? '#FFFFFF' : '#000000',
+                0.2 * this.drawerProgress),
+            })
+            .onClick(() => this.settleDrawer(false))
+            .gesture(
+              PanGesture({ direction: PanDirection.Horizontal, distance: 8 })
+                .onActionStart(() => this.beginDrawerDrag())
+                .onActionUpdate((event: GestureEvent) => this.updateDrawerDrag(event))
+                .onActionEnd((event: GestureEvent) => this.endDrawerDrag(event)),
+            )
+        }
       }
       .width('100%')
       .height('100%')
-      // Android's `ScreenScaffold` applies `WindowInsets.statusBars` as padding,
-      // which shrinks the box its screens lay out in; the inset is applied once
-      // here so no screen has to know about window metrics. A spacer child would
-      // instead push a `100%`-tall screen down and clip its bottom by the inset.
-      .padding({ top: this.statusBarHeight })
-      .backgroundColor(this.colors().canvas)
+      .translate({ x: this.cardOffsetX() })
+      .borderRadius(DRAWER_CARD_RADIUS * this.drawerProgress)
+      .clip(true)
+      .shadow({
+        radius: 18 * this.drawerProgress,
+        color: withAlpha('#000000', 0.28 * this.drawerProgress),
+        offsetX: -3 * this.drawerProgress,
+        offsetY: 0,
+      })
+
+
+      // The closed drawer's activation edge: iOS reserves `edgeActivationWidth`
+      // for the pan that opens it. `Transparent` lets taps through to the page
+      // underneath — only a horizontal pan starting here is claimed.
+      if (this.compactDrawerAvailable() && !this.sidebarOpen) {
+        Row() {
+          Column()
+            .width(DRAWER_EDGE_WIDTH)
+            .height('100%')
+            .hitTestBehavior(HitTestMode.Transparent)
+            .gesture(
+              PanGesture({ direction: PanDirection.Horizontal, distance: 8 })
+                .onActionStart(() => this.beginDrawerDrag())
+                .onActionUpdate((event: GestureEvent) => this.updateDrawerDrag(event))
+                .onActionEnd((event: GestureEvent) => this.endDrawerDrag(event)),
+            )
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Start)
+        .hitTestBehavior(HitTestMode.Transparent)
+      }
 
       // The update prompt floats above whichever screen is showing, as Android's
       // dialog does; it is the only overlay that can appear on any destination.
@@ -2778,6 +3073,10 @@ export struct AgentsAnywhereApp {
     })
     .width('100%')
     .height('100%')
+    // The drawer scales to 95% while it is closed, so the shell paints the canvas
+    // behind both of them; otherwise that sliver would show the window's default.
+    .backgroundColor(this.colors().canvas)
+    .clip(true)
   }
 }
 

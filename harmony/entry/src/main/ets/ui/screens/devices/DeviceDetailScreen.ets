@@ -60,6 +60,10 @@ export struct DeviceDetailScreen {
    */
   sidebarToggle: boolean = false;
   onToggleSidebar: () => void = () => {};
+  /** The device's workspace files, which iOS opens from this page. */
+  onOpenFiles: () => void = () => {};
+  /** The standalone terminal, which only this app has. */
+  onOpenTerminal: () => void = () => {};
   onOpenSession: (session: AgentSession) => void = () => {};
   onRetryRuntimes: () => void = () => {};
   onSetRuntimeActive: (runtime: RemoteDeviceRuntime, active: boolean) => void = () => {};
@@ -198,6 +202,9 @@ export struct DeviceDetailScreen {
           } else {
             ListItem() {
               this.AgentsSection()
+            }
+            ListItem() {
+              this.WorkspaceSection()
             }
             ListItem() {
               this.SessionsSection()
@@ -600,6 +607,51 @@ export struct DeviceDetailScreen {
   }
 
   // ----------------------------------------------------------------- pieces
+
+  /**
+   * The device's files and terminal.
+   *
+   * iOS browses a device's workspaces and projects on this page and opens
+   * `WorkspaceFilesSheet` from a row; this is the same entry point, pointing at
+   * this app's files page, plus the terminal page Android reaches from home.
+   */
+  @Builder
+  WorkspaceSection() {
+    Column({ space: 8 }) {
+      this.SectionTitle($r('app.string.new_session_workspace'))
+
+      this.WorkspaceRow(AA_ICONS.FOLDER, $r('app.string.common_files'), () => this.onOpenFiles())
+      this.WorkspaceRow(AA_ICONS.TERMINAL, $r('app.string.common_terminal'),
+        () => this.onOpenTerminal())
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  /** One row of the workspace section, in this page's filled-row shape. */
+  @Builder
+  WorkspaceRow(iconCommands: string, label: ResourceStr, action: () => void) {
+    Row({ space: 10 }) {
+      AAIcon({ commands: iconCommands, iconSize: 18, color: this.colors.ink })
+
+      Text(label)
+        .fontSize(15)
+        .fontWeight(600)
+        .fontColor(this.colors.ink)
+        .maxLines(1)
+        .layoutWeight(1)
+
+      AAIcon({ commands: AA_ICONS.CHEVRON_RIGHT, iconSize: 18, color: this.colors.faint })
+    }
+    .width('100%')
+    .height(52)
+    .padding({ left: 14, right: 14 })
+    .borderRadius(8)
+    .backgroundColor(this.colors.isDark ? this.colors.subtle : '#F6F6F4')
+    .border({ width: 1, color: this.colors.border })
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => action())
+  }
 
   @Builder
   SectionTitle(title: ResourceStr) {

@@ -29,6 +29,8 @@ export struct TerminalScreen {
   colors: AAColors = AA_LIGHT_COLORS;
   state: SessionsState = SessionsState.empty();
   pool: RemoteTerminalPool | null = null;
+  /** Device to open on, when the page that opened this one already knew it. */
+  initialDeviceId: string = '';
   onBack: () => void = () => {};
   onPairDevice: () => void = () => {};
 
@@ -36,6 +38,9 @@ export struct TerminalScreen {
   @State private pickerOpen: boolean = false;
 
   aboutToAppear(): void {
+    if (this.initialDeviceId.length > 0) {
+      this.selectedDeviceId = this.initialDeviceId;
+    }
     this.ensureDevice();
   }
 

@@ -126,7 +126,9 @@ export struct AASectionHeader {
         }
       }
       .layoutWeight(1)
-      .height(44)
+      // iOS's caption is a text with 20/6 padding (~44dp); its Projects header is
+      // a 44dp button under 16dp. Both are expressed here by the same row.
+      .height(this.collapsible ? 44 : 20)
       .alignItems(VerticalAlign.Center)
       .onClick(() => {
         if (this.collapsible) {
@@ -151,7 +153,12 @@ export struct AASectionHeader {
       }
     }
     .width('100%')
-    .height(44)
+    .padding({
+      left: 10,
+      right: 10,
+      top: this.collapsible ? 16 : 20,
+      bottom: this.collapsible ? 0 : 6,
+    })
     .alignItems(VerticalAlign.Center)
   }
 

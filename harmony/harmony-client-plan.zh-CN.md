@@ -472,11 +472,45 @@ iOS 把这三个界面都做成 **sheet**，其 chrome 是 `.navigationBarTitleD
 
 **验证**：同上一节——`clean` 后全量 `assembleHap` 0 error / 0 ArkTS warning；资源脚本 621 / 175 / 154 全过（引用数因首页删掉四处空状态而减少）；逻辑用例全过；构建产物仍不入库。
 
+## 手机端抽屉 + 首页继续对齐 iOS（第 43 轮）
+
+用户贴了手机截图："目前首页样式也不对，而且没有折叠按钮"，并逐项确认：**顶部两张卡片不应该有**、**右上角搜索图标不应该有**、**底部「新建会话」与账号按钮样式不对**、**分区标题/行的字号字重间距不对**，以及手机端要**"照 iOS：会话列表改成抽屉，默认收起，详情页左上角按钮打开/收起它"**。
+
+### 手机端：抽屉（`SidebarDrawer`）
+
+- `Sessions` 这个"没有选中"的 destination 现在渲染 **`NewSessionContent()`**（iOS 的 `ChatShellSelection.newSession` → `NewSessionView`），两种布局都一样——手机上的落地页因此是新建会话页，会话列表只活在抽屉/左栏里。原来右栏的空白 `EmptyDetail()` 删掉了。
+- 新增 `drawerVisible()` / `drawerLayerVisible()` 与 `@Builder SidebarDrawerLayer()`：窄屏（< 840vp）下、内容被"卡片化"之后，侧栏在卡片**背后**，宽度 `windowWidth × 0.75`（iOS 的 `revealFraction`），关闭时缩到 0.95（`sidebarClosedScale`）并盖一层画布色纱（`systemBackground` 0.5），随进度淡出。宽屏仍然走第 41 轮的 `SidebarColumn` 固定 320vp。
+
+### 抽屉的卡片表现与手势（iOS 的 `SidebarDrawerMainCard` / `SidebarDrawerInteractive`）
+
+- **卡片**：内容整体向右平移 `drawerWidth × progress`，圆角 `10 × progress`、`clip(true)`，并叠一层 **白色 14%×progress 的纱 + 1px×progress 的描边**（`Color.primary` 20%）、外投 `-3×progress` 的 28% 阴影——就是 iOS 在抽屉打开时给内容卡的那一套。原来那层黑色压暗遮罩删掉了（`withoutAlpha` 不再需要）。根 `Stack` 补了画布底色，免得侧栏缩到 95% 时露出窗口默认底色。
+- **跟手拖拽**：`drawerProgress`（0…1）+ `getUIContext().animateTo({ curve: curves.springMotion(0.34, 0.9) })`，即 iOS 的 `.interpolatingSpring(response: 0.34, dampingRatio: 0.9)`。松手时按 iOS 的投影规则判定：`progress + 0.2 × velocityX / drawerWidth ≥ 0.5` 则开，否则关。
+- **手势挂在哪**：只挂在两个节点上，而不是整屏——① 关闭状态下左侧 44vp 的激活边（iOS 的 `edgeActivationWidth`，`HitTestMode.Transparent` 让点击照常落到下面的页面）；② 抽屉打开时卡片上那层纱（点一下即关，拖动即跟手关）。两处都用 `PanDirection.Horizontal`，竖直拖动不会被识别，所以列表与终端照常滚动。
+- 卡片上的纱同时承担"点卡片关闭"的靶子（iOS 的 `SidebarDrawerCloseRegion`）：抽屉开着时页面本身不接受点击，与 iOS 一致。
+
+**已知差异（未做）**：边缘拖拽只有在手势从左侧 44vp 内开始时才认（与 iOS 相同），但没有做 iOS 的 `SidebarDrawerPanGesture` 那套"先判方向再决定归属"的细节；卡片圆角用的是固定 10vp 而不是 `ConcentricRectangle`；设备页的"工作目录"分组是本工程自己的行样式，没有做 iOS 的工作区卡片与项目列表。
+- `sidebarOpen` 仍是 iOS `ChatSidebarState.isOpen`：分栏默认打开、抽屉默认收起，只有布局切换时才重置。`navigate()` 在窄屏会把抽屉收起（iOS `selectDestination`），宽屏不动侧栏。
+- 前导按钮（`sidebarToggle`）现在**两种布局都为真**：会话详情、新建会话/新建项目、设备详情、以及会话列表以外的一切页面左上角都是 iOS 的 `SidebarMenuIcon`（`AA_ICONS.PANEL_LEFT`），点一下开/关抽屉或收起左栏。手机上的"折叠按钮"就是它——落地页（新建会话页）左上角那一个。
+- 系统返回手势：抽屉打开时 `canNavigateBack` 由 `publishBackGesture()` 置为真，`onBackRequested()` 先收抽屉（Android 也是这个顺序）。
+- 从抽屉进账号页会先收起抽屉（`drawerVisible()` 也排除了 `profileOpen`），返回时重新拉一次账号，让底部的头像跟着改名/换图更新。
+
+### 首页：只剩 iOS 侧栏有的东西
+
+- **卡片与搜索删掉**：三张快捷入口卡片（设备/终端/文件）与右上角搜索图标全部移除，`QuickEntryCard`、`ToolbarGlyphButton`、`AAHeight` 导入随之删除（`home_search_coming_soon` 这条文案从此没有引用，但它是 Android 对照表里的字符串，保留）。顶栏只剩 wordmark，按 iOS 的 18dp 缩进（列表自身 14dp + 顶栏 4dp）。
+- **终端/文件的新入口**：iOS 没有终端页、也没有顶层的文件入口（它从设备页开 `WorkspaceFilesSheet`），所以这两项移到**设备详情页**新增的"工作目录"分组（标题复用 `new_session_workspace`），两行分别是「文件」与「终端」。新增 `TerminalScreen.initialDeviceId` 与 `terminalReturn`，`FilesScreen` 复用已有的 `filesDeviceId`/`filesReturn`，两页返回都回到设备页。
+- **底部控件按 iOS**：`NewSessionCapsule()` 换成**按内容宽度**的 prominent 胶囊（iOS 在侧栏传 `maxWidth: nil`；共享的 `AAIosPrimaryButton` 是撑满的，所以这里是它自己的构建器，注释里写明了原因）；账号按钮改成 **50dp 玻璃圆 + 38dp 头像**，复用已有的 `ProfileAvatar`（有图显示图，没有就用名字首字母，与 iOS `AccountAvatarView` 一致）。外壳新增 `@State account`，登录后拉一次 `/auth/me`（抽屉本来也要拉），失败就留在首字母。
+- **分区标题的度量**：`AASectionHeader` 现在分两种形态——`collapsible: false`（设备、置顶、未分组会话）是 iOS 的 `ChatSidebarSectionLabel`：15sp/600 次要色、左右 10dp、上 20dp 下 6dp、无箭头无热区；`collapsible: true`（项目）保留 44dp 可点行，改为 iOS 的左右 10dp + 上 16dp。**「置顶」不再是可折叠段**（iOS 用普通标题，且只在有置顶内容时才画），`pinnedSectionExpanded` 状态删除。
+
+**已知差异（未做）**：抽屉没有 iOS 的跟手拖拽/边缘滑出与弹簧动画（只有遮罩点击、返回手势、按钮三种开关方式），也没有 iOS 那层白色 14% 卡片纱与 1px 描边（用全屏压暗的遮罩代替）。设备页的"工作目录"分组是本工程自己的行样式，没有做 iOS 的工作区卡片与项目列表。
+
+**验证**：`clean` 后全量 `assembleHap` 0 error / 0 ArkTS warning；资源脚本 620 / 175 / 154 全过；逻辑用例（`%TEMP%\aa-tok` 15 个 `check-*.mjs`）全过；`git status -- harmony` 无构建产物。
+
 ## 待确认问题
 
 - **签名配置需要用户决策**：本机 `harmony/build-profile.json5` 现在带有 DevEco Studio 自动生成的 `signingConfigs`（`material` 指向 `C:\Users\Administrator\.ohos\config\...`，并含 `keyPassword`/`storePassword` 字段）。这既是好事（能产出可安装的 `entry-default-signed.hap`），也是隐患：绝对路径换机即失效、口令字段不应入库。提交前建议二选一：删掉 `signingConfigs` 与 `"signingConfig": "default"` 回到"未签名但到处能构建"，或改成从环境变量/本地未入库的 profile 读取。`harmony/README.md` 的签名一节已如实说明。
 - 是否需要发布签名与上架流程（当前产物含一个本机调试签名）。
 - 应用内更新在鸿蒙上是否改为引导至应用市场，或只做版本提示（当前按差异表实现为"打开下载页"）。
 - 平板 / 2in1 的多列布局已按 iOS 的 `NavigationSplitView` 实现（见第 41 节），断点 840vp、左栏 320vp、侧栏折叠（第 42 节）是否需要调整，仍待实机确认。
-- 首页只剩「终端」「文件」两张卡片（「设备」已并入侧栏的设备分组）。是否也把它们移走、改成设备详情页里的"工作区 / 文件"入口（iOS 的做法）？
-- 分栏下的前导按钮已按 iOS 分工：会话详情、新建会话、设备详情、会话列表是"收起侧栏"；文件 / 终端 / 归档 / 配对向导仍是返回或关闭（iOS 里它们是 sheet，设备列表 iOS 没有）。若希望这几页也换成收起侧栏，需要先确认返回路径。
+- 首页现在只有 iOS 侧栏的内容（设备分组 / 配对 / 置顶 / 项目 / 未分组），卡片与搜索已删；「终端」「文件」移到了设备详情页的"工作目录"分组。是否接受这个入口位置，还是希望它们以行的形式回到侧栏？
+- 手机端抽屉已按 iOS 补上跟手拖拽、左侧边缘滑出、弹簧收放，以及卡片的白色纱 + 1px 描边；未做的只有 `ConcentricRectangle` 的圆角计算与卡片纱上的高光。实机手感（拖动跟手度、边缘触发宽度 44vp）待确认。
+- 分栏下的前导按钮已按 iOS 分工：会话详情、新建会话、设备详情、会话列表是"收起侧栏"；文件 / 终端 / 归档 / 配对向导仍是返回或关闭（iOS 里它们是 sheet，设备列表 iOS 没有）。若希望这几页也换成收起侧栏，需要先确认返回路径。**第 43 轮后**：会话详情、新建会话、设备详情在两种布局下都是"开/关会话列表"，只在手机上是抽屉、宽屏上是左栏。
