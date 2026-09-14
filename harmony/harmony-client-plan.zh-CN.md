@@ -505,6 +505,24 @@ iOS 把这三个界面都做成 **sheet**，其 chrome 是 `.navigationBarTitleD
 
 **验证**：`clean` 后全量 `assembleHap` 0 error / 0 ArkTS warning；资源脚本 620 / 175 / 154 全过；逻辑用例（`%TEMP%\aa-tok` 15 个 `check-*.mjs`）全过；`git status -- harmony` 无构建产物。
 
+## 侧栏位置与落地页的两处修正（第 44 轮）
+
+用户截图反馈"侧边的样式是不对的，并且首页有些问题，设备和 agent 没显示"。两处都能在截图里定位：
+
+### 1. 侧栏整体被右移了约 53vp（根 `Stack` 把它居中了）
+
+抽屉那一层是根 `Stack` 的直接子节点，而 ArkUI 的 `Stack` 默认 `alignContent: Center`：320vp 的侧栏被居中放进 427vp 的窗口，左边缘从 0 变成约 53vp，于是侧栏里的字、圆点、图标整体右移，看起来像"左侧空了一大块"。宽屏不分栏的那条路径没问题，因为 `SidebarColumn` 一直在 `Row` 里（左对齐）。
+
+修法：用一层 `Row().justifyContent(FlexAlign.Start)` 把抽屉层包起来（和左侧那条激活边同样的写法），不动根 `Stack` 的 `alignContent`——那里还有对话框等其它子节点。
+
+### 2. 落地页停在"正在检查设备"，设备与 Agent 都是灰条
+
+`Sessions`（空选择）这一支现在是新建会话页。它在**启动时**就用空的 `sessionsState` 挂载了，而页面内部把"设备/项目/工作区"三件事都从这份状态里推出来：`hasLoaded` 为假 → `NewSessionSetupReason.CheckingDevices` → 设备行与 Agent 行都画占位灰条，选中设备为空 → 项目区被 `connectorId` 过滤成空 → 显示"暂无项目，新建一个项目后即可开始会话。"，底部的"开始聊天"也一直禁用。状态随后到了，但页面仍停在挂载时的那份快照上（`@Prop` 的那份拷贝没有跟进），`startInventory()` 也就没有以真实设备列表重跑过。
+
+修法：这一支等 `sessionsState.hasLoaded || errorMessage !== null` 再挂载 `NewSessionContent()`，之前显示一个居中的加载指示（新增 `LandingLoading()` 与 `landingReady()`）。这样页面一定是在拿到状态之后才创建：设备行立刻显示设备名，Agent 行在运行时清单回来后显示 Agent，项目区按所选设备过滤后正常列出；首屏加载失败时也会挂载，让页面自己给出失败说明而不是永远转圈。
+
+**验证**：`clean` 后全量 `assembleHap` 0 error / 0 ArkTS warning；三个脚本 620 / 175 / 154 全过；15 个逻辑用例全过。
+
 ## 待确认问题
 
 - **签名配置需要用户决策**：本机 `harmony/build-profile.json5` 现在带有 DevEco Studio 自动生成的 `signingConfigs`（`material` 指向 `C:\Users\Administrator\.ohos\config\...`，并含 `keyPassword`/`storePassword` 字段）。这既是好事（能产出可安装的 `entry-default-signed.hap`），也是隐患：绝对路径换机即失效、口令字段不应入库。提交前建议二选一：删掉 `signingConfigs` 与 `"signingConfig": "default"` 回到"未签名但到处能构建"，或改成从环境变量/本地未入库的 profile 读取。`harmony/README.md` 的签名一节已如实说明。

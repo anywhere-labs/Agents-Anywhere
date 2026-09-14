@@ -2413,6 +2413,34 @@ export struct AgentsAnywhereApp {
   }
 
   /**
+   * What the empty selection shows until the first load lands.
+   *
+   * The new-session page reads its device, project and workspace choices out of
+   * the sessions state, and a state that arrived after it mounted left it on its
+   * "checking devices" rows for good — so it is only mounted once there is a state
+   * to read. A failed first load mounts it too: it has the failure explanations,
+   * and a spinner that never ends would be worse.
+   */
+  @Builder
+  LandingLoading() {
+    Column() {
+      LoadingProgress()
+        .width(24)
+        .height(24)
+        .color(this.colors().muted)
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor(this.colors().canvas)
+  }
+
+  /** Whether the empty selection has a sessions state to render its page from. */
+  private landingReady(): boolean {
+    return this.sessionsState.hasLoaded || this.sessionsState.errorMessage !== null;
+  }
+
+  /**
    * The empty selection's content, and the new-session destination's.
    *
    * iOS resolves the chat shell's `ChatShellSelection.newSession` to
@@ -2573,8 +2601,15 @@ export struct AgentsAnywhereApp {
     Stack() {
       // The compact layout draws the sidebar behind this card, as iOS does; in
       // the wide layout the same builder is the fixed column in the row below.
+      // The leading row matters: a bare child of this stack is centred, which
+      // pushed the whole sidebar right by half the unrevealed width.
       if (this.drawerLayerVisible()) {
-        this.SidebarDrawerLayer()
+        Row() {
+          this.SidebarDrawerLayer()
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Start)
       }
 
       // iOS's `SidebarDrawerMainCard`: the content slides right by the revealed
@@ -2681,8 +2716,13 @@ export struct AgentsAnywhereApp {
                 })
               } else if (this.destination === AppDestination.Sessions) {
                 // Nothing selected: iOS shows the new-session page here, in both
-                // layouts, and leaves the session list to the sidebar.
-                this.NewSessionContent()
+                // layouts, and leaves the session list to the sidebar. It waits
+                // for the first session load; see `LandingLoading`.
+                if (this.landingReady()) {
+                  this.NewSessionContent()
+                } else {
+                  this.LandingLoading()
+                }
               } else if (this.destination === AppDestination.SessionDetail) {
                 SessionDetailScreen({
                   colors: this.colors(),
