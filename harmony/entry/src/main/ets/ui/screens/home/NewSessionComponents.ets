@@ -236,7 +236,12 @@ export struct StartChatButton {
 @Component
 export struct WorkspaceMarqueeText {
   text: string = '';
-  selected: boolean = false;
+  /**
+   * `@Prop` for the same reason as `WorkspaceOptionRow.selected`: only the
+   * selected row marquees, so a plain member meant a newly selected long path
+   * kept its ellipsis and never started the pass.
+   */
+  @Prop selected: boolean = false;
   fontSize: number = 12;
   fontColor: string = '#000000';
   /** iOS renders these path lines in `.footnote` monospace. */
@@ -325,7 +330,17 @@ export struct WorkspaceOptionRow {
   colors: AAColors = AA_LIGHT_COLORS;
   title: string = '';
   path: string = '';
-  selected: boolean = false;
+  /**
+   * Whether this row carries the checkmark.
+   *
+   * `@Prop`, not a plain member: the row lives in the section's `ForEach`, and
+   * `selected` is recomputed from the page's chosen path on every re-render. A
+   * plain member is only applied when the row is *created*, so tapping a row
+   * selected it in the page's state while the checkmark stayed where it was.
+   * The page -> section boundary is `NewSessionWorkspaceSection.path` (`@Prop`);
+   * this is the second, section -> row boundary, and it was the one still open.
+   */
+  @Prop selected: boolean = false;
   /** Named `rowEnabled` because `enabled` collides with the component modifier. */
   rowEnabled: boolean = true;
   onTap: () => void = () => {};

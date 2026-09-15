@@ -79,9 +79,22 @@ export class NewSessionConfigurationField {
 @Component
 export struct NewSessionConfigurationCard {
   colors: AAColors = AA_LIGHT_COLORS;
-  fields: NewSessionConfigurationField[] = [];
-  /** The key whose menu is open, or -1. */
-  expandedKey: number = -1;
+  /**
+   * The rows to draw.
+   *
+   * `@Prop` for the same reason as `expandedKey`: the page rebuilds this array as
+   * the prerequisites arrive (device, then Agent, then the catalogs), and a plain
+   * member left the card showing whichever rows it was born with.
+   */
+  @Prop fields: NewSessionConfigurationField[] = [];
+  /**
+   * The key whose menu is open, or -1.
+   *
+   * `@Prop`, not a plain member: the menu's visibility is read by *this* card's
+   * build, and a plain variable handed down by the page never re-rendered it, so
+   * all five menus stayed shut on the device even though the rows were clickable.
+   */
+  @Prop expandedKey: number = -1;
   onToggle: (key: NewSessionConfigurationKey) => void = () => {};
   onDismiss: () => void = () => {};
   onSelect: (key: NewSessionConfigurationKey, optionId: string) => void = () => {};

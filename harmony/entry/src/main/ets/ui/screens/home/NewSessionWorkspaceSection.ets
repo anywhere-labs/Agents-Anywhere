@@ -33,7 +33,12 @@ export class WorkspaceChoice {
 @Component
 export struct NewSessionWorkspaceSection {
   colors: AAColors = AA_LIGHT_COLORS;
-  path: string = '';
+  /**
+   * `@Prop`: the selected workspace drives the row checkmark, and a plain member
+   * meant the section never re-rendered — tapping a project row selected it while
+   * the checkmark stayed on the old row (same cause as the config card's menus).
+   */
+  @Prop path: string = '';
   connectorId: string = '';
   deviceOs: string | null = null;
   homePath: string | null = null;

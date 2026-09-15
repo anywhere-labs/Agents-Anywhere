@@ -599,8 +599,146 @@ iOS 把这三个界面都做成 **sheet**，其 chrome 是 `.navigationBarTitleD
 
 登录后的页面（首页/抽屉/新建会话/会话详情/设置）在模拟器上需要一个账号：本机**没有**跑 agents-anywhere 的服务端（`server/agent_server` 是 Python FastAPI，进程在但没监听；`:8080` 是另一个 Java 应用），所以无法注册临时账号。等用户在模拟器里登录一次后继续。
 
+### 真机冒烟（第 48 轮，接上真机后继续）
+
+真机 `62T0225B18043858`（VYG-AL00）上装当前包（`hdc -t <id> install -r`，同签名可直接覆盖安装，**登录态保留**），逐屏核对：
+
+- **抽屉**：头部左侧按钮打开 ✓；侧栏贴在左边（第 44 轮的居中问题确已修好）✓；卡片右移 + 白纱 + 1px 描边 + 阴影 ✓；侧栏内容与 iOS 一致（设备圆点/配对行/项目树/嵌套会话带状态点）✓；底部「新建会话」+ 头像「M」✓。
+- **新建会话页**：等运行时清单回来后，五行配置全部就位（设备 · jerry的Mac mini → Agent · Codex → 模型 · GPT-5.6-Terra → 推理强度 · Low → 权限模式 · 请求批准），工作区列表出现勾选、「开始聊天」变为可用 ✓ —— 第 45/47 轮的加载与说明修正都生效了（等待期会显示「正在检查可用 Agent」）✓。
+
+**发现并确认了一个真 bug：配置卡的五个下拉菜单都打不开**（设备/Agent/模型/推理强度/权限模式）。用两种注入方式都复现（`uinput -T -c` 与 `uitest uiInput click`），并用 `uitest dumpLayout` 确认这些行在框架里是 `clickable: true`、坐标也正确（例如 Agent 行 `[63,?][1217,?]` 覆盖了点击点），所以不是注入方式的问题，而是 `NewSessionConfigurationCard` 里 `.bindMenu(this.expandedKey === field.key && field.active(), …)` 这一路：`expandedKey` 是**普通成员变量**，页面把 `expandedConfiguration` 改掉后卡片不一定重跑 `build`，菜单就不会弹出。下一步改成让卡片自己持有展开状态（`@State` + `@Prop` 初值），或把菜单交给页面层状态驱动。
+
+（工作区的项目行只做"选中"、只有勾选标记这一个可见变化，单次点击不易判定；这一条留待下一轮连同菜单一起验证。）
+
+### 下拉菜单修好了（待解锁复测）
+
+成因在上面写了：`NewSessionConfigurationCard` 的 `expandedKey` 是**普通成员变量**，页面把 `expandedConfiguration` 改掉后卡片不会重跑 `build`，于是 `bindMenu(this.expandedKey === field.key && …)` 永远读到 -1，五个菜单都弹不出来（行本身在框架里是 `clickable: true`，所以点击是到了的）。
+
+**修法**：把 `expandedKey` 从普通字段改成 **`@Prop`** —— 页面状态一变，卡片就会重渲染，`bindMenu` 的开关随之翻转。其余接线（`onToggle` / `onDismiss` / `onSelect`）不变，页面对展开态的所有重置（切设备、建项目等）也继续生效。改动只有一个属性声明行。
+
+**验证状态**：已构建（0 error / 0 warning）并装到真机；但真机在测试中途**自动锁屏**，`hdc shell aa start` 报 `10106102 The device screen is locked during the application launch`，我这边无法解锁（需要 PIN）。所以"菜单能弹开"这一步的实机复测等用户解锁后进行；`hdc shell power-shell wakeup` 能亮屏，但亮屏后仍是安全锁屏（上滑无效）。
+
+**实机复测（已通过）**：解锁后重装并启动，点「设备」行 → **下拉菜单正常弹出**（白色圆角卡，列出 jerry的Mac mini ✓ 打勾、皮蛋的麦克伯克坡若、DESKTOP-P13E1GV），`@Prop` 这一行改动就解决了问题 ✓✓。菜单项的语义与 Android 一致：选了没有可用 Agent 的设备后，页面会按 `pickDevice()` 自动回到"有可用 Agent"的那台（所以行里仍显示 jerry的Mac mini）。
+
+**同一轮里一起修的两处一致性问题**：
+
+- `NewSessionConfigurationCard.fields` 也改成 `@Prop` —— 页面是随着前置条件到位（先是设备、再是 Agent、再是模型目录）**重建这个数组**的，普通成员会让卡片一直显示它出生时那几行。
+- 新增 `isCheckingAgents()`：把"设备/Agent 检查中"的两种 Android reason 与 inventory/selection 的两个标志合在一处判断，卡片下方那行「正在检查可用 Agent」现在与 Agent 行的占位条**永远一致**（之前出现过"行是灰条但一句说明都没有"的状态）。检查已经落定、但选中的设备仍拿不到可用 Agent 时，这行还会带一个「重试」——就是失败行那个重新检查的入口。
+
+**实机复测（已通过）**：解锁后重装启动，点「设备」行 → **下拉菜单正常弹出**（白色圆角卡，列出 jerry的Mac mini ✓ 打勾、皮蛋的麦克伯克坡若、DESKTOP-P13E1GV），`@Prop` 这一行改动就解决了问题 ✓✓；换成 DESKTOP-P13E1GV 后设备行与项目列表（D:\code\…）都跟着变了 ✓；底部状态行也正确地显示「正在检查可用 Agent」✓。菜单项的语义与 Android 一致：选了没有可用 Agent 的设备后，页面会按 `pickDevice()` 回到"有可用 Agent"的那台。
+
+**仍待观察**：这台真机上的运行时清单有时几十秒都不出结果（同一个 Mac 半小时前是正常的），所以 Agent 行会长时间停在占位条上；退避阶梯的收尾、以及"检查落定后仍无可用 Agent 时是否给出重试"，下一轮再看。剩下没冒烟的屏：会话详情、设置页开关/返回、左缘拖拽开抽屉、工作区项目行的选中反馈。
+
+**再加一处防抖**：`startInventory()` 现在按"在线设备集合"去重 —— 设备签名在运行中翻转（例如某台设备在线状态抖动）时不再重新启动整条重试阶梯（那会把 `pendingInitial` 重新填满，页面就长时间停在"检查中"）。同一个设备集合的一次运行还没结束就忽略后续触发。
+
+**根因（日志定位）**：`hdc shell hilog -x` 里应用只有一件事在刷屏 —— `NETSTACK: [websocket_exec.cpp:498] lws callback reason is 8`，即**实时 WebSocket 一直在断开重连**。运行时清单是靠连接器回一个 RPC（HTTP 侧等连接器应答），所以当选中那台 Mac 的连接器不在线/不应答时，清单就一直 pending、Agent 行停在灰条 —— 这也解释了为什么早上同一台机器是正常的。**这不是 UI 的问题**：界面现在会正确显示「正在检查可用 Agent」（iOS 也是"正在查找设备…"），检查一旦落定还会给「重试」。
+
+## 真机冒烟与三处状态不同步修正（第 49 轮）
+
+接着第 48 轮的四个待办做真机冒烟。三项 UI 复测里 **1 项失败并定位到根因、2 项通过**（失败的正是第 48 轮"已装机、未复测"的那条）；第 5 条（实时 WebSocket）查清后**结论是"不是 bug"**，因此没有改代码。
+
+### 1. 工作区勾选：第 48 轮的 `@Prop` 只修了一半（断在第二层边界）
+
+点工作区行前后 `dumpLayout` 完全一致：该行 `children=2`（`Shape`+`Column`），勾选标记该多出的第三个子节点从未出现，另一行也恒为 2。行本身 `clickable=true`、坐标就是行 bounds 中点，而且同一页的「设备」行能点开菜单、「新建项目」行能跳转，所以**不是命中测试**：我又反复开关下拉菜单**强制父组件重渲染**，勾选标记依旧不出现，问题只能在渲染链上。
+
+成因：值要跨**两层**边界，第 48 轮只修了第一层。
+
+```
+NewSessionScreen.selectedWorkspacePath (@State)
+  → NewSessionWorkspaceSection.path      ← 第 48 轮已改 @Prop ✓
+    → WorkspaceOptionRow.selected        ← 仍是普通成员 ✗ 断在这里
+```
+
+`NewSessionComponents.ets` 里 `selected: boolean = false;` 没有装饰器。普通成员只在子组件**创建时**赋值，父组件后续重渲染不会更新它，于是父层算出的 `selected=true` 永远进不到 `if (this.selected)` 那个分支。
+
+**编译产物级的证据**（本轮审计从 `entry/build/default/cache/.../default@CompileArkTS/esmodule/debug/` 读出来的）：普通成员生成的 `updateStateVars(params) {}` 是**空的**，只有 `@Prop`/`@Link` 才会在重渲染时推送值；同一个文件里已修的 `NewSessionConfigurationCard` 会推 `{fields, expandedKey}`，而全普通成员的 `NewSessionPathSection` 推 `{}`。这条规则现在有据可查，不用再靠推断。
+
+**修法**：`WorkspaceOptionRow.selected` → `@Prop`；连带 `WorkspaceMarqueeText.selected` → `@Prop`（"只有选中的长路径才滚动"同样因为普通成员而是死的）。
+
+**实机复测（已通过）**：重装后点 `Documents` 行 → `jerry` 行 `children` 3→2、`Documents` 行 2→3，勾选**移动**过去了；重启应用后勾选又正确落在持久化的 `jerry` 上（修之前它从不出现）。
+
+### 2. 设置页 X 关闭（通过）
+
+抽屉底部头像 → 设置页（标题「设置」、昵称 `mimic`）→ 关闭按钮是左上角 `Column [63,137][217,290]`（内含 X 字形 `Shape`），点它的中点 → 干净回到新建会话页。`closeProfile()` 一路正常。
+
+### 3. 长按会话行 → 操作卡（通过）
+
+`uitest uiInput longClick` 长按抽屉里的会话行 → 白色圆角操作卡，**重命名 / 归档 / 置顶**三项齐全，与 Android 的会话操作一致。`HomeSessionRow` 的 `GestureGroup(Exclusive, LongPressGesture)` 接线是好的。
+
+### 4. 目录阶段的重试入口（比 handoff 说的多修一处）
+
+handoff 第 4 条说"点击重跑 `loadRuntimeDetails()`"就够了。但读代码发现 `loadRuntimeDetails()` 开头是：
+
+```ts
+if (this.selection.capabilities.fresh()) {
+  // Already loaded for this runtime; nothing to do.
+  return;
+}
+```
+
+**能力加载成功、只是模型或权限目录失败**时（`failModelCatalog` 只把那个 catalog 置为未加载），`capabilities.fresh()` 仍为真，于是这个「重试」点了**什么也不会发生**——按钮是死的。所以：
+
+- `NewSessionRuntimeSelectionState` 新增 `beginRuntimeCatalogs()`：只重问目录、保留已经拿到的能力集（能力请求才是贵的那一个），并在能力报告"该目录不可用"时原样不动。
+- `NewSessionScreen` 从 `loadRuntimeDetails()` 里抽出共用的 `loadRuntimeCatalogs()`，两条路径（首次加载 / 重试）走同一段代码，失败时也按同一段逻辑落到失败态。
+- 新增 `retryRuntimeResolution()`，把"清单还没落定"与"清单已落定、只差能力/目录"分开：前者重跑清单并 `inventory.refresh()`，后者走 `loadRuntimeDetails()`。两个状态行（检查中 / 失败）都改用它，不再各写一遍。
+
+### 5. 实时 WebSocket：查清的结论是"不是 bug"（推翻第 48 轮的两处判断）
+
+第 48 轮把 `NETSTACK: [websocket_exec.cpp:498] lws callback reason is 8` 读成"连接错误"、并据此认定"长连一直在断开重连"。两处都不成立：
+
+- **`reason is 8` 不是错误。** libwebsockets 的枚举里 `LWS_CALLBACK_CLIENT_RECEIVE = 8`，语义是"**服务端有数据到达**"（[libwebsockets User Callback](https://libwebsockets.org/lws-api-doc-v2.2-stable/html/group__usercb.html)）。这行 INFO 日志是**收到帧**的证据，本身不是故障。
+- **并没有周期性掉线。** 把屏幕保持常亮后连续观测：
+
+| 观测 | 结果 |
+|---|---|
+| 120 秒轮询 | 只有 1 条 `Dashboard connection up (attempt 0)`，**0 条 down** |
+| 440 秒（10:32:50 → 10:40:10）轮询 | 仍然**只有那 1 条 up**，一次都没断 |
+
+- **之前看到的"26 秒掉一次"和"应用日志整整 150 秒一条都没有"，都是息屏伪影。** 息屏后应用被冻结：既不执行也就不写日志，socket 也随之结束，于是日志里出现一次 `down`，之后再无任何输出——看上去就像"疯狂重连"。服务端代码也不会主动断（`server_push_websocket.py` 只等 disconnect，队列静默 ≤15 秒就发一条 keepalive）。
+
+**因此不改代码。** 另外记一笔：`@ohos.net.webSocket` 的 `pingInterval` **默认就是 30 秒**（`disable: 0`，`@since 21`），这台设备（API 26）本来就在自动 ping；Android 显式写 `.pingInterval(20, TimeUnit.SECONDS)` 只是更早、更紧。给它加 ping 属于"观测不到问题就改代码"，不做。
+
+### 6. 同类隐患审计（另开一轮，本轮不动）
+
+本轮顺带做了一次**只读**审计：扫描整个 `harmony/entry/src/main/ets`，找"声明为普通成员、又在自己 `build()` 里参与渲染决定、且父组件传的是会变的值"。除已修的 `WorkspaceOptionRow.selected` 外，还有 **15 组 HIGH**，症状明确的有：
+
+| 严重度 | 位置 | 症状 |
+|---|---|---|
+| HIGH | `ui/screens/home/NewSessionPathSection.ets:28-39`（`entries`/`loading`/`errorMessage`/`hasRetry`） | 目录浏览器可能**永远停在"正在加载目录…"**、进目录/返回上级不重绘、出错时**没有重试行** |
+| HIGH | `ui/screens/home/NewSessionHeader.ets:23` `headerEditing` + `NewSessionComponents.ets:121` `editing` | 点铅笔**无法进入标题编辑**，铅笔也不会变勾 |
+| HIGH | `ui/screens/files/FilesScreen.ets:1268` `FileListRow.menuOpen` | 长按文件**弹不出菜单**（与已修的 `expandedKey` 的 `bindMenu` 一模一样） |
+| HIGH | `ui/screens/profile/ProfileSettingsComponents.ets:121` `ProfileRow.trailing` | 设置页**昵称/邮箱的值不显示**（行在 `account` 还是 null 时就建好了） |
+| HIGH | `ui/screens/sessiondetail/CodeBlockPanel.ets:257` `CopyIconButton.copied` | 复制**没有勾选反馈** |
+| HIGH | `ui/screens/home/HomeSessionRow.ets:30` `SessionStatusIndicator.indicator` | 会话行的状态点/胶囊**不随会话状态变化** |
+| HIGH | `ui/screens/devices/DevicesScreen.ets:244` `DeviceRow.preview` | 设备行的 Agent 预览**一直停在"检查中"或"不可用"** |
+| HIGH | `ui/screens/home/NewSessionWorkspaceSection.ets:46-47` `projects`/`sessions` | 新建的项目**不出现在列表里**、recent 列表不更新 |
+| HIGH | `ui/screens/profile/ProfileSettingsDrawer.ets:57-58` `appearanceMode`/`languageMode` | 选了新语言/外观后**勾选和标签不动**（选择其实已生效） |
+| HIGH | `ui/screens/devices/DeviceDetailScreen.ets:943/979/980` `SelectionCircle.selected`、`SessionDetailRow.selectMode`/`selected` | 进入多选**看不到选择圈**，归档操作作用在看不见的选择上 |
+| HIGH | `ui/screens/sessiondetail/SessionDetailScreen.ets:113/115/117/122` 三个 notices + `attachments` | 会话开着时新到的**审批请求/附件不可见** |
+| HIGH | `ui/screens/sessiondetail/SessionRuntimeControls.ets:40/43` `busy`/`errorMessage` | 点批准**看不到任何反应**（无错误框、无忙碌态） |
+| HIGH | `ui/screens/home/HomeScreen.ets:49` `projectStatusFilter` + `HomeProjectActions.ets:380` `filter` | 状态筛选**树不更新、勾选不移动** |
+| HIGH | `ui/screens/home/HomeSessionActions.ets:161`、`HomeProjectActions.ets:133/134` 对话框的 `errorMessage`/`busy` | 弹窗内联错误**不显示**、保存按钮**不进"保存中"** |
+
+修法同本轮：把声明行改成 `@Prop`（这些调用点都始终传值，所以 `@Prop` 安全）；改完按老规矩跑 `assembleHap` + 三个门禁。
+
+### 7. 本轮验证
+
+- `clean` + `assembleHap`：**BUILD SUCCESSFUL，0 error / 0 ArkTS warning**（日志里 WARN 0 行、ERROR 0 行）。
+- 三个门禁：`627 refs / 154 ETS`；`175 文本文件 BOM=0 replacement=0 mojibake=0`；`154 ETS unreachable=0`。
+- 15 个逻辑用例：全部 exit 0，无一行 FAIL（`check-newsession` → `ALL CHECKS PASSED`）。
+- 真机复测：工作区勾选**能移动**（本轮唯一的行为改动里最关键的一条）。
+
+### 8. 真机配方补充（这一轮踩出来的）
+
+- **`hdc shell power-shell timeout -o 1800000`**：临时把息屏超时改成 30 分钟，收尾用 `-r` 还原。**这条是测长连的前提**——不设它，息屏会让应用冻结，测出来的全是伪影（上面第 5 条就是踩了这个坑）。
+- **应用日志用 `hdc shell hilog -x -T AgentsAnywhere` 过滤**（域是 `A00000`）。`hilog -T` 的过滤是设备侧做的，比拉全量再 grep 可靠得多。
+- **长按用 `uitest uiInput longClick <x> <y>`**，比 `uinput -T -d/-u` 稳。
+- **不要用 `uitest uiInput keyEvent Back`**：根页面上返回是交给平台的，会直接把应用退出到系统（本轮因此落到系统设置里一次）。
+- 坐标一律 `uitest dumpLayout` 取节点 bounds 中点，**不要估算**：运行清单到达时整页会重排（本轮第一次点工作区行就吃了这个亏）。
+
 ## 待确认问题
 
+- **同类状态不同步的存量清单（第 49 轮审计）**：见上一节第 6 条的 15 组 HIGH，已确认"普通成员的 `updateStateVars` 为空"这一机制来自编译产物。建议**单开一轮**批量改 `@Prop` 并逐条真机抽查；本轮为避免范围蔓延没有动。
 - **签名配置需要用户决策**：本机 `harmony/build-profile.json5` 现在带有 DevEco Studio 自动生成的 `signingConfigs`（`material` 指向 `C:\Users\Administrator\.ohos\config\...`，并含 `keyPassword`/`storePassword` 字段）。这既是好事（能产出可安装的 `entry-default-signed.hap`），也是隐患：绝对路径换机即失效、口令字段不应入库。提交前建议二选一：删掉 `signingConfigs` 与 `"signingConfig": "default"` 回到"未签名但到处能构建"，或改成从环境变量/本地未入库的 profile 读取。`harmony/README.md` 的签名一节已如实说明。
 - 是否需要发布签名与上架流程（当前产物含一个本机调试签名）。
 - 应用内更新在鸿蒙上是否改为引导至应用市场，或只做版本提示（当前按差异表实现为"打开下载页"）。

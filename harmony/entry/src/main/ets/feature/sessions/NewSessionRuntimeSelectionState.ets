@@ -609,6 +609,32 @@ export class NewSessionRuntimeSelectionState {
     });
   }
 
+  /**
+   * Re-asks only for the catalogs of an already-loaded capability set.
+   *
+   * The retry must not repeat the capability request once that set is known
+   * good: a *catalog* that failed is exactly what leaves `capabilities.fresh()`
+   * true while a catalog is still not fresh, and the capability call is the
+   * expensive one. A catalog the capabilities report as unavailable is left
+   * alone, because there is nothing to ask for.
+   */
+  beginRuntimeCatalogs(): NewSessionRuntimeSelectionState {
+    const currentConnectorId: string | null = this.connectorId;
+    const runtimeId: string | null = this.selectedRuntimeId;
+    if (currentConnectorId === null || runtimeId === null) {
+      return this;
+    }
+    const nextGeneration: number = this.generation + 1;
+    return this.copy({
+      generation: nextGeneration,
+      requestKey: new NewSessionRuntimeRequestKey(currentConnectorId, runtimeId, nextGeneration),
+      modelCatalog: this.canUseModelCatalog()
+        ? this.modelCatalog.begin(true) : this.modelCatalog,
+      permissionCatalog: this.canUsePermissionCatalog()
+        ? this.permissionCatalog.begin(true) : this.permissionCatalog,
+    });
+  }
+
   applyCapabilities(
     key: NewSessionRuntimeRequestKey,
     value: RemoteRuntimeCapabilitySet,

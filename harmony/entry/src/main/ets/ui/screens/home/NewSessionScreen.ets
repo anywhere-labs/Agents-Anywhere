@@ -11,7 +11,7 @@ import { RemoteDeviceRuntimeList } from '../../../api/DevicesDtos';
 import { AgentDevice, AgentProject } from '../../../model/AgentSession';
 import { SessionsState } from '../../../feature/sessions/SessionsState';
 import { NewSessionPreference, NewSessionPreferenceStore } from '../../../feature/sessions/NewSessionPreferenceStore';
-import { NewSessionRuntimeSelectionState } from '../../../feature/sessions/NewSessionRuntimeSelectionState';
+import { NewSessionRuntimeSelectionState, NewSessionRuntimeRequestKey } from '../../../feature/sessions/NewSessionRuntimeSelectionState';
 import { activeNewSessionRuntimes } from '../../../feature/sessions/NewSessionRuntimeInventory';
 import { NewSessionRuntimeInventory } from '../../../feature/sessions/NewSessionRuntimeInventoryLoader';
 import {
@@ -126,6 +126,8 @@ export struct NewSessionScreen {
   private preference: NewSessionPreference | null = null;
   private preferenceStore: NewSessionPreferenceStore | null = null;
   private directoryRequestId: number = 0;
+  /** The device set the inventory is currently being asked about; see `startInventory`. */
+  private inventoryRunKey: string = '';
   private retryDirectoryPath: string = '~';
   /** A project created here, shown before the next list refresh returns it. */
   private localProject: AgentProject | null = null;
@@ -323,6 +325,15 @@ export struct NewSessionScreen {
       this.loadRuntimeDetails();
       return;
     }
+    // One run per device set at a time. The device signature can flip while a
+    // run is in flight (a presence change), and restarting the whole ladder each
+    // time refilled `pendingInitial`, so the page stayed on "checking" for
+    // minutes instead of settling.
+    const runKey: string = ids.slice().sort().join('|');
+    if (runKey === this.inventoryRunKey && this.inventory.loading()) {
+      return;
+    }
+    this.inventoryRunKey = runKey;
     const version: number = this.inventory.refreshVersion();
     void this.inventory.loadAll(
       ids,
@@ -355,11 +366,24 @@ export struct NewSessionScreen {
     if (runtimeId === null || this.selection.capabilities.loading) {
       return;
     }
+    const connectorId: string = device.id;
     if (this.selection.capabilities.fresh()) {
-      // Already loaded for this runtime; nothing to do.
+      // The capability set is already good, so only a catalog can still be
+      // missing — which is what a failed model or permission load leaves
+      // behind. Re-asking the capabilities too would repeat the expensive
+      // request for an answer the page already has.
+      if (this.selection.modelCatalog.fresh() && this.selection.permissionCatalog.fresh()) {
+        return;
+      }
+      this.selection = this.selection.beginRuntimeCatalogs();
+      const key: NewSessionRuntimeRequestKey | null = this.selection.requestKey;
+      if (key === null) {
+        return;
+      }
+      this.loadRuntimeCatalogs(connectorId, runtimeId, key);
+      this.revision += 1;
       return;
     }
-    const connectorId: string = device.id;
     this.selection = this.selection.beginRuntimeDetails();
     const requestKey = this.selection.requestKey;
     if (requestKey === null) {
@@ -371,29 +395,7 @@ export struct NewSessionScreen {
         if (!requestKey.equals(this.selection.requestKey)) {
           return;
         }
-        if (this.selection.canUseModelCatalog()) {
-          void this.onLoadModelCatalog(connectorId, runtimeId).then((catalog: RuntimeModelCatalog) => {
-            this.selection = this.selection.applyModelCatalog(requestKey, catalog);
-            this.revision += 1;
-          }).catch(() => {
-            this.selection = this.selection.failModelCatalog(
-              requestKey, resolveString($r('app.string.new_session_model_catalog_failed')),
-            );
-            this.revision += 1;
-          });
-        }
-        if (this.selection.canUsePermissionCatalog()) {
-          void this.onLoadPermissionCatalog(connectorId, runtimeId)
-            .then((catalog: RuntimePermissionCatalog) => {
-              this.selection = this.selection.applyPermissionCatalog(requestKey, catalog);
-              this.revision += 1;
-            }).catch(() => {
-              this.selection = this.selection.failPermissionCatalog(
-                requestKey, resolveString($r('app.string.new_session_permission_catalog_failed')),
-              );
-              this.revision += 1;
-            });
-        }
+        this.loadRuntimeCatalogs(connectorId, runtimeId, requestKey);
         this.revision += 1;
       })
       .catch(() => {
@@ -402,6 +404,62 @@ export struct NewSessionScreen {
         );
         this.revision += 1;
       });
+  }
+
+  /**
+   * Asks for whichever catalogs the loaded capability set allows.
+   *
+   * Shared by the first load and by the retry, so a catalog that failed is
+   * re-asked exactly the way it was first asked for.
+   */
+  private loadRuntimeCatalogs(
+    connectorId: string,
+    runtimeId: string,
+    requestKey: NewSessionRuntimeRequestKey,
+  ): void {
+    if (this.selection.canUseModelCatalog()) {
+      void this.onLoadModelCatalog(connectorId, runtimeId).then((catalog: RuntimeModelCatalog) => {
+        this.selection = this.selection.applyModelCatalog(requestKey, catalog);
+        this.revision += 1;
+      }).catch(() => {
+        this.selection = this.selection.failModelCatalog(
+          requestKey, resolveString($r('app.string.new_session_model_catalog_failed')),
+        );
+        this.revision += 1;
+      });
+    }
+    if (this.selection.canUsePermissionCatalog()) {
+      void this.onLoadPermissionCatalog(connectorId, runtimeId)
+        .then((catalog: RuntimePermissionCatalog) => {
+          this.selection = this.selection.applyPermissionCatalog(requestKey, catalog);
+          this.revision += 1;
+        }).catch(() => {
+          this.selection = this.selection.failPermissionCatalog(
+            requestKey, resolveString($r('app.string.new_session_permission_catalog_failed')),
+          );
+          this.revision += 1;
+        });
+    }
+  }
+
+  /**
+   * The re-check both status rows offer.
+   *
+   * Two different things can be missing and re-running the wrong one costs a
+   * whole retry ladder: while the connector inventory has not settled — or
+   * settled without handing the selected device a usable Agent — the inventory
+   * has to run again, but once it has, only the selected Agent's capabilities
+   * and catalogs can be left, and that is `loadRuntimeDetails()`.
+   */
+  private retryRuntimeResolution(): void {
+    if (this.inventory.loading() || this.selection.runtimesLoading
+      || this.selection.runtimes.length === 0
+      || this.selection.runtimesErrorMessage !== null) {
+      this.inventory.refresh();
+      this.startInventory();
+      return;
+    }
+    this.loadRuntimeDetails();
   }
 
   // ------------------------------------------------------------ directories
@@ -812,6 +870,33 @@ export struct NewSessionScreen {
       this.selectedDeviceId.length > 0 ? this.selectedDeviceId : null,
       this.hasAvailableSelectedRuntime(this.selectedDevice()),
     );
+  }
+
+  /**
+   * Whether the page is still resolving devices or Agents.
+   *
+   * Android's own two "checking" reasons, plus the inventory and selection
+   * flags, so the status line under the card and the Agent row's placeholder
+   * always agree about what the page is waiting for.
+   */
+  private isCheckingAgents(): boolean {
+    const setup: NewSessionSetupState | null = this.setupState();
+    if (setup !== null) {
+      return setup.reason === NewSessionSetupReason.CheckingDevices
+        || setup.reason === NewSessionSetupReason.CheckingAgents;
+    }
+    if (this.inventory.loading() || this.selection.runtimesLoading) {
+      return true;
+    }
+    // Past the inventory the card still shows placeholders while the Agent's
+    // capabilities and the model/permission catalogs load, so the same line has
+    // to cover that phase too instead of going silent.
+    for (const field of this.configurationFields()) {
+      if (field.key !== NewSessionConfigurationKey.Device && field.loading) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private canStart(): boolean {
@@ -1338,15 +1423,33 @@ export struct NewSessionScreen {
       .alignItems(HorizontalAlign.Start)
 
       Column({ space: 10 }) {
-        if (this.inventory.loading() || this.selection.runtimesLoading) {
-          // The Agent row shows a placeholder while the connectors are asked for
-          // their runtimes, which can take seconds; saying so keeps the row from
-          // reading as a dead end. `runtimeError()` stays quiet until then.
-          Text($r('app.string.new_session_checking_agents'))
-            .fontSize(13)
-            .lineHeight(17)
-            .fontColor(this.colors.muted)
-            .width('100%')
+        if (this.isCheckingAgents()) {
+          // The Agent row shows a placeholder while the prerequisites are
+          // resolved — devices first, then each online connector's runtimes —
+          // which can take a while. Saying so keeps the row from reading as a
+          // dead end, and once the check has settled without giving the selected
+          // device a usable Agent, the same re-check the failure row offers is
+          // the way out.
+          Row({ space: 10 }) {
+            Text($r('app.string.new_session_checking_agents'))
+              .fontSize(13)
+              .lineHeight(17)
+              .fontColor(this.colors.muted)
+              .layoutWeight(1)
+
+            if (!this.inventory.loading() && !this.selection.runtimesLoading) {
+              Text($r('app.string.common_retry'))
+                .fontSize(13)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(this.colors.primaryAction)
+                .onClick(() => {
+                  this.retryRuntimeResolution();
+                })
+            }
+          }
+          .width('100%')
+          .padding({ left: 4, right: 4 })
+          .alignItems(VerticalAlign.Center)
         } else if (this.runtimeError().length > 0) {
           Row({ space: 10 }) {
             Text(this.runtimeError())
@@ -1362,13 +1465,7 @@ export struct NewSessionScreen {
                 .fontWeight(FontWeight.Bold)
                 .fontColor(this.colors.primaryAction)
                 .onClick(() => {
-                  if (this.selection.runtimesErrorMessage !== null
-                    || this.selection.runtimes.length === 0) {
-                    this.inventory.refresh();
-                    this.startInventory();
-                  } else {
-                    this.loadRuntimeDetails();
-                  }
+                  this.retryRuntimeResolution();
                 })
             }
           }
