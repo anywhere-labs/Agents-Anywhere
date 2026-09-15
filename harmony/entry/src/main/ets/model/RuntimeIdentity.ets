@@ -46,6 +46,39 @@ export function runtimeInstanceLabels(name: string | null, runtimeType: string):
   return { primary: primary, secondary: secondary };
 }
 
+/**
+ * The name a runtime instance is shown under, iOS's `sessionDisplayName`.
+ *
+ * iOS: `name.isEmpty ? displayName : name`. `runtimeInstanceLabels` above is
+ * stricter — it throws away a name that merely repeats the runtime type — and
+ * that also swallows a name which is the type's *abbreviation*: this device's
+ * instance is named `DSH` and its runtime type is `dsh`, equal once lowercased,
+ * so the row read "DeepSeek Harness" where iOS reads "DSH". The last fallback to
+ * the type label is this port's own, so a title is never empty.
+ */
+export function runtimeInstanceName(
+  name: string | null | undefined,
+  displayName: string,
+  runtimeType: string,
+): string {
+  const instance: string = name === null || name === undefined ? '' : name.trim();
+  if (instance.length > 0) {
+    return instance;
+  }
+  const sent: string = displayName.trim();
+  return sent.length > 0 ? sent : runtimeTypeLabel(runtimeType);
+}
+
+/** The runtime type's display name, as the Server sends it, or the built-in one. */
+export function runtimeTypeDisplayName(
+  typeDisplayName: string | null | undefined,
+  runtimeType: string,
+): string {
+  const sent: string = typeDisplayName === null || typeDisplayName === undefined
+    ? '' : typeDisplayName.trim();
+  return sent.length > 0 ? sent : runtimeTypeLabel(runtimeType);
+}
+
 /** Joins the non-empty labels the way a session row's context line does. */
 export function runtimeContextLabel(name: string | null, runtimeType: string): string {
   const labels: RuntimeInstanceLabels = runtimeInstanceLabels(name, runtimeType);

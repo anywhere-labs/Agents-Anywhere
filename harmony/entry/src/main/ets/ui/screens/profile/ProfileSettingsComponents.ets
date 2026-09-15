@@ -19,12 +19,19 @@ import { profileCardBackground, profileDividerColor } from './ProfileSettingsSup
  *    above a 12dp-radius card with no border.
  *
  * Values, callbacks and the sub-page structure are unchanged.
+ *
+ * Every piece here declares `colors` as `@Prop`: the settings page is where the
+ * appearance mode is changed, so it is the one page that has to repaint while it
+ * stays mounted. A plain member kept the palette each piece was created with, so
+ * switching to dark left these cards white on a dark page. Pieces that only ever
+ * appear after the switch (the dialogs, the pushed account page) are created with
+ * the new palette anyway and keep their plain member.
  */
 
 /** The drawer's navigation bar: dismiss glyph, centred title. */
 @Component
 export struct ProfileHeader {
-  colors: AAColors = AA_LIGHT_COLORS;
+  @Prop colors: AAColors = AA_LIGHT_COLORS;
   title: ResourceStr = '';
   /**
    * True for the sheet's own root page: iOS's `SheetCloseToolbar` puts an `xmark`
@@ -76,7 +83,7 @@ export struct ProfileHeader {
  */
 @Component
 export struct SettingsGroup {
-  colors: AAColors = AA_LIGHT_COLORS;
+  @Prop colors: AAColors = AA_LIGHT_COLORS;
   title: ResourceStr = '';
   @BuilderParam content: () => void;
 
@@ -115,18 +122,27 @@ export struct SettingsGroup {
  */
 @Component
 export struct ProfileRow {
-  colors: AAColors = AA_LIGHT_COLORS;
+  @Prop colors: AAColors = AA_LIGHT_COLORS;
   commands: string = '';
   title: ResourceStr = '';
   subtitle: string = '';
-  trailing: string = '';
+  /**
+   * The value on the trailing edge.
+   *
+   * `@Prop`: these rows are built before the account loads, so a plain member
+   * kept the empty string it was born with and the nickname and email rows never
+   * showed their value. The same member carries the appearance and language
+   * names, which change while the row stays mounted.
+   */
+  @Prop trailing: string = '';
   trailingTag: string = '';
   /** Empty means no trailing icon. */
-  trailingIcon: string = '';
-  trailingAttention: boolean = false;
+  @Prop trailingIcon: string = '';
+  @Prop trailingAttention: boolean = false;
   /** Named `rowEnabled` because `enabled` collides with the component modifier. */
   rowEnabled: boolean = true;
-  showChevron: boolean = true;
+  /** `@Prop`: the update badge appears after the check finishes, not at mount. */
+  @Prop showChevron: boolean = true;
   /** Destructive rows paint the symbol and the title in the error colour. */
   destructive: boolean = false;
   onTap: () => void = () => {};
@@ -229,7 +245,7 @@ export struct ProfileRow {
 /** The hairline between rows, inset to the text column as iOS does it. */
 @Component
 export struct ProfileDivider {
-  colors: AAColors = AA_LIGHT_COLORS;
+  @Prop colors: AAColors = AA_LIGHT_COLORS;
   insetStart: number = 45;
   insetEnd: number = 16;
 
@@ -245,7 +261,7 @@ export struct ProfileDivider {
 /** The destructive row at the bottom of the drawer. */
 @Component
 export struct SignOutCard {
-  colors: AAColors = AA_LIGHT_COLORS;
+  @Prop colors: AAColors = AA_LIGHT_COLORS;
   label: ResourceStr = '';
   onTap: () => void = () => {};
 

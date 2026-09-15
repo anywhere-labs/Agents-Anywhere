@@ -1,5 +1,5 @@
 import { AgentSession, SessionStatus } from '../../../model/AgentSession';
-import { AAColors, AA_LIGHT_COLORS, withAlpha } from '../../designsystem/AAColors';
+import { AAColors, AA_LIGHT_COLORS, sidebarSelectionFill, withAlpha } from '../../designsystem/AAColors';
 import { SessionListIndicator, sessionDisplayTitle, sessionListIndicator } from '../../../feature/sessions/SessionMappers';
 import { AARowArea } from './HomeSessionActions';
 
@@ -90,6 +90,15 @@ export struct HomeSessionRow {
   session: AgentSession = EMPTY_SESSION;
   /** Pinned rows carry a context subtitle, so they are taller. */
   showSubtitle: boolean = false;
+  /**
+   * Whether this is the session the detail page is showing.
+   *
+   * iOS's `ChatSidebarSessionRow` takes `isSelected` and paints
+   * `sidebarSelectionFill` behind it, so the sidebar shows which conversation is
+   * open. Nothing carried that here, so the list looked the same whichever
+   * session had been opened.
+   */
+  @Prop selected: boolean = false;
   onOpen: (session: AgentSession) => void = () => {};
   onLongPress: (session: AgentSession, area: AARowArea) => void = () => {};
 
@@ -129,6 +138,8 @@ export struct HomeSessionRow {
     .height(this.showSubtitle ? 56 : 42)
     .padding({ left: 10, right: 10 })
     .alignItems(VerticalAlign.Center)
+    .backgroundColor(sidebarSelectionFill(this.colors, this.selected))
+    .borderRadius(9)
     .onAreaChange((_oldValue: Area, newValue: Area) => {
       this.rowArea = toRowArea(newValue);
     })
@@ -151,6 +162,8 @@ export struct HomeProjectSessionRow {
    * the project view turns it off for pinned sessions listed on their own.
    */
   inset: boolean = true;
+  /** Whether this is the session the detail page is showing; see `HomeSessionRow`. */
+  @Prop selected: boolean = false;
   onOpen: (session: AgentSession) => void = () => {};
   onLongPress: (session: AgentSession, area: AARowArea) => void = () => {};
 
@@ -174,6 +187,8 @@ export struct HomeProjectSessionRow {
     .height(42)
     .padding({ left: this.inset ? 36 : 10, right: 10 })
     .alignItems(VerticalAlign.Center)
+    .backgroundColor(sidebarSelectionFill(this.colors, this.selected))
+    .borderRadius(9)
     .onAreaChange((_oldValue: Area, newValue: Area) => {
       this.rowArea = toRowArea(newValue);
     })

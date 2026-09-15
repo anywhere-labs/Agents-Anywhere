@@ -1,4 +1,5 @@
 import { AAColors, AA_LIGHT_COLORS } from '../../designsystem/AAColors';
+import { glassFill } from '../../designsystem/AAIosChrome';
 import { AAIcon } from '../../designsystem/AAIcon';
 import { AA_ICONS } from '../../designsystem/AAIcons';
 import { HeaderEditButton } from './NewSessionComponents';
@@ -73,6 +74,11 @@ export struct NewSessionHeader {
       .width(44)
       .height(44)
       .justifyContent(FlexAlign.Center)
+      // The same light disc the shared inline bar now draws: iOS's navigation-bar
+      // items carry the system's glass grouping, and leaving this header bare
+      // would make it the one page whose buttons differ.
+      .backgroundColor(glassFill(this.colors))
+      .borderRadius(22)
       .accessibilityText(this.leadingLabel())
       .onClick(() => {
         if (this.sidebarToggle) {
@@ -132,6 +138,8 @@ export struct NewSessionHeader {
         .width(44)
         .height(44)
         .justifyContent(FlexAlign.Center)
+        .backgroundColor(glassFill(this.colors))
+        .borderRadius(22)
       } else {
         Blank().width(44)
       }

@@ -50,13 +50,23 @@ enum ProfileDetailPage {
 
 @Component
 export struct ProfileSettingsDrawer {
-  colors: AAColors = AA_LIGHT_COLORS;
+  /**
+   * `@Prop`, not a plain member: the palette is resolved from the app's
+   * appearance mode, and the settings page is exactly where that mode is changed.
+   * A plain member meant the page kept painting the palette it was created with,
+   * so switching to dark repainted the shell behind it while this page — the one
+   * the user is looking at — stayed light until it was reopened.
+   */
+  @Prop colors: AAColors = AA_LIGHT_COLORS;
   userId: string = '';
   role: string = '';
   serverUrl: string = '';
-  appearanceMode: string = AAAppearanceMode.SYSTEM;
-  languageMode: string = AALanguageMode.SYSTEM;
-  sidebarViewMode: string = 'project';
+  /** `@Prop` for the same reason: the row's value and the menu tick follow it. */
+  @Prop appearanceMode: string = AAAppearanceMode.SYSTEM;
+  /** `@Prop`: the language sheet's tick is read from this. */
+  @Prop languageMode: string = AALanguageMode.SYSTEM;
+  /** `@Prop`: the sidebar row's value and the menu tick are read from this. */
+  @Prop sidebarViewMode: string = 'project';
   appVersion: string = AppConfig.CLIENT_VERSION_NAME;
   onAppearanceModeChange: (mode: string) => void = () => {};
   onLanguageModeChange: (mode: string) => void = () => {};

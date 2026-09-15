@@ -1,5 +1,7 @@
 import { DevicesApi, DeviceCredential } from '../../api/DevicesApi';
-import { RemoteDeviceRuntime, RemoteDeviceRuntimeList } from '../../api/DevicesDtos';
+import {
+  RemoteDeviceRuntime, RemoteDeviceRuntimeList, RemoteRuntimeTypeList,
+} from '../../api/DevicesDtos';
 import {
   RuntimeModelCatalog, RuntimePermissionCatalog,
 } from '../../api/RuntimeCatalogDtos';
@@ -87,6 +89,40 @@ export class DevicesController {
   async deleteRuntimeConfig(deviceId: string, runtimeId: string): Promise<RemoteDeviceRuntime> {
     return await this.devicesApi.deleteRuntimeConfig(
       this.serverUrl(), this.token(), deviceId, runtimeId,
+    );
+  }
+
+  /** The runtime types this device can still add. */
+  async listRuntimeTypes(deviceId: string): Promise<RemoteRuntimeTypeList> {
+    return await this.devicesApi.listRuntimeTypes(this.serverUrl(), this.token(), deviceId);
+  }
+
+  /** Re-runs discovery and returns the types it found. */
+  async discoverRuntimeTypes(deviceId: string): Promise<RemoteRuntimeTypeList> {
+    return await this.devicesApi.discoverRuntimeTypes(this.serverUrl(), this.token(), deviceId);
+  }
+
+  /** Adds a runtime instance and returns the Server's authoritative row. */
+  async createRuntime(
+    deviceId: string,
+    runtimeType: string,
+    name: string,
+    config: Object,
+    active: boolean,
+  ): Promise<RemoteDeviceRuntime> {
+    return await this.devicesApi.createRuntime(
+      this.serverUrl(), this.token(), deviceId, runtimeType, name, config, active,
+    );
+  }
+
+  /** Saves one runtime's configuration and returns the updated row. */
+  async saveRuntimeConfig(
+    deviceId: string,
+    runtimeId: string,
+    config: Object,
+  ): Promise<RemoteDeviceRuntime> {
+    return await this.devicesApi.putRuntimeConfig(
+      this.serverUrl(), this.token(), deviceId, runtimeId, config,
     );
   }
 

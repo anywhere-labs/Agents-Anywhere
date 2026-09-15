@@ -1,6 +1,6 @@
 import { AAColors, AA_LIGHT_COLORS, withAlpha } from '../../designsystem/AAColors';
 import { RemoteDeviceRuntime } from '../../../api/DevicesDtos';
-import { RuntimeInstanceLabels, runtimeInstanceLabels } from '../../../model/RuntimeIdentity';
+import { runtimeInstanceName } from '../../../model/RuntimeIdentity';
 
 /**
  * The device confirmation dialog.
@@ -79,9 +79,11 @@ export class DeviceConfirmAction {
   }
 
   static deleteRuntimeConfig(runtime: RemoteDeviceRuntime): DeviceConfirmAction {
-    const labels: RuntimeInstanceLabels = runtimeInstanceLabels(runtime.displayName, runtime.type);
+    // The same reader the runtime row uses, so the confirmation names the instance
+    // exactly the way the row that opened it does.
+    const name: string = runtimeInstanceName(runtime.name, runtime.displayName, runtime.type);
     return new DeviceConfirmAction(
-      DeviceConfirmKind.DeleteRuntimeConfig, '', false, '', '', runtime.id, labels.primary,
+      DeviceConfirmKind.DeleteRuntimeConfig, '', false, '', '', runtime.id, name,
       runtime.active,
     );
   }

@@ -42,7 +42,14 @@ export struct AAIcon {
   /** SVG path commands in 24x24 space. Multiple `M` subpaths are allowed. */
   commands: string = '';
   iconSize: number = 22;
-  color: string = '#000000';
+  /**
+   * `@Prop`, not a plain member: nearly every call site derives this from the
+   * palette (`this.colors.ink`, usually through `withAlpha`), and the palette
+   * changes without an `if` flipping, which is what re-creates a subtree. As a
+   * plain member the glyph kept the colour of the theme it was born in, so icons
+   * stayed dark on a page that had just turned dark.
+   */
+  @Prop color: string = '#000000';
   /** Stroke width in the 24-unit box; Android's Lucide glyphs use 2. */
   strokeWidth: number = 2;
   /** Lucide uses round caps and joins; keep them so the outline matches. */

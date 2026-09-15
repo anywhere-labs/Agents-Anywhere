@@ -2,9 +2,10 @@ import { HttpTransport } from './HttpTransport';
 import { encodeUrlComponent } from './ApiUrls';
 import {
   parseRemoteDeviceEnvelope, parseRemoteDeviceList, parseRemoteDeviceRuntime,
-  parseRemoteDeviceRuntimeList, RemoteDeviceEnvelopeDto, RemoteDeviceListDto,
-  RemoteDeviceRuntime, RemoteDeviceRuntimeDto, RemoteDeviceRuntimeEnvelopeDto,
-  RemoteDeviceRuntimeList, RemoteDeviceRuntimeListDto,
+  parseRemoteDeviceRuntimeList, parseRemoteRuntimeTypeList, RemoteDeviceEnvelopeDto,
+  RemoteDeviceListDto, RemoteDeviceRuntime, RemoteDeviceRuntimeDto,
+  RemoteDeviceRuntimeEnvelopeDto, RemoteDeviceRuntimeList, RemoteDeviceRuntimeListDto,
+  RemoteRuntimeTypeList, RemoteRuntimeTypeListDto,
 } from './DevicesDtos';
 import { AgentDevice } from '../model/AgentSession';
 import {
@@ -16,6 +17,19 @@ import { parseRuntimeCapabilitySet, RemoteRuntimeCapabilitySet } from './Runtime
 /** `{ "active": bool }` body of the runtime activation endpoint. */
 interface RuntimeActiveRequest {
   active: boolean;
+}
+
+/** `{ runtimeType, name, config, active }` body of the runtime creation endpoint. */
+interface RuntimeInstanceCreateRequest {
+  runtimeType: string;
+  name: string;
+  config: Object;
+  active: boolean;
+}
+
+/** `{ "config": … }` body of the runtime configuration endpoint. */
+interface RuntimeConfigPutRequest {
+  config: Object;
 }
 
 /** `{ capabilitySet: … }` body of the runtime capabilities endpoint. */
@@ -99,6 +113,69 @@ export class DevicesApi {
       serverUrl, `/connectors/${encodeUrlComponent(deviceId)}/runtimes/discover`, token,
     );
     return parseRemoteDeviceRuntimeList(body as RemoteDeviceRuntimeListDto, deviceId);
+  }
+
+  /** `GET /connectors/{id}/runtime-types` — the types this device can still add. */
+  async listRuntimeTypes(
+    serverUrl: string,
+    token: string,
+    deviceId: string,
+  ): Promise<RemoteRuntimeTypeList> {
+    const body: Object = await this.transport.getJson(
+      serverUrl, `/connectors/${encodeUrlComponent(deviceId)}/runtime-types`, token,
+    );
+    return parseRemoteRuntimeTypeList(body as RemoteRuntimeTypeListDto, deviceId);
+  }
+
+  /** `POST /connectors/{id}/runtime-types/discover` — re-runs type discovery. */
+  async discoverRuntimeTypes(
+    serverUrl: string,
+    token: string,
+    deviceId: string,
+  ): Promise<RemoteRuntimeTypeList> {
+    const body: Object = await this.transport.postEmpty(
+      serverUrl, `/connectors/${encodeUrlComponent(deviceId)}/runtime-types/discover`, token,
+    );
+    return parseRemoteRuntimeTypeList(body as RemoteRuntimeTypeListDto, deviceId);
+  }
+
+  /** `POST /connectors/{id}/runtimes` — adds a configured runtime instance. */
+  async createRuntime(
+    serverUrl: string,
+    token: string,
+    deviceId: string,
+    runtimeType: string,
+    name: string,
+    config: Object,
+    active: boolean,
+  ): Promise<RemoteDeviceRuntime> {
+    const request: RuntimeInstanceCreateRequest = {
+      runtimeType: runtimeType,
+      name: name,
+      config: config,
+      active: active,
+    };
+    const body: Object = await this.transport.postJson(
+      serverUrl, `/connectors/${encodeUrlComponent(deviceId)}/runtimes`, token, request,
+    );
+    return parseRemoteDeviceRuntimeEnvelope(body as RemoteDeviceRuntimeEnvelopeDto, deviceId);
+  }
+
+  /** `PUT /connectors/{id}/runtimes/{runtimeId}/config` — saves a runtime's config. */
+  async putRuntimeConfig(
+    serverUrl: string,
+    token: string,
+    deviceId: string,
+    runtimeId: string,
+    config: Object,
+  ): Promise<RemoteDeviceRuntime> {
+    const request: RuntimeConfigPutRequest = { config: config };
+    const body: Object = await this.transport.putJson(
+      serverUrl,
+      `/connectors/${encodeUrlComponent(deviceId)}/runtimes/${encodeUrlComponent(runtimeId)}/config`,
+      token, request,
+    );
+    return parseRemoteDeviceRuntimeEnvelope(body as RemoteDeviceRuntimeEnvelopeDto, deviceId);
   }
 
   /** `POST /connectors/{id}/runtimes/{runtimeId}/active` — start or stop one. */

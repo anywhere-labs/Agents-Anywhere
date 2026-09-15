@@ -22,6 +22,7 @@ import { AAColors, AA_LIGHT_COLORS, withAlpha } from '../../designsystem/AAColor
 import { AAIcon } from '../../designsystem/AAIcon';
 import { AA_ICONS } from '../../designsystem/AAIcons';
 import { AAFontSize, AAHeight, AARadius } from '../../designsystem/AAMetrics';
+import { glassFill, iosHairline } from '../../designsystem/AAIosChrome';
 import { BlockingRuntimeNoticeStack, RuntimeNoticeCard } from './SessionRuntimeControls';
 import { AgentMarkdownText } from './AgentMarkdownText';
 import { SessionRuntimeSettingsSheet } from './SessionRuntimeSettingsSheet';
@@ -176,6 +177,8 @@ export struct SessionDetailScreen {
   @Prop statusBarHeight: number;
 
   @State private draft: string = '';
+  /** iOS's `ComposerDraft.isFocused`, one of the three inputs to `isExpanded`. */
+  @State private composerFocused: boolean = false;
   @State private showRuntimeSettings: boolean = false;
   @State private showScrollToBottom: boolean = false;
   @State private showAttachMenu: boolean = false;
@@ -501,6 +504,17 @@ export struct SessionDetailScreen {
       return this.deviceOnline && !this.state.sending;
     }
     return this.takeoverEnabled() && this.deviceOnline && !this.state.sending;
+  }
+
+  /**
+   * iOS's `ComposerDraft.isExpanded`: `isFocused || !text.isEmpty || !attachments.isEmpty`.
+   *
+   * It is a *state*, not a measurement — the composer switches its corner radius
+   * (24 -> 26) and its horizontal inset (32 -> 12) as soon as it is in use, which
+   * is what makes the resting pill snap open the moment it is touched.
+   */
+  private composerExpanded(): boolean {
+    return this.composerFocused || this.draft.length > 0 || this.attachments.length > 0;
   }
 
   /**
@@ -1030,7 +1044,19 @@ export struct SessionDetailScreen {
           .padding({ left: 14, right: 14, bottom: 6 })
       }
 
-      this.Composer()
+      // iOS's composer inset: 32dp at rest, 12dp once it is in use. It has to be
+      // the padding of a wrapper — a `margin` on the composer's own
+      // `width('100%')` box is not applied, which made both states measure the
+      // same and left the box inset only by its content padding.
+      Column() {
+        this.Composer()
+      }
+      .width('100%')
+      .padding({
+        left: this.composerExpanded() ? 12 : 32,
+        right: this.composerExpanded() ? 12 : 32,
+        bottom: 10,
+      })
     }
     .width('100%')
     .height('100%')
@@ -1227,16 +1253,30 @@ export struct SessionDetailScreen {
         })
       }
 
-      TextInput({ text: this.draft, placeholder: this.placeholder() })
+      // A `TextArea`, not a `TextInput`: iOS's composer grows with the draft up
+      // to `maximumEditorHeight` (`min(160, max(72, height * 0.30))`, which is
+      // 160 on a phone), and a single-line field can never wrap onto a second
+      // line. It carries no chrome of its own — the container is the surface.
+      TextArea({ text: this.draft, placeholder: this.placeholder() })
         .placeholderColor(this.colors.muted)
         .placeholderFont({ size: 17 })
         .fontSize(17)
         .fontColor(this.colors.ink)
         .backgroundColor('#00000000')
         .borderRadius(0)
+        .borderWidth(0)
         .padding(0)
-        .height(40)
+        .textAlign(TextAlign.Start)
+        .constraintSize({ minHeight: 40, maxHeight: 160 })
         .enabled(this.inputEnabled())
+        .enterKeyType(EnterKeyType.Send)
+        .onSubmit(() => this.submitComposer())
+        .onFocus(() => {
+          this.composerFocused = true;
+        })
+        .onBlur(() => {
+          this.composerFocused = false;
+        })
         .onChange((next: string) => {
           const wasCommand: boolean = this.draft.trimStart().startsWith('/');
           this.draft = next;
@@ -1339,11 +1379,17 @@ export struct SessionDetailScreen {
       .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 14, bottom: 12 })
-    .margin({ left: 12, right: 12, bottom: 10 })
-    .borderRadius(26)
-    .backgroundColor(this.colors.raisedSurface)
-    .border({ width: 1, color: this.colors.isDark ? this.colors.border : '#3C3C43' })
+    // iOS `ChatComposer`: the glass container's flat equivalent — `groupedFill`
+    // with the `secondaryControlStroke` hairline, the same pair the glass buttons
+    // use. The corner radius follows `isExpanded` (24 at rest, 26 in use); the
+    // horizontal inset is the wrapper's padding at the call site, because a
+    // `margin` on this `width('100%')` box is not applied. The previous
+    // raised-surface fill with a hard `#3C3C43` outline read as a boxed field,
+    // which is not what iOS draws.
+    .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+    .borderRadius(this.composerExpanded() ? 26 : 24)
+    .backgroundColor(glassFill(this.colors))
+    .border({ width: 1, color: iosHairline(this.colors) })
     .opacity(1)
   }
 

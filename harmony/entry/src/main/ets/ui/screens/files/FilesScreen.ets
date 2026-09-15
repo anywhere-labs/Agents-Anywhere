@@ -73,6 +73,16 @@ export struct FilesScreen {
   /** Device to open first; the session's device when reached from a session. */
   initialDeviceId: string = '';
   /**
+   * Directory the device browser opens on, or an empty string for the device's
+   * own initial path.
+   *
+   * iOS's `WorkspaceFilesSheet` carries the same `initialPath`, which is how the
+   * device page opens a project's files at that project's workspace instead of at
+   * the connector's root. It only applies to the device browser: the session
+   * pager is rooted at the session's workspace whatever this holds.
+   */
+  @Prop initialPath: string = '';
+  /**
    * The session whose files/terminal pager this is, or `null` for the device
    * browser. Android passes the whole session plus its device; the device is
    * looked up from `state` here.
@@ -251,8 +261,11 @@ export struct FilesScreen {
 
   /** Resets the browser and loads the device's initial directory. */
   private resetForDevice(device: AgentDevice): void {
+    const start: string = this.initialPath.trim().length > 0
+      ? this.initialPath
+      : initialRemoteFilePath(device.deviceOs);
     this.selectedDeviceId = device.id;
-    this.directory = emptyDirectory(initialRemoteFilePath(device.deviceOs));
+    this.directory = emptyDirectory(start);
     this.resolvedRoot = null;
     this.selectedFile = null;
     this.preview = null;
@@ -262,7 +275,7 @@ export struct FilesScreen {
     this.closeSearch();
     if (device.online) {
       this.error = '';
-      void this.loadDirectory(isWindowsDeviceOs(device.deviceOs) ? '' : '.');
+      void this.loadDirectory(start);
     } else {
       this.error = 'This device is offline.';
     }

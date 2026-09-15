@@ -81,9 +81,14 @@ import { NewSessionAttachmentPart, NewSessionCreateOutcome } from '../feature/se
 import { RemoteDirectory } from '../api/FilesDtos';
 import { RuntimeModelCatalog, RuntimePermissionCatalog } from '../api/RuntimeCatalogDtos';
 import { RemoteRuntimeCapabilitySet } from '../api/RuntimeDtos';
-import { RemoteDeviceRuntimeList } from '../api/DevicesDtos';
-import { RemoteDeviceRuntime } from '../api/DevicesDtos';
-import { DeviceRuntimeManagementState } from '../feature/devices/DeviceRuntimeState';
+import {
+  RemoteDeviceRuntime, RemoteDeviceRuntimeList, RemoteRuntimeType, RemoteRuntimeTypeList,
+  runtimeTypeCanAdd,
+} from '../api/DevicesDtos';
+import {
+  configuredRuntime, DeviceRuntimeManagementState, reconfigurableRuntime, runtimeIsUp,
+  runtimeNamed,
+} from '../feature/devices/DeviceRuntimeState';
 import {
   archiveStatesFor, projectSessionKey, ProjectSessionsState, ProjectSessionStatusFilter,
 } from '../feature/sessions/ProjectSessionsState';
@@ -235,6 +240,15 @@ export struct AgentsAnywhereApp {
   @State private selectedDeviceId: string = '';
   /** Runtime inventory of the open device. */
   @State private deviceRuntimes: DeviceRuntimeManagementState = DeviceRuntimeManagementState.empty();
+  /**
+   * The runtime types the open device can still add.
+   *
+   * Loaded when the add-Agent sheet opens, as iOS's `DeviceAgentModel.refresh`
+   * does, and re-read after a create so the sheet's list follows the inventory.
+   */
+  @State private deviceRuntimeTypes: RemoteRuntimeType[] = [];
+  @State private deviceRuntimeTypesLoading: boolean = false;
+  @State private deviceRuntimeTypesError: string | null = null;
   /** True while a bulk session operation on the device page is in flight. */
   @State private deviceBulkBusy: boolean = false;
   /** Device-page notices, surfaced in that screen's toast. */
@@ -259,6 +273,14 @@ export struct AgentsAnywhereApp {
   @State private pairingMonitor: DevicePairingMonitor = new DevicePairingMonitor();
   /** Files page: which device it opens on, and where its back button returns. */
   @State private filesDeviceId: string = '';
+  /**
+   * Directory the files page opens on, when the device page asked for one.
+   *
+   * iOS's `WorkspaceFilesSheet(initialPath:)`: the device page opens a project's
+   * files at that project's workspace, so the path travels with the device id and
+   * the session that already ride along. Empty means the connector's own root.
+   */
+  @State private filesPath: string = '';
   /**
    * The session the files page belongs to, or `null` for the device browser.
    *
@@ -501,7 +523,11 @@ export struct AgentsAnywhereApp {
     // attachments on the session id, so a pending upload never leaks across.
     this.composerAttachments = [];
     this.restoreComposerDraft(session.id);
-    this.destination = AppDestination.SessionDetail;
+    // Through `navigate`, not straight to the field: picking content is what
+    // closes the compact drawer. Writing `destination` here left the drawer open
+    // over the conversation that was just opened, so the page showed only the
+    // sliver the card offset left beside the sidebar.
+    this.navigate(AppDestination.SessionDetail);
     void this.loadSessionDetail(session.id);
     // Reading, not sending: a failure here only leaves the unread dot in place.
     void services.sessionDetailController.markRead(session.id);
@@ -1217,12 +1243,50 @@ export struct AgentsAnywhereApp {
 
   // ------------------------------------------------------------ device detail
 
-  /** iOS's device page opens the device's workspace files from here. */
-  private openDeviceFiles(): void {
+  /**
+   * iOS's device page opens the device's workspace files from a project row, at
+   * that project's path; an empty path is the connector's own root.
+   */
+  private openDeviceFiles(path: string): void {
     this.filesSession = null;
     this.filesDeviceId = this.selectedDeviceId;
+    this.filesPath = path;
     this.filesReturn = AppDestination.DeviceDetail;
     this.navigate(AppDestination.Files);
+  }
+
+  /**
+   * A project row's rename: the same `ProjectsController.updateProject` call the
+   * sidebar's project editor makes, with the answered row folded in.
+   */
+  private async renameDeviceProject(project: AgentProject, name: string): Promise<void> {
+    const services: AppServices = this.requireServices('Sign in again to rename this project.');
+    const next: SessionsState =
+      await services.sessionsController.updateProject(this.sessionsState, project.id, name, null);
+    this.projectsRequestVersion += 1;
+    this.sessionsState = next;
+  }
+
+  /** A project row's pin toggle: the sidebar's own update, with `pinned` flipped. */
+  private async toggleDeviceProjectPin(project: AgentProject): Promise<void> {
+    const services: AppServices = this.requireServices('Sign in again to update this project.');
+    const next: SessionsState = await services.sessionsController.updateProject(
+      this.sessionsState, project.id, null, !project.pinned,
+    );
+    this.projectsRequestVersion += 1;
+    this.sessionsState = next;
+  }
+
+  /**
+   * iOS's `archiveProject`: every active session in the project, patched from the
+   * Server's own answer rather than refetching the dashboard.
+   */
+  private async archiveDeviceProject(project: AgentProject): Promise<void> {
+    const services: AppServices =
+      this.requireServices('Sign in again to archive these sessions.');
+    const next: SessionsState =
+      await services.sessionsController.archiveProjectSessions(this.sessionsState, project.id);
+    this.sessionsState = next;
   }
 
   /** The same page opens the standalone terminal, which only Android has. */
@@ -1236,8 +1300,17 @@ export struct AgentsAnywhereApp {
   private openDevice(device: AgentDevice): void {
     this.selectedDeviceId = device.id;
     this.deviceRuntimes = DeviceRuntimeManagementState.loadingFor(device.id);
+    // The add-Agent sheet reads the addable types, so the previous device's must
+    // not survive the switch. They are loaded with the page, not when the sheet
+    // opens: iOS's `DeviceAgentSection` keeps the type inventory in the model it
+    // loads for the page, and loading them *from the button* changed app state in
+    // the same tick as the sheet's own open, which dropped the just-presented
+    // sheet (the tap did nothing visible).
+    this.deviceRuntimeTypes = [];
+    this.deviceRuntimeTypesError = null;
     this.navigate(AppDestination.DeviceDetail);
     void this.loadDeviceRuntimes(device.id);
+    void this.loadDeviceRuntimeTypes(false);
   }
 
   /**
@@ -1305,6 +1378,149 @@ export struct AgentsAnywhereApp {
       await this.loadDeviceRuntimes(runtime.connectorId);
       this.deviceRuntimes = this.deviceRuntimes.copy({ errorMessage: message });
     }
+  }
+
+  // ------------------------------------------------- runtime configuration
+
+  /**
+   * Loads the device's addable runtime types.
+   *
+   * iOS's `DeviceAgentModel.refresh(discover:)` reads the types and the instances
+   * together; the instances here are the inventory the device page already holds,
+   * so this only fetches the types and keeps its own loading/error state.
+   */
+  private async loadDeviceRuntimeTypes(discover: boolean): Promise<void> {
+    const services: AppServices | null = this.services;
+    const deviceId: string = this.selectedDeviceId;
+    if (services === null || deviceId.length === 0) {
+      return;
+    }
+    this.deviceRuntimeTypesLoading = true;
+    this.deviceRuntimeTypesError = null;
+    try {
+      const list: RemoteRuntimeTypeList = discover
+        ? await services.devicesController.discoverRuntimeTypes(deviceId)
+        : await services.devicesController.listRuntimeTypes(deviceId);
+      if (this.selectedDeviceId !== deviceId) {
+        return;
+      }
+      this.deviceRuntimeTypes = list.runtimeTypes;
+    } catch (error) {
+      if (this.selectedDeviceId !== deviceId) {
+        return;
+      }
+      AALog.warn(`Runtime types failed: ${error instanceof Error ? error.message : 'unknown'}`);
+      this.deviceRuntimeTypesError = error instanceof Error
+        ? error.message
+        : 'Could not load the available Agents.';
+    } finally {
+      if (this.selectedDeviceId === deviceId) {
+        this.deviceRuntimeTypesLoading = false;
+      }
+    }
+  }
+
+  /**
+   * Saves one runtime's configuration.
+   *
+   * The Server answers with the authoritative row, which replaces the one on the
+   * page — the same contract `setRuntimeActive` uses.
+   */
+  private async saveDeviceRuntimeConfig(
+    runtime: RemoteDeviceRuntime,
+    config: Object,
+  ): Promise<void> {
+    const services: AppServices | null = this.services;
+    if (services === null) {
+      throw new Error('Sign in again to configure this runtime.');
+    }
+    const updated: RemoteDeviceRuntime = await services.devicesController.saveRuntimeConfig(
+      runtime.connectorId, runtime.id, config,
+    );
+    this.deviceRuntimes = this.deviceRuntimes.replaceRuntime(updated);
+  }
+
+  /**
+   * Adds a runtime, following iOS's `addRuntime`.
+   *
+   * It re-reads the inventory first — iOS does the same, because a create retry
+   * must not add a second instance — then reuses the instance the Server already
+   * has for that type (the one named like the request, the configured one, or a
+   * cleared one), and only creates a new instance when there is none.
+   */
+  private async addDeviceRuntime(
+    type: RemoteRuntimeType,
+    name: string | null,
+    config: Object,
+    newInstance: boolean,
+  ): Promise<void> {
+    const services: AppServices | null = this.services;
+    const deviceId: string = this.selectedDeviceId;
+    if (services === null || deviceId.length === 0) {
+      throw new Error('Sign in again to add this Agent.');
+    }
+    const inventory: RemoteDeviceRuntimeList =
+      await services.devicesController.listDeviceRuntimes(deviceId);
+    const instances: RemoteDeviceRuntime[] = inventory.runtimes;
+    this.deviceRuntimes = this.deviceRuntimes.replaceWithList(inventory);
+
+    const types: RemoteRuntimeTypeList = await services.devicesController.listRuntimeTypes(deviceId);
+    this.deviceRuntimeTypes = types.runtimeTypes;
+    let current: RemoteRuntimeType | null = null;
+    for (const candidate of types.runtimeTypes) {
+      if (candidate.id === type.id) {
+        current = candidate;
+      }
+    }
+    if (current === null || !current.present) {
+      throw new Error(resolveString($r('app.string.device_add_agent_unavailable')));
+    }
+
+    const named: RemoteDeviceRuntime | null = name === null
+      ? null
+      : runtimeNamed(instances, current.runtimeType, name);
+    const existing: RemoteDeviceRuntime | null = named
+      ?? (newInstance ? null : configuredRuntime(instances, current.runtimeType))
+      ?? reconfigurableRuntime(instances, current.runtimeType);
+    if (existing !== null) {
+      if (runtimeIsUp(existing)) {
+        return;
+      }
+      if (!existing.configured) {
+        await services.devicesController.saveRuntimeConfig(deviceId, existing.id, config);
+      }
+      const updated: RemoteDeviceRuntime = await services.devicesController.setRuntimeActive(
+        deviceId, existing.id, true,
+      );
+      this.deviceRuntimes = this.deviceRuntimes.replaceRuntime(updated);
+      return;
+    }
+
+    if (!runtimeTypeCanAdd(current, instances)) {
+      throw new Error(resolveString($r('app.string.device_add_agent_limit')));
+    }
+    const created: RemoteDeviceRuntime = await services.devicesController.createRuntime(
+      deviceId, current.runtimeType, name ?? this.suggestedRuntimeName(instances, current), config, true,
+    );
+    this.deviceRuntimes = this.deviceRuntimes.replaceRuntime(created);
+  }
+
+  /** iOS's suggested instance name: the type's name, then a numeric suffix. */
+  private suggestedRuntimeName(
+    instances: RemoteDeviceRuntime[],
+    type: RemoteRuntimeType,
+  ): string {
+    const names: Set<string> = new Set();
+    for (const instance of instances) {
+      names.add(instance.displayName.toLowerCase());
+    }
+    let name: string = type.displayName;
+    let suffix: number = 2;
+    while (names.has(name.toLowerCase())) {
+      name = `${type.displayName} ${suffix}`;
+      suffix += 1;
+    }
+    return name;
   }
 
   /**
@@ -2563,6 +2779,11 @@ export struct AgentsAnywhereApp {
       onNewSession: () => this.navigate(AppDestination.NewSession),
       onNewProject: () => this.navigate(AppDestination.NewProject),
       onOpenDevice: (device: AgentDevice) => this.openDevice(device),
+      // iOS's `ChatSidebarView` paints the row of the device that is showing with
+      // `sidebarSelectionFill`; without it the sidebar looked the same whichever
+      // device had just been opened.
+      selectedDeviceId: this.selectedDeviceId,
+      selectedSessionId: this.selectedSessionId,
       onOpenProfile: () => {
         // The account page replaces the shell, so the drawer gets out of its way
         // through the same settle the buttons and the pan use — setting the flag
@@ -2812,6 +3033,9 @@ export struct AgentsAnywhereApp {
                     const session: AgentSession | null = this.findSession(this.selectedSessionId);
                     this.filesSession = session;
                     this.filesDeviceId = session === null ? '' : session.connectorId;
+                    // The pager is rooted at the session's workspace, so a path
+                    // left over from a project row must not travel with it.
+                    this.filesPath = '';
                     this.filesReturn = AppDestination.SessionDetail;
                     this.navigate(AppDestination.Files);
                   },
@@ -2897,9 +3121,11 @@ export struct AgentsAnywhereApp {
                   bulkBusy: this.deviceBulkBusy,
                   deviceNotice: this.deviceNotice,
                   deviceNoticeRequest: this.deviceNoticeRequest,
-                  // iOS reaches a device's files from the device page
-                  // (`WorkspaceFilesSheet`); the terminal is this app's own page.
-                  onOpenFiles: () => this.openDeviceFiles(),
+                  // iOS reaches a device's files from a project row's folder
+                  // button, at that project's path (`WorkspaceFilesSheet`'s
+                  // `initialPath`); the terminal is this app's own page and lives
+                  // in the actions sheet next to the device's other actions.
+                  onOpenFiles: (path: string) => this.openDeviceFiles(path),
                   onOpenTerminal: () => this.openDeviceTerminal(),
                   onBack: () => this.navigate(AppDestination.Devices),
                   // A device row in the sidebar opens this page, so its leading
@@ -2909,6 +3135,18 @@ export struct AgentsAnywhereApp {
                   onOpenSession: (session: AgentSession) => {
                     this.openSession(session);
                   },
+                  // iOS passes the pressed project to its new-session flow; this
+                  // client's new-session page has no project preset, so the button
+                  // opens its picker — the same thing the sidebar's own project
+                  // rows do.
+                  onNewSession: () => this.navigate(AppDestination.NewSession),
+                  onCreateProject: () => this.navigate(AppDestination.NewProject),
+                  onRenameProject: (project: AgentProject, name: string) =>
+                    this.renameDeviceProject(project, name),
+                  onToggleProjectPin: (project: AgentProject) =>
+                    this.toggleDeviceProjectPin(project),
+                  onArchiveProject: (project: AgentProject) =>
+                    this.archiveDeviceProject(project),
                   onRetryRuntimes: () => {
                     void this.loadDeviceRuntimes(this.selectedDeviceId);
                   },
@@ -2919,6 +3157,23 @@ export struct AgentsAnywhereApp {
                     this.deviceActionError = '';
                     this.deviceConfirmAction = DeviceConfirmAction.deleteRuntimeConfig(runtime);
                   },
+                  // iOS's `slider.horizontal.3` button, and the footer's
+                  // "添加更多 Agent" flow. Both sheets live in the page's own
+                  // overlay; the app owns the writes they await.
+                  onSaveRuntimeConfig: (runtime: RemoteDeviceRuntime, config: Object) =>
+                    this.saveDeviceRuntimeConfig(runtime, config),
+                  runtimeTypes: this.deviceRuntimeTypes,
+                  runtimeTypesLoading: this.deviceRuntimeTypesLoading,
+                  runtimeTypesError: this.deviceRuntimeTypesError,
+                  onRediscoverRuntimeTypes: () => {
+                    void this.loadDeviceRuntimeTypes(true);
+                  },
+                  onAddRuntime: (
+                    type: RemoteRuntimeType,
+                    name: string | null,
+                    config: Object,
+                    newInstance: boolean,
+                  ) => this.addDeviceRuntime(type, name, config, newInstance),
                   onBulkSetArchived: (sessionIds: string[], archived: boolean) => {
                     void this.bulkSetDeviceSessionsArchived(sessionIds, archived);
                   },
@@ -3006,6 +3261,7 @@ export struct AgentsAnywhereApp {
                   state: this.sessionsState,
                   controller: this.services?.filesController ?? null,
                   initialDeviceId: this.filesDeviceId,
+                  initialPath: this.filesPath,
                   session: this.filesSession,
                   pool: this.services?.terminalPool ?? null,
                   onBack: () => this.navigate(this.filesReturn),

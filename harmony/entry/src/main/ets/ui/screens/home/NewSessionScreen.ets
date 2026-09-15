@@ -51,8 +51,8 @@ import { resolveString, resolveStringWith } from '../../../common/AAResources';
  *  - `devicesSignature` is a `@Watch`ed prop the app recomputes whenever the
  *    device list or an online flag changes; it starts the pull chain
  *    (device → inventory → runtime details → workspace default);
- *  - the inventory loader's `onChanged` callback bumps a local revision, so a
- *    connector that answers later re-runs the same chain.
+ *  - the inventory loader's `onChanged` callback re-runs the same chain; because
+ *    `selection` is a `@State`, that re-run is what the card actually receives.
  *
  * The page hosts two modes. Normally it picks a device, an agent and a workspace
  * and hands a draft to the app. With `projectOnly` set — how
@@ -112,7 +112,6 @@ export struct NewSessionScreen {
   @State private pathError: string = '';
   @State private expandedConfiguration: number = -1;
   /** Bumped when the selection or the inventory changes, so `build` re-runs. */
-  @State private revision: number = 0;
   /** True while the project editor replaces the picker. */
   @State private creatingProject: boolean = false;
   @State private projectName: string = '';
@@ -121,7 +120,19 @@ export struct NewSessionScreen {
   /** The project that already owns the chosen directory, awaiting confirmation. */
   @State private workspaceConflict: AgentProject | null = null;
 
-  private selection: NewSessionRuntimeSelectionState = NewSessionRuntimeSelectionState.empty();
+  /**
+   * The selected device/runtime plus its catalogs.
+   *
+   * `@State`, not a plain member: `configurationFields()`, the Agent row's
+   * placeholder and the status line under the card are all derived from it, and a
+   * plain member makes none of them re-render. The page used to rely on a `revision`
+   * counter to force that, but the counter was only ever written and never read in
+   * `build()`, so ArkUI had nothing to re-render and the card kept the fields it
+   * was created with. That is why the Agent row sat on its placeholder while the
+   * inventory had actually settled in ~150 ms. The counter is gone; this is the
+   * observable the page-renders hang off.
+   */
+  @State private selection: NewSessionRuntimeSelectionState = NewSessionRuntimeSelectionState.empty();
   private readonly inventory: NewSessionRuntimeInventory = new NewSessionRuntimeInventory();
   private preference: NewSessionPreference | null = null;
   private preferenceStore: NewSessionPreferenceStore | null = null;
@@ -281,7 +292,6 @@ export struct NewSessionScreen {
         this.persistSelection(NewSessionConfigurationKey.Device);
       }
     }
-    this.revision += 1;
   }
 
   /** Android's inventory effect: adopt whatever the loader has for this device. */
@@ -301,7 +311,6 @@ export struct NewSessionScreen {
   private onDevicesChanged(): void {
     this.startInventory();
     this.pickDevice();
-    this.revision += 1;
   }
 
   private onInventoryChanged(): void {
@@ -310,7 +319,6 @@ export struct NewSessionScreen {
       this.adoptInventory(this.selectedDeviceId);
     }
     this.loadRuntimeDetails();
-    this.revision += 1;
   }
 
   private startInventory(): void {
@@ -343,7 +351,6 @@ export struct NewSessionScreen {
     ).then(() => {
       this.loadInitialDirectory();
       this.loadRuntimeDetails();
-      this.revision += 1;
     }).catch((error: Error) => {
       AALog.warn(`Runtime inventory failed: ${error.message}`);
     });
@@ -381,7 +388,6 @@ export struct NewSessionScreen {
         return;
       }
       this.loadRuntimeCatalogs(connectorId, runtimeId, key);
-      this.revision += 1;
       return;
     }
     this.selection = this.selection.beginRuntimeDetails();
@@ -396,13 +402,11 @@ export struct NewSessionScreen {
           return;
         }
         this.loadRuntimeCatalogs(connectorId, runtimeId, requestKey);
-        this.revision += 1;
       })
       .catch(() => {
         this.selection = this.selection.failCapabilities(
           requestKey, resolveString($r('app.string.new_session_capabilities_failed')),
         );
-        this.revision += 1;
       });
   }
 
@@ -420,24 +424,20 @@ export struct NewSessionScreen {
     if (this.selection.canUseModelCatalog()) {
       void this.onLoadModelCatalog(connectorId, runtimeId).then((catalog: RuntimeModelCatalog) => {
         this.selection = this.selection.applyModelCatalog(requestKey, catalog);
-        this.revision += 1;
       }).catch(() => {
         this.selection = this.selection.failModelCatalog(
           requestKey, resolveString($r('app.string.new_session_model_catalog_failed')),
         );
-        this.revision += 1;
       });
     }
     if (this.selection.canUsePermissionCatalog()) {
       void this.onLoadPermissionCatalog(connectorId, runtimeId)
         .then((catalog: RuntimePermissionCatalog) => {
           this.selection = this.selection.applyPermissionCatalog(requestKey, catalog);
-          this.revision += 1;
         }).catch(() => {
           this.selection = this.selection.failPermissionCatalog(
             requestKey, resolveString($r('app.string.new_session_permission_catalog_failed')),
           );
-          this.revision += 1;
         });
     }
   }
@@ -502,7 +502,6 @@ export struct NewSessionScreen {
       const resolved: string = directory.path.length > 0 ? directory.path : '~';
       this.homePath = resolved;
       this.applyHomeWorkspace(device, resolved);
-      this.revision += 1;
     }).catch((error: Error) => {
       AALog.debug(`Resolving the home directory failed: ${error.message}`);
     });
@@ -681,7 +680,6 @@ export struct NewSessionScreen {
       this.selection = this.selection.selectPermission(optionId);
     }
     this.persistSelection(key);
-    this.revision += 1;
   }
 
   // ------------------------------------------------------------ fields
@@ -1056,7 +1054,6 @@ export struct NewSessionScreen {
     // opens on the current directory with the target selected.
     this.loadInitialDirectory();
     this.syncProjectName();
-    this.revision += 1;
   }
 
   /** True when the browser sits on the directory that would become the project. */
@@ -1088,7 +1085,6 @@ export struct NewSessionScreen {
     this.projectCreateError = '';
     void this.loadDirectory(targetPath, true).then(() => {
       this.syncProjectName();
-      this.revision += 1;
     });
   }
 
@@ -1113,7 +1109,6 @@ export struct NewSessionScreen {
     }
     this.projectCreating = true;
     this.projectCreateError = '';
-    this.revision += 1;
     void this.runCreateProject(device, inputPath, inputName, useDirectoryName, confirmRename);
   }
 
@@ -1149,7 +1144,6 @@ export struct NewSessionScreen {
       this.projectName = attemptedName;
       if (!confirmRename && existing !== null && existing.name !== attemptedName) {
         this.workspaceConflict = existing;
-        this.revision += 1;
         return;
       }
       const project: AgentProject =
@@ -1185,7 +1179,6 @@ export struct NewSessionScreen {
       }
     } finally {
       this.projectCreating = false;
-      this.revision += 1;
     }
   }
 
@@ -1212,7 +1205,6 @@ export struct NewSessionScreen {
     // Android's directory effect re-runs when `creatingProject` flips back, which
     // restores the picker's home row.
     this.loadInitialDirectory();
-    this.revision += 1;
   }
 
   private pathLabel(): string {
@@ -1267,7 +1259,6 @@ export struct NewSessionScreen {
             this.nameEdited = true;
             this.projectName = value;
             this.projectCreateError = '';
-            this.revision += 1;
           },
           creating: this.projectCreating,
           canCreate: this.canCreateProject(),

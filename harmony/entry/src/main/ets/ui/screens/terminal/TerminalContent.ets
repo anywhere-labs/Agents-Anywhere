@@ -397,7 +397,9 @@ export struct TerminalContent {
 
   /** `applyTerminalColors`' background: the terminal canvas itself. */
   private terminalBackground(): string {
-    return this.darkMode ? '#09090B' : '#FEFDFB';
+    // White in light mode, like every other page background; a light terminal
+    // theme is white anyway.
+    return this.darkMode ? '#09090B' : '#FFFFFF';
   }
 
   /**

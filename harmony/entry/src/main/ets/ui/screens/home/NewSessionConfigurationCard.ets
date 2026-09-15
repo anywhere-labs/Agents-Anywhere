@@ -113,7 +113,17 @@ export struct NewSessionConfigurationCard {
             .backgroundColor(this.colors.isDark ? '#545458' : '#3C3C43')
             .opacity(0.36)
         }
-      }, (field: NewSessionConfigurationField) => `field-${field.key}`)
+        // The key carries the row's visible content, not just its key.
+      //
+      // `ForEach` does not re-run an item's builder while its key is unchanged —
+      // it reuses the component it already built. With the plain `field-${key}`
+      // the page could hand this card a brand-new `fields` array (the pre-fix
+      // symptom: Agent settled to "Codex" and the model/effort/permission rows
+      // filled in) and every row would still draw the field object it was born
+      // with, i.e. the loading placeholder. Folding the content into the key makes
+      // a changed row a new row.
+    }, (field: NewSessionConfigurationField) =>
+      `field-${field.key}-${field.loading}-${field.enabled}-${field.active()}-${field.options.length}-${field.value}`)
     }
     .width('100%')
     .borderRadius(12)

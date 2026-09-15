@@ -32,8 +32,14 @@ import { AAFontSize } from './AAMetrics';
  * is black at 14% (white at 22%).
  */
 
-/** iOS `AppTheme.groupedFill`. */
-function glassFill(colors: AAColors): string {
+/**
+ * iOS `AppTheme.groupedFill`.
+ *
+ * The flat stand-in this port uses wherever iOS paints the glass material — the
+ * glass buttons, and the composer's container. Exported so a screen that draws
+ * its own glass surface uses the same fill instead of inventing one.
+ */
+export function glassFill(colors: AAColors): string {
   return colors.isDark ? '#0FFFFFFF' : '#0A000000';
 }
 
@@ -52,21 +58,32 @@ function glassStroke(colors: AAColors): string {
   return iosHairline(colors);
 }
 
+/** The square a toolbar item occupies on either side of an inline bar. */
+const BAR_ITEM_WIDTH: number = 44;
+
 /**
  * The inline navigation bar iOS uses on its sheets.
  *
  * 44dp row with the dismiss glyph on the leading edge and the title centred at
  * 17sp/600 — `.navigationBarTitleDisplayMode(.inline)` — which is what the iOS
  * client's device, files and settings surfaces carry. Trailing toolbar items go
- * in the caller's content slot; `trailingSlots` says how many there are so the
- * title stays centred between equal-width sides.
+ * in the caller's content slot; `trailingSlots` says how many there are, and the
+ * title is inset by the wider side so it stays centred on the *bar* rather than
+ * on whatever space the sides happen to leave.
  */
 @Component
 export struct AAIosInlineBar {
   colors: AAColors = AA_LIGHT_COLORS;
-  title: ResourceStr = '';
+  /**
+   * `@Prop`, not plain: every caller derives this from state that can change
+   * while the page stays mounted — the device page re-titles when another device
+   * is picked, the files and terminal bars re-title with their picker. A plain
+   * member kept the name the bar was born with, so switching devices left the old
+   * name in the bar while the rest of the page showed the new device.
+   */
+  @Prop title: ResourceStr = '';
   /** iOS's `navigationSubtitle`: a 12sp secondary line under the title. */
-  subtitle: ResourceStr = '';
+  @Prop subtitle: ResourceStr = '';
   onBack: () => void = () => {};
   /**
    * Split layout: the leading glyph folds the shell's sidebar instead of going
@@ -78,27 +95,22 @@ export struct AAIosInlineBar {
   trailingSlots: number = 0;
   @BuilderParam trailing: () => void = this.NoTrailing;
 
-  build() {
-    Row() {
-      Column() {
-        AAIcon({
-          commands: this.sidebarToggle ? AA_ICONS.PANEL_LEFT : AA_ICONS.CHEVRON_LEFT,
-          iconSize: 22,
-          color: this.colors.ink,
-        })
-      }
-      .width(44)
-      .height(44)
-      .justifyContent(FlexAlign.Center)
-      .accessibilityText(this.leadingLabel())
-      .onClick(() => {
-        if (this.sidebarToggle) {
-          this.onToggleSidebar();
-        } else {
-          this.onBack();
-        }
-      })
+  /**
+   * The half-width the centred title keeps clear on both sides.
+   *
+   * iOS centres the title in the bar and lets the toolbar items sit over its
+   * padding, so the inset is the *wider* of the two sides — at least one item,
+   * because the leading glyph is always there. Reserving space on the trailing
+   * side only (what this bar used to do) pushed the title towards the leading
+   * edge by half the difference: the device page drew its name 22dp left of
+   * centre.
+   */
+  private sideInset(): number {
+    return BAR_ITEM_WIDTH * (this.trailingSlots > 1 ? this.trailingSlots : 1);
+  }
 
+  build() {
+    Stack() {
       Column({ space: 1 }) {
         Text(this.title)
           .fontSize(17)
@@ -119,20 +131,61 @@ export struct AAIosInlineBar {
             .width('100%')
         }
       }
-      .layoutWeight(1)
-      .justifyContent(FlexAlign.Center)
+      .width('100%')
+      // Symmetric, so the text's centre is the bar's centre whatever the sides
+      // are, and a long name ellipsizes before it reaches a toolbar item.
+      .padding({ left: this.sideInset(), right: this.sideInset() })
       .alignItems(HorizontalAlign.Center)
+      .justifyContent(FlexAlign.Center)
 
-      if (this.trailingSlots > 0) {
-        Blank().width(44 * this.trailingSlots)
+      Row() {
+        Column() {
+          AAIcon({
+            commands: this.sidebarToggle ? AA_ICONS.PANEL_LEFT : AA_ICONS.CHEVRON_LEFT,
+            iconSize: 22,
+            color: this.colors.ink,
+          })
+        }
+        .width(BAR_ITEM_WIDTH)
+        .height(BAR_ITEM_WIDTH)
+        .justifyContent(FlexAlign.Center)
+        // iOS's navigation-bar items "own size, spacing, glass grouping"
+        // (`ChatPageToolbar`), which on the reference device page is a light disc
+        // behind each glyph. This port cannot draw the material, so the bar uses
+        // the same flat stand-in as the glass buttons: `groupedFill` in a circle.
+        .backgroundColor(glassFill(this.colors))
+        .borderRadius(BAR_ITEM_WIDTH / 2)
+        .accessibilityText(this.leadingLabel())
+        .onClick(() => {
+          if (this.sidebarToggle) {
+            this.onToggleSidebar();
+          } else {
+            this.onBack();
+          }
+        })
+
+        Blank()
+
+        // One trailing item is a single toolbar item on iOS, so it gets the same
+        // disc. Two or more are a group and are left to the caller.
+        if (this.trailingSlots === 1) {
+          Row() {
+            this.trailing()
+          }
+          .height(BAR_ITEM_WIDTH)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(glassFill(this.colors))
+          .borderRadius(BAR_ITEM_WIDTH / 2)
+        } else {
+          this.trailing()
+        }
       }
-
-      this.trailing()
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
     .height(44)
     .padding({ left: 6, right: 6 })
-    .alignItems(VerticalAlign.Center)
   }
 
   /**

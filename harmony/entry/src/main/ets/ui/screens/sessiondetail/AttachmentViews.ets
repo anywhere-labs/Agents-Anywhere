@@ -20,7 +20,7 @@ import {
  *  - conversation file card: 224x72 at 18dp radius on the message bubble colour,
  *    10dp padding, a 42dp icon tile at 14dp radius on `raisedSurface` at 86%, the
  *    name at 13sp semi-bold on one line and the size at 11sp muted;
- *  - viewer: full-screen on `#000000` (dark) or `#FDFCFB` (light), pages inset
+ *  - viewer: full-screen on `#000000` (dark) or `#FFFFFF` (light), pages inset
  *    12dp with room for the 46dp actions and a 104dp bottom band, a 58dp
  *    thumbnail strip at 8dp radius whose selected tile takes a 2dp selection
  *    border and 3dp inset, and two 46dp circular actions at the top-right;
@@ -57,7 +57,7 @@ export function attachmentPreviewPalette(dark: boolean): AttachmentPreviewPalett
     };
   }
   return {
-    background: '#FDFCFB',
+    background: '#FFFFFF',
     actionSurface: '#E6E7E5E0',
     actionContent: '#4B4B47',
     thumbnailSurface: '#F1F0ED',

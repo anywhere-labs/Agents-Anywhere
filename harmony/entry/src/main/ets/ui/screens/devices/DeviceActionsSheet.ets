@@ -22,6 +22,10 @@ import { AARadius } from '../../designsystem/AAMetrics';
  * The Reconnect/Revoke row hands off to the pairing wizard's token step, which is
  * where the replacement credentials are shown — revoking without showing them
  * would leave the device unable to reconnect.
+ *
+ * The Terminal row is this port's own: iOS has no standalone terminal, and the
+ * device page used to reach it from a `工作目录` block that iOS does not draw
+ * either, so it moved into this sheet with the device's other actions.
  */
 @Component
 export struct DeviceActionsSheet {
@@ -34,6 +38,8 @@ export struct DeviceActionsSheet {
   onDismiss: () => void = () => {};
   onRename: (name: string) => void = () => {};
   onPrepareSetup: () => void = () => {};
+  /** The standalone terminal for this device. */
+  onOpenTerminal: () => void = () => {};
   onDelete: () => void = () => {};
 
   @State private renaming: boolean = false;
@@ -180,6 +186,18 @@ export struct DeviceActionsSheet {
             icon: AA_ICONS.KEY_ROUND,
             rowEnabled: true,
             onTap: () => this.onPrepareSetup(),
+          })
+          AABottomSheetItem({
+            sheetColors: this.sheetColors(),
+            text: $r('app.string.common_terminal'),
+            icon: AA_ICONS.TERMINAL,
+            rowEnabled: !this.busy,
+            onTap: () => {
+              // The sheet is bound to the page that opened it, so it is closed
+              // before the terminal replaces that page.
+              this.onDismiss();
+              this.onOpenTerminal();
+            },
           })
           AABottomSheetItem({
             sheetColors: this.sheetColors(),

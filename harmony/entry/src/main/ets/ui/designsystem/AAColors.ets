@@ -63,7 +63,19 @@ export const AA_TRANSPARENT: string = '#00000000';
 
 export const AA_LIGHT_COLORS: AAColors = {
   isDark: false,
-  canvas: '#FDFCFB',
+  /*
+   * Android's `AAColor.Canvas` is a warm off-white (`#FDFCFB`), but the page
+   * background is pure white here: that is what iOS actually paints —
+   * `Color(.systemBackground)` in `ChatShellView` is white in light mode and
+   * black in dark — so the two clients now agree on the page colour. Dark mode
+   * is untouched, because `AA_DARK_COLORS.canvas` is what it always was.
+   *
+   * A card that is also white (`raisedSurface`) now sits on white; the ones that
+   * still need an edge carry the `border` hairline, which is visible in light
+   * mode and transparent in dark mode, where the surface contrast already
+   * separates them.
+   */
+  canvas: '#FFFFFF',
   ink: '#0A0A0B',
   inkSoft: '#2B2B2B',
   muted: '#777777',
@@ -176,6 +188,21 @@ export function withAlpha(color: string, alpha: number): string {
   const channel: number = Math.round(clamped * 255);
   const hex: string = channel.toString(16).padStart(2, '0').toUpperCase();
   return `#${hex}${color.substring(1)}`;
+}
+
+/**
+ * iOS `AppTheme.sidebarSelectionFill`.
+ *
+ * The fill behind the sidebar row of the device or session that is currently
+ * showing: black at 10% in light mode, white at 20% in dark, and nothing at all
+ * for a row that is not the current one. It is `ink` rather than a literal
+ * because `ink` is already the near-black / near-white pair iOS uses.
+ */
+export function sidebarSelectionFill(colors: AAColors, selected: boolean): string {
+  if (!selected) {
+    return AA_TRANSPARENT;
+  }
+  return withAlpha(colors.ink, colors.isDark ? 0.20 : 0.10);
 }
 
 /**

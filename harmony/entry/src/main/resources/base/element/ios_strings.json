@@ -19,6 +19,358 @@
     {
       "name": "sidebar_toggle",
       "value": "Toggle sidebar"
+    },
+    {
+      "name": "device_agent_runtimes",
+      "value": "Agent runtimes"
+    },
+    {
+      "name": "device_agent_rediscover",
+      "value": "Refresh"
+    },
+    {
+      "name": "device_agent_rediscovering",
+      "value": "Discovering…"
+    },
+    {
+      "name": "device_content",
+      "value": "Device content"
+    },
+    {
+      "name": "device_content_sessions",
+      "value": "Sessions"
+    },
+    {
+      "name": "device_connection_offline",
+      "value": "Device offline"
+    },
+    {
+      "name": "device_projects_count",
+      "value": "%d projects"
+    },
+    {
+      "name": "device_project_sessions_count",
+      "value": "%d sessions"
+    },
+    {
+      "name": "device_project_rename",
+      "value": "Rename project"
+    },
+    {
+      "name": "device_session_actions",
+      "value": "Session actions"
+    },
+    {
+      "name": "device_sessions_select_all",
+      "value": "Select all"
+    },
+    {
+      "name": "device_sessions_filter",
+      "value": "Session filter"
+    },
+    {
+      "name": "device_add_more_agents",
+      "value": "Add more Agents"
+    },
+    {
+      "name": "device_add_agent_title",
+      "value": "Add Agent"
+    },
+    {
+      "name": "device_add_agent_offline",
+      "value": "Device or network offline. Reconnect to continue."
+    },
+    {
+      "name": "device_add_agent_none_discovered",
+      "value": "No additional runtimes were discovered."
+    },
+    {
+      "name": "device_add_agent_none_addable",
+      "value": "No more runtime types can be added on this device."
+    },
+    {
+      "name": "device_add_agent_failed",
+      "value": "Failed to create runtime instance."
+    },
+    {
+      "name": "device_add_agent_unavailable",
+      "value": "This Agent is no longer available. Refresh the device."
+    },
+    {
+      "name": "device_add_agent_limit",
+      "value": "This runtime type cannot create another instance."
+    },
+    {
+      "name": "device_add_agent_quick_add",
+      "value": "Quick add"
+    },
+    {
+      "name": "device_agent_recommended",
+      "value": "Recommended"
+    },
+    {
+      "name": "device_agent_configure",
+      "value": "Configure"
+    },
+    {
+      "name": "device_agent_configuration_offline",
+      "value": "Device disconnected. Your changes are kept until it reconnects."
+    },
+    {
+      "name": "runtime_config_title",
+      "value": "Configure %s"
+    },
+    {
+      "name": "runtime_config_instance_name",
+      "value": "Instance name"
+    },
+    {
+      "name": "runtime_config_instance_name_placeholder",
+      "value": "Runtime instance name"
+    },
+    {
+      "name": "runtime_config_reset_defaults",
+      "value": "Reset all defaults"
+    },
+    {
+      "name": "runtime_config_choose_option",
+      "value": "Choose an option"
+    },
+    {
+      "name": "runtime_config_show_secret",
+      "value": "Show secret"
+    },
+    {
+      "name": "runtime_config_hide_secret",
+      "value": "Hide secret"
+    },
+    {
+      "name": "runtime_config_add_action",
+      "value": "Add"
+    },
+    {
+      "name": "runtime_config_review_fields",
+      "value": "Review the highlighted configuration fields."
+    },
+    {
+      "name": "runtime_config_required_field",
+      "value": "This field is required."
+    },
+    {
+      "name": "runtime_config_invalid_number",
+      "value": "Enter a valid number."
+    },
+    {
+      "name": "runtime_config_invalid_json",
+      "value": "Enter valid JSON."
+    },
+    {
+      "name": "runtime_config_value_too_long",
+      "value": "The value is too long."
+    },
+    {
+      "name": "runtime_config_invalid_format",
+      "value": "Enter a value in the required format."
+    },
+    {
+      "name": "runtime_config_out_of_range",
+      "value": "The number is outside the allowed range."
+    },
+    {
+      "name": "runtime_config_invalid_list_length",
+      "value": "The list has an invalid number of items."
+    },
+    {
+      "name": "runtime_config_duplicate_items",
+      "value": "List items must be unique."
+    },
+    {
+      "name": "runtime_config_incomplete_group",
+      "value": "Complete all required fields in this group."
+    },
+    {
+      "name": "runtime_config_unsupported_field",
+      "value": "This configuration contains an unsupported field."
+    },
+    {
+      "name": "runtime_config_unsupported_type",
+      "value": "The value has an unsupported type or format."
+    },
+    {
+      "name": "runtime_config_choose_from_options",
+      "value": "Choose one of the available options."
+    },
+    {
+      "name": "runtime_config_duplicate_variable",
+      "value": "Variable names must be unique."
+    },
+    {
+      "name": "runtime_config_duplicate_model",
+      "value": "Model IDs must be unique."
+    },
+    {
+      "name": "runtime_config_duplicate_effort",
+      "value": "Reasoning effort IDs must be unique within a model."
+    },
+    {
+      "name": "runtime_config_key_value_label",
+      "value": "Environment variables (optional)"
+    },
+    {
+      "name": "runtime_config_key_value_description",
+      "value": "Environment variables added or overridden when this runtime starts."
+    },
+    {
+      "name": "runtime_config_key_value_empty",
+      "value": "No environment overrides."
+    },
+    {
+      "name": "runtime_config_key_value_add",
+      "value": "Add variable"
+    },
+    {
+      "name": "runtime_config_key_value_variable_name",
+      "value": "Variable name"
+    },
+    {
+      "name": "runtime_config_key_value_variable_value",
+      "value": "Value"
+    },
+    {
+      "name": "runtime_config_key_value_remove_inherited",
+      "value": "Remove inherited variable"
+    },
+    {
+      "name": "runtime_config_key_value_remove",
+      "value": "Remove environment variable"
+    },
+    {
+      "name": "runtime_config_model_gateway_label",
+      "value": "Model gateway (optional)"
+    },
+    {
+      "name": "runtime_config_model_gateway_description",
+      "value": "Route this runtime's model requests through a compatible custom gateway. Leave both fields empty to use the runtime's default endpoint and authentication."
+    },
+    {
+      "name": "runtime_config_model_gateway_required_label",
+      "value": "Model gateway"
+    },
+    {
+      "name": "runtime_config_model_gateway_required_description",
+      "value": "A new Codex instance must use a model gateway. Enter its URL and API key."
+    },
+    {
+      "name": "runtime_config_model_gateway_url_label",
+      "value": "Gateway URL"
+    },
+    {
+      "name": "runtime_config_model_gateway_url_description",
+      "value": "The HTTP or HTTPS base URL exposed by your model gateway."
+    },
+    {
+      "name": "runtime_config_model_gateway_key_label",
+      "value": "Gateway API key"
+    },
+    {
+      "name": "runtime_config_model_gateway_key_description",
+      "value": "The API key sent to this gateway. It is stored and returned as part of the runtime configuration."
+    },
+    {
+      "name": "runtime_config_model_gateway_show_key",
+      "value": "Show gateway API key"
+    },
+    {
+      "name": "runtime_config_model_gateway_hide_key",
+      "value": "Hide gateway API key"
+    },
+    {
+      "name": "runtime_config_custom_models_label",
+      "value": "Custom models (optional)"
+    },
+    {
+      "name": "runtime_config_custom_models_description",
+      "value": "Add models to show in the model picker, plus the reasoning efforts available for each model."
+    },
+    {
+      "name": "runtime_config_custom_models_empty",
+      "value": "No custom models."
+    },
+    {
+      "name": "runtime_config_custom_models_add",
+      "value": "Add custom model"
+    },
+    {
+      "name": "runtime_config_custom_model",
+      "value": "Model"
+    },
+    {
+      "name": "runtime_config_custom_model_remove",
+      "value": "Remove custom model"
+    },
+    {
+      "name": "runtime_config_model_id",
+      "value": "Model ID"
+    },
+    {
+      "name": "runtime_config_model_display_name",
+      "value": "Display name"
+    },
+    {
+      "name": "runtime_config_efforts",
+      "value": "Efforts"
+    },
+    {
+      "name": "runtime_config_effort_add",
+      "value": "Add effort"
+    },
+    {
+      "name": "runtime_config_efforts_empty",
+      "value": "No efforts configured."
+    },
+    {
+      "name": "runtime_config_effort_id",
+      "value": "Effort ID"
+    },
+    {
+      "name": "runtime_config_effort_name",
+      "value": "Effort name"
+    },
+    {
+      "name": "runtime_config_effort_remove",
+      "value": "Remove effort"
+    },
+    {
+      "name": "runtime_config_use_system_codex_label",
+      "value": "Use System Codex"
+    },
+    {
+      "name": "runtime_config_use_system_codex_description",
+      "value": "Use the Codex executable from your login shell PATH. If it is unavailable, the bundled Codex is used automatically. Turn this off to always use the bundled Codex."
+    },
+    {
+      "name": "runtime_config_codex_executable_path_label",
+      "value": "Codex executable path (optional)"
+    },
+    {
+      "name": "runtime_config_codex_executable_path_description",
+      "value": "Optional. When set, this executable is always used and Use System Codex is ignored. Leave it empty to use automatic binary selection."
+    },
+    {
+      "name": "runtime_config_codex_home_label",
+      "value": "Codex data directory"
+    },
+    {
+      "name": "runtime_config_codex_home_description",
+      "value": "Stores configuration, sign-in data, and session history for this Codex instance. Running Codex instances cannot use the same directory."
+    },
+    {
+      "name": "runtime_config_claude_executable_path_label",
+      "value": "Claude executable path (optional)"
+    },
+    {
+      "name": "runtime_config_claude_executable_path_description",
+      "value": "Optional. Fill this only when Claude Code is not available on the default PATH."
     }
   ]
 }

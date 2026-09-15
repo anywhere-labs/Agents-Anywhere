@@ -245,6 +245,23 @@ export class AA_ICONS {
   static readonly FILE_CODE: string =
     'M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z'
     + 'M14 2v5h5M10 13l-2 2 2 2M14 17l2-2-2-2';
+
+  /**
+   * lucide `eye` / `eye-off` — the reveal button on a secure runtime field.
+   *
+   * iOS draws the same pair (`eye` / `eye.slash`) inside `RuntimeSecretInput`;
+   * Android has no equivalent because its configuration sheet has no secret
+   * field, so these are the first glyphs here taken from iOS rather than Android.
+   */
+  static readonly EYE: string =
+    'M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0'
+    + 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z';
+
+  static readonly EYE_OFF: string =
+    'M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49'
+    + 'M14.084 14.158a3 3 0 0 1-4.242-4.242'
+    + 'M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143'
+    + 'm2 2 20 20';
 }
 
 /**

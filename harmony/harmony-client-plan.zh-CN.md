@@ -736,8 +736,504 @@ if (this.selection.capabilities.fresh()) {
 - **不要用 `uitest uiInput keyEvent Back`**：根页面上返回是交给平台的，会直接把应用退出到系统（本轮因此落到系统设置里一次）。
 - 坐标一律 `uitest dumpLayout` 取节点 bounds 中点，**不要估算**：运行清单到达时整页会重排（本轮第一次点工作区行就吃了这个亏）。
 
+## 页面背景纯白、深色模式与剩余屏幕冒烟（第 50 轮）
+
+用户要求三件事：继续冒烟测试、把页面背景改成纯白色（"目前不是纯白色"）、适配深色模式。
+
+### 1. 页面背景改为纯白（顺带对齐了 iOS）
+
+- `AA_LIGHT_COLORS.canvas`：`#FDFCFB` → **`#FFFFFF`**。iOS 的 `ChatShellView` 背景用的是 `Color(.systemBackground)`，浅色下就是纯白、深色下是黑，所以这一改正好把两个客户端的页面底色对齐了，不是凭空造色。
+- `ProfileSettingsSupport.profilePageBackground()` 原本硬编码 `#F4F3EF`（只对浅色生效、不走 `canvas`），改成跟随 `colors.canvas` —— 少一个字面量，设置页也跟着白。
+- `TerminalContent` 的终端画布 `#FEFDFB` → `#FFFFFF`（浅色终端本来就是白底）。
+- `AttachmentViews` 的图片查看器背景 `#FDFCFB` → `#FFFFFF`。
+
+**实测（真机截图取像素）**：页面 `#FFFFFF`，改前是 `#FDFCFA`。注意肉眼看预览图会误判成"还是米白"——**必须取像素**：`#FDFCFB` 与 `#FFFFFF` 只差 2~4 级，JPEG 预览里完全看不出。
+
+### 2. 深色模式：能切，但设置页不重绘（已修）
+
+实测发现一个真 bug：在设置页切到深色后，**这一页仍然是浅色的**，只有关掉设置页回到 shell 才变黑。根因还是那条 ArkUI 规则，只是这次断在 `colors` 上：
+
+| 位置 | 问题 | 修法 |
+|---|---|---|
+| `ProfileSettingsDrawer.colors` | 普通成员 → 调色板变了这一页不重绘 | `@Prop` |
+| `ProfileSettingsComponents` 的 5 个 struct（`ProfileHeader`/`SettingsGroup`/`ProfileRow`/`ProfileDivider`/`SignOutCard`） | `colors` 是普通成员 → 卡片仍是白的 | 全部 `@Prop` |
+| `AAIcon.color` | 普通成员，而它几乎处处由调色板算出 → 图标停在旧主题的颜色 | `@Prop`（一行，杠杆最高） |
+| `ProfileRow.trailing`/`trailingIcon`/`trailingAttention`/`showChevron` | 普通成员 → 顺带就是审计的 **H10**：设置页昵称/邮箱的值**从来不显示**，外观/语言的值也不刷新 | `@Prop` |
+
+**实测（两个方向，且页面保持挂载，不靠重建）**：
+
+| 方向 | canvas | 卡片 | 外观行的值 |
+|---|---|---|---|
+| 深色 → 浅色 | `#FFFFFF` | `#FFFFFF` | 浅色 |
+| 浅色 → 深色 | `#09090B` | `#1F1F1F` | 深色 |
+
+顺手修掉 H10 之后，设置页的昵称（`mimic`）与邮箱（`phamton0308@gmail.com`）终于有值了 —— 之前那两行是空的。
+
+### 3. 从抽屉点会话不会关抽屉（已修）
+
+冒烟会话详情时发现：在抽屉里点一个会话行，**页面确实切过去了，但抽屉没关**；内容卡片又被右移，于是用户只看到抽屉右边一条缝，会话详情躲在后面。根因在 `AgentsAnywhereApp.openSession()`：
+
+```ts
+this.destination = AppDestination.SessionDetail;   // ← 绕过了 navigate()
+```
+
+而手机端关抽屉的 `settleDrawer(false)` 就在 `navigate()` 里（iOS 的 `selectDestination` 语义）。改成 `this.navigate(AppDestination.SessionDetail)` 即修好。
+
+**顺带核对**：其余直接写 `this.destination` 的地方只剩启动时的恢复、以及登录/登出两条 —— 那两处整个 shell 都会被替换，不受抽屉影响，保持原样。
+
+### 4. 本轮新增的冒烟覆盖
+
+| 屏 | 结果 |
+|---|---|
+| 会话详情 | ✓（修完第 3 条后：抽屉自动关闭、详情全宽、时间线与表格正常） |
+| 设备详情 | ✓（在线状态、AGENT 分组、工作目录=文件/终端、会话分组的 活跃/已归档/全部） |
+| 文件 | ✓（`/Users/jerry` 目录列表、`..`、`.agents-anywhere`/`.codex` 等点目录） |
+| 终端 | ✓ **真的连上了那台 Mac 的 zsh**：打出 `jerry@jerrydeMac-mini-2 ~ %` 并回显了 `.zshrc` 的报错；终端画布现在是白底 |
+| 归档会话 | ✓（深色下渲染正常，图标/文字/卡片对比都够） |
+
+### 5. 本轮验证
+
+- `clean` + `assembleHap`：**BUILD SUCCESSFUL，0 error / 0 ArkTS warning**（日志 WARN 0 行、ERROR 0 行）。
+- 三个门禁：`627 refs / 154 ETS`；`175 文本文件 BOM=0 replacement=0 mojibake=0`；`154 ETS unreachable=0`。
+- 15 个逻辑用例：全部 exit 0，无一行 FAIL。
+- 真机像素级验证：浅色页面 `#FFFFFF`、深色 canvas `#09090B` / 卡片 `#1F1F1F`，切换两个方向都**即时**生效。
+
+### 6. 测出来的一条工具经验（重要）
+
+**`uitest dumpLayout` 不可靠地包含 `bindMenu` 弹出的内容** —— 菜单在独立的浮层窗口里，有时 dump 得到、有时 dump 不到。本轮因此把"菜单没打开"误判过两次（其实是开着的）。判断菜单/浮层是否出现**要看截图**，不能只看 dump；`dumpLayout` 仍然适合取常规页面的节点 bounds。
+
+## 内联导航栏居中与输入框对齐 iOS（第 51 轮）
+
+用户反馈两处：**进入设备详情后设备名没有居中**、**输入框样式不对**。
+
+### 1. 内联导航栏的标题没居中（已修，且是共享组件的问题）
+
+先量了再改：设备详情页屏幕宽 1280px（中心 640），而标题与副标题的**节点**是 `x=[175..951]`，中心 **563** —— 偏左约 26vp。
+
+成因在共享的 `AAIosInlineBar`：它把标题放在 `layoutWeight(1)` 的中间列里，本来就已经被两侧挤到剩余空间里，却又在**尾侧**额外插了一个 `Blank().width(44 * trailingSlots)`。于是尾侧 = 44(占位) + 44(调用方真正画的那个按钮) = 88，而首侧只有 44，中间列的中心自然左移 (88−44)/2 = 22vp。
+
+`trailingSlots` 的语义本来是"调用方在内容槽里画几个 44dp 的尾侧项"——而调用方确实已经在画它们了（`DeviceDetailScreen`/`FilesScreen`/`TerminalScreen` 各画 1 个），所以那个 `Blank` 是**重复占位**。
+
+**改法**：换成 `Stack` —— 标题块按整条 bar 居中，并用 `sideInset()`（= `44 × max(1, trailingSlots)`）做**对称**左右内边距，于是文字中心恒等于 bar 中心，与两侧到底有几个按钮无关；长名字会在碰到按钮之前先省略。原来的 `Blank` 去掉。
+
+**实测（同一台真机、同一页）**：
+
+| 屏 | 改前标题中心 | 改后标题中心 | 期望 |
+|---|---|---|---|
+| 设备详情 | 563 | **640** | 640 |
+| 终端 | — | **640** | 640 |
+| 文件 | — | **640** | 640 |
+
+（`AGENT` 那个竖向居中的分组标题一直是 640，不在这个问题里。）
+
+### 2. 输入框（会话页 composer）改成 iOS 的玻璃等效样式
+
+对照 iOS `Views/Chat/Composer/ChatComposer.swift` + `ChatControlMetrics.swift`：iOS 的输入框是 `.glassEffect(.regular.interactive(), in: .rect(cornerRadius: isExpanded ? 26 : 24))`，**外面**套 `.padding(.horizontal, isExpanded ? 12 : 32)`、`.padding(.top, 8)`、`.padding(.bottom, 10)` —— 没有描边，也不是白底。
+
+鸿蒙这边原来是：`raisedSurface`（纯白）+ 写死的 `#3C3C43` 1px 描边 + 圆角 26 + 左右共 28、底部共 22。看起来就是一个**重描边的方框**，正是用户说的"不对"。
+
+**改法**：改用本仓库既有的"玻璃材质平面等效"约定（`AAIosGlassButton` 就是这么做的）——`glassFill()` + `iosHairline()`，并按 iOS 的收起态取值：左右 32、上 8、下 10、圆角 24。为了让会话页也能用，`AAIosChrome.ets` 里的 `glassFill` 加了 `export`（`iosHairline` 本来就已导出）。
+
+**实测**：输入框底色由 `#FFFFFF` 变为 **`#F5F5F5`**（黑 4% 叠白），描边变成发丝级，圆角 24，左右收进到 32。
+
+### 3. 本轮验证
+
+- `clean` + `assembleHap`：**0 error / 0 ArkTS warning**（日志 WARN 0 行 / ERROR 0 行）。
+- 三个门禁：627 refs / 154 ETS；175 文件编码干净；154 ETS 0 orphans。
+- 15 个逻辑用例全过。
+- 真机：三屏标题中心均为 640；输入框底色 `#F5F5F5`。
+
+### 4. 输入框支持多行增长（本轮补做，用户已确认要）
+
+iOS 的 `ComposerDraft.isExpanded` 是 **`isFocused || !text.isEmpty || !attachments.isEmpty`** —— 是一个*状态*，不是对高度的测量。它同时决定两件事：圆角 24 ↔ 26，左右内边距 32 ↔ 12。
+
+鸿蒙原来用的是单行 `TextInput`（固定 40 高），永远长不成两行。改成：
+
+- `TextArea` + `.constraintSize({ minHeight: 40, maxHeight: 160 })`。160 来自 iOS 的 `maximumEditorHeight = min(160, max(72, height * 0.30))`（手机上就是 160）。
+- 新增 `@State composerFocused`（由 `.onFocus` / `.onBlur` 维护）与 `composerExpanded()`，按上面那条式子判断。
+- `.enterKeyType(EnterKeyType.Send)` + `.onSubmit(...)`：回车发送（Android 的 IME action 也是 Send）；否则多行框会把回车当换行。
+
+**踩到一个 ArkUI 坑**：内边距一开始写在 composer 自己身上用 `.margin({ left, right })`，**完全不生效** —— 一个 `.width('100%')` 的子组件加水平 margin，实测两种状态测出来的 inset 一模一样（都是 20vp，只有 padding 在起作用）。改成**在调用点用一个外层 `Column` 的 `.padding()`** 给内边距，才生效。
+
+**实测（真机）**：
+
+| 状态 | 编辑器高度 | 左右 inset |
+|---|---|---|
+| 收起（空草稿、未聚焦） | 47vp | **57vp** |
+| 展开（草稿非空） | 47vp | **34vp** |
+| 展开 + 追加 60 字符 | **70vp**（长成两行） | — |
+
+（两个 inset 都比标称的 48/28 大 6~9vp，是 `TextArea` 自身的内部留白；关键是两者相差约 23vp，与 32−12 的设计一致。）
+
+**验证时的一个教训**：为了量多行增长，我往那个会话的输入框里追加了 60 个字符。**那个输入框里存着用户一条没有发出去的草稿**（"这个样式明显不对，保证和iOS一致"）——我按"追多少删多少"回删时多按了 2 下，把草稿末尾的"一致"删掉了，随后按原字符串补回并逐字符比对确认 `len=17` 与原文一致。**结论：以后在这台真机上做输入测试，先确认目标输入框里有没有用户的草稿；有草稿就换一个只读/空的目标，或者干脆不测。**
+
+**没有动的地方**：iOS 收起态那个"单行小胶囊"会把「接管」开关收进 ＋ 的选项面板里，而鸿蒙/Android 是把这个开关常驻在输入框内的。这一条**没有**照搬——它会改变一个现有功能的可达性，需要单独确认。
+
+### 5. 侧栏设备行没有选中态（用户反馈"侧边点击设备，不会切换设备"）
+
+先复现：在抽屉里点 `DESKTOP-P13E1GV`，页面**确实**切到了那台设备（详情页标题显示 `DESKTOP-P13E1GV` 且居中），`openDevice()` 也正确写了 `selectedDeviceId`。所以"没切换"不是指数据没切。
+
+对照 iOS `ChatSidebarView.swift:305`：设备行会画
+
+```swift
+.background(isSelected ? AppTheme.sidebarSelectionFill(colorScheme) : .clear, in: RoundedRectangle(cornerRadius: 9))
+```
+
+而鸿蒙的 `HomeScreen.DeviceRow` **完全没有选中态** —— 抽屉根本不知道当前是哪台设备（`HomeScreen` 连 `selectedDeviceId` 都没接）。于是"点完之后列表看起来一模一样"，用户无法判断设备切换了没有。
+
+**改法**：给 `HomeScreen` 加 `@Prop selectedDeviceId`（由 app 传入），`DeviceRow` 按 iOS 的 `sidebarSelectionFill`（浅色黑 10% / 深色白 20%，圆角 9）画底。
+
+**实测**：点 `DESKTOP-P13E1GV` → 返回 → 重开抽屉，该行像素由 `#FBFBFB` 变为 **`#E1E1E1`**，其余两行不变。
+
+**同一族的另一处（本轮未做，见待确认）**：iOS 的**会话行**也吃同一个 `sidebarSelectionFill`（`ChatSidebarView.swift:350`，`isSelected: selectedSessionId == session.id`），鸿蒙的 `HomeSessionRow` 同样没有选中态。app 里已经有 `@State selectedSessionId`，只是没往下传。
+
+### 6. 「选中设备后一直显示正在加载运行时…」+「侧边点击设备不切换」——同一个根因
+
+用户先后报了这两条。查下来是**同一个** ArkUI 规则，断在三个地方：
+
+**（a）`DeviceDetailScreen` 的数据成员是普通成员。** `openDevice()` 的顺序是"先 `deviceRuntimes = loadingFor(id)`、再 `navigate()`"——所以详情页**诞生在加载态**，请求回来的答案永远写不进页面（普通成员不会再被赋值），"正在加载运行时…"就永久停在那里。同理 `deviceId` / `state` 也是普通成员，而 `destination` 在设备之间**没有变化**，ArkUI 会**复用**这个组件而不是新建，于是从设备 A 的页面切到设备 B 时，页面还拿着 A 的数据。
+
+**（b）共享的 `AAIosInlineBar.title` / `subtitle` 也是普通成员。** 设备页标题是 `this.detail().device.name`，页面确实重渲染了，但 bar 的 title 只在创建时被赋过值——所以修好 (a) 之后，页面内容换了、**标题还是旧设备名**。
+
+**（c）侧栏没有选中态。** iOS 的 `ChatSidebarView.swift:305/350` 用同一个 `AppTheme.sidebarSelectionFill`（浅色黑 10% / 深色白 20%，圆角 9）标出当前设备行与当前会话行；鸿蒙的 `HomeScreen` 连 `selectedDeviceId` / `selectedSessionId` 都没接。
+
+**改法**：
+
+- `DeviceDetailScreen` 的 `state` / `deviceId` / `runtimes` / `bulkBusy` / `deviceNotice` → `@Prop`。
+- `AAIosInlineBar` 的 `title` / `subtitle` → `@Prop`（共享组件，一次修好设备页/文件/终端三条 bar）。
+- `AAColors` 新增 `sidebarSelectionFill(colors, selected)`；`HomeScreen.DeviceRow`、`HomeSessionRow`、`HomeProjectSessionRow` 都用它；`HomeScreen` 新增 `selectedDeviceId` / `selectedSessionId` 两个 `@Prop` 由 app 传入（5 个会话行调用点都补了 `selected:`）。
+
+**实测（真机）**：
+
+| 场景 | 改前 | 改后 |
+|---|---|---|
+| 打开设备页 | 永远"正在加载运行时…" | **Codex / 运行中** |
+| 在设备页从侧栏切到 DESKTOP-P13E1GV | AGENT 换了、标题还是 jerry的Mac mini | 标题 **DESKTOP-P13E1GV**、AGENT **DeepSeek Harness / 运行中** |
+| 侧栏当前设备行 | 无标记 | 底色 **#E6E6E6**（其余 #FFFFFF） |
+| 侧栏当前会话行 | 无标记 | 底色 **#E6E6E6**（其余 #FFFFFF） |
+
+**这轮最大的教训**：这条规则的排查顺序应该是"**先看哪些成员是普通成员，再看数据是否真的在变**"。"加载运行时"我一开始误判成"连接器慢/环境问题"（因为在新建会话页上也见过类似等待）；(b) 又是在 (a) 修好之后才露出来的第二层。**同一个页面里普通成员往往是成片的，修一处要顺手把同页同类的一起看。**
+
+### 7. 「新建会话里 Agent 一直不显示」——`revision` 是个只写不读的 `@State`
+
+用户报的第四条。这次没有猜，加了临时诊断日志（打完即删），拿到的事实让结论毫无歧义：
+
+```
+[diag] runtimes conn_1396e43f... ok 193ms count=1
+[diag] settled selDev=conn_f235... selConn=conn_f235... hasAvail=true setupReason=null runtimes=2 runtimesLoading=false
+```
+
+**数据 150 毫秒就到了，而且状态完全健康**（`setupState()` 返回 `null`、`hasAvailableSelectedRuntime` 为真、`runtimes=2`、无错误）。可界面还停在「正在检查可用 Agent」+ Agent 行灰条。所以问题不在数据，在**页面根本没重渲染**。
+
+**根因两处，都是同一条 ArkUI 规则的另一种表现**：
+
+1. **`@State private revision` 只被写、从没被读。** 全文件 20 处 `this.revision += 1;`，但 `build()` 里没有任何地方读 `revision`。ArkUI 只重渲染**读过**某个状态的元素，所以这 20 次自增对渲染**完全无效**——页面在等待期间一直用它出生时那份 `fields`。而 `selection` 又是普通成员，于是 `configurationFields()` / 状态行 / 开始聊天按钮的可用性全都冻在初始态。**这就是"Agent 一直不显示"**。
+   - 改法：`selection` → `@State`（它本来就是整对象替换，正适合 `@State`）；顺手把那个死掉的 `revision` 连同 20 处自增删掉——它没有任何行为影响，但会误导下一个读代码的人（已经误导过一次了）。
+2. **`NewSessionConfigurationCard` 的 `ForEach` 键是 `field-${field.key}`。** ForEach 在**键不变时不会重跑 item 构建**，会复用已建的组件——所以即使页面重渲染、把全新的 `fields` 传下来，每一行仍然画它出生时那个 field 对象（即加载占位）。把行内容折进键（`loading` / `enabled` / `active()` / `options.length` / `value`）后，变了的行就是一个新行。
+   - 这也解释了为什么第 48 轮把 `fields` 改成 `@Prop` **没能**修好 Agent 行：页面压根没重渲染，根本传不出新数组。
+
+**实测（真机，清空数据后重开）**：
+
+| 项 | 改前 | 改后 |
+|---|---|---|
+| 状态行 | 一直「正在检查可用 Agent」 | 消失 ✓ |
+| Agent 行 | 灰条占位 | **Codex** ✓ |
+| 模型 / 推理强度 / 权限模式 | 灰条占位 | **GPT-5.6-Terra / Low / 完全访问权限** ✓ |
+
+**这轮验证**：`clean` + `assembleHap` 0 error / 0 ArkTS warning；三门禁（627 refs、175 文件编码干净、154 ETS 0 orphans）；15 个逻辑用例全过；临时诊断日志已全部删除（grep `[diag]` 为 0）。
+
+**又一条教训**：`@State` **被写但没被读，等于没写**。这个仓库里有不少"自增一个 revision 来强制刷新"的写法，凡是没在 `build()` 里读过那个变量的，都是空操作。排查"数据到了但界面不动"时，先确认**触发重渲染的那个状态真的被读过**。
+
+## 设备详情页对齐 iOS（第 52 轮）
+
+用户给了 iOS 设备详情页的截图，要求"完全依照 iOS 检查还有啥不一样，帮我修改好"。对照 `Views/Devices/DeviceManagementView.swift` + `DeviceAgentSection.swift` + `DeviceOverviewContent.swift` + `DeviceOverviewSections.swift` 逐项重写了这一屏。
+
+### 改了什么
+
+| 位置 | 改成 iOS 的样子 |
+|---|---|
+| 表头副标题 | `<deviceOs> · <在线/离线>`（iOS `connectionDescription`），原来只有「在线」 |
+| 第一段 | 段头 `Agent Runtime`（次要色）+ **右侧 44dp 重新发现按钮**（加载中转圈）；行放在一张 **28dp 圆角分组卡**里（`colors.subtle`，行间 Divider，行内上下 8dp） |
+| 运行时行 | **删掉前置状态圆点/转圈**；名称 17sp/600 + `类型 · 状态` 12sp；**开关移到最右且改成绿色**；「删除配置」**移进长按菜单**（iOS 的 contextMenu 位置） |
+| 第三块 | 新增 **「设备内容」+ 分段控件 [项目 \| 会话]**，切换下面那一块 |
+| 项目模式 | 段头 `N 个项目` + 加号；行 = 文件夹图标 + 名称 + **等宽路径** + `N 个会话` + **文件夹 / 新建会话** 两个 44dp 按钮；长按菜单 = 重命名 / 置顶 / 复制路径 / 归档 |
+| 会话模式 | 行头 = **项目下拉 + `…` 菜单 + 新建会话按钮**；筛选改成**分段控件**（活跃/已归档/全部），替掉原来的胶囊 `FilterTag` |
+| 会话行 | 补上第二行说明 `runtime · 项目名` |
+| **删掉** | 「工作目录」整段；**文件**改从项目行的文件夹按钮进（按该项目的路径）；**终端**移进设备操作菜单 |
+| 顺手删的死代码 | `WorkspaceSection`/`WorkspaceRow`、`SectionTitle`、`FilterTag`、`SmallActionButton`、`AgentIconButton`、本来就没人引用的 `DeviceStatusLabel` |
+
+**又抓到一条同类 bug**：这一屏原来有个 `toastRevision` 计数器，和上一节 `NewSessionScreen` 的 `revision` 一样——**只写不读**，所以定时消失的 toast 从来不重绘（只有 app 驱动的 `@Prop` 路径能看到）。已删除，改成 `@State toast`。
+
+### 验证
+
+- `clean` + `assembleHap`：**BUILD SUCCESSFUL，0 error / 0 ArkTS warning**（父代理独立复跑过一次，结论一致）。
+- 三个门禁：`653 resource refs / 154 ETS`、`175 文件 BOM=0 replacement=0 mojibake=0`、`154 ETS unreachable=0`。
+- 15 个逻辑用例：全过。
+- **真机比对：未完成** —— 手机处于**安全锁屏**，`aa start` 报 `10106102 The device screen is locked`，`power-shell wakeup` 只能亮屏、解锁需要用户的 PIN。等解锁后按截图逐项比对。
+
+### 已知偏差（不是漏做，是鸿蒙还没有对应能力）
+
+1. **运行时「配置」按钮（iOS 的 sliders）没做**：鸿蒙没有运行时配置面板，做了就是死按钮。→ 下一批补（见待办）。
+2. **「添加更多 Agent」按钮没做**：鸿蒙没有添加 Agent 的面板，暂以 iOS 位置上的桌面端提示文字代替。→ 下一批补。
+3. **项目「删除」没做**：`ProjectsApi` 只有 list/create/update，`SessionsController` 没有删除项目，Android 也没有；iOS 的 `dashboard.deleteProject` 在鸿蒙没有对应接口。重命名/置顶/复制路径/归档已接。
+4. **运行时「重命名」没做**：同样没有接口。
+5. 「项目行 → 新建会话」只是打开新建会话页（复用侧栏同样的入口），没有预选该项目——`NewSessionScreen` 没有"预选项目"的入参。
+6. 项目级"全部归档"仍走**设备级**确认与范围：`SessionsController.archiveProjectSessions` 只能归档、不能取消归档，用项目路径去接"全部取消归档"会变成归档。
+7. `N 个项目` 是普通字符串不是复数形式（`app_plurals.json` 由 Android 生成），英文下可能出现 "1 projects"；中文正常。
+8. `device_detail_agents_section` / `device_detail_sessions_section` 两个字符串现在没人用了，但 `app_strings.json` 是生成文件、不手改，所以留着。调色板里 `runtimeSwitchCheckedTrack`/`runtimeSwitchCheckedThumb` 也因开关改绿而暂时没人用——调色板仍与 Android `Theme.kt` 1:1 对齐，没有删 token。
+
+### 静态复查（本轮补做，因为真机被锁屏挡住）
+
+真机处于安全锁屏、无法装机比对，于是对这次 1800 行重写做了一遍**针对 ArkUI 规则的静态复查**（脚本查：普通成员、只写不读的 `@State`、`ForEach` 键、`width('100%')` 子组件上的水平 margin、没人调用的 `@Builder`）：
+
+- **只写不读的 `@State`：0 个** ✓（重写时顺手删掉的那个 `toastRevision` 没有留下同类）。
+- **`ForEach` 键**：`runtimeRowKey` / `projectRowKey` / `sessionRowKey` 都把可见内容折进去了 ✓；另外两个（项目下拉项、分段控件）的标签是静态的，用 id/index 没问题。
+- 其余命中项都是 `@Builder` 形参、对象字面量字段、静态标签，不是问题。
+- **查出并修掉一个真问题**：`actionsOpen` / `actionBusy` / `actionError` / `confirmAction` 这四个由 app 传入、且在页面存在之后会变的状态，**一直是普通成员**（重写前就是，不是这次引入的）。后果有两个：
+  1. `bindSheet($$this.actionsOpen, …)` 绑在普通成员上，设备操作面板**开不出来**（app 把它置 true，子组件的普通成员不会更新）；
+  2. 更严重的是 `confirmAction` 永远是 `undefined`，而它 gate 着确认卡片 —— 于是这一页上**所有需要确认的操作**（本批新加的长按「删除配置」、全部归档、删除设备）都会调完 app 之后**什么都不显示**。
+  四个都改成 `@Prop` 后构建通过（app 的调用点本来就都传了）。
+
+**真机比对（已完成，用户解锁后做的）**：装上这批包、在设备页选中截图里那台 `DESKTOP-P13E1GV`，逐项核对（节点 bounds + 截图）：
+
+| 截图上的 iOS | 鸿蒙实测 | 结论 |
+|---|---|---|
+| `DESKTOP-P13E1GV`（居中） | `x=[175..1105]` → 中心 **640** | ✓ |
+| `windows · 在线` | `windows · 在线` | ✓ |
+| `Agent Runtime` + 右侧刷新 | `Agent Runtime` + 刷新字形 | ✓ |
+| `设备内容` + 分段 [项目 \| 会话] | `设备内容` + `项目`/`会话`（选中态药丸在「项目」） | ✓ |
+| `6 个项目` + 加号 | `6 个项目` + 加号 | ✓ |
+| 项目行（文件夹/名称/等宽路径/N 个会话 + 两个图标按钮） | `Agents-Anywhere` / `D:\code\Agents-Anywhere` / `2 个会话` + 文件夹与铅笔按钮，灰卡 + 行间分隔 | ✓ |
+| 运行时行 + 绿色开关 | 名称 + `运行中` + **绿色开关**；无前置圆点 | ✓（字形待补，见下） |
+| `+ 添加更多 Agent` 醒目按钮 | 仍是桌面端提示文字 | ⏳ 由并发批次替换 |
+
+**比对后仍差三处**：
+
+1. **运行时行的两行文字语义**：截图是 **实例名 `DSH`** + `DeepSeek Harness · 运行中`（类型 · 状态）；鸿蒙显示的是类型名 + 状态。iOS 的规则很明确：`sessionDisplayName = name.isEmpty ? displayName : name`，第二行是 `typeDisplayName · status`。等并发批次改完那一行再修（它正在改同一个文件，避免互相覆盖）。
+2. **顶栏两颗按钮没有玻璃圆底**：截图里汉堡与 `⋯` 各有一个浅色圆底，鸿蒙的 `AAIosInlineBar` 只画裸字形。这是**共享组件**的既有差异（文件/终端页同样），要改就一起改。
+3. 「配置」字形按钮与「添加更多 Agent」醒目按钮 —— 正在由并发批次实现（第 53 轮那批）。
+
+### 下一批（已确认要做，接口已核实）
+
+用户确认两个新能力都做。接口在服务端已齐：
+
+| 用途 | 接口 |
+|---|---|
+| 列出可添加的 Agent 类型 | `GET /connectors/{id}/runtime-types` |
+| 重新发现类型 | `POST /connectors/{id}/runtime-types/discover` |
+| 添加一个 Agent | `POST /connectors/{id}/runtimes`，体 `{runtimeType, name, config, active}` |
+| 保存某个 Agent 的配置 | `PUT /connectors/{id}/runtimes/{runtimeId}/config`，体 `{config}` |
+
+`DeviceRuntimeView` 本身就带 `schema` / `uiSchema` / `defaults` / `config`，所以配置面板不需要额外请求。工作量的大头是**按 JSON-schema 动态渲染表单**：要支持 `text`(min/max/secure)、`boolean`、`number`(integer/min/max)、`choice`(enum)、`keyValue`、`json`，以及两个自定义编辑器 `modelGateway`、`customModels`，外加 ui-schema 的字段顺序、`requiredForNamedInstance`、默认值合并与 `metadata.i18n`。两个面板共用同一个表单渲染器。
+
+## 设备详情页补齐两个能力：运行时配置 + 添加 Agent（第 53 轮）
+
+第 52 轮比对后剩下的两处「鸿蒙还没有对应能力」，按用户确认都做了。接口在第 52 轮已核实。
+
+### 加了什么
+
+| 层 | 内容 |
+|---|---|
+| API | `DevicesApi` 新增 `listRuntimeTypes` / `discoverRuntimeTypes` / `createRuntime`（体 `{runtimeType,name,config,active}`）/ `putRuntimeConfig`；`DevicesController` 对应四个包装 |
+| DTO | 运行时的 `defaults` 原来被解析器丢掉了（配置面板要用），已补；新增运行时类型 DTO 与解析（按 iOS 把 `configSchema.schema ?? schema` 折叠）；`runtimeTypeCanAdd` 复刻 iOS 的 `V2RuntimeInventory.canAdd`（`present && 有 schema && （实例已清空 或 未达 instancePolicy 上限）`） |
+| Schema 模型 | 新文件 `feature/devices/RuntimeConfigSchema.ets`：按 ui-schema `order` 排序（未知字段按名排在后面）、`requiredForNamedInstance`、`defaults`+`config` 播种草稿、`resetDefaults`、`makeConfig`，以及 iOS `RuntimeConfigValidation` 的完整移植（anyOf/oneOf/type/enum/min-max/pattern/items/required/properties，连带 iOS 自己的报错文案） |
+| 表单 | 新文件 `ui/screens/devices/RuntimeConfigForm.ets`：**8 种字段全支持** —— `text`（含明文/密文切换）、`number`、`json`、`boolean`、`choice`（走 `AADropdownMenu`）、`modelGateway`、`keyValue`、`customModels`；连 `metadata.i18n` 的每个键都映射到了资源 |
+| 面板 | 新文件 `ui/screens/devices/RuntimeConfigSheets.ets`：`RuntimeConfigurationSheet`（命名 + 表单 + 恢复默认 + 保存，忙碌态与服务端错误内联）与 `AddDeviceAgentSheet`（按 iOS 推荐序列可添加类型、头部重新发现、快速添加/配置两条路、同一个表单、创建走 `POST /runtimes`） |
+| 入口 | 运行时行补上 **`slider.horizontal.3` 配置按钮**（在开关之前，即 iOS 的 `[config][switch]`）；Agent Runtime 段尾把桌面端提示换成 **醒目的 `AAIosPrimaryButton`「添加更多 Agent」** |
+| 其它 | `AAIcons` 补 `eye`/`eye-off`（密文切换用）；`ios_strings.json` 两个语言各 +76 条 iOS 文案 |
+
+**注意一个 ArkUI 细节**：一个节点只能挂最后一个 `bindSheet`，所以第二个面板挂在页面列上、而不是根节点上。
+
+### 交付后我自己发现并修的四处
+
+1. **运行时行的两行文字取错字段**（第 52 轮比对时就记下的差异）：这一行原本走 `runtimeInstanceLabels(displayName, type)`，而它的规则会**丢掉"名字等于运行时类型"的实例名**——这台设备的实例名是 `DSH`、类型是 `dsh`，小写后相等，于是标题变成类型名「DeepSeek Harness」。iOS 的规则简单得多：`sessionDisplayName = name.isEmpty ? displayName : name`。已按 iOS 改，并补上 DTO 里被丢掉的 `name` / `typeDisplayName`；第二行现在恒为 `类型 · 状态`（只有与标题**完全相同**时才省掉重复）。
+2. **顶栏两颗按钮没有玻璃圆底**：像素实测按钮区域是纯白 `#FFFFFF`，而参考图里汉堡和 `⋯` 各有一个浅色圆盘；iOS 自己的 `ChatPageToolbar` 注释也写着 toolbar items "own size, spacing, **glass grouping**"。共享的 `AAIosInlineBar` 现在给首尾各一个 `groupedFill` 圆盘（`trailingSlots === 1` 时尾侧也套圆盘，多个则留给调用方），一次修好设备/文件/终端等 8 个页面。
+3. **`actionsOpen`/`actionBusy`/`actionError`/`confirmAction` 一直是普通成员**（第 52 轮静态复查查出，重写前就是这样）：`bindSheet($$this.actionsOpen)` 绑在普通成员上 → 设备操作面板开不出来；`confirmAction` 永远 `undefined` → 这一页**所有需要确认的操作**（长按删除配置、全部归档、删除设备）调完 app 之后什么都不显示。四个改 `@Prop`。
+4. **静态复查** 1800 行重写：只写不读的 `@State` **0 个**；三处会变内容的 `ForEach` 键都折进了内容。
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| `clean` + `assembleHap` | **BUILD SUCCESSFUL，0 error / 0 ArkTS warning**（我自己复跑，与子代理报告一致） |
+| 三个门禁 | `750 resource refs / 157 ETS`、`178 文件 BOM=0 replacement=0 mojibake=0`、`157 ETS unreachable=0` |
+| 15 个逻辑用例 | 全过 |
+| 真机 | **待复验**（手机又锁屏了，见下） |
+
+### 子代理如实上报的、本批**没做**的地方（我认可这些取舍）
+
+- iOS 保存失败后会**滚动到第一个出错字段**：ArkUI 要额外接 Scroller + 逐字段测量，本批改为在字段旁内联显示错误。
+- iOS 的**未保存改动拦截**（`interactiveDismissDisabled(isSaving || hasChanges)` + 放弃确认）：本批只在上传中阻止关闭。
+- 数字字段保持普通键盘：ArkUI 的 `InputType.Number` 会挡掉 `-` 和 `.`，比 iOS 的 `numbersAndPunctuation` 更糟。
+- `minLength/maxLength` 按 UTF-16 计数（`text.length`），iOS 按 `unicodeScalars.count`，只有星平面字符会不同。
+- 服务端错误显示为表单下方内联红字（本仓库 `DeviceActionsSheet` 的写法），不是 iOS 的 toast。
+- 没有复用 `AAIosField`（66dp/20sp 的认证页字段）等输入组件，新写了 44dp 的 `RuntimeConfigInput`。
+
+**一处规格与代码的出入**（子代理指出、我采纳）：我在规格里写的"添加 = POST /runtimes"不完整——iOS 会**先复用**该类型已存在的（被清空的）实例（保存配置 + 激活），只有确实没有时才 POST；否则单实例类型会 4xx。代码按 iOS 的来。
+
+### 仍未完成（需要设备）
+
+第 52 轮那批的**布局**已真机比对通过；但本批新加的东西**还没在真机上验过**：配置按钮与配置面板、醒目的「添加更多 Agent」按钮与添加面板、上面第 1/2 条两个修正。原因是手机再次进入**安全锁屏**（`aa start` 报 `10106102 The device screen is locked`，`power-shell wakeup` 只能亮屏，解锁需要用户的 PIN）。用户解锁后我要做的：
+
+1. 装当前包 → 设备页逐项比对：运行时行应是 **`DSH` + `DeepSeek Harness · 运行中`**、有配置字形按钮、段尾是**黑色醒目按钮**、顶栏两颗按钮有浅色圆盘。
+2. 点配置字形 → 面板应打开、能改字段、能保存（`PUT .../config`）。
+3. 点「添加更多 Agent」→ 列出可添加类型、能走到表单。
+4. 长按运行时行 → 「删除配置」→ **确认卡片应出现**（第 3 条修的就是这个）。
+
+### 交付后的离线复验（手机锁屏期间做的）
+
+真机拿不到，于是把「能离线验的都验完」：
+
+- **独立复跑**：`clean` + `assembleHap` → BUILD SUCCESSFUL，0 error / 0 ArkTS warning；三个门禁 `750 refs / 157 ETS`、`178 文件编码干净`、`157 ETS 0 orphans`；15 个逻辑用例全过。（与子代理报告一致，不是照抄。）
+- **对新写的 ~2100 行做 ArkUI 规则静态审查**（`RuntimeConfigSchema` / `RuntimeConfigForm` / `RuntimeConfigSheets` / `DeviceRuntimeState` / `DevicesController` / `DevicesDtos`）：
+  - **只写不读的 `@State`：0 个**（这是本仓库栽过两次的坑）。
+  - **输入不会被重建**：三处 `ForEach` 键折了 `rowRevision`，而 `rowRevision` 只在**增删行**时自增（`RuntimeConfigForm.ets:302/311`），**不在每次按键时**变——否则每敲一个字就会重建 `TextInput`、输入法和光标全废。这是我重点查的一条，结论是安全的。
+  - 文本框的写回**同时**更新本地 `@State` 和模型（`this.text = next` + `draft.setText(...)`），所以任何无关重绘都不会把已输入的字符弹回去。
+  - `width('100%')` 子组件上的水平 margin：0 处。
+- **新接线也查了**：app 侧的 `deviceRuntimeTypes` / `deviceRuntimeTypesLoading` / `deviceRuntimeTypesError` 都是 `@State`；页面侧的 `runtimeTypes` / `runtimeTypesLoading` / `runtimeTypesError` 是 `@Prop`；回调是普通成员（正确，回调不需要响应式）。
+- **顺手补一处一致性**：第 52 轮那批给共享 `AAIosInlineBar` 补了 iOS 的玻璃圆盘，于是「新建会话」页自己的 `NewSessionHeader` 就成了唯一还画裸字形的页面——已给它的首尾两颗 44dp 按钮补上同样的圆盘。
+
+### 顺手修的两处一致性 + 一个测试保真度问题
+
+1. **`DeviceConfirmDialog` 用同一个取名规则**：删除配置的确认文案原本也走 `runtimeInstanceLabels`，于是行上显示 `DSH`、确认框里却写「DeepSeek Harness」。改成与行、与配置面板标题同一个 `runtimeInstanceName`。
+2. **`NewSessionHeader` 补玻璃圆盘**：给共享 `AAIosInlineBar` 补上圆盘之后，「新建会话」页自己的 header 就成了唯一还画裸字形的页面，已一并补上。
+3. **测试保真度（值得记一笔）**：`check-confirm.mjs` 的 `prepare` 脚本**用手写的桩**代替了真实的标签函数，桩的兜底是 `type.toUpperCase()`，于是测试里"无名实例应回退到类型"这条**期望值写的是桩的行为（`DSH`）而不是真实实现**。这次把桩换成 `import { runtimeInstanceName } from './RuntimeIdentity.ts'`（`prepare.mjs` 本来就会把它转写到旁边），测试立刻暴露出这条期望是错的——真实（也是 iOS 的）回退是**类型显示名**「DeepSeek Harness」。期望值已改正，15 个用例仍全过。**教训：桩会让测试通过在一个假的行为上。**
+
+### 真机复验（第 6 轮，用户解锁后完成）
+
+四项全部通过，而且**查出了两个只有真机才能发现的 bug**（都已修好并复验）：
+
+| 项 | 结果 |
+|---|---|
+| ① 布局与文案 | `DESKTOP-P13E1GV` 居中（中心 640）、`windows · 在线`、`Agent Runtime` + 刷新字形、运行时行 **`DSH`** + **`DeepSeek Harness · 运行中`**、有**配置字形**按钮、开关在最右且绿、段尾是**黑色醒目「添加更多 Agent」**、顶栏两颗按钮有玻璃圆盘（像素 `#F5F5F5` 对页面 `#FFFFFF`）——与参考截图一致 ✅ |
+| ② 运行时配置面板 | 点配置字形 → 面板打开，按 schema 渲染出真实字段：`新会话默认模式`（选择）、`DSH home`（文本，带 schema 的英文说明）、`startupTimeoutMs` 30000、`requestTimeoutMs` 60000、`maxRestartAttempts` 3、`restartBackoffMs` 1000，底部 `全部恢复默认值` + `保存` ✅ |
+| ③ 添加 Agent 面板 | 点「添加更多 Agent」→ 列出可添加类型：**`Codex`（推荐徽标）** 与 **`Claude`**，各带说明与 `快速添加` / `配置` 两条路 ✅ |
+| ④ 长按 → 删除配置 → 确认卡 | 长按运行时行 → 菜单出现 `删除运行时配置` → 点它 → **确认卡出现**：标题「**删除 DSH 配置？**」（用的是实例名 `DSH`，说明取名规则已贯通到对话框）、正文说明会先停运行时再删配置、`取消` / 红色 `删除配置` ✅（我只点了「取消」，没有真的删除） |
+| ⑤ 会话模式 | 分段切到「会话」→ 行头是 **`全部项目` 项目下拉 + `…` 菜单 + 新建会话字形**（正是 iOS 的三个尾侧控件）；下面是 **分段筛选 `活跃` / `已归档` / `全部`**；行是「标题 + `DeepSeek Harness · 项目名`」两行，尾侧状态字形与时间（now / 2h / 3h …）✅ |
+
+**真机查出的两个 bug（都已修）**：
+
+1. **配置面板是透明的**：宿主 `bindSheet` 用的是透明底（各面板自己画面板），而 `AddDeviceAgentSheet` 与 `DeviceActionsSheet` 都画了、**`RuntimeConfigurationSheet` 没画**——于是表单直接浮在页面上，能透过它读到 `Agent Runtime`、项目列表那些文字。已补 28dp 圆角面板 + `sheetColors().container`。
+2. **「添加更多 Agent」按钮点了没反应**：加了临时诊断日志才定位到——处理函数**确实执行了**、`mode=add` / `open=true` 也都设了，但面板不出现。差别在于这条路径**同一个 tick 里还改了 app 状态**（去加载 runtime types），刚弹出的 sheet 被丢掉了；而配置面板那条路径不改 app 状态，所以正常。按 iOS 的做法修——**类型清单跟着页面加载**（iOS 的 `DeviceAgentSection` 就是用页面 model 里的 `inventory.types`），按钮只负责弹出面板。顺带删掉了因此变成死代码的 `onLoadRuntimeTypes` 属性与接线。
+
+**又一次印证**：`uitest dumpLayout` **抓不到 `bindMenu` 弹出的菜单**（本次菜单就是靠截图才看见的，dump 里完全没有），而**截图是唯一可靠依据**——这条已经写进第 49 轮的工具经验里，本轮又踩了一次。
+
+**没有做的事**：没有点「保存」写回运行时的配置、也没有点「快速添加」真的去创建运行时——那是会改到用户真机（那台 Mac / PC 上的 Agent 实例）的写操作，冒烟测试不该擅自做。这两条属于「功能已实现、未做端到端写验证」。
+
+## 设备页行内边距：文字贴着卡片边、长标题相互挤压（第 54 轮）
+
+用户反馈"页面上的字会有遮挡，需要适配屏幕宽度来优化"（附的是「会话」模式截图）。
+
+**先量，结论和第一眼不一样**：卡片本身**没有超宽** —— 像素扫描两张截图，卡片都是 `x=[84..1195]`，左右各 84px（28vp）边距，完全对称，也不是"卡片溢出屏幕"。
+
+真正的问题是**行内容没有左右内边距**：`GroupedCard`（28dp 圆角 + `colors.subtle` 的灰卡）**自己不画内边距**，而三种行（`DeviceRuntimeRow` / `ProjectDirectoryRow` / `SessionDetailRow`）都只有 `.padding({ top: 8, bottom: 8 })`。于是：
+
+- 会话行右侧的时间（`now` / `3h` / `19h`…）直接顶在卡片边界上（实测节点 x1 = 1196，卡片右边 = 1195，**余量 0**）；
+- 运行时段最右的开关、项目行最右的铅笔按钮同样贴边；
+- 长标题/长说明与右侧时间之间只剩十几像素，看起来就是"字挤在一起/被挡"。
+
+**改法**：给这三种行加 `left/right: 16` 内边距（iOS 的 `GroupBox` 本来就会给内容留白），**分隔线保持通栏**（与参考图一致）。
+
+**实测（节点 bounds，卡片右边 1195）**：
+
+| | 改前 | 改后 |
+|---|---|---|
+| 会话行时间 x1 | **1196（余量 0px）** | **1140（余量 55px ≈ 18vp）** |
+| 行标题 x0 | 175 | 231 |
+| 长标题 | 与时间相互挤压 | **省略号截断**（`SpringBoot4与Vue3全栈项…`） |
+| 长说明 | 同上 | **省略号截断**（`DeepSeek Harness · zhejiang---erp---…`） |
+
+**验证**：`clean` + `assembleHap` 0 error / 0 ArkTS warning；三门禁 `750 refs / 157 ETS`、`178 文件编码干净`、`157 ETS 0 orphans`；15 个逻辑用例全过；真机复验（截图 + 节点 bounds）。
+
+**一个测量方法的教训**：第一次我用"扫最右侧深色像素"来找裁切，但那行时间是 `colors.faint`（#AAA8A2，R=170），根本不在我的"深色"阈值里，于是得出了"8px 余量"的错结论。**量文字位置要用节点 bounds，不要用颜色阈值猜**。
+
+## 关掉配置面板后整页被灰层挡住、点不动（第 55 轮）
+
+用户反馈：设备详情页点 Agent 的配置按钮弹出面板，**关掉之后应用就点不动了，有一层灰色挡住**。
+
+**复现与定位（真机）**：按步骤走一遍，并量关闭后的像素——页面读数是 `#B8B8B8`，正好是白色叠上 `maskColor` 的 28% 黑；**关闭前、关闭中、关闭后三次采样完全一样**，说明灰层常驻。再看节点树，问题一目了然：
+
+```
+SheetWrapper x[0..1280] y[137..2832]
+  SheetPage  x[0..1280] y[164..2832]     ← 面板还在「呈现」着
+    Column   x[56..1224] y[163..164]     ← 内容只剩 1px
+    Scroll   x[0..1280] y[164..2832]     ← 空的
+```
+
+也就是**面板仍处于弹出状态、但内容被清空了**——只剩它自己的遮罩盖住整页，于是"看着像一层灰、点什么都没反应"。
+
+**根因**：`closeRuntimeSheet()` 在**同一个 tick 里**既把 `runtimeSheetOpen` 置 false、又把 `runtimeSheetMode` 清成 `''`；而 `runtimeSheetMode` 正是面板内容的判断依据，于是 ArkUI 收到的是一个"空页面的正在关闭的 sheet"，遮罩留了下来。（对比：**添加 Agent** 那条路径当时因为同一个 tick 里改了 app 状态而**根本弹不出来**，第 53 轮已修——两条其实是同一类"状态同 tick 打架"。）
+
+**改法**：关闭时只置 `runtimeSheetOpen = false`，把内容清空**推迟到关闭动画之后**（`setTimeout(..., 400ms)`），并加保护——若这段时间里用户又打开了面板（`runtimeSheetOpen` 为真）就不清，避免把新面板清空。三条关闭入口（面板的 X、`shouldDismiss`、下拉关闭）都走这一个方法，所以一处修好。
+
+**实测（真机）**：
+
+| | 改前 | 改后 |
+|---|---|---|
+| 关闭后页面像素 | `#B8B8B8`（被 28% 遮罩压暗） | **`#FFFFFF`** |
+| 节点树里的 `SheetWrapper` | 仍在（空 `SheetPage`） | **消失** |
+| 关闭后再点分段控件 | 无反应 | **正常切换**（实测切到「会话」，出现 `全部项目` / `活跃`） |
+
+**验证**：`clean` + `assembleHap` 0 error / 0 ArkTS warning；三门禁 `750 refs / 157 ETS`、`178 文件编码干净`、`157 ETS 0 orphans`；15 个逻辑用例全过。
+
+**又一条自查教训**：中途我用"dump 里有没有 `全部项目` / `活跃`"判断切换是否生效，得出过一次"无反应 ✗"的错结论——其实模式已经切过去了，是我的检测函数写错（PowerShell 里把 `if` 当表达式用直接抛异常）。**判断"能不能点"不要靠一次间接推断，要直接看目标状态的节点/像素。**
+
+## 「设备内容」旁的分段控件比 iOS 宽了一倍多（第 56 轮）
+
+用户反馈设备详情页「设备内容」旁边的 项目/会话 切换"UI 不适配"。
+
+**量化对比**（同一张参考截图 + 真机截图，按像素量控件中间行的轨道宽度）：
+
+| | 控件轨道 |
+|---|---|
+| iOS 参考截图 | `x=[955..1209]`，**254px（85vp）** |
+| 鸿蒙（改前） | `x=[573..1189]`，**616px（205vp）** —— 2.4 倍宽 |
+| 鸿蒙（改后） | `x=[940..1195]`，**255px（85vp）** ✅ |
+
+**根因**：`SegmentedControl` 本身没问题（32dp 轨道、28dp 白色药丸、13sp/600 标签，几何与文件页一致），是**调用点把宽度写死成 `Column().width(180)`**。而 iOS 的 `contentPicker` 用的是
+
+```swift
+contentPicker.fixedSize(horizontal: true, vertical: false)   // DeviceManagementView.swift:193
+```
+
+也就是**按内容自适应**。于是鸿蒙这边两个分段被拉到 180vp，标签在超宽的药丸里显得散、整条控件顶着页面左半边。
+
+**改法**：把宽度改成按标签内容算出来（`segmentedControlWidth()`：13sp 下 CJK 约 13dp/字、拉丁约 7dp/字，每段 16dp 内边距，44dp 为 iOS 的最小段宽），两个标签只算一次（`contentLabels()`），宽度与所画内容永远一致；英文（Projects / Sessions）会自动变宽而不会被截断。**会话筛选那条保持不变**——iOS 的 session filter 没有 `.fixedSize`，本来就该撑满。
+
+**验证**：`clean` + `assembleHap` 0 error / 0 ArkTS warning；三门禁 `750 refs / 157 ETS`、`178 文件编码干净`、`157 ETS 0 orphans`；15 个逻辑用例全过；真机复验（截图 + 像素实测 255px，与参考图一致）。
+
+**这一轮的方法论**：用户说"UI 不适配"时，**先把参考截图和真机截图都量出来**（这次是量轨道的像素宽度）比凭观感调参快得多，也让"改到什么程度算对"有了明确判据（85vp）。
+
+## 分段控件的白药丸压在轨道边框上（第 57 轮）
+
+用户反馈「项目和会话的切换按钮……按钮与边框有点叠一起了」。放大看确实如此：**白色药丸的左右边缘正好落在轨道的圆角边框上**。
+
+**根因**：`SegmentedControl` 是「一个 Stack + 一个单独画的药丸 + 一行标签」的结构——
+
+- 标签那行有 `padding(2)`，所以文字是内缩 2dp 的；
+- 但药丸是**另一个兄弟节点**，用 `margin({ left: pillOffset(), top: 2 })` 定位，而 `pillOffset()` 返回的是**百分比**：`0%` / `50%`，宽度也是 `50%`。
+
+于是选中第一项时药丸左边 = 0%（压在左边框上），选中第二项时药丸右边 = 100%（压在右边框上）——**轨道那 2dp 的内边距只作用到了文字，没作用到药丸**。
+
+**改法**：不再单独画药丸，改成**让被选中的那一段自己当药丸**——每个分段就是一个 28dp 高、圆角 7dp 的单元格，选中时上白底和阴影。这样它天然继承轨道自己的 `padding(2)`，四边都内缩 2dp（与 iOS 选中药丸 2pt 内缩一致），而且**不需要任何百分比换算**。顺手删掉了因此不再使用的 `segmentWidth()` / `pillOffset()`。
+
+**注意 `ForEach` 的键**：药丸位置现在属于"内容"，所以键要带上选中态（`` `segment-${index}-${this.selectedIndex}` ``）——否则切换时 `ForEach` 不会重建条目，药丸不会动。这正是第 47 轮那条教训。
+
+**实测（真机像素）**：
+
+| | 改前 | 改后 |
+|---|---|---|
+| 选中「项目」，药丸左边距 | **0px（压在边框上）** | **7px ≈ 2vp**（含阴影量测误差） |
+| 选中「会话」，轨道右缘内侧像素 | 白色（药丸压到边） | **`#E9E9E9` 轨道灰**（药丸内缩） |
+| 上下内缩 | 2dp（本来就有） | 2dp |
+
+**验证**：`clean` + `assembleHap` 0 error / 0 ArkTS warning；三门禁 `750 refs / 157 ETS`、`178 文件编码干净`、`157 ETS 0 orphans`；15 个逻辑用例全过。同一个组件也被本页的**会话筛选**（活跃/已归档/全部）复用，所以那条一起修好了。
+
 ## 待确认问题
 
+- **会话行是否也要加选中态**：见上一节第 5 条末尾。iOS 有，鸿蒙没有；改动很小（`HomeScreen` 加一个 `@Prop`、2 个 `HomeSessionRow` 调用点、组件加背景）。
+- **输入框收起态是否照搬 iOS 的"单行小胶囊"**：见上一节第 4 条末尾。照搬的话「接管」开关要从输入框里移走（iOS 放在 ＋ 的选项面板里），属于交互改动，等确认。
+- **主题切换只重绘"被重建的子树"（系统性问题，已记录）**：每个组件几乎都把 `colors` 当普通成员接收，所以切换深浅色时只有**重建过的**子树拿到新调色板。现在唯一的"切换时仍挂载"的页面是设置页，已按第 50 轮第 2 条修好；其余页面在导航时重建，所以表现正常。若要彻底免疫，需要把 `colors` 系统性改成 `@Prop`（约百处、且 `@Prop` 对对象是深拷贝，建议改用 `AppStorage` + `@StorageProp` 的共享主题），建议与下面那条同类清单合成一轮做。
 - **同类状态不同步的存量清单（第 49 轮审计）**：见上一节第 6 条的 15 组 HIGH，已确认"普通成员的 `updateStateVars` 为空"这一机制来自编译产物。建议**单开一轮**批量改 `@Prop` 并逐条真机抽查；本轮为避免范围蔓延没有动。
 - **签名配置需要用户决策**：本机 `harmony/build-profile.json5` 现在带有 DevEco Studio 自动生成的 `signingConfigs`（`material` 指向 `C:\Users\Administrator\.ohos\config\...`，并含 `keyPassword`/`storePassword` 字段）。这既是好事（能产出可安装的 `entry-default-signed.hap`），也是隐患：绝对路径换机即失效、口令字段不应入库。提交前建议二选一：删掉 `signingConfigs` 与 `"signingConfig": "default"` 回到"未签名但到处能构建"，或改成从环境变量/本地未入库的 profile 读取。`harmony/README.md` 的签名一节已如实说明。
 - 是否需要发布签名与上架流程（当前产物含一个本机调试签名）。

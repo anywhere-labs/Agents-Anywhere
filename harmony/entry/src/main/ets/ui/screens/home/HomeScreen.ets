@@ -5,7 +5,7 @@ import {
   ProjectSessionsState, ProjectSessionStatusFilter,
 } from '../../../feature/sessions/ProjectSessionsState';
 import { SIDEBAR_VIEW_SESSION } from '../../../storage/UiPreferences';
-import { AAColors, AA_LIGHT_COLORS, withAlpha } from '../../designsystem/AAColors';
+import { AAColors, AA_LIGHT_COLORS, sidebarSelectionFill, withAlpha } from '../../designsystem/AAColors';
 import { AAIcon } from '../../designsystem/AAIcon';
 import { AA_ICONS } from '../../designsystem/AAIcons';
 import { AAFontSize, AASpacing } from '../../designsystem/AAMetrics';
@@ -66,6 +66,24 @@ export struct HomeScreen {
   onNewProject: () => void = () => {};
   /** Opens one device's page, which is what the sidebar's device rows do. */
   onOpenDevice: (device: AgentDevice) => void = () => {};
+  /**
+   * The device whose page is showing.
+   *
+   * iOS's `ChatSidebarDeviceSection` passes `isSelected: selectedDeviceId ==
+   * device.id` down to each row and the row paints `sidebarSelectionFill` behind
+   * it. The sidebar had no idea which device was current, so tapping a device
+   * changed the page while the list looked exactly the same — there was nothing
+   * to say the device had switched.
+   */
+  @Prop selectedDeviceId: string = '';
+  /**
+   * The session whose conversation is showing.
+   *
+   * iOS's `ChatSidebarSessionRow` marks it with `sidebarSelectionFill`, on both
+   * the project-nested and the flat rows. Same reasoning as `selectedDeviceId`:
+   * without it the list cannot show which conversation is open.
+   */
+  @Prop selectedSessionId: string = '';
   onOpenProfile: () => void = () => {};
   onPairDevice: () => void = () => {};
   /** Resolves when the refresh finished, so the indicator can be cleared. */
@@ -589,6 +607,7 @@ export struct HomeScreen {
               colors: this.colors,
               session: session,
               inset: false,
+              selected: session.id === this.selectedSessionId,
               onOpen: (opened: AgentSession) => this.onOpenSession(opened),
               onLongPress: (pressed: AgentSession, area: AARowArea) =>
                 this.openSessionActions(pressed, area),
@@ -648,6 +667,7 @@ export struct HomeScreen {
               colors: this.colors,
               session: session,
               inset: false,
+              selected: session.id === this.selectedSessionId,
               onOpen: (opened: AgentSession) => this.onOpenSession(opened),
               onLongPress: (pressed: AgentSession, area: AARowArea) =>
                 this.openSessionActions(pressed, area),
@@ -748,6 +768,7 @@ export struct HomeScreen {
             HomeProjectSessionRow({
               colors: this.colors,
               session: session,
+              selected: session.id === this.selectedSessionId,
               onOpen: (opened: AgentSession) => this.onOpenSession(opened),
               onLongPress: (pressed: AgentSession, area: AARowArea) =>
                 this.openSessionActions(pressed, area),
@@ -787,6 +808,7 @@ export struct HomeScreen {
               colors: this.colors,
               session: session,
               showSubtitle: true,
+              selected: session.id === this.selectedSessionId,
               onOpen: (opened: AgentSession) => this.onOpenSession(opened),
               onLongPress: (pressed: AgentSession, area: AARowArea) =>
                 this.openSessionActions(pressed, area),
@@ -818,6 +840,7 @@ export struct HomeScreen {
                 colors: this.colors,
                 session: session,
                 showSubtitle: false,
+                selected: session.id === this.selectedSessionId,
                 onOpen: (opened: AgentSession) => this.onOpenSession(opened),
                 onLongPress: (pressed: AgentSession, area: AARowArea) =>
                   this.openSessionActions(pressed, area),
@@ -895,6 +918,10 @@ export struct HomeScreen {
     .height(42)
     .padding({ left: 10, right: 10 })
     .alignItems(VerticalAlign.Center)
+    // iOS `sidebarSelectionFill`: the same fill the session rows use, in a 9dp
+    // rounded rect.
+    .backgroundColor(sidebarSelectionFill(this.colors, device.id === this.selectedDeviceId))
+    .borderRadius(9)
     .accessibilityText(device.name)
     .onClick(() => this.onOpenDevice(device))
   }
@@ -1066,8 +1093,13 @@ export struct HomeScreen {
  * Project ordering, matching `sortProjectsByActivity`: projects with active
  * sessions first, then most recent activity, then creation time, then name,
  * then id.
+ *
+ * Exported because the device page lists the same projects and has to show them
+ * in the sidebar's order rather than one of its own.
  */
-function compareProjectsByActivity(state: SessionsState): (a: AgentProject, b: AgentProject) => number {
+export function compareProjectsByActivity(
+  state: SessionsState,
+): (a: AgentProject, b: AgentProject) => number {
   return (left: AgentProject, right: AgentProject): number => {
     const leftCount: number = state.activeSessionCountForProject(left.id);
     const rightCount: number = state.activeSessionCountForProject(right.id);

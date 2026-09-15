@@ -91,7 +91,9 @@ export function isProfileDark(colors: AAColors): boolean {
 }
 
 export function profilePageBackground(colors: AAColors): string {
-  return colors.isDark ? colors.canvas : '#F4F3EF';
+  // The settings page is a page like any other, so it follows the page token
+  // instead of a second, hard-coded off-white that only light mode ever used.
+  return colors.canvas;
 }
 
 export function profileCardBackground(colors: AAColors): string {

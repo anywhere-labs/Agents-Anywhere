@@ -165,3 +165,63 @@ export interface DeviceRuntimePatch {
 export function runtimeCanActivate(runtime: RemoteDeviceRuntime): boolean {
   return runtime.present && runtime.configured;
 }
+
+/**
+ * The instance of a type that can be configured again.
+ *
+ * iOS's `V2RuntimeInventory.reconfigurableInstance(for:)`: the Server keeps the
+ * identity and history of a cleared instance, so adding that type reuses it
+ * instead of creating a second one.
+ */
+export function reconfigurableRuntime(
+  runtimes: RemoteDeviceRuntime[],
+  runtimeType: string,
+): RemoteDeviceRuntime | null {
+  for (const runtime of runtimes) {
+    if (runtime.type === runtimeType && !runtime.configured) {
+      return runtime;
+    }
+  }
+  return null;
+}
+
+/** The instance of a type with the given name, or `null`. */
+export function runtimeNamed(
+  runtimes: RemoteDeviceRuntime[],
+  runtimeType: string,
+  name: string,
+): RemoteDeviceRuntime | null {
+  for (const runtime of runtimes) {
+    if (runtime.type === runtimeType && runtime.displayName === name) {
+      return runtime;
+    }
+  }
+  return null;
+}
+
+/** The configured instance of a type, or `null`; iOS's `configuredInstances.first`. */
+export function configuredRuntime(
+  runtimes: RemoteDeviceRuntime[],
+  runtimeType: string,
+): RemoteDeviceRuntime | null {
+  for (const runtime of runtimes) {
+    if (runtime.type === runtimeType && runtime.configured) {
+      return runtime;
+    }
+  }
+  return null;
+}
+
+/**
+ * iOS's "nothing left to do" test: an active runtime in a live state.
+ *
+ * Adding a type that is already running is a no-op there, so a retry after a
+ * start failure cannot restart a healthy instance.
+ */
+export function runtimeIsUp(runtime: RemoteDeviceRuntime): boolean {
+  if (!runtime.configured || !runtime.active) {
+    return false;
+  }
+  return runtime.status === DeviceRuntimeStatus.RUNNING
+    || runtime.status === DeviceRuntimeStatus.STARTING;
+}
