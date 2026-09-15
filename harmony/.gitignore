@@ -1,0 +1,24 @@
+# Build output
+/node_modules
+/oh_modules
+**/build
+/.hvigor
+/.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/.appanalyzer
+/.preview
+
+# DevEco Studio / IDE state
+/.idea
+*.iml
+/local.properties
+
+# Local signing material must never be committed.
+/signature
+/*.p12
+/*.cer
+/*.p7b
+/*.keystore
