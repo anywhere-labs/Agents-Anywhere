@@ -226,7 +226,25 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   }
 
   return (
-    <Sidebar contained={contained} className="border-sidebar-border">
+    <Sidebar
+      contained={contained}
+      className="border-sidebar-border [&_[data-slot=sidebar-inner]]:relative"
+      onDragOver={(event) => {
+        if (!acceptsFolderDrop(event)) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = "copy"
+        setFolderDropActive(true)
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFolderDropActive(false)
+      }}
+      onDrop={(event) => {
+        if (!acceptsFolderDrop(event)) return
+        event.preventDefault()
+        setFolderDropActive(false)
+        void handleFolderDrop(event.dataTransfer.files[0])
+      }}
+    >
       <SidebarHeader className="gap-0 px-4 pb-2 pt-4">
         <div className="flex min-h-7 items-center justify-between">
           <button type="button" onClick={goHome} className="aa-wordmark min-w-0 text-left text-xl">
@@ -261,33 +279,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
         <DesktopConnectionStatus />
       </SidebarHeader>
 
-      <SidebarContent
-        className="relative px-2"
-        onDragOver={(event) => {
-          if (!acceptsFolderDrop(event)) return
-          event.preventDefault()
-          event.dataTransfer.dropEffect = "copy"
-          setFolderDropActive(true)
-        }}
-        onDragLeave={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFolderDropActive(false)
-        }}
-        onDrop={(event) => {
-          if (!acceptsFolderDrop(event)) return
-          event.preventDefault()
-          setFolderDropActive(false)
-          void handleFolderDrop(event.dataTransfer.files[0])
-        }}
-      >
-        {folderDropActive ? (
-          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-sidebar/90 px-4 text-center text-sidebar-foreground">
-            <div className="flex flex-col items-center gap-2 rounded-lg border-2 border-dashed border-primary px-5 py-6">
-              <FolderPlus className="size-7 text-primary" aria-hidden="true" />
-              <span className="text-sm font-medium">{t("projects.dropFolder")}</span>
-            </div>
-          </div>
-        ) : null}
-
+      <SidebarContent className="px-2">
         <DevicesSection
           connectors={connectors}
           isLoading={isLoading}
@@ -352,6 +344,15 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
       </SidebarContent>
 
       <SidebarAccountFooter me={me} navigate={navigate} signOut={signOut} />
+
+      {folderDropActive ? (
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-sidebar/90 px-4 text-center text-sidebar-foreground">
+          <div className="flex flex-col items-center gap-2 rounded-lg border-2 border-dashed border-primary px-5 py-6">
+            <FolderPlus className="size-7 text-primary" aria-hidden="true" />
+            <span className="text-sm font-medium">{t("projects.dropFolder")}</span>
+          </div>
+        </div>
+      ) : null}
 
       <PairDeviceDialog
         open={pairOpen}
