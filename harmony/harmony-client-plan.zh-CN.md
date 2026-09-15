@@ -562,6 +562,43 @@ iOS 把这三个界面都做成 **sheet**，其 chrome 是 `.navigationBarTitleD
 
 **验证**：`clean` 后全量 `assembleHap` 0 error / 0 ArkTS warning；三个脚本 625 / 175 / 154 全过；15 个逻辑用例全过。图标用 System.Drawing 渲染预览核对过：启动图是深灰圆角块 + 白色字形（6335 个字形像素），前景是纯字形（无描边）。
 
+## 新建会话页点不动、Agent 一直转（第 47 轮）
+
+用户反馈"项目无法点击、设备/Agent 无法点击、agent 没有显示"。定位到一个自第 44 轮起就存在的**点击被吞**问题，以及一个状态说明缺失：
+
+### 1. 全屏透明遮罩吞掉了整页的点击
+
+第 44 轮补跟手拖拽时，把"左侧激活边"做成了一个**满屏的 `Row`（`HitTestMode.Transparent`）**，里面才是 44vp 的窄条，`PanGesture` 挂在窄条上。ArkUI 里 `Transparent` 的节点**自身也参与命中测试**，它又排在内容卡片之上，于是手机竖屏（抽屉关闭、这个遮罩常驻）时，页面里的一切点击都被它先接走——设备行、Agent 行、项目行全都点不动，而抽屉打开时这个遮罩不画，所以侧栏里的头像按钮反而是好的。这与用户前后几次的描述完全吻合。
+
+改法：**把 `PanGesture` 挂到内容卡片本身**（它是页面的祖先，不是覆盖物），并删掉那个满屏遮罩与卡片纱上的重复手势；打开条件改回 iOS 的 `canBeginHorizontalDrag`：`drawerProgress <= 0.001 && startX <= 44`（`GestureEvent.fingerList[0].globalX`）才认，抽屉已开则任意位置都能拖回。祖先上的手势不会被点击触发（`PanDirection.Horizontal` 不认竖直、普通点击更不会满足 8vp 的距离阈值），所以页面不再有任何死区。
+
+### 2. Agent 行一直显示占位条，看起来像"没显示"
+
+运行时清单要逐个问在线设备（单次 10s 超时 + 五次退避重试），这期间 Agent 行只画一条灰条、底部"开始聊天"也是灰的，而 `runtimeError()` 在这段时间刻意返回空——所以整页看起来就是"点不动 + 没显示"。现在这段时间在卡片下方显示一行 `new_session_checking_agents`（"正在检查可用 Agent"），与 iOS 的"正在查找设备…"同一作用；清单回来后若设备上确实没有可用 Agent，则照旧显示失败原因和"重试"。
+
+**验证**：`clean` 后全量 `assembleHap` 0 error / 0 ArkTS warning；三个脚本 626 / 175 / 154 全过；15 个逻辑用例全过。
+
+## 模拟器冒烟测试（第 48 轮）
+
+用户要求"用我的鸿蒙模拟器做冒烟测试"。本轮把模拟器跑通并做了**未登录面**的冒烟；登录后的页面还差一个账号，需要用户在模拟器里登一次。
+
+### 怎么把模拟器跑起来（记下来给后面几轮用）
+
+- 已创建的实例在 `%LOCALAPPDATA%\Huawei\Emulator\deployed\Customize_01`（`lists.json` 记着它的参数：手机、1080×1920、density 560 → **309vp 宽**、API 23、x86）。
+- 启动命令从 DevEco 日志里抄的（`%LOCALAPPDATA%\Huawei\DevEcoStudio6.1\log\idea.1.log`）：
+  `"…\tools\emulator\Emulator.exe" -hvd Customize_01 -path <deployed> -t trace_<pid>_commandPipe -imageRoot D:\sdk\HUAWEI`
+  **`-imageRoot` 必须是 `D:\sdk\HUAWEI`**：镜像在 `D:\sdk\HUAWEI\system-image\HarmonyOS-6.0.31\phone_all_x86`。第一次我按 `%LOCALAPPDATA%\Huawei\Sdk` 传，模拟器找不到镜像，卡在一个"点击确认清除镜像数据并启动"的对话框上（日志里能看到那句 `QString::arg: Argument missing`），hdc 一直 `[Empty]`。
+- 之后：`hdc list targets` → `127.0.0.1:5555`；`hdc install -r entry-default-signed.hap` **可以直接装**（本机调试签名被模拟器接受）；`hdc shell aa start -a EntryAbility -b com.agentsanywhere.app`；截图用 `hdc shell snapshot_display -f /data/local/tmp/x.jpeg` + `hdc file recv`；点击用 `hdc shell uinput -T -c <x> <y>`，回桌面用 `hdc shell uinput -K -d 1 -u 1`。
+
+### 已验证
+
+- **桌面图标就是 iOS 那张**（第 46 轮的成果在真启动器上确认）：深灰圆角块 + 白色终端字形。
+- App 能装能起，未登录的三个页面都对：登录方式页（`AuthWelcomeLayout`：wordmark 42sp + 副标题 + 两个胶囊，整体垂直居中 ✓）、选择登录服务页（iOS 的 `AuthScreen`：44dp 返回箭头 + 34sp 大标题 + 22dp 内边距 + prominent/glass 胶囊，顶部对齐 ✓）、账号密码表单页 ✓。
+
+### 待做（需要先登录）
+
+登录后的页面（首页/抽屉/新建会话/会话详情/设置）在模拟器上需要一个账号：本机**没有**跑 agents-anywhere 的服务端（`server/agent_server` 是 Python FastAPI，进程在但没监听；`:8080` 是另一个 Java 应用），所以无法注册临时账号。等用户在模拟器里登录一次后继续。
+
 ## 待确认问题
 
 - **签名配置需要用户决策**：本机 `harmony/build-profile.json5` 现在带有 DevEco Studio 自动生成的 `signingConfigs`（`material` 指向 `C:\Users\Administrator\.ohos\config\...`，并含 `keyPassword`/`storePassword` 字段）。这既是好事（能产出可安装的 `entry-default-signed.hap`），也是隐患：绝对路径换机即失效、口令字段不应入库。提交前建议二选一：删掉 `signingConfigs` 与 `"signingConfig": "default"` 回到"未签名但到处能构建"，或改成从环境变量/本地未入库的 profile 读取。`harmony/README.md` 的签名一节已如实说明。

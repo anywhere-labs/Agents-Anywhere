@@ -2398,16 +2398,17 @@ export struct AgentsAnywhereApp {
   /**
    * Starts the pan that drives the drawer.
    *
-   * The handlers below are wired to the two nodes that carry the gesture — the
-   * leading edge strip and the card's veil — and both use
-   * `PanDirection.Horizontal`, so a vertical drag is never recognised and lists
-   * and terminals keep scrolling.
+   * The gesture sits on the content card — an ancestor of the page, never an
+   * overlay above it — so ordinary taps reach the page untouched. A pan that
+   * starts within iOS's `edgeActivationWidth` opens a closed drawer; one that
+   * starts anywhere closes an open one, which is `canBeginHorizontalDrag`.
    */
-  private beginDrawerDrag(): void {
+  private beginDrawerDrag(event: GestureEvent): void {
+    const startX: number = event.fingerList.length > 0 ? event.fingerList[0].globalX : 0;
+    const fromEdge: boolean = this.drawerProgress <= 0.001 && startX <= DRAWER_EDGE_WIDTH;
     // The commit waits for the release: the layer appears as soon as progress
-    // moves, and the edge strip that owns the gesture has to stay mounted for as
-    // long as the finger is down.
-    this.drawerDragActive = true;
+    // moves, and the gesture's own node has to stay mounted meanwhile.
+    this.drawerDragActive = this.drawerProgress > 0.001 || fromEdge;
     this.drawerDragStart = this.drawerProgress;
   }
 
@@ -3066,12 +3067,6 @@ export struct AgentsAnywhereApp {
                 0.2 * this.cardProgress()),
             })
             .onClick(() => this.settleDrawer(false))
-            .gesture(
-              PanGesture({ direction: PanDirection.Horizontal, distance: 8 })
-                .onActionStart(() => this.beginDrawerDrag())
-                .onActionUpdate((event: GestureEvent) => this.updateDrawerDrag(event))
-                .onActionEnd((event: GestureEvent) => this.endDrawerDrag(event)),
-            )
         }
       }
       .width('100%')
@@ -3085,29 +3080,19 @@ export struct AgentsAnywhereApp {
         offsetX: -3 * this.cardProgress(),
         offsetY: 0,
       })
+      // The drawer's pan: `PanDirection.Horizontal` never recognises a vertical
+      // drag, so lists and terminals keep scrolling.
+      .gesture(
+        PanGesture({ direction: PanDirection.Horizontal, distance: 8 })
+          .onActionStart((event: GestureEvent) => this.beginDrawerDrag(event))
+          .onActionUpdate((event: GestureEvent) => this.updateDrawerDrag(event))
+          .onActionEnd((event: GestureEvent) => this.endDrawerDrag(event)),
+      )
 
 
-      // The closed drawer's activation edge: iOS reserves `edgeActivationWidth`
-      // for the pan that opens it. `Transparent` lets taps through to the page
-      // underneath — only a horizontal pan starting here is claimed.
-      if (this.compactDrawerAvailable() && !this.sidebarOpen) {
-        Row() {
-          Column()
-            .width(DRAWER_EDGE_WIDTH)
-            .height('100%')
-            .hitTestBehavior(HitTestMode.Transparent)
-            .gesture(
-              PanGesture({ direction: PanDirection.Horizontal, distance: 8 })
-                .onActionStart(() => this.beginDrawerDrag())
-                .onActionUpdate((event: GestureEvent) => this.updateDrawerDrag(event))
-                .onActionEnd((event: GestureEvent) => this.endDrawerDrag(event)),
-            )
-        }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.Start)
-        .hitTestBehavior(HitTestMode.Transparent)
-      }
+      // The closed drawer's activation edge is handled by the card's own pan, so
+      // nothing is drawn over the page: iOS reserves `edgeActivationWidth` for the
+      // gesture, not for a node.
 
       // The update prompt floats above whichever screen is showing, as Android's
       // dialog does; it is the only overlay that can appear on any destination.

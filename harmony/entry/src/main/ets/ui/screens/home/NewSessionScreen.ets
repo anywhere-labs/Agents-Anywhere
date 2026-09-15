@@ -1338,7 +1338,16 @@ export struct NewSessionScreen {
       .alignItems(HorizontalAlign.Start)
 
       Column({ space: 10 }) {
-        if (this.runtimeError().length > 0) {
+        if (this.inventory.loading() || this.selection.runtimesLoading) {
+          // The Agent row shows a placeholder while the connectors are asked for
+          // their runtimes, which can take seconds; saying so keeps the row from
+          // reading as a dead end. `runtimeError()` stays quiet until then.
+          Text($r('app.string.new_session_checking_agents'))
+            .fontSize(13)
+            .lineHeight(17)
+            .fontColor(this.colors.muted)
+            .width('100%')
+        } else if (this.runtimeError().length > 0) {
           Row({ space: 10 }) {
             Text(this.runtimeError())
               .fontSize(13)
