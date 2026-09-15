@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { CircleAlert, Loader2 } from "lucide-react"
+import { usePathname } from "next/navigation"
 import { useTranslations } from "next-intl"
 
 import {
@@ -15,14 +16,24 @@ import type { PublicSessionShareResponse, SessionView } from "@/features/dashboa
 import { apiPath } from "@/lib/api"
 import { isVisibleTimelineItem, runtimeLabel } from "@/components/session/session-utils"
 
-export function PublicSessionShare({ shareId }: { shareId: string }) {
+export function PublicSessionShare({ shareId: initialShareId }: { shareId?: string } = {}) {
   const t = useTranslations("dashboard.session")
+  const pathname = usePathname()
+  const [shareId, setShareId] = React.useState(initialShareId ?? "")
   const [share, setShare] = React.useState<PublicSessionShareResponse | null>(null)
   const [error, setError] = React.useState(false)
   const [groupOpenByKey, setGroupOpenByKey] = React.useState<Record<string, boolean>>({})
   const [itemOpenById, setItemOpenById] = React.useState<Record<string, boolean>>({})
 
+  // 静态导出只能预生成 /share/ 外壳，真实 shareId 在客户端从 URL 解析。
   React.useEffect(() => {
+    if (initialShareId) return
+    const segment = pathname.split("/").filter(Boolean).pop()
+    setShareId(segment ? decodeURIComponent(segment) : "")
+  }, [initialShareId, pathname])
+
+  React.useEffect(() => {
+    if (!shareId) return
     let cancelled = false
     setError(false)
     dashboardApi.getPublicSessionShare(shareId).then((result) => {

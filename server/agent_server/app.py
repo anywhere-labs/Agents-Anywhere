@@ -368,6 +368,12 @@ def create_app(
                     and (default_locale_candidate / "index.html").is_file()
                 ):
                     return _static_file(default_locale_candidate / "index.html")
+                # 静态导出无法预生成的动态路由（例如 /share/<id>）回退到父目录外壳。
+                parts = Path(relative).parts
+                for depth in range(len(parts) - 1, 0, -1):
+                    parent_index = static_path.joinpath(*parts[:depth], "index.html")
+                    if parent_index.is_file():
+                        return _static_file(parent_index)
 
             default_index = static_path / default_locale / "index.html"
             if default_index.is_file():

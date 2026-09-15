@@ -10,6 +10,7 @@ __pycache__/
 web-next/out/
 .env.local
 .env.*.local
+docker/.env
 
 # Dependency lockfiles are intentionally not committed in this repo.
 # Cross-platform package managers rewrite them frequently, creating noise.

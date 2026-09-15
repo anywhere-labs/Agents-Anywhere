@@ -1,0 +1,157 @@
+# Agents Anywhere · 生产编排（单端口：只暴露 server 端口）
+#
+# 拓扑：web-next 静态导出 → FastAPI 同源托管，UI / /api/v2 / WebSocket 全在容器 8000 一个端口上。
+# PostgreSQL 与 Redis 只在 compose 网络内可达，不发布任何宿主机端口。
+#
+# 首次部署（在仓库根目录执行）：
+#   cp docker/.env.example docker/.env && vi docker/.env
+#   docker build -f docker/Dockerfile --target server -t agents-anywhere-server:postgres .
+#   docker compose -f docker/docker-compose.prod.yml up -d
+#   docker compose -f docker/docker-compose.prod.yml logs server-next | grep -A3 setup-token
+#
+# 日常更新：
+#   git pull
+#   docker build -f docker/Dockerfile --target server -t agents-anywhere-server:postgres .
+#   docker compose -f docker/docker-compose.prod.yml up -d
+#
+# 注意：项目名与 docker/docker-compose.postgres.yml 相同，切过来会复用同一批数据卷；
+# 但同一台机器上不要同时 up 这两个文件。
+
+name: agents-anywhere
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  postgres-next:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    stop_grace_period: 60s
+    shm_size: 256mb
+    environment:
+      POSTGRES_DB: agents_anywhere
+      POSTGRES_USER: agents_anywhere
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 docker/.env 设置 POSTGRES_PASSWORD}
+    volumes:
+      - agents-anywhere-pg-next:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agents_anywhere -d agents_anywhere"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *default-logging
+
+  redis-next:
+    image: redis:8-alpine
+    restart: unless-stopped
+    # Timeline 未落盘的写入没有 TTL，禁止驱逐、必须 AOF 持久化。
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-512mb}
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - agents-anywhere-redis-next:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging: *default-logging
+
+  # 一次性迁移：每次 up 都会跑，幂等；失败则 server-next 不会启动。
+  migrate-next:
+    image: ${AGENTS_ANYWHERE_SERVER_IMAGE:-agents-anywhere-server:postgres}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: server
+    restart: "no"
+    depends_on:
+      postgres-next:
+        condition: service_healthy
+    environment:
+      AGENT_SERVER_DB_BACKEND: postgres
+      AGENT_SERVER_DB_URL: postgresql+asyncpg://agents_anywhere:${POSTGRES_PASSWORD:?请在 docker/.env 设置 POSTGRES_PASSWORD}@postgres-next:5432/agents_anywhere
+      AGENT_SERVER_MIGRATION_LOCK_TIMEOUT: ${AGENT_SERVER_MIGRATION_LOCK_TIMEOUT:-120}
+    command: ["sh", "-c", "cd /app/server && uv run --no-sync python -m agent_server.infra.db.migrations upgrade"]
+    logging: *default-logging
+
+  server-next:
+    image: ${AGENTS_ANYWHERE_SERVER_IMAGE:-agents-anywhere-server:postgres}
+    restart: unless-stopped
+    # 留出时间让 WebSocket / SSE 连接优雅断开。
+    stop_grace_period: 30s
+    depends_on:
+      migrate-next:
+        condition: service_completed_successfully
+      redis-next:
+        condition: service_healthy
+    environment:
+      AGENT_SERVER_DB_BACKEND: postgres
+      AGENT_SERVER_DB_URL: postgresql+asyncpg://agents_anywhere:${POSTGRES_PASSWORD:?请在 docker/.env 设置 POSTGRES_PASSWORD}@postgres-next:5432/agents_anywhere
+      AGENT_SERVER_DB_POOL_SIZE: ${AGENT_SERVER_DB_POOL_SIZE:-10}
+      AGENT_SERVER_DB_MAX_OVERFLOW: ${AGENT_SERVER_DB_MAX_OVERFLOW:-20}
+      AGENT_SERVER_DB_POOL_TIMEOUT: ${AGENT_SERVER_DB_POOL_TIMEOUT:-30}
+      AGENT_SERVER_DB_POOL_RECYCLE: ${AGENT_SERVER_DB_POOL_RECYCLE:-1800}
+      AGENT_SERVER_REDIS_URL: redis://redis-next:6379/0
+      AGENT_SERVER_REDIS_CONNECT_TIMEOUT: ${AGENT_SERVER_REDIS_CONNECT_TIMEOUT:-5}
+      AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE: ${AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE:-4096}
+      AGENT_SERVER_SECRET: ${AGENT_SERVER_SECRET:?请在 docker/.env 设置 AGENT_SERVER_SECRET}
+      # 反代/负载均衡没传 X-Forwarded-* 时，用它生成 OAuth 回调和分享链接。
+      AGENT_SERVER_PUBLIC_ORIGIN: ${AGENT_SERVER_PUBLIC_ORIGIN:-}
+      # 同源单端口部署不需要 CORS；只有把 API 拆到另一个域名时才填。
+      AGENT_SERVER_CORS_ORIGINS: ${AGENT_SERVER_CORS_ORIGINS:-}
+      AGENT_SERVER_SETUP_TOKEN_TTL: ${AGENT_SERVER_SETUP_TOKEN_TTL:-}
+      # 文件存储：local 落在 /data 卷；改 s3 时填下面的 S3 变量。
+      AGENT_SERVER_FILES_BACKEND: ${AGENT_SERVER_FILES_BACKEND:-local}
+      AGENT_SERVER_FILES_LOCAL_ROOT: /data/agent-server.files
+      AGENT_SERVER_FILES_S3_BUCKET: ${AGENT_SERVER_FILES_S3_BUCKET:-}
+      AGENT_SERVER_FILES_S3_PREFIX: ${AGENT_SERVER_FILES_S3_PREFIX:-}
+      AGENT_SERVER_FILES_S3_ACCESS_KEY: ${AGENT_SERVER_FILES_S3_ACCESS_KEY:-}
+      AGENT_SERVER_FILES_S3_SECRET_KEY: ${AGENT_SERVER_FILES_S3_SECRET_KEY:-}
+      AGENT_SERVER_FILES_S3_REGION: ${AGENT_SERVER_FILES_S3_REGION:-us-east-1}
+      AGENT_SERVER_FILES_S3_ENDPOINT_URL: ${AGENT_SERVER_FILES_S3_ENDPOINT_URL:-}
+      AGENT_SERVER_FILES_S3_VIRTUAL_HOST_STYLE: ${AGENT_SERVER_FILES_S3_VIRTUAL_HOST_STYLE:-}
+      # 静态 UI：镜像内已设，这里显式写死，避免被 .env 意外覆盖。
+      AGENT_SERVER_STATIC_DIR: /app/web-static
+    volumes:
+      - agents-anywhere-files-next:/data
+    # 唯一的对外端口：宿主机 BIND_IP:WEB_PORT → 容器 8000。
+    # 默认只绑回环，交给机器上已有的 TLS 入口；要直接对外就设 AGENTS_ANYWHERE_BIND_IP=0.0.0.0。
+    ports:
+      - "${AGENTS_ANYWHERE_BIND_IP:-127.0.0.1}:${AGENTS_ANYWHERE_WEB_PORT:-5174}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys, urllib.request
+          try:
+              response = urllib.request.urlopen("http://127.0.0.1:8000/api/v2/health/ready", timeout=5)
+          except Exception:
+              sys.exit(1)
+          sys.exit(0 if response.status == 200 else 1)
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging: *default-logging
+
+volumes:
+  agents-anywhere-pg-next:
+  agents-anywhere-redis-next:
+  agents-anywhere-files-next:
