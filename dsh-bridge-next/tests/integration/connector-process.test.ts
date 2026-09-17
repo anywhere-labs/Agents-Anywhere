@@ -39,7 +39,7 @@ lines.on('close', () => process.exit(0));
 `
 const binding = { installationId: 'test-installation', name: 'Test device', connectorId: 'conn_test', connectorToken: 'PRIVATE-DEVICE-TOKEN' }
 
-async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CONNECTOR_SETTINGS) {
+async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CONNECTOR_SETTINGS, firstRequestTimeoutMs?: number) {
   const root = await mkdtemp(join(tmpdir(), 'aa-process-中文 '))
   const source = join(root, 'source')
   await mkdir(join(source, 'connector'), { recursive: true })
@@ -63,9 +63,10 @@ async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CO
     assert.equal(options.env?.UV_DEFAULT_INDEX, expectedIndex)
     assert.equal(options.env?.UV_INDEX_URL, expectedIndex)
     assert.equal(options.env?.PIP_INDEX_URL, expectedIndex)
+    assert.equal(options.env?.UV_HTTP_TIMEOUT, process.env['UV_HTTP_TIMEOUT'] || '60')
     child = spawn(command, [script, mode], options)
     return child
-  }, () => settings)
+  }, () => settings, firstRequestTimeoutMs)
   return {
     connector, root, get child() { return child },
     async close() { await connector.stop(); await rm(root, { recursive: true, force: true }) },
@@ -158,6 +159,17 @@ test('cancelling a Connector that has not finished startup closes its owned proc
     await assert.rejects(h.connector.start(binding, 'https://api.example.test', controller.signal))
     assert.equal(h.connector.running, false)
   } finally { clearTimeout(timer); await h.close() }
+})
+
+
+test('the first request spends its own installation budget, not the ordinary request timeout', { timeout: 8000 }, async () => {
+  // A child that never answers proves which budget the first request uses: the ordinary 15 s
+  // default would outlast this test, so rejecting here means the installation budget applied.
+  const h = await fixture('stall', DEFAULT_CONNECTOR_SETTINGS, 300)
+  try {
+    await assert.rejects(h.connector.start(binding, 'https://api.example.test', new AbortController().signal), /响应超时/)
+    assert.equal(h.connector.running, false)
+  } finally { await h.close() }
 })
 
 
