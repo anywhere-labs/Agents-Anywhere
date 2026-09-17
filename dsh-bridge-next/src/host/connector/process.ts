@@ -22,7 +22,19 @@ const MAX_FRAME = 1024 * 1024
 const FIRST_REQUEST_TIMEOUT = 3_600_000
 /** Bounds a transfer that stopped producing bytes, which uv can see and this process cannot. */
 const UV_READ_TIMEOUT_SECONDS = '60'
+/** Reclaiming the cache is housekeeping, so it may not outlast the failure that asked for it. */
+const CACHE_PRUNE_TIMEOUT = 60_000
 type ConnectorLauncher = (command: string, args: string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams
+type CachePruner = (command: string) => Promise<unknown>
+
+/**
+ * uv unpacks a download into a temporary directory inside its cache and only commits the entry
+ * once it is whole, so a child killed mid-download orphans that directory for good: the reporter
+ * of #112 accumulated 57 of them, 2.44 GiB, over four days of retries. Pruning drops exactly those
+ * dangling entries and keeps every archive that did finish, so the next attempt still starts from
+ * whatever the last one managed to download.
+ */
+const pruneUvCache: CachePruner = command => runFile(command, ['cache', 'prune'], { timeout: CACHE_PRUNE_TIMEOUT, windowsHide: true })
 interface Pending {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
@@ -63,7 +75,8 @@ export class SourceConnector implements ConnectorProcess {
   private readonly logs: ConnectorLogs
   constructor(private readonly config: ResolvedConfig, private readonly launch: ConnectorLauncher = spawn,
     private readonly settings: () => ConnectorSettings = () => DEFAULT_CONNECTOR_SETTINGS,
-    private readonly firstRequestTimeoutMs = FIRST_REQUEST_TIMEOUT) {
+    private readonly firstRequestTimeoutMs = FIRST_REQUEST_TIMEOUT,
+    private readonly prune: CachePruner = pruneUvCache) {
     this.logs = new ConnectorLogs(join(config.stateRoot, 'logs'))
   }
 
@@ -128,9 +141,10 @@ export class SourceConnector implements ConnectorProcess {
     await this.logs.startSession([binding.connectorToken])
     this.logs.record('starting')
     const executable = await resolveUv(this.config, settings)
+    const command = executable ?? (settings.uvPath || this.config.uvPath)
     const pypiIndexUrl = settings.uvPypiIndexUrl || 'https://pypi.org/simple'
     signal.throwIfAborted()
-    const child = this.launch(executable ?? (settings.uvPath || this.config.uvPath), [
+    const child = this.launch(command, [
       'run', '--directory', this.config.connectorSourceDir,
       'anywhere-cli', 'rpc', '--config', configPath,
     ], {
@@ -179,6 +193,8 @@ export class SourceConnector implements ConnectorProcess {
       signal.throwIfAborted()
     } catch (error) {
       await this.stop()
+      // Whatever ended this attempt left a partial download behind, and only a prune reclaims it.
+      try { await this.prune(command) } catch { /* Housekeeping may not replace the real failure. */ }
       throw error
     } finally {
       signal.removeEventListener('abort', abort)
