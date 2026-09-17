@@ -132,7 +132,7 @@ Development uses **Python 3.12+ / uv / Node.js 22 / Corepack + Yarn**. Start wit
 | Architecture and API | [Server architecture](docs/server-architecture.md) · [API documentation](docs/api/README.md) |
 | Agent integrations and local execution | [Connector](connector/README.md) · [Runtime protocol](docs/runtime-protocol/README.md) |
 | Web and desktop clients | [Web source](web-next/) · [Desktop Workbench](desktop-workbench/README.md) |
-| Native mobile clients | [Android](android/README.md) · [iOS source](ios/) |
+| Native mobile clients | [Android](android/README.md) · [iOS source](ios/) · [HarmonyOS](harmony/README.md) |
 | DSH integration | [DSH Bridge Next](dsh-bridge-next/README.md) |
 | More documentation | [Documentation index](docs/README.md) · [Protocol contracts](contracts/) |
 
