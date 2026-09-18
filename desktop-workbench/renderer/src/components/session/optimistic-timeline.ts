@@ -183,7 +183,7 @@ export function buildOptimisticUserMessage({
   sessionId: string
   clientMessageId: string
   text: string
-  attachments: AttachedFile[]
+  attachments: Omit<AttachedFile, "file">[]
   items: TimelineItem[]
   nextSeq: number
 }): TimelineItem {
