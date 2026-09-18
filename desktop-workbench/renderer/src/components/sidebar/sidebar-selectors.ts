@@ -2,7 +2,7 @@ import type { WorkspaceSessionView } from "@/components/workspace-context"
 import type { ProjectView } from "@/features/dashboard/types"
 import { filterSessions, type FilterValue } from "@/lib/demo-api"
 import { sortProjectsBySessionActivity } from "./project-list-order"
-
+import { filterProjectSessions, type DeviceAgentFilter } from "./project-identity"
 import {
   projectHasVisibleSessions,
   projectSessionMatchesStatus,
@@ -20,9 +20,12 @@ export function selectPinnedProjects(
   projects: ProjectView[],
   sessions: WorkspaceSessionView[],
   status: ProjectSessionStatusFilter,
+  filter?: DeviceAgentFilter | null,
 ): ProjectView[] {
   return sortProjectsBySessionActivity(
-    projects.filter((project) => project.pinned && projectHasVisibleSessions(project, sessions, status)),
+    projects.filter((project) => (
+      project.pinned && projectHasVisibleSessions(project, sessions, status, filter)
+    )),
     sessions,
   )
 }
@@ -31,9 +34,12 @@ export function selectRegularProjects(
   projects: ProjectView[],
   sessions: WorkspaceSessionView[],
   status: ProjectSessionStatusFilter,
+  filter?: DeviceAgentFilter | null,
 ): ProjectView[] {
   return sortProjectsBySessionActivity(
-    projects.filter((project) => !project.pinned && projectHasVisibleSessions(project, sessions, status)),
+    projects.filter((project) => (
+      !project.pinned && projectHasVisibleSessions(project, sessions, status, filter)
+    )),
     sessions,
   )
 }
@@ -73,8 +79,10 @@ export function selectAllSessions(
 export function selectProjectSessions(
   sessions: WorkspaceSessionView[],
   status: ProjectSessionStatusFilter = "active",
+  filter?: DeviceAgentFilter | null,
 ): WorkspaceSessionView[] {
-  return sessions.filter((session) => projectSessionMatchesStatus(session, status))
+  return filterProjectSessions(sessions, filter)
+    .filter((session) => projectSessionMatchesStatus(session, status))
 }
 
 export function groupSessionsByProject(sessions: WorkspaceSessionView[]): Record<string, WorkspaceSessionView[]> {

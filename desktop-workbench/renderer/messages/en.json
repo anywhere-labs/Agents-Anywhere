@@ -316,6 +316,7 @@
       "title": "Couldn't load dashboard"
     },
     "filters": {
+      "deviceAgentAria": "Filter projects by device and agent",
       "active": "Active",
       "all": "All",
       "allActive": "Active sessions",
@@ -768,6 +769,7 @@
       "editDescription": "You can rename this project. Its device and workspace cannot be changed.",
       "editTitle": "Edit project",
       "empty": "No projects yet.",
+      "emptyFiltered": "No projects match the current device or agent filter.",
       "filterSessions": "Filter project sessions",
       "name": "Project name",
       "nameConflict": "A project named “{name}” already exists. Choose another name.",
