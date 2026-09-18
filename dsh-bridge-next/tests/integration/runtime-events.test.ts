@@ -277,10 +277,13 @@ test('startup and reconnect exclude persisted drafts and import messages sent th
     await until(() => !!adapter.release, 'native model is running')
     await until(() => stream.ops().some(op => op.kind === 'snapshot.commit' && op.sessionId === sessionId('test', handle!.agent.id)), 'native first message is synchronized live')
     assert.deepEqual(stream.errors, [])
+    // Disconnect before the turn's tail events reach the first feed. Whether that
+    // feed has already checkpointed the tail is a timing accident; closing here
+    // keeps the replacement feed's decision deterministic.
+    stream.feed.close()
     adapter.release!()
     await handle.agent.whenIdle()
     await fixture.ctx.sessions.flush(handle.agent.session)
-    stream.feed.close()
     stream = follow(native)
     await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'reconnected inventory')
     for (const id of drafts) assert.ok(!imported().includes(sessionId('test', id)), `${id} must not be imported on reconnect`)
