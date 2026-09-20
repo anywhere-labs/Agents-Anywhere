@@ -54,6 +54,10 @@ def test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:
     asyncio.run(_test_codex_sdk_client_delegates_runtime_protocol_methods())
 
 
+def test_codex_sdk_list_threads_recovers_after_transport_dies() -> None:
+    asyncio.run(_test_codex_sdk_list_threads_recovers_after_transport_dies())
+
+
 def test_codex_sdk_approval_does_not_block_response_reader() -> None:
     asyncio.run(_test_codex_sdk_approval_does_not_block_response_reader())
 
@@ -164,6 +168,45 @@ async def _test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:
     ]
     assert native.responses == [("req_1", {"decision": "approve"})]
     assert result.threads == ()
+
+
+async def _test_codex_sdk_list_threads_recovers_after_transport_dies() -> None:
+    failed = _BrokenPipeThreadListSdkClient()
+    replacement = _NativeSdkClient()
+    replacements: list[_NativeSdkClient] = []
+
+    def create_replacement() -> _NativeSdkClient:
+        replacements.append(replacement)
+        return replacement
+
+    client = CodexSdkClient(
+        failed,
+        client_factory=create_replacement,
+    )
+
+    async def handler(message: dict[str, Any]) -> None:
+        replacement.handled.append(message)
+
+    await client.start(handler)
+    result = await client.list_threads(limit=1)
+    await client.stop()
+
+    assert result.threads == ()
+    assert failed.stopped is True
+    assert replacements == [replacement]
+    assert replacement.started is True
+    assert replacement.stopped is True
+    assert replacement.requests == [
+        (
+            "thread/list",
+            {
+                "limit": 1,
+                "modelProviders": [],
+                "sortDirection": "desc",
+                "sortKey": "recency_at",
+            },
+        )
+    ]
 
 
 async def _test_codex_sdk_approval_does_not_block_response_reader() -> None:
@@ -802,6 +845,23 @@ class _NativeSdkClient:
         result: Mapping[str, Any] | None = None,
     ) -> None:
         self.responses.append((request_id, dict(result or {})))
+
+
+class _BrokenPipeThreadListSdkClient(_NativeSdkClient):
+    async def thread_list(
+        self,
+        cursor: str | None = None,
+        limit: int | None = None,
+        model_providers: list[str] | None = None,
+        sort_direction: SortDirection | None = None,
+        sort_key: ThreadSortKey | None = None,
+    ) -> dict[str, Any]:
+        _ = cursor
+        _ = limit
+        _ = model_providers
+        _ = sort_direction
+        _ = sort_key
+        raise BrokenPipeError(32, "Broken pipe")
 
 
 class _DeferredServerRequestSdkClient:
