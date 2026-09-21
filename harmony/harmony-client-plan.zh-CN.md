@@ -1229,6 +1229,56 @@ contentPicker.fixedSize(horizontal: true, vertical: false)   // DeviceManagement
 
 **验证**：`clean` + `assembleHap` 0 error / 0 ArkTS warning；三门禁 `750 refs / 157 ETS`、`178 文件编码干净`、`157 ETS 0 orphans`；15 个逻辑用例全过。同一个组件也被本页的**会话筛选**（活跃/已归档/全部）复用，所以那条一起修好了。
 
+## 运行已结束，输入框却提示「当前运行时状态下不可发送消息」（第 58 轮）
+
+用户反馈：明明运行已经结束了，会话页输入框里仍提示「当前运行时状态下不可发送消息。」
+
+**根因**：`SessionDetailScreen.placeholder()` 的分支表**漏了 Android 的一条**。Android（`SessionDetailScreen.kt:1541-1561`）的顺序是：
+
+```
+… Error → session_error_placeholder
+!canUseSendMessage && !canUseCommands → session_send_unavailable
+inputEnabled → session_reply_to          ← 鸿蒙这边整条缺失
+else → session_send_unavailable
+```
+
+我们只写到 `Error`，然后就 `return session_send_unavailable`。于是**运行结束、输入框可写**这种最正常的情况，正好落到那句「不可发送」上——文案在撒谎（输入框和发送按钮其实都是可用的）。
+
+**改法**：按 Android 的顺序补上 `inputEnabled → session_reply_to`（`回复 %s`，参数用 `runtimeLabel()`），兜底仍是 `session_send_unavailable`。
+
+**与 iOS 的差异（记录在案）**：iOS 的输入框占位符是**常量**（`ChatComposer.swift:10` 的 `"询问 Agents"`），它不随运行时状态换文案，而是靠置灰 + notice 说明原因。本移植文件自己的注释写明"按 Android 的优先级顺序"，所以这里按 Android 补齐，而不是改成 iOS 的常量写法。
+
+**验证**：
+
+- `clean` + `assembleHap` **0 error / 0 ArkTS warning**；门禁 `751 resource refs / 157 ETS`（引用数从 750 涨到 751，正是新加的这条字符串）、`178 文件编码干净`、`157 ETS 0 orphans`。
+- **新写了一个结构化用例** `check-placeholder.mjs`：它从**真实 `.ets` 源码**里抽出 `placeholder()` 的分支表（守卫 + 返回的资源名，按源码顺序），再逐项对照 Android 的顺序断言。本轮实测它有判别力——把新加的 `inputEnabled` 分支删掉（复现改前源码）后它**直接失败**（`branch count 9 ≠ 10`、顺序里缺 `session_reply_to`），改回后通过。
+
+### ⚠️ 本轮暴露的两个环境问题（如实记录）
+
+1. **`%TEMP%` 被清理了**：`aasmoke.ps1`（真机辅助脚本）和 **`aa-tok` 的 15 个逻辑用例全部丢失**。仓库里的三个门禁脚本（`harmony/tools/verify-*.mjs`）没受影响。已重建 `aasmoke.ps1`（`Get-Ui` / `Find-Ui` / `Get-Bounds` / `Click-Row` / `LongClick-Row` / `Shot`），并重建 1 个用例（上面的 `check-placeholder.mjs`）；**其余 14 个用例需要重写**（它们建在本次会话压缩之前，内容已不在上下文里）。在此之前"每批跑 15 个逻辑用例"这条约定**无法完整执行**，只能跑已重建的部分 + 三个门禁。
+2. **真机断开了**：`hdc list targets` 返回 `[Empty]`（重启 hdc server 后依旧），所以本轮**没能做真机复验**。修复版已编译并通过门禁，但"运行结束后输入框应显示「回复 DSH」"这一条**尚未在设备上确认**。
+
+### 逻辑用例与真机脚本：重建并**放进仓库**（用户同意后）
+
+`%TEMP%` 被清理这件事说明"验证工具放在临时目录"本身就是个隐患，所以这轮把它们搬进仓库：
+
+| 位置 | 内容 |
+|---|---|
+| `harmony/tools/logic-checks/` | 纯逻辑回归套件：`lib.mjs` + `run.mjs` + 各个 `*-check.mjs` + `README.md` |
+| `harmony/tools/device-smoke.ps1` | 真机辅助脚本（`Get-Ui` / `Find-Ui` / `Get-Bounds` / `Click-Row` / `LongClick-Row` / `Shot`），并加了一条"设备掉线就明确抛错"的断言——上次掉线时它退化成一个看不懂的 `ConvertFrom-Json` 路径错误 |
+
+**设计要点**（写在 `logic-checks/README.md` 里）：`lib.mjs` 把**真实 `.ets` 源码**及其相对导入闭包镜像到 `.generated/`（git-ignored，且已加入 `verify-encoding.mjs` 的 `SKIP`，与 `build` 同等对待），再用 Node 的类型擦除直接跑——**检查跑的是出货代码本身**，而不是抄一遍的实现（抄一遍的"检查"会在真代码坏掉时照样通过）。两类检查都保留：
+
+- **行为检查**：`loadModule(...)` 后断言真实返回值；
+- **结构检查**：`readSource(...)` 后断言源码里的**规则表**（分支顺序、资源名），专门用来守"少了一条分支"这类 bug。
+
+**已重建 2 个（并各自证明了判别力）**：
+
+1. `runtime-identity-check.mjs`（22 条断言）：把 `runtimeInstanceLabels` 与 `runtimeInstanceName` 两套规则的差异钉住——包括**「DSH」这种"类型缩写"被 Android 规则吞掉**这个真实回归（第 53 轮）。判别力证明：把 `runtimeInstanceName` 改成走 Android 规则 → 2 条断言失败、退出码 1；还原后 sha256 与改前**完全一致**。
+2. `session-placeholder-check.mjs`（6 条断言）：从真实源码抽出 `placeholder()` 的分支表对照 Android 顺序，正是本轮那条缺失分支的回归守卫。判别力证明：删掉 `inputEnabled` 分支（复现改前源码）→ 直接失败（`branch count 9 ≠ 10`、顺序里缺 `session_reply_to`）。
+
+**其余 15 个模块的检查**正在并行编写中（sessions 状态机 5 个、session 详情/时间线 5 个、设备/文件/API 5 个），每个都要求"能被变异证明会失败"才收。**旧的 15 个用例无法逐字恢复**（它们写于本次会话上下文压缩之前），所以这是**按当前源码重建**，不是还原——数量与覆盖会与旧套件不同，重建完成后我会给出对照。
+
 ## 待确认问题
 
 - **会话行是否也要加选中态**：见上一节第 5 条末尾。iOS 有，鸿蒙没有；改动很小（`HomeScreen` 加一个 `@Prop`、2 个 `HomeSessionRow` 调用点、组件加背景）。

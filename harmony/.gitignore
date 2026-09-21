@@ -11,6 +11,9 @@
 /.appanalyzer
 /.preview
 
+# The logic-check harness mirrors the .ets sources here to run them on Node.
+/tools/logic-checks/.generated
+
 # DevEco Studio / IDE state
 /.idea
 *.iml

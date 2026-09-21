@@ -5,7 +5,9 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOTS = ['entry/src/main/ets', 'entry/src/main/resources', 'AppScope', 'tools'];
-const SKIP = new Set(['build', 'node_modules', '.hvigor', 'oh_modules']);
+// `.generated` holds the logic-check harness's mirrored copies of the sources —
+// derived files, so they are skipped exactly like `build`.
+const SKIP = new Set(['build', 'node_modules', '.hvigor', 'oh_modules', '.generated']);
 const TEXT = /\.(ets|ts|json|json5|mjs|md)$/;
 
 const files = [];

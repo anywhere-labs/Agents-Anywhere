@@ -494,6 +494,13 @@ export struct SessionDetailScreen {
     if (status === RuntimeStatus.ERROR) {
       return $r('app.string.session_error_placeholder');
     }
+    // The run has finished and the composer is writable: Android's own order ends
+    // with this branch. Without it a finished session fell through to the "this
+    // runtime state cannot send" text, which reads as a refusal even though the
+    // composer and its send button are both live.
+    if (this.inputEnabled()) {
+      return $r('app.string.session_reply_to', this.runtimeLabel());
+    }
     return $r('app.string.session_send_unavailable');
   }
 
