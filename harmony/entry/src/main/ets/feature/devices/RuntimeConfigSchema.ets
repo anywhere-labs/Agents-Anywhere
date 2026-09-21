@@ -207,7 +207,8 @@ function parseRuntimeConfigFields(
     }
   }
   const remaining: string[] = Object.keys(properties)
-    .filter((name: string) => !preferred.includes(name));
+    .filter((name: string) => !preferred.includes(name))
+    .sort();
   for (const name of remaining) {
     ordered.push(name);
   }
