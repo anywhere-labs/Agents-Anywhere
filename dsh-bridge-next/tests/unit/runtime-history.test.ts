@@ -4,6 +4,7 @@ import type { SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
 import { createProjection, projectHistory, replayHistory } from '../../src/host/dsh-runtime/history.js'
 import { contentHash, sessionId, itemId } from '../../src/host/dsh-runtime/identity.js'
 import { RuntimeRouter } from '../../src/host/dsh-runtime/router.js'
+import { decodeModelSelection, decodePermissionSelection, modelSelectionId, permissionSelectionId } from '../../src/host/dsh-runtime/selections.js'
 import { readFile } from 'node:fs/promises'
 
 function log(events: { type: string, data: unknown }[]): SessionLogSnapshot {
@@ -150,6 +151,15 @@ test('compaction keeps original messages and ignores internal informational even
 test('canonical identities and hashes match the shared cross-language fixtures', async () => {
   const fixture = JSON.parse(await readFile(new URL('../../../contracts/dsh-bridge/1.0/fixtures/identity.json', import.meta.url), 'utf8'))
   for (const entry of fixture.sessionIds) assert.equal(sessionId(entry.connectorId, entry.externalSessionId), entry.sessionId)
+  for (const entry of fixture.modelSelections) {
+    const selection = { provider: entry.provider, model: entry.model, ...(entry.effort === null ? {} : { reasoningEffort: entry.effort }) }
+    assert.equal(modelSelectionId(selection), entry.selectionId)
+    assert.deepEqual(decodeModelSelection(entry.selectionId), selection)
+  }
+  for (const entry of fixture.permissionSelections) {
+    assert.equal(permissionSelectionId(entry.preset), entry.selectionId)
+    assert.equal(decodePermissionSelection(entry.selectionId), entry.preset)
+  }
   for (const entry of fixture.timelineIds) assert.equal(itemId(entry.externalSessionId, entry.projectionKind, entry.businessId), entry.itemId)
   for (const entry of fixture.contentHashes) assert.equal(contentHash(entry), entry.contentHash)
 })
