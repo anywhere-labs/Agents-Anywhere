@@ -24,6 +24,8 @@ type RecentSessionsSectionProps = {
   label?: string
   isLoading: boolean
   activeSessionId: string | null
+  /** Optional `device · agent` identity line for each session row. */
+  sessionMeta?: (session: WorkspaceSessionView) => string | null
   onMarkAllRead: () => void | Promise<void>
   onOpenSession: (sessionId: string) => void
   onToggleSessionPin: (sessionId: string) => void
@@ -36,6 +38,7 @@ export function RecentSessionsSection({
   label,
   isLoading,
   activeSessionId,
+  sessionMeta,
   onMarkAllRead,
   onOpenSession,
   onToggleSessionPin,
@@ -76,6 +79,7 @@ export function RecentSessionsSection({
                   <SessionSidebarItem
                     key={item.id}
                     item={item}
+                    meta={sessionMeta?.(item) ?? null}
                     isActive={activeSessionId === item.id}
                     onOpen={() => onOpenSession(item.id)}
                     onTogglePin={() => onToggleSessionPin(item.id)}

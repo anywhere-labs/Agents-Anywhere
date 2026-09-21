@@ -322,6 +322,7 @@
       "team": "团队"
     },
     "filters": {
+      "deviceAgentAria": "按设备与 Agent 筛选项目",
       "active": "活跃",
       "all": "全部",
       "allActive": "活跃会话",
@@ -768,6 +769,7 @@
       "editDescription": "你可以修改项目名称；设备和工作区创建后不能更换。",
       "editTitle": "编辑项目",
       "empty": "还没有项目。",
+      "emptyFiltered": "没有符合当前设备或 Agent 筛选的项目。",
       "filterSessions": "筛选项目会话",
       "name": "项目名称",
       "nameConflict": "项目名称“{name}”已存在，请换一个名称。",

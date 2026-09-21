@@ -37,6 +37,7 @@ import { useTranslations } from "next-intl"
 
 export function SessionSidebarItem({
   item,
+  meta = null,
   inset = false,
   isActive,
   onOpen,
@@ -45,6 +46,8 @@ export function SessionSidebarItem({
   onRename,
 }: {
   item: { id: string; title?: string | null; status: string; unread: boolean; pinned: boolean; archived: boolean }
+  /** Optional `device · agent` identity line for sessions shown outside projects. */
+  meta?: string | null
   inset?: boolean
   isActive: boolean
   onOpen: () => void
@@ -119,11 +122,25 @@ export function SessionSidebarItem({
                 className={cn(
                   "text-muted-foreground data-[active=true]:text-foreground",
                   inset && "pl-9",
+                  meta && "h-auto",
                   !hasStatusIndicator && "group-hover/session:pr-[4.25rem] group-focus-within/session:pr-[4.25rem]",
                   isActive && !hasStatusIndicator && "pr-[4.25rem]",
                 )}
               >
-                <OverflowMarquee text={item.title ?? ""} active={nameHovered} />
+                {meta ? (
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <OverflowMarquee
+                      text={item.title ?? ""}
+                      active={nameHovered}
+                      className="w-full flex-none"
+                    />
+                    <span className="block min-w-0 truncate text-[11px] leading-4 text-muted-foreground/80">
+                      {meta}
+                    </span>
+                  </span>
+                ) : (
+                  <OverflowMarquee text={item.title ?? ""} active={nameHovered} />
+                )}
                 <SessionSidebarIndicator
                   busy={isBusy}
                   unreadIdle={isUnreadIdle}
