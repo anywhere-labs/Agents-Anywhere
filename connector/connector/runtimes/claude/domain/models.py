@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,11 +13,18 @@ from connector.runtime_protocol import (
 from connector.runtimes.custom_models import custom_model_items
 from connector.server.protocol import protocol_selection_id
 
+# Claude Code's `/model` entry that means "no --model flag".
+CLAUDE_DEFAULT_MODEL_ID = "default"
+
 
 @dataclass(frozen=True, slots=True)
 class ClaudeModelSelection:
     model_id: str
     effort_id: str | None = None
+
+    @property
+    def cli_model(self) -> str | None:
+        return None if self.model_id == CLAUDE_DEFAULT_MODEL_ID else self.model_id
 
 
 _CLAUDE_EFFORTS: tuple[dict[str, str], ...] = (
@@ -117,8 +125,19 @@ def claude_model_catalog(
     query: str | None = None,
     limit: int = 100,
     custom_models: object | None = None,
+    cli_models: Sequence[Mapping[str, Any]] = (),
 ) -> RuntimeModelCatalog:
-    models = tuple(_model_item(model) for model in _CLAUDE_MODELS)
+    """Build the picker catalog.
+
+    `cli_models` is the list Claude Code reports at initialize; when it is
+    available it replaces the static table so new CLI models show up without a
+    Connector release. The static table remains the fallback.
+    """
+
+    if cli_models:
+        models = tuple(_cli_model_item(model) for model in cli_models)
+    else:
+        models = tuple(_model_item(model) for model in _CLAUDE_MODELS)
     models = (
         *models,
         *custom_model_items(
@@ -144,16 +163,73 @@ def claude_model_catalog(
 def model_selection_from_selection_id(
     selection_id: str | None,
     custom_models: object | None = None,
+    cli_models: Sequence[Mapping[str, Any]] = (),
 ) -> ClaudeModelSelection | None:
     if selection_id is None:
         return None
-    for model in claude_model_catalog(revision=0, custom_models=custom_models).models:
+    for model in _selection_candidates(custom_models, cli_models):
         if model.selection_id == selection_id:
             return ClaudeModelSelection(model_id=model.id)
         for effort in model.reasoning_items:
             if effort.selection_id == selection_id:
                 return ClaudeModelSelection(model_id=model.id, effort_id=effort.id)
     raise RuntimeInvalidRequestError("unknown Claude model selection")
+
+
+def _selection_candidates(
+    custom_models: object | None,
+    cli_models: Sequence[Mapping[str, Any]],
+) -> tuple[RuntimeModelItem, ...]:
+    # Sessions keep the selection ids they were created with, so static
+    # entries stay resolvable even while the picker shows the CLI list.
+    candidates = list(
+        claude_model_catalog(
+            revision=0,
+            custom_models=custom_models,
+            cli_models=cli_models,
+        ).models
+    )
+    seen = {model.id for model in candidates}
+    for model in _CLAUDE_MODELS:
+        if model["id"] not in seen:
+            candidates.append(_model_item(model))
+    return tuple(candidates)
+
+
+def _cli_model_item(item: Mapping[str, Any]) -> RuntimeModelItem:
+    model_id = str(item["value"])
+    display_name = item.get("displayName")
+    description = item.get("description")
+    metadata: dict[str, Any] = {"source": "claude-code.initialize"}
+    resolved_model = item.get("resolvedModel")
+    if isinstance(resolved_model, str) and resolved_model:
+        metadata["resolvedModel"] = resolved_model
+    for key in ("supportsFastMode", "supportsAutoMode", "supportsAdaptiveThinking"):
+        if isinstance(item.get(key), bool):
+            metadata[key] = item[key]
+    return RuntimeModelItem(
+        id=model_id,
+        title=display_name
+        if isinstance(display_name, str) and display_name
+        else model_id,
+        selection_id=protocol_selection_id(
+            "claude",
+            "model",
+            {"model_id": model_id},
+        ),
+        description=description if isinstance(description, str) else None,
+        reasoning_items=_reasoning_items(model_id, _cli_effort_ids(item)),
+        metadata=metadata,
+    )
+
+
+def _cli_effort_ids(item: Mapping[str, Any]) -> tuple[str, ...]:
+    if item.get("supportsEffort") is not True:
+        return ()
+    levels = item.get("supportedEffortLevels")
+    if not isinstance(levels, list):
+        return ()
+    return tuple(level for level in levels if isinstance(level, str) and level)
 
 
 def _model_item(item: dict[str, Any]) -> RuntimeModelItem:
@@ -179,19 +255,23 @@ def _model_item(item: dict[str, Any]) -> RuntimeModelItem:
     )
 
 
-def _reasoning_items(model_id: str) -> tuple[RuntimeReasoningItem, ...]:
+def _reasoning_items(
+    model_id: str,
+    effort_ids: Sequence[str] | None = None,
+) -> tuple[RuntimeReasoningItem, ...]:
+    known = {effort["id"]: effort for effort in _CLAUDE_EFFORTS}
+    ids = tuple(known) if effort_ids is None else tuple(effort_ids)
     return tuple(
         RuntimeReasoningItem(
             id=effort_id,
-            title=title,
+            title=known[effort_id]["title"] if effort_id in known else effort_id,
             selection_id=protocol_selection_id(
                 "claude",
                 "model",
                 {"model_id": model_id, "effort_id": effort_id},
             ),
-            description=effort["description"],
+            description=known[effort_id]["description"] if effort_id in known else None,
             metadata={"source": "claude-agent-sdk.effort"},
         )
-        for effort in _CLAUDE_EFFORTS
-        for effort_id, title in ((effort["id"], effort["title"]),)
+        for effort_id in ids
     )

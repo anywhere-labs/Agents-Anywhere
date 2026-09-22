@@ -73,6 +73,7 @@ class ClaudeTurnController:
             notifications=self.notifications,
             interactions=self.interactions,
             pending_messages=self.pending_messages,
+            catalogs=self.catalogs,
             sdk_loader=self.sdk_loader,
             client_factory=self.client_factory,
         )

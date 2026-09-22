@@ -32,7 +32,10 @@ class ClaudeSelectionController:
             external_session_id=external_session_id,
         )
         try:
-            session.selections = self.effective_selections(session_id, selections)
+            session.selections = await self.effective_selections(
+                session_id,
+                selections,
+            )
         except RuntimeInvalidRequestError as exc:
             return RuntimeOperationResult(
                 ok=False,
@@ -55,14 +58,19 @@ class ClaudeSelectionController:
             },
         )
 
-    def effective_selections(
+    async def effective_selections(
         self,
         session_id: str,
         selections: Mapping[str, str | None] | None,
     ) -> dict[str, str | None]:
         state = self.session_states.get(session_id)
+        current = state.selections if state is not None else {}
+        await self.catalogs.resolve_model_selection(
+            {**current, **dict(selections or {})}.get("model")
+        )
         return effective_claude_selections(
-            state.selections if state is not None else {},
+            current,
             selections,
             custom_models=self.catalogs.custom_models,
+            cli_models=self.catalogs.cli_models,
         )
