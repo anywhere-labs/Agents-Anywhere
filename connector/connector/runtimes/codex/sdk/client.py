@@ -113,10 +113,12 @@ class CodexSdkClient:
         client: Any,
         sdk: Any | None = None,
         model_gateway: ModelGateway | None = None,
+        config: RuntimeConfig | None = None,
     ) -> None:
         self._client = client
         self._sdk = sdk
         self._model_gateway = model_gateway
+        self._config = config
         self._handler: NotificationHandler | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._pending_approval_responses: dict[
@@ -164,6 +166,26 @@ class CodexSdkClient:
             self._entered_client = None
         elif hasattr(self._client, "close"):
             await maybe_await(self._client.close())
+
+    async def restart(self) -> None:
+        """Start a fresh Codex app-server so new on-disk credentials take effect.
+
+        Codex pins the signed-in account inside the app-server process, and the SDK
+        client is single-use, so only a new client - with a new app-server - can
+        pick up a ``codex login`` that switched accounts.
+        """
+
+        handler = self._handler
+        await self.stop()
+        if self._sdk is None or self._config is None:
+            raise RuntimeInvalidRequestError("Codex SDK client cannot be restarted")
+        # Thread and turn handles belong to the app-server process that made them.
+        self._threads.clear()
+        self._loaded_thread_ids.clear()
+        self._turns.clear()
+        self._client = _create_sdk_client(self._sdk, self._config)
+        if handler is not None:
+            await self.start(handler)
 
     def cancel_pending_approval_responses(self) -> None:
         pending = tuple(self._pending_approval_responses.values())
@@ -756,6 +778,7 @@ def sdk_client_from_config(config: RuntimeConfig) -> CodexRuntimeClient:
         client,
         sdk=sdk,
         model_gateway=model_gateway,
+        config=config,
     )
 
 
