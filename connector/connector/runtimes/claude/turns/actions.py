@@ -57,7 +57,7 @@ class ClaudeTurnActionHandler:
     ) -> RuntimeOperationResult:
         session = self.session_for(session_id, external_session_id, cwd)
         try:
-            effective_selections = self.selections.effective_selections(
+            effective_selections = await self.selections.effective_selections(
                 session_id,
                 selections,
             )

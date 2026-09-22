@@ -10,6 +10,7 @@ from connector.runtime_protocol import (
     RuntimeTimelineItem,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtimes.claude.catalogs.reader import ClaudeCatalogReader
 from connector.runtimes.claude.domain.pending_messages import (
     ClaudePendingClientMessageRegistry,
     client_message_text_matches,
@@ -69,6 +70,7 @@ class ClaudeTurnRunner:
     notifications: ClaudeNotificationProjector
     interactions: ClaudeInteractionController
     pending_messages: ClaudePendingClientMessageRegistry
+    catalogs: ClaudeCatalogReader
     sdk_loader: SdkLoader | None = None
     client_factory: ClaudeClientFactory | None = None
 
@@ -105,6 +107,7 @@ class ClaudeTurnRunner:
                 ),
                 stderr=stderr.record,
                 settings_path=settings_path,
+                cli_models=self.catalogs.cli_models,
             )
             execution.client = client
             await connect_client(client)

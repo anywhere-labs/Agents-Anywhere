@@ -2044,6 +2044,187 @@ async def _test_claude_runtime_rejects_unknown_model_selection() -> None:
     assert result.code == "claude_invalid_selection"
 
 
+def test_claude_runtime_lists_models_reported_by_claude_code() -> None:
+    asyncio.run(_test_claude_runtime_lists_models_reported_by_claude_code())
+
+
+async def _test_claude_runtime_lists_models_reported_by_claude_code() -> None:
+    discovery = _DiscoveryClientType(server_info={"models": _CLI_MODELS})
+    runtime = _runtime(
+        sdk=_default_sdk(ClaudeSDKClient=discovery),
+        config=RuntimeConfig(
+            runtime="claude",
+            revision=1,
+            values={
+                "environment": {"EXAMPLE": "1"},
+                "executablePath": "/opt/claude/bin/claude",
+                "customModels": [
+                    {"modelId": "claude-local-test", "displayName": "Local Test"}
+                ],
+            },
+        ),
+    )
+
+    catalog = await runtime.list_model_catalog()
+
+    assert [model.id for model in catalog.models] == [
+        "default",
+        "opus[1m]",
+        "claude-fable-5-1",
+        "haiku",
+        "claude-local-test",
+    ]
+    assert catalog.revision == 1004
+    default = catalog.models[0]
+    assert default.title == "Default (recommended)"
+    assert default.description == "Opus 5.5 with 1M context"
+    assert default.metadata["source"] == "claude-code.initialize"
+    assert default.metadata["resolvedModel"] == "claude-opus-5-5[1m]"
+    assert default.metadata["supportsFastMode"] is True
+    assert [item.id for item in default.reasoning_items] == ["low", "high", "max"]
+    assert default.reasoning_items[1].title == "High"
+    assert catalog.models[3].reasoning_items == ()
+    assert catalog.models[4].metadata["custom"] is True
+
+    await runtime.list_model_catalog(query="haiku")
+    assert discovery.created == 1
+    options = discovery.instances[0].options
+    assert options.kwargs["cli_path"] == "/opt/claude/bin/claude"
+    assert options.kwargs["env"] == {"EXAMPLE": "1"}
+    assert "model" not in options.kwargs
+    assert discovery.instances[0].connected is True
+    assert discovery.instances[0].disconnected is True
+    assert discovery.instances[0].queries == []
+
+
+def test_claude_runtime_default_cli_model_omits_model_flag() -> None:
+    asyncio.run(_test_claude_runtime_default_cli_model_omits_model_flag())
+
+
+async def _test_claude_runtime_default_cli_model_omits_model_flag() -> None:
+    client = _FakeClaudeClient(
+        messages=[SimpleNamespace(type="result", session_id="claude_default")]
+    )
+    runtime = _runtime(
+        client=client,
+        sdk=_default_sdk(
+            ClaudeSDKClient=_DiscoveryClientType(server_info={"models": _CLI_MODELS})
+        ),
+    )
+    default = (await runtime.list_model_catalog(query="default")).models[0]
+    effort = next(item for item in default.reasoning_items if item.id == "max")
+
+    result = await runtime.start_turn(
+        "sess_default",
+        "claude_default",
+        "use default",
+        selections={"model": effort.selection_id},
+    )
+    task = runtime._sessions["sess_default"].active_task
+    assert result.ok is True
+    assert task is not None
+    await task
+
+    assert "model" not in client.options.kwargs
+    assert client.options.kwargs["effort"] == "max"
+
+
+def test_claude_runtime_resolves_cli_selection_before_first_catalog_read() -> None:
+    asyncio.run(_test_claude_runtime_resolves_cli_selection_before_first_catalog_read())
+
+
+async def _test_claude_runtime_resolves_cli_selection_before_first_catalog_read() -> (
+    None
+):
+    # A session keeps its CLI selection across a Connector restart, when the
+    # fresh runtime has not read the CLI list yet.
+    listed = await _runtime(
+        sdk=_default_sdk(
+            ClaudeSDKClient=_DiscoveryClientType(server_info={"models": _CLI_MODELS})
+        )
+    ).list_model_catalog(query="opus")
+    selection_id = listed.models[0].selection_id
+
+    client = _FakeClaudeClient(
+        messages=[SimpleNamespace(type="result", session_id="claude_restart")]
+    )
+    discovery = _DiscoveryClientType(server_info={"models": _CLI_MODELS})
+    runtime = _runtime(client=client, sdk=_default_sdk(ClaudeSDKClient=discovery))
+
+    result = await runtime.start_turn(
+        "sess_restart",
+        "claude_restart",
+        "resume",
+        selections={"model": selection_id},
+    )
+    task = runtime._sessions["sess_restart"].active_task
+    assert result.ok is True
+    assert task is not None
+    await task
+
+    assert discovery.created == 1
+    assert client.options.kwargs["model"] == "opus[1m]"
+
+
+def test_claude_runtime_keeps_static_selections_with_cli_catalog() -> None:
+    asyncio.run(_test_claude_runtime_keeps_static_selections_with_cli_catalog())
+
+
+async def _test_claude_runtime_keeps_static_selections_with_cli_catalog() -> None:
+    static_model = (
+        await _runtime().list_model_catalog(query="claude-opus-4-8")
+    ).models[0]
+    client = _FakeClaudeClient(
+        messages=[SimpleNamespace(type="result", session_id="claude_static")]
+    )
+    discovery = _DiscoveryClientType(server_info={"models": _CLI_MODELS})
+    runtime = _runtime(client=client, sdk=_default_sdk(ClaudeSDKClient=discovery))
+
+    catalog = await runtime.list_model_catalog()
+    assert "claude-opus-4-8" not in [model.id for model in catalog.models]
+
+    result = await runtime.start_turn(
+        "sess_static",
+        "claude_static",
+        "keep static",
+        selections={"model": static_model.selection_id},
+    )
+    task = runtime._sessions["sess_static"].active_task
+    assert result.ok is True
+    assert task is not None
+    await task
+
+    assert client.options.kwargs["model"] == "claude-opus-4-8"
+    assert discovery.created == 1
+
+
+def test_claude_runtime_falls_back_to_static_models_when_discovery_fails() -> None:
+    asyncio.run(_test_claude_runtime_falls_back_to_static_models_when_discovery_fails())
+
+
+async def _test_claude_runtime_falls_back_to_static_models_when_discovery_fails() -> (
+    None
+):
+    discovery = _DiscoveryClientType(connect_error=RuntimeError("claude missing"))
+    runtime = _runtime(sdk=_default_sdk(ClaudeSDKClient=discovery))
+
+    first = await runtime.list_model_catalog()
+    second = await runtime.list_model_catalog()
+    unknown = await runtime.start_turn(
+        "sess_unknown",
+        None,
+        "hello",
+        selections={"model": "sel_model_missing"},
+    )
+
+    assert first.models[0].id == "claude-fable-5"
+    assert first.models[0].metadata["source"] == "claude-code.static-models"
+    assert second.models == first.models
+    assert unknown.ok is False
+    assert unknown.code == "claude_invalid_selection"
+    assert discovery.created == 1
+
+
 def test_claude_runtime_rejects_unknown_permission_selection() -> None:
     asyncio.run(_test_claude_runtime_rejects_unknown_permission_selection())
 
@@ -3470,7 +3651,7 @@ def _runtime_with_client_factory(
     )
 
 
-def _default_sdk() -> Any:
+def _default_sdk(**overrides: Any) -> Any:
     return SimpleNamespace(
         __version__="1.0",
         ClaudeAgentOptions=_FakeOptions,
@@ -3479,7 +3660,80 @@ def _default_sdk() -> Any:
         list_sessions=lambda **_: [],
         get_session_info=lambda **_: None,
         get_session_messages=lambda **_: [],
+        **overrides,
     )
+
+
+# Shape of the `models` entry in Claude Code's initialize response.
+_CLI_MODELS: list[dict[str, Any]] = [
+    {
+        "value": "default",
+        "resolvedModel": "claude-opus-5-5[1m]",
+        "displayName": "Default (recommended)",
+        "description": "Opus 5.5 with 1M context",
+        "supportsEffort": True,
+        "supportedEffortLevels": ["low", "high", "max"],
+        "supportsFastMode": True,
+    },
+    {
+        "value": "opus[1m]",
+        "resolvedModel": "claude-opus-5-5[1m]",
+        "displayName": "Opus (1M context)",
+        "description": "Opus 5.5 with 1M context",
+        "supportsEffort": True,
+        "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"],
+    },
+    {
+        "value": "claude-fable-5-1",
+        "resolvedModel": "claude-fable-5-1",
+        "displayName": "Fable",
+        "description": "Fable 5.1",
+        "supportsEffort": True,
+        "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"],
+    },
+    {
+        "value": "haiku",
+        "resolvedModel": "claude-haiku-4-5-20251001",
+        "displayName": "Haiku",
+        "description": "Haiku 4.5",
+    },
+]
+
+
+class _DiscoveryClientType:
+    """Stands in for `claude_agent_sdk.ClaudeSDKClient` during model discovery."""
+
+    def __init__(
+        self,
+        *,
+        server_info: dict[str, Any] | None = None,
+        connect_error: Exception | None = None,
+    ) -> None:
+        self.server_info = server_info
+        self.connect_error = connect_error
+        self.instances: list[_FakeClaudeClient] = []
+
+    @property
+    def created(self) -> int:
+        return len(self.instances)
+
+    def __call__(self, options: Any) -> _FakeClaudeClient:
+        owner = self
+        client = _FakeClaudeClient()
+        client.options = options
+
+        async def connect() -> None:
+            if owner.connect_error is not None:
+                raise owner.connect_error
+            client.connected = True
+
+        async def get_server_info() -> dict[str, Any] | None:
+            return owner.server_info
+
+        client.connect = connect  # type: ignore[method-assign]
+        client.get_server_info = get_server_info  # type: ignore[attr-defined]
+        self.instances.append(client)
+        return client
 
 
 def _config() -> RuntimeConfig:

@@ -87,7 +87,10 @@ class ClaudeRuntime(AgentRuntime):
             ),
             kv_store=self.client_message_kv,
         )
-        self._catalogs = ClaudeCatalogReader(config=self.config)
+        self._catalogs = ClaudeCatalogReader(
+            config=self.config,
+            sdk_loader=self.sdk_loader,
+        )
         self._session_reader = ClaudeSessionReader(
             config=self.config,
             host=self.host,
