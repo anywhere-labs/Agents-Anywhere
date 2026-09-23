@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from connector.logging import logger
 from connector.runtime_protocol import RuntimeConfig, RuntimeConflictError, RuntimeInvalidRequestError
+from connector.runtimes.codex.domain.input_requests import CODEX_REQUEST_USER_INPUT
 from connector.runtimes.codex.runtime_helpers import soft_codex_unavailable_reason
 from connector.runtimes.codex.sdk.binary import (
     codex_launch_command,
@@ -60,7 +61,6 @@ from connector.runtimes.codex.sdk.runtime_client import (
     CodexTurnResult,
     NotificationHandler,
 )
-from connector.runtimes.codex.domain.input_requests import CODEX_REQUEST_USER_INPUT
 from connector.runtimes.codex.sdk.server_requests import (
     install_deferred_server_request_reader,
 )
