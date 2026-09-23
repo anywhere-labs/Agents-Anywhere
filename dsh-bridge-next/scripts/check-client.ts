@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import { JSDOM } from 'jsdom'
 import { transform } from 'lightningcss'
-import { act, createElement, type ComponentType } from 'react'
+import { act, createElement, type ComponentType, type ReactElement } from 'react'
 import { Context } from '@deepseek-ai/cordis'
 import type { DesktopDetection, OnboardingHostApi, OnboardingSnapshot } from '../src/contracts/index.ts'
 import { DEFAULT_CONNECTOR_SETTINGS } from '../src/contracts/connector.ts'
@@ -97,6 +97,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     type EntryProps = { host: OnboardingHostApi; wide: boolean }
     let entry: { Component: ComponentType<EntryProps>; props: { host: OnboardingHostApi } } | undefined
     let entryCount = 0
+    const pluginEntries = new Map<string, (owner: Record<string, unknown>) => ReactElement>()
     ctx.provide('connection', { rpc: { call: async (channel: string, endpoint: string, payload: unknown) => {
         assert.equal(channel, '/api')
         calls.push({ endpoint, payload })
@@ -148,11 +149,19 @@ export async function checkClient(source: string, packageId: string): Promise<vo
         return { ok: true, value: snapshot }
       } } })
     ctx.provide('slots', {
-        inject(name: string, register: () => () => void) { assert.equal(name, 'sidebar.footer.action'); return register() },
-        register(options: { name: string; id: string; label: () => string; inject: () => { host: OnboardingHostApi } }, Component: ComponentType<EntryProps>) {
+        inject(name: string, register: () => () => void) {
+          assert.ok(['sidebar.footer.action', 'plugins.bundle.config', 'plugins.detail.actions'].includes(name))
+          return register()
+        },
+        register(options: { name: string; id?: string; key?: string; label?: () => string; inject: () => { host: OnboardingHostApi } }, Component: ComponentType<EntryProps>) {
+          if (options.name !== 'sidebar.footer.action') {
+            if (options.name === 'plugins.bundle.config') assert.equal(options.key, packageId)
+            pluginEntries.set(options.name, owner => createElement(Component, { ...options.inject(), wide: true, ...owner }))
+            return () => { pluginEntries.delete(options.name) }
+          }
           assert.equal(options.name, 'sidebar.footer.action', 'The entry belongs above Settings, not inside it')
           assert.equal(options.id, 'agents-anywhere-next')
-          assert.equal(options.label(), '手机连接')
+          assert.equal(options.label?.(), '手机连接')
           entry = { Component, props: options.inject() }
           entryCount++
           return () => { entryCount-- }
@@ -517,11 +526,35 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(button('登录 Agents Anywhere Cloud').disabled, false)
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang|benson@example.test|退出登录/)
 
+    // The manager owns the page shell and bundle switch. AA contributes only
+    // its real settings body and the panel action in the manager's header.
+    assert.equal(pluginEntries.size, 2)
+    const renderActions = pluginEntries.get('plugins.detail.actions')!
+    await act(async () => { root.render(renderActions({ subject: { kind: 'item', id: 'other' } })) })
+    assert.equal(container.textContent, '')
+    assert.equal(dialog(), null)
+    await act(async () => { root.render(renderActions({ subject: { kind: 'bundle', pkg: { name: packageId, enabled: false } } })) })
+    assert.equal(container.textContent, '')
+    await act(async () => { root.render(renderActions({ subject: { kind: 'bundle', pkg: { name: packageId, enabled: true } } })) })
+    const panelButton = button('打开面板')
+    await act(async () => { panelButton.click() })
+    assert.ok(dialog())
+    await act(async () => { button('关闭手机连接').click() })
+    assert.equal(document.activeElement, panelButton)
+    await act(async () => { root.render(pluginEntries.get('plugins.bundle.config')!({ view: 'page' })) })
+    assert.ok(container.querySelector('form'), 'Bundle details must contain the real Connector settings form')
+    assert.match(container.textContent!, /运行环境/)
+    assert.match(container.textContent!, /同步设置/)
+    assert.equal(container.querySelector('h1, h2'), null, 'The official detail supplies the title and layout')
+    await act(async () => { button('前往登录').click() })
+    assert.ok(dialog(), 'Settings can open the same connection panel for pairing')
+
     await act(async () => { unmount!(); unmount = undefined })
     await ctx.fiber.dispose()
     assert.equal(listeners.size, 0, 'Client unload must unsubscribe from selection changes')
     assert.equal(selectionCalls().at(-1)?.current, null, 'Client unload must release its selected-session presence')
     assert.equal(entryCount, 0, 'Client unload must remove its sidebar entry')
+    assert.equal(pluginEntries.size, 0, 'Client unload must remove its detail contributions')
     assert.equal(dialog(), null, 'Client unload must remove an open dialog')
     assert.equal(container.hasAttribute('inert'), false, 'Client unload must restore the application root')
   } finally {
