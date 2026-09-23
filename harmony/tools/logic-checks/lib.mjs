@@ -20,7 +20,18 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO = normalize(join(HERE, '..', '..'));
-export const SRC_ROOT = join(REPO, 'entry', 'src', 'main', 'ets');
+const DEFAULT_SRC_ROOT = join(REPO, 'entry', 'src', 'main', 'ets');
+/**
+ * Where the mirrored sources are read from.
+ *
+ * `AA_CHECK_SRC_ROOT` overrides it so a mutation test can run against a **copy**
+ * of the tree instead of the live sources. Mutating the live tree is how a
+ * deliberately broken file once got committed: a check was mid-mutation when the
+ * working tree was committed. Copy first, mutate the copy, point this at it.
+ */
+export const SRC_ROOT = process.env.AA_CHECK_SRC_ROOT
+  ? normalize(process.env.AA_CHECK_SRC_ROOT)
+  : DEFAULT_SRC_ROOT;
 const GENERATED = join(HERE, '.generated');
 
 /** The raw text of a source module, for structural checks. */
@@ -44,6 +55,85 @@ function enumToConst(text) {
       .map((line) => line.replace(/\s*=\s*/, ': '));
     return `export const ${name} = Object.freeze({ ${entries.join(', ')} });`;
   });
+}
+
+/**
+ * Replaces erased type declarations with the `undefined` they already are.
+ *
+ * ArkTS writes `import { SomeInterface } from './X'` — never `import type` — so
+ * after type stripping the name has no runtime export and Node aborts the whole
+ * check with "does not provide an export named ..." before a line of the module
+ * under test runs. That is an artefact of the mirror, not a property of the code:
+ * the declaration's *shape* is irrelevant because type stripping removes it
+ * either way. Giving the name the `undefined` it has at runtime keeps every real
+ * export untouched while making such an import resolve.
+ *
+ * (A bare kit import — `@kit.ArkTS`, `@ohos.*` — is deliberately left alone: that
+ * is a genuine blocker and a check must report it, not paper over it.)
+ */
+function exportErasedTypes(text) {
+  const starts = [];
+  const declaration = /export (?:declare )?interface ([A-Za-z_$][\w$]*)/g;
+  let match;
+  while ((match = declaration.exec(text)) !== null) {
+    const bodyStart = text.indexOf('{', match.index);
+    if (bodyStart < 0) {
+      continue;
+    }
+    const bodyEnd = matchingBrace(text, bodyStart);
+    if (bodyEnd < 0) {
+      continue;
+    }
+    starts.push({ from: match.index, to: bodyEnd + 1, name: match[1] });
+  }
+
+  const alias = /export (?:declare )?type ([A-Za-z_$][\w$]*) =/g;
+  while ((match = alias.exec(text)) !== null) {
+    let index = match.index + match[0].length;
+    let depth = 0;
+    while (index < text.length) {
+      const char = text[index];
+      if (char === '{' || char === '(' || char === '[' || char === '<') {
+        depth++;
+      } else if (char === '}' || char === ')' || char === ']' || char === '>') {
+        depth--;
+      } else if (char === ';' && depth <= 0) {
+        break;
+      }
+      index++;
+    }
+    starts.push({ from: match.index, to: Math.min(index + 1, text.length), name: match[1] });
+  }
+
+  starts.sort((left, right) => left.from - right.from);
+  let out = '';
+  let cursor = 0;
+  for (const entry of starts) {
+    if (entry.from < cursor) {
+      continue;
+    }
+    out += text.slice(cursor, entry.from);
+    out += `export const ${entry.name} = undefined;`;
+    cursor = entry.to;
+  }
+  return out + text.slice(cursor);
+}
+
+/** Finds the `}` closing the `{` at `start`, counting nesting. */
+function matchingBrace(text, start) {
+  let depth = 0;
+  for (let index = start; index < text.length; index++) {
+    const char = text[index];
+    if (char === '{') {
+      depth++;
+    } else if (char === '}') {
+      depth--;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+  return -1;
 }
 
 /**
@@ -161,7 +251,7 @@ function mirror(relPath) {
   );
   const out = join(GENERATED, rel.replace(/\.ets$/, '.ts'));
   mkdirSync(dirname(out), { recursive: true });
-  writeFileSync(out, eraseTypeImports(enumToConst(text), rel), 'utf8');
+  writeFileSync(out, eraseTypeImports(exportErasedTypes(enumToConst(text)), rel), 'utf8');
 }
 
 /** Imports the real module through that mirror; returns the module namespace. */

@@ -40,9 +40,25 @@ Conventions:
   boundaries — concrete expected values, never "it did not throw";
 - a module that cannot load standalone (ArkUI, `@ohos.*`, `$r(...)`) is skipped,
   not faked, and not modified to become testable;
-- **every check must be provably able to fail**: mutate one piece of the real
-  logic, watch the specific assertions fail, restore the file and confirm its
-  hash is unchanged. A check that cannot be made to fail is a rubber stamp.
+- **every check must be provably able to fail** — see below.
 
-`.generated/` is derived output: it is git-ignored and skipped by
-`verify-encoding.mjs`, exactly like `build`.
+## Proving a check can fail (never on the live tree)
+
+```powershell
+node tools/logic-checks/mutate.mjs <module.ets> <check.mjs> "<find>" "<replace>"
+```
+
+It copies the source tree to a temp directory, applies the edit **to the copy**,
+runs the check against the copy through `AA_CHECK_SRC_ROOT`, and deletes the copy.
+Exit code 0 means the check rejected the mutation; 1 means it passed anyway and is
+a rubber stamp.
+
+Mutating the live tree is forbidden, and not only on principle: a deliberate
+mutation once sat in the working tree long enough to be **committed** by someone
+else before the check finished, and had to be reverted by hand a minute later.
+`AA_CHECK_SRC_ROOT` (honoured by `lib.mjs`) exists so the ritual can never put a
+broken file in front of another reader.
+
+`.generated/` is derived output: it is git-ignored, skipped by
+`verify-encoding.mjs`, and cleared by `run.mjs` on every run so a mutant mirror
+can never mix into a normal one.

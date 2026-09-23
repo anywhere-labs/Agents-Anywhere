@@ -7,14 +7,11 @@
  * a swallowed string all show up as visibly wrong colours in a tool call's code
  * block, so each case below pins the exact span kinds and offsets.
  *
- * `lib.mjs` mirrors the real `.ets`; `mirror-loader-hooks.mjs` closes the one gap
+ * `lib.mjs` mirrors the real `.ets`; `lib.mjs` closes the one gap
  * that would otherwise stop this module from loading at all (ArkTS writes its
  * type imports without `import type`, which Node's type stripping then rejects).
  */
-import { register } from 'node:module';
-register('./mirror-loader-hooks.mjs', import.meta.url);
-
-const { loadModule, suite, expect, finish } = await import('./lib.mjs');
+import { loadModule, suite, expect, finish } from './lib.mjs';
 
 const tok = await loadModule('feature/sessiondetail/CodeTokenizer.ets');
 const lang = await loadModule('feature/sessiondetail/CodeLanguage.ets');

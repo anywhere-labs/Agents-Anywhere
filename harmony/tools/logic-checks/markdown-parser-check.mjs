@@ -7,14 +7,11 @@
  * turns a tappable span into dead text. Every assertion below therefore pins a
  * value a reader of the transcript can see, not merely that the parser returned.
  *
- * `lib.mjs` mirrors the real `.ets`; `mirror-loader-hooks.mjs` closes the one gap
+ * `lib.mjs` mirrors the real `.ets`; `lib.mjs` closes the one gap
  * that would otherwise stop this module from loading at all (ArkTS writes its
  * type imports without `import type`, which Node's type stripping then rejects).
  */
-import { register } from 'node:module';
-register('./mirror-loader-hooks.mjs', import.meta.url);
-
-const { loadModule, suite, expect, finish } = await import('./lib.mjs');
+import { loadModule, suite, expect, finish } from './lib.mjs';
 
 const md = await loadModule('feature/sessiondetail/MarkdownParser.ets');
 const kind = md.MarkdownBlockKind;

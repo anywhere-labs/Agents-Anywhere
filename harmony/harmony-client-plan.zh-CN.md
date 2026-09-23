@@ -1279,6 +1279,40 @@ else → session_send_unavailable
 
 **其余 15 个模块的检查**正在并行编写中（sessions 状态机 5 个、session 详情/时间线 5 个、设备/文件/API 5 个），每个都要求"能被变异证明会失败"才收。**旧的 15 个用例无法逐字恢复**（它们写于本次会话上下文压缩之前），所以这是**按当前源码重建**，不是还原——数量与覆盖会与旧套件不同，重建完成后我会给出对照。
 
+### 回归套件最终形态（15 个检查 / 297 条断言，全部通过）
+
+| 检查 | 覆盖模块 | 断言 |
+|---|---|---|
+| `code-tokenizer-check.mjs` | `feature/sessiondetail/CodeTokenizer.ets` | 25 |
+| `device-runtime-state-check.mjs` | `feature/devices/DeviceRuntimeState.ets` | 23 |
+| `devices-dtos-check.mjs` | `api/DevicesDtos.ets` | 22 |
+| `file-search-check.mjs` | `feature/files/FileSearch.ets` | 17 |
+| `markdown-parser-check.mjs` | `feature/sessiondetail/MarkdownParser.ets` | 22 |
+| `new-session-runtime-inventory-check.mjs` | `feature/sessions/NewSessionRuntimeInventory.ets` | 17 |
+| `new-session-runtime-selection-state-check.mjs` | `feature/sessions/NewSessionRuntimeSelectionState.ets` | 25 |
+| `new-session-workspaces-check.mjs` | `feature/sessions/NewSessionWorkspaces.ets` | 25 |
+| `pending-attachment-check.mjs` | `feature/sessiondetail/PendingAttachment.ets`（**被 kit 阻塞，只守跳过前提**） | 11 |
+| `runtime-config-schema-check.mjs` | `feature/devices/RuntimeConfigSchema.ets` | 24 |
+| `runtime-identity-check.mjs` | `model/RuntimeIdentity.ets` | 22 |
+| `session-notice-presentation-check.mjs` | `feature/sessiondetail/SessionNoticePresentation.ets` | 25 |
+| `session-placeholder-check.mjs` | `SessionDetailScreen.placeholder()`（结构检查） | 6 |
+| `session-scroll-follow-check.mjs` | `feature/sessiondetail/SessionScrollFollow.ets` | 15 |
+| `update-version-check.mjs` | `api/UpdateVersion.ets` | 18 |
+
+**两个模块确实无法加载**（不是偷懒）：`NewSessionState.ets` / `NewSessionDraft.ets` / `PendingAttachment.ets` 的导入闭包里有 6 个平台导入（`common/AAEncoding.ets` 的 `@kit.ArkTS` + `@kit.CryptoArchitectureKit`、`api/HttpTransport.ets` 的 `@kit.RemoteCommunicationKit`、`common/AAAppLog.ets` 的 `@kit.PerformanceAnalysisKit`、`storage/AAPreferences.ets` 的 `@kit.ArkData` + `@kit.AbilityKit`）。按约定**跳过而不是打桩**。`pending-attachment-check.mjs` 改为"守住跳过的前提"：它断言那两个 kit 导入仍在、`loadModule` 确实以该错误码失败、并且一旦哪天这个闭包变得可加载它就**主动失败**提醒下一个人来补真检查。**诚实说明它的边界**：它对不可达的 `formatBytes` 没有行为覆盖（把 `size < 1024` 改成 `size < 1000` 不会让它失败）。
+
+### 套件本身这轮修了三个真问题
+
+1. **两条并行的修补被合并成一条**：两个子代理各自绕过了同一个坑——ArkTS 写的是 `import { SomeInterface }`（不是 `import type`），类型擦除后该名字在运行时不存在，Node 直接以 `does not provide an export named …` 中断整个检查。一个在**导入侧**删绑定，另一个用 `node:module` 加载钩子在**导出侧**把被擦除的类型补成 `export const X = undefined`。两套机制并存意味着每个检查都要先写 `register('./mirror-loader-hooks.mjs')` 再 `await import('./lib.mjs')`——忘了就得到一个费解的失败。现在统一到 `lib.mjs` 的镜像阶段（导入侧删除 + 导出侧补 `undefined` 都做），**加载钩子已删除**，检查回到普通 `import`。清空 `.generated` 后重跑 15/15 通过。
+2. **变异测试不再动真源码**：这轮真的出过一次事故——某个子代理做变异验证时，**有人正好提交了工作区**，于是"被故意改坏"的 `RuntimeConfigSchema.ets`（少了一个 `.sort()`）被提交进 `d2d6…`，29 秒后才由用户手工还原（`250022cd`）。是净结果没坏，但这条路径必须堵死：`lib.mjs` 现在支持 `AA_CHECK_SRC_ROOT`，并新增 `mutate.mjs`——它把源码树拷到临时目录、**只改副本**、让检查跑在副本上，真源码一个字节都不碰。已实测：变异后检查失败（判别力成立），前后真源码 sha256 完全一致。
+3. **`run.mjs` 每次先清 `.generated`**：否则上一轮跑"变异副本"留下的镜像可能和新一轮混在一起。
+
+### 子代理顺带发现、我确认属实但**未**擅自修改的点（遗留观察）
+
+- **`api/DevicesDtos.ets` 的 `EMPTY_OBJECT` 是所有解析结果共享的同一个字面量且未冻结**（`discovery` / `metadata` / `uiSchema` / `defaults` 都指向它）。目前无人写它，所以是**潜在**别名问题：任何一处写进去都会污染所有实例。建议改成每次解析新建对象（一行），但要单独一轮做并配断言。
+- `parseDeviceRuntimeStatus` 不做 `trim`，所以 `" Error "` 会解析成 unknown。
+- `RuntimeConfigDraft.makeConfig` 会把校验不通过的字段值照样放进请求体（只靠调用方"有错就不发"兜住），以及 `keyValue`/`customModels` 永远不会返回 null。
+
 ## 待确认问题
 
 - **会话行是否也要加选中态**：见上一节第 5 条末尾。iOS 有，鸿蒙没有；改动很小（`HomeScreen` 加一个 `@Prop`、2 个 `HomeSessionRow` 调用点、组件加背景）。

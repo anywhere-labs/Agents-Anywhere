@@ -5,12 +5,15 @@
  * tests the shipped code rather than a re-typed copy. Exit code is non-zero when
  * any check fails, which is what the per-batch gate expects.
  */
-import { readdirSync } from 'node:fs';
+import { readdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+// Start from a clean mirror: a previous run may have mirrored a mutated *copy*
+// (see `mutate.mjs`), and mixing those with the live sources would be confusing.
+rmSync(join(HERE, '.generated'), { recursive: true, force: true });
 const checks = readdirSync(HERE)
   .filter((name) => name.endsWith('-check.mjs'))
   .sort();

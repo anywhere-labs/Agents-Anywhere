@@ -22,13 +22,10 @@
  * assertion fails and says "now load this module for real" rather than letting
  * the skip quietly outlive its cause.
  *
- * `mirror-loader-hooks.mjs` only rewrites erased type declarations; it leaves bare
+ * `lib.mjs` only rewrites erased type declarations; it leaves bare
  * kit specifiers alone on purpose, precisely so a blocker like this stays visible.
  */
-import { register } from 'node:module';
-register('./mirror-loader-hooks.mjs', import.meta.url);
-
-const { loadModule, readSource, suite, expect, finish } = await import('./lib.mjs');
+import { loadModule, readSource, suite, expect, finish } from './lib.mjs';
 
 const MODULE = 'feature/sessiondetail/PendingAttachment.ets';
 const BLOCKER = 'common/AAEncoding.ets';

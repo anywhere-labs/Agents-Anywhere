@@ -8,14 +8,11 @@
  * wrong `noticesChanged` either misses an approval banner or re-renders on every
  * identical poll. The assertions below pin the truth table for each.
  *
- * `lib.mjs` mirrors the real `.ets`; `mirror-loader-hooks.mjs` closes the one gap
+ * `lib.mjs` mirrors the real `.ets`; `lib.mjs` closes the one gap
  * that would otherwise stop this module from loading at all (ArkTS writes its
  * type imports without `import type`, which Node's type stripping then rejects).
  */
-import { register } from 'node:module';
-register('./mirror-loader-hooks.mjs', import.meta.url);
-
-const { loadModule, suite, expect, finish } = await import('./lib.mjs');
+import { loadModule, suite, expect, finish } from './lib.mjs';
 
 const follow = await loadModule('feature/sessiondetail/SessionScrollFollow.ets');
 suite('feature/sessiondetail/SessionScrollFollow.ets');
