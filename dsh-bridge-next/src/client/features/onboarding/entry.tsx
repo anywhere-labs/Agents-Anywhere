@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Button, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Download, MessageCircle, Smartphone, Star } from 'lucide-react'
 import clsx from 'clsx'
@@ -23,9 +23,11 @@ const tabLabels = { connection: '登录和连接', settings: '设置', logs: '�
 export interface ConnectionEntryProps {
   wide: boolean
   host: OnboardingHostApi
+  /** Plugin settings reuse the same connection dialog with their own trigger. */
+  renderTrigger?: (open: () => void) => ReactNode
 }
 
-export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
+export function ConnectionEntry({ wide, host, renderTrigger }: ConnectionEntryProps) {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<typeof tabs[number]>('connection')
   const tabId = useId()
@@ -37,7 +39,7 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
   const detectionError = snapshot?.desktop.status === 'error' ? snapshot.desktop.message : !snapshot ? state.readError : null
   const detectionMessage = detectionError ?? (snapshot?.desktop.status === 'installed'
     ? '已安装 Agents Anywhere 桌面端。请打开桌面端完成连接设置。' : '正在检查连接方式…')
-  const trigger = useRef<HTMLButtonElement | null>(null)
+  const trigger = useRef<HTMLElement | null>(null)
   const content = useRef<HTMLDivElement | null>(null)
   const close = useCallback(() => {
     // Official Modals each listen for Escape; a nested reset confirmation must
@@ -97,8 +99,12 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
     }
   }, [open])
 
+  const openPanel = (event?: { currentTarget: HTMLElement }) => {
+    trigger.current = event?.currentTarget ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+    state.prepareOpen(); setTab('connection'); setOpen(true)
+  }
   return <>
-    <Tooltip label="手机连接" disabled={wide || open} delayMs={500}>
+    {renderTrigger ? renderTrigger(openPanel) : <Tooltip label="手机连接" disabled={wide || open} delayMs={500}>
       <span className={clsx(css.trigger, !wide && css.rail)}>
         <Button
           variant="ghost"
@@ -107,12 +113,12 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
           aria-label="手机连接"
           aria-haspopup="dialog"
           aria-expanded={open}
-          onClick={event => { trigger.current = event.currentTarget; state.prepareOpen(); setTab('connection'); setOpen(true) }}
+          onClick={openPanel}
         >
           {wide ? <span className={css.label}>手机连接</span> : null}
         </Button>
       </span>
-    </Tooltip>
+    </Tooltip>}
     <Modal
       open={open}
       onClose={close}

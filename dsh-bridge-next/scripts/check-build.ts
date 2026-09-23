@@ -18,10 +18,15 @@ const manifest = JSON.parse(await readFile(new URL('package.json', root), 'utf8'
 
 for (const target of Object.values(manifest.exports)) {
   for (const file of typeof target === 'string' ? [target] : [target.types, target.default]) {
+    if (file.includes('*')) continue
     await access(new URL(file, root))
   }
 }
 await access(new URL(manifest.dsh.bundle.patch, root))
+for (const language of ['zh', 'en']) {
+  const locale = JSON.parse(await readFile(new URL(`locale/${language}.json`, root), 'utf8')) as { meta: { title: string; description: string } }
+  assert.ok(locale.meta.title && locale.meta.description, 'Official plugin details require localized package metadata')
+}
 assert.equal(manifest.dsh.client.platform, 'web')
 
 const hostEntry = manifest.exports['.']
