@@ -1,3 +1,4 @@
+import { translateMessage, type Translate } from '../../locales.js'
 import { useId, useState } from 'react'
 import { Button, Input, StateDot, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Cloud, Server } from 'lucide-react'
@@ -6,7 +7,7 @@ import type { OnboardingHostApi } from '../../../contracts/index.js'
 import type { OnboardingState } from './state.js'
 import css from './section.module.css'
 
-export function OnboardingSection({ host, state: panel }: { host: OnboardingHostApi; state: OnboardingState }) {
+export function OnboardingSection({ t, host, state: panel }: { t: Translate; host: OnboardingHostApi; state: OnboardingState }) {
   const { snapshot, busy, run, refresh, clearError } = panel
   const error = panel.error ?? panel.readError
   const [link, setLink] = useState<string | null>(null)
@@ -37,10 +38,10 @@ export function OnboardingSection({ host, state: panel }: { host: OnboardingHost
   const failed = Boolean(error || snapshot?.stage === 'error' || detected === 'error')
   const state: StateDotState = failed ? 'error' : !snapshot || busy || connecting ? 'ongoing' : snapshot.stage === 'ready' ? 'done' : 'warning'
   const statusMessage = error
-    ?? (detected === 'installed' ? '已检测到桌面端，请在桌面端继续连接。'
+    ?? (detected === 'installed' ? t('已检测到桌面端，请在桌面端继续连接。')
       : detected === 'error' ? snapshot?.desktop.message
-        : snapshot?.account && snapshot.stage === 'ready' ? `已登录为 ${snapshot.account.displayName}`
-          : snapshot?.stage === 'authorizing' ? '已打开登录页面，完成登录后将自动返回。'
+        : snapshot?.account && snapshot.stage === 'ready' ? t('已登录为 {name}', { name: snapshot.account.displayName })
+          : snapshot?.stage === 'authorizing' ? t('已打开登录页面，完成登录后将自动返回。')
             : connecting || snapshot?.stage === 'error' ? snapshot?.message : null)
   return <section className={css.section} aria-busy={busy}>
     <Button
@@ -50,7 +51,7 @@ export function OnboardingSection({ host, state: panel }: { host: OnboardingHost
       disabled={unavailable}
       onClick={() => begin('cloud')}
     >
-      {primaryBusy ? '正在连接…' : '登录 Agents Anywhere Cloud'}
+      {primaryBusy ? t('正在连接…') : t('登录 Agents Anywhere Cloud')}
     </Button>
     {showServer ? <form id={serverFormId} className={css.form} onSubmit={(event) => {
       event.preventDefault()
@@ -58,9 +59,7 @@ export function OnboardingSection({ host, state: panel }: { host: OnboardingHost
     }}>
       <p className={css.separator} aria-hidden="true">OR</p>
       <div className={css.fields}>
-        <label className={css.field} htmlFor={`${serverFormId}-url`}>
-          连接到你自己的 Agents Anywhere 服务实例
-        </label>
+        <label className={css.field} htmlFor={`${serverFormId}-url`}>{t('连接到你自己的 Agents Anywhere 服务实例')}</label>
         <Input
           id={`${serverFormId}-url`}
           className={clsx(css.input)}
@@ -76,7 +75,7 @@ export function OnboardingSection({ host, state: panel }: { host: OnboardingHost
           disabled={unavailable}
           value={serverUrl}
           onChange={(event) => { setServerUrl(event.target.value); clearError() }}
-          placeholder="输入服务器地址，例如 https://your-server.com"
+          placeholder={t('输入服务器地址，例如 https://your-server.com')}
           aria-invalid={Boolean(error && loginTarget === 'server')}
           aria-describedby={error ? errorId : undefined}
         />
@@ -86,7 +85,7 @@ export function OnboardingSection({ host, state: panel }: { host: OnboardingHost
           type="submit"
           icon={serverBusy ? <StateDot state="ongoing" /> : null}
           disabled={unavailable || !serverUrl.trim()}
-        >{serverBusy ? '正在连接…' : '连接服务器'}</Button>
+        >{serverBusy ? t('正在连接…') : t('连接服务器')}</Button>
       </div>
     </form> : <Button
       variant="ghost"
@@ -95,13 +94,13 @@ export function OnboardingSection({ host, state: panel }: { host: OnboardingHost
       aria-expanded={showServer}
       aria-controls={serverFormId}
       onClick={() => { setShowServer(true); clearError() }}
-    >连接到你自己的 Agents Anywhere 服务实例</Button>}
+    >{t('连接到你自己的 Agents Anywhere 服务实例')}</Button>}
     {statusMessage ? <p id={errorId} className={clsx(css.status, failed && css.error)} role={failed ? 'alert' : 'status'}>
       <StateDot state={state} className={css.stateDot} />
-      <span>{statusMessage}</span>
+      <span>{translateMessage(t, statusMessage)}</span>
     </p> : null}
-    {link ? <p className={css.hint}><a className={css.link} href={link} target="_blank" rel="noreferrer">浏览器没有打开？点击继续</a></p> : null}
-    {connecting ? <Button variant="ghost" className={css.secondaryButton} disabled={busy} onClick={() => void run(async () => { await host.cancel(); setLink(null) })}>取消本次连接</Button> : null}
-    {failed ? <Button variant="outline" className={css.secondaryButton} disabled={busy} onClick={() => void run(refresh)}>重新检查</Button> : null}
+    {link ? <p className={css.hint}><a className={css.link} href={link} target="_blank" rel="noreferrer">{t('浏览器没有打开？点击继续')}</a></p> : null}
+    {connecting ? <Button variant="ghost" className={css.secondaryButton} disabled={busy} onClick={() => void run(async () => { await host.cancel(); setLink(null) })}>{t('取消本次连接')}</Button> : null}
+    {failed ? <Button variant="outline" className={css.secondaryButton} disabled={busy} onClick={() => void run(refresh)}>{t('重新检查')}</Button> : null}
   </section>
 }
