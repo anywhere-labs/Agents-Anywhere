@@ -34,16 +34,22 @@ class ClaudeTurnActionHandler:
     runner: ClaudeTurnRunner
 
     async def stop(self) -> None:
+        self.runner.stopping = True
         for session in self.session_store.sessions():
-            execution = session.execution
-            if execution is None:
-                continue
-            await self.interrupt_execution(
-                session=session,
-                execution=execution,
-                source="claude.runtime.stop",
-                reason="runtime_stopped",
-            )
+            executions = (session.queued_execution, session.execution)
+            for execution in executions:
+                if execution is not None:
+                    execution.interrupt_source = "claude.runtime.stop"
+                    execution.interrupt_reason = "runtime_stopped"
+            for execution in executions:
+                if execution is not None:
+                    await self.interrupt_execution(
+                        session=session,
+                        execution=execution,
+                        source="claude.runtime.stop",
+                        reason="runtime_stopped",
+                    )
+        await self.runner.stop()
 
     async def start_turn(
         self,
@@ -128,6 +134,14 @@ class ClaudeTurnActionHandler:
                 )
             execution.interrupt_source = "claude.session.interrupt"
             execution.interrupt_reason = reason
+            queued = session.queued_execution
+        if queued is not None:
+            await self.interrupt_execution(
+                session=session,
+                execution=queued,
+                source="claude.session.interrupt",
+                reason=reason,
+            )
         await self.interrupt_execution(
             session=session,
             execution=execution,

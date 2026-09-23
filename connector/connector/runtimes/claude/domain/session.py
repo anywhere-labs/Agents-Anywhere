@@ -32,6 +32,7 @@ class ClaudeSession:
     timeline_revision: int = 0
     synced_revision: int = 0
     execution: ClaudeExecution | None = None
+    queued_execution: ClaudeExecution | None = None
     execution_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     @property

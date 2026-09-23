@@ -14,10 +14,10 @@ from connector.runtime_protocol import (
     RuntimeIdentity,
     RuntimeModelCatalog,
     RuntimeOperationResult,
-    RuntimeUnsupportedError,
     RuntimePermissionCatalog,
     RuntimeSessionStateCache,
     RuntimeTimelineSnapshot,
+    RuntimeUnsupportedError,
     SessionMeta,
     SessionNotice,
     SessionState,
@@ -138,7 +138,8 @@ class ClaudeRuntime(AgentRuntime):
         )
 
     async def start(self) -> None:
-        return None
+        self._turns.runner.stopping = False
+        await self._turns.runner.reconnect_sessions()
 
     async def stop(self) -> None:
         await self._turns.stop()
