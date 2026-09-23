@@ -24,7 +24,11 @@ from connector.runtimes.claude.domain.pending_messages import (
 )
 from connector.runtimes.claude.domain.session import ClaudeExecution, stable_session_id
 from connector.runtimes.claude.runtime import ClaudeRuntime
-from connector.runtimes.claude.sdk.connection import RECONCILE_PROMPT
+from connector.runtimes.claude.sdk.connection import (
+    LEGACY_RECONCILE_PROMPT,
+    RECONCILE_DONE_MARKER,
+    RECONCILE_PROMPT,
+)
 
 
 @pytest.mark.parametrize(
@@ -1607,6 +1611,78 @@ async def _test_claude_runtime_scanner_syncs_delta_after_cursor() -> None:
 
 def test_claude_runtime_history_drops_synthetic_control_messages() -> None:
     asyncio.run(_test_claude_runtime_history_drops_synthetic_control_messages())
+
+
+def test_claude_maintenance_stays_hidden_after_history_reload_and_delta() -> None:
+    asyncio.run(_test_claude_maintenance_stays_hidden_after_history_reload_and_delta())
+
+
+async def _test_claude_maintenance_stays_hidden_after_history_reload_and_delta() -> None:
+    native_id = "claude_maintenance_history"
+
+    def entry(role: str, uuid: str, content: Any) -> SimpleNamespace:
+        return SimpleNamespace(
+            type=role,
+            uuid=uuid,
+            session_id=native_id,
+            message={"role": role, "content": content},
+        )
+
+    sdk = _HistorySdk(messages={native_id: [entry("user", "human_1", "hello")]})
+    host = _RecordingHost()
+    runtime = _runtime(host=host, sdk=sdk)
+    await runtime.sync_session_timeline("sess_maintenance", native_id)
+    host.timeline_syncs.clear()
+    sdk.messages[native_id].extend(
+        [
+            entry("user", "maintenance_request", RECONCILE_PROMPT),
+            entry("assistant", "maintenance_tool", [{
+                "type": "tool_use", "id": "cron_list_1", "name": "CronList", "input": {},
+            }]),
+            entry("user", "maintenance_result", [{
+                "type": "tool_result", "tool_use_id": "cron_list_1", "content": "one job",
+            }]),
+            entry("assistant", "maintenance_answer", [{
+                "type": "text", "text": RECONCILE_DONE_MARKER,
+            }]),
+            entry("user", "human_2", "next real question"),
+            entry("assistant", "answer_2", "real answer"),
+        ]
+    )
+
+    await runtime.sync_session_timeline("sess_maintenance", native_id)
+    incremental = host.timeline_syncs[-1]["items"]
+    snapshot = await runtime.get_session_snapshot("sess_maintenance", native_id)
+    assert [item.content.get("text") for item in incremental if item.type == "message"] == [
+        "next real question", "real answer",
+    ]
+    assert not any(item.type == "tool" for item in incremental)
+    assert [item.content.get("text") for item in snapshot.items if item.type == "message"] == [
+        "hello", "next real question", "real answer",
+    ]
+    assert not any(item.type == "tool" for item in snapshot.items)
+
+
+def test_claude_maintenance_history_preserves_unmarked_scheduled_reply() -> None:
+    from connector.runtimes.claude.sessions.reader import _without_maintenance_messages
+
+    def entry(role: str, uuid: str, content: Any) -> SimpleNamespace:
+        return SimpleNamespace(
+            type=role, uuid=uuid, message={"role": role, "content": content},
+        )
+
+    scheduled = entry("assistant", "scheduled_reply", "reminder fired")
+    messages = (
+        entry("user", "old_maintenance", LEGACY_RECONCILE_PROMPT),
+        entry("assistant", "cron_call", [{
+            "type": "tool_use", "id": "cron", "name": "CronList", "input": {},
+        }]),
+        entry("user", "cron_result", [{
+            "type": "tool_result", "tool_use_id": "cron", "content": "[]",
+        }]),
+        scheduled,
+    )
+    assert _without_maintenance_messages(messages) == (scheduled,)
 
 
 async def _test_claude_runtime_history_drops_synthetic_control_messages() -> None:

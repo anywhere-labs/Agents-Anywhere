@@ -32,6 +32,11 @@ from connector.runtimes.claude.domain.session import (
 )
 from connector.runtimes.claude.history.state import history_cursor_key
 from connector.runtimes.claude.sdk.client import SdkLoader, load_sdk
+from connector.runtimes.claude.sdk.connection import (
+    LEGACY_RECONCILE_PROMPT,
+    RECONCILE_DONE_MARKER,
+    RECONCILE_PROMPT,
+)
 from connector.runtimes.claude.sdk.history import (
     list_sdk_sessions,
     read_sdk_session_info,
@@ -273,14 +278,15 @@ class ClaudeSessionReader:
                 or _int_attr(info, "created_at")
             ),
         )
+        visible_messages = _without_maintenance_messages(messages)
         client_message_matches = await _match_history_client_messages(
             session=session,
-            messages=messages,
+            messages=visible_messages,
             pending_messages=self.pending_messages,
         )
         items = await asyncer.asyncify(_history_items_from_messages)(
             session,
-            messages,
+            visible_messages,
             client_message_matches=client_message_matches,
         )
         if limit is not None:
@@ -391,6 +397,45 @@ def _history_items_from_messages(
         )
     items.extend(projector.missing_history_tool_result_items(session=session))
     return _resequence_history_items(_dedupe_history_items(items))
+
+
+def _without_maintenance_messages(messages: tuple[Any, ...]) -> tuple[Any, ...]:
+    """Hide the internal CronList exchange when rebuilding a native transcript.
+
+    The marker is the exact prompt persisted by Claude, so it also works after
+    a connector restart without relying on in-memory response flags.
+    """
+    visible: list[Any] = []
+    maintenance = False
+    for message in messages:
+        role = message_role(message)
+        text = message_text(message)
+        blocks = message_tool_blocks(message)
+        if role == "user" and text is not None and text.strip() in {
+            RECONCILE_PROMPT,
+            LEGACY_RECONCILE_PROMPT,
+        }:
+            maintenance = True
+            continue
+        if maintenance:
+            # A real user prompt or a native scheduled-task notification starts
+            # a new turn. Tool results from CronList are not user prompts.
+            if is_synthetic_control_message(message) or (
+                role == "user" and text and not blocks
+            ):
+                maintenance = False
+            elif role == "assistant" and not any(
+                block.block_type == "tool_use" for block in blocks
+            ):
+                # Without the marker this may be a new scheduled reply, even
+                # if the maintenance call had no visible final answer.
+                maintenance = False
+                if text is not None and text.strip() == RECONCILE_DONE_MARKER:
+                    continue
+            else:
+                continue
+        visible.append(message)
+    return tuple(visible)
 
 
 def _history_tool_call_context(
