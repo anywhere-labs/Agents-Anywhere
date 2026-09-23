@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Button, IconGlobeOutline14, IconUserOutline16, StateDot, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, StateDot, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Globe, User } from 'lucide-react'
 import type { AccountProfile, OnboardingHostApi, OnboardingSnapshot } from '../../../contracts/index.js'
 import { resolveWebAppUrl } from '../../../contracts/web-address.js'
 import type { OnboardingState } from './state.js'
@@ -44,7 +45,7 @@ export function AccountPanel({ host, state, snapshot, account }: {
     <div className={css.profile} aria-label="账号信息">
       <span className={css.avatar}>
         {avatar ? <img src={avatar} alt={`${account.displayName}的头像`} onError={() => setFailedAvatar(avatar)} />
-          : <IconUserOutline16 size={28} />}
+          : <User size={28} strokeWidth={1.5} />}
       </span>
       <div className={css.identity}>
         <p className={css.name}>{account.displayName}</p>
@@ -82,7 +83,7 @@ export function AccountPanel({ host, state, snapshot, account }: {
       <Button
         variant="primary"
         className={css.button}
-        icon={<IconGlobeOutline14 size={16} />}
+        icon={<Globe size={16} strokeWidth={1.5} />}
         disabled={state.busy}
         onClick={() => window.open(webAppUrl, '_blank', 'noopener,noreferrer')}
       >打开 Web</Button>
