@@ -1,0 +1,12 @@
+# Overlay for the 8-vCPU / 16-GiB first application node.
+# docker compose -f compose.yml -f compose.worker-1.yml up -d server
+services:
+  server:
+    environment:
+      AGENT_SERVER_WORKERS: 8
+      AGENT_SERVER_EVENT_WORKERS: 1
+      # Keep total cluster pool capacity below PostgreSQL max_connections=300.
+      AGENT_SERVER_DB_MAX_OVERFLOW: 2
+      AGENT_SERVER_INSTANCE_ID: cluster-a-worker-1
+    cpus: 8.0
+    mem_limit: 14g

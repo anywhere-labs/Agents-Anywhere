@@ -3,17 +3,20 @@
 See MIGRATION.md and migration-state.json for the current production migration and
 application readiness state. deployed.json is the earlier alpha snapshot.
 
-Two identical Docker workers bind HTTP to 127.0.0.1:8000, including the static Web UI,
-API and WebSockets. Each runs three FastAPI processes, with the additional event process pool disabled. PostgreSQL and Redis run
-on 192.168.1.35 and accept LAN traffic only. Both workers must share their database,
+Four Docker workers bind HTTP to 127.0.0.1:8000, including the static Web UI,
+API and WebSockets. All four workers each run eight FastAPI processes using their compose.worker-N.yml overlays. Each application process has one extra
+event-preparation worker (32 across the cluster). All containers have a 14 GiB
+memory limit. PostgreSQL and Redis run on 192.168.1.35 and accept LAN traffic only.
+All workers must share their database,
 Redis, token secret and S3 configuration; instance IDs differ by node.
 
-The six application processes allow at most 60 pooled PostgreSQL connections in
-total (5 persistent + 5 overflow per process), leaving room under the configured
-300-connection server limit. Redis requires AOF with appendfsync everysec and
+The 32 application processes allow at most 272 pooled PostgreSQL connections:
+workers 1 and 2 each allow 5 persistent + 2 overflow connections per process;
+workers 3 and 4 each allow 5 persistent + 5 overflow. This leaves 28 connections
+under the configured 300-connection server limit. Redis requires AOF with appendfsync everysec and
 maxmemory-policy noeviction because it buffers accepted Timeline writes.
 
-Build one image from a committed release and distribute that exact image to both
+Build one image from a committed release and distribute that exact image to all
 workers. Release archives live under /root/code/github/Agents-Anywhere-releases/<release> on each node.
 Copy .env.example to .env, fill credentials, and chmod 600 .env. Never commit it.
 Run commands in this directory:

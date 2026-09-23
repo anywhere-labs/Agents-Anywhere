@@ -35,6 +35,7 @@ def test_liveness_and_readiness_are_separate(tmp_path) -> None:
     assert response.json()["checks"] == {
         "database": {"status": "ok", "schemaVersion": CURRENT_SCHEMA_VERSION},
         "redis": {"status": "not_configured"},
+        "realtime": {"status": "ok"},
     }
 
 
@@ -57,3 +58,14 @@ def test_readiness_fails_closed_when_redis_is_unavailable(tmp_path) -> None:
         "status": "error",
         "message": "redis unavailable",
     }
+
+
+def test_readiness_rejects_a_dead_subscription_even_when_redis_pings(tmp_path) -> None:
+    client = TestClient(create_app(tmp_path / "subscription-health.sqlite3"))
+    class DeadBroker:
+        healthy = False
+    client.app.state.timeline_broker = DeadBroker()
+    response = client.get("/api/v2/health/ready")
+    assert response.status_code == 503
+    assert response.json()["checks"]["realtime"]["status"] == "error"
+    assert client.get("/api/v2/health/live").status_code == 200
