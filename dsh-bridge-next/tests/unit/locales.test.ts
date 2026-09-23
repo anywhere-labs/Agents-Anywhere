@@ -5,6 +5,15 @@ import { en, zh, translateMessage, type LocaleKey, type Translate } from '../../
 const translate = (dictionary: Record<LocaleKey, string>): Translate => (key, params) =>
   dictionary[key as LocaleKey].replace(/\{(\w+)\}/g, (match, name: string) => params && name in params ? String(params[name]) : match)
 
+test('remote control entry is bilingual without renaming phone pairing', () => {
+  assert.equal(zh['远程控制'], '远程控制')
+  assert.equal(en['远程控制'], 'Remote Control')
+  assert.equal(zh['关闭远程控制'], '关闭远程控制')
+  assert.equal(en['关闭远程控制'], 'Close Remote Control')
+  assert.equal(zh['手机连接'], '手机连接')
+  assert.equal(en['手机连接'], 'Mobile connection')
+})
+
 test('English preserves interpolation parameters for every Chinese message', () => {
   for (const key of Object.keys(en) as LocaleKey[]) {
     assert.deepEqual([...en[key].matchAll(/\{(\w+)\}/g)].map(match => match[1]).sort(),

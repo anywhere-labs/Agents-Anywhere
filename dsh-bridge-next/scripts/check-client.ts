@@ -167,7 +167,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
           }
           assert.equal(options.name, 'sidebar.footer.action', 'The entry belongs above Settings, not inside it')
           assert.equal(options.id, 'agents-anywhere-next')
-          assert.equal(options.label?.(), '手机连接')
+          assert.equal(options.label?.(), '远程控制')
           entry = { Component: Localized, props: options.inject() }
           entryCount++
           return () => { entryCount-- }
@@ -188,14 +188,14 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     }
     const switchLanguage = async (language: string) => act(async () => { locale.setLocale(language) })
     const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]')
-    const trigger = button('手机连接')
-    assert.equal(trigger.textContent, '手机连接')
+    const trigger = button('远程控制')
+    assert.equal(trigger.textContent, '远程控制')
     assert.ok(trigger.querySelector('svg.lucide-smartphone'))
     assert.equal(dialog(), null)
     assert.equal(calls.length, 0, 'A closed connection panel must not poll the Host')
     await switchLanguage('en')
-    assert.equal(trigger.textContent, 'Mobile connection')
-    assert.equal(trigger.getAttribute('aria-label'), 'Mobile connection')
+    assert.equal(trigger.textContent, 'Remote Control')
+    assert.equal(trigger.getAttribute('aria-label'), 'Remote Control')
     assert.equal(calls.length, 0, 'Changing language must not contact the Host')
     await switchLanguage('zh')
     const listeners = new Set<() => void>()
@@ -221,8 +221,11 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(container.contains(dialog()), false, 'Official Modal must portal outside the sidebar')
     assert.equal(container.hasAttribute('inert'), true)
     assert.equal(trigger.getAttribute('aria-expanded'), 'true')
-    assert.equal(document.activeElement, button('关闭手机连接'))
+    assert.equal(document.activeElement, button('关闭远程控制'))
     assert.match(dialog()!.textContent!, /在所有设备间访问你的 Agent、会话和工作空间。/)
+    await switchLanguage('en')
+    assert.equal(document.activeElement, button('Close Remote Control'))
+    await switchLanguage('zh')
     assert.equal(dialog()!.querySelector('input'), null, 'Server fields stay hidden until requested')
     assert.equal(button('登录 Agents Anywhere Cloud').disabled, false)
     await act(async () => { button('登录 Agents Anywhere Cloud').click() })
@@ -290,8 +293,8 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       button('去 GitHub 点 Star').focus()
       button('去 GitHub 点 Star').dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
     })
-    assert.equal(document.activeElement, button('关闭手机连接'))
-    await act(async () => { button('关闭手机连接').click() })
+    assert.equal(document.activeElement, button('关闭远程控制'))
+    await act(async () => { button('关闭远程控制').click() })
     assert.equal(dialog(), null)
     await act(async () => { root.render(createElement(Component, { ...props, wide: false })) })
     assert.equal(trigger.textContent, '', 'Collapsed sidebar must keep only the icon and accessible name')
@@ -416,7 +419,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     // An older Host lacks webAppUrl while the linked Client has already hot-reloaded.
     const { webAppUrl: _webAppUrl, ...legacySnapshot } = snapshot
     snapshot = legacySnapshot as OnboardingSnapshot
-    await act(async () => { button('关闭手机连接').click() })
+    await act(async () => { button('关闭远程控制').click() })
     await act(async () => { trigger.click() })
     assert.equal(button('打开 Web').disabled, false)
     await act(async () => { button('打开 Web').click() })
@@ -424,7 +427,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     snapshot = { ...snapshot, webAppUrl: _webAppUrl }
 
     const reopen = async () => {
-      await act(async () => { button('关闭手机连接').click() })
+      await act(async () => { button('关闭远程控制').click() })
       await act(async () => { trigger.click() })
     }
     for (const [status, label, action, message] of [
@@ -507,7 +510,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       const readsBefore = calls.filter(call => call.endpoint.endsWith('/inspect')).length
       await reopen()
       assert.ok(calls.filter(call => call.endpoint.endsWith('/inspect')).length > readsBefore, 'Every opening must perform a fresh detection')
-      assert.equal(dialog()!.getAttribute('aria-label'), '手机连接')
+      assert.equal(dialog()!.getAttribute('aria-label'), '远程控制')
       assert.match(dialog()!.textContent!, /已安装 Agents Anywhere 桌面端。请打开桌面端完成连接设置。/)
       assert.equal(dialog()!.querySelector('input, img, form, a'), null)
       assert.doesNotMatch(dialog()!.textContent!, /BensonWang|账号信息|Connector|打开 Web|退出登录|登录 Agents Anywhere Cloud/)
@@ -581,7 +584,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     await switchLanguage('zh')
     await act(async () => { panelButton.click() })
     assert.ok(dialog())
-    await act(async () => { button('关闭手机连接').click() })
+    await act(async () => { button('关闭远程控制').click() })
     assert.equal(document.activeElement, panelButton)
     await act(async () => { root.render(pluginEntries.get('plugins.bundle.config')!({ view: 'page' })) })
     assert.ok(container.querySelector('form'), 'Bundle details must contain the real Connector settings form')
