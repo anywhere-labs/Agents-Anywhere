@@ -27,6 +27,6 @@ export function apply(ctx: Context): void {
   ctx.effect(() => registerPluginSettings(services.slots, host), 'agentsAnywhereOnboarding.plugin-settings')
   ctx.effect(() => services.slots.inject('sidebar.footer.action', () => services.slots.register({
     name: 'sidebar.footer.action', id: 'agents-anywhere-next', order: 26,
-    locale: LOCALE_NS, label: () => t('手机连接'), inject: () => ({ host }),
+    locale: LOCALE_NS, label: () => t('远程控制'), inject: () => ({ host }),
   }, ConnectionEntry)), 'agentsAnywhereOnboarding.sidebar')
 }

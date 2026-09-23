@@ -61,7 +61,7 @@ test('published client shows recovery guidance and preserves expanded log rows a
       assert.ok(button, text)
       await act(async () => { button.click(); await new Promise(resolve => setTimeout(resolve, 10)) })
     }
-    await click('手机连接')
+    await click('远程控制')
     assert.match(document.body.textContent!, /本机连接被占用/)
     await click('查看运行日志')
     const row = [...document.querySelectorAll('details')].find(row => row.querySelector('summary')?.textContent?.includes('session.getState'))!

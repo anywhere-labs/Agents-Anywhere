@@ -106,26 +106,26 @@ export function ConnectionEntry({ wide, host, t, renderTrigger }: ConnectionEntr
     state.prepareOpen(); setTab('connection'); setOpen(true)
   }
   return <>
-    {renderTrigger ? renderTrigger(openPanel) : <Tooltip label={t('手机连接')} disabled={wide || open} delayMs={500}>
+    {renderTrigger ? renderTrigger(openPanel) : <Tooltip label={t('远程控制')} disabled={wide || open} delayMs={500}>
       <span className={clsx(css.trigger, !wide && css.rail)}>
         <Button
           variant="ghost"
           className={css.button}
           icon={<Smartphone size={16} strokeWidth={1.5} />}
-          aria-label={t('手机连接')}
+          aria-label={t('远程控制')}
           aria-haspopup="dialog"
           aria-expanded={open}
           onClick={openPanel}
         >
-          {wide ? <span className={css.label}>{t('手机连接')}</span> : null}
+          {wide ? <span className={css.label}>{t('远程控制')}</span> : null}
         </Button>
       </span>
     </Tooltip>}
     <Modal
       open={open}
       onClose={close}
-      title={standalone ? 'Agents Anywhere' : t('手机连接')}
-      closeLabel={t('关闭手机连接')}
+      title={standalone ? 'Agents Anywhere' : t('远程控制')}
+      closeLabel={t('关闭远程控制')}
       className={clsx(css.dialog, standalone ? css.wordmarkDialog : css.accountDialog, tab === 'logs' && css.logsDialog)}
       contentClassName={clsx(css.dialogContent)}
     >
