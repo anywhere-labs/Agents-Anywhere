@@ -22,10 +22,14 @@ from connector.runtimes.claude.sdk.events import (
 from connector.runtimes.claude.timeline.messages import message_id, message_role
 from connector.runtimes.claude.timeline.stream import is_stream_event
 
-RECONCILE_PROMPT = (
+RECONCILE_DONE_MARKER = "AA_MAINTENANCE_DONE"
+LEGACY_RECONCILE_PROMPT = (
     "AA connection maintenance: call CronList exactly once to report the current "
     "scheduled task list, then stop. If needed, use ToolSearch to find CronList. "
     "Do not create, delete, execute or modify tasks or perform any other work."
+)
+RECONCILE_PROMPT = (
+    f"{LEGACY_RECONCILE_PROMPT} End with exactly {RECONCILE_DONE_MARKER}."
 )
 
 

@@ -33,6 +33,7 @@ from connector.runtimes.claude.sessions.reader import (
     _session_title,
     _string_attr,
     _timestamp_from_epoch,
+    _without_maintenance_messages,
 )
 from connector.runtimes.claude.sessions.sync_state import (
     ClaudePendingSessionSync,
@@ -139,12 +140,17 @@ class ClaudeHistorySyncer:
             sync_messages = messages
         else:
             sync_messages = messages_after_cursor(messages, previous_cursor)
+        visible_messages = _without_maintenance_messages(messages)
+        visible_ids = {id(message) for message in visible_messages}
+        sync_messages = tuple(
+            message for message in sync_messages if id(message) in visible_ids
+        )
         session = _history_session(session_id, external_session_id, info)
         tool_call_lookup, ignored_task_tool_use_ids = await asyncer.asyncify(
             _history_tool_call_context
         )(
             session,
-            messages,
+            visible_messages,
         )
         client_message_matches = await _match_history_client_messages(
             session=session,

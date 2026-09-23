@@ -46,6 +46,11 @@ connection; a non-empty list updates the observed IDs and keeps it open. If the
 check fails or returns an invalid list, AA keeps the connection rather than risk
 dropping a task. These hints also do not discover all tasks in a previously
 unregistered, externally imported Claude session.
+The internal maintenance prompt and tool exchange are filtered from both live
+and historical timeline projection, including after a connector restart. The
+new prompt requests an explicit completion marker so its answer can also be
+hidden. An unmarked assistant reply from older transcripts is kept because it
+could instead be a real scheduled reply with no intervening user message.
 
 ## Validation
 
@@ -67,3 +72,15 @@ reminders, cancellation, permission-change resume, a busy conversation crossing 
 deadline, runtime-object restart, and simultaneous scheduled/user replies.
 Long-running expiration, multi-process durable
 task ownership and mobile notification delivery are not established by these tests.
+
+## Lifecycle status (2026-09-23)
+
+Claude scheduled-task connection retention and history filtering have been
+updated, but are **pending validation** with real user sessions after deployment.
+In particular, verify a scheduled wakeup fires without another user message,
+that a background-task notification cannot swallow a subsequent human prompt,
+and that refresh/restart does not reveal internal maintenance exchanges. The
+older `ScheduleWakeup` report and background-task race (#122 and #123) should
+remain open until those cases are reproduced and checked against the deployed
+Claude CLI/SDK. `CronCreate` retention alone does not establish that all
+background work has a safe lifetime.
