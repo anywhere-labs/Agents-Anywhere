@@ -12,11 +12,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from test_codex_runtime import FakeCodexClient, FakeHost
-
 from connector.runtime_protocol import RuntimeConfig
 from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk.client import CodexSdkClient
+from test_codex_runtime import FakeCodexClient, FakeHost
 
 
 class _RestartableFakeCodexClient(FakeCodexClient):
@@ -122,6 +121,73 @@ async def _keep_app_server_on_token_refresh(tmp_path: Path) -> None:
     await runtime.start()
 
     assert client.restarts == 0
+
+
+def test_runtime_ignores_unreadable_auth_until_another_account_appears(
+    tmp_path: Path,
+) -> None:
+    asyncio.run(_ignore_unreadable_auth(tmp_path))
+
+
+async def _ignore_unreadable_auth(tmp_path: Path) -> None:
+    codex_home = _codex_home(tmp_path)
+    auth_file = codex_home / "auth.json"
+    _write_auth(auth_file, "acct_old")
+    client = _RestartableFakeCodexClient()
+    runtime = CodexRuntime(
+        config=_runtime_config(codex_home), host=FakeHost(), client=client
+    )
+
+    await runtime.start()
+    auth_file.write_text("{", encoding="utf-8")
+    await runtime.start()
+    auth_file.unlink()
+    await runtime.start()
+    _write_auth(auth_file, "acct_old")
+    await runtime.start()
+    assert client.restarts == 0
+
+    _write_auth(auth_file, "acct_new")
+    await runtime.start()
+    assert client.restarts == 1
+
+
+def test_concurrent_operations_restart_once_for_one_account_change(
+    tmp_path: Path,
+) -> None:
+    asyncio.run(_concurrent_account_change(tmp_path))
+
+
+async def _concurrent_account_change(tmp_path: Path) -> None:
+    class SlowRestartClient(_RestartableFakeCodexClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.restarting = asyncio.Event()
+            self.resume = asyncio.Event()
+
+        async def restart(self) -> None:
+            self.restarts += 1
+            self.restarting.set()
+            await self.resume.wait()
+
+    codex_home = _codex_home(tmp_path)
+    auth_file = codex_home / "auth.json"
+    _write_auth(auth_file, "acct_old")
+    client = SlowRestartClient()
+    runtime = CodexRuntime(
+        config=_runtime_config(codex_home), host=FakeHost(), client=client
+    )
+    await runtime.start()
+
+    _write_auth(auth_file, "acct_new")
+    first = asyncio.create_task(runtime.start())
+    await client.restarting.wait()
+    second = asyncio.create_task(runtime.start())
+    await asyncio.sleep(0)
+    client.resume.set()
+    await asyncio.gather(first, second)
+
+    assert client.restarts == 1
 
 
 def test_sdk_client_restart_uses_a_new_app_server_and_drops_process_state() -> None:

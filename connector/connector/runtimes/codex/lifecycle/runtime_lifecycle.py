@@ -15,6 +15,7 @@ soon as it changed.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,17 +39,21 @@ class CodexRuntimeLifecycle:
     started: bool = False
     model_list_result: CodexModelListResult | None = None
     account_id: str | None = field(init=False, default=None)
+    _start_lock: asyncio.Lock = field(
+        init=False, default_factory=asyncio.Lock, repr=False
+    )
 
     async def start(self) -> None:
-        if not self.started:
-            # Remember the account before the app-server reads auth.json: a login
-            # landing in between then shows up as a mismatch instead of hiding.
-            self._remember_account()
-            if self.client is not None:
-                await self.client.start(self.handle_notification)
-                await self.bootstrap()
-            self.started = True
-        await self.recycle_if_account_changed()
+        async with self._start_lock:
+            if not self.started:
+                # Remember the account before the app-server reads auth.json: a login
+                # landing in between then shows up as a mismatch instead of hiding.
+                self._remember_account()
+                if self.client is not None:
+                    await self.client.start(self.handle_notification)
+                    await self.bootstrap()
+                self.started = True
+            await self.recycle_if_account_changed()
 
     async def stop(self) -> None:
         if self.client is not None:
@@ -73,7 +78,7 @@ class CodexRuntimeLifecycle:
         if self.client is None or not self.started or self.codex_home is None:
             return False
         current = read_codex_account_id(self.codex_home)
-        if current == self.account_id:
+        if current is None or current == self.account_id:
             return False
         restart = getattr(self.client, "restart", None)
         if not callable(restart):
@@ -88,7 +93,7 @@ class CodexRuntimeLifecycle:
         except Exception as exc:  # noqa: BLE001
             logger.warning("codex app-server restart failed error={}", exc)
             return False
-        self._remember_account()
+        self.account_id = current
         self.model_list_result = None
         await self.bootstrap()
         return True
