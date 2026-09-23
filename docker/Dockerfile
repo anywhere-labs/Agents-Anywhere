@@ -28,6 +28,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     PYTHONPATH=/app/server \
     AGENT_SERVER_DB_BACKEND=postgres \
+    AGENT_SERVER_HOST=0.0.0.0 \
     AGENT_SERVER_STATIC_DIR=/app/web-static
 
 WORKDIR /app
@@ -52,5 +53,6 @@ RUN mkdir -p /data
 VOLUME ["/data"]
 
 EXPOSE 8000
+WORKDIR /app/server
 ENTRYPOINT ["tini", "--"]
-CMD ["sh", "-c", "cd /app/server && uv run --no-sync uvicorn agent_server.app:create_app --factory --host 0.0.0.0 --port 8000"]
+CMD ["uv", "run", "--no-sync", "python", "-m", "agent_server.main"]

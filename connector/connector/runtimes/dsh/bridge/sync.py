@@ -25,13 +25,31 @@ from connector.runtimes.dsh.bridge.models import (
 )
 from connector.runtimes.dsh.bridge.models import notice as session_notice
 
+_DURABLE_NOTIFICATIONS = {
+    "timeline.itemUpsert", "session.meta.upsert", "session.state.updated",
+    "session.source.updated", "session.turnEnded",
+    "session.inventory.begin", "session.inventory.complete",
+}
+
+
+def _checkpoint(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    seq, fingerprint = value.get("throughSeq"), value.get("historyHash")
+    if (value.get("version") != 1 or value.get("projectionVersion") != 2
+        or type(seq) is not int or not -1 <= seq <= 9007199254740991
+        or type(value.get("settled")) is not bool or not isinstance(fingerprint, str)
+        or len(fingerprint) != 64 or any(c not in "0123456789abcdef" for c in fingerprint)):
+        return None
+    return {key: value[key] for key in ("version", "projectionVersion", "throughSeq", "historyHash", "settled")}
+
 
 class SyncRelay:
     """Reassemble transport pages, then forward existing platform notifications.
 
     No native event parsing or backend-specific persistence protocol lives here.
-    Live updates use the same Host publishers as the other runtimes, including
-    their coalescing and WebSocket/HTTP fallback. Snapshots await HTTP ingestion.
+    Checkpoint-capable feeds await ingestion for history-bearing notifications.
+    Transport page ACKs alone never advance the Connector's persisted state.
     """
 
     def __init__(self, client: BridgeClient, host: RuntimeHostClient, *, retry_delay: float = 1.0) -> None:
@@ -46,6 +64,8 @@ class SyncRelay:
         self.items: list[dict[str, Any]] = []
         self.item_bytes = 0
         self.item_ids: set[str] = set()
+        self.durable_checkpoints = False
+        self.loaded_checkpoint: dict[str, Any] | None = None
 
     def start(self) -> None:
         self.task = asyncio.create_task(self.run(), name="dsh-event-sync")
@@ -78,7 +98,25 @@ class SyncRelay:
 
     async def operation(self, op: dict[str, Any]) -> None:
         kind = op.get("kind")
-        if kind == "snapshot.begin":
+        if kind in {"checkpoint.load", "checkpoint.save", "checkpoint.delete"}:
+            if not self.durable_checkpoints or self.snapshot is not None:
+                raise ValueError("Checkpoint operation outside a committed sync boundary")
+            external_id = op.get("externalSessionId")
+            if not isinstance(external_id, str) or not external_id:
+                raise ValueError("Checkpoint requires an external session identity")
+            key = f"dsh/sync/checkpoints/{external_id}"
+            if kind == "checkpoint.load":
+                self.loaded_checkpoint = _checkpoint(await self.host.sync_state_read(key))
+            elif kind == "checkpoint.delete":
+                await self.host.sync_state_delete(key)
+            else:
+                checkpoint = _checkpoint(op.get("checkpoint"))
+                if checkpoint is None:
+                    raise ValueError("Invalid DSH checkpoint")
+                # All preceding history operations were synchronously ingested.
+                # The Host's periodic/final flush uses the same JSON as scanners.
+                await self.host.sync_state_write(key, checkpoint)
+        elif kind == "snapshot.begin":
             self.clear_snapshot()
             self.snapshot = op
 
@@ -107,14 +145,35 @@ class SyncRelay:
             else:
                 self.clear_snapshot()
         elif kind == "notifications":
+            pending: list[dict[str, Any]] = []
             for notice in op["notifications"]:
-                await self.publish_notification(notice)
+                if self.durable_checkpoints and notice.get("method") in _DURABLE_NOTIFICATIONS:
+                    params = notice.get("params")
+                    if not isinstance(params, dict):
+                        raise ValueError("Invalid runtime notification")
+                    if notice["method"] == "timeline.itemUpsert":
+                        item = timeline_item(params["item"])
+                        if item.session_id != params.get("sessionId"):
+                            raise ValueError("Incremental item belongs to a different session")
+                    pending.append(notice)
+                else:
+                    await self.ingest_notifications(pending)
+                    pending = []
+                    await self.publish_notification(notice)
+            await self.ingest_notifications(pending)
         elif kind == "workspace.inventory":
             # Older plugin builds sent native project facts. Ignore those batches;
             # all project grouping and naming use the existing session cwd path.
             return
         else:
             raise ValueError(f"Unsupported bridge operation: {kind}")
+
+    async def ingest_notifications(self, notifications: list[dict[str, Any]]) -> None:
+        if not notifications:
+            return
+        await self.host.publish_runtime_notifications("dsh", notifications)
+        if any(n["method"] == "session.inventory.complete" and n["params"].get("complete") is True for n in notifications):
+            await self.host.runtime_health_update("running")
 
     async def store_items(self, items: list[dict[str, Any]]) -> None:
         self.item_bytes += object_bytes(items)
@@ -235,10 +294,11 @@ class SyncRelay:
             await self.host.runtime_health_update("starting", {
                 "code": "runtime_initializing", "message": "正在同步 DSH 会话…", "retryable": True,
             })
-            subscription = await self.client.request("runtime.sync.subscribe")
+            subscription = await self.client.request("runtime.sync.subscribe", {"checkpointVersion": 1})
             if subscription.get("projectionVersion") != 2:
                 raise ValueError("Unsupported DSH projection version")
             stream_id, expected = subscription["streamId"], 1
+            self.durable_checkpoints = subscription.get("checkpointVersion") == 1
             self.stream_id = stream_id
             while True:
                 batch = await self.queue.get()
@@ -250,9 +310,13 @@ class SyncRelay:
                     raise ValueError("Out-of-order event batch; reconnect to recalibrate")
                 if batch.get("projectionVersion") != 2 or not isinstance(batch.get("operations"), list) or not batch["operations"]:
                     raise ValueError("Invalid DSH event batch")
+                self.loaded_checkpoint = None
                 for operation in batch["operations"]:
                     await self.operation(operation)
-                await self.client.request("runtime.sync.ack", {"streamId": stream_id, "batchSeq": expected})
+                ack = {"streamId": stream_id, "batchSeq": expected}
+                if any(op.get("kind") == "checkpoint.load" for op in batch["operations"]):
+                    ack["checkpoint"] = self.loaded_checkpoint
+                await self.client.request("runtime.sync.ack", ack)
                 expected += 1
         finally:
             self.clear_snapshot()

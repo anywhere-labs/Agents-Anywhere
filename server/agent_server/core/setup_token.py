@@ -8,7 +8,8 @@ silently claims the instance.
 
 When the token expires, the next call to :meth:`SetupToken.snapshot` generates
 a new one and re-prints it to the log. Restarting the server also discards
-any in-memory token.
+any in-memory token. With Redis configured, SetupTokenService coordinates one
+expiring token across workers and mirrors it into this local object for logs.
 """
 
 from __future__ import annotations
@@ -100,6 +101,15 @@ class SetupToken:
         """Return (value, expires_at) without side effects. For introspection."""
         with self._lock:
             return self._value, self._expires_at
+
+    def adopt(self, value: str, expires_at: dt.datetime) -> None:
+        """Mirror a shared token locally so every worker logs the same value."""
+        with self._lock:
+            if (self._value, self._expires_at) == (value, expires_at):
+                return
+            self._value = value
+            self._expires_at = expires_at
+            self._announce_locked()
 
     def _ensure_fresh_locked(self) -> None:
         now = self._now()

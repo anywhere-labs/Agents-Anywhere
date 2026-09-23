@@ -55,6 +55,8 @@ async def wait_for_websocket_disconnect(websocket: WebSocket) -> None:
 async def run_server_push_until_disconnect(
     websocket: WebSocket,
     outbound_stream: Coroutine[object, object, None],
+    *,
+    recovery_signal: asyncio.Event | None = None,
 ) -> None:
     """Run an outbound stream while monitoring the client connection.
 
@@ -65,7 +67,9 @@ async def run_server_push_until_disconnect(
 
     outbound_task = asyncio.create_task(outbound_stream)
     disconnect_task = asyncio.create_task(wait_for_websocket_disconnect(websocket))
-    tasks = (outbound_task, disconnect_task)
+    recovery_task = (asyncio.create_task(recovery_signal.wait())
+                     if recovery_signal is not None else None)
+    tasks = (outbound_task, disconnect_task) + ((recovery_task,) if recovery_task else ())
 
     try:
         completed, _pending = await asyncio.wait(
@@ -84,12 +88,22 @@ async def run_server_push_until_disconnect(
                 cancel_websocket_task(outbound_task)
             return
 
+        if recovery_task is not None and recovery_task in completed:
+            recovery_task.result()
+            cancel_websocket_task(outbound_task)
+            cancel_websocket_task(disconnect_task)
+            await websocket.close(code=1012, reason="realtime interrupted; reconnect to recover")
+            return
+
         cancel_websocket_task(disconnect_task)
         complete_outbound_stream(outbound_task)
     except asyncio.CancelledError:
         for task in tasks:
             cancel_websocket_task(task)
         raise
+    finally:
+        if recovery_task is not None:
+            recovery_task.cancel()
 
 
 def complete_outbound_stream(outbound_task: asyncio.Task[None]) -> None:

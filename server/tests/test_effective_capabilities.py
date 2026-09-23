@@ -251,6 +251,9 @@ def test_presence_change_publishes_reprojected_session_capabilities() -> None:
             assert session_id == session.id
             return 7
 
+        async def get_protocol_capabilities_stamp(self, connector_id):
+            return (1, "unchanged")
+
     class OfflinePresence:
         async def is_online(self, connector_id: str) -> bool:
             assert connector_id == session.connectorId
@@ -297,6 +300,79 @@ def test_effective_capabilities_preserve_attachment_mime_policy() -> None:
     assert attachment.metadata == {"allowedMimeTypes": ["image/png"]}
 
 
+def test_batch_refreshes_equal_revision_replacement_from_another_publisher():
+    async def exercise():
+        paused, release = asyncio.Event(), asyncio.Event()
+
+        class Repository:
+            allowed = True
+            reads = 0
+
+            async def list_sessions_for_connector(self, connector_id):
+                return [
+                    _session(takeover=True).model_copy(update={"id": f"session-{i}"})
+                    for i in range(3)
+                ]
+
+            @asynccontextmanager
+            async def session_revision_fence(self, session_id):
+                if asyncio.current_task().get_name() == "old" and session_id == "session-1":
+                    paused.set()
+                    await release.wait()
+                yield
+
+            async def get_protocol_capabilities_stamp(self, connector_id):
+                return (7, "first-write" if self.allowed else "replacement-write")
+
+            async def get_protocol_capabilities(self, connector_id, *, user_id=None):
+                self.reads += 1
+                return {
+                    "revision": 7,
+                    "capabilities": [{
+                        "capabilityId": SESSION_SEND_MESSAGE,
+                        "runtime": "codex",
+                        "scope": "runtime",
+                        "allowed": self.allowed,
+                    }],
+                }
+
+            async def get_session_seq(self, session_id):
+                return 9
+
+        class Presence:
+            async def is_online(self, connector_id):
+                return True
+
+        class Publisher:
+            def __init__(self):
+                self.allowed = []
+
+            async def publish(self, session_id, payload):
+                self.allowed.append(next(
+                    item["allowed"] for item in payload["capabilitySet"]["capabilities"]
+                    if item["capabilityId"] == SESSION_SEND_MESSAGE
+                ))
+
+        store, old_publisher, new_publisher = Repository(), Publisher(), Publisher()
+        old = asyncio.create_task(publish_connector_session_capabilities(
+            store, Presence(), old_publisher, "connector-1",
+        ), name="old")
+        await paused.wait()
+        store.allowed = False
+        # A different publisher models a different Server process: the local
+        # supersession token cannot stop the old batch in this case.
+        await publish_connector_session_capabilities(
+            store, Presence(), new_publisher, "connector-1",
+        )
+        release.set()
+        await old
+        assert old_publisher.allowed == [True, False, False]
+        assert new_publisher.allowed == [False, False, False]
+        assert store.reads == 3
+
+    asyncio.run(exercise())
+
+
 def _session(*, takeover: bool) -> SessionView:
     return SessionView(
         id="session-1",
@@ -307,3 +383,66 @@ def _session(*, takeover: bool) -> SessionView:
         takeover=takeover,
         updatedSeq=1,
     )
+
+
+def test_capability_batch_reads_once_and_newer_batch_supersedes_old_work():
+    async def exercise():
+        started, release = asyncio.Event(), asyncio.Event()
+
+        class Repository:
+            reads = 0
+            allowed = True
+            pause = True
+
+            async def list_sessions_for_connector(self, connector_id):
+                return [_session(takeover=True).model_copy(update={"id": f"session-{i}"})
+                        for i in range(3)]
+
+            async def get_protocol_capabilities(self, connector_id, *, user_id=None):
+                self.reads += 1
+                return {"revision": self.reads, "capabilities": [{
+                    "capabilityId": SESSION_SEND_MESSAGE, "scope": "runtime",
+                    "runtime": "codex", "allowed": self.allowed,
+                }]}
+
+            async def get_protocol_capabilities_stamp(self, connector_id):
+                return (1, "allowed" if self.allowed else "denied")
+
+            @asynccontextmanager
+            async def session_revision_fence(self, session_id):
+                yield
+
+            async def get_session_seq(self, session_id):
+                if self.pause:
+                    self.pause = False
+                    started.set()
+                    await release.wait()
+                return 7
+
+        class Presence:
+            async def is_online(self, connector_id):
+                return True
+
+        class Publisher:
+            def __init__(self):
+                self.sent = []
+
+            async def publish(self, session_id, payload):
+                self.sent.append(payload)
+
+        repository, publisher = Repository(), Publisher()
+        old = asyncio.create_task(publish_connector_session_capabilities(
+            repository, Presence(), publisher, "connector-1",
+        ))
+        await started.wait()
+        repository.allowed = False
+        await publish_connector_session_capabilities(repository, Presence(), publisher, "connector-1")
+        release.set()
+        await old
+        assert repository.reads == 2
+        assert len(publisher.sent) == 3
+        assert all(next(cap for cap in payload["capabilitySet"]["capabilities"]
+                        if cap["capabilityId"] == SESSION_SEND_MESSAGE)["allowed"] is False
+                   for payload in publisher.sent)
+
+    asyncio.run(exercise())

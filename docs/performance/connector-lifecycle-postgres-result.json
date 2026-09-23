@@ -1,0 +1,438 @@
+{
+  "scope": "local PostgreSQL, real services, synthetic 200 unchanged imported sessions; no app listeners",
+  "scan_sessions": 200,
+  "samples": {
+    "fenced_source_replay": {
+      "sql": {
+        "UPDATE": 201,
+        "SELECT": 1601
+      },
+      "total_sql": 1802,
+      "session_views": 600,
+      "wall_ms": 1841.434,
+      "loop_cpu_ms": 846.79,
+      "process_cpu_ms": 846.791,
+      "repeats": 3
+    },
+    "current_scan": {
+      "sql": {
+        "UPDATE": 201,
+        "SELECT": 401
+      },
+      "total_sql": 602,
+      "session_views": 0,
+      "wall_ms": 473.898,
+      "loop_cpu_ms": 198.947,
+      "process_cpu_ms": 198.947,
+      "repeats": 3
+    },
+    "inventory_only_replay": {
+      "sql": {
+        "UPDATE": 2,
+        "SELECT": 1
+      },
+      "total_sql": 3,
+      "session_views": 0,
+      "wall_ms": 10.15,
+      "loop_cpu_ms": 4.749,
+      "process_cpu_ms": 4.75,
+      "repeats": 3
+    }
+  },
+  "identical_scan_rows": true,
+  "capability_batch": {
+    "sql": {
+      "SELECT": 803
+    },
+    "total_sql": 803,
+    "session_views": 200,
+    "wall_ms": 791.983,
+    "loop_cpu_ms": 290.073,
+    "process_cpu_ms": 290.073,
+    "calls": {
+      "get_session_seq": 600,
+      "is_online": 200,
+      "get_protocol_capabilities_stamp": 200,
+      "get_protocol_capabilities": 1,
+      "publish": 200
+    }
+  },
+  "postgres_plans": {
+    "session_rows": 10000,
+    "plans": [
+      {
+        "path": "unchanged_source",
+        "sql": "UPDATE sessions SET source_state_at=CASE WHEN (sessions.source_state_at > $1::VARCHAR) THEN sessions.source_state_at ELSE $2::VARCHAR END, source_scan_token=CASE WHEN (sessions.source_state_at > $1::VARCHAR) THEN sessions.source_scan_token END WHERE sessions.id = $3::VARCHAR AND sessions.connector_id = $4::VARCHAR AND sessions.runtime = $5::VARCHAR AND sessions.runtime_id = $6::VARCHAR AND sessions.source_state = $7::VARCHAR AND sessions.source_state_reason = $8::VARCHAR AND sessions.source_observation_origin = $9::VARCHAR",
+        "plan": [
+          {
+            "Plan": {
+              "Node Type": "ModifyTable",
+              "Operation": "Update",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Relation Name": "sessions",
+              "Alias": "sessions",
+              "Startup Cost": 0.29,
+              "Total Cost": 8.32,
+              "Plan Rows": 0,
+              "Plan Width": 0,
+              "Actual Startup Time": 0.025,
+              "Actual Total Time": 0.025,
+              "Actual Rows": 0,
+              "Actual Loops": 1,
+              "Shared Hit Blocks": 6,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0,
+              "Plans": [
+                {
+                  "Node Type": "Index Scan",
+                  "Parent Relationship": "Outer",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Scan Direction": "Forward",
+                  "Index Name": "sessions_pkey",
+                  "Relation Name": "sessions",
+                  "Alias": "sessions",
+                  "Startup Cost": 0.29,
+                  "Total Cost": 8.32,
+                  "Plan Rows": 1,
+                  "Plan Width": 70,
+                  "Actual Startup Time": 0.01,
+                  "Actual Total Time": 0.011,
+                  "Actual Rows": 1,
+                  "Actual Loops": 1,
+                  "Index Cond": "(id = 'sess_d0mVHCVkpfbhLg'::text)",
+                  "Rows Removed by Index Recheck": 0,
+                  "Filter": "((connector_id = 'conn_VbbndBiebO8WOQ'::text) AND (runtime = 'codex'::text) AND (runtime_id = 'codex'::text) AND (source_state = 'available'::text) AND (source_state_reason = 'codex.thread/list active'::text) AND (source_observation_origin = 'inventory'::text))",
+                  "Rows Removed by Filter": 0,
+                  "Shared Hit Blocks": 3,
+                  "Shared Read Blocks": 0,
+                  "Shared Dirtied Blocks": 0,
+                  "Shared Written Blocks": 0,
+                  "Local Hit Blocks": 0,
+                  "Local Read Blocks": 0,
+                  "Local Dirtied Blocks": 0,
+                  "Local Written Blocks": 0,
+                  "Temp Read Blocks": 0,
+                  "Temp Written Blocks": 0
+                }
+              ]
+            },
+            "Planning": {
+              "Shared Hit Blocks": 59,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0
+            },
+            "Planning Time": 0.179,
+            "Triggers": [],
+            "Execution Time": 0.042
+          }
+        ]
+      },
+      {
+        "path": "inventory_begin",
+        "sql": "UPDATE sessions SET source_scan_token=$1::VARCHAR WHERE sessions.connector_id = $2::VARCHAR AND sessions.runtime = $3::VARCHAR AND sessions.runtime_id = $4::VARCHAR",
+        "plan": [
+          {
+            "Plan": {
+              "Node Type": "ModifyTable",
+              "Operation": "Update",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Relation Name": "sessions",
+              "Alias": "sessions",
+              "Startup Cost": 0.0,
+              "Total Cost": 722.0,
+              "Plan Rows": 0,
+              "Plan Width": 0,
+              "Actual Startup Time": 76.867,
+              "Actual Total Time": 76.867,
+              "Actual Rows": 0,
+              "Actual Loops": 1,
+              "Shared Hit Blocks": 111549,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 538,
+              "Shared Written Blocks": 538,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0,
+              "Plans": [
+                {
+                  "Node Type": "Seq Scan",
+                  "Parent Relationship": "Outer",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Relation Name": "sessions",
+                  "Alias": "sessions",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 722.0,
+                  "Plan Rows": 10000,
+                  "Plan Width": 38,
+                  "Actual Startup Time": 0.003,
+                  "Actual Total Time": 2.23,
+                  "Actual Rows": 10000,
+                  "Actual Loops": 1,
+                  "Filter": "((connector_id = 'conn_VbbndBiebO8WOQ'::text) AND (runtime = 'codex'::text) AND (runtime_id = 'codex'::text))",
+                  "Rows Removed by Filter": 0,
+                  "Shared Hit Blocks": 547,
+                  "Shared Read Blocks": 0,
+                  "Shared Dirtied Blocks": 0,
+                  "Shared Written Blocks": 0,
+                  "Local Hit Blocks": 0,
+                  "Local Read Blocks": 0,
+                  "Local Dirtied Blocks": 0,
+                  "Local Written Blocks": 0,
+                  "Temp Read Blocks": 0,
+                  "Temp Written Blocks": 0
+                }
+              ]
+            },
+            "Planning": {
+              "Shared Hit Blocks": 0,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0
+            },
+            "Planning Time": 0.018,
+            "Triggers": [
+              {
+                "Trigger Name": "RI_ConstraintTrigger_c_19247",
+                "Constraint Name": "sessions_connector_id_fkey",
+                "Relation": "sessions",
+                "Time": 56.821,
+                "Calls": 9801
+              },
+              {
+                "Trigger Name": "RI_ConstraintTrigger_c_19573",
+                "Constraint Name": "fk_sessions_project_id_projects",
+                "Relation": "sessions",
+                "Time": 59.465,
+                "Calls": 9801
+              }
+            ],
+            "Execution Time": 193.745
+          }
+        ]
+      },
+      {
+        "path": "inventory_read",
+        "sql": "SELECT sessions.id, sessions.external_session_id, sessions.source_state, sessions.source_scan_token, sessions.archived, sessions.dsh_archive_legacy \nFROM sessions \nWHERE sessions.connector_id = $1::VARCHAR AND sessions.runtime = $2::VARCHAR AND sessions.runtime_id = $3::VARCHAR",
+        "plan": [
+          {
+            "Plan": {
+              "Node Type": "Seq Scan",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Relation Name": "sessions",
+              "Alias": "sessions",
+              "Startup Cost": 0.0,
+              "Total Cost": 1404.41,
+              "Plan Rows": 19452,
+              "Plan Width": 83,
+              "Actual Startup Time": 0.005,
+              "Actual Total Time": 1.758,
+              "Actual Rows": 10000,
+              "Actual Loops": 1,
+              "Filter": "((connector_id = 'conn_VbbndBiebO8WOQ'::text) AND (runtime = 'codex'::text) AND (runtime_id = 'codex'::text))",
+              "Rows Removed by Filter": 0,
+              "Shared Hit Blocks": 1064,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0
+            },
+            "Planning": {
+              "Shared Hit Blocks": 12,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0
+            },
+            "Planning Time": 0.085,
+            "Triggers": [],
+            "Execution Time": 1.905
+          }
+        ]
+      },
+      {
+        "path": "inventory_refresh",
+        "sql": "UPDATE sessions SET source_state_at=CASE sessions.id WHEN $1::VARCHAR THEN $2::VARCHAR WHEN $3::VARCHAR THEN $4::VARCHAR WHEN $5::VARCHAR THEN $6::VARCHAR WHEN $7::VARCHAR THEN $8::VARCHAR WHEN $9::VARCHAR THEN $10::VARCHAR WHEN $11::VARCHAR THEN $12::VARCHAR WHEN $13::VARCHAR THEN $14::VARCHAR WHEN $15::VARCHAR THEN $16::VARCHAR WHEN $17::VARCHAR THEN $18::VARCHAR WHEN $19::VARCHAR THEN $20::VARCHAR WHEN $21::VARCHAR THEN $22::VARCHAR WHEN $23::VARCHAR THEN $24::VARCHAR WHEN $25::VARCHAR THEN $26::VARCHAR WHEN $27::VARCHAR THEN $28::VARCHAR WHEN $29::VARCHAR THEN $30::VARCHAR WHEN $31::VARCHAR THEN $32::VARCHAR WHEN $33::VARCHAR THEN $34::VARCHAR WHEN $35::VARCHAR THEN $36::VARCHAR WHEN $37::VARCHAR THEN $38::VARCHAR WHEN $39::VARCHAR THEN $40::VARCHAR WHEN $41::VARCHAR THEN $42::VARCHAR WHEN $43::VARCHAR THEN $44::VARCHAR WHEN $45::VARCHAR THEN $46::VARCHAR WHEN $47::VARCHAR THEN $48::VARCHAR WHEN $49::VARCHAR THEN $50::VARCHAR WHEN $51::VARCHAR THEN $52::VARCHAR WHEN $53::VARCHAR THEN $54::VARCHAR WHEN $55::VARCHAR THEN $56::VARCHAR WHEN $57::VARCHAR THEN $58::VARCHAR WHEN $59::VARCHAR THEN $60::VARCHAR WHEN $61::VARCHAR THEN $62::VARCHAR WHEN $63::VARCHAR THEN $64::VARCHAR WHEN $65::VARCHAR THEN $66::VARCHAR WHEN $67::VARCHAR THEN $68::VARCHAR WHEN $69::VARCHAR THEN $70::VARCHAR WHEN $71::VARCHAR THEN $72::VARCHAR WHEN $73::VARCHAR THEN $74::VARCHAR WHEN $75::VARCHAR THEN $76::VARCHAR WHEN $77::VARCHAR THEN $78::VARCHAR WHEN $79::VARCHAR THEN $80::VARCHAR WHEN $81::VARCHAR THEN $82::VARCHAR WHEN $83::VARCHAR THEN $84::VARCHAR WHEN $85::VARCHAR THEN $86::VARCHAR WHEN $87::VARCHAR THEN $88::VARCHAR WHEN $89::VARCHAR THEN $90::VARCHAR WHEN $91::VARCHAR THEN $92::VARCHAR WHEN $93::VARCHAR THEN $94::VARCHAR WHEN $95::VARCHAR THEN $96::VARCHAR WHEN $97::VARCHAR THEN $98::VARCHAR WHEN $99::VARCHAR THEN $100::VARCHAR WHEN $101::VARCHAR THEN $102::VARCHAR WHEN $103::VARCHAR THEN $104::VARCHAR WHEN $105::VARCHAR THEN $106::VARCHAR WHEN $107::VARCHAR THEN $108::VARCHAR WHEN $109::VARCHAR THEN $110::VARCHAR WHEN $111::VARCHAR THEN $112::VARCHAR WHEN $113::VARCHAR THEN $114::VARCHAR WHEN $115::VARCHAR THEN $116::VARCHAR WHEN $117::VARCHAR THEN $118::VARCHAR WHEN $119::VARCHAR THEN $120::VARCHAR WHEN $121::VARCHAR THEN $122::VARCHAR WHEN $123::VARCHAR THEN $124::VARCHAR WHEN $125::VARCHAR THEN $126::VARCHAR WHEN $127::VARCHAR THEN $128::VARCHAR WHEN $129::VARCHAR THEN $130::VARCHAR WHEN $131::VARCHAR THEN $132::VARCHAR WHEN $133::VARCHAR THEN $134::VARCHAR WHEN $135::VARCHAR THEN $136::VARCHAR WHEN $137::VARCHAR THEN $138::VARCHAR WHEN $139::VARCHAR THEN $140::VARCHAR WHEN $141::VARCHAR THEN $142::VARCHAR WHEN $143::VARCHAR THEN $144::VARCHAR WHEN $145::VARCHAR THEN $146::VARCHAR WHEN $147::VARCHAR THEN $148::VARCHAR WHEN $149::VARCHAR THEN $150::VARCHAR WHEN $151::VARCHAR THEN $152::VARCHAR WHEN $153::VARCHAR THEN $154::VARCHAR WHEN $155::VARCHAR THEN $156::VARCHAR WHEN $157::VARCHAR THEN $158::VARCHAR WHEN $159::VARCHAR THEN $160::VARCHAR WHEN $161::VARCHAR THEN $162::VARCHAR WHEN $163::VARCHAR THEN $164::VARCHAR WHEN $165::VARCHAR THEN $166::VARCHAR WHEN $167::VARCHAR THEN $168::VARCHAR WHEN $169::VARCHAR THEN $170::VARCHAR WHEN $171::VARCHAR THEN $172::VARCHAR WHEN $173::VARCHAR THEN $174::VARCHAR WHEN $175::VARCHAR THEN $176::VARCHAR WHEN $177::VARCHAR THEN $178::VARCHAR WHEN $179::VARCHAR THEN $180::VARCHAR WHEN $181::VARCHAR THEN $182::VARCHAR WHEN $183::VARCHAR THEN $184::VARCHAR WHEN $185::VARCHAR THEN $186::VARCHAR WHEN $187::VARCHAR THEN $188::VARCHAR WHEN $189::VARCHAR THEN $190::VARCHAR WHEN $191::VARCHAR THEN $192::VARCHAR WHEN $193::VARCHAR THEN $194::VARCHAR WHEN $195::VARCHAR THEN $196::VARCHAR WHEN $197::VARCHAR THEN $198::VARCHAR WHEN $199::VARCHAR THEN $200::VARCHAR WHEN $201::VARCHAR THEN $202::VARCHAR WHEN $203::VARCHAR THEN $204::VARCHAR WHEN $205::VARCHAR THEN $206::VARCHAR WHEN $207::VARCHAR THEN $208::VARCHAR WHEN $209::VARCHAR THEN $210::VARCHAR WHEN $211::VARCHAR THEN $212::VARCHAR WHEN $213::VARCHAR THEN $214::VARCHAR WHEN $215::VARCHAR THEN $216::VARCHAR WHEN $217::VARCHAR THEN $218::VARCHAR WHEN $219::VARCHAR THEN $220::VARCHAR WHEN $221::VARCHAR THEN $222::VARCHAR WHEN $223::VARCHAR THEN $224::VARCHAR WHEN $225::VARCHAR THEN $226::VARCHAR WHEN $227::VARCHAR THEN $228::VARCHAR WHEN $229::VARCHAR THEN $230::VARCHAR WHEN $231::VARCHAR THEN $232::VARCHAR WHEN $233::VARCHAR THEN $234::VARCHAR WHEN $235::VARCHAR THEN $236::VARCHAR WHEN $237::VARCHAR THEN $238::VARCHAR WHEN $239::VARCHAR THEN $240::VARCHAR WHEN $241::VARCHAR THEN $242::VARCHAR WHEN $243::VARCHAR THEN $244::VARCHAR WHEN $245::VARCHAR THEN $246::VARCHAR WHEN $247::VARCHAR THEN $248::VARCHAR WHEN $249::VARCHAR THEN $250::VARCHAR WHEN $251::VARCHAR THEN $252::VARCHAR WHEN $253::VARCHAR THEN $254::VARCHAR WHEN $255::VARCHAR THEN $256::VARCHAR WHEN $257::VARCHAR THEN $258::VARCHAR WHEN $259::VARCHAR THEN $260::VARCHAR WHEN $261::VARCHAR THEN $262::VARCHAR WHEN $263::VARCHAR THEN $264::VARCHAR WHEN $265::VARCHAR THEN $266::VARCHAR WHEN $267::VARCHAR THEN $268::VARCHAR WHEN $269::VARCHAR THEN $270::VARCHAR WHEN $271::VARCHAR THEN $272::VARCHAR WHEN $273::VARCHAR THEN $274::VARCHAR WHEN $275::VARCHAR THEN $276::VARCHAR WHEN $277::VARCHAR THEN $278::VARCHAR WHEN $279::VARCHAR THEN $280::VARCHAR WHEN $281::VARCHAR THEN $282::VARCHAR WHEN $283::VARCHAR THEN $284::VARCHAR WHEN $285::VARCHAR THEN $286::VARCHAR WHEN $287::VARCHAR THEN $288::VARCHAR WHEN $289::VARCHAR THEN $290::VARCHAR WHEN $291::VARCHAR THEN $292::VARCHAR WHEN $293::VARCHAR THEN $294::VARCHAR WHEN $295::VARCHAR THEN $296::VARCHAR WHEN $297::VARCHAR THEN $298::VARCHAR WHEN $299::VARCHAR THEN $300::VARCHAR WHEN $301::VARCHAR THEN $302::VARCHAR WHEN $303::VARCHAR THEN $304::VARCHAR WHEN $305::VARCHAR THEN $306::VARCHAR WHEN $307::VARCHAR THEN $308::VARCHAR WHEN $309::VARCHAR THEN $310::VARCHAR WHEN $311::VARCHAR THEN $312::VARCHAR WHEN $313::VARCHAR THEN $314::VARCHAR WHEN $315::VARCHAR THEN $316::VARCHAR WHEN $317::VARCHAR THEN $318::VARCHAR WHEN $319::VARCHAR THEN $320::VARCHAR WHEN $321::VARCHAR THEN $322::VARCHAR WHEN $323::VARCHAR THEN $324::VARCHAR WHEN $325::VARCHAR THEN $326::VARCHAR WHEN $327::VARCHAR THEN $328::VARCHAR WHEN $329::VARCHAR THEN $330::VARCHAR WHEN $331::VARCHAR THEN $332::VARCHAR WHEN $333::VARCHAR THEN $334::VARCHAR WHEN $335::VARCHAR THEN $336::VARCHAR WHEN $337::VARCHAR THEN $338::VARCHAR WHEN $339::VARCHAR THEN $340::VARCHAR WHEN $341::VARCHAR THEN $342::VARCHAR WHEN $343::VARCHAR THEN $344::VARCHAR WHEN $345::VARCHAR THEN $346::VARCHAR WHEN $347::VARCHAR THEN $348::VARCHAR WHEN $349::VARCHAR THEN $350::VARCHAR WHEN $351::VARCHAR THEN $352::VARCHAR WHEN $353::VARCHAR THEN $354::VARCHAR WHEN $355::VARCHAR THEN $356::VARCHAR WHEN $357::VARCHAR THEN $358::VARCHAR WHEN $359::VARCHAR THEN $360::VARCHAR WHEN $361::VARCHAR THEN $362::VARCHAR WHEN $363::VARCHAR THEN $364::VARCHAR WHEN $365::VARCHAR THEN $366::VARCHAR WHEN $367::VARCHAR THEN $368::VARCHAR WHEN $369::VARCHAR THEN $370::VARCHAR WHEN $371::VARCHAR THEN $372::VARCHAR WHEN $373::VARCHAR THEN $374::VARCHAR WHEN $375::VARCHAR THEN $376::VARCHAR WHEN $377::VARCHAR THEN $378::VARCHAR WHEN $379::VARCHAR THEN $380::VARCHAR WHEN $381::VARCHAR THEN $382::VARCHAR WHEN $383::VARCHAR THEN $384::VARCHAR WHEN $385::VARCHAR THEN $386::VARCHAR WHEN $387::VARCHAR THEN $388::VARCHAR WHEN $389::VARCHAR THEN $390::VARCHAR WHEN $391::VARCHAR THEN $392::VARCHAR WHEN $393::VARCHAR THEN $394::VARCHAR WHEN $395::VARCHAR THEN $396::VARCHAR WHEN $397::VARCHAR THEN $398::VARCHAR WHEN $399::VARCHAR THEN $400::VARCHAR ELSE sessions.source_state_at END, source_state_reason=CASE sessions.id WHEN $401::VARCHAR THEN $402::VARCHAR WHEN $403::VARCHAR THEN $404::VARCHAR WHEN $405::VARCHAR THEN $406::VARCHAR WHEN $407::VARCHAR THEN $408::VARCHAR WHEN $409::VARCHAR THEN $410::VARCHAR WHEN $411::VARCHAR THEN $412::VARCHAR WHEN $413::VARCHAR THEN $414::VARCHAR WHEN $415::VARCHAR THEN $416::VARCHAR WHEN $417::VARCHAR THEN $418::VARCHAR WHEN $419::VARCHAR THEN $420::VARCHAR WHEN $421::VARCHAR THEN $422::VARCHAR WHEN $423::VARCHAR THEN $424::VARCHAR WHEN $425::VARCHAR THEN $426::VARCHAR WHEN $427::VARCHAR THEN $428::VARCHAR WHEN $429::VARCHAR THEN $430::VARCHAR WHEN $431::VARCHAR THEN $432::VARCHAR WHEN $433::VARCHAR THEN $434::VARCHAR WHEN $435::VARCHAR THEN $436::VARCHAR WHEN $437::VARCHAR THEN $438::VARCHAR WHEN $439::VARCHAR THEN $440::VARCHAR WHEN $441::VARCHAR THEN $442::VARCHAR WHEN $443::VARCHAR THEN $444::VARCHAR WHEN $445::VARCHAR THEN $446::VARCHAR WHEN $447::VARCHAR THEN $448::VARCHAR WHEN $449::VARCHAR THEN $450::VARCHAR WHEN $451::VARCHAR THEN $452::VARCHAR WHEN $453::VARCHAR THEN $454::VARCHAR WHEN $455::VARCHAR THEN $456::VARCHAR WHEN $457::VARCHAR THEN $458::VARCHAR WHEN $459::VARCHAR THEN $460::VARCHAR WHEN $461::VARCHAR THEN $462::VARCHAR WHEN $463::VARCHAR THEN $464::VARCHAR WHEN $465::VARCHAR THEN $466::VARCHAR WHEN $467::VARCHAR THEN $468::VARCHAR WHEN $469::VARCHAR THEN $470::VARCHAR WHEN $471::VARCHAR THEN $472::VARCHAR WHEN $473::VARCHAR THEN $474::VARCHAR WHEN $475::VARCHAR THEN $476::VARCHAR WHEN $477::VARCHAR THEN $478::VARCHAR WHEN $479::VARCHAR THEN $480::VARCHAR WHEN $481::VARCHAR THEN $482::VARCHAR WHEN $483::VARCHAR THEN $484::VARCHAR WHEN $485::VARCHAR THEN $486::VARCHAR WHEN $487::VARCHAR THEN $488::VARCHAR WHEN $489::VARCHAR THEN $490::VARCHAR WHEN $491::VARCHAR THEN $492::VARCHAR WHEN $493::VARCHAR THEN $494::VARCHAR WHEN $495::VARCHAR THEN $496::VARCHAR WHEN $497::VARCHAR THEN $498::VARCHAR WHEN $499::VARCHAR THEN $500::VARCHAR WHEN $501::VARCHAR THEN $502::VARCHAR WHEN $503::VARCHAR THEN $504::VARCHAR WHEN $505::VARCHAR THEN $506::VARCHAR WHEN $507::VARCHAR THEN $508::VARCHAR WHEN $509::VARCHAR THEN $510::VARCHAR WHEN $511::VARCHAR THEN $512::VARCHAR WHEN $513::VARCHAR THEN $514::VARCHAR WHEN $515::VARCHAR THEN $516::VARCHAR WHEN $517::VARCHAR THEN $518::VARCHAR WHEN $519::VARCHAR THEN $520::VARCHAR WHEN $521::VARCHAR THEN $522::VARCHAR WHEN $523::VARCHAR THEN $524::VARCHAR WHEN $525::VARCHAR THEN $526::VARCHAR WHEN $527::VARCHAR THEN $528::VARCHAR WHEN $529::VARCHAR THEN $530::VARCHAR WHEN $531::VARCHAR THEN $532::VARCHAR WHEN $533::VARCHAR THEN $534::VARCHAR WHEN $535::VARCHAR THEN $536::VARCHAR WHEN $537::VARCHAR THEN $538::VARCHAR WHEN $539::VARCHAR THEN $540::VARCHAR WHEN $541::VARCHAR THEN $542::VARCHAR WHEN $543::VARCHAR THEN $544::VARCHAR WHEN $545::VARCHAR THEN $546::VARCHAR WHEN $547::VARCHAR THEN $548::VARCHAR WHEN $549::VARCHAR THEN $550::VARCHAR WHEN $551::VARCHAR THEN $552::VARCHAR WHEN $553::VARCHAR THEN $554::VARCHAR WHEN $555::VARCHAR THEN $556::VARCHAR WHEN $557::VARCHAR THEN $558::VARCHAR WHEN $559::VARCHAR THEN $560::VARCHAR WHEN $561::VARCHAR THEN $562::VARCHAR WHEN $563::VARCHAR THEN $564::VARCHAR WHEN $565::VARCHAR THEN $566::VARCHAR WHEN $567::VARCHAR THEN $568::VARCHAR WHEN $569::VARCHAR THEN $570::VARCHAR WHEN $571::VARCHAR THEN $572::VARCHAR WHEN $573::VARCHAR THEN $574::VARCHAR WHEN $575::VARCHAR THEN $576::VARCHAR WHEN $577::VARCHAR THEN $578::VARCHAR WHEN $579::VARCHAR THEN $580::VARCHAR WHEN $581::VARCHAR THEN $582::VARCHAR WHEN $583::VARCHAR THEN $584::VARCHAR WHEN $585::VARCHAR THEN $586::VARCHAR WHEN $587::VARCHAR THEN $588::VARCHAR WHEN $589::VARCHAR THEN $590::VARCHAR WHEN $591::VARCHAR THEN $592::VARCHAR WHEN $593::VARCHAR THEN $594::VARCHAR WHEN $595::VARCHAR THEN $596::VARCHAR WHEN $597::VARCHAR THEN $598::VARCHAR WHEN $599::VARCHAR THEN $600::VARCHAR WHEN $601::VARCHAR THEN $602::VARCHAR WHEN $603::VARCHAR THEN $604::VARCHAR WHEN $605::VARCHAR THEN $606::VARCHAR WHEN $607::VARCHAR THEN $608::VARCHAR WHEN $609::VARCHAR THEN $610::VARCHAR WHEN $611::VARCHAR THEN $612::VARCHAR WHEN $613::VARCHAR THEN $614::VARCHAR WHEN $615::VARCHAR THEN $616::VARCHAR WHEN $617::VARCHAR THEN $618::VARCHAR WHEN $619::VARCHAR THEN $620::VARCHAR WHEN $621::VARCHAR THEN $622::VARCHAR WHEN $623::VARCHAR THEN $624::VARCHAR WHEN $625::VARCHAR THEN $626::VARCHAR WHEN $627::VARCHAR THEN $628::VARCHAR WHEN $629::VARCHAR THEN $630::VARCHAR WHEN $631::VARCHAR THEN $632::VARCHAR WHEN $633::VARCHAR THEN $634::VARCHAR WHEN $635::VARCHAR THEN $636::VARCHAR WHEN $637::VARCHAR THEN $638::VARCHAR WHEN $639::VARCHAR THEN $640::VARCHAR WHEN $641::VARCHAR THEN $642::VARCHAR WHEN $643::VARCHAR THEN $644::VARCHAR WHEN $645::VARCHAR THEN $646::VARCHAR WHEN $647::VARCHAR THEN $648::VARCHAR WHEN $649::VARCHAR THEN $650::VARCHAR WHEN $651::VARCHAR THEN $652::VARCHAR WHEN $653::VARCHAR THEN $654::VARCHAR WHEN $655::VARCHAR THEN $656::VARCHAR WHEN $657::VARCHAR THEN $658::VARCHAR WHEN $659::VARCHAR THEN $660::VARCHAR WHEN $661::VARCHAR THEN $662::VARCHAR WHEN $663::VARCHAR THEN $664::VARCHAR WHEN $665::VARCHAR THEN $666::VARCHAR WHEN $667::VARCHAR THEN $668::VARCHAR WHEN $669::VARCHAR THEN $670::VARCHAR WHEN $671::VARCHAR THEN $672::VARCHAR WHEN $673::VARCHAR THEN $674::VARCHAR WHEN $675::VARCHAR THEN $676::VARCHAR WHEN $677::VARCHAR THEN $678::VARCHAR WHEN $679::VARCHAR THEN $680::VARCHAR WHEN $681::VARCHAR THEN $682::VARCHAR WHEN $683::VARCHAR THEN $684::VARCHAR WHEN $685::VARCHAR THEN $686::VARCHAR WHEN $687::VARCHAR THEN $688::VARCHAR WHEN $689::VARCHAR THEN $690::VARCHAR WHEN $691::VARCHAR THEN $692::VARCHAR WHEN $693::VARCHAR THEN $694::VARCHAR WHEN $695::VARCHAR THEN $696::VARCHAR WHEN $697::VARCHAR THEN $698::VARCHAR WHEN $699::VARCHAR THEN $700::VARCHAR WHEN $701::VARCHAR THEN $702::VARCHAR WHEN $703::VARCHAR THEN $704::VARCHAR WHEN $705::VARCHAR THEN $706::VARCHAR WHEN $707::VARCHAR THEN $708::VARCHAR WHEN $709::VARCHAR THEN $710::VARCHAR WHEN $711::VARCHAR THEN $712::VARCHAR WHEN $713::VARCHAR THEN $714::VARCHAR WHEN $715::VARCHAR THEN $716::VARCHAR WHEN $717::VARCHAR THEN $718::VARCHAR WHEN $719::VARCHAR THEN $720::VARCHAR WHEN $721::VARCHAR THEN $722::VARCHAR WHEN $723::VARCHAR THEN $724::VARCHAR WHEN $725::VARCHAR THEN $726::VARCHAR WHEN $727::VARCHAR THEN $728::VARCHAR WHEN $729::VARCHAR THEN $730::VARCHAR WHEN $731::VARCHAR THEN $732::VARCHAR WHEN $733::VARCHAR THEN $734::VARCHAR WHEN $735::VARCHAR THEN $736::VARCHAR WHEN $737::VARCHAR THEN $738::VARCHAR WHEN $739::VARCHAR THEN $740::VARCHAR WHEN $741::VARCHAR THEN $742::VARCHAR WHEN $743::VARCHAR THEN $744::VARCHAR WHEN $745::VARCHAR THEN $746::VARCHAR WHEN $747::VARCHAR THEN $748::VARCHAR WHEN $749::VARCHAR THEN $750::VARCHAR WHEN $751::VARCHAR THEN $752::VARCHAR WHEN $753::VARCHAR THEN $754::VARCHAR WHEN $755::VARCHAR THEN $756::VARCHAR WHEN $757::VARCHAR THEN $758::VARCHAR WHEN $759::VARCHAR THEN $760::VARCHAR WHEN $761::VARCHAR THEN $762::VARCHAR WHEN $763::VARCHAR THEN $764::VARCHAR WHEN $765::VARCHAR THEN $766::VARCHAR WHEN $767::VARCHAR THEN $768::VARCHAR WHEN $769::VARCHAR THEN $770::VARCHAR WHEN $771::VARCHAR THEN $772::VARCHAR WHEN $773::VARCHAR THEN $774::VARCHAR WHEN $775::VARCHAR THEN $776::VARCHAR WHEN $777::VARCHAR THEN $778::VARCHAR WHEN $779::VARCHAR THEN $780::VARCHAR WHEN $781::VARCHAR THEN $782::VARCHAR WHEN $783::VARCHAR THEN $784::VARCHAR WHEN $785::VARCHAR THEN $786::VARCHAR WHEN $787::VARCHAR THEN $788::VARCHAR WHEN $789::VARCHAR THEN $790::VARCHAR WHEN $791::VARCHAR THEN $792::VARCHAR WHEN $793::VARCHAR THEN $794::VARCHAR WHEN $795::VARCHAR THEN $796::VARCHAR WHEN $797::VARCHAR THEN $798::VARCHAR WHEN $799::VARCHAR THEN $800::VARCHAR ELSE sessions.source_state_reason END, source_observation_origin=$801::VARCHAR, source_scan_token=$802::VARCHAR WHERE sessions.id IN ($804::VARCHAR, $805::VARCHAR, $806::VARCHAR, $807::VARCHAR, $808::VARCHAR, $809::VARCHAR, $810::VARCHAR, $811::VARCHAR, $812::VARCHAR, $813::VARCHAR, $814::VARCHAR, $815::VARCHAR, $816::VARCHAR, $817::VARCHAR, $818::VARCHAR, $819::VARCHAR, $820::VARCHAR, $821::VARCHAR, $822::VARCHAR, $823::VARCHAR, $824::VARCHAR, $825::VARCHAR, $826::VARCHAR, $827::VARCHAR, $828::VARCHAR, $829::VARCHAR, $830::VARCHAR, $831::VARCHAR, $832::VARCHAR, $833::VARCHAR, $834::VARCHAR, $835::VARCHAR, $836::VARCHAR, $837::VARCHAR, $838::VARCHAR, $839::VARCHAR, $840::VARCHAR, $841::VARCHAR, $842::VARCHAR, $843::VARCHAR, $844::VARCHAR, $845::VARCHAR, $846::VARCHAR, $847::VARCHAR, $848::VARCHAR, $849::VARCHAR, $850::VARCHAR, $851::VARCHAR, $852::VARCHAR, $853::VARCHAR, $854::VARCHAR, $855::VARCHAR, $856::VARCHAR, $857::VARCHAR, $858::VARCHAR, $859::VARCHAR, $860::VARCHAR, $861::VARCHAR, $862::VARCHAR, $863::VARCHAR, $864::VARCHAR, $865::VARCHAR, $866::VARCHAR, $867::VARCHAR, $868::VARCHAR, $869::VARCHAR, $870::VARCHAR, $871::VARCHAR, $872::VARCHAR, $873::VARCHAR, $874::VARCHAR, $875::VARCHAR, $876::VARCHAR, $877::VARCHAR, $878::VARCHAR, $879::VARCHAR, $880::VARCHAR, $881::VARCHAR, $882::VARCHAR, $883::VARCHAR, $884::VARCHAR, $885::VARCHAR, $886::VARCHAR, $887::VARCHAR, $888::VARCHAR, $889::VARCHAR, $890::VARCHAR, $891::VARCHAR, $892::VARCHAR, $893::VARCHAR, $894::VARCHAR, $895::VARCHAR, $896::VARCHAR, $897::VARCHAR, $898::VARCHAR, $899::VARCHAR, $900::VARCHAR, $901::VARCHAR, $902::VARCHAR, $903::VARCHAR, $904::VARCHAR, $905::VARCHAR, $906::VARCHAR, $907::VARCHAR, $908::VARCHAR, $909::VARCHAR, $910::VARCHAR, $911::VARCHAR, $912::VARCHAR, $913::VARCHAR, $914::VARCHAR, $915::VARCHAR, $916::VARCHAR, $917::VARCHAR, $918::VARCHAR, $919::VARCHAR, $920::VARCHAR, $921::VARCHAR, $922::VARCHAR, $923::VARCHAR, $924::VARCHAR, $925::VARCHAR, $926::VARCHAR, $927::VARCHAR, $928::VARCHAR, $929::VARCHAR, $930::VARCHAR, $931::VARCHAR, $932::VARCHAR, $933::VARCHAR, $934::VARCHAR, $935::VARCHAR, $936::VARCHAR, $937::VARCHAR, $938::VARCHAR, $939::VARCHAR, $940::VARCHAR, $941::VARCHAR, $942::VARCHAR, $943::VARCHAR, $944::VARCHAR, $945::VARCHAR, $946::VARCHAR, $947::VARCHAR, $948::VARCHAR, $949::VARCHAR, $950::VARCHAR, $951::VARCHAR, $952::VARCHAR, $953::VARCHAR, $954::VARCHAR, $955::VARCHAR, $956::VARCHAR, $957::VARCHAR, $958::VARCHAR, $959::VARCHAR, $960::VARCHAR, $961::VARCHAR, $962::VARCHAR, $963::VARCHAR, $964::VARCHAR, $965::VARCHAR, $966::VARCHAR, $967::VARCHAR, $968::VARCHAR, $969::VARCHAR, $970::VARCHAR, $971::VARCHAR, $972::VARCHAR, $973::VARCHAR, $974::VARCHAR, $975::VARCHAR, $976::VARCHAR, $977::VARCHAR, $978::VARCHAR, $979::VARCHAR, $980::VARCHAR, $981::VARCHAR, $982::VARCHAR, $983::VARCHAR, $984::VARCHAR, $985::VARCHAR, $986::VARCHAR, $987::VARCHAR, $988::VARCHAR, $989::VARCHAR, $990::VARCHAR, $991::VARCHAR, $992::VARCHAR, $993::VARCHAR, $994::VARCHAR, $995::VARCHAR, $996::VARCHAR, $997::VARCHAR, $998::VARCHAR, $999::VARCHAR, $1000::VARCHAR, $1001::VARCHAR, $1002::VARCHAR, $1003::VARCHAR) AND sessions.source_scan_token = $803::VARCHAR",
+        "plan": [
+          {
+            "Plan": {
+              "Node Type": "ModifyTable",
+              "Operation": "Update",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Relation Name": "sessions",
+              "Alias": "sessions",
+              "Startup Cost": 0.29,
+              "Total Cost": 478.52,
+              "Plan Rows": 0,
+              "Plan Width": 0,
+              "Actual Startup Time": 1.477,
+              "Actual Total Time": 1.477,
+              "Actual Rows": 0,
+              "Actual Loops": 1,
+              "Shared Hit Blocks": 1412,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 3,
+              "Shared Written Blocks": 3,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0,
+              "Plans": [
+                {
+                  "Node Type": "Index Scan",
+                  "Parent Relationship": "Outer",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Scan Direction": "Forward",
+                  "Index Name": "sessions_pkey",
+                  "Relation Name": "sessions",
+                  "Alias": "sessions",
+                  "Startup Cost": 0.29,
+                  "Total Cost": 478.52,
+                  "Plan Rows": 1,
+                  "Plan Width": 134,
+                  "Actual Startup Time": 0.094,
+                  "Actual Total Time": 0.702,
+                  "Actual Rows": 200,
+                  "Actual Loops": 1,
+                  "Index Cond": "(id = ANY ('{sess_d0mVHCVkpfbhLg,source_audit_1,source_audit_2,source_audit_3,source_audit_4,source_audit_5,source_audit_6,source_audit_7,source_audit_8,source_audit_9,source_audit_10,source_audit_11,source_audit_12,source_audit_13,source_audit_14,source_audit_15,source_audit_16,source_audit_17,source_audit_18,source_audit_19,source_audit_20,source_audit_21,source_audit_22,source_audit_23,source_audit_24,source_audit_25,source_audit_26,source_audit_27,source_audit_28,source_audit_29,source_audit_30,source_audit_31,source_audit_32,source_audit_33,source_audit_34,source_audit_35,source_audit_36,source_audit_37,source_audit_38,source_audit_39,source_audit_40,source_audit_41,source_audit_42,source_audit_43,source_audit_44,source_audit_45,source_audit_46,source_audit_47,source_audit_48,source_audit_49,source_audit_50,source_audit_51,source_audit_52,source_audit_53,source_audit_54,source_audit_55,source_audit_56,source_audit_57,source_audit_58,source_audit_59,source_audit_60,source_audit_61,source_audit_62,source_audit_63,source_audit_64,source_audit_65,source_audit_66,source_audit_67,source_audit_68,source_audit_69,source_audit_70,source_audit_71,source_audit_72,source_audit_73,source_audit_74,source_audit_75,source_audit_76,source_audit_77,source_audit_78,source_audit_79,source_audit_80,source_audit_81,source_audit_82,source_audit_83,source_audit_84,source_audit_85,source_audit_86,source_audit_87,source_audit_88,source_audit_89,source_audit_90,source_audit_91,source_audit_92,source_audit_93,source_audit_94,source_audit_95,source_audit_96,source_audit_97,source_audit_98,source_audit_99,source_audit_100,source_audit_101,source_audit_102,source_audit_103,source_audit_104,source_audit_105,source_audit_106,source_audit_107,source_audit_108,source_audit_109,source_audit_110,source_audit_111,source_audit_112,source_audit_113,source_audit_114,source_audit_115,source_audit_116,source_audit_117,source_audit_118,source_audit_119,source_audit_120,source_audit_121,source_audit_122,source_audit_123,source_audit_124,source_audit_125,source_audit_126,source_audit_127,source_audit_128,source_audit_129,source_audit_130,source_audit_131,source_audit_132,source_audit_133,source_audit_134,source_audit_135,source_audit_136,source_audit_137,source_audit_138,source_audit_139,source_audit_140,source_audit_141,source_audit_142,source_audit_143,source_audit_144,source_audit_145,source_audit_146,source_audit_147,source_audit_148,source_audit_149,source_audit_150,source_audit_151,source_audit_152,source_audit_153,source_audit_154,source_audit_155,source_audit_156,source_audit_157,source_audit_158,source_audit_159,source_audit_160,source_audit_161,source_audit_162,source_audit_163,source_audit_164,source_audit_165,source_audit_166,source_audit_167,source_audit_168,source_audit_169,source_audit_170,source_audit_171,source_audit_172,source_audit_173,source_audit_174,source_audit_175,source_audit_176,source_audit_177,source_audit_178,source_audit_179,source_audit_180,source_audit_181,source_audit_182,source_audit_183,source_audit_184,source_audit_185,source_audit_186,source_audit_187,source_audit_188,source_audit_189,source_audit_190,source_audit_191,source_audit_192,source_audit_193,source_audit_194,source_audit_195,source_audit_196,source_audit_197,source_audit_198,source_audit_199}'::text[]))",
+                  "Rows Removed by Index Recheck": 0,
+                  "Filter": "(source_scan_token = 'audit-inventory-token-000001'::text)",
+                  "Rows Removed by Filter": 0,
+                  "Shared Hit Blocks": 241,
+                  "Shared Read Blocks": 0,
+                  "Shared Dirtied Blocks": 0,
+                  "Shared Written Blocks": 0,
+                  "Local Hit Blocks": 0,
+                  "Local Read Blocks": 0,
+                  "Local Dirtied Blocks": 0,
+                  "Local Written Blocks": 0,
+                  "Temp Read Blocks": 0,
+                  "Temp Written Blocks": 0
+                }
+              ]
+            },
+            "Planning": {
+              "Shared Hit Blocks": 0,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0
+            },
+            "Planning Time": 0.194,
+            "Triggers": [
+              {
+                "Trigger Name": "RI_ConstraintTrigger_c_19247",
+                "Constraint Name": "sessions_connector_id_fkey",
+                "Relation": "sessions",
+                "Time": 1.143,
+                "Calls": 200
+              },
+              {
+                "Trigger Name": "RI_ConstraintTrigger_c_19573",
+                "Constraint Name": "fk_sessions_project_id_projects",
+                "Relation": "sessions",
+                "Time": 1.242,
+                "Calls": 200
+              }
+            ],
+            "Execution Time": 3.968
+          }
+        ]
+      }
+    ]
+  },
+  "normal_close": {
+    "sql": {
+      "SELECT": 40,
+      "UPDATE": 20
+    },
+    "total_sql": 60,
+    "session_views": 0,
+    "wall_ms": 70.465,
+    "loop_cpu_ms": 60.571,
+    "process_cpu_ms": 60.571,
+    "pending_after_close": 0
+  },
+  "delete_and_cancel": {
+    "sql": {
+      "UPDATE": 1,
+      "SELECT": 3,
+      "DELETE": 4
+    },
+    "total_sql": 8,
+    "session_views": 0,
+    "wall_ms": 27.979,
+    "loop_cpu_ms": 9.332,
+    "process_cpu_ms": 13.544
+  },
+  "deleted_backlog": {
+    "sql": {},
+    "total_sql": 0,
+    "session_views": 0,
+    "wall_ms": 0.019,
+    "loop_cpu_ms": 0.02,
+    "process_cpu_ms": 0.02,
+    "queued": 500,
+    "handlers_entered": 4,
+    "tracebacks": 0,
+    "formatted_traceback_bytes": 0,
+    "pending_after_close": 0,
+    "socket_close": [
+      {
+        "code": 4001,
+        "reason": "connector deleted"
+      }
+    ],
+    "first_error": null,
+    "sessions_remain_deleted": true
+  },
+  "postgres_version": "PostgreSQL 17.10, aarch64 Alpine container",
+  "environment": "Local Docker, loopback TCP, tmpfs test storage, production SQLAlchemy pool; host load is uncontrolled",
+  "baseline_method": "fenced_source_replay disables only the new no-change shortcut; inventory and the remaining service code are identical"
+}

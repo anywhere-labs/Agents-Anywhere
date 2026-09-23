@@ -98,6 +98,12 @@ class CodexThreadTurnsResult:
 
 
 @dataclass(frozen=True, slots=True)
+class CodexThreadTurnsPage:
+    turns: tuple[Mapping[str, Any], ...]
+    next_cursor: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CodexThreadResult:
     thread_id: str | None
     payload: Mapping[str, Any]

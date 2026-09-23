@@ -1,0 +1,349 @@
+{
+  "date": "2026-09-11",
+  "baseline_revision": "0601e668dc844916882a14bf7b4148a11dc2c5ee",
+  "online_constraints": {
+    "maximum_cpus": 8,
+    "maximum_server_workers": 4
+  },
+  "selected_profile": {
+    "server_workers": 4,
+    "compute_children_per_worker": 1,
+    "database_connections_total": 32,
+    "event_input_budget_mib_total": 64
+  },
+  "baseline": {
+    "python": "3.12.13",
+    "platform": "Darwin arm64",
+    "policy": "warm once, median of three; event-loop CPU; no network/database",
+    "results": {
+      "connector": {
+        "wall_ms": 29.665,
+        "loop_cpu_ms": 29.57,
+        "inputs": 96,
+        "sent": 1,
+        "final_hash": "sha256:b4fed69a6c09def9031e7248f0a4998d65950ac4942d789927074d4d4f14e466",
+        "wire_bytes": 72616,
+        "scope": "projection, hash, coalescing, JSON"
+      },
+      "capabilities": {
+        "wall_ms": 1069.567,
+        "loop_cpu_ms": 1064.334,
+        "sessions": 200,
+        "capability_records": 2000,
+        "capability_reads": 200,
+        "stamp_reads": 0,
+        "scope": "actual publication service, in-memory ports"
+      },
+      "single_session_capabilities": {
+        "wall_ms": 51.773,
+        "loop_cpu_ms": 51.608,
+        "projections": 200,
+        "capability_records": 2000,
+        "scope": "single-session projection API"
+      },
+      "fanout": {
+        "wall_ms": 156.197,
+        "loop_cpu_ms": 155.433,
+        "notifications": 24,
+        "subscribers": 4,
+        "sent": 96,
+        "scope": "actual local broker plus outbound event preparation; no sockets"
+      }
+    }
+  },
+  "candidate": {
+    "python": "3.12.13",
+    "platform": "Darwin arm64",
+    "policy": "warm once, median of three; event-loop CPU; no network/database",
+    "results": {
+      "connector": {
+        "wall_ms": 18.248,
+        "loop_cpu_ms": 18.168,
+        "inputs": 96,
+        "sent": 1,
+        "final_hash": "sha256:b4fed69a6c09def9031e7248f0a4998d65950ac4942d789927074d4d4f14e466",
+        "wire_bytes": 72616,
+        "scope": "projection, hash, coalescing, JSON"
+      },
+      "capabilities": {
+        "wall_ms": 16.289,
+        "loop_cpu_ms": 16.164,
+        "sessions": 200,
+        "capability_records": 2000,
+        "capability_reads": 1,
+        "stamp_reads": 200,
+        "scope": "actual publication service, in-memory ports"
+      },
+      "single_session_capabilities": {
+        "wall_ms": 25.145,
+        "loop_cpu_ms": 24.961,
+        "projections": 200,
+        "capability_records": 2000,
+        "scope": "single-session projection API"
+      },
+      "fanout": {
+        "wall_ms": 49.274,
+        "loop_cpu_ms": 48.291,
+        "notifications": 24,
+        "subscribers": 4,
+        "sent": 96,
+        "scope": "actual local broker plus outbound event preparation; no sockets"
+      },
+      "concurrent_fanout_0_workers": {
+        "wall_ms": 53.226,
+        "loop_cpu_ms": 50.659,
+        "sessions": 4,
+        "notifications": 24,
+        "subscribers_per_session": 4,
+        "sent": 96,
+        "max_loop_lag_ms": 6.959,
+        "scope": "actual broker; warm pool; 2ms event-loop timer; no network/database",
+        "pool_startup_ms": 0.002
+      },
+      "concurrent_fanout_2_workers": {
+        "wall_ms": 34.797,
+        "loop_cpu_ms": 18.59,
+        "sessions": 4,
+        "notifications": 24,
+        "subscribers_per_session": 4,
+        "sent": 96,
+        "max_loop_lag_ms": 0.787,
+        "scope": "actual broker; warm pool; 2ms event-loop timer; no network/database",
+        "pool_startup_ms": 258.512
+      }
+    }
+  },
+  "worker_scaling": {
+    "python": "3.12.13",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "logical_cpus": 12,
+    "scope": "real broker CPU stage; warmed pools; independent processes; no sockets/DB/Redis",
+    "policy": "fixed total work; active cores = parent and compute CPU seconds / common wall time",
+    "layouts": [
+      {
+        "workers": 1,
+        "event_workers_per_worker": 0,
+        "compute_processes": 0,
+        "notifications": 2304,
+        "delivered_events": 9216,
+        "wall_s": 5.15,
+        "notifications_per_second": 447.4,
+        "average_active_cores": 0.952,
+        "parent_cpu_s": 4.904,
+        "compute_cpu_s": 0,
+        "samples": [
+          {
+            "workers": 1,
+            "event_workers_per_worker": 0,
+            "compute_processes": 0,
+            "notifications": 2304,
+            "delivered_events": 9216,
+            "wall_s": 5.1392,
+            "notifications_per_second": 448.3,
+            "average_active_cores": 0.952,
+            "parent_cpu_s": 4.8926,
+            "compute_cpu_s": 0
+          },
+          {
+            "workers": 1,
+            "event_workers_per_worker": 0,
+            "compute_processes": 0,
+            "notifications": 2304,
+            "delivered_events": 9216,
+            "wall_s": 5.1726,
+            "notifications_per_second": 445.4,
+            "average_active_cores": 0.953,
+            "parent_cpu_s": 4.9271,
+            "compute_cpu_s": 0
+          },
+          {
+            "workers": 1,
+            "event_workers_per_worker": 0,
+            "compute_processes": 0,
+            "notifications": 2304,
+            "delivered_events": 9216,
+            "wall_s": 5.15,
+            "notifications_per_second": 447.4,
+            "average_active_cores": 0.952,
+            "parent_cpu_s": 4.904,
+            "compute_cpu_s": 0
+          }
+        ]
+      },
+      {
+        "workers": 4,
+        "event_workers_per_worker": 1,
+        "compute_processes": 4,
+        "notifications": 2304,
+        "delivered_events": 9216,
+        "wall_s": 1.5409,
+        "notifications_per_second": 1495.2,
+        "average_active_cores": 4.23,
+        "parent_cpu_s": 2.5409,
+        "compute_cpu_s": 3.9873,
+        "samples": [
+          {
+            "workers": 4,
+            "event_workers_per_worker": 1,
+            "compute_processes": 4,
+            "notifications": 2304,
+            "delivered_events": 9216,
+            "wall_s": 1.5739,
+            "notifications_per_second": 1463.9,
+            "average_active_cores": 4.204,
+            "parent_cpu_s": 2.5897,
+            "compute_cpu_s": 4.0271
+          },
+          {
+            "workers": 4,
+            "event_workers_per_worker": 1,
+            "compute_processes": 4,
+            "notifications": 2304,
+            "delivered_events": 9216,
+            "wall_s": 1.5409,
+            "notifications_per_second": 1495.2,
+            "average_active_cores": 4.23,
+            "parent_cpu_s": 2.5314,
+            "compute_cpu_s": 3.9873
+          },
+          {
+            "workers": 4,
+            "event_workers_per_worker": 1,
+            "compute_processes": 4,
+            "notifications": 2304,
+            "delivered_events": 9216,
+            "wall_s": 1.5391,
+            "notifications_per_second": 1497.0,
+            "average_active_cores": 4.239,
+            "parent_cpu_s": 2.5409,
+            "compute_cpu_s": 3.9831
+          }
+        ]
+      },
+      {
+        "workers": 4,
+        "event_workers_per_worker": 2,
+        "compute_processes": 8,
+        "notifications": 2304,
+        "delivered_events": 9216,
+        "wall_s": 1.0022,
+        "notifications_per_second": 2298.9,
+        "average_active_cores": 7.325,
+        "parent_cpu_s": 2.9213,
+        "compute_cpu_s": 4.387,
+        "samples": [
+          {
+            "workers": 4,
+            "event_workers_per_worker": 2,
+            "compute_processes": 8,
+            "notifications": 2304,
+            "delivered_events": 9216,
+            "wall_s": 0.9939,
+            "notifications_per_second": 2318.2,
+            "average_active_cores": 7.325,
+            "parent_cpu_s": 2.9113,
+            "compute_cpu_s": 4.3691
+          },
+          {
+            "workers": 4,
+            "event_workers_per_worker": 2,
+            "compute_processes": 8,
+            "notifications": 2304,
+            "delivered_events": 9216,
+            "wall_s": 1.0049,
+            "notifications_per_second": 2292.7,
+            "average_active_cores": 7.272,
+            "parent_cpu_s": 2.9213,
+            "compute_cpu_s": 4.387
+          },
+          {
+            "workers": 4,
+            "event_workers_per_worker": 2,
+            "compute_processes": 8,
+            "notifications": 2304,
+            "delivered_events": 9216,
+            "wall_s": 1.0022,
+            "notifications_per_second": 2298.9,
+            "average_active_cores": 7.339,
+            "parent_cpu_s": 2.9483,
+            "compute_cpu_s": 4.4066
+          }
+        ]
+      },
+      {
+        "workers": 8,
+        "event_workers_per_worker": 1,
+        "compute_processes": 8,
+        "notifications": 2304,
+        "delivered_events": 9216,
+        "wall_s": 0.9567,
+        "notifications_per_second": 2408.3,
+        "average_active_cores": 8.196,
+        "parent_cpu_s": 3.3906,
+        "compute_cpu_s": 4.4447,
+        "samples": [
+          {
+            "workers": 8,
+            "event_workers_per_worker": 1,
+            "compute_processes": 8,
+            "notifications": 2304,
+            "delivered_events": 9216,
+            "wall_s": 0.9532,
+            "notifications_per_second": 2417.1,
+            "average_active_cores": 8.212,
+            "parent_cpu_s": 3.3932,
+            "compute_cpu_s": 4.4343
+          },
+          {
+            "workers": 8,
+            "event_workers_per_worker": 1,
+            "compute_processes": 8,
+            "notifications": 2304,
+            "delivered_events": 9216,
+            "wall_s": 0.9567,
+            "notifications_per_second": 2408.3,
+            "average_active_cores": 8.19,
+            "parent_cpu_s": 3.3906,
+            "compute_cpu_s": 4.4447
+          },
+          {
+            "workers": 8,
+            "event_workers_per_worker": 1,
+            "compute_processes": 8,
+            "notifications": 2304,
+            "delivered_events": 9216,
+            "wall_s": 0.9574,
+            "notifications_per_second": 2406.5,
+            "average_active_cores": 8.196,
+            "parent_cpu_s": 3.3886,
+            "compute_cpu_s": 4.4582
+          }
+        ]
+      }
+    ]
+  },
+  "compose_validation": [
+    {
+      "base": "docker-compose.postgres.yml",
+      "cpus": 8,
+      "workers": 4,
+      "event_workers_per_worker": 1,
+      "max_database_connections": 32
+    },
+    {
+      "base": "docker-compose.prod.yml",
+      "cpus": 8,
+      "workers": 4,
+      "event_workers_per_worker": 1,
+      "max_database_connections": 32
+    }
+  ],
+  "verification": {
+    "server_passed": 347,
+    "server_preexisting_skips": 14,
+    "connector_passed": 146,
+    "web_passed": 265,
+    "web_typecheck": "passed",
+    "production_deployed": false
+  }
+}

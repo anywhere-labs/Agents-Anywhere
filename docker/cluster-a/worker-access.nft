@@ -1,0 +1,9 @@
+# Apply before Docker DNAT; block network ingress to the host-local HTTP port.
+add table inet aa_worker_access
+flush table inet aa_worker_access
+table inet aa_worker_access {
+    chain ingress {
+        type filter hook prerouting priority -110; policy accept;
+        iifname "eth0" tcp dport 8000 counter drop
+    }
+}

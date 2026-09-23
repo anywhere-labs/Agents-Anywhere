@@ -21,6 +21,28 @@ class MemoryWebSocket:
         self.sent.append(payload)
 
 
+def test_disabled_debug_does_not_prepare_rpc_log_payload(monkeypatch):
+    from connector.server import rpc
+
+    def unexpected(_value):
+        raise AssertionError("disabled DEBUG must not sanitize the payload")
+
+    monkeypatch.setattr(rpc, "sanitize_rpc_log_value", unexpected)
+    rpc.logger.disable("connector.server.rpc")
+    try:
+        async def exercise():
+            channel = ConnectorRpcChannel()
+            websocket = MemoryWebSocket()
+            channel.set_connection(websocket)
+            await channel.send_notification("timeline.itemUpsert", {"content": "x" * 100_000})
+            await channel.send_response("request", ok=True, result={"large": "result"})
+            assert len(websocket.sent) == 2
+            channel.clear_connection()
+        asyncio.run(exercise())
+    finally:
+        rpc.logger.enable("connector.server.rpc")
+
+
 class BlockingWebSocket:
     def __init__(self) -> None:
         self.sent: list[str] = []

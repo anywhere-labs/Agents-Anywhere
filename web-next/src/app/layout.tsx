@@ -1,5 +1,6 @@
 import { Caveat, Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
 import type { Metadata, Viewport } from "next";
+import "katex/dist/katex.min.css";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ToasterProvider } from "@/components/toaster-provider";

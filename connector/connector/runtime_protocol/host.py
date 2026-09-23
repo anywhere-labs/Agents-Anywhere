@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from typing import Any
+from connector.core.json_kv import JsonKeyValueStore
 
 from connector.runtime_protocol.models import (
     RuntimeAttachmentContent,
@@ -18,6 +19,14 @@ from connector.runtime_protocol.models import (
 
 class RuntimeHostClient(ABC):
     """Runtime -> Connector."""
+
+    async def prepare_runtime_host(self, runtime_id: str) -> RuntimeHostClient:
+        """Bind storage before a provider constructs its runtime; legacy hosts are unchanged."""
+        return self
+
+    @property
+    def runtime_kv(self) -> JsonKeyValueStore:
+        return JsonKeyValueStore.default()
 
     async def publish_runtime_notifications(
         self, runtime: str, notifications: list[dict[str, Any]], runtime_id: str | None = None
@@ -175,3 +184,9 @@ class RuntimeHostClient(ABC):
         key: str,
     ) -> None:
         raise NotImplementedError
+
+
+def runtime_kv_store(host: RuntimeHostClient) -> JsonKeyValueStore:
+    """Support older structural Host implementations outside the Connector."""
+    store = getattr(host, "runtime_kv", None)
+    return store if store is not None else JsonKeyValueStore.default()

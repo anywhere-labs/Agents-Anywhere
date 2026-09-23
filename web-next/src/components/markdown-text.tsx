@@ -3,12 +3,17 @@
 import * as React from "react"
 import { toast } from "sonner"
 import { copyText } from "@/lib/clipboard"
-import ReactMarkdown from "react-markdown"
+import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { Copy, Check, ExternalLink, GitBranch } from "lucide-react"
+import remarkMath from "remark-math"
+import { MermaidPreview } from "@/components/mermaid-preview"
+import rehypeKatex from "rehype-katex"
+import { remarkStandaloneDisplayMath } from "@/lib/markdown-math"
+import { Copy, Check, ExternalLink, GitBranch, Maximize2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import {
   type OpenSessionFilePreview,
   useSessionFilePreviewOpener,
@@ -33,6 +38,67 @@ export function MarkdownText({
   return <MarkdownBody text={text} token={token} session={session} inverted={inverted} />
 }
 
+// Keep the component identity stable while streamed message text changes.
+const MarkdownPre: Components["pre"] = ({ node, children, ...props }) => {
+  const block = node?.children[0]
+  if (block?.type !== "element" || block.tagName !== "code") {
+    return <pre {...props}>{children}</pre>
+  }
+  const classes = block.properties.className
+  const language = (Array.isArray(classes) ? classes.map(String) : String(classes ?? "").split(/\s+/))
+    .find((name) => name.startsWith("language-"))?.slice(9) || "text"
+  const code = block.children.map((child) => child.type === "text" ? child.value : "").join("").replace(/\n$/, "")
+  return <MarkdownCodeBlock code={code} language={language} />
+}
+
+// Module-level so streamed text updates don't remount the table and drop its expanded state.
+const MarkdownTable: Components["table"] = ({ node: _node, children, ...props }) => (
+  <MarkdownTableBlock {...props}>{children}</MarkdownTableBlock>
+)
+
+function MarkdownTableBlock({ children, ...props }: React.ComponentProps<"table">) {
+  const tSession = useTranslations("dashboard.session")
+  const [fullscreen, setFullscreen] = React.useState(false)
+  const label = tSession("tableFullscreen")
+
+  return (
+    <div className="relative my-3 min-w-0 max-w-full">
+      <ScrollArea contentWide className="min-w-0 max-w-full rounded-xl border border-border">
+        <table className="w-full min-w-max border-collapse text-sm" {...props}>
+          {children}
+        </table>
+        <ScrollBar orientation="horizontal" />
+      </ScrollArea>
+      <button
+        type="button"
+        onClick={() => setFullscreen(true)}
+        aria-label={label}
+        title={label}
+        className="absolute top-1.5 right-1.5 z-10 rounded-md border border-border/60 bg-background/90 p-1 text-muted-foreground opacity-70 shadow-sm transition hover:bg-accent hover:text-foreground hover:opacity-100 focus-visible:opacity-100 supports-backdrop-filter:backdrop-blur-sm"
+      >
+        <Maximize2 className="size-3.5" />
+      </button>
+      <Dialog open={fullscreen} onOpenChange={setFullscreen}>
+        <DialogContent
+          aria-describedby={undefined}
+          className="top-0 left-0 flex h-dvh w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none p-0 sm:max-w-none"
+        >
+          <DialogTitle className="flex h-12 shrink-0 items-center border-b border-border px-4 text-sm font-medium">
+            {label}
+          </DialogTitle>
+          <div className="min-h-0 flex-1 overflow-auto p-4">
+            <div className="w-max min-w-full overflow-hidden rounded-xl border border-border">
+              <table className="w-full min-w-max border-collapse text-sm">
+                {children}
+              </table>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
 function MarkdownBody({
   text,
   token,
@@ -49,26 +115,17 @@ function MarkdownBody({
   return (
     <div
       className={cn(
-        "space-y-3 text-sm leading-relaxed [&_a]:underline [&_blockquote]:border-l [&_blockquote]:pl-3 [&_code]:text-[1em] [&_li]:ml-5 [&_ol]:list-decimal [&_pre]:m-0 [&_ul]:list-disc",
+        "markdown-body min-w-0 space-y-3 text-sm leading-relaxed [&_a]:underline [&_blockquote]:border-l [&_blockquote]:pl-3 [&_code]:text-[1em] [&_li]:ml-5 [&_ol]:list-decimal [&_pre]:m-0 [&_ul]:list-disc",
         inverted
           ? "[&_pre]:border-primary-foreground/15"
           : "[&_pre]:border-border",
       )}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkGitDirectiveBadges]}
+        remarkPlugins={[remarkGfm, remarkMath, remarkStandaloneDisplayMath, remarkGitDirectiveBadges]}
+        rehypePlugins={[rehypeKatex]}
         components={{
-          pre({ node, children, ...props }) {
-            const block = node?.children[0]
-            if (block?.type !== "element" || block.tagName !== "code") {
-              return <pre {...props}>{children}</pre>
-            }
-            const classes = block.properties.className
-            const language = (Array.isArray(classes) ? classes.map(String) : String(classes ?? "").split(/\s+/))
-              .find((name) => name.startsWith("language-"))?.slice(9) || "text"
-            const code = block.children.map((child) => child.type === "text" ? child.value : "").join("").replace(/\n$/, "")
-            return <MarkdownCodeBlock code={code} language={language} />
-          },
+          pre: MarkdownPre,
           code({ className, children, node: _node, ...props }) {
             const previewPath = typeof children === "string" ? parseInlineFileRef(children) : null
             if (previewPath && token && session) {
@@ -130,16 +187,7 @@ function MarkdownBody({
               </span>
             )
           },
-          table({ children, ...props }) {
-            return (
-              <ScrollArea contentWide className="my-3 min-w-0 max-w-full rounded-xl border border-border">
-                <table className="w-full min-w-max border-collapse text-sm" {...props}>
-                  {children}
-                </table>
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
-            )
-          },
+          table: MarkdownTable,
           thead({ children, ...props }) {
             return (
               <thead className="border-b border-border bg-muted/40" {...props}>
@@ -525,6 +573,18 @@ function MarkdownCodeBlock({ code, language }: { code: string; language: string 
   const tSession = useTranslations("dashboard.session")
   const tCommon = useTranslations("common")
   const [copied, setCopied] = React.useState(false)
+  const source = (
+    <ScrollArea
+      contentWide
+      className="min-w-0 max-w-full overflow-hidden"
+      viewportProps={{ className: "max-h-96" }}
+    >
+      <pre className="w-max min-w-full p-3 text-sm leading-relaxed">
+        <code>{highlightCode(code, language)}</code>
+      </pre>
+      <ScrollBar orientation="horizontal" />
+    </ScrollArea>
+  )
   return (
     <div className="my-3 min-w-0 max-w-full overflow-hidden rounded-xl border border-border bg-background">
       <div className="flex h-9 items-center justify-between border-b bg-muted/25 px-3">
@@ -547,12 +607,9 @@ function MarkdownCodeBlock({ code, language }: { code: string; language: string 
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
         </button>
       </div>
-      <ScrollArea contentWide className="max-h-96 min-w-0 max-w-full overflow-hidden">
-        <pre className="w-max min-w-full p-3 text-sm leading-relaxed">
-          <code>{highlightCode(code, language)}</code>
-        </pre>
-        <ScrollBar orientation="horizontal" />
-      </ScrollArea>
+      {language.toLowerCase() === "mermaid" ? (
+        <MermaidPreview code={code}>{source}</MermaidPreview>
+      ) : source}
     </div>
   )
 }

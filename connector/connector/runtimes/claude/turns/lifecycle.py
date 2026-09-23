@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+import secrets
+from dataclasses import dataclass, field
 
 from connector.logging import logger
 from connector.runtime_protocol import (
@@ -22,12 +23,12 @@ from connector.runtimes.claude.sdk.client import (
     ClaudeClientFactory,
     SdkLoader,
     connect_client,
-    disconnect_client,
     load_sdk,
     new_sdk_client,
     query_client,
     receive_response_messages,
 )
+from connector.runtimes.claude.sdk.connection import ClaudeConnection, ClaudeResponse
 from connector.runtimes.claude.sdk.events import (
     ClaudeTerminalEvent,
     failed_terminal_event,
@@ -40,6 +41,7 @@ from connector.runtimes.claude.sdk.settings import (
 )
 from connector.runtimes.claude.sdk.stderr import ClaudeStderrBuffer
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
+from connector.runtimes.claude.sessions.scheduled import ClaudeScheduledSessions
 from connector.runtimes.claude.timeline.messages import (
     ClaudeMessageProjector,
     is_synthetic_control_message,
@@ -71,6 +73,176 @@ class ClaudeTurnRunner:
     pending_messages: ClaudePendingClientMessageRegistry
     sdk_loader: SdkLoader | None = None
     client_factory: ClaudeClientFactory | None = None
+    connections: dict[str, ClaudeConnection] = field(default_factory=dict, init=False)
+    stopping: bool = False
+    scheduled_sessions: ClaudeScheduledSessions = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.scheduled_sessions = ClaudeScheduledSessions(self.host)
+
+    async def stop(self) -> None:
+        self.stopping = True
+        for connection in tuple(self.connections.values()):
+            await connection.close()
+
+    async def reconnect_sessions(self) -> None:
+        """Resume only AA sessions previously observed to have scheduled tasks."""
+        if self.stopping:
+            return
+        for session_id, saved in (await self.scheduled_sessions.read()).items():
+            session = self.session_store.ensure(
+                session_id=session_id,
+                external_session_id=saved["externalSessionId"],
+                cwd=saved["cwd"],
+            )
+            if session.execution is not None or session_id in self.connections:
+                continue
+            session.selections = dict(saved["selections"])
+            try:
+                connection = await self.connection_for(
+                    session, ClaudeStderrBuffer(session.session_id)
+                )
+                connection.task_ids.update(saved["taskIds"])
+                connection.queried.set()
+                await connection.connect()
+            except Exception as exc:  # noqa: BLE001
+                await self.notifications.session_state.session_state_update(
+                    session,
+                    "error",
+                    error={
+                        "code": "claude_schedule_resume_failed",
+                        "message": str(exc),
+                    },
+                    metadata={"source": "claude.scheduled.resume"},
+                )
+
+    async def scheduled_activity(
+        self, session: ClaudeSession, response: ClaudeResponse
+    ) -> None:
+        async with session.execution_lock:
+            if self.stopping:
+                return
+            if response.execution is not None:
+                return
+            session.queued_execution = session.execution
+            execution = ClaudeExecution(
+                turn_id=f"turn_claude_{secrets.token_urlsafe(12)}"
+            )
+            session.execution = execution
+            response.execution = execution
+            try:
+                await self.notifications.session_state.session_state_update(
+                    session,
+                    "running",
+                    metadata={"source": "claude.scheduled.running"},
+                )
+                execution.task = asyncio.create_task(
+                    self.drive_turn(
+                        session,
+                        execution,
+                        "",
+                        (),
+                        None,
+                        scheduled=True,
+                        response=response,
+                    )
+                )
+            except BaseException:
+                session.execution = session.queued_execution
+                session.queued_execution = None
+                execution.finished.set()
+                raise
+
+    async def connection_for(
+        self,
+        session: ClaudeSession,
+        stderr: ClaudeStderrBuffer,
+    ) -> ClaudeConnection:
+        existing = self.connections.get(session.session_id)
+        if existing is not None:
+            if not existing.closing and existing.selections == session.selections:
+                return existing
+            await existing.close()
+        sdk = load_sdk(self.sdk_loader)
+        settings_path = create_gateway_settings_file(self.config.values)
+
+        async def approval(tool_name, tool_input, context):
+            await connection.prepare_approval()
+            return await self.interactions.approval_callback(
+                sdk,
+                session,
+                session.active_turn_id,
+            )(tool_name, tool_input, context)
+
+        async def tool_result(data, *args):
+            result = await connection.tool_result(data, *args)
+            native_id = data.get("session_id")
+            if session.external_session_id is None and isinstance(native_id, str):
+                await self._update_external_session_id(session, native_id)
+            await self.scheduled_sessions.save(session, connection.task_ids)
+            return result
+
+        def cleanup():
+            remove_gateway_settings_file(settings_path)
+            if self.connections.get(session.session_id) is connection:
+                self.connections.pop(session.session_id)
+
+        try:
+            client = new_sdk_client(
+                sdk=sdk,
+                config_values=self.config.values,
+                session=session,
+                client_factory=self.client_factory,
+                can_use_tool=approval,
+                stderr=stderr.record,
+                settings_path=settings_path,
+                on_tool_result=tool_result,
+                before_tool=lambda data: connection.before_tool(data),
+            )
+        except BaseException:
+            remove_gateway_settings_file(settings_path)
+            raise
+        connection = ClaudeConnection(
+            client=client,
+            on_activity=lambda response: self.scheduled_activity(session, response),
+            cleanup=cleanup,
+            selections=dict(session.selections),
+            task_ids=set(existing.task_ids) if existing is not None else set(),
+        )
+        self.connections[session.session_id] = connection
+        return connection
+
+    async def refresh_idle_connection(self, session: ClaudeSession) -> None:
+        async with session.execution_lock:
+            existing = self.connections.get(session.session_id)
+            if (
+                self.stopping
+                or session.execution is not None
+                or existing is None
+                or existing.selections == session.selections
+            ):
+                return
+            try:
+                connection = await self.connection_for(
+                    session,
+                    ClaudeStderrBuffer(session.session_id),
+                )
+                connection.queried.set()
+                await connection.connect()
+                await self.scheduled_sessions.save(session, connection.task_ids)
+            except Exception as exc:  # noqa: BLE001
+                connection = self.connections.get(session.session_id)
+                if connection is not None:
+                    await connection.close()
+                await self.notifications.session_state.session_state_update(
+                    session,
+                    "error",
+                    error={
+                        "code": "claude_connection_refresh_failed",
+                        "message": str(exc),
+                    },
+                    metadata={"source": "claude.connection.refresh"},
+                )
 
     async def drive_turn(
         self,
@@ -79,33 +251,23 @@ class ClaudeTurnRunner:
         content: str,
         attachments: tuple[RuntimeAttachment, ...],
         client_message_id: str | None,
+        scheduled: bool = False,
+        response: ClaudeResponse | None = None,
     ) -> None:
         turn_id = execution.turn_id
         stderr = ClaudeStderrBuffer(session.session_id)
-        client: object | None = None
-        settings_path: str | None = None
+        client = response
+        connection = response.connection if response is not None else None
         terminal: ClaudeTerminalEvent | None = None
         reserved_user_item = None
         attachment_mappings: tuple[dict[str, object], ...] = ()
         replayed_user_message: tuple[str, str] | None = None
         response_external_session_confirmed = False
-        user_message_published = False
+        user_message_published = scheduled
         try:
-            sdk = load_sdk(self.sdk_loader)
-            settings_path = create_gateway_settings_file(self.config.values)
-            client = new_sdk_client(
-                sdk=sdk,
-                config_values=self.config.values,
-                session=session,
-                client_factory=self.client_factory,
-                can_use_tool=self.interactions.approval_callback(
-                    sdk,
-                    session,
-                    turn_id,
-                ),
-                stderr=stderr.record,
-                settings_path=settings_path,
-            )
+            if client is None:
+                connection = await self.connection_for(session, stderr)
+                client = connection.response_for(execution)
             execution.client = client
             await connect_client(client)
             materialized_attachments = await materialize_claude_attachments(
@@ -117,28 +279,29 @@ class ClaudeTurnRunner:
                 content,
                 materialized_attachments,
             )
-            await self.notifications.session_state.session_state_update(
-                session,
-                "running",
-                metadata={"source": "claude.turn.running"},
-            )
+            if not scheduled:
+                await self.notifications.session_state.session_state_update(
+                    session,
+                    "running",
+                    metadata={"source": "claude.turn.running"},
+                )
             attachment_mappings = tuple(
                 attachment.to_mapping() for attachment in materialized_attachments
             )
-            reserved_user_item = self.timeline.message_item(
-                session=session,
-                turn_id=turn_id,
-                role="user",
-                text=content,
-                event="claude.turn.user",
-                client_message_id=client_message_id,
-                attachments=attachment_mappings,
-            )
-            await query_client(client, effective_content)
+            if not scheduled:
+                reserved_user_item = self.timeline.message_item(
+                    session=session,
+                    turn_id=turn_id,
+                    role="user",
+                    text=content,
+                    event="claude.turn.user",
+                    client_message_id=client_message_id,
+                    attachments=attachment_mappings,
+                )
+                await query_client(client, effective_content)
 
             emitted_final_assistant_content = False
             stream_accumulator = ClaudeStreamAccumulator()
-            assert reserved_user_item is not None
             async for message in receive_response_messages(client):
                 external_session_id = message_session_id(message)
                 if external_session_id is not None:
@@ -296,6 +459,8 @@ class ClaudeTurnRunner:
                 message=stderr.failure_message(exc),
             )
         finally:
+            if execution.interrupt_source is not None:
+                terminal = interrupted_terminal_event(execution.interrupt_reason)
             if reserved_user_item is not None and not user_message_published:
                 try:
                     user_message_published = await self.publish_replayed_user_message(
@@ -322,25 +487,58 @@ class ClaudeTurnRunner:
                         "Claude user message publish failed session_id={}",
                         session.session_id,
                     )
-            try:
-                await disconnect_client(client)
-            except Exception:  # noqa: BLE001
-                logger.exception(
-                    "Claude SDK disconnect failed session_id={}",
-                    session.session_id,
-                )
-            remove_gateway_settings_file(settings_path)
+            reconciled = False
+            if connection is not None and client is not None:
+                if (
+                    scheduled
+                    and terminal is not None
+                    and terminal.status == "completed"
+                ):
+                    connection.reconcile_needed = True
+                if (
+                    connection.reconcile_needed
+                    and connection.retained
+                    and not connection.reconciling
+                    and connection.pending is None
+                    and not connection.closing
+                    and not self.stopping
+                    and terminal is not None
+                    and terminal.status == "completed"
+                ):
+                    try:
+                        reconciled = await connection.reconcile_tasks(client)
+                    except asyncio.CancelledError:
+                        terminal = interrupted_terminal_event(
+                            execution.interrupt_reason
+                        )
+            if connection is not None and (connection.retained or reconciled):
+                try:
+                    await self.scheduled_sessions.save(session, connection.task_ids)
+                except Exception as exc:  # noqa: BLE001
+                    terminal = failed_terminal_event(
+                        code="claude_schedule_save_failed", message=str(exc)
+                    )
             execution.client = None
             if terminal is None:
                 terminal = failed_terminal_event(
                     code="claude_turn_missing_terminal_state",
                     message="Claude turn stopped without a terminal state",
                 )
-            await self.finish_execution(
-                session=session,
-                execution=execution,
-                terminal=terminal,
-            )
+            try:
+                await self.finish_execution(
+                    session=session,
+                    execution=execution,
+                    terminal=terminal,
+                    response=client,
+                )
+            finally:
+                if connection is not None:
+                    if terminal.status == "failed":
+                        await connection.close()
+                    else:
+                        if not connection.retained and connection.pending is None:
+                            await connection.close()
+                        await self.refresh_idle_connection(session)
 
     async def publish_replayed_user_message(
         self,
@@ -459,6 +657,7 @@ class ClaudeTurnRunner:
         session: ClaudeSession,
         execution: ClaudeExecution,
         terminal: ClaudeTerminalEvent,
+        response: ClaudeResponse | None = None,
     ) -> bool:
         """Publish one terminal state and release this exact execution."""
 
@@ -466,18 +665,36 @@ class ClaudeTurnRunner:
             if execution.finished.is_set():
                 return False
             async with session.execution_lock:
-                if session.execution is not execution:
+                queued = session.queued_execution is execution
+                if session.execution is not execution and not queued:
+                    if response is not None:
+                        response.release(interrupted=terminal.status == "interrupted")
                     execution.finished.set()
                     return False
                 try:
-                    await self.interactions.close_open_interaction_notices(
-                        session,
-                        status="closed",
-                        reason=terminal.status,
+                    if not queued:
+                        await self.interactions.close_open_interaction_notices(
+                            session,
+                            status="closed",
+                            reason=terminal.status,
+                        )
+                    await self.publish_terminal_state(
+                        session, execution, terminal, update_state=not queued
                     )
-                    await self.publish_terminal_state(session, execution, terminal)
                 finally:
-                    session.execution = None
+                    if response is not None:
+                        response.release(interrupted=terminal.status == "interrupted")
+                    if queued:
+                        session.queued_execution = None
+                    else:
+                        session.execution = session.queued_execution
+                        session.queued_execution = None
+                    if not queued and session.execution is not None:
+                        await self.notifications.session_state.session_state_update(
+                            session,
+                            "running",
+                            metadata={"source": "claude.turn.running"},
+                        )
                     execution.finished.set()
             return True
 
@@ -486,6 +703,8 @@ class ClaudeTurnRunner:
         session: ClaudeSession,
         execution: ClaudeExecution,
         terminal: ClaudeTerminalEvent,
+        *,
+        update_state: bool = True,
     ) -> None:
         reason = terminal.reason or execution.interrupt_reason
         if terminal.status == "failed":
@@ -501,6 +720,8 @@ class ClaudeTurnRunner:
                 outcome="failed",
                 metadata=metadata,
             )
+            if not update_state:
+                return
             await self.notifications.session_state.session_state_update(
                 session,
                 "error",
@@ -526,6 +747,8 @@ class ClaudeTurnRunner:
             outcome=terminal.status,
             metadata=metadata,
         )
+        if not update_state:
+            return
         await self.notifications.session_state.session_state_update(
             session,
             "idle",

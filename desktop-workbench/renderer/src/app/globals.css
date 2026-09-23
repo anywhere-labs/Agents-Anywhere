@@ -443,3 +443,11 @@ html[data-windows-title-bar] [data-slot="session-tool-sidebar"] {
 .dark .hljs-punctuation {
   color: #a1a1aa;
 }
+
+/* Keep wide display equations scrollable inside the message. */
+.markdown-body .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0.25rem;
+}

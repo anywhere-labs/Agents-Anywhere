@@ -13,6 +13,7 @@ import { detectDesktop } from '../desktop/detect.js'
 import { desktopOnboardingUrl, launchDesktop, newDesktopFlowId, type DesktopLauncher } from '../desktop/launch.js'
 import type { LocalMachineRegistry } from '../desktop/machine-state.js'
 import { acquireManagerLock, readJson, writeJson } from '../storage/files.js'
+import { migrateStateRoot } from '../storage/migration.js'
 import { LoopbackFlow } from './loopback.js'
 import type { ConnectorAction, ConnectorFolder, ConnectorSettings } from '../../contracts/connector.js'
 import { ConnectorSettingsStore, validateConnectorSettings } from '../connector/settings.js'
@@ -88,6 +89,7 @@ export class OnboardingManager {
   private async load(): Promise<void> {
     this.releaseLock = await acquireManagerLock(join(this.config.stateRoot, 'manager.lock'), () => this.loseOwnership())
     try {
+      await migrateStateRoot(this.config.stateRoot, this.config.legacyStateRoot)
       await this.refreshRole()
       await this.connectorSettings.load()
       this.resolvedUvPath = await resolveUv(this.config, this.connectorSettings.get())

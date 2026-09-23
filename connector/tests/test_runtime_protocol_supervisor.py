@@ -31,6 +31,39 @@ class FakeHost(RuntimeHostClient):
         return "conn_test"
 
 
+def test_storage_is_prepared_before_provider_creation_and_failure_blocks_start(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+    from connector.server.runtime_host import ConnectorRuntimeHost
+    from connector.server.sync_state import JsonSyncStateStore
+
+    async def run():
+        monkeypatch.setenv("AGENT_CONNECTOR_KV_FILE", str(tmp_path / "legacy-kv.json"))
+        host = ConnectorRuntimeHost("conn_test", AsyncMock(), AsyncMock(), JsonSyncStateStore(tmp_path / "state.json"))
+        provider = FakeProvider()
+        original = provider.create_runtime
+
+        async def create(config, bound):
+            assert (tmp_path / "conn_test" / "rti_a" / "sync-state.json").exists()
+            assert bound.runtime_kv.path == tmp_path / "conn_test" / "rti_a" / "kv.json"
+            await bound.sync_state_write("fake/history/x", {"seq": 7})
+            return await original(config, bound)
+
+        provider.create_runtime = create
+        supervisor = RuntimeSupervisor((provider,), host)
+        spec = RuntimeInstanceSpec(runtime_id="rti_a", runtime_type="fake", name="A")
+        await supervisor.start(spec, {})
+        await supervisor.stop("rti_a")
+        assert host.flush_runtime_storage()
+        state = JsonSyncStateStore(tmp_path / "conn_test" / "rti_a" / "sync-state.json")
+        assert state.get("fake", "conn_test", "fake/instances/rti_a/history/x").cursor == {"seq": 7}
+        (tmp_path / "legacy-kv.json").write_text("invalid")
+        with pytest.raises(RuntimeError):
+            await supervisor.start(RuntimeInstanceSpec(runtime_id="rti_b", runtime_type="fake", name="B"), {})
+        assert len(provider.created) == 1
+        assert supervisor.entry("rti_b").status == "error"
+    asyncio.run(run())
+
+
 class FakeRuntime(AgentRuntime):
     def __init__(self, runtime: str = "fake", fail_start: bool = False) -> None:
         self._runtime = runtime

@@ -102,6 +102,12 @@ curl http://127.0.0.1:8000/api/v2/health/ready
 
 | Variable | Purpose |
 | --- | --- |
+| `AGENT_SERVER_WORKERS` | Number of Uvicorn workers when launched with `uv run python -m agent_server.main` or the server Docker image. Defaults to `1`. More than one requires Redis and disallows `AGENT_SERVER_TIMELINE_SINGLE_INSTANCE`. |
+| `AGENT_SERVER_EVENT_WORKERS` | Compute subprocesses **per Uvicorn worker** for large outbound session events. Defaults to `2`; `0` disables offload. |
+| `AGENT_SERVER_EVENT_THRESHOLD_BYTES` | Minimum UTF-8 envelope size sent to a compute subprocess. Defaults to `262144` (256 KiB). Smaller events use shared inline preparation. |
+| `AGENT_SERVER_EVENT_QUEUE_ITEMS` | Maximum admitted large-event jobs per Uvicorn worker, including waiting and running jobs. Defaults to `32`. |
+| `AGENT_SERVER_EVENT_QUEUE_BYTES` | Maximum admitted large-event input bytes per Uvicorn worker. Defaults to `33554432` (32 MiB). This is not a limit on total process memory. |
+| `AGENT_SERVER_HOST` / `AGENT_SERVER_PORT` | Bind address/port for `agent_server.main`. Defaults to `127.0.0.1:8000`; the Docker image sets the host to `0.0.0.0`. |
 | `AGENT_SERVER_DB_URL` | Required PostgreSQL SQLAlchemy URL using the `postgresql+asyncpg` scheme. |
 | `AGENT_SERVER_DB_BACKEND` | Optional backend assertion. When set for runtime use, it must be `postgres`. |
 | `AGENT_SERVER_DB_POOL_SIZE` | PostgreSQL base connection pool size. Defaults to `10`. |
@@ -114,7 +120,7 @@ curl http://127.0.0.1:8000/api/v2/health/ready
 | `AGENT_SERVER_REDIS_CONNECT_TIMEOUT` | Redis connection timeout in seconds. Defaults to `5`. |
 | `AGENT_SERVER_REDIS_HEALTH_CHECK_INTERVAL` | Redis connection health-check interval in seconds. Defaults to `30`. |
 | `AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE` | Number of Timeline revisions reserved from PostgreSQL per Redis sequence lease. Defaults to `4096`. Larger leases reduce database writes but leave larger unused sequence gaps after Redis state loss. |
-| `AGENT_SERVER_INSTANCE_ID` | Optional unique Server instance ID used for Connector RPC routing. A random ID is generated when unset. |
+| `AGENT_SERVER_INSTANCE_ID` | Optional Server instance ID for Connector RPC routing. With multiple workers the process ID is appended, so workers do not claim the same RPC route. A random ID is generated when unset. |
 | `AGENT_SERVER_FILES_BACKEND` | File storage backend. Use `local` or `s3`. Defaults to `local`. |
 | `AGENT_SERVER_FILES_LOCAL_ROOT` | Local attachment/file root. Defaults next to the database. |
 | `AGENT_SERVER_FILES_S3_BUCKET` | S3 bucket name when `AGENT_SERVER_FILES_BACKEND=s3`. |
@@ -161,6 +167,20 @@ only for single-process development, not as a production durability mode.
 
 See `../docs/server-architecture.md` for layer boundaries, state ownership, and
 database versioning rules.
+
+## Multi-worker deployment
+
+For the measured 8 CPU starting profile, use `docker/docker-compose.8cpu.yml`.
+It runs four Uvicorn workers with one compute child each, with an aggregate
+PostgreSQL connection ceiling of 32 and 64 MiB of admitted event input.
+Runtime-state projections are shared through Redis and fetched in one batch for
+Dashboard lists. Reconstructible runtime-state entries expire after 24 hours;
+accepted Timeline writes retain their separate, non-expiring persistence rules.
+Concurrent background state refreshes share a renewable Redis lease, preventing
+each worker from independently asking the runtime to replay the same session.
+
+See [session pipeline measurements](../docs/performance/session-pipeline.md) for
+the tested workloads, queue/recovery behavior and deployment limits.
 
 ## Main API Areas
 

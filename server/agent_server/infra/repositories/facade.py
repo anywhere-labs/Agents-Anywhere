@@ -9,15 +9,19 @@ from agent_server.infra.repositories.active_runs_facade import ActiveRunReposito
 from agent_server.infra.repositories.attachments import AttachmentRepositoryMixin
 from agent_server.infra.repositories.connectors import ConnectorRepositoryMixin
 from agent_server.infra.repositories.device_runtimes import DeviceRuntimeRepositoryMixin
-from agent_server.infra.repositories.instance_settings_facade import InstanceSettingsRepositoryMixin
+from agent_server.infra.repositories.instance_settings_facade import (
+    InstanceSettingsRepositoryMixin,
+)
 from agent_server.infra.repositories.oauth import OAuthRepositoryMixin
-from agent_server.infra.repositories.protocol_catalogs import ProtocolCatalogRepositoryMixin
 from agent_server.infra.repositories.projects import ProjectRepositoryMixin
+from agent_server.infra.repositories.protocol_catalogs import (
+    ProtocolCatalogRepositoryMixin,
+)
 from agent_server.infra.repositories.sessions import SessionRepositoryMixin
 from agent_server.infra.repositories.shares import SessionShareRepositoryMixin
+from agent_server.infra.repositories.store_support import *
 from agent_server.infra.repositories.timeline import TimelineRepositoryMixin
 from agent_server.infra.repositories.users import UserRepositoryMixin
-from agent_server.infra.repositories.store_support import *
 
 _MAX_TRACKED_LOCKS = 4096
 _TRACKED_LOCK_IDLE_SECONDS = 900.0
@@ -62,6 +66,17 @@ class Store(
         self._session_revision_fence_factory: Any | None = None
         self._session_revision_publisher: Any | None = None
         self._session_revision_range_sealer: Any | None = None
+        self._connector_lifecycle_factory: Any | None = None
+
+    def bind_connector_lifecycle(self, factory: Any) -> None:
+        self._connector_lifecycle_factory = factory
+
+    @asynccontextmanager
+    async def connector_lifecycle(self, connector_id: str) -> AsyncIterator[None]:
+        factory = self._connector_lifecycle_factory
+        guard = factory(connector_id) if factory else await self.timeline_lock(f"connector:{connector_id}")
+        async with guard:
+            yield
 
     def bind_session_revision_fence(self, factory: Any) -> None:
         """Bind the app-scoped coordinator used by revision-producing writes."""

@@ -24,12 +24,13 @@ export const Config: z<Config> = z.object({
 export interface ResolvedConfig extends ConnectionSettings {
   dshHome?: string
   stateRoot: string
+  legacyStateRoot?: string
   connectorSourceDir: string
   uvPath: string
 }
 
 export function stateRoot(config: Config): string {
-  return config.stateRoot ?? join(userInfo().homedir, '.agentsanywhere', 'dsh-bridge-next')
+  return config.stateRoot ?? join(userInfo().homedir, '.agents-anywhere', 'dsh-bridge-next')
 }
 
 export function resolveConfig(config: Config): ResolvedConfig {
@@ -40,6 +41,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
   return {
     ...(config.dshHome !== undefined ? { dshHome: config.dshHome } : {}),
     stateRoot: root,
+    ...(config.stateRoot === undefined ? { legacyStateRoot: join(userInfo().homedir, '.agentsanywhere', 'dsh-bridge-next') } : {}),
     connectorSourceDir,
     apiBaseUrl: normalizeServerOrigin(config.apiBaseUrl ?? CLOUD_API_BASE_URL),
     uvPath: config.uvPath ?? process.env['UV_PATH'] ?? 'uv',

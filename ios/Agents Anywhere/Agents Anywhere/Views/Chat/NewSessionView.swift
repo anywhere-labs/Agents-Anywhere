@@ -50,14 +50,14 @@ struct NewSessionView: View, Equatable {
                     canSelectPermission: model.prepared?.capabilities.allows("catalog.permission") == true,
                     isBusy: model.isCreating, isLoadingSettings: model.isPreparing,
                     onSend: { text in if let session = await model.create(text: text) { onCreated(session) } },
-                    onApplySettings: { model.saveSelections(); return true })
+                    onApplySettings: { model.saveSelections(); return true },
+                    onDraftChange: { model.saveDraft() })
             }
         }
         .modifier(ChatPageToolbar(title: "", onMenu: onMenu))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) { targetButton }
         }
-        .onChange(of: model.draft.text) { _, _ in model.saveDraft() }
         .sheet(isPresented: $showsTarget) {
             SessionTargetSheet(model: model)
         }

@@ -5,6 +5,7 @@ from __future__ import annotations
 from connector.runtimes.dsh.identity import model_selection_id, permission_selection_id
 
 import asyncio
+import hashlib
 import sys
 from pathlib import Path
 
@@ -27,14 +28,17 @@ async def main(home: Path) -> None:
     app = create_app(home / "questions-test.sqlite3")
     await app.state.store.create_user(user_id="question-test", password_hash="test-only")
     async with app.router.lifespan_context(app):
-        connector, _, _ = await app.state.store.create_connector(name="question-test", user_id="question-test")
+        connector, credential, _ = await app.state.store.create_connector(name="question-test", user_id="question-test")
         transport = IngestTransport(app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ingest_http, httpx.AsyncClient(
             transport=httpx.ASGITransport(app), base_url="http://test/api/v2",
             headers={"Authorization": f"Bearer {create_user_access_token('question-test')}"},
         ) as web:
             async def token(_force):
-                return create_connector_access_token(connector.id)
+                return create_connector_access_token(
+                    connector.id,
+                    credential_hash=hashlib.sha256(credential.encode("utf-8")).hexdigest(),
+                )
 
             ingest = ConnectorIngestClient("http://test", token, lambda: ingest_http, lambda _timeout: ingest_http)
 

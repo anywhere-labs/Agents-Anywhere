@@ -41,7 +41,6 @@ from agent_server.core.models import (
     UpdateProfileRequest,
     UserView,
 )
-from agent_server.core.setup_token import SetupToken
 from agent_server.core.utc import utc_now
 from agent_server.deps import current_user, current_user_id, get_store
 from agent_server.infra.repositories.email_accounts import (
@@ -64,10 +63,11 @@ from agent_server.services.oauth import (
     return_to_from_state,
     verify_pending_token,
 )
+from agent_server.services.setup_tokens import SetupTokenService
 
 
-def _setup_token(request: Request) -> SetupToken:
-    return request.app.state.setup_token
+def _setup_token(request: Request) -> SetupTokenService:
+    return SetupTokenService(request.app.state.setup_token, request.app.state.redis)
 
 
 router = APIRouter(tags=["auth"])
@@ -94,7 +94,7 @@ async def auth_config(
         # Touching the token here is intentional — if it expired since last
         # check, the operator should already see the freshly-generated one in
         # the server log by the time they hit refresh.
-        expires_at = _setup_token(request).current_expires_at_iso()
+        expires_at = await _setup_token(request).current_expires_at_iso()
     oauth_config = await db.get_oauth_provider_config()
     return AuthConfigResponse(
         emailVerificationRequired=bool((await get_email_settings(db)).get("enabled")),
@@ -134,7 +134,7 @@ async def auth_register(
     # Pre-check rather than relying on bootstrap_first_admin's None return —
     # we want to reject before touching the DB when the setup token is wrong.
     if await db.count_users() == 0:
-        if not _setup_token(request).verify(payload.setupToken):
+        if not await _setup_token(request).verify(payload.setupToken):
             raise HTTPException(
                 status_code=401,
                 detail="invalid or expired setup token — find the current token in the server log",
@@ -155,7 +155,7 @@ async def auth_register(
         raise _value_error_to_http(exc) from exc
 
     if bootstrap_user is not None:
-        _setup_token(request).consume()
+        await _setup_token(request).consume()
         return _auth_response(bootstrap_user)
 
     if not await db.is_registration_open():
@@ -203,7 +203,7 @@ async def send_email_code(
             payload.pendingToken and verify_pending_token(payload.pendingToken)
             and await db.is_oauth_registration_open()
         )
-        bootstrap_allowed = await db.count_users() == 0 and _setup_token(request).verify(payload.setupToken)
+        bootstrap_allowed = await db.count_users() == 0 and await _setup_token(request).verify(payload.setupToken)
         if not (await db.is_registration_open() or (user and user.role == "admin") or oauth_allowed or bootstrap_allowed):
             raise HTTPException(status_code=403, detail="registration is closed")
     if not (await get_email_settings(db)).get("enabled"):

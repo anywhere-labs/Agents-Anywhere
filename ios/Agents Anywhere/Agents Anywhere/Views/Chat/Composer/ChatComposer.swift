@@ -13,6 +13,9 @@ struct ChatComposer: View {
     let onSend: () -> Void
     let onStop: () -> Void
     let onOptions: () -> Void
+    /// Reports draft mutations from this subtree only. Persisting the draft
+    /// must not make the page root observe the editor's text.
+    var onDraftChange: () -> Void = {}
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var glass
@@ -65,6 +68,11 @@ struct ChatComposer: View {
         .padding(.top, 8)
         .padding(.bottom, 10)
         .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: draft.isExpanded)
+        // The composer is the only subtree that already re-evaluates on every
+        // keystroke, including each Chinese IME marked-text update. Observing
+        // the draft from the page root re-evaluated the whole conversation.
+        .onChange(of: draft.text) { _, _ in onDraftChange() }
+        .onChange(of: draft.attachments) { _, _ in onDraftChange() }
     }
 
     private var attachmentTray: some View {

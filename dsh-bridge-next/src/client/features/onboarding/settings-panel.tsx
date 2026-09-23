@@ -1,3 +1,4 @@
+import { translateMessage, type Translate } from '../../locales.js'
 import { useEffect, useId, useState } from 'react'
 import { Button, Input, Menu, RiskConfirmation, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ChevronDown, FolderOpen, Power, RotateCw } from 'lucide-react'
@@ -19,8 +20,8 @@ function Choice({ label, value, options, disabled, onChange }: {
     </Button>} />
 }
 
-export function SettingsPanel({ host, state, snapshot, onConnection }: {
-  host: OnboardingHostApi; state: OnboardingState; snapshot: OnboardingSnapshot; onConnection: () => void
+export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
+  t: Translate; host: OnboardingHostApi; state: OnboardingState; snapshot: OnboardingSnapshot; onConnection: () => void
 }) {
   const management = snapshot.connector
   const [draft, setDraft] = useState(management?.settings)
@@ -30,10 +31,10 @@ export function SettingsPanel({ host, state, snapshot, onConnection }: {
   const id = useId()
   const signature = JSON.stringify(management?.settings)
   useEffect(() => { setDraft(management?.settings) }, [signature])
-  if (!management || !draft) return <p className={css.hint} role="status">请重启 DSH Host，以加载 Connector 管理接口。</p>
+  if (!management || !draft) return <p className={css.hint} role="status">{t('请重启 DSH Host，以加载 Connector 管理接口。')}</p>
   const connecting = ['authorizing', 'pairing', 'starting'].includes(snapshot.stage)
   const busy = state.busy || connecting || Boolean(state.readError)
-  const status = connectorStatus(snapshot, state.readError)
+  const status = connectorStatus(snapshot, state.readError, t)
   const dirty = JSON.stringify(draft) !== signature
   const mirror = PYPI_MIRRORS.find(mirror => mirror.url === draft.uvPypiIndexUrl)?.id ?? 'default'
   const update = <K extends keyof typeof draft>(key: K, value: (typeof draft)[K]) => {
@@ -53,21 +54,21 @@ export function SettingsPanel({ host, state, snapshot, onConnection }: {
   return <section className={css.panel} aria-busy={state.busy}>
     <div className={css.section}>
       <div className={css.row}>
-        <h3>{management.deviceName || '此设备'}</h3>
+        <h3>{management.deviceName || t('此设备')}</h3>
         <span className={css.status}><StateDot state={status.state} />{status.label}</span>
       </div>
       <dl className={css.details}>
-        <dt>Connector ID</dt><dd>{snapshot.connectorId ?? '尚未连接'}</dd>
-        <dt>服务器</dt><dd>{snapshot.settings.apiBaseUrl}</dd>
+        <dt>Connector ID</dt><dd>{snapshot.connectorId ?? t('尚未连接')}</dd>
+        <dt>{t('服务器')}</dt><dd>{snapshot.settings.apiBaseUrl}</dd>
       </dl>
-      {status.detail ? <p className={css.hint} role="status">{status.detail}</p> : null}
+      {status.detail ? <p className={css.hint} role="status">{translateMessage(t, status.detail)}</p> : null}
       {!snapshot.account || snapshot.deviceRecovery ? <Button variant="outline" onClick={onConnection}>
-        {snapshot.account ? '前往恢复连接' : '前往登录'}
+        {snapshot.account ? t('前往恢复连接') : t('前往登录')}
       </Button> : <div className={css.actions}>
         {snapshot.connectorRunning ? <>
-          <Button variant="outline" icon={<Power size={14} />} disabled={state.busy} onClick={() => void state.run(() => host.controlConnector('stop'))}>停止 Connector</Button>
-          <Button variant="outline" icon={<RotateCw size={14} />} disabled={busy} onClick={() => void state.run(() => host.controlConnector('restart'))}>重启 Connector</Button>
-        </> : <Button variant="outline" icon={<Power size={14} />} disabled={busy} onClick={() => void state.run(() => host.controlConnector('start'))}>启动 Connector</Button>}
+          <Button variant="outline" icon={<Power size={14} />} disabled={state.busy} onClick={() => void state.run(() => host.controlConnector('stop'))}>{t('停止 Connector')}</Button>
+          <Button variant="outline" icon={<RotateCw size={14} />} disabled={busy} onClick={() => void state.run(() => host.controlConnector('restart'))}>{t('重启 Connector')}</Button>
+        </> : <Button variant="outline" icon={<Power size={14} />} disabled={busy} onClick={() => void state.run(() => host.controlConnector('start'))}>{t('启动 Connector')}</Button>}
       </div>}
     </div>
 
@@ -76,59 +77,59 @@ export function SettingsPanel({ host, state, snapshot, onConnection }: {
       if (!busy && dirty) void state.run(() => host.saveConnectorSettings(draft)).then(success => { if (success) setSaved(true) })
     }}>
       <div className={css.section}>
-        <h3>运行环境</h3>
-        <label className={css.field} htmlFor={`${id}-uv`}>uv 路径</label>
+        <h3>{t('运行环境')}</h3>
+        <label className={css.field} htmlFor={`${id}-uv`}>{t('uv 路径')}</label>
         <Input id={`${id}-uv`} className={css.input!} disabled={busy} value={draft.uvPath} spellCheck={false}
-          placeholder="留空使用内置 uv" autoComplete="off" onChange={event => update('uvPath', event.target.value)} />
-        <p className={css.hint}>当前路径：<span className={css.path}>{management.resolvedUvPath || '未找到 uv'}</span></p>
+          placeholder={t('留空使用内置 uv')} autoComplete="off" onChange={event => update('uvPath', event.target.value)} />
+        <p className={css.hint}>{t('当前路径：')}<span className={css.path}>{management.resolvedUvPath || t('未找到 uv')}</span></p>
         <div className={css.row}>
-          <span>Python 下载镜像</span>
-          <Choice label="Python 下载镜像" value={PYTHON_MIRRORS.find(item => item.url === draft.uvPythonInstallMirror)?.id ?? 'default'} disabled={busy}
-            options={PYTHON_MIRRORS.map(({ id, label }) => ({ id, label }))}
+          <span>{t('Python 下载镜像')}</span>
+          <Choice label={t('Python 下载镜像')} value={PYTHON_MIRRORS.find(item => item.url === draft.uvPythonInstallMirror)?.id ?? 'default'} disabled={busy}
+            options={PYTHON_MIRRORS.map(({ id, label }) => ({ id, label: translateMessage(t, label) }))}
             onChange={id => update('uvPythonInstallMirror', PYTHON_MIRRORS.find(item => item.id === id)!.url)} />
         </div>
         <div className={css.row}>
-          <span>PyPI 镜像</span>
-          <Choice label="PyPI 镜像" value={mirror} disabled={busy} options={PYPI_MIRRORS.map(({ id, label }) => ({ id, label }))}
+          <span>{t('PyPI 镜像')}</span>
+          <Choice label={t('PyPI 镜像')} value={mirror} disabled={busy} options={PYPI_MIRRORS.map(({ id, label }) => ({ id, label: translateMessage(t, label) }))}
             onChange={id => update('uvPypiIndexUrl', PYPI_MIRRORS.find(mirror => mirror.id === id)!.url)} />
         </div>
       </div>
 
       <div className={css.section}>
-        <h3>同步设置</h3>
+        <h3>{t('同步设置')}</h3>
         <div className={css.row}>
-          <div><span>同步间隔</span><p className={css.hint}>用于定时扫描的 Agent；DSH 消息实时同步</p></div>
-          <Choice label="同步间隔" disabled={busy} value={String(draft.syncIntervalSeconds)}
-            options={[...new Set([...SYNC_INTERVALS, draft.syncIntervalSeconds])].sort((a, b) => a - b).map(value => ({ id: String(value), label: `${value} 秒` }))}
+          <div><span>{t('同步间隔')}</span><p className={css.hint}>{t('用于定时扫描的 Agent；DSH 消息实时同步')}</p></div>
+          <Choice label={t('同步间隔')} disabled={busy} value={String(draft.syncIntervalSeconds)}
+            options={[...new Set([...SYNC_INTERVALS, draft.syncIntervalSeconds])].sort((a, b) => a - b).map(value => ({ id: String(value), label: t('{count} 秒', { count: value }) }))}
             onChange={value => update('syncIntervalSeconds', Number(value))} />
         </div>
         <div className={css.save}>
-          {saved && !dirty ? <span className={css.hint} role="status">设置已保存</span> : null}
+          {saved && !dirty ? <span className={css.hint} role="status">{t('设置已保存')}</span> : null}
           <Button type="submit" variant="primary" disabled={busy || !dirty}>
-            {state.busy ? '正在保存…' : snapshot.connectorRunning ? '保存并重启' : '保存设置'}
+            {state.busy ? t('正在保存…') : snapshot.connectorRunning ? t('保存并重启') : t('保存设置')}
           </Button>
         </div>
       </div>
     </form>
 
     <div className={css.section}>
-      <h3>维护</h3>
+      <h3>{t('维护')}</h3>
       <div className={css.actions}>
         <Button variant="outline" icon={<FolderOpen size={14} />} disabled={state.busy || !management.canOpenFolders}
-          onClick={() => void state.run(() => host.openConnectorFolder('data'))}>打开数据目录</Button>
+          onClick={() => void state.run(() => host.openConnectorFolder('data'))}>{t('打开数据目录')}</Button>
         <Button variant="outline" icon={<FolderOpen size={14} />} disabled={state.busy || !management.canOpenFolders}
-          onClick={() => void state.run(() => host.openConnectorFolder('logs'))}>打开日志目录</Button>
+          onClick={() => void state.run(() => host.openConnectorFolder('logs'))}>{t('打开日志目录')}</Button>
         <Button variant="outline" className={css.danger} disabled={busy}
-          onClick={() => { setReset('normal'); setAcknowledged(false); state.clearError() }}>恢复出厂设置</Button>
+          onClick={() => { setReset('normal'); setAcknowledged(false); state.clearError() }}>{t('恢复出厂设置')}</Button>
       </div>
-      {!management.canOpenFolders ? <p className={css.hint}>当前环境不支持打开本机目录。</p> : null}
-      <RiskConfirmation open={reset !== null} title={reset === 'force' ? '无法撤销连接' : '恢复出厂设置'}
-        description={reset === 'force' ? '服务端撤销失败，本地数据尚未清理。可以取消后重试，或仅清理本地数据；原设备凭据在服务端可能仍有效。'
-          : '将撤销当前设备凭据、停止 Connector，并清除本插件的本地连接数据。DSH 会话和共享的设备记录会保留。'}
-        acknowledgeLabel="我了解恢复出厂设置的影响" acknowledged={acknowledged} onAcknowledgedChange={setAcknowledged}
-        cancelLabel="取消" closeLabel="关闭恢复出厂设置确认" confirmLabel={reset === 'force' ? '仅清理本地数据' : '确认恢复出厂设置'}
+      {!management.canOpenFolders ? <p className={css.hint}>{t('当前环境不支持打开本机目录。')}</p> : null}
+      <RiskConfirmation open={reset !== null} title={reset === 'force' ? t('无法撤销连接') : t('恢复出厂设置')}
+        description={reset === 'force' ? t('服务端撤销失败，本地数据尚未清理。可以取消后重试，或仅清理本地数据；原设备凭据在服务端可能仍有效。')
+          : t('将撤销当前设备凭据、停止 Connector，并清除本插件的本地连接数据。DSH 会话和共享的设备记录会保留。')}
+        acknowledgeLabel={t('我了解恢复出厂设置的影响')} acknowledged={acknowledged} onAcknowledgedChange={setAcknowledged}
+        cancelLabel={t('取消')} closeLabel={t('关闭恢复出厂设置确认')} confirmLabel={reset === 'force' ? t('仅清理本地数据') : t('确认恢复出厂设置')}
         disabled={state.busy} onCancel={() => { if (!state.busy) { setReset(null); state.clearError() } }} onConfirm={() => void confirmReset()} />
     </div>
-    {state.error ? <p className={css.error} role="alert">{state.error}</p> : null}
+    {state.error ? <p className={css.error} role="alert">{translateMessage(t, state.error)}</p> : null}
   </section>
 }

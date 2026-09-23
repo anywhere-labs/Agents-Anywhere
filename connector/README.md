@@ -59,10 +59,54 @@ The default config path is `~/.agents-anywhere/connector.json`. Override it with
 
 Connector configuration, runtime ownership, sync state, and attachments all
 live under `~/.agents-anywhere` by default. Runtime sync cursors are stored as
-atomic JSON in `connector-state.json`; Connector does not use SQLite. On first
+atomic JSON in `<connectorId>/<runtimeId>/sync-state.json`; runtime message
+bindings use the adjacent `kv.json`. Connector prepares these stores before
+constructing a runtime and retains all opened stores for periodic/shutdown flush,
+including stopped instances. Existing sync and KV keys and read/write interfaces
+are unchanged, including runtime source-key isolation. Connector does not use SQLite. On first
 use, the v2 connector performs a one-time local data migration from the old
 `~/.agent-server` directory into `~/.agents-anywhere` and discards obsolete
 SQLite sync state.
+
+When an instance directory does not exist, startup copies the entire legacy
+`connector-state.json` and `connector-kv.json` into a temporary directory and
+publishes it after both files validate. Legacy files remain untouched apart from
+flushing pending committed sync state before copying. Existing instance directories
+are never recopied or merged; reads and deletes do not fall back to legacy data.
+Copied files retain their old namespaces, so foreign instance records are not
+selected by that runtime's normal keys. A failed migration blocks that runtime's
+startup and can be retried. Agent-native histories and the machine ownership record
+are not relocated.
+
+Codex recovery uses an optional read-only native history index to avoid loading
+unchanged message bodies. For standalone paginated histories, it verifies that
+`thread_history_1.sqlite` has consumed the current rollout, then compares every
+turn's metadata and item update ordinals with its committed checkpoint. Unchanged,
+settled history needs no history RPC after restart. New turns normally require one
+20-turn page; the previous tail is rechecked. Changes to older turns read back to
+the earliest changed turn. Prefix item counts preserve timeline ordering.
+
+The index is an optimization, not another data owner: it is opened read-only and
+never repaired or migrated by AA. Unknown schemas, lagging projections, inherited
+histories, compaction, missing sources or invalid checkpoints use the full history
+RPC. Deletion, reordering and source replacement require full calibration. Changes
+during a paginated read abort the checkpoint commit and retry on the next scan.
+Native file identity, size and nanosecond mtime supplement the API's second-resolution
+change marker. Index validation and checkpoint metadata still scale with history
+size, but unchanged message bodies are neither fetched nor projected.
+
+Each projected item is compared with its last successfully ingested fingerprint in `sync-state.json`.
+Unchanged items are omitted, including after reconnect/restart; new and modified
+items are sent as a delta. First sync sends all items. Item removals or incompatible
+checkpoint versions use a session replacement snapshot. Replacement is deferred
+while a session is active, without committing its checkpoint. Failed ingestion
+never advances the prepared fingerprint state. Live notifications do not advance
+this scanner checkpoint, so the latest live items can be safely resent once by
+the next successful scan. Fingerprints scale with the number of timeline items.
+Recovery progress is tracked per session, so one failing session does not force
+all successful sessions to reread their history on every poll. Codex's active-writer
+conflict is reported as a takeover failure before sending the message; AA cannot
+silently displace another native client holding the writer lock.
 
 ## Local startup ownership
 
@@ -136,7 +180,8 @@ The server can ask an online connector to perform local work:
 | `AGENT_SERVER_URL` | Server URL used when `--server-url` is omitted. |
 | `AGENT_CONNECTOR_ID` | Connector id used when `--connector-id` is omitted. |
 | `AGENT_CONNECTOR_TOKEN` | Connector token used when `--connector-token` is omitted. |
-| `AGENT_CONNECTOR_STATE_FILE` | Runtime sync state JSON path. Defaults to `~/.agents-anywhere/connector-state.json`. |
+| `AGENT_CONNECTOR_STATE_FILE` | Legacy sync state source; its parent is the root for new `<connectorId>/<runtimeId>/` directories. Defaults to `~/.agents-anywhere/connector-state.json`. Config `statePath` takes precedence. |
+| `AGENT_CONNECTOR_KV_FILE` | Legacy KV copy source. Defaults to `~/.agents-anywhere/connector-kv.json`; new runtime writes use the instance's `kv.json`. |
 | `AGENT_CONNECTOR_ATTACHMENTS_ROOT` | Runtime attachment download directory. Defaults to `~/.agents-anywhere/attachments`. |
 | `CLAUDE_BIN` | Explicit Claude Code CLI path. |
 
@@ -146,3 +191,5 @@ The server can ask an online connector to perform local work:
 uv run ruff check connector tests
 uv run pytest -q
 ```
+
+DSH 插件默认将私有数据存放在 `~/.agents-anywhere/dsh-bridge-next/`，其托管 Connector 通过 `AGENT_CONNECTOR_DATA_DIR` 使用其中的 `connector/` 子目录。插件首次启动负责迁移旧 `.agentsanywhere/dsh-bridge-next/` 数据；通用 Connector 的默认路径和自定义环境变量行为不变。

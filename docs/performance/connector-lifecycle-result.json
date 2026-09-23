@@ -1,0 +1,93 @@
+{
+  "scope": "local SQLite, real services, synthetic 200 unchanged imported sessions; no network listeners",
+  "scan_sessions": 200,
+  "samples": {
+    "current_scan": {
+      "sql": {
+        "UPDATE": 201,
+        "SELECT": 401
+      },
+      "total_sql": 602,
+      "session_views": 0,
+      "wall_ms": 415.67,
+      "loop_cpu_ms": 181.523,
+      "process_cpu_ms": 346.275,
+      "repeats": 3
+    },
+    "inventory_only_replay": {
+      "sql": {
+        "UPDATE": 2,
+        "SELECT": 1
+      },
+      "total_sql": 3,
+      "session_views": 0,
+      "wall_ms": 7.731,
+      "loop_cpu_ms": 4.099,
+      "process_cpu_ms": 7.172,
+      "repeats": 3
+    }
+  },
+  "identical_scan_rows": true,
+  "capability_batch": {
+    "sql": {
+      "SELECT": 803
+    },
+    "total_sql": 803,
+    "session_views": 200,
+    "wall_ms": 646.134,
+    "loop_cpu_ms": 281.57,
+    "process_cpu_ms": 516.518,
+    "calls": {
+      "get_session_seq": 600,
+      "is_online": 200,
+      "get_protocol_capabilities_stamp": 200,
+      "get_protocol_capabilities": 1,
+      "publish": 200
+    }
+  },
+  "normal_close": {
+    "sql": {
+      "SELECT": 40,
+      "UPDATE": 20
+    },
+    "total_sql": 60,
+    "session_views": 0,
+    "wall_ms": 38.77,
+    "loop_cpu_ms": 22.046,
+    "process_cpu_ms": 50.984,
+    "pending_after_close": 0
+  },
+  "delete_and_cancel": {
+    "sql": {
+      "UPDATE": 1,
+      "SELECT": 3,
+      "DELETE": 4
+    },
+    "total_sql": 8,
+    "session_views": 0,
+    "wall_ms": 16.372,
+    "loop_cpu_ms": 7.079,
+    "process_cpu_ms": 13.399
+  },
+  "deleted_backlog": {
+    "sql": {},
+    "total_sql": 0,
+    "session_views": 0,
+    "wall_ms": 0.024,
+    "loop_cpu_ms": 0.025,
+    "process_cpu_ms": 0.025,
+    "queued": 500,
+    "handlers_entered": 4,
+    "tracebacks": 0,
+    "formatted_traceback_bytes": 0,
+    "pending_after_close": 0,
+    "socket_close": [
+      {
+        "code": 4001,
+        "reason": "connector deleted"
+      }
+    ],
+    "first_error": null,
+    "sessions_remain_deleted": true
+  }
+}

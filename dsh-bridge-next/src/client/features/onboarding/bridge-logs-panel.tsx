@@ -1,3 +1,4 @@
+import { translateMessage, type Translate } from '../../locales.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { OnboardingHostApi } from '../../../contracts/index.js'
@@ -5,18 +6,18 @@ import type { BridgeLogSnapshot } from '../../../contracts/logs.js'
 import { ConnectorLogsPanel } from './connector-logs-panel.js'
 import css from './bridge-logs-panel.module.css'
 
-export function BridgeLogsPanel({ host }: { host: OnboardingHostApi }) {
+export function BridgeLogsPanel({ t, host }: { t: Translate; host: OnboardingHostApi }) {
   const [source, setSource] = useState<'bridge' | 'connector'>('bridge')
   return <div>
-    <div className={css.sources} role="group" aria-label="日志来源">
+    <div className={css.sources} role="group" aria-label={t('日志来源')}>
       <Button variant={source === 'bridge' ? 'primary' : 'outline'} aria-pressed={source === 'bridge'} onClick={() => setSource('bridge')}>Bridge</Button>
       <Button variant={source === 'connector' ? 'primary' : 'outline'} aria-pressed={source === 'connector'} onClick={() => setSource('connector')}>Connector</Button>
     </div>
-    {source === 'bridge' ? <BridgeLogView host={host} /> : <ConnectorLogsPanel host={host} />}
+    {source === 'bridge' ? <BridgeLogView t={t} host={host} /> : <ConnectorLogsPanel t={t} host={host} />}
   </div>
 }
 
-function BridgeLogView({ host }: { host: OnboardingHostApi }) {
+function BridgeLogView({ t, host }: { t: Translate; host: OnboardingHostApi }) {
   const [snapshot, setSnapshot] = useState<BridgeLogSnapshot | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [paused, setPaused] = useState(false)
@@ -49,28 +50,28 @@ function BridgeLogView({ host }: { host: OnboardingHostApi }) {
   }, [paused, refresh])
 
   const occurrences = new Map<string, number>()
-  return <section className={css.panel} aria-label="运行日志">
+  return <section className={css.panel} aria-label={t('运行日志')}>
     <div className={css.toolbar}>
-      <div><h3>运行日志</h3><p>最近 200 条记录 · 点击查看详情</p></div>
+      <div><h3>{t('运行日志')}</h3><p>{t('最近 200 条记录 · 点击查看详情')}</p></div>
       <div className={css.actions}>
-        <Button variant="ghost" onClick={() => setPaused(value => !value)}>{paused ? '继续刷新' : '暂停刷新'}</Button>
-        <Button variant="outline" disabled={busy} onClick={() => void refresh()}>刷新</Button>
+        <Button variant="ghost" onClick={() => setPaused(value => !value)}>{paused ? t('继续刷新') : t('暂停刷新')}</Button>
+        <Button variant="outline" disabled={busy} onClick={() => void refresh()}>{t('刷新')}</Button>
       </div>
     </div>
-    <p className={css.status} role="status">{snapshot ? `${paused ? '已暂停' : '每 2 秒刷新'} · 更新于 ${new Date(snapshot.updatedAt).toLocaleTimeString()}` : error ? '尚未读取到日志' : '正在读取运行日志…'}</p>
-    {error ? <p className={css.error} role="alert">{error}</p> : null}
-    {snapshot?.entries.length === 0 ? <p className={css.empty}>暂无运行记录。连接启动或收到请求后，日志会显示在这里。</p> : null}
-    <ol className={css.entries} aria-label="运行日志记录" tabIndex={0}>
+    <p className={css.status} role="status">{snapshot ? t('{status} · 更新于 {time}', { status: paused ? t('已暂停') : t('每 2 秒刷新'), time: new Date(snapshot.updatedAt).toLocaleTimeString(t('locale.code')) }) : error ? t('尚未读取到日志') : t('正在读取运行日志…')}</p>
+    {error ? <p className={css.error} role="alert">{translateMessage(t, error)}</p> : null}
+    {snapshot?.entries.length === 0 ? <p className={css.empty}>{t('暂无运行记录。连接启动或收到请求后，日志会显示在这里。')}</p> : null}
+    <ol className={css.entries} aria-label={t('运行日志记录')} tabIndex={0}>
       {[...(snapshot?.entries ?? [])].reverse().map(entry => {
         const identity = entry.id ?? `${entry.time}-${entry.event}-${entry.details}`
         const occurrence = occurrences.get(identity) ?? 0
         occurrences.set(identity, occurrence + 1)
         const outcome = entry.outcome ?? (entry.level === 'error' ? 'failure' : 'info')
-        const label = { success: '成功', failure: '失败', pending: '进行中', info: entry.level === 'warn' ? '提示' : '记录' }[outcome]
+        const label = { success: t('成功'), failure: t('失败'), pending: t('进行中'), info: entry.level === 'warn' ? t('提示') : t('记录') }[outcome]
         return <li key={`${identity}-${occurrence}`} className={css.entry} data-outcome={outcome}>
           <details>
             <summary className={css.summary}>
-              <time dateTime={entry.time}>{new Date(entry.time).toLocaleTimeString()}</time>
+              <time dateTime={entry.time}>{new Date(entry.time).toLocaleTimeString(t('locale.code'))}</time>
               <code title={entry.method ?? entry.event}>{entry.method ?? entry.event}</code>
               <span className={css.outcome}>{label}</span>
             </summary>

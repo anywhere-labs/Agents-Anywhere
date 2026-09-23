@@ -1,0 +1,36 @@
+name: agents-anywhere-cluster-a
+services:
+  server:
+    image: ${AGENTS_ANYWHERE_SERVER_IMAGE:?Set the release image}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      AGENT_SERVER_HOST: 0.0.0.0
+      AGENT_SERVER_PORT: 8000
+      AGENT_SERVER_WORKERS: 3
+      AGENT_SERVER_EVENT_WORKERS: 1
+      AGENT_SERVER_DB_POOL_SIZE: 5
+      AGENT_SERVER_DB_MAX_OVERFLOW: 5
+      AGENT_SERVER_FILES_BACKEND: s3
+      AGENT_SERVER_STATIC_DIR: /app/web-static
+    ports:
+      - "127.0.0.1:8000:8000"
+    stop_grace_period: 60s
+    mem_limit: 14g
+    cpus: 3.5
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v2/health/ready', timeout=5)"]
+      interval: 20s
+      timeout: 8s
+      retries: 3
+      start_period: 60s
+  migrate:
+    image: ${AGENTS_ANYWHERE_SERVER_IMAGE:?Set the release image}
+    env_file: .env
+    profiles: [migration]
+    command: [uv, run, --no-sync, python, -m, agent_server.infra.db.migrations, upgrade]

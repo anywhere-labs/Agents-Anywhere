@@ -40,10 +40,33 @@ class ConnectorIngestClient:
         self._access_token_provider = access_token_provider
         self._http_client_getter = http_client_getter
         self._http_client_factory = http_client_factory
-        self._notify_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._notify_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1024)
+        self._inflight: list[dict[str, Any]] = []
+        self._retry_delay = 1.0
+        self._closed: Exception | None = None
+        self._post_lock = asyncio.Lock()
+        self._available = asyncio.Event()
+        self._posting = False
+
+    @property
+    def has_pending(self) -> bool:
+        return self._posting or bool(self._inflight) or not self._notify_queue.empty()
+
+    def close(self, error: Exception | None = None) -> None:
+        self._closed = error or RuntimeError("connector ingest is closed")
+        # Wake blocked producers. They check _closed again after admission.
+        while not self._notify_queue.empty():
+            self._notify_queue.get_nowait()
+
 
     async def enqueue(self, method: str, params: dict[str, Any]) -> None:
+        if self._closed is not None:
+            raise self._closed
         await self._notify_queue.put({"method": method, "params": params})
+        self._available.set()
+        if self._closed is not None:
+            self.close(self._closed)
+            raise self._closed
 
     async def ingest_notifications(self, notifications: list[dict[str, Any]]) -> None:
         """Send a batch synchronously, bypassing the flush queue."""
@@ -52,50 +75,69 @@ class ConnectorIngestClient:
         await self.post_batch(list(notifications))
 
     async def flush_loop(self) -> None:
-        """Drain notification queue and POST in bounded batches.
+        """Keep a failed batch at the head; cancellation leaves it recoverable.
 
-        Errors are logged and the loop continues. Losing a notification is
-        preferable to hanging the connector process.
+        Delivery is at least once after an ambiguous HTTP failure. State/item
+        replacements retain their protocol versions; no synthetic revision is
+        introduced by a retry. Authentication and permanent rejections do not
+        enter the transient-error retry loop.
         """
+        attempt = 0
         while True:
+            await self._available.wait()
+            if not self._inflight:
+                await asyncio.sleep(FLUSH_WINDOW_SECONDS)
             try:
-                first = await self._notify_queue.get()
-            except asyncio.CancelledError:
-                return
-            batch: list[dict[str, Any]] = [first]
-            deadline = asyncio.get_event_loop().time() + FLUSH_WINDOW_SECONDS
-            while len(batch) < FLUSH_MAX:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:
-                    break
-                try:
-                    item = await asyncio.wait_for(
-                        self._notify_queue.get(), timeout=remaining
-                    )
-                except asyncio.TimeoutError:
-                    break
-                except asyncio.CancelledError:
+                async with self._post_lock:
+                    self._posting = True
                     try:
-                        await self.post_batch(batch)
-                    except Exception:  # noqa: BLE001
-                        pass
-                    return
-                batch.append(item)
-            try:
-                await self.post_batch(batch)
+                        self._collect_pending()
+                        await self._post_batch(self._inflight)
+                        self._inflight = []
+                        if self._notify_queue.empty():
+                            self._available.clear()
+                    finally:
+                        self._posting = False
+            except ConnectorAuthenticationError as exc:
+                self.close(exc)
+                raise
             except ConnectorNetworkError as exc:
-                logger.warning(
-                    "connector ingest flush failed due to network error; dropped {} notifications error={}",
-                    len(batch),
-                    exc,
-                )
-            except Exception:  # noqa: BLE001
-                logger.exception(
-                    "connector ingest flush failed (dropped {} notifications)",
-                    len(batch),
-                )
+                attempt += 1
+                if attempt == 1 or attempt % 10 == 0:
+                    logger.warning("connector ingest deferred notifications={} attempt={} error={}", len(self._inflight), attempt, exc)
+                await asyncio.sleep(min(30.0, self._retry_delay * 2 ** min(attempt - 1, 5)))
+                continue
+            except (ConnectorIngestRejectedError, httpx.HTTPStatusError) as exc:
+                logger.warning("connector ingest permanently rejected notifications={} error={}", len(self._inflight), exc)
+            self._inflight = []
+            attempt = 0
+
+    def _collect_pending(self) -> None:
+        if self._inflight:
+            return
+        while len(self._inflight) < FLUSH_MAX and not self._notify_queue.empty():
+            self._inflight.append(self._notify_queue.get_nowait())
 
     async def post_batch(self, notifications: list[dict[str, Any]]) -> None:
+        async with self._post_lock:
+            self._posting = True
+            try:
+                # Direct scanner snapshots cannot overtake an older failed batch.
+                # Drain only work already queued at admission so a live stream
+                # cannot starve this synchronous snapshot indefinitely.
+                remaining = len(self._inflight) + self._notify_queue.qsize()
+                while remaining:
+                    self._collect_pending()
+                    await self._post_batch(self._inflight)
+                    remaining = max(0, remaining - len(self._inflight))
+                    self._inflight = []
+                await self._post_batch(notifications)
+            finally:
+                self._posting = False
+                if not self.has_pending:
+                    self._available.clear()
+
+    async def _post_batch(self, notifications: list[dict[str, Any]]) -> None:
         if not notifications:
             return
         notifications = coalesce_timeline_item_upserts(notifications)
@@ -132,6 +174,9 @@ class ConnectorIngestClient:
                     raise ConnectorAuthenticationError(
                         "connector credential no longer valid"
                     )
+            status = getattr(response, "status_code", 200)
+            if status in {408, 429} or status >= 500:
+                raise ConnectorNetworkError(f"backend ingest temporarily unavailable: HTTP {status}")
             response.raise_for_status()
             _raise_for_rejected_notifications(response)
         finally:

@@ -31,10 +31,16 @@ type LazyFileTreeProps = {
   canLoad: boolean
   caseInsensitivePaths?: boolean
   selectedPath?: string | null
+  revealSelectedPath?: boolean
   initialExpandedPaths?: readonly string[]
+  restoredExpandedPaths?: readonly string[]
+  restoredScroll?: { top: number; left: number }
+  scrollViewportRef?: React.RefObject<HTMLDivElement | null>
+  onExpandedPathsChange?: (paths: string[]) => void
   labels: LazyFileTreeLabels
   loadDirectory: (path: string) => Promise<FsListResult>
   onOpenFile: (entry: FsEntry) => void
+  onKeepFileOpen?: (entry: FsEntry) => void
   onContextEntryChange?: (entry: FsEntry | null) => void
   renderTrailing?: (entry: FsEntry) => React.ReactNode
 }
@@ -58,10 +64,16 @@ export function LazyFileTree({
   canLoad,
   caseInsensitivePaths = false,
   selectedPath = null,
+  revealSelectedPath = false,
   initialExpandedPaths = [],
+  restoredExpandedPaths,
+  restoredScroll,
+  scrollViewportRef,
+  onExpandedPathsChange,
   labels,
   loadDirectory,
   onOpenFile,
+  onKeepFileOpen,
   onContextEntryChange,
   renderTrailing,
 }: LazyFileTreeProps) {
@@ -97,6 +109,35 @@ export function LazyFileTree({
     setExpandedPaths(nextExpandedPaths)
     setFocusedPath(null)
   }, [caseInsensitivePaths, identity])
+
+  React.useEffect(() => {
+    if (!restoredExpandedPaths) return
+    const next = prepareExpandedPaths(restoredExpandedPaths, caseInsensitivePaths)
+    expandedPathsRef.current = next
+    setExpandedPaths(next)
+  }, [caseInsensitivePaths, identity, restoredExpandedPaths])
+
+  React.useEffect(() => {
+    if (!revealSelectedPath || !selectedPath) return
+    const selected = keyForPath(selectedPath)
+    const root = keyForPath(rootPath)
+    const prefix = root.endsWith("/") ? root : `${root}/`
+    if (!selected.startsWith(prefix)) return
+    const parents = selected.slice(prefix.length).split("/").slice(0, -1)
+    const next = new Set(expandedPathsRef.current)
+    let parent = prefix.slice(0, -1)
+    for (const segment of parents) {
+      parent += `/${segment}`
+      next.add(parent)
+    }
+    expandedPathsRef.current = next
+    setExpandedPaths(next)
+    setFocusedPath(selected)
+  }, [identity, keyForPath, restoredExpandedPaths, revealSelectedPath, rootPath, selectedPath])
+
+  React.useEffect(() => {
+    onExpandedPathsChange?.([...expandedPaths])
+  }, [expandedPaths, onExpandedPathsChange])
 
   React.useEffect(
     () => () => {
@@ -199,14 +240,49 @@ export function LazyFileTree({
     [],
   )
 
+  const scrollTargetRef = React.useRef<{
+    identity: string
+    selectedKey: string | null
+    restoredScroll: typeof restoredScroll
+    revealed: boolean
+  } | null>(null)
+
   React.useEffect(() => {
+    if (scrollTargetRef.current?.identity !== identity || scrollTargetRef.current.selectedKey !== selectedKey
+      || scrollTargetRef.current.restoredScroll !== restoredScroll) {
+      scrollTargetRef.current = { identity, selectedKey, restoredScroll, revealed: false }
+    }
+    const target = scrollTargetRef.current
     if (!selectedKey) return
+    if (target.revealed) return
+    if (restoredScroll) {
+      // Wait for every visible expanded branch, including siblings above the
+      // selection, so restoring an offset isn't clamped to an incomplete tree.
+      const pending = (entries: FsEntry[], ancestors = new Set([keyForPath(rootPath)])): boolean => entries.some(entry => {
+        const key = keyForPath(entry.path)
+        if (entry.type !== "directory" || !expandedPaths.has(key) || ancestors.has(key)) return false
+        const branch = branchStates.get(key)
+        return !branch || branch.status === "loading"
+          || (branch.status === "loaded" && pending(branch.entries, new Set([...ancestors, key])))
+      })
+      if (rootLoading || pending(rootEntries)) return
+    }
     const frame = window.requestAnimationFrame(() => {
       const selectedItem = visibleTreeItems().find((item) => item.dataset.treeKey === selectedKey)
-      selectedItem?.scrollIntoView({ block: "nearest" })
+      if (!selectedItem) return
+      if (restoredScroll && scrollViewportRef?.current) {
+        scrollViewportRef.current.scrollTop = restoredScroll.top
+        scrollViewportRef.current.scrollLeft = restoredScroll.left
+        target.revealed = true
+        return
+      }
+      // Retry while ancestors load, but don't undo the user's scrolling when
+      // they subsequently expand or collapse another directory.
+      target.revealed = true
+      selectedItem.scrollIntoView({ block: "nearest" })
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [branchStates, expandedPaths, rootEntries, selectedKey, visibleTreeItems])
+  }, [branchStates, expandedPaths, identity, keyForPath, restoredScroll, rootEntries, rootLoading, rootPath, scrollViewportRef, selectedKey, visibleTreeItems])
 
   const focusTreeItem = React.useCallback((item: HTMLElement | undefined) => {
     if (!item) return
@@ -257,7 +333,7 @@ export function LazyFileTree({
       if (event.key === "ArrowRight" && current.dataset.treeKind === "directory") {
         event.preventDefault()
         if (current.getAttribute("aria-expanded") !== "true") {
-          current.click()
+          current.querySelector<HTMLElement>("[data-tree-toggle]")?.click()
           return
         }
         const currentKey = current.dataset.treeKey
@@ -269,7 +345,7 @@ export function LazyFileTree({
         const parentKey = current.dataset.treeParentKey
         if (current.dataset.treeKind === "directory" && current.getAttribute("aria-expanded") === "true") {
           event.preventDefault()
-          current.click()
+          current.querySelector<HTMLElement>("[data-tree-toggle]")?.click()
           return
         }
         if (parentKey && parentKey !== currentKey) {
@@ -314,7 +390,7 @@ export function LazyFileTree({
             aria-expanded={isDirectory && !isCycle ? isExpanded : undefined}
             aria-level={depth + 1}
             aria-posinset={index + 1}
-            aria-selected={isFile ? selectedKey === key : undefined}
+            aria-selected={isFile || isDirectory ? selectedKey === key : undefined}
             aria-setsize={siblings.length}
             className={cn("aa-file-tree-row", selectedKey === key && "active")}
             data-aa-file-tree-item="true"
@@ -327,16 +403,22 @@ export function LazyFileTree({
             style={rowStyle}
             tabIndex={focusedPath === key ? 0 : -1}
             title={entry.name}
-            onClick={() => {
+            onClick={(event) => {
               setFocusedPath(key)
               if (isDirectory && !isCycle) toggleDirectory(entry)
-              else if (isFile) onOpenFile(entry)
+              else if (isFile) {
+                if (event.detail < 2 || !onKeepFileOpen) onOpenFile(entry)
+              }
+            }}
+            onDoubleClick={() => {
+              if (!isFile || !onKeepFileOpen) return
+              onKeepFileOpen(entry)
             }}
             onContextMenu={() => onContextEntryChange?.(entry)}
             onFocus={() => setFocusedPath(key)}
             onKeyDown={handleItemKeyDown}
           >
-            <span className="aa-file-tree-leading" aria-hidden="true">
+            <span className="aa-file-tree-leading" data-tree-toggle={isDirectory ? "true" : undefined} aria-hidden="true">
               {isDirectory ? (
                 branch?.status === "loading" && isExpanded ? (
                   <LoaderCircle className="aa-file-tree-spinner" />

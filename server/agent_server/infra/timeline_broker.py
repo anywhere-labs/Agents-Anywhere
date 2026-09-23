@@ -17,8 +17,15 @@ import asyncio
 import json
 from contextlib import suppress
 
-from agent_server.infra.redis_coordinator import RedisCoordinator
+from loguru import logger
+from redis.asyncio.retry import Retry
+from redis.backoff import NoBackoff
 
+from agent_server.infra.event_preparation import EventPreparationPool
+from agent_server.infra.redis_coordinator import RedisCoordinator
+from agent_server.infra.shared_message import SharedMessage
+
+MAX_LIVE_MESSAGE_BYTES = 1024 * 1024
 
 def timeline_envelope_message(
     *,
@@ -50,31 +57,75 @@ class TimelineBroker:
         coordinator: RedisCoordinator | None = None,
         *,
         dashboard_debounce_seconds: float = 0.0,
+        event_workers: int = 0,
+        event_threshold_bytes: int = 256 * 1024,
+        event_queue_items: int = 32,
+        event_queue_bytes: int = 32 * 1024 * 1024,
     ) -> None:
         self._coordinator = coordinator or RedisCoordinator()
-        self._subs: dict[str, set[asyncio.Queue[str]]] = {}
-        self._dashboard_subs: dict[str, set[asyncio.Queue[str]]] = {}
+        self._subs: dict[str, set[asyncio.Queue[SharedMessage]]] = {}
+        self._dashboard_subs: dict[str, set[asyncio.Queue[SharedMessage]]] = {}
         self._dashboard_pending: dict[str, dict] = {}
         self._dashboard_tasks: dict[str, asyncio.Task[None]] = {}
         self._dashboard_debounce_seconds = dashboard_debounce_seconds
         self._lock = asyncio.Lock()
         self._pubsub = None
+        self.connection_lost = asyncio.Event()
+        self._subscription_ready = False
         self._listener_task: asyncio.Task[None] | None = None
+        self._preparation_tasks: set[asyncio.Task] = set()
+        self._event_pool = EventPreparationPool(
+            workers=event_workers, threshold_bytes=event_threshold_bytes,
+            max_pending=event_queue_items, max_pending_bytes=event_queue_bytes,
+        ) if event_workers > 0 else None
 
     async def start(self) -> None:
+        if self._event_pool is not None:
+            await self._event_pool.start()
         if not self._coordinator.distributed or self._listener_task is not None:
             return
+        await self._subscribe()
+        self._listener_task = asyncio.create_task(
+            self._listen(), name="redis-timeline-listener"
+        )
+
+    @property
+    def recovery_signal(self) -> asyncio.Event | None:
+        return self.connection_lost if self._coordinator.distributed else None
+
+    @property
+    def healthy(self) -> bool:
+        return not self._coordinator.distributed or (
+            self._subscription_ready
+            and self._listener_task is not None
+            and not self._listener_task.done()
+        )
+
+    async def _subscribe(self) -> None:
         self._pubsub = self._coordinator.client.pubsub()
         await self._pubsub.psubscribe(
             self._coordinator.channel("timeline", "*"),
             self._coordinator.channel("dashboard", "*"),
         )
-        self._listener_task = asyncio.create_task(
-            self._listen(), name="redis-timeline-listener"
-        )
+        # A transparent redis-py reconnect can lose events without telling
+        # sockets to recover. Let our supervisor own retries instead.
+        self._pubsub.connection.retry = Retry(NoBackoff(), 0)
+        acknowledged = 0
+        async with asyncio.timeout(10):
+            while acknowledged < 2:
+                event = await self._pubsub.get_message(timeout=1)
+                if event and event.get("type") == "psubscribe":
+                    acknowledged += 1
+        self.connection_lost = asyncio.Event()
+        self._subscription_ready = True
+
+    def _invalidate_subscription(self) -> None:
+        self._subscription_ready = False
+        self.connection_lost.set()
 
     async def close(self) -> None:
-        tasks = list(self._dashboard_tasks.values())
+        self._invalidate_subscription()
+        tasks = [*self._dashboard_tasks.values(), *self._preparation_tasks]
         if self._listener_task is not None:
             self._listener_task.cancel()
             tasks.append(self._listener_task)
@@ -86,9 +137,12 @@ class TimelineBroker:
         self._listener_task = None
         self._dashboard_tasks.clear()
         self._dashboard_pending.clear()
+        self._preparation_tasks.clear()
         if self._pubsub is not None:
             await self._pubsub.aclose()
             self._pubsub = None
+        if self._event_pool is not None:
+            await self._event_pool.close()
 
     async def publish(self, session_id: str, payload: dict) -> None:
         message = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
@@ -96,6 +150,15 @@ class TimelineBroker:
 
     async def publish_message(self, session_id: str, message: str) -> None:
         """Publish a pre-encoded envelope so callers can reuse a serialization."""
+
+        # The complete projection is already retained by the write buffer.
+        # Keep oversized bodies out of global Pub/Sub; clients read them through
+        # the existing fenced recovery API instead.
+        if len(message) >= MAX_LIVE_MESSAGE_BYTES // 4 and len(message.encode("utf-8")) > MAX_LIVE_MESSAGE_BYTES:
+            payload = json.loads(message)
+            next_seq = payload.get("nextSeq")
+            if isinstance(next_seq, int) and next_seq > 0:
+                message = json.dumps({"sessionId": session_id, "nextSeq": next_seq, "refetch": True})
 
         if self._coordinator.distributed:
             lock_name = f"session-revision:{session_id}"
@@ -111,13 +174,13 @@ class TimelineBroker:
             return
         await self._fan_out(self._subs, session_id, message)
 
-    async def register(self, session_id: str) -> asyncio.Queue[str]:
-        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=256)
+    async def register(self, session_id: str) -> asyncio.Queue[SharedMessage]:
+        queue: asyncio.Queue[SharedMessage] = asyncio.Queue(maxsize=256)
         async with self._lock:
             self._subs.setdefault(session_id, set()).add(queue)
         return queue
 
-    async def unregister(self, session_id: str, queue: asyncio.Queue[str]) -> None:
+    async def unregister(self, session_id: str, queue: asyncio.Queue[SharedMessage]) -> None:
         async with self._lock:
             pool = self._subs.get(session_id)
             if pool is not None:
@@ -174,6 +237,29 @@ class TimelineBroker:
             self._fan_out_queues(queues, message)
 
     async def _listen(self) -> None:
+        delay = 1.0
+        while True:
+            try:
+                if self._pubsub is None:
+                    await self._subscribe()
+                    logger.info("Redis timeline subscription restored")
+                await self._listen_once()
+                raise ConnectionError("Redis timeline subscription ended")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - supervise the long-lived delivery task
+                self._invalidate_subscription()
+                # Do not log payloads or credentials from exception messages.
+                logger.warning("Redis timeline subscription lost ({}); retry in {}s",
+                               type(exc).__name__, delay)
+                if self._pubsub is not None:
+                    with suppress(Exception):
+                        await self._pubsub.aclose()
+                    self._pubsub = None
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 30.0)
+
+    async def _listen_once(self) -> None:
         assert self._pubsub is not None
         timeline_prefix = self._coordinator.channel("timeline", "")
         dashboard_prefix = self._coordinator.channel("dashboard", "")
@@ -195,7 +281,7 @@ class TimelineBroker:
 
     async def _fan_out(
         self,
-        subscriptions: dict[str, set[asyncio.Queue[str]]],
+        subscriptions: dict[str, set[asyncio.Queue[SharedMessage]]],
         key: str,
         message: str,
     ) -> None:
@@ -204,8 +290,11 @@ class TimelineBroker:
             queues = list(subscriptions.get(key, ()))
         self._fan_out_queues(queues, message)
 
-    @staticmethod
-    def _fan_out_queues(queues: list[asyncio.Queue[str]], message: str) -> None:
+    def _fan_out_queues(self, queues: list[asyncio.Queue[SharedMessage]], message: str) -> None:
+        message = SharedMessage(
+            message, self._preparation_tasks,
+            self._event_pool.prepare if self._event_pool is not None else None,
+        )
         for queue in queues:
             try:
                 queue.put_nowait(message)
@@ -225,14 +314,14 @@ class TimelineBroker:
             return value.decode("utf-8")
         return str(value)
 
-    async def register_dashboard(self, user_id: str) -> asyncio.Queue[str]:
-        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=256)
+    async def register_dashboard(self, user_id: str) -> asyncio.Queue[SharedMessage]:
+        queue: asyncio.Queue[SharedMessage] = asyncio.Queue(maxsize=256)
         async with self._lock:
             self._dashboard_subs.setdefault(user_id, set()).add(queue)
         return queue
 
     async def unregister_dashboard(
-        self, user_id: str, queue: asyncio.Queue[str]
+        self, user_id: str, queue: asyncio.Queue[SharedMessage]
     ) -> None:
         async with self._lock:
             pool = self._dashboard_subs.get(user_id)

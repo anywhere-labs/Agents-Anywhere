@@ -252,6 +252,23 @@ test("capability comparison includes complete records such as runtimeId", () => 
   assert.equal(mergeEffectiveCapabilities(first, changed), changed)
 })
 
+test("capability comparison canonicalizes each record once, including duplicates", () => {
+  let reads = 0
+  const records = Array.from({ length: 100 }, (_, i) => ({
+    capabilityId: "capability-" + (i % 17),
+    get parameters() {
+      reads += 1
+      return { nested: { value: i % 17 } }
+    },
+  }))
+  const first = { revision: 1, capabilities: records }
+  const reordered = { revision: 2, capabilities: [...records].reverse() }
+  assert.equal(mergeEffectiveCapabilities(first, reordered), first)
+  assert.equal(reads, 200)
+  const removedDuplicate = { revision: 3, capabilities: records.slice(1) }
+  assert.equal(mergeEffectiveCapabilities(first, removedDuplicate), removedDuplicate)
+})
+
 test("live capability cutover discards only pre-read capability projections", () => {
   const capabilityBeforeRead = capabilityEvent(capabilitySet(false))
   const capabilityDuringRead = {

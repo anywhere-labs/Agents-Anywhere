@@ -4,6 +4,7 @@ import asyncio
 import secrets
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from typing import Any
 
 from pydantic import ValidationError
@@ -58,6 +59,9 @@ class RuntimeSyncRunner:
         self.send_notification = send_notification
         self.ingest_notifications = ingest_notifications
         self.flush_sync_state = flush_sync_state
+        self._recovery_generation = 0
+        self._recovered: dict[str, int] = {}
+        self._recovered_sessions: set[tuple[str, str]] = set()
         self._last_preferences: dict[str, Any] | None = None
         self._last_active_session_updates: dict[
             str, tuple[SessionMeta, SessionState]
@@ -77,6 +81,9 @@ class RuntimeSyncRunner:
             await asyncio.sleep(self.config.sync_interval_seconds)
 
     async def reconnect_event_runtimes(self) -> None:
+        self._recovery_generation += 1
+        self._recovered_sessions.clear()
+        self._last_active_session_updates.clear()
         for runtime_id in self.supervisor.runtimes:
             try:
                 runtime = self.supervisor.resolve_runtime(runtime_id)
@@ -88,6 +95,9 @@ class RuntimeSyncRunner:
     async def sync_existing_once(self) -> None:
         for runtime_id in self.supervisor.runtimes:
             runtime_started_at = time.monotonic()
+            recovery_generation = self._recovery_generation
+            recover = self._recovered.get(runtime_id, 0) != recovery_generation
+            failed = False
             try:
                 runtime = self.supervisor.resolve_runtime(runtime_id)
                 if runtime.sync_mode == "events":
@@ -95,9 +105,9 @@ class RuntimeSyncRunner:
                 logger.info(
                     "existing session sync runtime started runtime={}", runtime_id
                 )
+                entry = self.supervisor.entry(runtime_id)
                 await self.push_runtime_catalogs(runtime)
                 inventory_scan_token: str | None = None
-                entry = self.supervisor.entry(runtime_id)
                 runtime_type = entry.runtime_type
                 scoped_runtime_id = entry.runtime_id
                 if runtime.supports_complete_session_inventory():
@@ -142,7 +152,21 @@ class RuntimeSyncRunner:
                 )
                 for session in sessions:
                     try:
-                        await self.sync_existing_session(runtime, session)
+                        recovery_key = (runtime_id, session.session_id)
+                        recover_session = recover and recovery_key not in self._recovered_sessions
+                        if recover_session:
+                            session = replace(session, metadata={
+                                **dict(session.metadata),
+                                "sync": {"changed": True, "requires_timeline_sync": True},
+                            })
+                        completed = await self.sync_existing_session(
+                            runtime, session, source_in_inventory=inventory_scan_token is not None,
+                            recovering=recover_session,
+                        )
+                        if completed is False:
+                            failed = True
+                        elif recover_session and recovery_generation == self._recovery_generation:
+                            self._recovered_sessions.add(recovery_key)
                     except ConnectorNetworkError as exc:
                         logger.warning(
                             "existing session sync network failure runtime={} session_id={} external_session_id={} error={}",
@@ -151,6 +175,7 @@ class RuntimeSyncRunner:
                             session.external_session_id,
                             exc,
                         )
+                        failed = True
                         continue
                     except ValidationError as exc:
                         logger.error(
@@ -161,6 +186,7 @@ class RuntimeSyncRunner:
                             exc.error_count(),
                             validation_error_summary(exc),
                         )
+                        failed = True
                         continue
                     except Exception:  # noqa: BLE001
                         logger.exception(
@@ -169,6 +195,7 @@ class RuntimeSyncRunner:
                             session.session_id,
                             session.external_session_id,
                         )
+                        failed = True
                         continue
                 if inventory_scan_token is not None:
                     await self._ingest_scanner_notifications(
@@ -182,6 +209,8 @@ class RuntimeSyncRunner:
                             )
                         ]
                     )
+                if not failed:
+                    self._recovered[runtime_id] = recovery_generation
                 logger.info(
                     "existing session sync runtime completed runtime={} sessions={} elapsed_ms={:.1f}",
                     runtime_id,
@@ -215,7 +244,10 @@ class RuntimeSyncRunner:
         self,
         runtime: AgentRuntime,
         session: SessionMeta,
-    ) -> None:
+        *,
+        source_in_inventory: bool = False,
+        recovering: bool = False,
+    ) -> bool | None:
         """Publish one discovered session and any required fresh timeline.
 
         Side effects:
@@ -226,7 +258,7 @@ class RuntimeSyncRunner:
         """
         if not session_requires_timeline_sync(session):
             if session_sync_changed(session) is False:
-                if session.source_state is not None:
+                if session.source_state is not None and not source_in_inventory:
                     await self.host.session_source_update(
                         SessionSourceObservation(
                             session_id=session.session_id,
@@ -254,7 +286,8 @@ class RuntimeSyncRunner:
             session.session_id,
             session.external_session_id,
         )
-        if state is not None and state.status in ACTIVE_SESSION_SYNC_SKIP_STATUSES:
+        active = state is not None and state.status in ACTIVE_SESSION_SYNC_SKIP_STATUSES
+        if active and not recovering:
             active_update = (session, state)
             if (
                 self._last_active_session_updates.get(session.session_id)
@@ -282,12 +315,14 @@ class RuntimeSyncRunner:
             )
             return
         self._last_active_session_updates.pop(session.session_id, None)
+        read_started_at = time.monotonic()
         prepared = await runtime.prepare_session_timeline_sync(
             session.session_id,
             session.external_session_id,
         )
         snapshot: RuntimeTimelineSnapshot | None = None
         if prepared is not None:
+            read_elapsed_ms = (time.monotonic() - read_started_at) * 1000
             snapshot = prepared.snapshot
             synced_items = len(snapshot.items) if snapshot is not None else 0
         else:
@@ -306,6 +341,9 @@ class RuntimeSyncRunner:
                 snapshot.complete,
                 read_elapsed_ms,
             )
+        deferred_replacement = recovering and active and snapshot is not None and snapshot.complete
+        if recovering and active and snapshot is not None:
+            snapshot = replace(snapshot, complete=False)
         notices = await runtime.get_session_notices(
             session.session_id,
             session.external_session_id,
@@ -324,7 +362,7 @@ class RuntimeSyncRunner:
         publish_started_at = time.monotonic()
         await self._ingest_scanner_notifications(notifications)
         publish_elapsed_ms = (time.monotonic() - publish_started_at) * 1000
-        if prepared is not None and prepared.commit is not None:
+        if prepared is not None and prepared.commit is not None and not deferred_replacement:
             await prepared.commit()
         if publish_elapsed_ms >= 250 or synced_items >= 100:
             logger.info(
@@ -343,6 +381,9 @@ class RuntimeSyncRunner:
             read_elapsed_ms,
             publish_elapsed_ms,
         )
+        # Keep this recovery generation pending until deletion reconciliation is
+        # safe; otherwise an unchanged inventory marker could suppress its retry.
+        return not deferred_replacement
 
     async def _ingest_scanner_notifications(
         self,

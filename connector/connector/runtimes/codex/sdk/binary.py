@@ -4,10 +4,13 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
+from connector.launch import launch_target
 from connector.logging import logger
 
 CodexRuntimeBinaryMode = Literal["prefer_system", "sdk_bundled"]
@@ -56,6 +59,9 @@ def read_login_shell_path(shell: str | None = None) -> LoginShellPathResult:
     - starts the user's shell with login and interactive flags
     - waits up to a short timeout for shell initialization
     """
+
+    if sys.platform == "win32":
+        return LoginShellPathResult(shell=None, path=None)
 
     selected_shell = shell or default_login_shell()
     if selected_shell is None:
@@ -134,6 +140,10 @@ def select_codex_runtime_binary(
     configured_path: str | None = None,
 ) -> CodexRuntimeBinarySelection:
     candidate = configured_path
+    if candidate is not None:
+        candidate = (
+            find_executable_on_path(candidate, environment.get("PATH")) or candidate
+        )
     source: CodexRuntimeBinarySource = "configured"
     reason = "system Codex disabled by useSystemCodex"
     if candidate is None and mode == "prefer_system":
@@ -171,7 +181,7 @@ def codex_version_error(candidate: str, environment: Mapping[str, str]) -> str |
     """Validate the executable with the same environment used by the SDK."""
     try:
         result = subprocess.run(
-            [candidate, "--version"],
+            codex_launch_command(candidate, ["--version"], environment),
             env=dict(environment),
             capture_output=True,
             text=True,
@@ -197,13 +207,46 @@ def codex_version_error(candidate: str, environment: Mapping[str, str]) -> str |
 def find_executable_on_path(name: str, path_value: str | None) -> str | None:
     if path_value is None:
         return None
-    # shutil.which honors Windows PATHEXT, unlike looking for a bare npm shim.
+    if sys.platform == "win32":
+        # PowerShell scripts are normally absent from PATHEXT. Do not select
+        # npm's extensionless POSIX shim, even when Python's which returns it.
+        suffixes = (
+            ("",) if Path(name).suffix else (".exe", ".com", ".cmd", ".bat", ".ps1")
+        )
+        for directory in path_value.split(";"):
+            if not directory:
+                continue
+            for suffix in suffixes:
+                candidate = Path(os.path.expanduser(directory.strip('"'))) / (
+                    name + suffix
+                )
+                if candidate.is_file():
+                    return str(candidate)
+        return None
     search_path = os.pathsep.join(
         os.path.expanduser(directory)
         for directory in path_value.split(os.pathsep)
         if directory
     )
     return shutil.which(name, path=search_path)
+
+
+def codex_launch_command(
+    candidate: str, args: list[str], environment: Mapping[str, str]
+) -> list[str]:
+    """Use identical script launch semantics for probing and SDK startup."""
+    target = launch_target("codex", candidate)
+    command = target.command(args)
+    if target.launcher != "direct":
+        command[0] = (
+            find_executable_on_path("powershell.exe", environment.get("PATH"))
+            or find_executable_on_path("pwsh.exe", environment.get("PATH"))
+            or command[0]
+        )
+        command.insert(2, "-NonInteractive")
+        if target.launcher == "cmd":
+            command[-1] += "; exit $LASTEXITCODE"
+    return command
 
 
 def runtime_binary_metadata(

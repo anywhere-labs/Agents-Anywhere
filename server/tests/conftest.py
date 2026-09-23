@@ -22,6 +22,8 @@ os.environ.setdefault("AGENT_SERVER_RUNTIME_RPC_TIMEOUT_SECONDS", "0.2")
 os.environ.setdefault("AGENT_SERVER_SESSION_RPC_TIMEOUT_SECONDS", "0.2")
 # Every test signs in at least once; the production PBKDF2 cost dominates otherwise.
 os.environ.setdefault("AGENT_SERVER_PASSWORD_ITERATIONS", "1000")
+# Most tests exercise protocol behavior. The process pool has dedicated tests.
+os.environ.setdefault("AGENT_SERVER_EVENT_WORKERS", "0")
 
 _TEMPLATE_DB: pathlib.Path | None = None
 

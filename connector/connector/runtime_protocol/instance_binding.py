@@ -377,6 +377,15 @@ class RuntimeInstanceHost(RuntimeHostClient):
     async def sync_state_read(self, key: str) -> Mapping[str, Any] | None:
         return await self.base.sync_state_read(self.instance_sync_key(key))
 
+    @property
+    def runtime_kv(self):
+        return self.base.runtime_kv
+
+    async def prepare_runtime_host(self, runtime_id: str) -> RuntimeHostClient:
+        if runtime_id != self.instance.runtime_id:
+            raise ValueError("Cannot rebind an instance Host to another runtime")
+        return replace(self, base=await self.base.prepare_runtime_host(runtime_id))
+
     async def sync_state_write(
         self,
         key: str,

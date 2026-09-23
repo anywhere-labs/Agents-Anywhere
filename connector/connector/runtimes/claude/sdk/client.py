@@ -33,6 +33,8 @@ def new_sdk_client(
     can_use_tool: Any | None = None,
     stderr: Callable[[str], None] | None = None,
     settings_path: str | None = None,
+    on_tool_result: Any | None = None,
+    before_tool: Any | None = None,
 ) -> Any:
     options = build_sdk_options(
         sdk,
@@ -41,6 +43,8 @@ def new_sdk_client(
         can_use_tool=can_use_tool,
         stderr=stderr,
         settings_path=settings_path,
+        on_tool_result=on_tool_result,
+        before_tool=before_tool,
     )
     if client_factory is not None:
         return client_factory(sdk, options)
@@ -60,6 +64,8 @@ def build_sdk_options(
     can_use_tool: Any | None = None,
     stderr: Callable[[str], None] | None = None,
     settings_path: str | None = None,
+    on_tool_result: Any | None = None,
+    before_tool: Any | None = None,
 ) -> Any:
     values = dict(config_values)
     kwargs: dict[str, Any] = {
@@ -96,7 +102,7 @@ def build_sdk_options(
         kwargs["stderr"] = stderr
     if settings_path is not None:
         kwargs["settings"] = settings_path
-    hooks = _permission_hooks(sdk)
+    hooks = _permission_hooks(sdk, on_tool_result, before_tool)
     if hooks is not None:
         kwargs["hooks"] = hooks
     options_cls = getattr(sdk, "ClaudeAgentOptions", None) or getattr(
@@ -154,7 +160,9 @@ async def query_client(client: Any, content: str) -> None:
 
 
 async def receive_response_messages(client: Any) -> AsyncIterator[Any]:
-    receive_response = getattr(client, "receive_response", None)
+    receive_response = getattr(client, "receive_messages", None) or getattr(
+        client, "receive_response", None
+    )
     if not callable(receive_response):
         return
     response = receive_response()
@@ -175,7 +183,9 @@ async def maybe_await(value: Any) -> Any:
     return value
 
 
-def _permission_hooks(sdk: Any) -> dict[str, Any] | None:
+def _permission_hooks(
+    sdk: Any, on_tool_result: Any | None = None, before_tool: Any | None = None
+) -> dict[str, Any] | None:
     hook_matcher = _optional_attr(sdk, "HookMatcher", "types.HookMatcher")
     if hook_matcher is None:
         return None
@@ -184,12 +194,21 @@ def _permission_hooks(sdk: Any) -> dict[str, Any] | None:
         _input_data: Any,
         _tool_use_id: Any = None,
         _context: Any = None,
-    ) -> dict[str, bool]:
+    ) -> dict[str, Any]:
+        if before_tool is not None:
+            result = await before_tool(_input_data)
+            if result:
+                return result
         return {"continue_": True}
 
-    return {
+    hooks = {
         "PreToolUse": [hook_matcher(matcher=None, hooks=[keep_permission_stream_open])]
     }
+    if on_tool_result is not None:
+        hooks["PostToolUse"] = [
+            hook_matcher(matcher="^Cron(Create|Delete|List)$", hooks=[on_tool_result])
+        ]
+    return hooks
 
 
 def _optional_attr(root: Any, *paths: str) -> Any:

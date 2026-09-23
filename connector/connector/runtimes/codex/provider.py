@@ -1,4 +1,5 @@
 from __future__ import annotations
+from connector.runtime_protocol.host import runtime_kv_store
 
 import sys
 from collections.abc import Callable, Mapping
@@ -6,7 +7,6 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from connector.core.json_kv import JsonKeyValueStore
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeConfig,
@@ -238,7 +238,7 @@ class CodexProvider(RuntimeProvider):
             config=config,
             host=host,
             client=client,
-            client_message_kv=JsonKeyValueStore.default(),
+            client_message_kv=runtime_kv_store(host),
         )
 
     def resource_claims(

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from anyio import CancelScope
 from fastapi import (
     APIRouter,
     Depends,
@@ -22,8 +25,8 @@ from starlette.requests import HTTPConnection
 
 from agent_server.core.auth import (
     DEFAULT_EXPIRES_IN,
+    connector_access_token_id,
     create_connector_access_token,
-    verify_connector_access_token,
 )
 from agent_server.core.models import (
     ConnectorAuthResponse,
@@ -64,6 +67,10 @@ from agent_server.services.device_runtimes import (
 from agent_server.services.effective_capabilities import (
     publish_connector_session_capabilities,
 )
+from agent_server.services.runtime_ingress import (
+    notification_runtime_id,
+    runtime_notification_is_allowed,
+)
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
 router = APIRouter(tags=["connector-ingress"])
@@ -76,7 +83,7 @@ DEFAULT_NOTIFICATION_CONCURRENCY = 4
 class _NotificationLane:
     """FIFO work for one ordering key, with superseded entries dropped."""
 
-    queue: asyncio.Queue[tuple[str, dict[str, Any], str | None, int]] = field(
+    queue: asyncio.Queue[tuple[str, dict[str, Any], str | None, int, int]] = field(
         default_factory=asyncio.Queue
     )
     # Highest queued version per stable item ID. A queued entry whose version is
@@ -108,11 +115,20 @@ class _ConnectorNotificationPump:
         *,
         connection_id: str | None = None,
         max_concurrency: int = DEFAULT_NOTIFICATION_CONCURRENCY,
+        is_current: Callable[[], bool] | None = None,
+        unconfigured_runtimes: set[str] | None = None,
     ) -> None:
         self._connector_id = connector_id
         self._connection_id = connection_id
         self._ingest_service = ingest_service
-        self._queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = (
+        self._is_current = is_current
+        self._runtime_generations: dict[str | None, int] = {}
+        self._blocked_runtimes = set(unconfigured_runtimes or ())
+        self._inflight_tasks: dict[asyncio.Task[None], str | None] = {}
+        self._accepting = True
+        self._abort_task: asyncio.Task[None] | None = None
+        self._lane_tasks: set[asyncio.Task[None]] = set()
+        self._queue: asyncio.Queue[tuple[str, dict[str, Any], int] | None] = (
             asyncio.Queue()
         )
         self._task: asyncio.Task[None] | None = None
@@ -124,6 +140,24 @@ class _ConnectorNotificationPump:
         self._idle = asyncio.Event()
         self._idle.set()
         self.coalesced = 0
+        self.obsolete = 0
+
+    async def set_runtime_ingress_enabled(self, runtime_id: str, enabled: bool) -> None:
+        if enabled:
+            self._blocked_runtimes.discard(runtime_id)
+            return
+        self._blocked_runtimes.add(runtime_id)
+        self._runtime_generations[runtime_id] = self._runtime_generations.get(runtime_id, 0) + 1
+        tasks = [task for task, target in self._inflight_tasks.items() if target == runtime_id]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _runtime_current(self, method: str, params: dict[str, Any], generation: int) -> bool:
+        return (
+            generation == self._runtime_generations.get(notification_runtime_id(params), 0)
+            and runtime_notification_is_allowed(method, params, self._blocked_runtimes)
+        )
 
     @property
     def task(self) -> asyncio.Task[None]:
@@ -140,16 +174,26 @@ class _ConnectorNotificationPump:
         )
 
     def enqueue_message(self, message: dict[str, Any]) -> None:
+        if not self._accepting:
+            return
         if self._task is not None and self._task.done():
             self._task.result()
             raise RuntimeError("connector notification pump stopped unexpectedly")
         method = message.get("method")
         params = message.get("params") or {}
         if isinstance(method, str) and isinstance(params, dict):
+            if not runtime_notification_is_allowed(method, params, self._blocked_runtimes):
+                self.obsolete += 1
+                return
+            generation = self._runtime_generations.get(notification_runtime_id(params), 0)
             self._mark_pending(1)
-            self._queue.put_nowait((method, params))
+            self._queue.put_nowait((method, params, generation))
 
     async def close(self) -> None:
+        self._accepting = False
+        if self._abort_task is not None:
+            await asyncio.shield(self._abort_task)
+            return
         if self._task is None:
             return
         if not self._task.done():
@@ -158,6 +202,39 @@ class _ConnectorNotificationPump:
             await self._idle.wait()
             return
         await asyncio.gather(self._task, return_exceptions=True)
+        await self._idle.wait()
+
+    async def abort(self) -> None:
+        """Stop admission and await every old handler before releasing ownership."""
+        self._accepting = False
+        if self._abort_task is None:
+            self._abort_task = asyncio.create_task(self._abort())
+        await asyncio.shield(self._abort_task)
+
+    async def _abort(self) -> None:
+        dropped = self._pending
+        tasks = list(self._lane_tasks)
+        if self._task is not None:
+            tasks.append(self._task)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        # A task cancelled before its first step never enters its finally block.
+        for lane in self._lanes.values():
+            while not lane.queue.empty():
+                lane.queue.get_nowait()
+                self._mark_pending(-1)
+        self._lanes.clear()
+        self._active_lanes.clear()
+        while not self._queue.empty():
+            if self._queue.get_nowait() is not None:
+                self._mark_pending(-1)
+        await self._idle.wait()
+        if dropped:
+            logger.info(
+                "discarded obsolete connector notifications connector_id={} count={}",
+                self._connector_id, dropped,
+            )
 
     async def flush(self) -> None:
         task = self.task
@@ -183,8 +260,8 @@ class _ConnectorNotificationPump:
                 notification = await self._queue.get()
                 if notification is None:
                     return
-                method, params = notification
-                await self._dispatch(method, params)
+                method, params, generation = notification
+                await self._dispatch(method, params, generation)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -194,7 +271,7 @@ class _ConnectorNotificationPump:
             )
             raise
 
-    async def _dispatch(self, method: str, params: dict[str, Any]) -> None:
+    async def _dispatch(self, method: str, params: dict[str, Any], generation: int) -> None:
         key = self._lane_key(params)
         item_key = self._item_key(method, params)
         async with self._lane_guard:
@@ -207,19 +284,21 @@ class _ConnectorNotificationPump:
                 lane.version += 1
                 version = lane.version
                 lane.latest[item_key] = version
-            lane.queue.put_nowait((method, params, item_key, version))
+            lane.queue.put_nowait((method, params, item_key, version, generation))
             if key not in self._active_lanes:
                 self._active_lanes.add(key)
-                asyncio.create_task(
+                task = asyncio.create_task(
                     self._run_lane(key, lane),
                     name=f"connector-notifications-{self._connector_id}-{key}",
                 )
+                self._lane_tasks.add(task)
+                task.add_done_callback(self._lane_tasks.discard)
 
     async def _run_lane(self, key: str, lane: _NotificationLane) -> None:
         try:
             while True:
                 try:
-                    method, params, item_key, version = lane.queue.get_nowait()
+                    method, params, item_key, version, generation = lane.queue.get_nowait()
                 except asyncio.QueueEmpty:
                     async with self._lane_guard:
                         if lane.queue.empty():
@@ -227,16 +306,30 @@ class _ConnectorNotificationPump:
                             self._lanes.pop(key, None)
                             return
                         continue
-                if item_key is not None:
-                    if lane.latest.get(item_key) != version:
-                        # A newer complete value for this item is already
-                        # queued, so this one can never be observed.
-                        self.coalesced += 1
-                        self._mark_pending(-1)
-                        continue
-                    lane.latest.pop(item_key, None)
-                async with self._slots:
-                    await self._handle(method, params)
+                try:
+                    if item_key is not None:
+                        if lane.latest.get(item_key) != version:
+                            self.coalesced += 1
+                            continue
+                        lane.latest.pop(item_key, None)
+                    async with self._slots:
+                        if not self._runtime_current(method, params, generation):
+                            self.obsolete += 1
+                            continue
+                        if self._is_current is None or self._is_current():
+                            task = asyncio.create_task(self._handle(method, params))
+                            self._inflight_tasks[task] = notification_runtime_id(params)
+                            try:
+                                await task
+                            except asyncio.CancelledError:
+                                if asyncio.current_task().cancelling():
+                                    raise
+                                self.obsolete += 1
+                            finally:
+                                self._inflight_tasks.pop(task, None)
+                finally:
+                    # Includes cancellation while waiting for a concurrency slot.
+                    self._mark_pending(-1)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - one lane must not stop the pump
@@ -259,40 +352,37 @@ class _ConnectorNotificationPump:
     async def _handle(self, method: str, params: dict[str, Any]) -> None:
         started_at = time.monotonic()
         try:
-            try:
-                await self._ingest_service.handle_notification_message(
-                    connector_id=self._connector_id,
-                    method=method,
-                    params=params,
-                    connection_id=self._connection_id,
-                )
-            except Exception:
-                logger.exception(
-                    "connector notification rejected connector_id={} method={}",
-                    self._connector_id,
-                    method,
-                )
-                return
-            elapsed_ms = (time.monotonic() - started_at) * 1000
-            if elapsed_ms >= 100:
-                logger.info(
-                    "connector notification handled connector_id={} method={} session_id={} elapsed_ms={:.1f}",
-                    self._connector_id,
-                    method,
-                    params.get("sessionId"),
-                    elapsed_ms,
-                )
-            elif method == "timeline.itemUpsert":
-                # High-frequency streaming path: only useful while debugging.
-                logger.debug(
-                    "connector notification handled connector_id={} method={} session_id={} elapsed_ms={:.1f}",
-                    self._connector_id,
-                    method,
-                    params.get("sessionId"),
-                    elapsed_ms,
-                )
-        finally:
-            self._mark_pending(-1)
+            await self._ingest_service.handle_notification_message(
+                connector_id=self._connector_id,
+                method=method,
+                params=params,
+                connection_id=self._connection_id,
+            )
+        except Exception:
+            logger.exception(
+                "connector notification rejected connector_id={} method={}",
+                self._connector_id,
+                method,
+            )
+            return
+        elapsed_ms = (time.monotonic() - started_at) * 1000
+        if elapsed_ms >= 100:
+            logger.info(
+                "connector notification handled connector_id={} method={} session_id={} elapsed_ms={:.1f}",
+                self._connector_id,
+                method,
+                params.get("sessionId"),
+                elapsed_ms,
+            )
+        elif method == "timeline.itemUpsert":
+            # High-frequency streaming path: only useful while debugging.
+            logger.debug(
+                "connector notification handled connector_id={} method={} session_id={} elapsed_ms={:.1f}",
+                self._connector_id,
+                method,
+                params.get("sessionId"),
+                elapsed_ms,
+            )
 
     @staticmethod
     def _lane_key(params: dict[str, Any]) -> str:
@@ -325,7 +415,10 @@ async def connector_auth(
     if not await db.verify_connector_token(connector_id, token):
         raise HTTPException(status_code=401, detail="invalid connector credential")
     return ConnectorAuthResponse(
-        accessToken=create_connector_access_token(connector_id),
+        accessToken=create_connector_access_token(
+            connector_id,
+            credential_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+        ),
         expiresIn=DEFAULT_EXPIRES_IN,
     )
 
@@ -341,15 +434,16 @@ async def connector_ingest(
     db: Store = Depends(get_store),
     ingest_service: ConnectorIngestService = Depends(get_connector_ingest_service),
 ) -> ConnectorIngestResponse:
-    connector_id = _connector_id_from_bearer(authorization)
-    await _require_active_connector(connector_id, db)
-    try:
-        return await ingest_service.ingest(connector_id=connector_id, payload=payload)
-    except NotificationValidationError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={"code": exc.code, "message": exc.message},
-        ) from exc
+    connector_id = _access_token_connector_id(authorization)
+    async with db.connector_lifecycle(connector_id):
+        await _require_active_connector(authorization, db)
+        try:
+            return await ingest_service.ingest(connector_id=connector_id, payload=payload)
+        except NotificationValidationError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": exc.code, "message": exc.message},
+            ) from exc
 
 
 @router.get("/connector/sessions/{session_id}/attachments/{file_id}/content")
@@ -369,8 +463,7 @@ async def connector_attachment_content(
       X-File-Name      original upload filename
       X-File-Sha256    sha256 hex of the bytes in the body
     """
-    connector_id = _connector_id_from_bearer(authorization)
-    await _require_active_connector(connector_id, db)
+    connector_id = await _require_active_connector(authorization, db)
     await db.record_connector_activity(connector_id)
     try:
         data, metadata = await attachments.read_connector_attachment(
@@ -401,8 +494,7 @@ async def connector_fs_transfer_upload(
     db: Store = Depends(get_store),
     downloads: FsDownloadRelayManager = Depends(get_fs_downloads),
 ) -> dict[str, str]:
-    connector_id = _connector_id_from_bearer(authorization)
-    await _require_active_connector(connector_id, db)
+    connector_id = await _require_active_connector(authorization, db)
     await db.record_connector_activity(connector_id)
     transfer = await downloads.get(transfer_id, token)
     if transfer is None or transfer.connector_id != connector_id:
@@ -437,76 +529,57 @@ async def connector_ws(
     ),
 ) -> None:
     auth_header = websocket.headers.get("authorization")
-    connector_id = _connector_id_from_bearer(auth_header)
-    if connector_id is None:
-        await websocket.close(code=1008)
-        return
+    runtime_service: DeviceRuntimeService = websocket.app.state.device_runtime_service
     try:
-        await db.get_connector(connector_id)
-    except KeyError:
+        connector_id = _access_token_connector_id(auth_header)
+        async with db.connector_lifecycle(connector_id):
+            await _require_active_connector(auth_header, db)
+            connection = await manager.register(connector_id, websocket, ready=False)
+            ingest_service = ConnectorIngestService(
+                db, ConnectorNotificationService(db, realtime, timeline_write_buffer),
+                timeline_broker, runtime_service, manager,
+                websocket.app.state.session_runtime_state_cache,
+            )
+            notification_pump = _ConnectorNotificationPump(
+                connector_id, ingest_service,
+                connection_id=connection.connection_id,
+                is_current=lambda: manager.accepts_notifications(connection),
+                unconfigured_runtimes=await db.get_unconfigured_runtime_ids(connector_id),
+                max_concurrency=int(os.environ.get("AGENT_SERVER_NOTIFICATION_CONCURRENCY", "4")),
+            )
+            notification_pump.start()
+            connection.abort_notifications = notification_pump.abort
+            connection.drain_notifications = notification_pump.close
+            connection.set_runtime_ingress_enabled = notification_pump.set_runtime_ingress_enabled
+            try:
+                if not await db.record_connector_connection(
+                    connector_id,
+                    device_os=_connector_device_os(websocket.headers.get("x-device-os")),
+                ):
+                    await websocket.close(code=1008, reason="connector was revoked")
+                    return
+                await db.record_connector_activity(connector_id)
+                await websocket.accept()
+                if not await manager.mark_ready(connection):
+                    await websocket.close(code=4409, reason="connector ownership was lost")
+                    return
+            finally:
+                if not connection.ready:
+                    await manager.unregister(connector_id, connection)
+    except HTTPException:
         await websocket.close(code=1008, reason="invalid connector access token")
         return
-
-    try:
-        connection = await manager.register(connector_id, websocket, ready=False)
     except DuplicateConnectorConnectionError:
         await websocket.close(code=4409, reason="connector id already connected")
         logger.warning("rejected duplicate connector websocket: {}", connector_id)
         return
-    runtime_service: DeviceRuntimeService = websocket.app.state.device_runtime_service
-    try:
-        recorded_connection = await db.record_connector_connection(
-            connector_id,
-            device_os=_connector_device_os(websocket.headers.get("x-device-os")),
-        )
-        if not recorded_connection:
-            await websocket.close(code=1008, reason="connector was revoked")
-            return
-        await db.record_connector_activity(connector_id)
-        # Finish authentication and registration before making this socket routable.
-        await websocket.accept()
-        if not await manager.mark_ready(connection):
-            await websocket.close(code=4409, reason="connector ownership was lost")
-            return
-    finally:
-        if not connection.ready:
-            await manager.unregister(connector_id, connection)
 
     discovery_task: asyncio.Task[str | None] | None = None
     flush_task: asyncio.Task[None] | None = None
     completion_task: asyncio.Task[None] | None = None
     reader_task: asyncio.Task[None] | None = None
-    notification_pump: _ConnectorNotificationPump | None = None
+    capabilities_task: asyncio.Task[None] | None = None
     try:
-        await publish_dashboard_changed(
-            db,
-            timeline_broker,
-            connector_id=connector_id,
-            reason="connector.online",
-        )
-        await publish_connector_session_capabilities(
-            db,
-            manager,
-            timeline_broker,
-            connector_id,
-        )
-        ingest_service = ConnectorIngestService(
-            db,
-            ConnectorNotificationService(db, realtime, timeline_write_buffer),
-            timeline_broker,
-            runtime_service,
-            manager,
-            websocket.app.state.session_runtime_state_cache,
-        )
-        notification_pump = _ConnectorNotificationPump(
-            connector_id,
-            ingest_service,
-            connection_id=connection.connection_id,
-            max_concurrency=int(
-                os.environ.get("AGENT_SERVER_NOTIFICATION_CONCURRENCY", "4")
-            ),
-        )
-        notification_pump.start()
         # Discovery refreshes provider metadata independently of request routing.
         discovery_task = asyncio.create_task(
             _discover_runtimes(
@@ -527,11 +600,17 @@ async def connector_ws(
             ),
             name=f"connector-reader-{connection.connection_id}",
         )
+        capabilities_task = asyncio.create_task(
+            _publish_connection_presence(db, manager, timeline_broker, connector_id),
+            name=f"connector-presence-{connection.connection_id}",
+        )
         done, _pending = await asyncio.wait(
             {reader_task, discovery_task, notification_pump.task},
             return_when=asyncio.FIRST_COMPLETED,
         )
         if notification_pump.task in done:
+            if connection.invalidated:
+                return
             await notification_pump.task
             raise RuntimeError("connector notification worker stopped unexpectedly")
         if reader_task in done:
@@ -548,6 +627,8 @@ async def connector_ws(
             return_when=asyncio.FIRST_COMPLETED,
         )
         if notification_pump.task in done:
+            if connection.invalidated:
+                return
             await notification_pump.task
             raise RuntimeError("connector notification worker stopped unexpectedly")
         if reader_task in done:
@@ -571,49 +652,72 @@ async def connector_ws(
             await reader_task
             return
         if notification_pump.task in done:
+            if connection.invalidated:
+                return
             await notification_pump.task
             raise RuntimeError("connector notification worker stopped unexpectedly")
     except WebSocketDisconnect:
         logger.info("connector disconnected: {}", connector_id)
     finally:
-        await manager.unregister(connector_id, connection)
-        if reader_task is not None and not reader_task.done():
-            reader_task.cancel()
-            await asyncio.gather(reader_task, return_exceptions=True)
-        if discovery_task is not None:
-            discovery_task.cancel()
-            await asyncio.gather(discovery_task, return_exceptions=True)
-        if flush_task is not None:
-            flush_task.cancel()
-            await asyncio.gather(flush_task, return_exceptions=True)
-        if completion_task is not None:
-            completion_task.cancel()
-            await asyncio.gather(completion_task, return_exceptions=True)
-        if notification_pump is not None:
-            await notification_pump.close()
-        removed_terminals = await broker.remove_ephemeral_for_connector(
-            connector_id,
-            connection_id=connection.connection_id,
-        )
-        if removed_terminals:
-            logger.info(
-                "removed ephemeral terminals after connector websocket ended "
-                "connector_id={} count={}",
+        with CancelScope(shield=True):
+            if reader_task is not None and not reader_task.done():
+                reader_task.cancel()
+                await asyncio.gather(reader_task, return_exceptions=True)
+            if discovery_task is not None:
+                discovery_task.cancel()
+                await asyncio.gather(discovery_task, return_exceptions=True)
+            if flush_task is not None:
+                flush_task.cancel()
+                await asyncio.gather(flush_task, return_exceptions=True)
+            if completion_task is not None:
+                completion_task.cancel()
+                await asyncio.gather(completion_task, return_exceptions=True)
+            if capabilities_task is not None:
+                capabilities_task.cancel()
+                await asyncio.gather(capabilities_task, return_exceptions=True)
+            try:
+                if await manager.begin_drain(connection):
+                    # The lease remains reserved until accepted work has settled.
+                    # Explicit invalidation can interrupt this drain at any time.
+                    async with asyncio.timeout(10):
+                        await notification_pump.close()
+            except TimeoutError:
+                logger.warning("connector notification drain timed out connector_id={}", connector_id)
+            finally:
+                await manager.unregister(connector_id, connection)
+            removed_terminals = await broker.remove_ephemeral_for_connector(
                 connector_id,
-                len(removed_terminals),
+                connection_id=connection.connection_id,
             )
-        await publish_connector_session_capabilities(
-            db,
-            manager,
-            timeline_broker,
-            connector_id,
-        )
+            if removed_terminals:
+                logger.info(
+                    "removed ephemeral terminals after connector websocket ended "
+                    "connector_id={} count={}",
+                    connector_id,
+                    len(removed_terminals),
+                )
+            await publish_connector_session_capabilities(
+                db,
+                manager,
+                timeline_broker,
+                connector_id,
+            )
+            await publish_dashboard_changed(
+                db,
+                timeline_broker,
+                connector_id=connector_id,
+                reason="connector.presence",
+            )
+
+
+async def _publish_connection_presence(db, manager, broker, connector_id: str) -> None:
+    try:
         await publish_dashboard_changed(
-            db,
-            timeline_broker,
-            connector_id=connector_id,
-            reason="connector.presence",
+            db, broker, connector_id=connector_id, reason="connector.online",
         )
+        await publish_connector_session_capabilities(db, manager, broker, connector_id)
+    except Exception:  # noqa: BLE001 - background publication must not stop the reader
+        logger.exception("connector presence publication failed connector_id={}", connector_id)
 
 
 async def _discover_runtimes(
@@ -835,20 +939,20 @@ def _parse_connector_authorization(authorization: str) -> tuple[str, str]:
     return connector_id, token
 
 
-def _connector_id_from_bearer(authorization: str | None) -> str | None:
+async def _require_active_connector(authorization: str | None, db: Store) -> str:
     prefix = "Bearer "
     if authorization is None or not authorization.startswith(prefix):
-        return None
-    return verify_connector_access_token(authorization[len(prefix) :])
-
-
-async def _require_active_connector(connector_id: str | None, db: Store) -> str:
+        raise HTTPException(status_code=401, detail="invalid connector access token")
+    connector_id = await db.authenticate_connector_access(authorization[len(prefix) :])
     if connector_id is None:
         raise HTTPException(status_code=401, detail="invalid connector access token")
-    try:
-        await db.get_connector(connector_id)
-    except KeyError:
-        raise HTTPException(
-            status_code=401, detail="invalid connector access token"
-        ) from None
     return connector_id
+
+
+def _access_token_connector_id(authorization: str | None) -> str:
+    """Only select the admission lock; authentication still happens inside it."""
+    if authorization is not None and authorization.startswith("Bearer "):
+        connector_id = connector_access_token_id(authorization[len("Bearer "):])
+        if connector_id is not None:
+            return connector_id
+    raise HTTPException(status_code=401, detail="invalid connector access token")

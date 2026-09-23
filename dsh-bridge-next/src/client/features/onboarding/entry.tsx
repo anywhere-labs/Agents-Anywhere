@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { translateMessage, type Translate } from '../../locales.js'
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Button, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Download, MessageCircle, Smartphone, Star } from 'lucide-react'
 import clsx from 'clsx'
@@ -18,26 +19,29 @@ const homeLinks = [
 ] as const
 
 const tabs = ['connection', 'settings', 'logs'] as const
-const tabLabels = { connection: '登录和连接', settings: '设置', logs: '运行日志' }
+const tabLabels = { connection: '登录和连接', settings: '设置', logs: '运行日志' } as const
 
 export interface ConnectionEntryProps {
   wide: boolean
+  t: Translate
   host: OnboardingHostApi
+  /** Plugin settings reuse the same connection dialog with their own trigger. */
+  renderTrigger?: (open: () => void) => ReactNode
 }
 
-export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
+export function ConnectionEntry({ wide, host, t, renderTrigger }: ConnectionEntryProps) {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<typeof tabs[number]>('connection')
   const tabId = useId()
   const state = useOnboardingState(host, open)
   const snapshot = state.snapshot
   const standalone = snapshot?.desktop.status === 'absent'
-  const ownershipError = standalone && snapshot?.ownership && snapshot.ownership.status !== 'owned' ? snapshot.ownership.message || '暂时无法检查本机 Connector 状态，请稍后重试。' : null
+  const ownershipError = standalone && snapshot?.ownership && snapshot.ownership.status !== 'owned' ? snapshot.ownership.message || t('暂时无法检查本机 Connector 状态，请稍后重试。') : null
   const showLogin = standalone && !snapshot.account && tab === 'connection'
   const detectionError = snapshot?.desktop.status === 'error' ? snapshot.desktop.message : !snapshot ? state.readError : null
   const detectionMessage = detectionError ?? (snapshot?.desktop.status === 'installed'
-    ? '已安装 Agents Anywhere 桌面端。请打开桌面端完成连接设置。' : '正在检查连接方式…')
-  const trigger = useRef<HTMLButtonElement | null>(null)
+    ? t('已安装 Agents Anywhere 桌面端。请打开桌面端完成连接设置。') : t('正在检查连接方式…'))
+  const trigger = useRef<HTMLElement | null>(null)
   const content = useRef<HTMLDivElement | null>(null)
   const close = useCallback(() => {
     // Official Modals each listen for Escape; a nested reset confirmation must
@@ -97,32 +101,36 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
     }
   }, [open])
 
+  const openPanel = (event?: { currentTarget: HTMLElement }) => {
+    trigger.current = event?.currentTarget ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+    state.prepareOpen(); setTab('connection'); setOpen(true)
+  }
   return <>
-    <Tooltip label="手机连接" disabled={wide || open} delayMs={500}>
+    {renderTrigger ? renderTrigger(openPanel) : <Tooltip label={t('远程控制')} disabled={wide || open} delayMs={500}>
       <span className={clsx(css.trigger, !wide && css.rail)}>
         <Button
           variant="ghost"
           className={css.button}
           icon={<Smartphone size={16} strokeWidth={1.5} />}
-          aria-label="手机连接"
+          aria-label={t('远程控制')}
           aria-haspopup="dialog"
           aria-expanded={open}
-          onClick={event => { trigger.current = event.currentTarget; state.prepareOpen(); setTab('connection'); setOpen(true) }}
+          onClick={openPanel}
         >
-          {wide ? <span className={css.label}>手机连接</span> : null}
+          {wide ? <span className={css.label}>{t('远程控制')}</span> : null}
         </Button>
       </span>
-    </Tooltip>
+    </Tooltip>}
     <Modal
       open={open}
       onClose={close}
-      title={standalone ? 'Agents Anywhere' : '手机连接'}
-      closeLabel="关闭手机连接"
+      title={standalone ? 'Agents Anywhere' : t('远程控制')}
+      closeLabel={t('关闭远程控制')}
       className={clsx(css.dialog, standalone ? css.wordmarkDialog : css.accountDialog, tab === 'logs' && css.logsDialog)}
       contentClassName={clsx(css.dialogContent)}
     >
       <div ref={content}>
-          <div className={css.tabs} role="tablist" aria-label="连接管理">
+          <div className={css.tabs} role="tablist" aria-label={t('连接管理')}>
             {tabs.map(value => <Button key={value} variant={tab === value ? 'outline' : 'ghost'}
               role="tab" id={`${tabId}-${value}`} aria-selected={tab === value} aria-controls={`${tabId}-panel`}
               tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => {
@@ -132,29 +140,29 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
                   : (tabs.indexOf(value) + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
                 const next = tabs[index]!
                 setTab(next); document.getElementById(`${tabId}-${next}`)?.focus()
-              }}>{tabLabels[value]}</Button>)}
+              }}>{t(tabLabels[value])}</Button>)}
           </div>
-          <BridgeStatusNotice status={snapshot?.bridge} busy={state.busy} error={state.error}
+          <BridgeStatusNotice t={t} status={snapshot?.bridge} busy={state.busy} error={state.error}
             onRestart={() => void state.run(() => host.restartBridge())} onLogs={() => setTab('logs')} />
           <div id={`${tabId}-panel`} role="tabpanel" aria-labelledby={`${tabId}-${tab}`}>
-        {tab === 'logs' ? <BridgeLogsPanel host={host} /> : ownershipError ? <p className={css.placeholder} role="alert">{ownershipError}</p> : !standalone ? <>
-          <p className={css.placeholder} role={detectionError ? 'alert' : 'status'}>{detectionMessage}</p>
-          {state.error ? <p className={css.placeholder} role="alert">{state.error}</p> : null}
+        {tab === 'logs' ? <BridgeLogsPanel t={t} host={host} /> : ownershipError ? <p className={css.placeholder} role="alert">{translateMessage(t, ownershipError)}</p> : !standalone ? <>
+          <p className={css.placeholder} role={detectionError ? 'alert' : 'status'}>{translateMessage(t, detectionMessage)}</p>
+          {state.error ? <p className={css.placeholder} role="alert">{translateMessage(t, state.error)}</p> : null}
           {detectionError
-            ? <Button variant="outline" disabled={state.busy} onClick={() => void state.run(state.refresh)}>重新检查</Button>
-            : <Button variant="primary" disabled={state.busy} onClick={() => void state.run(() => host.openDesktop())}>打开 Agents Anywhere</Button>}
+            ? <Button variant="outline" disabled={state.busy} onClick={() => void state.run(state.refresh)}>{t('重新检查')}</Button>
+            : <Button variant="primary" disabled={state.busy} onClick={() => void state.run(() => host.openDesktop())}>{t('打开 Agents Anywhere')}</Button>}
         </> : <>
-            {tab === 'settings' ? <SettingsPanel host={host} state={state} snapshot={snapshot} onConnection={() => setTab('connection')} />
-              : snapshot.account ? <AccountPanel key={`${snapshot.settings.apiBaseUrl}:${snapshot.account.userId}`} host={host} state={state} snapshot={snapshot} account={snapshot.account} />
+            {tab === 'settings' ? <SettingsPanel t={t} host={host} state={state} snapshot={snapshot} onConnection={() => setTab('connection')} />
+              : snapshot.account ? <AccountPanel t={t} key={`${snapshot.settings.apiBaseUrl}:${snapshot.account.userId}`} host={host} state={state} snapshot={snapshot} account={snapshot.account} />
                 : <>
-                  {showLogin ? <p className={css.loginDescription}>在所有设备间访问你的 Agent、会话和工作空间。</p> : null}
-                  <OnboardingSection host={host} state={state} />
+                  {showLogin ? <p className={css.loginDescription}>{t('在所有设备间访问你的 Agent、会话和工作空间。')}</p> : null}
+                  <OnboardingSection t={t} host={host} state={state} />
                 </>}
         </>}
-            {tab === 'connection' ? <nav className={css.homeLinks} aria-label="Agents Anywhere 相关链接">
+            {tab === 'connection' ? <nav className={css.homeLinks} aria-label={t('Agents Anywhere 相关链接')}>
               {homeLinks.map(({ label, url, icon: Icon }) => <Button key={url} variant="outline"
                 icon={<Icon size={16} strokeWidth={1.5} />} onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}>
-                {label}
+                {t(label)}
               </Button>)}
             </nav> : null}
           </div>

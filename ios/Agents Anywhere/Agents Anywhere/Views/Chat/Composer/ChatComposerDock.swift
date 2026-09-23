@@ -25,6 +25,7 @@ struct ChatComposerDock: View {
     var onLoadSettings: () async -> Void = {}
     var onApplySettings: () async -> Bool = { true }
     var applyError: () -> String? = { nil }
+    var onDraftChange: () -> Void = {}
 
     @State private var editor = ComposerEditorController()
     @State private var showsOptions = false
@@ -43,7 +44,7 @@ struct ChatComposerDock: View {
             placeholder: placeholder,
             maximumEditorHeight: maximumEditorHeight, controls: controls,
             onSend: send, onStop: { Task { await onStop() } },
-            onOptions: { showsOptions = true })
+            onOptions: { showsOptions = true }, onDraftChange: onDraftChange)
         .frame(maxWidth: ChatControlMetrics.maximumContentWidth)
         .frame(maxWidth: .infinity)
         .background {

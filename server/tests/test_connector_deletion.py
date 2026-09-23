@@ -4,11 +4,6 @@ import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
-from conftest import ApiV2TestClient as TestClient
-from fakeredis import FakeAsyncRedis
-from sqlalchemy import insert, select, text, update
-from sqlalchemy.exc import IntegrityError
-
 from agent_server.app import create_app
 from agent_server.core.models import SessionRuntimeState, TimelineItemIn
 from agent_server.core.utc import utc_now
@@ -18,7 +13,10 @@ from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
-
+from conftest import ApiV2TestClient as TestClient
+from fakeredis import FakeAsyncRedis
+from sqlalchemy import insert, select, text, update
+from sqlalchemy.exc import IntegrityError
 
 DEVICE_CHILD_TABLES = (
     db.connector_runtime_types,
@@ -444,7 +442,7 @@ def test_token_rotation_keeps_device_projects(api):
     )
 
 
-def test_failed_project_cleanup_rolls_back_all_database_deletions(api):
+def test_failed_project_cleanup_rolls_back_all_database_deletions(api, request):
     client, headers = api
     device = create_device(client, headers)
     project = create_project(client, headers, device, "Rollback")
@@ -453,6 +451,16 @@ def test_failed_project_cleanup_rolls_back_all_database_deletions(api):
 
     async def reject_cleanup():
         async with client.app.state.store.engine.begin() as connection:
+            if connection.dialect.name == "postgresql":
+                await connection.execute(text(
+                    "CREATE FUNCTION reject_project_delete() RETURNS trigger LANGUAGE plpgsql AS $$ "
+                    "BEGIN RAISE EXCEPTION 'cleanup failed' USING ERRCODE = '23000'; END; $$"
+                ))
+                await connection.execute(text(
+                    "CREATE TRIGGER reject_project_delete BEFORE DELETE ON projects "
+                    "FOR EACH ROW EXECUTE FUNCTION reject_project_delete()"
+                ))
+                return
             await connection.execute(
                 text(
                     "CREATE TRIGGER reject_project_delete BEFORE DELETE ON projects "
@@ -461,6 +469,14 @@ def test_failed_project_cleanup_rolls_back_all_database_deletions(api):
             )
 
     asyncio.run(reject_cleanup())
+
+    async def remove_trigger():
+        async with client.app.state.store.engine.begin() as connection:
+            if connection.dialect.name == "postgresql":
+                await connection.execute(text("DROP TRIGGER reject_project_delete ON projects"))
+                await connection.execute(text("DROP FUNCTION reject_project_delete()"))
+
+    request.addfinalizer(lambda: asyncio.run(remove_trigger()))
     with pytest.raises(IntegrityError, match="cleanup failed"):
         client.delete(f"/connectors/{device}", headers=headers)
 
@@ -470,7 +486,7 @@ def test_failed_project_cleanup_rolls_back_all_database_deletions(api):
                 await connection.execute(
                     select(connectors.c.revoked).where(connectors.c.id == device)
                 )
-            ).scalar_one() == 0
+            ).scalar_one() == 2
             assert (
                 await connection.execute(
                     select(sessions.c.project_id).where(sessions.c.id == session)
@@ -492,7 +508,7 @@ def test_failed_project_cleanup_rolls_back_all_database_deletions(api):
     asyncio.run(check_rows())
 
 
-def test_failed_attachment_cleanup_keeps_device_available_for_retry(api, monkeypatch):
+def test_failed_attachment_cleanup_keeps_revoked_device_records_for_retry(api, monkeypatch):
     client, headers = api
     device = create_device(client, headers)
     project = create_project(client, headers, device, "Retry")
@@ -507,8 +523,8 @@ def test_failed_attachment_cleanup_keeps_device_available_for_retry(api, monkeyp
         )
         with pytest.raises(OSError, match="storage unavailable"):
             client.delete(f"/connectors/{device}", headers=headers)
-    assert client.get(f"/connectors/{device}", headers=headers).status_code == 200
-    assert client.get(f"/sessions/{session}/meta", headers=headers).status_code == 200
+    assert client.get(f"/connectors/{device}", headers=headers).status_code == 404
+    assert client.get(f"/sessions/{session}/meta", headers=headers).status_code == 404
     assert asyncio.run(store.files.exists(session, saved["fileId"]))
     assert client.delete(f"/connectors/{device}", headers=headers).status_code == 204
     assert not asyncio.run(store.files.exists(session, saved["fileId"]))

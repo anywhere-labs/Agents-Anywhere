@@ -113,6 +113,7 @@ async def dashboard_ws(
 
     await websocket.accept()
     queue = await broker.register_dashboard(ticket.user_id)
+    recovery_signal = broker.recovery_signal
 
     async def send_dashboard_updates() -> None:
         await websocket.send_json(
@@ -131,6 +132,10 @@ async def dashboard_ws(
                     {"type": "keepalive", "serverTime": utc_now()}
                 )
                 continue
+            # A Dashboard invalidation requests a full current snapshot. Retain
+            # only the newest queued request while a previous build/send ran.
+            while not queue.empty():
+                message = queue.get_nowait()
             try:
                 invalidation = json.loads(message)
             except json.JSONDecodeError:
@@ -139,19 +144,21 @@ async def dashboard_ws(
                 continue
             if invalidation.get("type") != "dashboard.changed":
                 continue
-            await websocket.send_json(
-                await _dashboard_snapshot(
-                    db=db,
-                    manager=manager,
-                    runtime_state_cache=runtime_state_cache,
+
+            async def build_snapshot() -> str:
+                snapshot = await _dashboard_snapshot(
+                    db=db, manager=manager, runtime_state_cache=runtime_state_cache,
                     user_id=ticket.user_id,
                 )
-            )
+                return json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+            await websocket.send_text(await message.prepared(build_snapshot))
 
     try:
         await run_server_push_until_disconnect(
             websocket,
             send_dashboard_updates(),
+            recovery_signal=recovery_signal,
         )
     finally:
         await broker.unregister_dashboard(ticket.user_id, queue)

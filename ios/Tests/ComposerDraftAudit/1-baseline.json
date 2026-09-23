@@ -1,0 +1,20 @@
+{
+  "attachmentCallback": true,
+  "baseline": true,
+  "counts": {
+    "composer": 238,
+    "page": 120,
+    "persistence": 120,
+    "timeline": 145
+  },
+  "cpuSeconds": 4.055006,
+  "draftMatchesEditor": true,
+  "finalTextCharacters": 43,
+  "historyCharacters": 7200,
+  "markedUpdates": 120,
+  "stepMaxms": 118.73870831914246,
+  "stepP50ms": 64.68374998075888,
+  "stepP95ms": 80.38554165977985,
+  "updates": 120,
+  "wallSeconds": 8.046048166695982
+}

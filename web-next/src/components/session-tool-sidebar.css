@@ -1,0 +1,6 @@
+/* Inactive panels stay mounted, but must disappear in the same frame.
+   Descendant transition-all rules must not delay inherited visibility. */
+.aa-session-tool-panel[aria-hidden="true"],
+.aa-session-tool-panel[aria-hidden="true"] * {
+  transition: none !important;
+}

@@ -14,6 +14,10 @@ from agent_server.api.server_push_websocket import (
 class FakeWebSocket:
     def __init__(self) -> None:
         self.inbound: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self.close_code = None
+
+    async def close(self, *, code: int, reason: str) -> None:
+        self.close_code = code
 
     async def receive(self) -> dict[str, Any]:
         return await self.inbound.get()
@@ -104,4 +108,28 @@ def test_external_cancellation_still_propagates() -> None:
         with pytest.raises(asyncio.CancelledError):
             await stream_task
 
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("already_lost", [False, True])
+def test_subscription_loss_closes_idle_socket_for_recovery(already_lost) -> None:
+    async def exercise() -> None:
+        ws = FakeWebSocket()
+        signal = asyncio.Event()
+        cancelled = asyncio.Event()
+        async def stream() -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+        if already_lost:
+            signal.set()
+        task = asyncio.create_task(run_server_push_until_disconnect(
+            cast(WebSocket, ws), stream(), recovery_signal=signal))
+        await asyncio.sleep(0)
+        signal.set()
+        await asyncio.wait_for(task, 1)
+        await asyncio.sleep(0)
+        assert ws.close_code == 1012
+        assert cancelled.is_set()
     asyncio.run(exercise())

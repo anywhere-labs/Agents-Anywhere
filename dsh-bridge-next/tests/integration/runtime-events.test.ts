@@ -27,9 +27,20 @@ function notifications(operations: SyncOperation[]) {
     ? op.notifications as { method: string, params: Record<string, unknown> }[] : [])
 }
 
-function follow(native: ReturnType<typeof nativeRuntime> extends Promise<infer T> ? T['ctx']['agentsAnywhereRuntime']['native'] : never) {
+function follow(native: ReturnType<typeof nativeRuntime> extends Promise<infer T> ? T['ctx']['agentsAnywhereRuntime']['native'] : never,
+  checkpoints?: Map<string, unknown>) {
   const batches: SyncBatch[] = [], errors: unknown[] = []
-  const feed = new SyncFeed(native, 'test', batch => { batches.push(batch); queueMicrotask(() => feed.ack(batch.batchSeq)) }, error => errors.push(error))
+  const feed = new SyncFeed(native, 'test', batch => {
+    batches.push(batch)
+    let loaded: unknown
+    for (const op of batch.operations) {
+      const id = String(op.externalSessionId)
+      if (op.kind === 'checkpoint.load') loaded = checkpoints?.get(id)
+      if (op.kind === 'checkpoint.save') checkpoints?.set(id, op.checkpoint)
+      if (op.kind === 'checkpoint.delete') checkpoints?.delete(id)
+    }
+    queueMicrotask(() => feed.ack(batch.batchSeq, loaded))
+  }, error => errors.push(error), 60_000, checkpoints !== undefined)
   feed.start()
   return { feed, batches, errors, ops: () => batches.flatMap(b => b.operations) }
 }
@@ -266,10 +277,13 @@ test('startup and reconnect exclude persisted drafts and import messages sent th
     await until(() => !!adapter.release, 'native model is running')
     await until(() => stream.ops().some(op => op.kind === 'snapshot.commit' && op.sessionId === sessionId('test', handle!.agent.id)), 'native first message is synchronized live')
     assert.deepEqual(stream.errors, [])
+    // Disconnect before the turn's tail events reach the first feed. Whether that
+    // feed has already checkpointed the tail is a timing accident; closing here
+    // keeps the replacement feed's decision deterministic.
+    stream.feed.close()
     adapter.release!()
     await handle.agent.whenIdle()
     await fixture.ctx.sessions.flush(handle.agent.session)
-    stream.feed.close()
     stream = follow(native)
     await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'reconnected inventory')
     for (const id of drafts) assert.ok(!imported().includes(sessionId('test', id)), `${id} must not be imported on reconnect`)
@@ -433,6 +447,13 @@ test('official native loop crosses Python and backend despite corrupt history, i
           session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'first native user message' }] }), { surfaceOp: 'append' })
           session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
           await fixture.ctx.sessions.flush(session)
+        } else if (action.action === 'host-restart') {
+          await fixture.plugin.dispose()
+          const host = await import('../../lib/index.js')
+          fixture.plugin = fixture.ctx.plugin(host, { dshHome: home, stateRoot: join(home, 'account'), connectorSourceDir: home })
+          await fixture.plugin.await()
+        } else if (action.action === 'offline-message') {
+          fixture.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'offline recovery message' }] }), { surfaceOp: 'append' })
         } else if (action.action === 'rename') await workspace.setTitle('DSH 项目改名')
         else if (action.action === 'archive') await fixture.ctx.workspaceRegistry.archiveSession(SessionId(action.sessionId))
         else if (action.action === 'delete') await fixture.ctx.workspaceRegistry.delete(workspace.id)
@@ -447,27 +468,86 @@ test('official native loop crosses Python and backend despite corrupt history, i
       cwd: new URL('../../../server/', import.meta.url), timeout: 60_000,
     })
     assert.match(result.stdout, /DSH event pipeline passed/)
+    assert.match(result.stdout, /offline change=1 delta, 0 snapshots/)
   } finally { closed = true; adapter.release?.(); await mutations; await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })
 
 
-test('a replacement feed reuses startup checkpoints and snapshots only offline changes', { timeout: 30_000 }, async () => {
+test('a replacement feed uses Connector checkpoints and uploads only offline deltas', { timeout: 30_000 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'dsh-checkpoints-'))
   const fixture = await nativeRuntime(home)
   const native = fixture.ctx.agentsAnywhereRuntime.native
-  let stream = follow(native)
+  const checkpoints = new Map<string, unknown>()
+  let stream = follow(native, checkpoints)
   try {
     await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'first inventory')
     assert.equal(stream.ops().filter(op => op.kind === 'snapshot.commit').length, 2)
     stream.feed.close()
-    stream = follow(native)
+    stream = follow(native, checkpoints)
     await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'unchanged reconnect')
     assert.equal(stream.ops().filter(op => op.kind === 'snapshot.begin').length, 0)
     stream.feed.close()
     fixture.session.append('session/title', { title: 'changed offline', source: { kind: 'user' }, messageSeqs: [] })
-    stream = follow(native)
+    fixture.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'offline delta' }] }), { surfaceOp: 'append' })
+    stream = follow(native, checkpoints)
     await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'changed reconnect')
+    assert.equal(stream.ops().filter(op => op.kind === 'snapshot.begin').length, 0)
+    const delta = notifications(stream.ops()).filter(n => n.method === 'timeline.itemUpsert')
+    assert.equal(delta.length, 1)
+    assert.ok(JSON.stringify(delta[0]).includes('offline delta'))
+    assert.deepEqual(stream.errors, [])
+    stream.feed.close()
+    // Destroy the plugin Host (including its source caches and projections).
+    // Only the Connector-owned, JSON-serializable checkpoints survive.
+    const saved = JSON.stringify([...checkpoints])
+    await fixture.plugin.dispose()
+    fixture.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'changed while Host destroyed' }] }), { surfaceOp: 'append' })
+    const host = await import('../../lib/index.js')
+    await fixture.ctx.plugin(host, { dshHome: home, stateRoot: join(home, 'account'), connectorSourceDir: home }).await()
+    const restored = new Map<string, unknown>(JSON.parse(saved))
+    stream = follow(fixture.ctx.agentsAnywhereRuntime.native, restored)
+    await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'new Host restores Connector checkpoints')
+    assert.equal(stream.ops().filter(op => op.kind === 'snapshot.begin').length, 0)
+    const restartDelta = notifications(stream.ops()).filter(n => n.method === 'timeline.itemUpsert')
+    assert.equal(restartDelta.length, 1)
+    assert.ok(JSON.stringify(restartDelta[0]).includes('changed while Host destroyed'))
+    fixture.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'incremental after Host restart' }] }), { surfaceOp: 'append' })
+    await until(() => notifications(stream.ops()).some(n => n.method === 'timeline.itemUpsert' && JSON.stringify(n).includes('incremental after Host restart')), 'restored projection handles the next event incrementally')
+    assert.equal(stream.ops().filter(op => op.kind === 'snapshot.begin').length, 0)
+    await until(() => (restored.get('native-main') as { throughSeq: number }).throughSeq === Number(fixture.session.seq) - 1, 'live event checkpoint is committed')
+    stream.feed.close()
+    stream = follow(fixture.ctx.agentsAnywhereRuntime.native, restored)
+    await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'live and replay fingerprints agree')
+    assert.equal(stream.ops().filter(op => op.kind === 'snapshot.begin').length, 0)
+    assert.deepEqual(stream.errors, [])
+  } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+test('checkpoint mismatches and active turns recalibrate only the affected session', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-checkpoint-fallback-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  const checkpoints = new Map<string, unknown>()
+  let stream = follow(native, checkpoints)
+  const complete = () => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete')
+  try {
+    await until(complete, 'initial checkpoints')
+    for (const mutation of [{ historyHash: '0'.repeat(64) }, { projectionVersion: 99 }, { settled: false }]) {
+      stream.feed.close()
+      checkpoints.set('native-main', { ...checkpoints.get('native-main') as object, ...mutation })
+      stream = follow(native, checkpoints)
+      await until(complete, 'incompatible checkpoint recalibrates')
+      assert.deepEqual(stream.ops().filter(op => op.kind === 'snapshot.commit').map(op => op.sessionId), [sessionId('test', 'native-main')])
+      assert.deepEqual(stream.errors, [])
+    }
+    fixture.session.append('turn/start', { turn: 2 })
+    await until(() => (checkpoints.get('native-main') as { settled: boolean }).settled === false, 'active turn never claims a settled checkpoint')
+    stream.feed.close()
+    stream = follow(native, checkpoints)
+    await until(complete, 'active reconnect')
     assert.deepEqual(stream.ops().filter(op => op.kind === 'snapshot.commit').map(op => op.sessionId), [sessionId('test', 'native-main')])
+    native.refresh('persisted-only')
+    await until(() => stream.ops().some(op => op.kind === 'snapshot.commit' && op.sessionId === sessionId('test', 'persisted-only')), 'manual refresh bypasses a matching checkpoint')
     assert.deepEqual(stream.errors, [])
   } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })

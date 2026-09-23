@@ -2177,6 +2177,53 @@ def test_codex_runtime_session_sync_force_requires_timeline() -> None:
     asyncio.run(_test_codex_runtime_session_sync_force_requires_timeline())
 
 
+def test_codex_recovery_uploads_only_changed_items_after_committed_json_restart(tmp_path):
+    from unittest.mock import AsyncMock
+    from connector.server.runtime_host import ConnectorRuntimeHost
+    from connector.server.sync_state import JsonSyncStateStore
+
+    async def run():
+        path = tmp_path / "sync-state.json"
+        store = JsonSyncStateStore(path)
+        host = ConnectorRuntimeHost("conn_test", AsyncMock(), AsyncMock(), store)
+        client = FakeCodexClient()
+        runtime = CodexRuntime(config=_config(), host=host, client=client)
+        session = (await runtime.list_sessions(force=True))[0]
+        first = await runtime.prepare_session_timeline_sync(session.session_id, "thread_1")
+        assert first.snapshot and len(first.snapshot.items) >= 2
+        await first.commit()
+        store.flush()
+        restored_host = ConnectorRuntimeHost("conn_test", AsyncMock(), AsyncMock(), JsonSyncStateStore(path))
+        restored = CodexRuntime(config=_config(), host=restored_host, client=client)
+        await restored.list_sessions(force=True)
+        unchanged = await restored.prepare_session_timeline_sync(session.session_id, "thread_1")
+        assert unchanged.snapshot is None
+        await unchanged.commit()
+        raw = client.results["thread/read"]["thread"]["items"]
+        assistant = next(item for item in raw if item.get("id") == "item_assistant")
+        assistant["text"] = "updated response"
+        raw.append({"id": "new_message", "type": "message", "role": "assistant", "text": "new response", "status": "done"})
+        delta = await restored.prepare_session_timeline_sync(session.session_id, "thread_1")
+        assert delta.snapshot and len(delta.snapshot.items) == 2
+        assert delta.snapshot.complete is False
+        assert {item.content.get("text") for item in delta.snapshot.items} == {"updated response", "new response"}
+        # Simulate failed ingestion by withholding commit; recovery must retry.
+        retry = await restored.prepare_session_timeline_sync(session.session_id, "thread_1")
+        assert retry.snapshot.items == delta.snapshot.items
+        await retry.commit()
+        assert (await restored.prepare_session_timeline_sync(session.session_id, "thread_1")).snapshot is None
+        raw.pop()
+        deletion = await restored.prepare_session_timeline_sync(session.session_id, "thread_1")
+        assert deletion.snapshot and deletion.snapshot.complete is True
+        await deletion.commit()
+        assert (await restored.prepare_session_timeline_sync(session.session_id, "thread_1")).snapshot is None
+        key = "codex/timeline-sync/thread_1"
+        await restored_host.sync_state_write(key, {"version": 99, "items": {}})
+        incompatible = await restored.prepare_session_timeline_sync(session.session_id, "thread_1")
+        assert incompatible.snapshot and incompatible.snapshot.complete is True
+    asyncio.run(run())
+
+
 async def _test_codex_runtime_session_sync_force_requires_timeline() -> None:
     client = FakeCodexClient()
     host = FakeHost()

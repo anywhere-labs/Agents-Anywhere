@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import asyncio
 
+from agent_server.core.models import TimelineItemIn
 from test_backend_mvp import (
     _create_extra_session,
     create_connector_and_session,
     dashboard_ws_ticket,
     make_client,
 )
-
-from agent_server.core.models import TimelineItemIn
 
 
 def test_inventory_and_push_include_all_owned_active_and_archived_sessions(tmp_path):
@@ -152,3 +151,40 @@ def test_inventory_projects_the_newest_timeline_item_of_each_session(tmp_path):
         assert rows[first_id]["lastItemAt"] == "2026-01-02T00:00:00Z"
         assert rows[second_id]["lastItemOrderSeq"] == 1
         assert rows[second_id]["lastItemAt"] == "2025-12-31T00:00:00Z"
+
+
+def test_unchanged_source_fast_path_preserves_seq_archive_and_scan_order(tmp_path):
+    from agent_server.infra.db import sessions as sessions_t
+    from sqlalchemy import select
+
+    client = make_client(tmp_path)
+    connector_id, _, session_id, _ = create_connector_and_session(client)
+    store = client.app.state.store
+
+    async def run():
+        first = await store.update_session_source_state(
+            session_id, availability="archived", reason="archive", observed_at="2026-09-11T00:00:01Z", observation_origin="inventory",
+        )
+        initial_seq = first.updatedSeq
+        # Repeated observations must not re-archive a session the user restored.
+        from sqlalchemy import update
+        async with store.engine.begin() as conn:
+            await conn.execute(update(sessions_t).where(sessions_t.c.id == session_id).values(archived=0, source_scan_token="current-scan"))
+        observation = {"connector_id": connector_id, "runtime": first.runtime, "runtime_id": first.runtimeId,
+            "availability": "archived", "reason": "archive", "observation_origin": "inventory"}
+        assert await store.refresh_unchanged_session_source(session_id, observed_at="2026-09-11T00:00:00Z", **observation)
+        async with store.engine.connect() as conn:
+            row = (await conn.execute(select(sessions_t).where(sessions_t.c.id == session_id))).mappings().one()
+        assert row["source_scan_token"] == "current-scan"
+        assert row["source_state_at"] == "2026-09-11T00:00:01Z"
+        assert row["updated_seq"] == initial_seq and row["archived"] == 0
+        assert await store.refresh_unchanged_session_source(session_id, observed_at="2026-09-11T00:00:02Z", **observation)
+        async with store.engine.connect() as conn:
+            row = (await conn.execute(select(sessions_t).where(sessions_t.c.id == session_id))).mappings().one()
+        assert row["source_scan_token"] is None
+        assert row["source_state_at"] == "2026-09-11T00:00:02Z"
+        assert row["updated_seq"] == initial_seq and row["archived"] == 0
+        observation["reason"] = "changed reason"
+        assert not await store.refresh_unchanged_session_source(session_id, observed_at="2026-09-11T00:00:03Z", **observation)
+
+    asyncio.run(run())

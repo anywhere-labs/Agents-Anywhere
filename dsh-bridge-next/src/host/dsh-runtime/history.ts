@@ -1,8 +1,9 @@
 import { setImmediate as yieldLoop } from 'node:timers/promises'
+import { createHash } from 'node:crypto'
 import type { ContentBlock, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { receiptKey, type AttachmentSnapshot, type AttachmentReceipt } from './attachments.js'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { clientMessageId, contentHash, itemId } from './identity.js'
+import { canonicalJson, clientMessageId, contentHash, itemId } from './identity.js'
 import { enrichToolResult, parentToolItem, resultContent, toolContent } from './tools.js'
 import { json, record, type Data, type ItemStatus, type ItemType, type TimelineItem } from './types.js'
 
@@ -12,7 +13,10 @@ type LegacyChunk = { type: 'assistant/chunk', seq: SessionEvent['seq'], time: nu
 type ProjectionEvent = SessionEvent | LegacyChunk
 
 /** One deterministic projector shared by snapshots and the live event feed. */
-export function createProjection(externalId: string, platformId: string) {
+export function createProjection(externalId: string, platformId: string, fingerprint = false) {
+  // Hash durable inputs, including attachment receipts, independently of live/cold
+  // SDK revision formats. Never use a fresh source revision after sending a cut.
+  const historyHash = fingerprint ? createHash('sha256').update(JSON.stringify([externalId, platformId])) : undefined
   let throughSeq = -1
   const changed = new Map<string, TimelineItem>()
   const removed = new Set<string>()
@@ -105,6 +109,7 @@ export function createProjection(externalId: string, platformId: string) {
   function apply(event: ProjectionEvent, receipt?: AttachmentReceipt, transient = false): void {
     if (!transient && Number(event.seq) <= throughSeq) return
     if (!transient && throughSeq >= 0 && Number(event.seq) !== throughSeq + 1) throw new Error('DSH event sequence gap')
+    if (!transient) historyHash?.update(canonicalJson(json({ event, receipt: receipt ?? null }))).update('\n')
     if (!transient) throughSeq = Number(event.seq)
     if (event.type !== 'assistant/chunk') flushDrafts()
     const data = record(event.data)
@@ -232,6 +237,8 @@ export function createProjection(externalId: string, platformId: string) {
         data: { turn, step, chunk } }, undefined, true)
     },
     get throughSeq() { return throughSeq },
+    get historyHash() { return historyHash?.copy().digest('hex') },
+    get settled() { return turnId === null && drafts.size === 0 },
     get dirty() { return pendingDrafts.size > 0 || changed.size > 0 || removed.size > 0 },
     snapshot: () => {
       flushDrafts()
@@ -257,7 +264,8 @@ export function projectHistory(snapshot: AttachmentSnapshot, platformId: string)
 }
 
 /** Bound replay slices so timers, control RPC and cancellation can run between them. */
-export async function replayHistory(projection: SessionProjection, snapshot: AttachmentSnapshot, signal?: AbortSignal): Promise<void> {
+export async function replayHistory(projection: SessionProjection, snapshot: AttachmentSnapshot, signal?: AbortSignal,
+  throughSeq = Infinity): Promise<void> {
   let deadline = performance.now() + 5
   for (let index = 0; index < snapshot.events.length; index++) {
     if (index % 128 === 0 && performance.now() >= deadline) {
@@ -266,6 +274,7 @@ export async function replayHistory(projection: SessionProjection, snapshot: Att
     }
     signal?.throwIfAborted()
     const event = snapshot.events[index]!
+    if (Number(event.seq) > throughSeq) break
     projection.apply(event, snapshot.attachmentReceipts?.[receiptKey(event) ?? ''])
   }
 }

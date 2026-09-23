@@ -7,7 +7,7 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-from openai_codex import MethodNotFoundError
+from openai_codex import JsonRpcError, MethodNotFoundError
 from openai_codex.generated.v2_all import (
     ApprovalsReviewer,
     AskForApproval,
@@ -30,9 +30,10 @@ from openai_codex.generated.v2_all import (
 from pydantic import BaseModel, ConfigDict, Field
 
 from connector.logging import logger
-from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
+from connector.runtime_protocol import RuntimeConfig, RuntimeConflictError, RuntimeInvalidRequestError
 from connector.runtimes.codex.runtime_helpers import soft_codex_unavailable_reason
 from connector.runtimes.codex.sdk.binary import (
+    codex_launch_command,
     codex_runtime_environment,
     select_codex_runtime_binary,
 )
@@ -55,6 +56,7 @@ from connector.runtimes.codex.sdk.runtime_client import (
     CodexThreadReadResult,
     CodexThreadResult,
     CodexThreadTurnsResult,
+    CodexThreadTurnsPage,
     CodexTurnResult,
     NotificationHandler,
 )
@@ -268,6 +270,23 @@ class CodexSdkClient:
         return projected
 
     async def list_thread_turns(self, thread_id: str) -> CodexThreadTurnsResult:
+        turns_descending: list[Mapping[str, Any]] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        while True:
+            page = await self.list_thread_turns_page(thread_id, cursor, CODEX_THREAD_TURNS_PAGE_SIZE)
+            turns_descending.extend(page.turns)
+            next_cursor = page.next_cursor
+            if next_cursor is None:
+                break
+            if next_cursor in seen_cursors:
+                raise RuntimeError(f"Codex history pagination repeated a cursor for {thread_id}")
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+        turns_descending.reverse()
+        return CodexThreadTurnsResult(turns=tuple(turns_descending))
+
+    async def list_thread_turns_page(self, thread_id: str, cursor: str | None = None, limit: int = 20) -> CodexThreadTurnsPage:
         await ensure_codex_initialized(self._client)
         low_level_client = getattr(self._client, "_client", None)
         request = getattr(low_level_client, "request", None)
@@ -275,36 +294,25 @@ class CodexSdkClient:
             raise RuntimeInvalidRequestError(
                 "Codex SDK client does not expose raw request() for thread turns"
             )
-        turns_descending: list[Mapping[str, Any]] = []
-        cursor: str | None = None
-        seen_cursors: set[str] = set()
-        while True:
-            params: dict[str, Any] = {
-                "threadId": thread_id,
-                "limit": CODEX_THREAD_TURNS_PAGE_SIZE,
-                "sortDirection": "desc",
-                "itemsView": "full",
-            }
-            if cursor is not None:
-                params["cursor"] = cursor
-            try:
-                page = await request(
-                    "thread/turns/list",
-                    params,
-                    response_model=CodexThreadTurnsListResponse,
-                )
-            except MethodNotFoundError as exc:
-                raise RuntimeInvalidRequestError(
-                    "Codex app-server does not support thread/turns/list"
-                ) from exc
-            turns_descending.extend(page.data)
-            next_cursor = page.next_cursor
-            if next_cursor is None or next_cursor in seen_cursors:
-                break
-            seen_cursors.add(next_cursor)
-            cursor = next_cursor
-        turns_descending.reverse()
-        return CodexThreadTurnsResult(turns=tuple(turns_descending))
+        params: dict[str, Any] = {
+            "threadId": thread_id,
+            "limit": limit,
+            "sortDirection": "desc",
+            "itemsView": "full",
+        }
+        if cursor is not None:
+            params["cursor"] = cursor
+        try:
+            page = await request(
+                "thread/turns/list",
+                params,
+                response_model=CodexThreadTurnsListResponse,
+            )
+        except MethodNotFoundError as exc:
+            raise RuntimeInvalidRequestError(
+                "Codex app-server does not support thread/turns/list"
+            ) from exc
+        return CodexThreadTurnsPage(turns=tuple(page.data), next_cursor=page.next_cursor)
 
     async def start_thread(self, request: CodexStartThreadRequest) -> CodexThreadResult:
         await ensure_codex_initialized(self._client)
@@ -462,10 +470,19 @@ class CodexSdkClient:
         thread_resume = getattr(low_level_client, "thread_resume", None)
         if not callable(thread_resume):
             return
-        resumed = await thread_resume(
-            request.thread_id,
-            codex_thread_resume_params(request, self._model_gateway),
-        )
+        try:
+            resumed = await thread_resume(
+                request.thread_id,
+                codex_thread_resume_params(request, self._model_gateway),
+            )
+        except JsonRpcError as exc:
+            if exc.code == -32600 and "already has an active writer" in exc.message:
+                raise RuntimeConflictError(
+                    "该 Codex 会话正由其他进程持有写入权限，AA 尚未接管。"
+                    "请先在原 Codex 客户端释放该会话；若仍被占用，退出对应客户端后重试。"
+                    "本次消息尚未发送。"
+                ) from exc
+            raise
         thread_id = id_of(resumed.thread)
         thread = codex_async_thread(self._sdk, self._client, thread_id)
         if thread is not None:
@@ -807,7 +824,17 @@ def _sdk_config(sdk: Any, config: RuntimeConfig) -> Any:
         binary_selection.codex_bin,
         binary_selection.login_shell,
     )
+    launch_options: dict[str, Any] = {}
+    if binary_selection.codex_bin is not None:
+        command = codex_launch_command(
+            binary_selection.codex_bin,
+            ["app-server", "--listen", "stdio://"],
+            runtime_environment,
+        )
+        if command[0] != binary_selection.codex_bin:
+            launch_options["launch_args_override"] = tuple(command)
     return config_cls(
+        **launch_options,
         codex_bin=binary_selection.codex_bin,
         env=runtime_environment,
         client_name="agents_anywhere_connector",

@@ -15,7 +15,19 @@
         "type": "object",
         "required": ["kind"],
         "properties": {
-          "kind": { "enum": ["snapshot.begin", "snapshot.items", "snapshot.commit", "snapshot.abort", "notifications", "workspace.inventory"] },
+          "kind": { "enum": ["snapshot.begin", "snapshot.items", "snapshot.commit", "snapshot.abort", "notifications", "workspace.inventory", "checkpoint.load", "checkpoint.save", "checkpoint.delete"] },
+          "externalSessionId": { "type": "string", "minLength": 1 },
+          "checkpoint": {
+            "type": "object",
+            "required": ["version", "projectionVersion", "throughSeq", "historyHash", "settled"],
+            "properties": {
+              "version": { "const": 1 },
+              "projectionVersion": { "const": 2 },
+              "throughSeq": { "type": "integer", "minimum": -1, "maximum": 9007199254740991 },
+              "historyHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+              "settled": { "type": "boolean" }
+            }
+          },
           "sessionId": { "type": "string", "minLength": 1 },
           "snapshotId": { "type": "string", "minLength": 1 },
           "throughSeq": { "type": "integer", "minimum": -1 },
@@ -35,6 +47,8 @@
           }
         },
         "allOf": [
+          { "if": { "properties": { "kind": { "pattern": "^checkpoint\\." } } }, "then": { "required": ["externalSessionId"] } },
+          { "if": { "properties": { "kind": { "const": "checkpoint.save" } } }, "then": { "required": ["checkpoint"] } },
           { "if": { "properties": { "kind": { "pattern": "^snapshot\\." } } }, "then": { "required": ["sessionId", "snapshotId"] } },
           { "if": { "properties": { "kind": { "const": "snapshot.begin" } } }, "then": { "required": ["meta", "throughSeq"] } },
           { "if": { "properties": { "kind": { "const": "snapshot.items" } } }, "then": { "required": ["items"] } },

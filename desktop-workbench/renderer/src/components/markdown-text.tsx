@@ -3,8 +3,12 @@
 import * as React from "react"
 import { toast } from "sonner"
 import { copyText } from "@/lib/clipboard"
-import ReactMarkdown from "react-markdown"
+import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
+import remarkMath from "remark-math"
+import { MermaidPreview } from "@/components/mermaid-preview"
+import rehypeKatex from "rehype-katex"
+import { remarkStandaloneDisplayMath } from "@/lib/markdown-math"
 import { Copy, Check, ExternalLink, GitBranch } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -33,6 +37,19 @@ export function MarkdownText({
   return <MarkdownBody text={text} token={token} session={session} inverted={inverted} />
 }
 
+// Keep the component identity stable while streamed message text changes.
+const MarkdownPre: Components["pre"] = ({ node, children, ...props }) => {
+  const block = node?.children[0]
+  if (block?.type !== "element" || block.tagName !== "code") {
+    return <pre {...props}>{children}</pre>
+  }
+  const classes = block.properties.className
+  const language = (Array.isArray(classes) ? classes.map(String) : String(classes ?? "").split(/\s+/))
+    .find((name) => name.startsWith("language-"))?.slice(9) || "text"
+  const code = block.children.map((child) => child.type === "text" ? child.value : "").join("").replace(/\n$/, "")
+  return <MarkdownCodeBlock code={code} language={language} />
+}
+
 function MarkdownBody({
   text,
   token,
@@ -49,26 +66,17 @@ function MarkdownBody({
   return (
     <div
       className={cn(
-        "space-y-3 text-sm leading-relaxed [&_a]:underline [&_blockquote]:border-l [&_blockquote]:pl-3 [&_code]:text-[1em] [&_li]:ml-5 [&_ol]:list-decimal [&_pre]:m-0 [&_ul]:list-disc",
+        "markdown-body min-w-0 space-y-3 text-sm leading-relaxed [&_a]:underline [&_blockquote]:border-l [&_blockquote]:pl-3 [&_code]:text-[1em] [&_li]:ml-5 [&_ol]:list-decimal [&_pre]:m-0 [&_ul]:list-disc",
         inverted
           ? "[&_pre]:border-primary-foreground/15"
           : "[&_pre]:border-border",
       )}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkGitDirectiveBadges]}
+        remarkPlugins={[remarkGfm, remarkMath, remarkStandaloneDisplayMath, remarkGitDirectiveBadges]}
+        rehypePlugins={[rehypeKatex]}
         components={{
-          pre({ node, children, ...props }) {
-            const block = node?.children[0]
-            if (block?.type !== "element" || block.tagName !== "code") {
-              return <pre {...props}>{children}</pre>
-            }
-            const classes = block.properties.className
-            const language = (Array.isArray(classes) ? classes.map(String) : String(classes ?? "").split(/\s+/))
-              .find((name) => name.startsWith("language-"))?.slice(9) || "text"
-            const code = block.children.map((child) => child.type === "text" ? child.value : "").join("").replace(/\n$/, "")
-            return <MarkdownCodeBlock code={code} language={language} />
-          },
+          pre: MarkdownPre,
           code({ className, children, node: _node, ...props }) {
             const previewPath = typeof children === "string" ? parseInlineFileRef(children) : null
             if (previewPath && token && session) {
@@ -525,6 +533,18 @@ function MarkdownCodeBlock({ code, language }: { code: string; language: string 
   const tSession = useTranslations("dashboard.session")
   const tCommon = useTranslations("common")
   const [copied, setCopied] = React.useState(false)
+  const source = (
+    <ScrollArea
+      contentWide
+      className="min-w-0 max-w-full overflow-hidden"
+      viewportProps={{ className: "max-h-96" }}
+    >
+      <pre className="w-max min-w-full p-3 text-sm leading-relaxed">
+        <code>{highlightCode(code, language)}</code>
+      </pre>
+      <ScrollBar orientation="horizontal" />
+    </ScrollArea>
+  )
   return (
     <div className="my-3 min-w-0 max-w-full overflow-hidden rounded-xl border border-border bg-background">
       <div className="flex h-9 items-center justify-between border-b bg-muted/25 px-3">
@@ -547,12 +567,9 @@ function MarkdownCodeBlock({ code, language }: { code: string; language: string 
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
         </button>
       </div>
-      <ScrollArea contentWide className="max-h-96 min-w-0 max-w-full overflow-hidden">
-        <pre className="w-max min-w-full p-3 text-sm leading-relaxed">
-          <code>{highlightCode(code, language)}</code>
-        </pre>
-        <ScrollBar orientation="horizontal" />
-      </ScrollArea>
+      {language.toLowerCase() === "mermaid" ? (
+        <MermaidPreview code={code}>{source}</MermaidPreview>
+      ) : source}
     </div>
   )
 }

@@ -9,6 +9,7 @@ from types import SimpleNamespace, TracebackType
 from typing import Any, Self
 
 import pytest
+from openai_codex import InvalidRequestError
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
     ContextCompactedNotification,
@@ -29,7 +30,7 @@ from openai_codex.models import (
     TurnCompletedNotification,
 )
 
-from connector.runtime_protocol import RuntimeConfig
+from connector.runtime_protocol import RuntimeConfig, RuntimeConflictError
 from connector.runtimes.codex.sdk import client as codex_sdk_client
 from connector.runtimes.codex.sdk.binary import LoginShellPathResult
 from connector.runtimes.codex.sdk.client import (
@@ -59,6 +60,39 @@ def test_codex_sdk_approval_does_not_block_response_reader() -> None:
 
 def test_codex_sdk_lists_paginated_thread_turns_in_chronological_order() -> None:
     asyncio.run(_test_codex_sdk_lists_paginated_thread_turns_in_chronological_order())
+
+
+def test_codex_sdk_rejects_partial_history_when_cursor_repeats() -> None:
+    async def run():
+        native = _FakeLowLevelAsyncCodex()
+        async def repeating(method, params, *, response_model):
+            return response_model.model_validate({"data": [{"id": "turn"}], "nextCursor": "same"})
+        native.low_level.request = repeating
+        with pytest.raises(RuntimeError, match="repeated a cursor"):
+            await CodexSdkClient(native).list_thread_turns("thread")
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("conflict", [True, False])
+def test_codex_sdk_resume_conflict_never_sends_or_caches_thread(conflict) -> None:
+    async def run():
+        native = _FakeLowLevelAsyncCodex()
+        client = CodexSdkClient(native, sdk=_FakeLowLevelSdkModule())
+        resume = native.low_level.thread_resume
+        error = InvalidRequestError(-32600, "thread thread_existing already has an active writer" if conflict else "invalid paginated history lineage: cycle detected")
+        async def blocked(*args, **kwargs):
+            raise error
+        native.low_level.thread_resume = blocked
+        request = CodexStartTurnRequest(thread_id="thread_existing", content="hello")
+        with pytest.raises(RuntimeConflictError if conflict else InvalidRequestError):
+            await client.start_turn(request)
+        assert native.low_level.turn_start_inputs == []
+        assert "thread_existing" not in client._loaded_thread_ids
+        native.low_level.thread_resume = resume
+        await client.start_turn(request)
+        assert len(native.low_level.thread_resume_params) == 1
+        assert len(native.low_level.turn_start_inputs) == 1
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize("include_turns", [False, True])

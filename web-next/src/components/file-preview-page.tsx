@@ -37,6 +37,7 @@ import { dashboardApi } from "@/features/dashboard/api"
 import { loadStoredSession } from "@/features/auth/session"
 import type { FsEntry, FsPreviewSessionResponse, FsReadTextResult } from "@/features/dashboard/types"
 import { cn } from "@/lib/utils"
+import { filePathBreadcrumbSegments } from "@/lib/file-path-breadcrumb"
 
 type PreviewState =
   | { kind: "loading" }
@@ -110,26 +111,21 @@ type FilePreviewSurfaceProps = {
   onOpenExternal?: () => void
 }
 
-export function FilePathBreadcrumb({ path }: { path: string }) {
+export function FilePathBreadcrumb({ path, renderSegment }: {
+  path: string
+  renderSegment?: (segment: { label: string; path: string }, current: boolean) => React.ReactNode
+}) {
   const viewportRef = React.useRef<HTMLDivElement | null>(null)
   const contentRef = React.useRef<HTMLDivElement | null>(null)
-  const [overflowed, setOverflowed] = React.useState(false)
   const normalizedPath = path.trim().replaceAll("\\", "/") || "."
-  const segments = React.useMemo(() => {
-    const values = normalizedPath.split("/").filter(Boolean)
-    return values.length > 0
-      ? values
-      : normalizedPath.startsWith("/")
-        ? []
-        : [normalizedPath]
-  }, [normalizedPath])
+  const segments = React.useMemo(() => filePathBreadcrumbSegments(normalizedPath), [normalizedPath])
 
   React.useLayoutEffect(() => {
     const viewport = viewportRef.current
     const content = contentRef.current
     if (!viewport || !content) return
 
-    const measure = () => setOverflowed(content.scrollWidth > viewport.clientWidth + 1)
+    const measure = () => { viewport.scrollLeft = viewport.scrollWidth }
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(viewport)
@@ -141,23 +137,22 @@ export function FilePathBreadcrumb({ path }: { path: string }) {
     <div
       ref={viewportRef}
       className="aa-file-preview-breadcrumb-viewport min-w-0 flex-1"
-      data-overflowed={overflowed ? "true" : "false"}
       dir="ltr"
       title={normalizedPath}
       aria-label={normalizedPath}
     >
-      <div ref={contentRef} className="aa-file-preview-breadcrumb" aria-hidden="true">
+      <div ref={contentRef} className="aa-file-preview-breadcrumb">
         {segments.map((segment, index) => (
-          <React.Fragment key={`${segment}:${index}`}>
-            {index > 0 ? <ChevronRight className="aa-file-preview-breadcrumb-separator" /> : null}
-            <span
-              className={cn(
-                "aa-file-preview-breadcrumb-segment",
-                index === segments.length - 1 && "current",
-              )}
-            >
-              {segment}
-            </span>
+          <React.Fragment key={segment.path}>
+            {index > 0 ? <ChevronRight aria-hidden="true" className="aa-file-preview-breadcrumb-separator" /> : null}
+            {renderSegment ? renderSegment(segment, index === segments.length - 1) : (
+              <span
+                className={cn("aa-file-preview-breadcrumb-segment", index === segments.length - 1 && "current")}
+                aria-current={index === segments.length - 1 ? "location" : undefined}
+              >
+                {segment.label}
+              </span>
+            )}
           </React.Fragment>
         ))}
       </div>
@@ -189,10 +184,15 @@ export function FilePreviewSurface({
   translationRef.current = t
   const routePath = initialPath
   const [previewSession, setPreviewSession] = React.useState<FsPreviewSessionResponse | null>(null)
-  const [path, setPath] = React.useState(routePath)
+  const [navigation, setNavigation] = React.useState({ origin: routePath, path: routePath })
+  const path = navigation.origin === routePath ? navigation.path : routePath
+  const setPath = (nextPath: string) => setNavigation({ origin: routePath, path: nextPath })
   const effectivePath = previewSession?.path ?? path
   const name = path === routePath ? initialName || fileNameFromPath(effectivePath) : fileNameFromPath(effectivePath)
   const [state, setState] = React.useState<PreviewState>({ kind: "loading" })
+  const [loadingFile, setLoadingFile] = React.useState(true)
+  const [loadedPath, setLoadedPath] = React.useState<string | null>(null)
+  const pendingFile = loadingFile || loadedPath !== path
   const [editMode, setEditMode] = React.useState(false)
   const [dirty, setDirty] = React.useState(false)
   const [saving, setSaving] = React.useState(false)
@@ -225,9 +225,8 @@ export function FilePreviewSurface({
     const requestId = ++loadRequestIdRef.current
     const requestIsCurrent = () => requestId === loadRequestIdRef.current
     revokeObjectUrl()
-    editorRef.current?.destroy()
-    editorRef.current = null
-    setState({ kind: "loading" })
+    setLoadingFile(true)
+    setState((previous) => previous.kind === "text" ? previous : { kind: "loading" })
     setDirty(false)
     setEditMode(false)
     setSaveError(null)
@@ -235,6 +234,8 @@ export function FilePreviewSurface({
     setSavedFlash(false)
     if (!canLoad) {
       setState({ kind: "error", message: t("missingContext") })
+      setLoadedPath(path)
+      setLoadingFile(false)
       return
     }
     try {
@@ -350,6 +351,11 @@ export function FilePreviewSurface({
       }
       if (!requestIsCurrent()) return
       setState({ kind: "error", message: err instanceof Error ? err.message : String(err) })
+    } finally {
+      if (requestIsCurrent()) {
+        setLoadedPath(path)
+        setLoadingFile(false)
+      }
     }
   }, [
     canLoad,
@@ -396,6 +402,7 @@ export function FilePreviewSurface({
   )
 
   const handleDownload = React.useCallback(async () => {
+    if (pendingFile) return
     setDownloadError(null)
     if (!token && !readOnlyPreview) return
     try {
@@ -421,10 +428,10 @@ export function FilePreviewSurface({
     } catch (err) {
       setDownloadError(err instanceof Error ? err.message : String(err))
     }
-  }, [isScopedPreview, name, readOnlyPreview, sourceUrl, state, token])
+  }, [isScopedPreview, name, pendingFile, readOnlyPreview, sourceUrl, state, token])
 
   const handleSave = React.useCallback(async () => {
-    if (readOnlyPreview || !token || state.kind !== "text" || !editorRef.current || !editMode) return false
+    if (pendingFile || readOnlyPreview || !token || state.kind !== "text" || !editorRef.current || !editMode) return false
     const content = editorRef.current.getValue()
     setSaving(true)
     setSaveError(null)
@@ -459,7 +466,7 @@ export function FilePreviewSurface({
     } finally {
       setSaving(false)
     }
-  }, [connectorId, editMode, path, readOnlyPreview, root, state, t, token])
+  }, [connectorId, editMode, path, pendingFile, readOnlyPreview, root, state, t, token])
 
   const handleEmbeddedEditModeChange = React.useCallback(
     (checked: boolean) => {
@@ -524,6 +531,7 @@ export function FilePreviewSurface({
       )}
     >
       <header
+        inert={pendingFile || undefined}
         className={cn(
           "aa-file-preview-header flex min-h-12 shrink-0 items-center gap-2 border-b px-3",
           mode === "embedded"
@@ -680,7 +688,10 @@ export function FilePreviewSurface({
       {downloadError ? (
         <div className="border-b px-3 py-2 text-xs text-destructive">{downloadError}</div>
       ) : null}
-      <section className="min-h-0 min-w-0 flex-1 overflow-hidden">
+      <section aria-busy={pendingFile} inert={pendingFile || undefined} className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+        {pendingFile && state.kind === "text" ? (
+          <div className="absolute inset-x-0 top-0 z-10 flex justify-center bg-background/80 py-1 text-xs text-muted-foreground">{t("loading")}</div>
+        ) : null}
         {state.kind === "loading" ? <CenteredStatus label={t("loading")} /> : null}
         {state.kind === "error" ? (
           <div className="mx-auto flex h-full max-w-xl items-center px-6">
@@ -693,10 +704,10 @@ export function FilePreviewSurface({
         ) : null}
         {state.kind === "text" ? (
           <MonacoCodeView
-            key={`${state.file.path}:${state.file.sha256}:${editMode}`}
+            documentKey={state.file.path}
             fileName={state.file.name || name}
             content={state.file.content}
-            editable={editMode && !readOnlyPreview}
+            editable={editMode && !readOnlyPreview && !pendingFile}
             onReady={handleEditorReady}
             onChange={handleEditorChange}
             className="h-full min-h-0 overflow-hidden"

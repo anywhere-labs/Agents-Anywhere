@@ -85,7 +85,8 @@ struct SessionChatView: View, Equatable {
                             isLoadingSettings: model.isLoadingSettings,
                             settingsError: model.settingsError, sessionChat: model,
                             onSend: model.send, onStop: model.interrupt, onLoadSettings: model.loadSettings,
-                            onApplySettings: model.applySettings, applyError: { model.settingsError })
+                            onApplySettings: model.applySettings, applyError: { model.settingsError },
+                            onDraftChange: { model.repository.draftDidChange() })
                             .traceChatLayout("composer-dock")
                     }
                     .frame(maxWidth: ChatControlMetrics.maximumContentWidth).frame(maxWidth: .infinity)
@@ -172,8 +173,6 @@ struct SessionChatView: View, Equatable {
         .quickLookPreview($previewURL)
         .onChange(of: previewURL) { _, url in if url == nil { cleanPreview() } }
         .onDisappear { if previewURL == nil { cleanPreview() } }
-        .onChange(of: session.composer.text) { _, _ in model.repository.draftDidChange() }
-        .onChange(of: session.composer.attachments) { _, _ in model.repository.draftDidChange() }
         .onChange(of: session.failure, initial: true) { _, failure in
             toasts.update(source: "session", failure: failure, canRetry: failure?.kind != .authentication)
         }

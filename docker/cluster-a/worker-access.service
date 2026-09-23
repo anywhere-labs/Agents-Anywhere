@@ -1,0 +1,16 @@
+[Unit]
+Description=Restrict Agents Anywhere HTTP to host-local proxy
+DefaultDependencies=no
+After=local-fs.target
+Wants=network-pre.target
+Before=network-pre.target docker.service shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/nftables.d/aa-worker-access.nft
+ExecReload=/usr/sbin/nft -f /etc/nftables.d/aa-worker-access.nft
+
+[Install]
+WantedBy=multi-user.target

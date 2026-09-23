@@ -1,0 +1,35 @@
+{
+  "deployed_at": "2026-09-13",
+  "application_source_commit": "b4133309",
+  "image_build_commit": "c4be624b",
+  "compose_config_commit": "9f8a9418",
+  "image": "agents-anywhere:cluster-a-c4be624b",
+  "image_id": "sha256:889e0809bc057de3010e3d85348a80235ad8f52268af77051ece56f8e2b26557",
+  "remote_release_directory": "/root/code/github/Agents-Anywhere-releases/c4be624b",
+  "workers": {
+    "cluster-a-worker-1.agents-anywhere.com": "192.168.1.34",
+    "cluster-a-worker-2.agents-anywhere.com": "192.168.1.36"
+  },
+  "http_bind": "127.0.0.1:8000",
+  "fastapi_workers_per_node": 3,
+  "event_workers_per_process": 0,
+  "database_host": "192.168.1.35",
+  "database_name": "agents_anywhere",
+  "schema_revision": "v2_35",
+  "postgres_max_connections": 300,
+  "redis_aof": true,
+  "redis_maxmemory_bytes": 2147483648,
+  "redis_maxmemory_policy": "noeviction",
+  "attachment_bucket": "alpha-1-agents-anywhere",
+  "attachment_prefix": "attachments",
+  "verified": [
+    "both image IDs match",
+    "all six FastAPI processes ready",
+    "both Web UI roots HTTP 200",
+    "cross-node attachment write/read/delete",
+    "presigned attachment HTTP download",
+    "worker HTTP loopback-only; LAN ingress blocked",
+    "public service probes time out; firewall drop counters advance",
+    "shared setup token matches in both nodes and all six startup logs"
+  ]
+}

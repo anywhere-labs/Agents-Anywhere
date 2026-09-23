@@ -58,13 +58,6 @@ export class NativeRuntime {
   private closed = false
   private creations: CreationIntents
   readonly attachments: RuntimeAttachments
-  // Successful feed checkpoints live only for this Host process. A new Host imports everything.
-  private readonly syncCheckpoints = new Map<string, Map<string, string>>()
-  checkpoints(namespace: string): Map<string, string> {
-    let checkpoints = this.syncCheckpoints.get(namespace)
-    if (!checkpoints) { checkpoints = new Map(); this.syncCheckpoints.set(namespace, checkpoints) }
-    return checkpoints
-  }
   private readonly facts = new Map<string, { revision: string, value: SessionFacts }>()
 
   constructor(readonly ctx: Context, creationDirectory: string,
@@ -130,7 +123,6 @@ export class NativeRuntime {
     return () => this.listeners.delete(callback)
   }
   refresh(id: string): void {
-    for (const checkpoints of this.syncCheckpoints.values()) checkpoints.delete(id)
     this.source.retry(id); this.emit({ type: 'refresh', id })
   }
   private emit(change: NativeChange): void {
@@ -328,6 +320,5 @@ export class NativeRuntime {
     this.listeners.clear()
     await Promise.allSettled([...this.writes.values()])
     this.facts.clear()
-    this.syncCheckpoints.clear()
   }
 }

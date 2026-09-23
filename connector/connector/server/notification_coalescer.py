@@ -55,6 +55,15 @@ class TimelineItemNotificationCoalescer:
         for session_id in session_ids:
             await self.flush(session_id)
 
+    async def abort(self) -> None:
+        """Discard projections after shutdown or revoked credentials, without sending."""
+        tasks = list(self._flush_tasks.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._flush_tasks.clear()
+        self._pending.clear()
+
     def _schedule_flush(self, session_id: str) -> None:
         task = self._flush_tasks.get(session_id)
         if task is not None and not task.done():

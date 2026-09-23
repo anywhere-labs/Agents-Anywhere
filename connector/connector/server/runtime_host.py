@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import time
+import asyncio
+import copy
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
@@ -17,6 +19,7 @@ from connector.runtime_protocol import (
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.server.runtime_rpc_payloads import (
+    DeferredServerPayload,
     capability_set_payload,
     model_catalog_payload,
     permission_catalog_payload,
@@ -24,7 +27,8 @@ from connector.server.runtime_rpc_payloads import (
     session_notice_payload,
     session_source_observation_payload,
 )
-from connector.server.sync_state import RuntimeSyncState, SyncStateStore
+from connector.server.sync_state import JsonSyncStateStore, RuntimeSyncState, SyncStateStore
+from connector.server.runtime_storage import RuntimeStorageManager
 
 BackendNotifier = Callable[[str, dict[str, Any]], Awaitable[None]]
 AttachmentDownloader = Callable[[str, str], Awaitable[tuple[bytes, str, str]]]
@@ -40,6 +44,8 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         attachment_downloader: AttachmentDownloader,
         sync_state_store: SyncStateStore | None = None,
         ingest_notifications: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
+        *,
+        defer_payload_projection: bool = False,
     ) -> None:
         self._connector_id = connector_id
         self._notifier = notifier
@@ -47,6 +53,25 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         self._sync_state_store = sync_state_store
         self._memory_sync_state: dict[str, Mapping[str, Any]] = {}
         self._ingest_notifications = ingest_notifications
+        self._defer_payload_projection = defer_payload_projection
+        self._runtime_storage = RuntimeStorageManager(sync_state_store) if isinstance(sync_state_store, JsonSyncStateStore) else None
+        self._runtime_kv = None
+
+    async def prepare_runtime_host(self, runtime_id: str) -> ConnectorRuntimeHost:
+        if self._runtime_storage is None:
+            return self
+        state, kv = await asyncio.to_thread(self._runtime_storage.prepare, self.connector_id, runtime_id)
+        bound = copy.copy(self)
+        bound._sync_state_store = state
+        bound._runtime_kv = kv
+        return bound
+
+    @property
+    def runtime_kv(self):
+        return self._runtime_kv if self._runtime_kv is not None else super().runtime_kv
+
+    def flush_runtime_storage(self) -> bool:
+        return self._runtime_storage.flush() if self._runtime_storage is not None else False
 
     async def publish_runtime_notifications(
         self, runtime: str, notifications: list[dict[str, Any]], *, runtime_id: str | None = None
@@ -311,11 +336,12 @@ class ConnectorRuntimeHost(RuntimeHostClient):
     async def _notify_server(self, method: str, payload: Mapping[str, Any]) -> None:
         """Send a notification after enforcing the Server session-only boundary."""
 
-        server_payload = (
-            dict(payload)
-            if method == "session.turnEnded"
-            else server_payload_without_turn_data(payload)
-        )
+        if method == "session.turnEnded":
+            server_payload = dict(payload)
+        elif self._defer_payload_projection:
+            server_payload = DeferredServerPayload(payload)
+        else:
+            server_payload = server_payload_without_turn_data(payload)
         await self._notifier(method, server_payload)
 
     async def attachment_download(

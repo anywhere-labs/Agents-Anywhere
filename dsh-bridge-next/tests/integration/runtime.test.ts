@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
-import { access, appendFile, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { access, appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createConnection } from 'node:net'
 import { createInterface } from 'node:readline'
@@ -116,4 +116,28 @@ test('concurrent starts cannot overwrite ownership and closing twice releases th
     assert.equal((await recovered.rpc('ping')).result.ok, true)
     recovered.socket.destroy()
   } finally { await Promise.allSettled(servers.map(server => server.close())); await rm(home, { recursive: true, force: true }) }
+})
+
+test('a stale endpoint whose pid was reused by another live process is taken over', { timeout: 15_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'aa-dsh-reused-pid-'))
+  const path = join(home, 'bridge/endpoint.json')
+  const reader = { query: { listSessions: async () => [], readTitleSnapshots: async () => [], readSession: async () => { throw new Error('unused') } }, status: () => undefined }
+  // A crashed bridge leaves its publication behind; the OS later reuses that pid
+  // for an unrelated process, which must not look like a live bridge owner.
+  const unrelated = spawn(process.execPath, ['--eval', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+  const server = new RuntimeServer(path, reader)
+  try {
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, JSON.stringify({ version: 1, host: '127.0.0.1', port: 1, token: 'crashed-owner', pid: unrelated.pid }))
+    const value = await server.start()
+    assert.notEqual(value.token, 'crashed-owner')
+    assert.equal(JSON.parse(await readFile(path, 'utf8')).token, value.token)
+    const connection = await client(value)
+    assert.equal((await connection.rpc('ping')).result.ok, true)
+    connection.socket.destroy()
+  } finally {
+    await server.close()
+    unrelated.kill('SIGKILL')
+    await rm(home, { recursive: true, force: true })
+  }
 })

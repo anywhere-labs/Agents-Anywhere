@@ -111,17 +111,47 @@ in the Connector; after count and identity checks it forwards existing backend
 incomplete transport never submits a partial replacement. Turn lifecycle markers
 are excluded from backend Timeline contents.
 
-`notifications` carries already normalized platform notifications. The Connector
-forwards live Timeline, state, source and metadata updates through the same typed
-Host publishers used by Codex and Claude. These bind the immutable runtime
-instance and use the existing coalescing, WebSocket sender and HTTP fallback
-queue. Complete snapshots and inventory boundaries continue to await
-`/connector/ingest`. No public transport implementation or backend API changes.
-An ACK means page receipt, acceptance by the existing live notification pipeline
-(including its queues), or completed snapshot ingestion; it is not a durable
-server persistence ACK. Relay failures replace only the sync subscription on the
-existing RPC connection; incomplete captures are discarded before full native
-history recalibration. Socket failure still uses endpoint rediscovery and reconnect.
+`notifications` carries already normalized platform notifications. A Connector
+requests reliable recovery with `runtime.sync.subscribe {checkpointVersion:1}`;
+the Host echoes `checkpointVersion:1` only when this extension is enabled. In
+this mode Timeline, state, source, metadata, turn completion and inventory batches
+await `/connector/ingest` through the instance-bound Host before ACK. They bypass
+the asynchronous notification/coalescing queue. Native changes are still batched
+at the Bridge's bounded cadence. Snapshot page ACK only means page receipt;
+snapshot.commit waits for ingestion of the assembled complete snapshot.
+
+Without the negotiated extension, live notifications retain the typed Host
+publishers and their WebSocket/coalescing/HTTP fallback queue. Their ACK does not
+mean server persistence. No resumable checkpoint is inferred from legacy ACKs;
+a new Host subscription conservatively recalibrates visible histories.
+
+With the extension, the Host sends a single `checkpoint.load {externalSessionId}`
+operation outside a snapshot. Its ACK adds `checkpoint: object|null`, read from
+the Connector's existing JSON sync state using the instance-scoped key
+`dsh/sync/checkpoints/<externalSessionId>`. There is no all-session manifest or
+new Host-side checkpoint file. After all preceding history operations are
+successfully ingested, `checkpoint.save {externalSessionId,checkpoint}` advances
+Connector state, which uses the existing periodic and shutdown flush. A crash
+before that flush permits retransmission, never skipping uncommitted history.
+`checkpoint.delete {externalSessionId}` invalidates an unavailable session.
+
+Checkpoint fields are `version:1`, `projectionVersion:2`, `throughSeq`,
+`historyHash` (SHA-256 of durable native events and attachment receipts, seeded
+with native/platform identity), and `settled`. The Host locally replays history
+and compares this fingerprint, independent of live/persisted SDK revision formats.
+The Host first replays through the checkpoint cursor and validates its fingerprint
+and settled boundary. It drains that prefix, applies the remaining events and
+uploads only resulting new/modified Timeline items. Unchanged sessions upload no
+history. The reconstructed projection also handles the next live event directly.
+Missing/incompatible checkpoints, a changed or truncated prefix, an unsettled
+checkpoint, or item deletions fall back to a complete snapshot of that session.
+Local history is still read/replayed; incremental recovery limits network uploads. Metadata,
+current state, pending notices and the full source inventory are still reconciled.
+
+Relay failures replace only the sync subscription on the existing RPC connection;
+incomplete captures are discarded. Socket failure still uses endpoint rediscovery
+and reconnect. Backend WS reconnect also replaces the subscription, using the
+same committed checkpoints rather than trusting an old Host's in-memory state.
 
 The private batch also carries the existing `notice.upsert` and
 `runtime.capability.updated` notifications. The DSH adapter forwards these through

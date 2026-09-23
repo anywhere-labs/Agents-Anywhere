@@ -399,6 +399,28 @@ class ConnectorRepositoryMixin:
         return secrets.compare_digest(row.token_hash, _hash_token(token))
 
 
+    async def authenticate_connector_access(self, token: str) -> str | None:
+        from agent_server.core.auth import (
+            connector_access_token_id,
+            verify_connector_access_token,
+        )
+
+        connector_id = connector_access_token_id(token)
+        if connector_id is None:
+            return None
+        async with self._engine.connect() as conn:
+            credential_hash = (
+                await conn.execute(
+                    select(connectors_t.c.token_hash).where(
+                        connectors_t.c.id == connector_id,
+                        connectors_t.c.revoked == 0,
+                    )
+                )
+            ).scalar_one_or_none()
+        if credential_hash is None:
+            return None
+        return verify_connector_access_token(token, credential_hash=credential_hash)
+
     async def get_connector(self, connector_id: str) -> ConnectorView:
         async with self._engine.connect() as conn:
             row = (
@@ -453,6 +475,30 @@ class ConnectorRepositoryMixin:
                 raise KeyError(connector_id)
         return await self.get_connector(connector_id)
 
+
+    async def pending_connector_deletions(self) -> list[tuple[str, str]]:
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(select(connectors_t.c.id, connectors_t.c.user_id)
+                .where(connectors_t.c.revoked == 2)
+                .order_by(connectors_t.c.updated_at).limit(50))).all()
+        return [(str(row.id), str(row.user_id)) for row in rows]
+
+    async def begin_connector_deletion(
+        self, connector_id: str, *, user_id: str
+    ) -> list[str]:
+        """Revoke admission first and retain IDs until external cleanup succeeds."""
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                update(connectors_t).where(
+                    connectors_t.c.id == connector_id,
+                    connectors_t.c.user_id == user_id,
+                ).values(revoked=2, updated_at=utc_now())
+            )
+            if result.rowcount == 0:
+                raise KeyError(connector_id)
+            return list((await conn.execute(
+                select(sessions_t.c.id).where(sessions_t.c.connector_id == connector_id)
+            )).scalars())
 
     async def delete_connector(
         self, connector_id: str, *, user_id: str | None = None
@@ -619,6 +665,33 @@ class ConnectorRepositoryMixin:
                     .values(**values)
                 )
         return True
+
+    async def get_protocol_capabilities_stamp(
+        self, connector_id: str,
+    ) -> tuple[int, str] | None:
+        """Check one stored snapshot without loading its capability body.
+
+        Include the write timestamp because equal protocol revisions may be
+        replaced. This stamp is only reused within one publication batch.
+        """
+        query = (
+            select(
+                connector_protocol_capabilities_t.c.revision,
+                connector_protocol_capabilities_t.c.updated_at,
+            )
+            .select_from(connectors_t.outerjoin(
+                connector_protocol_capabilities_t,
+                connector_protocol_capabilities_t.c.connector_id == connectors_t.c.id,
+            ))
+            .where(connectors_t.c.id == connector_id, connectors_t.c.revoked == 0)
+        )
+        async with self._engine.connect() as conn:
+            row = (await conn.execute(query)).first()
+        if row is None:
+            raise KeyError(connector_id)
+        if row.revision is None:
+            return None
+        return int(row.revision), row.updated_at
 
     async def get_protocol_capabilities(
         self,

@@ -171,6 +171,10 @@ def drop_none_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if value is not None}
 
 
+class DeferredServerPayload(dict[str, Any]):
+    """Owned notification snapshot awaiting projection after coalescing."""
+
+
 def server_payload_without_turn_data(value: Any) -> Any:
     """Remove runtime-owned turn details from data crossing into Server."""
 

@@ -326,8 +326,10 @@ class RuntimeSupervisor:
         native_runtime: AgentRuntime | None = None
         bound_runtime: RuntimeInstance | None = None
         try:
+            prepare_host = getattr(self._host, "prepare_runtime_host", None)
+            storage_host = await prepare_host(instance.runtime_id) if callable(prepare_host) else self._host
             scoped_host = RuntimeInstanceHost(
-                base=self._host,
+                base=storage_host,
                 instance=instance,
                 source_key=_provider_source_key(entry.provider, config),
                 status_reporter=report_health,

@@ -5,6 +5,11 @@ import Foundation
 nonisolated struct TimelineHistoryPull: Equatable {
     enum Edge: Equatable { case older, latest }
     var edge = Edge.latest
+
+    // `private var origin` makes the synthesized memberwise initializer private,
+    // while the all-defaulted `init()` stays internal. Callers that pass an edge
+    // need an accessible initializer.
+    init(edge: Edge = .latest) { self.edge = edge }
     private var origin: TimelineViewport?
     private(set) var isReady = false
 
