@@ -1,3 +1,5 @@
+import { loadTestLocale, localeEntry } from './test-locale.ts'
+import { LOCALE_NS, type Translate } from '../src/client/locales.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createRequire, registerHooks } from 'node:module'
@@ -54,7 +56,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     const registration = registrations[0]!
     assert.equal(registration.id, packageId)
     const client = registration.factory(require)
-    assert.deepEqual(Array.from(client.inject), ['slots', 'connection'])
+    assert.deepEqual(Array.from(client.inject), ['slots', 'connection', 'locale'])
 
     const ownedStyles = () => Array.from(document.querySelectorAll('style')).filter(style => style.dataset.plugin === packageId)
     const styleCount = ownedStyles().length
@@ -148,21 +150,25 @@ export async function checkClient(source: string, packageId: string): Promise<vo
         }
         return { ok: true, value: snapshot }
       } } })
+    const locale = loadTestLocale(ctx, require)
+    ctx.provide('locale', locale)
     ctx.provide('slots', {
         inject(name: string, register: () => () => void) {
           assert.ok(['sidebar.footer.action', 'plugins.bundle.config', 'plugins.detail.actions'].includes(name))
           return register()
         },
-        register(options: { name: string; id?: string; key?: string; label?: () => string; inject: () => { host: OnboardingHostApi } }, Component: ComponentType<EntryProps>) {
+        register(options: { name: string; id?: string; key?: string; label?: () => string; locale: string; inject: () => { host: OnboardingHostApi } }, Component: ComponentType<EntryProps & { t: Translate }>) {
+          assert.equal(options.locale, LOCALE_NS)
+          const Localized = localeEntry(locale, Component)
           if (options.name !== 'sidebar.footer.action') {
             if (options.name === 'plugins.bundle.config') assert.equal(options.key, packageId)
-            pluginEntries.set(options.name, owner => createElement(Component, { ...options.inject(), wide: true, ...owner }))
+            pluginEntries.set(options.name, owner => createElement(Localized, { ...options.inject(), wide: true, ...owner }))
             return () => { pluginEntries.delete(options.name) }
           }
           assert.equal(options.name, 'sidebar.footer.action', 'The entry belongs above Settings, not inside it')
           assert.equal(options.id, 'agents-anywhere-next')
           assert.equal(options.label?.(), '手机连接')
-          entry = { Component, props: options.inject() }
+          entry = { Component: Localized, props: options.inject() }
           entryCount++
           return () => { entryCount-- }
         },
@@ -180,12 +186,18 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       assert.ok(element, `Missing button: ${text}`)
       return element
     }
+    const switchLanguage = async (language: string) => act(async () => { locale.setLocale(language) })
     const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]')
     const trigger = button('手机连接')
     assert.equal(trigger.textContent, '手机连接')
     assert.ok(trigger.querySelector('svg.lucide-smartphone'))
     assert.equal(dialog(), null)
     assert.equal(calls.length, 0, 'A closed connection panel must not poll the Host')
+    await switchLanguage('en')
+    assert.equal(trigger.textContent, 'Mobile connection')
+    assert.equal(trigger.getAttribute('aria-label'), 'Mobile connection')
+    assert.equal(calls.length, 0, 'Changing language must not contact the Host')
+    await switchLanguage('zh')
     const listeners = new Set<() => void>()
     let current: string | null = 'native-selected'
     const selectionCalls = () => calls.filter(call => call.endpoint.endsWith('/selection')).map(call =>
@@ -259,6 +271,15 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     await act(async () => { button('连接服务器').click() })
     assert.equal(input.getAttribute('aria-invalid'), 'true')
     assert.match(document.getElementById(input.getAttribute('aria-describedby')!)!.textContent!, /无法连接服务器/)
+    const failedDialog = dialog()
+    await switchLanguage('en')
+    assert.equal(dialog(), failedDialog)
+    assert.equal(dialog()!.querySelector('input'), input)
+    assert.equal(input.value, 'http://127.0.0.1:8000')
+    assert.equal(input.placeholder, 'Enter a server address, e.g. https://your-server.com')
+    assert.match(document.getElementById(input.getAttribute('aria-describedby')!)!.textContent!, /Unable to connect to the server/)
+    assert.ok(button('Connect to server'))
+    await switchLanguage('zh')
     await enterServer('https://another.example')
     assert.equal(input.getAttribute('aria-invalid'), 'false')
     await act(async () => { button('登录 Agents Anywhere Cloud').click() })
@@ -321,6 +342,13 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     await act(async () => { button('手机连接').click() })
     assert.equal(dialog()!.querySelector('img[alt="手机连接二维码"]')?.getAttribute('src'), mobile.qrImage)
     assert.ok(calls.some(call => call.endpoint.endsWith('/createMobileLogin')))
+    const qrImage = dialog()!.querySelector('img[alt="手机连接二维码"]')
+    const qrRequests = calls.filter(call => call.endpoint.endsWith('/createMobileLogin')).length
+    await switchLanguage('en')
+    assert.equal(dialog()!.querySelector('img[alt="Mobile connection QR code"]'), qrImage)
+    assert.ok(button('Hide QR code'))
+    assert.equal(calls.filter(call => call.endpoint.endsWith('/createMobileLogin')).length, qrRequests)
+    await switchLanguage('zh')
     assert.doesNotMatch(dialog()!.textContent!, /安装地址|下载手机端|App Store|Google Play/)
     mobile = { ...mobile, status: 'pending_web_confirm', deviceName: 'Test Phone', qrImage: null }
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 1_700)) })
@@ -348,6 +376,11 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     await act(async () => { button('PyPI 镜像').click() })
     const mirror = Array.from(dialog()!.querySelectorAll('[role="menuitem"]')).find(item => item.textContent?.includes('清华大学')) as HTMLElement | undefined
     assert.ok(mirror)
+    await switchLanguage('en')
+    assert.equal(button('Settings').getAttribute('aria-selected'), 'true')
+    assert.match(dialog()!.textContent!, /Tsinghua University/)
+    assert.ok(button('Save and restart').disabled)
+    await switchLanguage('zh')
     await act(async () => { mirror.click() })
     await act(async () => { button('保存并重启').click() })
     const savedSettings = (calls.find(call => call.endpoint.endsWith('/saveConnectorSettings'))?.payload as { args: { settings: { uvPypiIndexUrl: string } } }).args.settings
@@ -364,6 +397,12 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(document.querySelectorAll('[role="dialog"]').length, 2)
     assert.equal(dialog()!.hasAttribute('inert'), true, 'The parent dialog must be inert while confirming a reset')
     assert.equal(calls.some(call => call.endpoint.endsWith('/resetConnector')), false, 'Opening confirmation must never reset the device')
+    const confirmation = document.querySelectorAll('[role="dialog"]')[1]!
+    await switchLanguage('en')
+    assert.equal(document.querySelectorAll('[role="dialog"]')[1], confirmation)
+    assert.match(confirmation.textContent!, /I understand the effects of a factory reset/)
+    assert.match(confirmation.textContent!, /Confirm factory reset/)
+    await switchLanguage('zh')
     await act(async () => { document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
     assert.equal(document.querySelectorAll('[role="dialog"]').length, 1, 'Escape closes only the reset confirmation')
     assert.equal(dialog()!.hasAttribute('inert'), false)
@@ -537,6 +576,9 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(container.textContent, '')
     await act(async () => { root.render(renderActions({ subject: { kind: 'bundle', pkg: { name: packageId, enabled: true } } })) })
     const panelButton = button('打开面板')
+    await switchLanguage('en')
+    assert.equal(panelButton.textContent, 'Open panel')
+    await switchLanguage('zh')
     await act(async () => { panelButton.click() })
     assert.ok(dialog())
     await act(async () => { button('关闭手机连接').click() })
@@ -545,6 +587,11 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.ok(container.querySelector('form'), 'Bundle details must contain the real Connector settings form')
     assert.match(container.textContent!, /运行环境/)
     assert.match(container.textContent!, /同步设置/)
+    const settingsForm = container.querySelector('form')
+    await switchLanguage('en')
+    assert.equal(container.querySelector('form'), settingsForm)
+    assert.match(container.textContent!, /Sync settings/)
+    await switchLanguage('zh')
     assert.equal(container.querySelector('h1, h2'), null, 'The official detail supplies the title and layout')
     await act(async () => { button('前往登录').click() })
     assert.ok(dialog(), 'Settings can open the same connection panel for pairing')

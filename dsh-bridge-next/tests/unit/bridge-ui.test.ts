@@ -1,3 +1,5 @@
+import { Context } from '@deepseek-ai/cordis'
+import { loadTestLocale, localeEntry } from '../../scripts/test-locale.ts'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFile } from 'node:fs/promises'
@@ -15,6 +17,8 @@ test('published client shows recovery guidance and preserves expanded log rows a
   for (const [key, value] of Object.entries(values)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value })
   let entry: React.ComponentType<any> | undefined
   let client: any
+  let locale: ReturnType<typeof loadTestLocale>
+  const ctx = new Context()
   let bridge = { state: 'failed', message: '本机连接被占用，无法启动。', hint: '请退出其他正在运行的 DSH，再点击“尝试重启”。', canRetry: true }
   let restarts = 0
   let entries = [{ id: 'one', time: '2026-09-10T10:00:00Z', level: 'error', event: 'rpc.failed', method: 'session.getState', outcome: 'failure', details: '{"errorCode":"TEST_ERROR"}' }]
@@ -42,8 +46,14 @@ test('published client shows recovery guidance and preserves expanded log rows a
   const root = createRoot(document.getElementById('root')!)
   try {
     dom.window.eval(await readFile(new URL('../../lib/client.js', import.meta.url), 'utf8'))
-    client.apply({ inject() {}, effect: (fn: any) => fn(), slots: {
-      inject: (_name: string, callback: any) => callback(), register: (_options: any, component: any) => { entry = component; return () => {} },
+    locale = loadTestLocale(ctx, name => {
+      if (name === 'react') return React
+      if (name === 'react/jsx-runtime') return jsx
+      if (name === '@deepseek-ai/dsh-client-ui-primitives') return primitives
+      throw new Error(`Unexpected locale import: ${name}`)
+    })
+    client.apply({ locale, inject() {}, effect: (fn: any) => fn(), slots: {
+      inject: (_name: string, callback: any) => callback(), register: (_options: any, component: any) => { entry = localeEntry(locale, component); return () => {} },
     }, connection: { rpc: {} } })
     await act(async () => { root.render(React.createElement(entry!, { wide: true, host })) })
     const click = async (text: string) => {
@@ -60,6 +70,13 @@ test('published client shows recovery guidance and preserves expanded log rows a
     assert.match(row.querySelector('summary')!.textContent!, /失败/)
     assert.doesNotMatch(row.querySelector('summary')!.textContent!, /TEST_ERROR/)
     row.open = true
+    await act(async () => { locale.setLocale('en') })
+    assert.ok(row.isConnected)
+    assert.equal(row.open, true)
+    assert.match(row.querySelector('summary')!.textContent!, /Failed/)
+    assert.match(document.body.textContent!, /The local connection is in use/)
+    assert.ok(document.querySelector('[aria-label="Runtime log entries"]'))
+    await act(async () => { locale.setLocale('zh') })
     entries = [{ ...entries[0]!, id: 'two', time: '2026-09-10T10:00:01Z' }, ...entries]
     await click('刷新')
     assert.ok(row.isConnected)
