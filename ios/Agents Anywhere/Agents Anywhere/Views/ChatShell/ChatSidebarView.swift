@@ -360,7 +360,7 @@ struct ChatSidebarSessionRow: View {
             }.disabled(session.id.hasPrefix("local:"))
             Button(action: onTogglePinned) {
                 if session.pinned {
-                    Label(String(localized: "Unpin"), systemImage: "pin")
+                    Label(String(localized: "Unpin"), systemImage: "pin.slash")
                 } else {
                     Label(String(localized: "Pin"), systemImage: "pin")
                 }
