@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from connector.runtime_protocol import (
     RuntimeAttachment,
     RuntimeAttachmentContent,
@@ -3559,11 +3558,17 @@ def _default_sdk() -> Any:
     )
 
 
-def _config() -> RuntimeConfig:
+def _config(*, idle_timeout_seconds: float | None = None) -> RuntimeConfig:
     return RuntimeConfig(
         runtime="claude",
         revision=1,
-        values={"environment": {}},
+        values={
+            "environment": {},
+            **(
+                {"idleTimeoutSeconds": idle_timeout_seconds}
+                if idle_timeout_seconds is not None else {}
+            ),
+        },
     )
 
 
@@ -3828,7 +3833,10 @@ def test_claude_reconciles_after_scheduled_reply_without_visible_maintenance(
         host = _RecordingHost()
         sdk = _default_sdk()
         sdk.HookMatcher = _FakeHookMatcher
-        runtime = _runtime(client=client, sdk=sdk, host=host)
+        runtime = _runtime(
+            client=client, sdk=sdk, host=host,
+            config=_config(idle_timeout_seconds=0),
+        )
         try:
             await runtime.start_turn("timer", None, "schedule")
             await runtime._sessions["timer"].active_task
@@ -4111,7 +4119,10 @@ def test_claude_scheduled_connection_reuses_client_and_projects_separate_turn() 
         host = _RecordingHost()
         sdk = _default_sdk()
         sdk.HookMatcher = _FakeHookMatcher
-        runtime = _runtime(client=client, sdk=sdk, host=host)
+        runtime = _runtime(
+            client=client, sdk=sdk, host=host,
+            config=_config(idle_timeout_seconds=0),
+        )
         try:
             await runtime.start_turn("timer", None, "schedule")
             await runtime._sessions["timer"].active_task
@@ -4137,12 +4148,268 @@ def test_claude_scheduled_connection_reuses_client_and_projects_separate_turn() 
 
             await runtime.start_turn("timer", "native_timer", "cancel")
             await runtime._sessions["timer"].active_task
+            await _wait_until(lambda: client.disconnected)
+            assert not runtime._turns.runner.connections
+        finally:
+            await runtime.stop()
+
+    asyncio.run(run())
+
+
+def test_claude_regular_session_reuses_process_until_idle_timeout() -> None:
+    async def run():
+        client = _ScheduledClaudeClient("native_regular")
+        runtime = _runtime(
+            client=client,
+            config=_config(idle_timeout_seconds=0.08),
+        )
+        try:
+            await runtime.start_turn("regular", None, "hello")
+            await runtime._sessions["regular"].active_task
+            assert not client.disconnected
+            assert runtime._turns.runner.connections["regular"].client is client
+
+            await asyncio.sleep(0.05)
+            await runtime.start_turn("regular", "native_regular", "again")
+            await runtime._sessions["regular"].active_task
+            assert client.queries == ["hello", "again"]
+            assert not client.disconnected
+            await asyncio.sleep(0.05)
+            assert not client.disconnected  # The new turn reset the idle clock.
+            await asyncio.wait_for(_wait_for_disconnection(client), 1)
+            assert "regular" not in runtime._turns.runner.connections
+        finally:
+            await runtime.stop()
+
+    asyncio.run(run())
+
+
+def test_claude_idle_reclaim_does_not_interrupt_new_turn() -> None:
+    async def run():
+        client = _ScheduledClaudeClient("native_race")
+        runtime = _runtime(
+            client=client,
+            config=_config(idle_timeout_seconds=0.03),
+        )
+        try:
+            await runtime.start_turn("race", None, "hello")
+            await runtime._sessions["race"].active_task
+            await asyncio.sleep(0.01)
+            await runtime.start_turn("race", "native_race", "wait")
+            await _wait_until(lambda: "wait" in client.queries)
+            await asyncio.sleep(0.05)
+            assert not client.disconnected
+            assert runtime._sessions["race"].execution is not None
+            await client.reply("finished")
+            await runtime._sessions["race"].active_task
+            await asyncio.wait_for(_wait_for_disconnection(client), 1)
+        finally:
+            await runtime.stop()
+
+    asyncio.run(run())
+
+
+def test_claude_reclaimed_session_resumes_with_new_process() -> None:
+    async def run():
+        first = _ScheduledClaudeClient("native_resume")
+        second = _ScheduledClaudeClient("native_resume")
+        clients = iter([first, second])
+
+        def factory(_sdk, options):
+            client = next(clients)
+            client.options = options
+            return client
+
+        runtime = ClaudeRuntime(
+            config=_config(idle_timeout_seconds=0.02),
+            host=_RecordingHost(), sdk_loader=_default_sdk, client_factory=factory,
+        )
+        try:
+            await runtime.start_turn("resume", None, "hello")
+            await runtime._sessions["resume"].active_task
+            await asyncio.wait_for(_wait_for_disconnection(first), 1)
+
+            await runtime.start_turn("resume", "native_resume", "again")
+            await runtime._sessions["resume"].active_task
+            assert second.connected and not second.disconnected
+            assert second.options.kwargs["resume"] == "native_resume"
+            assert first.queries == ["hello"]
+            assert second.queries == ["again"]
+        finally:
+            await runtime.stop()
+
+    asyncio.run(run())
+
+
+def test_claude_distinct_active_sessions_keep_distinct_clients() -> None:
+    async def run():
+        clients = iter([
+            _ScheduledClaudeClient("native_a"),
+            _ScheduledClaudeClient("native_b"),
+        ])
+
+        def factory(_sdk, options):
+            client = next(clients)
+            client.options = options
+            return client
+
+        runtime = ClaudeRuntime(
+            config=_config(idle_timeout_seconds=0.08),
+            host=_RecordingHost(), sdk_loader=_default_sdk, client_factory=factory,
+        )
+        try:
+            for session_id in ("a", "b"):
+                await runtime.start_turn(session_id, None, "hello")
+                await runtime._sessions[session_id].active_task
+            connections = runtime._turns.runner.connections
+            assert connections["a"].client is not connections["b"].client
+            assert not connections["a"].client.disconnected
+            assert not connections["b"].client.disconnected
+        finally:
+            await runtime.stop()
+
+    asyncio.run(run())
+
+
+def test_claude_scheduled_wakeup_outlives_idle_timeout() -> None:
+    async def run():
+        client = _ScheduledClaudeClient()
+        sdk = _default_sdk()
+        sdk.HookMatcher = _FakeHookMatcher
+        runtime = _runtime(
+            client=client, sdk=sdk,
+            config=_config(idle_timeout_seconds=0.02),
+        )
+        try:
+            await runtime.start_turn("timer", None, "schedule")
+            await runtime._sessions["timer"].active_task
+            await asyncio.sleep(0.05)
+            assert not client.disconnected
+            await runtime.start_turn("timer", "native_timer", "cancel")
+            await runtime._sessions["timer"].active_task
+            await asyncio.wait_for(_wait_for_disconnection(client), 1)
+        finally:
+            await runtime.stop()
+
+    asyncio.run(run())
+
+
+def test_claude_reconciliation_waits_for_background_work() -> None:
+    async def run():
+        client = _ReconcileClaudeClient()
+        client.jobs = []
+        sdk = _default_sdk()
+        sdk.HookMatcher = _FakeHookMatcher
+        runtime = _runtime(
+            client=client, sdk=sdk,
+            config=_config(idle_timeout_seconds=0.02),
+        )
+        try:
+            await runtime.start_turn("timer", None, "schedule")
+            await runtime._sessions["timer"].active_task
+            await client.incoming.put(SystemMessage(
+                subtype="task_started", task_id="background_1",
+                data={"task_id": "background_1"},
+            ))
+            await _wait_until(lambda: bool(
+                runtime._turns.runner.connections["timer"].background.active_ids
+            ))
+            await client.reply("scheduled reply")
+            await _wait_until(lambda: len(runtime._turns.runner.connections) == 1)
+            await _wait_until(lambda: runtime._sessions["timer"].execution is None)
+            assert RECONCILE_PROMPT not in client.queries
+            hook = client.options.kwargs["hooks"]["PreToolUse"][0].hooks[0]
+            assert "hookSpecificOutput" not in await hook({"tool_name": "Bash"})
+            await asyncio.sleep(0.05)
+            assert not client.disconnected
+
+            await client.incoming.put(SystemMessage(
+                subtype="task_updated", task_id="background_1",
+                patch={"status": "completed"}, data={"task_id": "background_1"},
+            ))
+            async with asyncio.timeout(1):
+                while RECONCILE_PROMPT not in client.queries:
+                    await asyncio.sleep(0.005)
+            await asyncio.wait_for(_wait_for_disconnection(client), 1)
+            assert "timer" not in runtime._turns.runner.connections
+        finally:
+            await runtime.stop()
+
+    asyncio.run(run())
+
+
+def test_claude_stop_during_deferred_reconciliation() -> None:
+    async def run():
+        client = _ReconcileClaudeClient()
+        client.hold_check = True
+        sdk = _default_sdk()
+        sdk.HookMatcher = _FakeHookMatcher
+        runtime = _runtime(client=client, sdk=sdk)
+        try:
+            await runtime.start_turn("timer", None, "schedule")
+            await runtime._sessions["timer"].active_task
+            await client.incoming.put(SystemMessage(
+                subtype="task_started", task_id="background_1",
+                data={"task_id": "background_1"},
+            ))
+            await _wait_until(lambda: bool(
+                runtime._turns.runner.connections["timer"].background.active_ids
+            ))
+            await client.reply("scheduled reply")
+            await _wait_until(lambda: runtime._sessions["timer"].execution is None)
+            await client.incoming.put(SystemMessage(
+                subtype="task_updated", task_id="background_1",
+                patch={"status": "completed"}, data={"task_id": "background_1"},
+            ))
+            await _wait_until(lambda: RECONCILE_PROMPT in client.queries)
+            await asyncio.wait_for(runtime.stop(), 2)
             assert client.disconnected
             assert not runtime._turns.runner.connections
         finally:
             await runtime.stop()
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("terminal", ["task_updated", "task_notification"])
+def test_claude_background_work_outlives_reply_then_allows_reclaim(terminal: str) -> None:
+    class BackgroundClient(_ScheduledClaudeClient):
+        async def query(self, prompt):
+            if prompt == "start background":
+                await self.incoming.put(SystemMessage(
+                    subtype="task_started", task_id="bg_1", data={"task_id": "bg_1"},
+                ))
+            await super().query(prompt)
+
+    async def run():
+        client = BackgroundClient("native_background")
+        runtime = _runtime(
+            client=client,
+            config=_config(idle_timeout_seconds=0.02),
+        )
+        try:
+            await runtime.start_turn("background", None, "start background")
+            await runtime._sessions["background"].active_task
+            connection = runtime._turns.runner.connections["background"]
+            assert connection.background.active_ids == {"bg_1"}
+            await asyncio.sleep(0.05)
+            assert not client.disconnected
+
+            await client.incoming.put(SystemMessage(
+                subtype=terminal, task_id="bg_1", status="completed",
+                patch={"status": "killed"}, data={"task_id": "bg_1"},
+            ))
+            await asyncio.wait_for(_wait_for_disconnection(client), 1)
+            assert not connection.background.active_ids
+        finally:
+            await runtime.stop()
+
+    asyncio.run(run())
+
+
+async def _wait_for_disconnection(client: _FakeClaudeClient) -> None:
+    while not client.disconnected:
+        await asyncio.sleep(0.005)
 
 
 def test_claude_scheduled_connection_survives_interrupt_and_closes_on_stop() -> None:

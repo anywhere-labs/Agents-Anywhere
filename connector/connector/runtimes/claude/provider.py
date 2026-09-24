@@ -1,5 +1,4 @@
 from __future__ import annotations
-from connector.runtime_protocol.host import runtime_kv_store
 
 import os
 import sys
@@ -19,13 +18,13 @@ from connector.runtime_protocol import (
     RuntimeTypeDescriptor,
     RuntimeUnavailableError,
 )
-from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtime_protocol.host import RuntimeHostClient, runtime_kv_store
 from connector.runtimes.claude import discovery, provider_config
 from connector.runtimes.claude.runtime import ClaudeRuntime
 from connector.runtimes.custom_models import normalize_custom_models
 from connector.runtimes.model_gateway import model_gateway_from_config
 
-CLAUDE_CONFIG_SCHEMA_REVISION = 4
+CLAUDE_CONFIG_SCHEMA_REVISION = 5
 
 
 class ClaudeProvider(RuntimeProvider):
@@ -103,12 +102,13 @@ class ClaudeProvider(RuntimeProvider):
                     "modelGateway",
                     "environment",
                     "customModels",
+                    "idleTimeoutSeconds",
                 ],
                 "modelGateway": {"component": "modelGateway"},
                 "environment": {"component": "keyValue"},
                 "customModels": {"component": "customModels"},
             },
-            defaults={"environment": {}, "customModels": []},
+            defaults={"environment": {}, "customModels": [], "idleTimeoutSeconds": 600},
         )
 
     async def validate_config(
@@ -155,6 +155,7 @@ class ClaudeProvider(RuntimeProvider):
         normalized_values: dict[str, Any] = {
             "environment": dict(raw_values.get("environment") or {}),
             "customModels": normalize_custom_models(raw_values.get("customModels")),
+            "idleTimeoutSeconds": raw_values.get("idleTimeoutSeconds", 600),
         }
         if model_gateway is not None:
             normalized_values["modelGateway"] = model_gateway.to_config_values()

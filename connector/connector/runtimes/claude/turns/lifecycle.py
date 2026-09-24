@@ -153,6 +153,52 @@ class ClaudeTurnRunner:
                 execution.finished.set()
                 raise
 
+    async def reclaim_idle_connection(
+        self, session: ClaudeSession, connection: ClaudeConnection
+    ) -> None:
+        async with session.execution_lock:
+            if (
+                self.connections.get(session.session_id) is not connection
+                or self.stopping
+                or connection.closing
+                or session.execution is not None
+                or session.queued_execution is not None
+                or connection.current is not None
+                or connection.pending is not None
+                or connection.task_ids
+                or connection.background.active_ids
+            ):
+                return
+            await connection.close()
+
+    async def reconcile_after_background(
+        self, session: ClaudeSession, connection: ClaudeConnection
+    ) -> None:
+        try:
+            async with session.execution_lock:
+                if (
+                    self.stopping
+                    or self.connections.get(session.session_id) is not connection
+                    or connection.closing
+                    or session.execution is not None
+                    or connection.current is not None
+                    or connection.pending is not None
+                    or connection.background.active_ids
+                    or not connection.reconcile_needed
+                    or not connection.retained
+                ):
+                    return
+                await connection.reconcile_tasks()
+                await self.scheduled_sessions.save(session, connection.task_ids)
+                connection.arm_idle()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Claude deferred task reconciliation failed session_id={}",
+                session.session_id,
+            )
+
     async def connection_for(
         self,
         session: ClaudeSession,
@@ -161,7 +207,12 @@ class ClaudeTurnRunner:
         existing = self.connections.get(session.session_id)
         if existing is not None:
             if not existing.closing and existing.selections == session.selections:
+                existing.cancel_idle()
                 return existing
+            if existing.background.active_ids:
+                raise RuntimeError(
+                    "Claude selection change requires background work to finish"
+                )
             await existing.close()
         sdk = load_sdk(self.sdk_loader)
         settings_path = create_gateway_settings_file(self.config.values)
@@ -205,7 +256,12 @@ class ClaudeTurnRunner:
         connection = ClaudeConnection(
             client=client,
             on_activity=lambda response: self.scheduled_activity(session, response),
+            on_idle=lambda current: self.reclaim_idle_connection(session, current),
+            on_background_done=lambda current: self.reconcile_after_background(
+                session, current
+            ),
             cleanup=cleanup,
+            idle_timeout_seconds=self.config.values.get("idleTimeoutSeconds", 600),
             selections=dict(session.selections),
             task_ids=set(existing.task_ids) if existing is not None else set(),
         )
@@ -220,6 +276,7 @@ class ClaudeTurnRunner:
                 or session.execution is not None
                 or existing is None
                 or existing.selections == session.selections
+                or existing.background.active_ids
             ):
                 return
             try:
@@ -499,6 +556,7 @@ class ClaudeTurnRunner:
                     connection.reconcile_needed
                     and connection.retained
                     and not connection.reconciling
+                    and not connection.background.active_ids
                     and connection.pending is None
                     and not connection.closing
                     and not self.stopping
@@ -536,8 +594,14 @@ class ClaudeTurnRunner:
                     if terminal.status == "failed":
                         await connection.close()
                     else:
-                        if not connection.retained and connection.pending is None:
+                        if (
+                            not connection.streaming
+                            and not connection.retained
+                            and connection.pending is None
+                        ):
                             await connection.close()
+                        else:
+                            connection.arm_idle()
                         await self.refresh_idle_connection(session)
 
     async def publish_replayed_user_message(
