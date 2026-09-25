@@ -31,14 +31,21 @@ test('desktop detection carries the recorded launch arguments', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'aa-desktop-detect-'))
   t.after(() => rm(home, { recursive: true, force: true }))
   await writeDesktopRecord(home, {
-    platform: process.platform, executablePath: process.execPath, launchArgs: ['/repo/desktop-workbench'],
+    platform: process.platform, executablePath: process.execPath, launchArgs: [home],
     packaged: false, appPath: home,
   })
-  const detected = await detectDesktop(home, process.platform)
+  const detected = await detectDesktop(home, process.platform, async () => true)
   assert.equal(detected.status, 'installed')
   assert.equal(detected.status === 'installed' && detected.executablePath, process.execPath)
-  assert.deepEqual(detected.status === 'installed' && detected.launchArgs, ['/repo/desktop-workbench'])
+  assert.deepEqual(detected.status === 'installed' && detected.launchArgs, [home])
   assert.equal(detected.status === 'installed' && detected.packaged, false)
+
+  const stopped = await detectDesktop(home, process.platform, async () => false)
+  assert.equal(stopped.status, 'absent', 'installation alone must not hand off the plugin')
+  assert.match(stopped.message, /未运行/)
+  const unavailable = await detectDesktop(home, process.platform, async () => { throw new Error('process query failed') })
+  assert.equal(unavailable.status, 'error', 'a failed process query cannot prove Desktop is running')
+  assert.match(unavailable.message, /进程查询权限/)
 
   await writeDesktopRecord(home, { platform: process.platform, executablePath: process.execPath, launchArgs: [''] })
   assert.equal((await detectDesktop(home, process.platform)).status, 'error')

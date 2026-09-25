@@ -65,7 +65,7 @@ test('Desktop discovery checks on every call and never rewrites the shared recor
     const path = machineStatePath(home)
     await writeJson(path, { version: 2, connectorIds: [], legacyMachineMigrated: true, desktop: { platform: process.platform, executablePath: process.execPath } })
     const before = await stat(path)
-    assert.equal((await detectDesktop(home)).status, 'installed')
+    assert.equal((await detectDesktop(home, process.platform, async () => true)).status, 'installed')
     assert.equal((await stat(path)).mtimeMs, before.mtimeMs)
     await writeJson(path, { version: 2, connectorIds: [], legacyMachineMigrated: true, desktop: { platform: process.platform, executablePath: join(home, 'missing') } })
     assert.equal((await detectDesktop(home)).status, 'absent')

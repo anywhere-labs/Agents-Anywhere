@@ -40,7 +40,7 @@ export function ConnectionEntry({ wide, host, t, renderTrigger }: ConnectionEntr
   const showLogin = standalone && !snapshot.account && tab === 'connection'
   const detectionError = snapshot?.desktop.status === 'error' ? snapshot.desktop.message : !snapshot ? state.readError : null
   const detectionMessage = detectionError ?? (snapshot?.desktop.status === 'installed'
-    ? t('已安装 Agents Anywhere 桌面端。请打开桌面端完成连接设置。') : t('正在检查连接方式…'))
+    ? t('Agents Anywhere 桌面端正在运行。请在桌面端完成连接设置。') : t('正在检查连接方式…'))
   const trigger = useRef<HTMLElement | null>(null)
   const content = useRef<HTMLDivElement | null>(null)
   const close = useCallback(() => {
