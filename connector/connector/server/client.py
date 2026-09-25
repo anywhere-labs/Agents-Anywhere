@@ -520,7 +520,9 @@ class BackendRpcClient:
 def _is_auth_close(exc: ConnectionClosed) -> bool:
     reason = _close_reason(exc).lower()
     return (
-        _close_code(exc) in {1008, 4001}
+        # 1008 can reject a short-lived access token, not the saved credential.
+        # Reconnect refreshes access tokens; only explicit revocation is final.
+        _close_code(exc) == 4001
         and "connector" in reason
         and any(marker in reason for marker in ("invalid", "revok", "delet", "credential"))
     )

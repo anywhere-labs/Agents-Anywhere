@@ -2066,6 +2066,12 @@ def test_connector_runtime_reconnects_quietly_on_websocket_close(monkeypatch) ->
     asyncio.run(_exercise_websocket_close_reconnect(monkeypatch))
 
 
+def test_access_token_rejection_reconnects_without_invalidating_saved_credential(monkeypatch) -> None:
+    asyncio.run(_exercise_websocket_close_reconnect(
+        monkeypatch, Close(1008, "invalid connector access token")
+    ))
+
+
 def test_runtime_sync_task_survives_websocket_reconnect(monkeypatch) -> None:
     asyncio.run(_exercise_runtime_sync_task_survives_websocket_reconnect(monkeypatch))
 
@@ -2659,7 +2665,7 @@ async def wait_for_ws_response(
     raise AssertionError(f"websocket response not received: {request_id}")
 
 
-async def _exercise_websocket_close_reconnect(monkeypatch) -> None:
+async def _exercise_websocket_close_reconnect(monkeypatch, close_frame=None) -> None:
     client = _client(reconnect_seconds=0)
     calls = 0
     sleeps: list[float] = []
@@ -2668,7 +2674,7 @@ async def _exercise_websocket_close_reconnect(monkeypatch) -> None:
         nonlocal calls
         calls += 1
         if calls == 1:
-            close = Close(1012, "service restart")
+            close = close_frame or Close(1012, "service restart")
             raise ConnectionClosedError(close, close, True)
         raise asyncio.CancelledError
 

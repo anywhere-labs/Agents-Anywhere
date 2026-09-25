@@ -132,6 +132,7 @@ export class BackendServer {
       if (path === "/device/create") return this.state.createAndConnect(body as never);
       if (path === "/device/reconnect") return this.state.reconnectAndConnect(body as never);
       if (path === "/device/disconnect") return this.state.disconnectLocal(body as never);
+      if (path === "/device/revoke") return this.state.revokeLocal(body as never);
       if (path === "/device/rename") return this.state.updateLocalBindingName(String(body.name ?? ""));
     }
     throw new Error(`Unknown Desktop backend route: ${method} ${path}`);

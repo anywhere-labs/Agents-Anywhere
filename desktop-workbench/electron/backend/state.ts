@@ -258,6 +258,10 @@ export class BackendState {
     return this.devices.disconnectLocal(input);
   }
 
+  revokeLocal(input: DesktopDeviceAuthInput): Promise<PublicLocalDesktopBinding> {
+    return this.devices.revokeLocal(input);
+  }
+
   updateLocalBindingName(name: DesktopDeviceNameInput["name"]): PublicLocalDesktopBinding {
     return this.devices.updateLocalBindingName(name ?? "");
   }

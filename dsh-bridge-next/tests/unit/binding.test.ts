@@ -142,6 +142,43 @@ for (const existing of [false, true]) {
   })
 }
 
+for (const valid of [true, false, 'network-error'] as const) {
+  test(`explicit reconnect only renews a confirmed invalid credential (${valid})`, async t => {
+    const root = await mkdtemp(join(tmpdir(), 'aa-binding-reconnect-'))
+    t.after(() => rm(root, { recursive: true, force: true }))
+    let renewals = 0
+    const device = { id: 'known', userId: 'user', name: 'Mac', status: 'offline' }
+    const api = new class extends AccountApi {
+      override async device() { return device }
+      override async devices() { return [device] }
+      override async verifyConnector() {
+        if (valid === 'network-error') throw new ApiError(503)
+        return valid
+      }
+      override async renewConnector() { renewals++; return 'NEW' }
+    }('https://server.test')
+    const account = { apiBaseUrl: api.baseUrl, userId: 'user', displayName: 'User', accessToken: 'USER', expiresAt: Date.now() + 60000 }
+    const key = createHash('sha256').update(`${account.apiBaseUrl}\n${account.userId}`).digest('hex')
+    const path = join(root, 'bindings', `${key}.json`)
+    const saved = { installationId: 'installation', connectorId: device.id, connectorToken: 'OLD', name: device.name }
+    await writeJson(path, saved)
+    const recover = () => recoverBinding(root, account, api, new AbortController().signal, device.id, 'reconnect')
+    if (valid === 'network-error') {
+      await assert.rejects(recover(), ApiError)
+      assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), saved)
+    } else {
+      assert.equal((await recover()).connectorToken, valid ? 'OLD' : 'NEW')
+      if (valid) {
+        const loggedIn = await ensureBinding(root, account, api, new AbortController().signal, {
+          renew: true, machineState: localMachineRegistry(root),
+        })
+        assert.equal(loggedIn.connectorToken, 'OLD')
+      }
+    }
+    assert.equal(renewals, valid === false ? 1 : 0)
+  })
+}
+
 test('confirmed recreation retries the same registration key after a lost response, including a plugin restart', async () => {
   const root = await mkdtemp(join(tmpdir(), 'aa-binding-recovery-'))
   const keys: string[] = []
