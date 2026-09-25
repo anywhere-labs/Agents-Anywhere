@@ -3,18 +3,22 @@
 See MIGRATION.md and migration-state.json for the current production migration and
 application readiness state. deployed.json is the earlier alpha snapshot.
 
-Four Docker workers bind HTTP to 127.0.0.1:8000, including the static Web UI,
-API and WebSockets. All four workers each run eight FastAPI processes using their compose.worker-N.yml overlays. Each application process has one extra
-event-preparation worker (32 across the cluster). All containers have a 14 GiB
+Six Docker workers bind HTTP to 127.0.0.1:8000, including the static Web UI,
+API and WebSockets. All six workers each run eight FastAPI processes using their
+compose.worker-N.yml overlays. Each application process has one extra
+event-preparation worker (48 across the cluster). All containers have a 14 GiB
 memory limit. PostgreSQL and Redis run on 192.168.1.35 and accept LAN traffic only.
 All workers must share their database,
 Redis, token secret and S3 configuration; instance IDs differ by node.
 
-The 32 application processes allow at most 272 pooled PostgreSQL connections:
+The 48 application processes allow at most 432 pooled PostgreSQL connections:
 workers 1 and 2 each allow 5 persistent + 2 overflow connections per process;
-workers 3 and 4 each allow 5 persistent + 5 overflow. This leaves 28 connections
-under the configured 300-connection server limit. Redis requires AOF with appendfsync everysec and
-maxmemory-policy noeviction because it buffers accepted Timeline writes.
+workers 3 through 6 each allow 5 persistent + 5 overflow. This requires
+PostgreSQL `max_connections` of at least 500, leaving 68 connections for
+administration and other consumers under the configured 500-connection limit.
+Do not start workers 5 and 6 while db-1 still uses 300. Redis requires AOF with
+appendfsync everysec and maxmemory-policy noeviction because it buffers accepted
+Timeline writes.
 
 Build one image from a committed release and distribute that exact image to all
 workers. Release archives live under /root/code/github/Agents-Anywhere-releases/<release> on each node.
