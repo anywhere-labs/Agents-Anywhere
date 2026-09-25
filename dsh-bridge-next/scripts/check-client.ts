@@ -513,7 +513,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       await reopen()
       assert.ok(calls.filter(call => call.endpoint.endsWith('/inspect')).length > readsBefore, 'Every opening must perform a fresh detection')
       assert.equal(dialog()!.getAttribute('aria-label'), '远程控制')
-      assert.match(dialog()!.textContent!, /已安装 Agents Anywhere 桌面端。请打开桌面端完成连接设置。/)
+      assert.match(dialog()!.textContent!, /Agents Anywhere 桌面端正在运行。请在桌面端完成连接设置。/)
       assert.equal(dialog()!.querySelector('input, img, form, a'), null)
       assert.doesNotMatch(dialog()!.textContent!, /BensonWang|账号信息|Connector|打开 Web|退出登录|登录 Agents Anywhere Cloud/)
       assert.equal(dialog()!.querySelectorAll('button').length, 8, 'Desktop handoff keeps the open action and bridge diagnostics')
@@ -538,7 +538,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang|登录 Agents Anywhere Cloud|已安装桌面端/)
     await act(async () => { releaseInspection() })
     inspectGate = null
-    assert.match(dialog()!.textContent!, /已安装 Agents Anywhere 桌面端/)
+    assert.match(dialog()!.textContent!, /Agents Anywhere 桌面端正在运行/)
 
     // A response from an earlier, closed opening must not overwrite the current mode.
     inspectGate = new Promise(resolve => { releaseInspection = resolve })
@@ -549,7 +549,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     snapshot = { ...signedInSnapshot, desktop: installed }
     await reopen()
     await act(async () => { releaseInspection() })
-    assert.match(dialog()!.textContent!, /已安装 Agents Anywhere 桌面端/)
+    assert.match(dialog()!.textContent!, /Agents Anywhere 桌面端正在运行/)
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang/)
 
     snapshot = { ...signedInSnapshot, desktop: { status: 'error', message: '安装记录无法读取。' } }
