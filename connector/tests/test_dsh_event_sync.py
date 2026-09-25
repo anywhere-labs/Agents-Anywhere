@@ -79,7 +79,8 @@ def test_snapshot_abort_foreign_items_and_duplicate_pages_do_not_publish_partial
 
 
 @pytest.mark.parametrize("reject", [False, True])
-def test_relay_failure_resubscribes_without_closing_concurrent_rpc(reject):
+@pytest.mark.parametrize("projection_version", [2, 3])
+def test_relay_failure_resubscribes_without_closing_concurrent_rpc(reject, projection_version):
     async def exercise():
         entered, release, acknowledged = asyncio.Event(), asyncio.Event(), asyncio.Event()
         acks = []
@@ -99,7 +100,7 @@ def test_relay_failure_resubscribes_without_closing_concurrent_rpc(reject):
                 subscriptions += 1
                 if subscriptions > 1:
                     resubscribed.set()
-                return {"streamId": f"stream-{subscriptions}", "projectionVersion": 2}
+                return {"streamId": f"stream-{subscriptions}", "projectionVersion": projection_version}
             acks.append(params["batchSeq"])
             acknowledged.set()
 
@@ -109,18 +110,18 @@ def test_relay_failure_resubscribes_without_closing_concurrent_rpc(reject):
         try:
             op = {"kind": "notifications", "notifications": [{"method": "session.state.updated", "params": {"sessionId": "session", "status": "idle"}}]}
             await asyncio.sleep(0)
-            relay.accept({"streamId": "stream-1", "batchSeq": 1, "projectionVersion": 2, "operations": [op]})
+            relay.accept({"streamId": "stream-1", "batchSeq": 1, "projectionVersion": projection_version, "operations": [op]})
             await asyncio.wait_for(entered.wait(), 1)
             assert not acks
             release.set()
             if not reject:
                 await asyncio.wait_for(acknowledged.wait(), 1)
-                relay.accept({"streamId": "stream-1", "batchSeq": 3, "projectionVersion": 2, "operations": [op]})
+                relay.accept({"streamId": "stream-1", "batchSeq": 3, "projectionVersion": projection_version, "operations": [op]})
             await asyncio.wait_for(resubscribed.wait(), 1)
             assert acks == ([] if reject else [1])
             acknowledged.clear()
             relay.restart("stream-1")  # A delayed old error cannot stop the new feed.
-            relay.accept({"streamId": "stream-2", "batchSeq": 1, "projectionVersion": 2, "operations": [op]})
+            relay.accept({"streamId": "stream-2", "batchSeq": 1, "projectionVersion": projection_version, "operations": [op]})
             await asyncio.wait_for(acknowledged.wait(), 1)
             assert acks == ([1] if reject else [1, 1])
             client.writer.close.assert_not_called()

@@ -1,3 +1,4 @@
+import { PROJECTION_VERSION } from './history.js'
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { link, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
@@ -77,7 +78,7 @@ export class RuntimeServer {
         await link(temporary, this.endpointPath)
       } finally { await unlink(temporary).catch(() => undefined) }
       this.endpoint = endpoint
-      this.diagnostics.log('info', 'bridge.listening', { host: endpoint.host, port: endpoint.port, protocolVersion: '1.0', projectionVersion: 2 })
+      this.diagnostics.log('info', 'bridge.listening', { host: endpoint.host, port: endpoint.port, protocolVersion: '1.0', projectionVersion: PROJECTION_VERSION })
       return endpoint
     } catch (error) {
       for (const socket of this.sockets) socket.destroy()
@@ -179,11 +180,11 @@ export class RuntimeServer {
           clearTimeout(authTimer)
           this.diagnostics.log('info', 'bridge.initialized', { connectionId, syncMode: this.reader.native ? 'events' : 'polling' })
           send({ jsonrpc: '2.0', id, result: {
-            identity: { runtime: 'dsh', runtimeVersion: '0.1.5-rc.2', bridgeVersion: '0.1.0-dev.0', protocolVersion: '1.0', displayName: 'DeepSeek Harness' },
+            identity: { runtime: 'dsh', runtimeVersion: '0.1.7-rc.2', bridgeVersion: '0.1.0-dev.0', protocolVersion: '1.0', displayName: 'DeepSeek Harness' },
             storage: { mode: 'dsh-native', sameSessionWriterLimit: 1, crossProcessWriterExclusion: false },
             features: { attachments: Boolean(this.reader.native?.ctx.get('sessionController') && this.reader.native.ctx.get('attachments')),
               sessionDiscovery: true, timelineSuffixRead: false, approval: this.reader.native?.approvals.available ?? false, userQuestions: this.reader.native?.questions.available ?? false,
-              readOnly: !this.reader.native?.ctx.get('sessionController'), snapshotPagination: true, syncMode: this.reader.native ? 'events' : 'polling', projectionVersion: 2 },
+              readOnly: !this.reader.native?.ctx.get('sessionController'), snapshotPagination: true, syncMode: this.reader.native ? 'events' : 'polling', projectionVersion: PROJECTION_VERSION },
           } })
           return
         }

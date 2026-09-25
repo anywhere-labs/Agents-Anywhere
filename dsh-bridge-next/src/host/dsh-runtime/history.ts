@@ -7,10 +7,25 @@ import { canonicalJson, clientMessageId, contentHash, itemId } from './identity.
 import { enrichToolResult, parentToolItem, resultContent, toolContent } from './tools.js'
 import { json, record, type Data, type ItemStatus, type ItemType, type TimelineItem } from './types.js'
 
+// Bump when replay semantics change so old checkpoints rebuild their timeline.
+export const PROJECTION_VERSION = 3
+
 // Older persisted logs and fixtures can still carry the pre-rc.1 chunk vocabulary.
 type LegacyChunk = { type: 'assistant/chunk', seq: SessionEvent['seq'], time: number,
   data: { turn: number, step: number, chunk: StreamChunk } }
 type ProjectionEvent = SessionEvent | LegacyChunk
+type LegacyToolResultBlock = { type: 'tool-result', toolCallId: string, content: unknown[], isError?: boolean }
+
+/** rc.7 uses tool-role messages; retain the nested result shape for older logs. */
+function readToolResult(value: unknown) {
+  const message = record(value)
+  const result = typeof message.toolCallId === 'string' ? message
+    : record(Array.isArray(message.content) ? message.content[0] : undefined)
+  if (typeof result.toolCallId !== 'string' || !result.toolCallId || !Array.isArray(result.content)) {
+    throw new Error('Invalid DSH tool result message.')
+  }
+  return { callId: result.toolCallId, content: result.content, isError: result.isError === true }
+}
 
 /** One deterministic projector shared by snapshots and the live event feed. */
 export function createProjection(externalId: string, platformId: string, fingerprint = false) {
@@ -82,7 +97,7 @@ export function createProjection(externalId: string, platformId: string, fingerp
         ...(error !== undefined ? { error: json(error) } : {}), ...resultContent(blocks) }, meta))
   }
 
-  function block(block: ContentBlock, key: string, index: number, event: ProjectionEvent,
+  function block(block: ContentBlock | LegacyToolResultBlock, key: string, index: number, event: ProjectionEvent,
     role: string, status: ItemStatus, anchor?: number) {
     switch (block.type) {
       case 'text':
@@ -208,14 +223,17 @@ export function createProjection(externalId: string, platformId: string, fingerp
     } else if (event.type === 'tool/call') {
       tool(event.data.callId, event.data.name, event.data.arguments, event)
     } else if (event.type === 'tool/result') {
-      const value = event.data.message.content[0]
-      result(value.toolCallId, value.content, value.isError === true || Boolean(event.data.error), event, event.data.meta, event.data.error)
-    } else if (eventType === 'tool/code-dispatch-start' || eventType === 'tool/code-dispatch') {
+      const value = readToolResult(event.data.message)
+      result(value.callId, value.content, value.isError || Boolean(event.data.error), event, event.data.meta, event.data.error)
+    } else if (eventType === 'tool/ptc-dispatch-start' || eventType === 'tool/ptc-dispatch'
+      || eventType === 'tool/code-dispatch-start' || eventType === 'tool/code-dispatch') {
       if (typeof data.subCallId !== 'string' || typeof data.name !== 'string') return
       const item = tool(data.subCallId, data.name, data.arguments, event)
       item.content.parentItemId = parentToolItem(externalId, String(data.parentCallId))
       item.content.rootCallId = String(data.rootCallId)
-      if (eventType === 'tool/code-dispatch') result(data.subCallId, data.content, data.isError === true, event)
+      if (eventType === 'tool/ptc-dispatch' || eventType === 'tool/code-dispatch') {
+        result(data.subCallId, data.content, data.isError === true || Boolean(data.error), event, undefined, data.error)
+      }
     } else if (eventType === 'approval/asked' || eventType === 'approval/decided') {
       const key = String(data.id)
       const previous = items.get(itemId(externalId, 'approval', key))

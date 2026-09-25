@@ -21,11 +21,10 @@ async function until(check: () => boolean) {
 test('AA creation overrides DSH defaults before the first request; live switches and retries preserve session choices', { timeout: 30_000 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'aa-config-'))
   const adapter = new TextAdapter()
-  const f = await nativeRuntime(home, ctx => mountAgents(ctx, adapter))
+  const f = await nativeRuntime(home, ctx => mountAgents(ctx, adapter, { provider: 'test', model: 'thinking', reasoningEffort: 'high' }))
   const runtime = f.ctx.agentsAnywhereRuntime.native
   const id = SessionId('configuration-session')
   try {
-    await f.ctx.agentDefaultModel.saveSelection({ provider: 'test', model: 'thinking', reasoningEffort: 'high' })
     assert.equal(f.ctx.agentPresets.defaultId, 'minimal')
     assert.equal(f.ctx.permissionPresets.defaultPreset, 'danger-full-access')
     await runtime.send(id, 'first', 'first-id', home, true, initialSelections, 'standard')

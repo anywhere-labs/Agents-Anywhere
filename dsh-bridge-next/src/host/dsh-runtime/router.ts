@@ -1,3 +1,4 @@
+import { PROJECTION_VERSION } from './history.js'
 import { jsonBytes } from './json-size.js'
 import { randomUUID } from 'node:crypto'
 import { parseAttachments } from './attachments.js'
@@ -59,7 +60,7 @@ export class RuntimeRouter {
         }, 60_000, params.checkpointVersion === 1)
         this.feed = feed
         setTimeout(() => { if (this.feed === feed) feed.start() }, 0)
-        return { streamId: feed.id, projectionVersion: 2, ...(params.checkpointVersion === 1 ? { checkpointVersion: 1 } : {}) }
+        return { streamId: feed.id, projectionVersion: PROJECTION_VERSION, ...(params.checkpointVersion === 1 ? { checkpointVersion: 1 } : {}) }
       }
       case 'runtime.sync.ack':
         if (!this.feed || params.streamId !== this.feed.id || typeof params.batchSeq !== 'number') throw new BridgeError('INVALID_PARAMS', 'Unknown event stream.')
@@ -290,7 +291,7 @@ export class RuntimeRouter {
       sessionId: page.platformId, externalSessionId: page.externalId, runtime: 'dsh', items,
       complete: offset === 0 && nextCursor === null && !page.truncated,
       snapshotComplete: !page.truncated, nextCursor, watermark: page.watermark,
-      metadata: { projectionVersion: 2, totalItems: page.values.length, readOnly: !this.reader.native?.ctx.get('agents') },
+      metadata: { projectionVersion: PROJECTION_VERSION, totalItems: page.values.length, readOnly: !this.reader.native?.ctx.get('agents') },
     }
   }
 }

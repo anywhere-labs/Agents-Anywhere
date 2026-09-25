@@ -3,22 +3,23 @@ import LlmRuntime, { LlmAdapter, ReasoningEffortId, type GenerateOptions, type S
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import AgentDefaultModel from '@deepseek-ai/dsh-agent-default-model'
-import SettingsFile from '@deepseek-ai/dsh-settings-file'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import SessionProjection from '@deepseek-ai/dsh-session-projection'
 import SessionController from '@deepseek-ai/dsh-api-session-controller'
 import Attachments from '@deepseek-ai/dsh-attachment-local'
-import AgentPresets from '@deepseek-ai/dsh-agent-presets'
+import AgentPresets from '@deepseek-ai/dsh-agent-preset-registry'
+import AgentPreset from '@deepseek-ai/dsh-agent-preset'
 import { HostConnectionService } from '@deepseek-ai/dsh-client-connection'
 import FileUploads from '@deepseek-ai/dsh-client-file-upload'
 import Commands from '@deepseek-ai/dsh-commands'
 import PermissionPresets from '@deepseek-ai/dsh-permission-presets'
 import Approval from '@deepseek-ai/dsh-user-approval'
 import Shell from '@deepseek-ai/dsh-shell'
+import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -63,29 +64,27 @@ export class TextAdapter extends LlmAdapter {
   }
 }
 
-export async function mountAgents(ctx: Context, adapter: LlmAdapter): Promise<void> {
+export async function mountAgents(ctx: Context, adapter: LlmAdapter,
+  defaultModel: { provider: string, model: string, reasoningEffort?: string } = { provider: 'test', model: 'text' }): Promise<void> {
   await ctx.plugin(LlmRuntime).await()
   await ctx.plugin(SessionProjection).await()
   await ctx.plugin(SystemPrompt).await()
   await ctx.plugin(ToolRuntime).await()
   await ctx.plugin(AgentRegistry).await()
   await ctx.plugin(AgentLoop, { agents: [] }).await()
-  await ctx.plugin(AgentDefaultModel, { provider: 'test', model: 'text' }).await()
+  // rc.7 stores defaults in the composition; this fixture has no profile ConfigEditor.
+  await ctx.plugin(AgentDefaultModel, defaultModel).await()
   ctx.llm.registerAdapter(['test'], adapter)
   const root = await mkdtemp(join(tmpdir(), 'aa-dsh-composition-'))
   ctx.on('dispose', () => rm(root, { recursive: true, force: true }))
-  await ctx.plugin(SettingsFile, { dshHome: root, watch: false }).await()
   ctx.baseUrl = import.meta.url
   await ctx.plugin(Loader, { baseUrl: import.meta.url }).await()
   ctx.loader.builtins.include = Include
   await writeFile(join(root, 'agent.mjs'), 'export default function () {}\n')
+  await ctx.plugin(AgentPresets, { default: 'minimal' }).await()
   for (const id of ['standard', 'minimal']) {
-    const directory = join(root, 'presets', id)
-    await mkdir(directory, { recursive: true })
-    await writeFile(join(directory, 'agent.cordis.yml'), `- name: ${pathToFileURL(join(root, 'agent.mjs')).href}\n`)
-    await writeFile(join(directory, 'preset.yml'), `name: ${id}\n`)
+    await ctx.plugin(AgentPreset, { id, name: id, plugins: [{ name: pathToFileURL(join(root, 'agent.mjs')).href }] }).await()
   }
-  await ctx.plugin(AgentPresets, { default: 'minimal', roots: [{ path: join(root, 'presets'), trust: 'system' }], includeShippedRoot: false, includeUserRoot: false }).await()
   await ctx.plugin(Attachments, { dshHome: root }).await()
   await ctx.plugin(Commands).await()
   await ctx.plugin(UnusedShell).await()
@@ -94,5 +93,6 @@ export async function mountAgents(ctx: Context, adapter: LlmAdapter): Promise<vo
   // In-process route registry only; this fixture never serves browser HTTP requests.
   new HostConnectionService(ctx, [], {} as ConstructorParameters<typeof HostConnectionService>[2])
   await ctx.plugin(FileUploads).await()
+  await ctx.plugin(LocalFileSystem).await()
   await ctx.plugin(SessionController).await()
 }
