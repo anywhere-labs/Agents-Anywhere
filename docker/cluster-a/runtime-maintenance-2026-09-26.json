@@ -1,5 +1,5 @@
 {
-  "status": "awaiting_cold_backup_before_production_migration",
+  "status": "cold_backup_verified_ready_for_production_migration",
   "pull_request": "https://github.com/anywhere-labs/Agents-Anywhere/pull/167",
   "merge_commit": "0182249a0ecb316ca2c6120866e5c7ab3e016247",
   "application_source_commit": "9a398889",
@@ -12,6 +12,10 @@
   "database_host": "192.168.1.35",
   "database_backup": "/root/backups/aa-maintenance-20260926-526ad861/postgres-data17",
   "redis_backup": "/root/backups/aa-maintenance-20260926-526ad861/redis-data",
+  "backup_completed_at_utc": "2026-09-25T20:13:48Z",
+  "backup_restoration_verified": true,
+  "backup_connector_count": 8250,
+  "backup_runtime_count": 9652,
   "schema_from": "v2_35",
   "schema_to": "v2_36",
   "postgres_max_connections_target": 500,
@@ -32,7 +36,11 @@
     "Six workers have matching database, Redis and signing-secret configuration hashes",
     "PostgreSQL 17 isolated v2_35 to v2_36 migration passed",
     "Isolated candidate API readiness and Web root returned HTTP 200",
-    "Image runtime-service, migration and Web-root checksums match local release inputs"
+    "Image runtime-service, migration and Web-root checksums match local release inputs",
+    "Six production containers created with the same verified image and left stopped",
+    "Worker 1 S3 probe read and presigned download verified on workers 5 and 6; probe deleted",
+    "Cold backup file manifest, permissions and control file match stopped source",
+    "Backup started with no networking; schema v2_35 and 8250 connectors / 9652 runtimes readable; backup cleanly stopped"
   ],
   "rollback_boundary": "Do not start the v2_35 image against a v2_36 database. Preserve cold backup and previous images. After new writes, restoring the old backup requires a data-loss decision."
 }
