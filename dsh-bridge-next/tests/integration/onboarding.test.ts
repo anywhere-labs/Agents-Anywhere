@@ -654,6 +654,20 @@ test('installing Desktop stops the plugin Connector while its panel stays closed
   } finally { await h.close() }
 })
 
+test('Desktop exit restores an already authorized plugin Connector', { timeout: 8000 }, async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    h.setDesktop({ status: 'installed', message: 'Desktop running', executablePath: process.execPath, launchArgs: [], packaged: true })
+    await until(async () => !h.connector.running)
+    h.setDesktop({ status: 'absent', message: 'Desktop stopped' })
+    await until(async () => h.connector.running)
+    assert.equal((await h.manager.inspect()).desktop.status, 'absent')
+  } finally { await h.close() }
+})
+
 test('failed device reconfiguration returns no browser destination and remains recoverable', async () => {
   const h = await fixture()
   h.api.online = true

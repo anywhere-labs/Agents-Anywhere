@@ -10,6 +10,7 @@ export const CLOUD_API_BASE_URL = 'https://web.agents-anywhere.com'
 
 export type DesktopDetection =
   | { status: 'absent'; message: string }
+  /** Legacy status name: installation AND a matching live Desktop main process were verified. */
   | { status: 'installed'; message: string; executablePath: string; launchArgs: string[]; packaged: boolean }
   | { status: 'error'; message: string }
 
