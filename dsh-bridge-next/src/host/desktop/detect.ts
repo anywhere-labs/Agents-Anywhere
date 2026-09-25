@@ -5,11 +5,15 @@ import { isAbsolute, join } from 'node:path'
 import type { DesktopDetection } from '../../contracts/index.js'
 import { hasCode } from '../storage/files.js'
 import { readMachineState } from './machine-state.js'
+import { isDesktopRunning, type DesktopProcessTarget } from './process.js'
 
 export const desktopRecordPath = (home = userInfo().homedir): string => join(home, '.agentsanywhere', 'desktop', 'install.json')
 
 /** Read-only: registration and Desktop onboarding belong to the Desktop app. */
-export async function detectDesktop(home = userInfo().homedir, platform = process.platform): Promise<DesktopDetection> {
+export async function detectDesktop(
+  home = userInfo().homedir, platform = process.platform,
+  running: (target: DesktopProcessTarget, platform: NodeJS.Platform) => Promise<boolean> = isDesktopRunning,
+): Promise<DesktopDetection> {
   try {
     const machine = await readMachineState(home)
     const value = machine['desktop']
@@ -30,13 +34,25 @@ export async function detectDesktop(home = userInfo().homedir, platform = proces
     if (launchArgs !== undefined && (!Array.isArray(launchArgs) || launchArgs.some(value => typeof value !== 'string' || !value))) {
       return { status: 'error', message: '桌面端启动参数无效，请打开一次 Agents Anywhere 桌面端后重试。' }
     }
+    if (record['packaged'] === false && !(launchArgs as string[] | undefined)?.includes(record['appPath'] as string)) {
+      return { status: 'error', message: '桌面端启动参数无效，请打开一次 Agents Anywhere 桌面端后重试。' }
+    }
     if (record['packaged'] !== undefined && typeof record['packaged'] !== 'boolean') {
       return { status: 'error', message: '桌面端安装记录无效，请打开一次 Agents Anywhere 桌面端后重试。' }
     }
+    const target = {
+      executablePath, launchArgs: (launchArgs as string[] | undefined) ?? [], packaged: record['packaged'] !== false,
+    }
+    try {
+      if (!(await running(target, platform))) {
+        return { status: 'absent', message: 'Agents Anywhere 桌面端未运行，可以在插件中管理本机设备。' }
+      }
+    } catch {
+      return { status: 'error', message: '无法确认 Agents Anywhere 桌面端是否正在运行，请检查进程查询权限后重试。' }
+    }
     return {
-      status: 'installed', executablePath, launchArgs: (launchArgs as string[] | undefined) ?? [],
-      packaged: record['packaged'] !== false,
-      message: '已发现 Agents Anywhere 桌面端，请由桌面端管理本机设备。',
+      status: 'installed', ...target,
+      message: 'Agents Anywhere 桌面端正在运行，请由桌面端管理本机设备。',
     }
   } catch (error) {
     if (hasCode(error, 'ENOENT')) return { status: 'absent', message: '桌面端已不在原安装位置，可以通过 Web 继续连接本机设备。' }
