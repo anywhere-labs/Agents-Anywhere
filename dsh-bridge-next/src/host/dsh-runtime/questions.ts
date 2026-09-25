@@ -3,6 +3,7 @@ import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { itemId, sessionId } from './identity.js'
 import { QuestionForm } from './question-form.js'
 import { InteractionStream, type InteractionOutcome } from './interaction-stream.js'
+import type { RuntimeDiagnostics } from './diagnostics.js'
 
 interface Question {
   eventId: string, agentId: string, form: QuestionForm,
@@ -16,8 +17,8 @@ export class UserQuestions {
   private stream: InteractionStream
   get available(): boolean { return this.stream.available }
   constructor(ctx: Context, private visible: (id: string) => Promise<boolean>,
-    private changed: (id?: string) => void) {
-    this.stream = new InteractionStream(ctx, frame => this.receive(frame), () => this.changed())
+    private changed: (id?: string) => void, diagnostics?: RuntimeDiagnostics) {
+    this.stream = new InteractionStream(ctx, frame => this.receive(frame), () => this.changed(), 'userQuestions', diagnostics)
   }
 
   private async receive(frame: Record<string, unknown>): Promise<void> {

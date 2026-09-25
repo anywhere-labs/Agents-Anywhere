@@ -22,6 +22,9 @@ import { modelSelectionId } from '../../src/host/dsh-runtime/selections.js'
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR4AWP8DwQMQMDEAAUAPfgEADYYS7QAAAAASUVORK5CYII=', 'base64')
 
 class VisionAdapter extends TextAdapter {
+  override async listModels(provider: string) {
+    return [...await super.listModels(provider), { provider, id: 'text-only', name: 'Text only' }]
+  }
   override async resolveModel(provider: string, model: string) {
     return { ...await super.resolveModel(provider, model), inputModalities: model === 'text-only' ? ['text' as const] : ['text' as const, 'image' as const] }
   }

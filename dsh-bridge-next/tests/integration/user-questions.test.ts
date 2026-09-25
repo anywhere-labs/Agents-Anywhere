@@ -20,6 +20,7 @@ import { SyncFeed, type SyncBatch } from '../../src/host/dsh-runtime/sync.js'
 import { sessionId } from '../../src/host/dsh-runtime/identity.js'
 import type { Context } from '@deepseek-ai/cordis'
 import { UserQuestions } from '../../src/host/dsh-runtime/questions.js'
+import { openInteractionEvents } from '../../src/host/dsh-runtime/interaction-stream.js'
 
 const questions = [
   { id: 'mode', question: '选择模式', options: [{ label: '标准' }, { label: '快速' }] },
@@ -31,6 +32,7 @@ const expected = { answers: [{ id: 'mode', selected: ['快速'] }, { id: 'target
 
 class QuestionAdapter extends LlmAdapter {
   requests: GenerateOptions[] = []
+  override async listModels(provider: string) { return [{ provider, id: 'text', name: 'Text' }] }
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requests.push(options)
     const call = { type: 'tool-call' as const, id: ToolCallId(randomUUID()), name: 'ask_user_question', arguments: JSON.stringify({ questions }) }
@@ -73,7 +75,7 @@ async function fixture() {
 
 async function remote(ctx: Context) {
   const abort = new AbortController()
-  const stream = (await ctx.typertGateway.wireStream.open('$events', { args: {} }, abort.signal))[Symbol.asyncIterator]()
+  const stream = (await openInteractionEvents(ctx.typertGateway.wireStream, abort.signal))[Symbol.asyncIterator]()
   const ready = (await stream.next()).value as { clientId: string }
   const questions = new Set<unknown>()
   return { next: async () => {
@@ -120,7 +122,7 @@ test('published Host pauses the real ask_user_question tool, accepts platform an
     const toolResult = agent.session.snapshotEvents().find(e => e.type === 'tool/result')
     assert.equal(toolResult?.type, 'tool/result')
     if (toolResult?.type === 'tool/result') {
-      const block = toolResult.data.message.content.find(c => c.type === 'tool-result')!
+      const block = toolResult.data.message
       assert.equal(block.isError, false)
       assert.deepEqual(JSON.parse(block.content.find(c => c.type === 'text')!.text), expected)
     }
@@ -135,7 +137,7 @@ test('published Host pauses the real ask_user_question tool, accepts platform an
     assert.equal((await f.request('session.respondInteraction', { sessionId: platformId, noticeId: cancelled.noticeId, actionId: 'cancel' }) as { ok: boolean }).ok, true)
     await until(() => agent.session.snapshotEvents().filter(e => e.type === 'turn/end').length === 2, 'cancel follows the native tool error path')
     const cancelledResult = agent.session.snapshotEvents().findLast(e => e.type === 'tool/result')!
-    if (cancelledResult.type === 'tool/result') assert.equal(cancelledResult.data.message.content.find(c => c.type === 'tool-result')?.isError, true)
+    if (cancelledResult.type === 'tool/result') assert.equal(cancelledResult.data.message.isError, true)
   } finally { client.close(); await f.close() }
 })
 

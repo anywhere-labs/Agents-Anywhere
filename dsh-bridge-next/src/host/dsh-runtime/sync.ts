@@ -4,7 +4,7 @@ import { receiptKey } from './attachments.js'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
-import { createProjection, replayHistory, type SessionProjection } from './history.js'
+import { createProjection, replayHistory, PROJECTION_VERSION, type SessionProjection } from './history.js'
 import { sessionId } from './identity.js'
 import type { NativeChange, NativeRuntime } from './native.js'
 import { record, type TimelineItem } from './types.js'
@@ -13,11 +13,11 @@ import type { SourceState } from './sessions/source.js'
 
 export type SyncOperation = { kind: string, [key: string]: unknown }
 export interface SyncBatch { streamId: string, batchSeq: number, projectionVersion: number, operations: SyncOperation[] }
-export interface SyncCheckpoint { version: 1, projectionVersion: 2, throughSeq: number, historyHash: string, settled: boolean }
+export interface SyncCheckpoint { version: 1, projectionVersion: typeof PROJECTION_VERSION, throughSeq: number, historyHash: string, settled: boolean }
 
 function matchesCheckpoint(value: unknown, projection: SessionProjection): boolean {
   const checkpoint = record(value)
-  return checkpoint.version === 1 && checkpoint.projectionVersion === 2 && checkpoint.settled === true
+  return checkpoint.version === 1 && checkpoint.projectionVersion === PROJECTION_VERSION && checkpoint.settled === true
     && projection.settled && checkpoint.throughSeq === projection.throughSeq && checkpoint.historyHash === projection.historyHash
 }
 const MAX_BUFFER = 10_000
@@ -121,7 +121,7 @@ export class SyncFeed {
       await delay(Math.ceil(SYNC_FLUSH_MS - (performance.now() - this.lastSentAt)), undefined, { signal: this.abort.signal })
     }
     this.abort.signal.throwIfAborted()
-    const batch: SyncBatch = { streamId: this.id, batchSeq: ++this.batchSeq, projectionVersion: 2, operations }
+    const batch: SyncBatch = { streamId: this.id, batchSeq: ++this.batchSeq, projectionVersion: PROJECTION_VERSION, operations }
     if (jsonBytes(batch) > 7 * 1024 * 1024) throw new Error('DSH sync batch exceeds frame size')
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -411,7 +411,7 @@ export class SyncFeed {
     for (const id of this.checkpointDirty) {
       const projection = this.projections.get(id)
       if (!projection || !this.published.has(id) || this.failedSessions.has(id)) continue
-      const checkpoint: SyncCheckpoint = { version: 1, projectionVersion: 2,
+      const checkpoint: SyncCheckpoint = { version: 1, projectionVersion: PROJECTION_VERSION,
         throughSeq: projection.throughSeq, historyHash: projection.historyHash!, settled: projection.settled }
       await this.send([{ kind: 'checkpoint.save', externalSessionId: id, checkpoint }])
     }

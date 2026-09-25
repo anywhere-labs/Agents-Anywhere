@@ -3,6 +3,7 @@ import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { itemId, sessionId } from './identity.js'
 import { InteractionStream } from './interaction-stream.js'
 import { record } from './types.js'
+import type { RuntimeDiagnostics } from './diagnostics.js'
 
 interface Approval {
   eventId: string; agentId: string; toolName: string; reason?: string; callId?: string
@@ -15,8 +16,8 @@ export class UserApprovals {
   private entries = new Map<string, Approval>()
   private readonly stream: InteractionStream
   get available(): boolean { return this.stream.available }
-  constructor(ctx: Context, private readonly visible: (id: string) => Promise<boolean>, private readonly changed: (id?: string) => void) {
-    this.stream = new InteractionStream(ctx, frame => this.receive(frame), () => changed(), 'approval')
+  constructor(ctx: Context, private readonly visible: (id: string) => Promise<boolean>, private readonly changed: (id?: string) => void, diagnostics?: RuntimeDiagnostics) {
+    this.stream = new InteractionStream(ctx, frame => this.receive(frame), () => changed(), 'approval', diagnostics)
   }
   private async receive(frame: Record<string, unknown>): Promise<void> {
     if (frame.type === 'cancel' && typeof frame.eventId === 'string') {
