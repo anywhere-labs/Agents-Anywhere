@@ -1,7 +1,8 @@
 # Cluster A
 
-See MIGRATION.md and migration-state.json for the current production migration and
-application readiness state. deployed.json is the earlier alpha snapshot.
+See runtime-maintenance-2026-09-26.json for the latest rollout state, exact image,
+backup location and validation results. MIGRATION.md, migration-state.json and
+deployed.json retain earlier migration and deployment snapshots.
 
 Six Docker workers bind HTTP to 127.0.0.1:8000, including the static Web UI,
 API and WebSockets. All six workers each run eight FastAPI processes using their
