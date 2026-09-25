@@ -217,7 +217,8 @@ def test_runtime_deletion_removes_only_its_sessions_and_related_data(api):
             == 404
         )
         assert client.get(f"/public/shares/{session.id}").status_code == 404
-    assert client.get(f"{runtime_url}", headers=headers).status_code == 200
+    assert response.json()["runtimeId"] != runtime
+    assert client.get(f"{runtime_url}", headers=headers).status_code == 404
     assert (
         client.get(
             f"/connectors/{device}/runtimes/{other_runtime}", headers=headers
@@ -250,7 +251,8 @@ def test_runtime_deletion_removes_only_its_sessions_and_related_data(api):
             assert await store.timeline.read(session.id) == []
 
     asyncio.run(check())
-    assert client.delete(f"{runtime_url}/config", headers=headers).status_code == 200
+    # A stale retry must not delete the successor, even after it is configured.
+    assert client.delete(f"{runtime_url}/config", headers=headers).status_code == 404
     asyncio.run(assert_session_data(client.app, {session.id for session in kept}))
 
 
@@ -310,6 +312,36 @@ def test_stopped_runtime_can_be_deleted_while_connector_is_offline(api):
     )
     assert response.status_code == 200, response.text
     asyncio.run(assert_session_data(client.app, set()))
+
+
+def test_only_manual_delete_changes_identity_and_stale_retries_cannot_delete_successor(api):
+    client, rpc, headers, device, runtime = api
+    url = f"/connectors/{device}/runtimes/{runtime}"
+    for active in (True, False, True, False):
+        result = client.put(f"{url}/active", headers=headers, json={"active": active})
+        assert result.status_code == 200, result.text
+        assert result.json()["runtimeId"] == runtime
+    # Reconfiguration and an offline period both keep the configured identity.
+    config = client.get(url, headers=headers).json()["config"]
+    result = client.put(f"{url}/config", headers=headers, json={"config": config})
+    assert result.status_code == 200, result.text
+    assert result.json()["runtimeId"] == runtime
+    rpc.online = False
+    assert client.get(url, headers=headers).json()["runtimeId"] == runtime
+    rpc.online = True
+    removed = client.delete(f"{url}/config", headers=headers)
+    assert removed.status_code == 200, removed.text
+    replacement = removed.json()["runtimeId"]
+    assert replacement != runtime
+    replacement_url = f"/connectors/{device}/runtimes/{replacement}"
+    configured = client.put(f"{replacement_url}/config", headers=headers, json={"config": config})
+    assert configured.status_code == 200, configured.text
+    assert configured.json()["runtimeId"] == replacement
+    assert client.delete(f"{url}/config", headers=headers).status_code == 404
+    assert client.put(f"{url}/config", headers=headers, json={"config": config}).status_code == 404
+    assert client.get(replacement_url, headers=headers).json()["configured"] is True
+    denied = asyncio.run(client.app.state.store.get_unconfigured_runtime_ids(device))
+    assert runtime in denied and replacement not in denied
 
 
 def test_failed_runtime_attachment_cleanup_rolls_back_and_can_retry(api, monkeypatch):

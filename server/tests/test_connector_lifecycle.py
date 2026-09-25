@@ -52,6 +52,28 @@ def test_revocation_invalidates_previously_issued_access_token(tmp_path):
     assert response.status_code == 200
 
 
+def test_transport_disconnect_preserves_connector_authentication(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, token, _, _ = create_connector_and_session(client)
+
+    async def run():
+        class Socket:
+            async def close(self, **kwargs):
+                pass
+
+        for _ in range(2):
+            connection = await client.app.state.rpc.register(connector_id, Socket())
+            await client.app.state.rpc.unregister(connector_id, connection)
+            assert await client.app.state.store.authenticate_connector_access(token) == connector_id
+
+    asyncio.run(run())
+    response = client.post(
+        "/connector/ingest", headers={"Authorization": f"Bearer {token}"},
+        json={"notifications": [{"method": "connector.heartbeat", "params": {}}]},
+    )
+    assert response.status_code == 200, response.text
+
+
 def test_access_token_cannot_be_retargeted_to_another_connector(tmp_path):
     client = make_client(tmp_path)
     _, token, _, _ = create_connector_and_session(client)
@@ -109,7 +131,7 @@ def test_failed_delete_keeps_revoked_tombstone_and_can_finish_on_retry(tmp_path)
     asyncio.run(run())
 
 
-def test_runtime_deletion_cancels_old_queue_and_allows_legacy_reconfiguration(tmp_path):
+def test_runtime_deletion_cancels_old_queue_and_retires_legacy_identity(tmp_path):
     from agent_server.api.connector_ingress import _ConnectorNotificationPump
     from agent_server.core.models import ConnectorIngestRequest
     from agent_server.services.connector_ingest import ConnectorIngestService
@@ -187,15 +209,23 @@ def test_runtime_deletion_cancels_old_queue_and_allows_legacy_reconfiguration(tm
         assert pump.obsolete == 1
         with pytest.raises(KeyError):
             await state.store.get_session(session_id)
-        # Old clients carry no generation. Reject writes while unconfigured.
+        # Retired identities remain denied, even after configuring a successor.
         result = await service.ingest(
             connector_id=connector_id,
             payload=ConnectorIngestRequest(notifications=[notification]),
         )
         assert result.accepted == 0 and result.rejected[0].code == "runtime_not_configured"
-        await state.store.set_device_runtime_config(connector_id, "codex", {})
-        await state.rpc.set_runtime_ingress_enabled(connector_id, "codex", True)
-        # After reconfiguration, the original wire format is accepted again.
+        assert runtime.runtimeId != "codex"
+        await state.store.set_device_runtime_config(connector_id, runtime.runtimeId, {})
+        await state.rpc.set_runtime_ingress_enabled(connector_id, runtime.runtimeId, True)
+        assert "codex" in await state.store.get_unconfigured_runtime_ids(connector_id)
+        result = await service.ingest(
+            connector_id=connector_id,
+            payload=ConnectorIngestRequest(notifications=[notification]),
+        )
+        assert result.accepted == 0 and result.rejected[0].code == "runtime_not_configured"
+        # Only the replacement identity may publish new sessions.
+        notification["params"]["runtimeId"] = runtime.runtimeId
         notification["params"]["title"] = "new runtime"
         result = await service.ingest(
             connector_id=connector_id,
@@ -205,6 +235,19 @@ def test_runtime_deletion_cancels_old_queue_and_allows_legacy_reconfiguration(tm
         assert (await state.store.get_session(session_id)).title == "new runtime"
         await pump.close()
         await state.rpc.unregister(connector_id, connection)
+        # A completely new WebSocket pump reloads the durable retired-ID set.
+        reconnected = _ConnectorNotificationPump(
+            connector_id, service,
+            unconfigured_runtimes=await state.store.get_unconfigured_runtime_ids(connector_id),
+        )
+        reconnected.start()
+        notification["params"]["runtimeId"] = "codex"
+        notification["params"]["title"] = "stale after reconnect"
+        reconnected.enqueue_message(notification)
+        await reconnected.flush()
+        assert reconnected.obsolete == 1
+        assert (await state.store.get_session(session_id)).title == "new runtime"
+        await reconnected.close()
 
     asyncio.run(run())
 
