@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import time
 import hashlib
 import json
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
@@ -35,8 +35,14 @@ from connector.runtimes.codex.domain.pending_messages import (
 )
 from connector.runtimes.codex.domain.selections import selections_from_thread_state
 from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
+from connector.runtimes.codex.sessions.history_index import (
+    NativeThreadActivity,
+    read_history_index,
+    read_native_thread_activity,
+    source_signature,
+    valid_read_state,
+)
 from connector.runtimes.codex.sessions.inventory import list_all_codex_threads
-from connector.runtimes.codex.sessions.history_index import read_history_index, source_signature, valid_read_state
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
 
 ListModelCatalog = Callable[[str | None, int], Awaitable[RuntimeModelCatalog]]
@@ -163,9 +169,21 @@ class CodexSessionReader:
         sync_marker = codex_sessions.thread_sync_marker(thread_ref)
         self._observed_threads[thread_id] = thread_ref
         source = await asyncer.asyncify(source_signature)(thread_ref)
+        native_activity = await asyncer.asyncify(read_native_thread_activity)(
+            thread_ref
+        )
         if source is not None:
             # API timestamps have second precision and miss fast changes within a second.
-            sync_marker = hashlib.sha256(json.dumps([sync_marker, source], sort_keys=True).encode()).hexdigest()
+            sync_marker = hashlib.sha256(
+                json.dumps(
+                    [
+                        sync_marker,
+                        source,
+                        asdict(native_activity) if native_activity is not None else None,
+                    ],
+                    sort_keys=True,
+                ).encode()
+            ).hexdigest()
         sync_key = _session_sync_key(thread_id)
         previous_sync = await self.host.sync_state_read(sync_key)
         previous_marker = (
@@ -386,6 +404,15 @@ class CodexSessionReader:
             cached = self.session_states.get_by_external_session_id(
                 external_session_id
             )
+        native_activity = await self._read_native_activity(external_session_id)
+        reconciled = reconcile_native_activity(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            cached=cached,
+            native_activity=native_activity,
+        )
+        if reconciled is not None:
+            return reconciled
         if cached is not None:
             return cached
         if external_session_id is None:
@@ -399,6 +426,17 @@ class CodexSessionReader:
             selections=selections,
             metadata={"source": "codex.thread/read.state"},
         )
+
+    async def _read_native_activity(
+        self,
+        external_session_id: str | None,
+    ) -> NativeThreadActivity | None:
+        if external_session_id is None:
+            return None
+        thread = self._observed_threads.get(external_session_id)
+        if thread is None:
+            return None
+        return await asyncer.asyncify(read_native_thread_activity)(thread)
 
     async def _read_session_selections(
         self,
@@ -524,6 +562,76 @@ class CodexSessionReader:
             complete=False,
             metadata={"source": snapshot_source},
         )
+
+
+def reconcile_native_activity(
+    *,
+    session_id: str,
+    external_session_id: str | None,
+    cached: SessionState | None,
+    native_activity: NativeThreadActivity | None,
+) -> SessionState | None:
+    if native_activity is None:
+        return None
+    cached_status = cached.status if cached is not None else None
+    if native_activity.status == "running":
+        if cached_status in {"waiting_approval", "blocked"}:
+            return cached
+        return SessionState(
+            session_id=cached.session_id if cached is not None else session_id,
+            external_session_id=(
+                cached.external_session_id
+                if cached is not None
+                else external_session_id
+            ),
+            runtime="codex",
+            status="running",
+            selections=dict(cached.selections) if cached is not None else {},
+            metadata={
+                **(dict(cached.metadata) if cached is not None else {}),
+                "source": "codex.thread_history.state",
+                "turn_id": native_activity.turn_id,
+                "native_status": native_activity.native_status,
+                "native_activity_evidence": native_activity.evidence,
+            },
+        )
+    if cached_status != "running":
+        if native_activity.evidence != "stale":
+            return None
+        return SessionState(
+            session_id=cached.session_id if cached is not None else session_id,
+            external_session_id=(
+                cached.external_session_id
+                if cached is not None
+                else external_session_id
+            ),
+            runtime="codex",
+            status="idle",
+            selections=dict(cached.selections) if cached is not None else {},
+            metadata={
+                **(dict(cached.metadata) if cached is not None else {}),
+                "source": "codex.thread_history.state",
+                "turn_id": native_activity.turn_id,
+                "native_status": native_activity.native_status,
+                "native_activity_evidence": native_activity.evidence,
+            },
+        )
+    if cached is None or cached.metadata.get("turn_id") != native_activity.turn_id:
+        return cached
+    return SessionState(
+        session_id=cached.session_id,
+        external_session_id=cached.external_session_id,
+        runtime="codex",
+        status="idle",
+        selections=dict(cached.selections),
+        metadata={
+            **dict(cached.metadata),
+            "source": "codex.thread_history.state",
+            "turn_id": native_activity.turn_id,
+            "native_status": native_activity.native_status,
+            "native_activity_evidence": native_activity.evidence,
+        },
+    )
 
 
 def thread_state_from_sdk_thread(thread: Thread) -> dict[str, Any]:
