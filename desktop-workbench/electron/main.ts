@@ -772,7 +772,7 @@ function registerIpcHandlers(): void {
     if (binding && !forceLocal) {
       // Server revoke happens first. If it fails, local credentials and binding
       // remain untouched so the user can retry instead of creating an orphan.
-      await client.request("/device/disconnect", {
+      await client.request("/device/revoke", {
         method: "POST",
         body: JSON.stringify({
           userToken: input?.userToken ?? "",

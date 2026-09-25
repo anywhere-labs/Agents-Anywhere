@@ -13,6 +13,7 @@ import { findCapability } from "../src/components/session/capabilities.ts"
 import {
   addableRuntimeTypes,
   configuredRuntimeInstances,
+  runtimeInstancesAfterDeletion,
   mergeRuntimeTypes,
   namedInstanceRequiredConfigFields,
   reconfigurableRuntimeInstance,
@@ -25,6 +26,17 @@ import {
   sessionRuntimeRequestIdentity,
   sessionRuntimeType,
 } from "../src/features/dashboard/runtime-instances.ts"
+
+test("manual deletion replaces the retired ID without duplicating a refreshed successor", () => {
+  const old = { runtimeId: "rti_old", configured: true }
+  const successor = { runtimeId: "rti_new", configured: false }
+  const other = { runtimeId: "rti_other", configured: true }
+  assert.deepEqual(runtimeInstancesAfterDeletion([old, other], old.runtimeId, successor), [other, successor])
+  assert.deepEqual(runtimeInstancesAfterDeletion([old, other, successor], old.runtimeId, successor), [other, successor])
+  // Remains compatible with a server that has not yet been upgraded.
+  assert.deepEqual(runtimeInstancesAfterDeletion([old, other], old.runtimeId, { ...old, configured: false }),
+    [other, { ...old, configured: false }])
+})
 
 const legacyRuntime = {
   connectorId: "connector-1",

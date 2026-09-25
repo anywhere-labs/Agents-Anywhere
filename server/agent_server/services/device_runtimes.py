@@ -18,6 +18,7 @@ from agent_server.core.device_runtime import (
     RuntimeTypeView,
     validate_config,
 )
+from agent_server.core.runtime_identity import generate_runtime_instance_id
 from agent_server.infra.connector_rpc import (
     ConnectorConnection,
     ConnectorOfflineError,
@@ -584,11 +585,17 @@ class DeviceRuntimeService:
                         await self._timeline_write_buffer.discard_session(session_id)
                     if self._runtime_state_cache is not None:
                         await self._runtime_state_cache.discard(session_id)
-                await self._store.clear_device_runtime_config(connector_id, runtime_id, cleanup_files=False)
-            finally:
+                replacement_id = generate_runtime_instance_id()
+                await self._store.clear_device_runtime_config(
+                    connector_id, runtime_id, cleanup_files=False,
+                    replacement_runtime_id=replacement_id,
+                )
+            except BaseException:
                 remaining = await self._get_owned(connector_id, runtime_id, user_id=user_id)
                 await self._manager.set_runtime_ingress_enabled(connector_id, runtime_id, remaining.configured)
-            runtime = await self._get_owned(connector_id, runtime_id, user_id=user_id)
+                raise
+            await self._manager.set_runtime_ingress_enabled(connector_id, replacement_id, False)
+            runtime = await self._get_owned(connector_id, replacement_id, user_id=user_id)
             await self._publish(connector_id, "runtime.config_deleted")
             return runtime
 

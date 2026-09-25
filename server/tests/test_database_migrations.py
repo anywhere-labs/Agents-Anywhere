@@ -1125,9 +1125,27 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_35() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_35"
-    assert CURRENT_SCHEMA_VERSION == "2.35"
+def test_current_schema_version_is_v2_36() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_36"
+    assert CURRENT_SCHEMA_VERSION == "2.36"
+
+
+def test_v2_36_adds_retired_runtime_identity_storage(tmp_path) -> None:
+    path = tmp_path / "retired-runtimes.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_35")
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        assert "retired_device_runtimes" not in inspect(engine).get_table_names()
+        upgrade_database(db_url=url)
+        upgrade_database(db_url=url)
+        schema = inspect(engine)
+        assert schema.get_pk_constraint("retired_device_runtimes")["constrained_columns"] == ["connector_id", "runtime_id"]
+        foreign_key = schema.get_foreign_keys("retired_device_runtimes")[0]
+        assert foreign_key["referred_table"] == "connectors"
+        assert foreign_key["options"]["ondelete"] == "CASCADE"
+    finally:
+        engine.dispose()
 
 
 def test_retiring_releases_preserves_history(tmp_path) -> None:

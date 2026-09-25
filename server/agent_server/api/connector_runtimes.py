@@ -240,6 +240,7 @@ async def put_connector_runtime_active(
 @router.delete(
     "/{connector_id}/runtimes/{runtime_id}/config",
     response_model=DeviceRuntimeView,
+    summary="Delete a runtime and return an unconfigured successor with a new ID",
 )
 async def delete_connector_runtime_config(
     connector_id: str,

@@ -69,6 +69,7 @@ import {
 import {
   addableRuntimeTypes,
   configuredRuntimeInstances,
+  runtimeInstancesAfterDeletion,
   namedInstanceRequiredConfigFields,
   runtimeInstanceName,
   runtimeTypeName,
@@ -702,7 +703,7 @@ export function DevicePage() {
         connector.id,
         removeRuntime.runtimeId,
       )
-      replaceRuntime(response)
+      setRuntimes((current) => runtimeInstancesAfterDeletion(current, removeRuntime.runtimeId, response))
       setRemoveRuntime(null)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("deleteRuntimeConfigFailed"))

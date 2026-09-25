@@ -105,6 +105,17 @@ export function configuredRuntimeInstances(
     .sort((left, right) => runtimeInstanceName(left).localeCompare(runtimeInstanceName(right)))
 }
 
+export function runtimeInstancesAfterDeletion(
+  runtimes: readonly DeviceRuntimeView[],
+  deletedId: string,
+  successor: DeviceRuntimeView,
+): DeviceRuntimeView[] {
+  return [
+    ...runtimes.filter((runtime) => runtime.runtimeId !== deletedId && runtime.runtimeId !== successor.runtimeId),
+    successor,
+  ]
+}
+
 export function addableRuntimeTypes(
   runtimeTypes: readonly RuntimeTypeView[],
   runtimes: readonly DeviceRuntimeView[],
