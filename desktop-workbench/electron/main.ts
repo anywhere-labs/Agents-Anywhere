@@ -38,6 +38,7 @@ import { validateTitleBarColors } from "./title-bar";
 import type { BackendInit } from "./backend/protocol";
 import { DesktopBackendClient } from "./backend-client";
 import { windowMaterialOptions } from "./window-material";
+import { droppedFolderPath } from "./dropped-folder";
 import config from "../config.json";
 import { proxyDesktopApi } from "./api-proxy";
 import {
@@ -589,6 +590,10 @@ async function requireLocalOwnership(): Promise<void> {
 }
 
 function registerIpcHandlers(): void {
+  ipcMain.handle("workbench:files:droppedFolderPath", (event, value: unknown) => {
+    assertTrustedRenderer(event);
+    return droppedFolderPath(value);
+  });
   ipcMain.handle("workbench:ownership:getState", event => {
     assertTrustedRenderer(event);
     // The backend probes ownership asynchronously. Reporting the placeholder
