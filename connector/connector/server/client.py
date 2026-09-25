@@ -256,6 +256,9 @@ class BackendRpcClient:
                 "X-Device-OS": device_os(),
             },
             proxy=None if is_loopback_url(self.config.server_url) else True,
+            ping_interval=20,
+            ping_timeout=20,
+            close_timeout=10,
         ) as ws:
             self._rpc.set_connection(ws)
             capabilities_task = asyncio.create_task(
