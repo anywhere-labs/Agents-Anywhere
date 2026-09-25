@@ -249,7 +249,7 @@ test('startup and reconnect exclude persisted drafts and import messages sent th
       const detach = ctx.sessions.enter(session)
       ctx.sessions.announce(session)
       if (id !== 'persisted-draft') session.append('turn/start', { turn: 1 })
-      if (id === 'injected-only') session.append('user/message', createUserMessage({ source: { kind: 'plugin', plugin: 'context' }, content: [{ type: 'text', text: 'context without a user' }] }), { surfaceOp: 'append' })
+      if (id === 'injected-only') session.append('user/message', createUserMessage({ source: { kind: 'system-prompt' }, content: [{ type: 'text', text: 'context without a user' }] }), { surfaceOp: 'append' })
       if (id !== 'persisted-draft') session.append('turn/end', { turn: 1, reason: { kind: 'interrupted' } })
       await ctx.sessions.flush(session)
       detach()
@@ -532,7 +532,7 @@ test('checkpoint mismatches and active turns recalibrate only the affected sessi
   const complete = () => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete')
   try {
     await until(complete, 'initial checkpoints')
-    for (const mutation of [{ historyHash: '0'.repeat(64) }, { projectionVersion: 99 }, { settled: false }]) {
+    for (const mutation of [{ historyHash: '0'.repeat(64) }, { projectionVersion: 2 }, { projectionVersion: 99 }, { settled: false }]) {
       stream.feed.close()
       checkpoints.set('native-main', { ...checkpoints.get('native-main') as object, ...mutation })
       stream = follow(native, checkpoints)

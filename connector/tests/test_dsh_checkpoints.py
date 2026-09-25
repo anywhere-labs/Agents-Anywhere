@@ -32,7 +32,9 @@ def timeline_notice():
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_ingestion_precedes_checkpoint_and_ack_and_json_survives_restart(tmp_path, fail):
+@pytest.mark.parametrize("projection_version", [2, 3])
+def test_ingestion_precedes_checkpoint_and_ack_and_json_survives_restart(tmp_path, fail, projection_version):
+    checkpoint = {**CHECKPOINT, "projectionVersion": projection_version}
     async def run():
         entered, release, acked = asyncio.Event(), asyncio.Event(), asyncio.Event()
         forwarded, acks = [], []
@@ -50,16 +52,16 @@ def test_ingestion_precedes_checkpoint_and_ack_and_json_survives_restart(tmp_pat
         async def request(method, params=None):
             if method == "runtime.sync.subscribe":
                 assert params == {"checkpointVersion": 1}
-                return {"streamId": "stream", "projectionVersion": 2, "checkpointVersion": 1}
+                return {"streamId": "stream", "projectionVersion": projection_version, "checkpointVersion": 1}
             acks.append(params)
             acked.set()
 
         relay = SyncRelay(SimpleNamespace(request=request), host)
         task = asyncio.create_task(relay.consume())
         try:
-            relay.accept({"streamId": "stream", "batchSeq": 1, "projectionVersion": 2, "operations": [
+            relay.accept({"streamId": "stream", "batchSeq": 1, "projectionVersion": projection_version, "operations": [
                 {"kind": "notifications", "notifications": [timeline_notice()]},
-                {"kind": "checkpoint.save", "externalSessionId": "native", "checkpoint": CHECKPOINT},
+                {"kind": "checkpoint.save", "externalSessionId": "native", "checkpoint": checkpoint},
             ]})
             await asyncio.wait_for(entered.wait(), 1)
             assert await host.sync_state_read(KEY) is None
@@ -74,7 +76,7 @@ def test_ingestion_precedes_checkpoint_and_ack_and_json_survives_restart(tmp_pat
                 return
             await asyncio.wait_for(acked.wait(), 1)
             assert forwarded[0]["params"]["runtimeId"] == "rti_dsh"
-            assert await host.sync_state_read(KEY) == CHECKPOINT
+            assert await host.sync_state_read(KEY) == checkpoint
             # A crash before flush can only cause safe retransmission.
             cold_before_flush, _ = bound_host(path, AsyncMock())
             assert await cold_before_flush.sync_state_read(KEY) is None
@@ -83,7 +85,7 @@ def test_ingestion_precedes_checkpoint_and_ack_and_json_survives_restart(tmp_pat
             restarted = SyncRelay(SimpleNamespace(), cold)
             restarted.durable_checkpoints = True
             await restarted.operation({"kind": "checkpoint.load", "externalSessionId": "native"})
-            assert restarted.loaded_checkpoint == CHECKPOINT
+            assert restarted.loaded_checkpoint == checkpoint
             other, _ = bound_host(path, AsyncMock(), runtime_id="rti_another_dsh")
             assert await other.sync_state_read(KEY) is None
         finally:
@@ -101,7 +103,7 @@ def test_load_ack_returns_checkpoint_and_invalid_version_falls_back(tmp_path):
 
         async def request(method, params=None):
             if method == "runtime.sync.subscribe":
-                return {"streamId": "s", "projectionVersion": 2, "checkpointVersion": 1}
+                return {"streamId": "s", "projectionVersion": 3, "checkpointVersion": 1}
             await acknowledged.put(params)
 
         relay = SyncRelay(SimpleNamespace(request=request), host)
@@ -110,7 +112,7 @@ def test_load_ack_returns_checkpoint_and_invalid_version_falls_back(tmp_path):
             for seq, expected in [(1, CHECKPOINT), (2, None)]:
                 if seq == 2:
                     await host.sync_state_write(KEY, {**CHECKPOINT, "projectionVersion": 99})
-                relay.accept({"streamId": "s", "batchSeq": seq, "projectionVersion": 2,
+                relay.accept({"streamId": "s", "batchSeq": seq, "projectionVersion": 3,
                     "operations": [{"kind": "checkpoint.load", "externalSessionId": "native"}]})
                 ack = await asyncio.wait_for(acknowledged.get(), 1)
                 assert ack["checkpoint"] == expected

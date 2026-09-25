@@ -42,8 +42,71 @@ env:
   YARN_ENABLE_SCRIPTS: "false"
 
 jobs:
-  runtime:
-    name: Plugin and Python integration
+  changes:
+    name: Select affected checks
+    runs-on: ubuntu-latest
+    outputs:
+      plugin: ${{ steps.paths.outputs.plugin }}
+      connector: ${{ steps.paths.outputs.connector }}
+      server: ${{ steps.paths.outputs.server }}
+      web: ${{ steps.paths.outputs.web }}
+      desktop: ${{ steps.paths.outputs.desktop }}
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select checks for changed paths
+        id: paths
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          plugin=false
+          connector=false
+          server=false
+          web=false
+          desktop=false
+
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            plugin=true
+            connector=true
+            server=true
+            web=true
+            desktop=true
+          else
+            if [[ -z "$BASE_SHA" ]] || ! git cat-file -e "${BASE_SHA}^{commit}"; then
+              echo "::error::Cannot find the base commit for path selection"
+              exit 1
+            fi
+            git diff --name-only --no-renames "$BASE_SHA" "$GITHUB_SHA" > "$RUNNER_TEMP/changed-paths"
+            while IFS= read -r path; do
+              case "$path" in
+                .github/workflows/dsh-bridge-next.yml|contracts/*)
+                  plugin=true
+                  connector=true
+                  server=true
+                  web=true
+                  desktop=true
+                  ;;
+                dsh-bridge-next/*) plugin=true ;;
+                connector/*) connector=true ;;
+                server/*) server=true ;;
+                web-next/*) web=true ;;
+                desktop-workbench/*) desktop=true ;;
+              esac
+            done < "$RUNNER_TEMP/changed-paths"
+          fi
+
+          for scope in plugin connector server web desktop; do
+            echo "$scope=${!scope}" >> "$GITHUB_OUTPUT"
+            echo "$scope: ${!scope}"
+          done
+
+  plugin:
+    name: DSH plugin
+    needs: changes
+    if: needs.changes.outputs.plugin == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -75,13 +138,49 @@ jobs:
       - name: Typecheck, build and test plugin
         working-directory: dsh-bridge-next
         run: corepack yarn check
-      - name: Test Connector DSH and ownership flows
+
+  connector:
+    name: Connector tests
+    needs: changes
+    if: needs.changes.outputs.connector == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      UV_DEFAULT_INDEX: https://pypi.org/simple
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: 0.12.3
+          python-version: "3.12"
+      - name: Install Connector dependencies
+        run: uv sync --project connector
+      - name: Test Connector
         working-directory: connector
-        run: >-
-          uv run --frozen pytest tests/test_dsh*.py
-          tests/test_runtime_owner.py tests/test_connector_control.py
-          tests/test_connector_ownership_rpc.py tests/test_runtime_control_v2.py
-          tests/test_connector_runtime.py -q
+        run: uv run --frozen pytest -q
+
+  server:
+    name: Server integration
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      UV_DEFAULT_INDEX: https://pypi.org/simple
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: 0.12.3
+          python-version: "3.12"
+      - name: Prepare Python integration fixtures
+        run: |
+          uv sync --project connector
+          uv sync --project server
       - name: Test Server runtime, onboarding and attachment flows
         working-directory: server
         run: >-
@@ -114,21 +213,15 @@ jobs:
           -k 'capabilit or send_message or running_tool_item or patch_session_selections or steer or interrupt or runtime_command or interaction_respond'
           -q
 
-  clients:
-    name: ${{ matrix.surface }} headless checks
+  web:
+    name: Web headless checks
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - surface: Web
-            directory: web-next
-          - surface: Desktop
-            directory: desktop-workbench
     defaults:
       run:
-        working-directory: ${{ matrix.directory }}
+        working-directory: web-next
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -141,13 +234,32 @@ jobs:
       - name: Install client dependencies
         run: corepack yarn install
       - name: Verify Web
-        if: matrix.surface == 'Web'
         run: |
           corepack yarn test
           corepack yarn typecheck
           corepack yarn protocol:check
+
+  desktop:
+    name: Desktop headless checks
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: desktop-workbench
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install client dependencies
+        run: corepack yarn install
       - name: Verify Desktop renderer and main process
-        if: matrix.surface == 'Desktop'
         run: |
           corepack yarn workspace agents-anywhere-desktop-renderer test
           corepack yarn renderer:typecheck

@@ -75,8 +75,8 @@ export class NativeRuntime {
     }
     this.presence = new ClientPresence(() => {})
     this.source = new NativeSessionSource(ctx, diagnostics)
-    this.approvals = new UserApprovals(ctx, id => this.visible(id), id => this.emit(id ? { type: 'approval', id } : { type: 'capabilities' }))
-    this.questions = new UserQuestions(ctx, id => this.visible(id), id => this.emit(id ? { type: 'question', id } : { type: 'capabilities' }))
+    this.approvals = new UserApprovals(ctx, id => this.visible(id), id => this.emit(id ? { type: 'approval', id } : { type: 'capabilities' }), this.diagnostics)
+    this.questions = new UserQuestions(ctx, id => this.visible(id), id => this.emit(id ? { type: 'question', id } : { type: 'capabilities' }), this.diagnostics)
     ctx.on('session/created', session => {
       this.source.observe(session)
       this.emit({ type: 'session', id: session.id })

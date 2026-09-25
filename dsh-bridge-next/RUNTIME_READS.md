@@ -116,3 +116,7 @@ uv run pytest tests/test_dsh_contracts.py tests/test_dsh_provider.py tests/test_
 本机 RPC 或本机管理锁初始化失败时，管理 Gateway 保持可用。连接页面会显示原因和下一步：占用冲突提示退出其他 DSH，权限和磁盘错误提供对应处理建议；“尝试重启”会重建当前插件的本机服务，必要时重新初始化管理器，不会终止其他进程。并发重试合并为一次操作。
 
 “运行日志”默认每条只显示时间、方法名和结果，点击展开事件名、日志级别与诊断详情。结果区分成功、失败、进行中和普通记录；RPC 返回 `ok: false` 也标为失败。日志刷新保留已有条目的展开状态，继续使用原有最近 200 条及敏感信息过滤规则。
+
+## DSH 0.1.7-rc.2 适配
+
+工具结果从 tool-role 消息的 `toolCallId`、`content`、`isError` 读取，空结果也能结束原工具卡片；旧的嵌套 `tool-result` 日志继续支持。`tool/ptc-dispatch-start` 与 `tool/ptc-dispatch` 按子调用 ID 合并，保留父调用关联和结构化错误；旧 `tool/code-dispatch*` 仍可回放。投影 v3 不复用旧 v2 检查点，避免旧映射错误长期留在平台历史中。

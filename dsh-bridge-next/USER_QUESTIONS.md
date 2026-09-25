@@ -1,16 +1,18 @@
 # DSH 用户问答
 
-已接入 DSH `0.1.2-rc.1` 的 `ask_user_question`。只转换 DSH 的问题和答案，沿用平台既有 `inputRequest` v1、notice、接管权限和回应接口。后端、平台 RuntimeProtocol、Web、Desktop、Android、iOS 均不需要改动。
+已接入 DSH 的 `ask_user_question`、计划审阅和权限审批。沿用平台既有 `inputRequest` v1、notice、接管权限和回应接口，由各端已有的问答／审批组件显示。
 
 ## 流程与分工
 
 1. 官方工具调用 `ctx.userQuestions.ask()`，Agent 暂停等待。插件在 Host 内订阅官方 Typert Gateway 的 `$events`，接收 `user-questions/request`。它是普通事件消费者，不覆盖官方问答服务或替换官方 UI 的回答者。
-2. 插件过滤不可见会话和 `plan-review` 等不支持的意图。普通问答转换为平台 `interactionType: input_request` 的 notice。等待状态使用现有 `waiting_approval`。
+2. 插件过滤不可见会话；普通问答和 `plan-review` 转换为平台 `interactionType: input_request` 的 notice。权限请求转换为 `interactionType: approval`。等待状态使用现有 `waiting_approval`。
 3. DSH Connector 通过已有 `RuntimeHost.notice_upsert()` 发布问题，前端复用原来的问答组件。没有接管时仍遵守平台只读规则。
 4. 平台原有 `/sessions/{sessionId}/runtime/notices/{noticeId}/respond` 调用 `interaction.respond`。Python 仅转发到插件 `session.respondInteraction`，所有原生解释、校验和等待管理都在插件。
 5. 插件检查会话归属、问题是否仍等待、答案完整性，再使用官方 Connection 的公开进程内 Fetch carrier 向 Gateway `$events/result` 回答。这个 Fetch 不访问网络。官方工具收到答案后产生普通工具结果，Agent 继续执行，结果沿已有 Timeline 流同步。
 
-`question-stream.ts` 负责官方事件流及回应；`question-form.ts` 负责现有表单格式和答案校验；`questions.ts` 负责待回答状态和 notice。Python 的 `runtime.py` 和 `bridge/sync.py` 只做转发。
+`interaction-stream.ts` 负责两类交互共用的官方事件流及回应；`question-form.ts` 负责现有表单格式和答案校验；`questions.ts` 和 `approvals.ts` 负责待回答状态和 notice。Python 的 `runtime.py` 和 `bridge/sync.py` 只做转发。
+
+事件流适配已验证的两种公开签名：DSH `0.1.5-rc.2` 的 `(endpoint, payload, signal)`，以及 `0.1.7-rc.2` 的 `(endpoint, payload, uplink, peer, signal)`。新版使用空上行流和官方进程内 operator 身份。按函数声明参数数量选择签名，不在失败后猜测其他参数重试。未知签名保持不可用，并写入 `interaction.stream_failed` 诊断；同一次故障仅记录一次，恢复后记录 `interaction.stream_recovered`，不记录问题或答案正文。
 
 ## 既有表单规则
 
@@ -36,13 +38,23 @@
 - Gateway 暂不可用时问题保留，回应明确失败，可重新连接重试。原生轮次结束会清理仍未回答的旧问题。保留最多 128 个已关闭记录，用于前端当前状态核对，不写新数据库。
 - 问答/能力通知复用既有平台发布方法；只有插件与 Python 之间的私有批次白名单增加这两个已有通知名，平台协议及后端接口不变。Timeline 仍遵守已有 30 Hz 缓冲、顺序与 ACK。
 
-权限审批和 `exit_plan_mode` 本轮不接入，仍交给 DSH 原生界面。`session.interaction.approval` 是平台已有的通用交互门控能力，本次仅用它开放问答提交，不意味着已实现工具权限审批。
+## 请求类型覆盖
+
+| 原生请求 | AA 适配 |
+|---|---|
+| `user-questions/request` 普通问题 | 单选、多选、自由输入、选项说明，复用 `inputRequest` 表单 |
+| `user-questions/request` 的 `plan-review` 意图 | 完整计划正文、批准选项、修改意见和整组取消，复用同一表单 |
+| `approval/request` | 复用通用审批卡片，允许一次或拒绝，不修改持久权限策略 |
+
+当前核对的 DSH Remote allowlist 中，需要回答的 waterfall 事件就是上述问答和审批两类。`exit_plan_mode` 的计划审阅沿用问答意图；其他设置、登录、插件和命令等 emit 事件不属于这两类可作答交互。本适配不把它们伪装成审批请求。未知事件或不支持的意图交回原生客户端。`session.interaction.approval` 是平台已有的通用交互门控能力，同时控制问答和审批提交。
 
 ## 验证与试用
 
 ```sh
 cd dsh-bridge-next
 corepack yarn check
+# 可选：用另一套已安装的 DSH 依赖验证真实 Gateway（该目录需有 package.json 和依赖）
+DSH_INTERACTION_RUNTIME_ROOT=/path/to/dsh-package corepack yarn tsx --test tests/integration/interaction-gateway.test.ts
 cd ../connector
 uv run pytest tests/test_dsh_provider.py tests/test_dsh_contracts.py tests/test_dsh_bridge_client.py tests/test_dsh_event_sync.py -q
 ```
