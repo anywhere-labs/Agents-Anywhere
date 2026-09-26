@@ -132,7 +132,7 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 | 整体架构与 API | [Server 架构](docs/server-architecture.md) · [API 文档](docs/api/README.md) |
 | Agent 接入与本机执行 | [Connector](connector/README.md) · [Runtime 协议](docs/runtime-protocol/README.md) |
 | Web 与桌面客户端 | [Web 源码](web-next/) · [Desktop Workbench](desktop-workbench/README.md) |
-| 原生移动客户端 | [Android](android/README.md) · [iOS 源码](ios/) |
+| 原生移动客户端 | [Android](android/README.md) · [iOS 源码](ios/) · [HarmonyOS](harmony/README.md) |
 | DSH 集成 | [DSH Bridge Next](dsh-bridge-next/README.md) |
 | 更多文档 | [文档目录](docs/README.md) · [协议契约](contracts/) |
 

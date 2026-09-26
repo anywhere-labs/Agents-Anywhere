@@ -1,0 +1,27 @@
+# Build output
+/node_modules
+/oh_modules
+**/build
+/.hvigor
+/.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/.appanalyzer
+/.preview
+
+# The logic-check harness mirrors the .ets sources here to run them on Node.
+/tools/logic-checks/.generated
+
+# DevEco Studio / IDE state
+/.idea
+*.iml
+/local.properties
+
+# Local signing material must never be committed.
+/signature
+/*.p12
+/*.cer
+/*.p7b
+/*.keystore
