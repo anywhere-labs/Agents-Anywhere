@@ -85,3 +85,32 @@ test("proxies a backend netFetch request that arrives after the ready handshake"
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+const DISCONNECTING_FIXTURE = `
+const send = (message, callback) => process.send?.(message, callback);
+send({ type: "ready", port: 1, token: "fixture-token" }, () => {
+  // Close the channel while the process stays alive: the parent still holds a child
+  // reference but the channel is gone, which is the window that used to surface as an
+  // unhandled 'error' event and take the caller down.
+  process.disconnect();
+  setTimeout(() => process.exit(0), 400);
+});
+`;
+
+test("shutdown survives a backend whose channel closed before it exited", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-backend-disconnect-"));
+  const entryPath = path.join(root, "disconnect-fixture.js");
+  fs.writeFileSync(entryPath, DISCONNECTING_FIXTURE, "utf8");
+  const client = new DesktopBackendClient({
+    entryPath,
+    fetcher: async () => new Response("", { status: 200 }),
+  });
+
+  try {
+    await client.start(initFor(root));
+    await delay(150);
+    await client.shutdown();
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

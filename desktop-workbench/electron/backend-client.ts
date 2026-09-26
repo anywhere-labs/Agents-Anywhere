@@ -134,6 +134,21 @@ export class DesktopBackendClient {
     return pathname.slice(BACKEND_API_PREFIX.length);
   }
 
+  /**
+   * Sends a control message without risking the backend exit race. A child that already
+   * closed its channel reports the failure through the send callback, so it never turns
+   * into an unhandled 'error' event on the ChildProcess (which would crash the caller).
+   */
+  private sendToChild(message: BackendControlMessage): void {
+    const child = this.child;
+    if (!child?.connected) return;
+    try {
+      child.send(message, () => undefined);
+    } catch {
+      // The channel closed between the check and the write; the exit path handles it.
+    }
+  }
+
   async shutdown(): Promise<void> {
     if (!this.started) return;
     this.closing = true;
@@ -141,11 +156,7 @@ export class DesktopBackendClient {
     this.stream = null;
     const child = this.child;
     if (!child) return;
-    try {
-      child.send({ type: "shutdown" } satisfies BackendControlMessage);
-    } catch {
-      // The channel is already gone; the exit race below handles it.
-    }
+    this.sendToChild({ type: "shutdown" } satisfies BackendControlMessage);
     const exited = await Promise.race([
       this.exitPromise?.then(() => true) ?? Promise.resolve(true),
       delay(SHUTDOWN_GRACE_MS).then(() => false),
@@ -200,7 +211,7 @@ export class DesktopBackendClient {
       const headers: Record<string, string> = {};
       response.headers.forEach((value, key) => { headers[key] = value; });
       const body = await response.text();
-      this.child?.send({
+      this.sendToChild({
         type: "netFetchResult",
         id: message.id,
         ok: response.ok,
@@ -209,7 +220,7 @@ export class DesktopBackendClient {
         body,
       } satisfies BackendControlMessage);
     } catch (error) {
-      this.child?.send({
+      this.sendToChild({
         type: "netFetchError",
         id: message.id,
         message: error instanceof Error ? error.message : String(error),
