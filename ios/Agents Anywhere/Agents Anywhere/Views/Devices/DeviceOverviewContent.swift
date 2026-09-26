@@ -36,7 +36,7 @@ struct DeviceProjectList: View {
                         .contentShape(.rect)
                         .contextMenu {
                             Button(String(localized: "Rename project"), systemImage: "pencil") { onEdit(project) }.disabled(!canManage)
-                            Button(project.pinned ? String(localized: "Unpin") : String(localized: "Pin"), systemImage: "pin") { onPin(project) }.disabled(!canManage)
+                            Button(project.pinned ? String(localized: "Unpin") : String(localized: "Pin"), systemImage: project.pinned ? "pin.slash" : "pin") { onPin(project) }.disabled(!canManage)
                             Button(String(localized: "Copy path"), systemImage: "doc.on.doc") { UIPasteboard.general.string = project.workspacePath }
                             Divider()
                             Button(String(localized: "Archive project sessions"), systemImage: "archivebox") { onArchive(project) }.disabled(!canManage)

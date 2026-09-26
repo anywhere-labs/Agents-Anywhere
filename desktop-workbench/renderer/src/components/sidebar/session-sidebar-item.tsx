@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Archive, Copy, FolderOpen, Pencil, Pin } from "lucide-react"
+import { Archive, ArchiveRestore, Copy, FolderOpen, Pencil, Pin, PinOff } from "lucide-react"
 import { toast } from "sonner"
 import {
   ContextMenu,
@@ -183,7 +183,11 @@ export function SessionSidebarItem({
                         item.pinned ? "text-primary" : "text-muted-foreground",
                       )}
                     >
-                      <Pin className="size-3" />
+                      {item.pinned ? (
+                        <PinOff className="size-3" />
+                      ) : (
+                        <Pin className="size-3" />
+                      )}
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="top" sideOffset={4}>
@@ -201,7 +205,11 @@ export function SessionSidebarItem({
                       }}
                       className="rounded p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent/65 hover:text-foreground"
                     >
-                      <Archive className="size-3" />
+                      {item.archived ? (
+                        <ArchiveRestore className="size-3" />
+                      ) : (
+                        <Archive className="size-3" />
+                      )}
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="top" sideOffset={4}>
@@ -222,11 +230,15 @@ export function SessionSidebarItem({
             {t("actions.rename")}
           </ContextMenuItem>
           <ContextMenuItem onSelect={onTogglePin}>
-            <Pin className="size-4" />
+            {item.pinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
             {item.pinned ? t("actions.unpin") : t("actions.pin")}
           </ContextMenuItem>
           <ContextMenuItem onSelect={onToggleArchive}>
-            <Archive className="size-4" />
+            {item.archived ? (
+              <ArchiveRestore className="size-4" />
+            ) : (
+              <Archive className="size-4" />
+            )}
             {item.archived ? t("actions.unarchive") : t("actions.archive")}
           </ContextMenuItem>
           <ContextMenuSeparator />

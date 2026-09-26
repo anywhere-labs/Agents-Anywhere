@@ -8,6 +8,7 @@ import {
   MoreHorizontal,
   Pencil,
   Pin,
+  PinOff,
   SquarePen,
 } from "lucide-react"
 import {
@@ -127,7 +128,7 @@ export function ProjectSidebarItem({
                     {t("projects.edit")}
                   </DropdownMenuItem>
                   <DropdownMenuItem onSelect={onTogglePin}>
-                    <Pin />
+                    {project.pinned ? <PinOff /> : <Pin />}
                     {project.pinned ? t("projects.unpin") : t("projects.pin")}
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
