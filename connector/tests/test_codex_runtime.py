@@ -47,6 +47,7 @@ from connector.runtime_protocol import (
     ArtifactTimelineItem,
     CommandToolContent,
     CompactMarkerContent,
+    InputRequestValidationError,
     MarkdownMessageContent,
     MarkerTimelineItem,
     MessageTimelineContent,
@@ -68,6 +69,10 @@ from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain.catalogs import (
     model_catalog_from_codex_items,
     permission_catalog_from_codex_items,
+)
+from connector.runtimes.codex.domain.input_requests import (
+    codex_input_request,
+    user_input_response_from_interaction,
 )
 from connector.runtimes.codex.domain.pending_messages import (
     CLIENT_MESSAGE_BINDINGS_VERSION,
@@ -6299,6 +6304,251 @@ def _notification_method(message: Any) -> str:
     if isinstance(message, CodexSdkEvent):
         return message.event_type
     return str(message["method"])
+
+
+def test_codex_runtime_input_request_upserts_questionnaire_notice() -> None:
+    asyncio.run(_test_codex_runtime_input_request_upserts_questionnaire_notice())
+
+
+async def _test_codex_runtime_input_request_upserts_questionnaire_notice() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start()
+    await runtime._handle_notification(_input_request_notification())
+
+    assert len(host.notice_upserts) == 1
+    notice = host.notice_upserts[0]
+    assert notice.notice_id == "notice_codex_input_input_req_1"
+    assert notice.type == "interaction"
+    assert notice.interaction_type == "input_request"
+    assert notice.response_required is True
+    assert notice.blocking == {"scope": "session", "targetId": "sess_1"}
+    assert notice.source == {
+        "component": "codex.request_user_input",
+        "threadId": "thread_1",
+        "timelineItemId": "item_question",
+    }
+    assert notice.context["inputStatus"] == "pending"
+    assert notice.context["requestKind"] == "questionnaire"
+    assert notice.context["method"] == "item/tool/requestUserInput"
+    assert notice.context["requestId"] == "input_req_1"
+    assert notice.context["isBlocking"] is True
+    assert notice.context["turnId"] == "turn_1"
+    assert notice.context["itemId"] == "item_question"
+    assert notice.context["requestParams"]["questions"][0]["id"] == "q_lang"
+
+    assert [action["actionId"] for action in notice.actions] == ["submit", "cancel"]
+    ui_schema = notice.actions[0]["input"]["uiSchema"]
+    assert ui_schema["component"] == "inputRequest"
+    assert ui_schema["version"] == 1
+    assert ui_schema["questions"] == [
+        {
+            "id": "q_lang",
+            "prompt": "Which language should I use?",
+            "multiple": False,
+            "allowCustom": True,
+            "header": "Language",
+            "options": [
+                {"id": "o_0", "label": "Python", "description": "fast to write"},
+                {"id": "o_1", "label": "Rust", "description": "fast to run"},
+            ],
+        }
+    ]
+    assert host.state_updates[-1]["status"] == "waiting"
+    assert host.state_updates[-1]["metadata"]["notice_id"] == notice.notice_id
+
+
+def test_codex_runtime_non_blocking_input_request_keeps_session_state() -> None:
+    asyncio.run(_test_codex_runtime_non_blocking_input_request_keeps_session_state())
+
+
+async def _test_codex_runtime_non_blocking_input_request_keeps_session_state() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start()
+    await runtime._handle_notification(_input_request_notification(is_blocking=False))
+
+    assert len(host.notice_upserts) == 1
+    assert host.notice_upserts[0].context["isBlocking"] is False
+    assert host.state_updates == []
+
+
+def test_codex_runtime_responds_to_input_request_interaction() -> None:
+    asyncio.run(_test_codex_runtime_responds_to_input_request_interaction())
+
+
+async def _test_codex_runtime_responds_to_input_request_interaction() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+    await runtime.start()
+    await runtime._handle_notification(_input_request_notification())
+
+    result = await runtime.respond_interaction(
+        "sess_1",
+        "notice_codex_input_input_req_1",
+        "submit",
+        {
+            "requestId": "input_req_1",
+            "answers": {"q_lang": {"optionIds": ["o_1"]}},
+        },
+    )
+
+    assert result.ok is True
+    assert result.result["decision"] == "answered"
+    assert client.responses == [
+        ("input_req_1", {"answers": {"q_lang": {"answers": ["Rust"]}}})
+    ]
+    resolved = host.notice_upserts[-1]
+    assert resolved.status == "resolved"
+    assert resolved.response_required is False
+    assert resolved.blocking is None
+    assert resolved.context["inputStatus"] == "resolved"
+    assert resolved.context["decision"] == "answered"
+
+
+def test_codex_runtime_cancelled_input_request_answers_empty() -> None:
+    asyncio.run(_test_codex_runtime_cancelled_input_request_answers_empty())
+
+
+async def _test_codex_runtime_cancelled_input_request_answers_empty() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+    await runtime.start()
+    await runtime._handle_notification(_input_request_notification())
+
+    result = await runtime.respond_interaction(
+        "sess_1",
+        "notice_codex_input_input_req_1",
+        "cancel",
+        {"requestId": "input_req_1"},
+    )
+
+    assert result.ok is True
+    assert result.result["decision"] == "cancelled"
+    assert client.responses == [("input_req_1", {"answers": {}})]
+
+
+def test_codex_sdk_input_request_waits_for_connector_response() -> None:
+    asyncio.run(_test_codex_sdk_input_request_waits_for_connector_response())
+
+
+async def _test_codex_sdk_input_request_waits_for_connector_response() -> None:
+    sdk_client = _ApprovalBridgeSdkClient()
+    client = CodexSdkClient(sdk_client)
+    messages: list[Any] = []
+
+    async def handler(message: Any) -> None:
+        messages.append(message)
+
+    await client.start(handler)
+
+    task = asyncio.create_task(
+        asyncio.to_thread(
+            sdk_client.approval_handler,
+            "item/tool/requestUserInput",
+            _input_request_params(),
+        )
+    )
+    while not messages:
+        await asyncio.sleep(0)
+
+    request_id = messages[0]["id"]
+    assert isinstance(request_id, str)
+    assert request_id.startswith("input_")
+    assert messages[0]["method"] == "item/tool/requestUserInput"
+    assert messages[0]["params"]["questions"][0]["id"] == "q_lang"
+
+    await client.respond(request_id, {"answers": {"q_lang": {"answers": ["Rust"]}}})
+
+    assert await task == {"answers": {"q_lang": {"answers": ["Rust"]}}}
+
+
+def test_codex_input_request_rejects_invalid_questionnaire() -> None:
+    with pytest.raises(ValueError):
+        codex_input_request({"questions": []})
+    with pytest.raises(TypeError):
+        codex_input_request({"questions": ["not-an-object"]})
+
+
+def test_codex_input_request_maps_free_text_when_codex_forbids_other() -> None:
+    request = codex_input_request(
+        {
+            "questions": [
+                {
+                    "id": "q_pick",
+                    "header": "Pick",
+                    "question": "Pick one",
+                    "isOther": False,
+                    "options": [{"label": "A", "description": ""}],
+                },
+                {
+                    "id": "q_free",
+                    "header": "Free",
+                    "question": "Anything else?",
+                    "options": None,
+                },
+            ]
+        }
+    )
+
+    assert [question.allow_custom for question in request.form.questions] == [False, True]
+    with pytest.raises(InputRequestValidationError):
+        user_input_response_from_interaction(
+            "submit",
+            {
+                "requestParams": {
+                    "questions": [
+                        {
+                            "id": "q_pick",
+                            "header": "Pick",
+                            "question": "Pick one",
+                            "isOther": False,
+                            "options": [{"label": "A", "description": ""}],
+                        }
+                    ]
+                },
+                "answers": {"q_pick": {"optionIds": [], "customText": "typed"}},
+            },
+        )
+
+
+def _input_request_params(*, is_blocking: bool = True) -> dict[str, Any]:
+    return {
+        "threadId": "thread_1",
+        "turnId": "turn_1",
+        "itemId": "item_question",
+        "isBlocking": is_blocking,
+        "questions": [
+            {
+                "id": "q_lang",
+                "header": "Language",
+                "question": "Which language should I use?",
+                "isOther": True,
+                "options": [
+                    {"label": "Python", "description": "fast to write"},
+                    {"label": "Rust", "description": "fast to run"},
+                ],
+            }
+        ],
+    }
+
+
+def _input_request_notification(*, is_blocking: bool = True) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": "input_req_1",
+        "method": "item/tool/requestUserInput",
+        "params": {
+            "platformSessionId": "sess_1",
+            **_input_request_params(is_blocking=is_blocking),
+        },
+    }
 
 
 def _config() -> RuntimeConfig:

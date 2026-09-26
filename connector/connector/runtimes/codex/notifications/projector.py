@@ -9,6 +9,7 @@ from connector.runtime_protocol import (
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain import sessions as codex_sessions
 from connector.runtimes.codex.domain.approvals import is_approval_request
+from connector.runtimes.codex.domain.input_requests import is_user_input_request
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
 from connector.runtimes.codex.notifications.notices import CodexNoticeHandler
 from connector.runtimes.codex.notifications.timeline_activity import (
@@ -108,6 +109,15 @@ class CodexNotificationProjector:
                 external_session_id=thread_id,
                 status="idle",
                 metadata={"source": f"codex.{event.event_type}"},
+            )
+            return
+        if is_user_input_request(event.event_type):
+            await self.notice_handler.handle_user_input_request(
+                session_id=session_id,
+                thread_id=thread_id,
+                method=event.event_type,
+                params=event.params,
+                request_id=event.request_id,
             )
             return
         if is_approval_request(event.event_type):

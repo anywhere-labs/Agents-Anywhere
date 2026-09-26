@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from connector.logging import logger
 from connector.runtime_protocol import RuntimeConfig, RuntimeConflictError, RuntimeInvalidRequestError
+from connector.runtimes.codex.domain.input_requests import CODEX_REQUEST_USER_INPUT
 from connector.runtimes.codex.runtime_helpers import soft_codex_unavailable_reason
 from connector.runtimes.codex.sdk.binary import (
     codex_launch_command,
@@ -85,6 +86,7 @@ CODEX_SDK_APPROVAL_REQUEST_METHODS = {
     "item/fileChange/requestApproval",
     "item/permissions/requestApproval",
 }
+CODEX_SDK_INPUT_REQUEST_METHODS = {CODEX_REQUEST_USER_INPUT}
 CODEX_THREAD_TURNS_PAGE_SIZE = 100
 
 
@@ -119,6 +121,8 @@ class CodexSdkClient:
         self._model_gateway = model_gateway
         self._handler: NotificationHandler | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        # Responses for blocking Codex server requests. Approvals and
+        # `request_user_input` questionnaires share this pending map.
         self._pending_approval_responses: dict[
             str, asyncio.Future[Mapping[str, Any]]
         ] = {}
@@ -586,6 +590,8 @@ class CodexSdkClient:
         method: str,
         params: Mapping[str, Any] | None,
     ) -> dict[str, Any]:
+        if method in CODEX_SDK_INPUT_REQUEST_METHODS:
+            return self.handle_sdk_input_request(method, dict(params or {}))
         if method not in CODEX_SDK_APPROVAL_REQUEST_METHODS:
             return {}
         loop = self._loop
@@ -647,6 +653,84 @@ class CodexSdkClient:
             self._pending_approval_responses.pop(request_id, None)
             logger.debug(
                 "codex sdk approval request unregistered request_id={} pending_count={}",
+                request_id,
+                len(self._pending_approval_responses),
+            )
+
+    def handle_sdk_input_request(
+        self,
+        method: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Answer one Codex `request_user_input` request with the user's answers.
+
+        Runs on the SDK server-request reader thread. The runtime loop publishes
+        the questionnaire notice and resolves the returned future once the user
+        answers through `interaction.respond`.
+        """
+
+        loop = self._loop
+        if loop is None:
+            logger.warning(
+                "codex sdk input request answered empty because runtime loop is unavailable method={} thread_id={} turn_id={}",
+                method,
+                params.get("threadId") or params.get("thread_id"),
+                params.get("turnId") or params.get("turn_id"),
+            )
+            return {"answers": {}}
+        started_at = time.monotonic()
+        future = asyncio.run_coroutine_threadsafe(
+            self.publish_sdk_input_request(method, params),
+            loop,
+        )
+        response = dict(future.result())
+        elapsed_ms = (time.monotonic() - started_at) * 1000
+        logger.info(
+            "codex sdk input request completed method={} elapsed_ms={:.1f} answer_count={}",
+            method,
+            elapsed_ms,
+            len(response.get("answers") or {}),
+        )
+        return response
+
+    async def publish_sdk_input_request(
+        self,
+        method: str,
+        params: dict[str, Any],
+    ) -> Mapping[str, Any]:
+        if self._handler is None:
+            logger.warning(
+                "codex sdk input request answered empty because notification handler is unavailable method={}",
+                method,
+            )
+            return {"answers": {}}
+        request_id = sdk_input_request_id(method, params)
+        response: asyncio.Future[Mapping[str, Any]] = asyncio.Future()
+        self._pending_approval_responses[request_id] = response
+        logger.info(
+            "codex sdk input request registered method={} request_id={} thread_id={} turn_id={} item_id={} question_count={} is_blocking={}",
+            method,
+            request_id,
+            params.get("threadId") or params.get("thread_id"),
+            params.get("turnId") or params.get("turn_id"),
+            params.get("itemId") or params.get("item_id"),
+            len(params.get("questions") or []),
+            params.get("isBlocking"),
+        )
+        try:
+            await self._handler(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": method,
+                    "params": params,
+                }
+            )
+            return await response
+        finally:
+            self._pending_approval_responses.pop(request_id, None)
+            logger.debug(
+                "codex sdk input request unregistered request_id={} pending_count={}",
                 request_id,
                 len(self._pending_approval_responses),
             )
@@ -869,6 +953,17 @@ def install_codex_approval_handler(client: Any, handler: Any) -> bool:
         client._approval_handler = handler
         return True
     return False
+
+
+def sdk_input_request_id(method: str, params: Mapping[str, Any]) -> str:
+    stable_parts = [
+        method,
+        str(params.get("threadId") or params.get("thread_id") or ""),
+        str(params.get("turnId") or params.get("turn_id") or ""),
+        str(params.get("itemId") or params.get("item_id") or ""),
+    ]
+    digest = hashlib.sha256(":".join(stable_parts).encode()).hexdigest()[:24]
+    return f"input_{digest}"
 
 
 def sdk_approval_request_id(method: str, params: Mapping[str, Any]) -> str:
