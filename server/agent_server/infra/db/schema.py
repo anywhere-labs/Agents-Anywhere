@@ -421,6 +421,7 @@ sessions = Table(
     Column("permission_selection_id", Text),
     Column("external_session_id", Text),
     Column("title", Text),
+    Column("title_source", Text),
     Column("cwd", Text),
     Column("status", Text, nullable=False),
     Column("takeover", Integer, nullable=False),

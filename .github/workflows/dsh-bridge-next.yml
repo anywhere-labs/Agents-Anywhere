@@ -200,6 +200,7 @@ jobs:
           tests/test_runtime_discovery_recovery.py
           tests/test_runtime_discovery_connection.py
           tests/test_connector_ingress_dispatch.py
+          tests/test_connector_lifecycle.py
           tests/test_connector_rpc_manager.py
           tests/test_plugin_onboarding.py
           tests/test_device_data_storage.py
