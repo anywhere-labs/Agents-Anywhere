@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from connector.logging import logger
 from connector.runtimes.claude.domain.session import ClaudeExecution
+from connector.runtimes.claude.sdk.background import ClaudeBackgroundTasks
 from connector.runtimes.claude.sdk.client import (
     connect_client,
     disconnect_client,
@@ -103,8 +104,13 @@ class ClaudeConnection:
 
     client: Any
     on_activity: Callable[[ClaudeResponse], Awaitable[None]]
+    on_idle: Callable[[ClaudeConnection], Awaitable[None]]
+    on_background_done: Callable[[ClaudeConnection], Awaitable[None]]
     cleanup: Callable[[], None]
+    idle_timeout_seconds: float = 600.0
     task: asyncio.Task[None] | None = None
+    idle_task: asyncio.Task[None] | None = None
+    background_done_task: asyncio.Task[None] | None = None
     ready: asyncio.Event = field(default_factory=asyncio.Event)
     queried: asyncio.Event = field(default_factory=asyncio.Event)
     selected: asyncio.Event = field(default_factory=asyncio.Event)
@@ -113,6 +119,7 @@ class ClaudeConnection:
     failure: BaseException | None = None
     closing: bool = False
     task_ids: set[str] = field(default_factory=set)
+    background: ClaudeBackgroundTasks = field(default_factory=ClaudeBackgroundTasks)
     selections: dict[str, str | None] = field(default_factory=dict)
     reconcile_needed: bool = False
     reconciling: bool = False
@@ -121,20 +128,51 @@ class ClaudeConnection:
     def retained(self) -> bool:
         return bool(self.task_ids)
 
-    def response_for(self, execution: ClaudeExecution) -> ClaudeResponse:
+    @property
+    def streaming(self) -> bool:
+        return callable(getattr(self.client, "receive_messages", None))
+
+    def cancel_idle(self) -> None:
+        timer = self.idle_task
+        self.idle_task = None
+        if timer is not None and timer is not asyncio.current_task():
+            timer.cancel()
+
+    def arm_idle(self) -> None:
+        if (
+            self.closing
+            or not self.streaming
+            or self.task_ids
+            or self.background.active_ids
+            or self.current is not None
+            or self.pending is not None
+        ):
+            return
+        self.cancel_idle()
+
+        async def expire() -> None:
+            await asyncio.sleep(self.idle_timeout_seconds)
+            await self.on_idle(self)
+
+        self.idle_task = asyncio.create_task(expire())
+
+    def response_for(self, execution: ClaudeExecution | None) -> ClaudeResponse:
+        self.cancel_idle()
         response = ClaudeResponse(
             self,
             execution=execution,
-            user_id=str(uuid4()) if self.retained else None,
+            user_id=str(uuid4()) if self.retained or self.queried.is_set() else None,
         )
         self.pending = response
         return response
 
     async def select_response(self, response: ClaudeResponse) -> None:
+        self.cancel_idle()
         self.current = response
         if self.pending is response:
             self.pending = None
-        await self.on_activity(response)
+        if not response.maintenance:
+            await self.on_activity(response)
         self.selected.set()
 
     async def prepare_approval(self) -> None:
@@ -184,13 +222,15 @@ class ClaudeConnection:
             }
         return {}
 
-    async def reconcile_tasks(self, response: ClaudeResponse) -> bool:
+    async def reconcile_tasks(self, response: ClaudeResponse | None = None) -> bool:
         self.reconcile_needed = False
         self.reconciling = True
-        check = self.response_for(response.execution)
+        check = self.response_for(response.execution if response is not None else None)
         check.maintenance = True
-        response.execution.client = check
-        response.release()
+        if response is not None:
+            if response.execution is not None:
+                response.execution.client = check
+            response.release()
         try:
             async with asyncio.timeout(30):
                 await check.query(RECONCILE_PROMPT)
@@ -233,7 +273,20 @@ class ClaudeConnection:
             await self.queried.wait()
             preamble = []
             async for message in receive_response_messages(self.client):
+                had_background = bool(self.background.active_ids)
+                task_event = self.background.observe(message)
+                if task_event:
+                    if self.background.active_ids:
+                        self.cancel_idle()
+                    else:
+                        self.arm_idle()
+                        if had_background and self.current is None:
+                            self.background_done_task = asyncio.create_task(
+                                self.on_background_done(self)
+                            )
                 if self.current is None:
+                    if task_event:
+                        continue
                     terminal_event = terminal_event_from_message(message)
                     if self.pending is not None and (
                         self.pending.user_id is None
@@ -271,11 +324,18 @@ class ClaudeConnection:
                     await response.released.wait()
                     self.current = None
                     self.selected.clear()
-                    if (not self.retained and self.pending is None) or self.closing:
+                    self.arm_idle()
+                    if (
+                        not self.streaming
+                        and not self.retained
+                        and self.pending is None
+                    ) or self.closing:
                         break
-            if self.retained and not self.closing:
+            if (
+                self.streaming or self.retained or self.background.active_ids
+            ) and not self.closing:
                 raise RuntimeError(
-                    "Claude connection ended with scheduled tasks pending"
+                    "Claude session transport ended unexpectedly"
                 )
         except asyncio.CancelledError:
             raise
@@ -285,6 +345,9 @@ class ClaudeConnection:
                 await self.select_response(ClaudeResponse(self))
         finally:
             self.closing = True
+            self.cancel_idle()
+            if self.background_done_task is not None:
+                self.background_done_task.cancel()
             self.ready.set()
             try:
                 await disconnect_client(self.client)

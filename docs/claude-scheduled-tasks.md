@@ -3,8 +3,8 @@
 AA previously disconnected Claude after each reply. A successful `CronCreate`
 could therefore be followed by the process exiting before the reminder fired.
 AA now keeps connections with observed scheduled tasks open and continuously
-receives subsequent replies. Ordinary conversations without observed tasks still
-disconnect after their reply.
+receives subsequent replies. Ordinary streaming conversations also retain their
+process for a configurable idle interval; see [Claude session process lifecycle](claude-session-lifecycle.md).
 
 ## Ownership and recovery
 
@@ -38,7 +38,8 @@ history or send hidden model requests to enumerate tasks.
 ## Resource limits
 
 Successful `CronCreate`, `CronDelete` and `CronList` results update AA's observed
-task IDs. When the set becomes empty, the connection can close after its response.
+task IDs. When the set becomes empty, the connection becomes eligible for idle
+reclamation rather than closing immediately after its response.
 After a scheduled turn completes, AA sends one maintenance request asking Claude
 to call `CronList`. The maintenance request is restricted by a pre-tool hook to
 `CronList` (and `ToolSearch` when needed). An empty, valid list closes the idle
