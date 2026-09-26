@@ -1125,9 +1125,26 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_36() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_36"
-    assert CURRENT_SCHEMA_VERSION == "2.36"
+def test_current_schema_version_is_v2_37() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_37"
+    assert CURRENT_SCHEMA_VERSION == "2.37"
+
+
+def test_v2_37_adds_session_title_source(tmp_path) -> None:
+    path = tmp_path / "session-title-source.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_36")
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        before = {column["name"] for column in inspect(engine).get_columns("sessions")}
+        assert "title_source" not in before
+        upgrade_database(db_url=url)
+        upgrade_database(db_url=url)
+        after = {column["name"] for column in inspect(engine).get_columns("sessions")}
+    finally:
+        engine.dispose()
+
+    assert "title_source" in after
 
 
 def test_v2_36_adds_retired_runtime_identity_storage(tmp_path) -> None:

@@ -314,3 +314,76 @@ def test_runtime_pause_discards_queued_work_after_reconfiguration():
         await pump.close()
 
     asyncio.run(run())
+
+
+def _ingest_runtime_title(client, token, session_id, title):
+    return client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "title": title,
+                    },
+                }
+            ]
+        },
+    )
+
+
+def test_manual_rename_survives_connector_title_sync(tmp_path):
+    client = make_client(tmp_path)
+    _, token, session_id, headers = create_connector_and_session(client)
+
+    renamed = client.patch(
+        f"/sessions/{session_id}/meta",
+        headers=headers,
+        json={"title": "renamed by hand"},
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["session"]["title"] == "renamed by hand"
+
+    response = _ingest_runtime_title(client, token, session_id, "thread title")
+    assert response.status_code == 200, response.text
+    assert asyncio.run(client.app.state.store.get_session(session_id)).title == (
+        "renamed by hand"
+    )
+
+
+def test_connector_title_still_applies_without_manual_rename(tmp_path):
+    client = make_client(tmp_path)
+    _, token, session_id, _ = create_connector_and_session(client)
+
+    response = _ingest_runtime_title(client, token, session_id, "thread title")
+    assert response.status_code == 200, response.text
+    assert asyncio.run(client.app.state.store.get_session(session_id)).title == (
+        "thread title"
+    )
+
+
+def test_connector_resync_upsert_keeps_manual_title(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    renamed = client.patch(
+        f"/sessions/{session_id}/meta",
+        headers=headers,
+        json={"title": "renamed by hand"},
+    )
+    assert renamed.status_code == 200, renamed.text
+
+    async def run():
+        return await client.app.state.store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id=session_id,
+            runtime="codex",
+            runtime_id="codex",
+            external_session_id=f"thr_{connector_id}_demo",
+            title="thread title",
+        )
+
+    assert asyncio.run(run()).title == "renamed by hand"

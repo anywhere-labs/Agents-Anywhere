@@ -13,6 +13,11 @@ from agent_server.core.models import ConnectorSessionResolution
 SESSION_CURSOR_VERSION = 1
 _SESSION_INVENTORY_UPDATE_CHUNK_SIZE = 4_000
 
+# Title provenance. A title a user typed must survive every later connector sync,
+# because runtimes keep re-announcing the title of their own thread file.
+TITLE_SOURCE_CONNECTOR = "connector"
+TITLE_SOURCE_USER = "user"
+
 
 class _LatestTimelineMetadata(BaseModel):
     """Read already-validated metadata without rebuilding the message body."""
@@ -464,6 +469,7 @@ class SessionRepositoryMixin:
                         permission_selection_id=permission_selection_id,
                         external_session_id=external_session_id,
                         title=title,
+                        title_source=TITLE_SOURCE_CONNECTOR if title is not None else None,
                         cwd=normalized_cwd,
                         status=status or "idle",
                         takeover=0,
@@ -492,6 +498,7 @@ class SessionRepositoryMixin:
                             sessions_t.c.runtime_id,
                             sessions_t.c.external_session_id,
                             sessions_t.c.title,
+                            sessions_t.c.title_source,
                             sessions_t.c.cwd,
                             sessions_t.c.project_id,
                             sessions_t.c.status,
@@ -512,8 +519,13 @@ class SessionRepositoryMixin:
                 values: dict[str, Any] = {}
                 if external_session_id is not None:
                     values["external_session_id"] = external_session_id
-                if title is not None:
+                if (
+                    title is not None
+                    and current.title_source != TITLE_SOURCE_USER
+                    and current.title != title
+                ):
                     values["title"] = title
+                    values["title_source"] = TITLE_SOURCE_CONNECTOR
                 if cwd is not None or current.project_id is None:
                     project_id, normalized_cwd = await self._ensure_project_for_workspace(
                         conn,
@@ -1580,7 +1592,7 @@ class SessionRepositoryMixin:
             await conn.execute(
                 update(sessions_t)
                 .where(sessions_t.c.id == session_id)
-                .values(title=cleaned, updated_at=now)
+                .values(title=cleaned, title_source=TITLE_SOURCE_USER, updated_at=now)
             )
         return await self.get_session(session_id, user_id=user_id)
 
@@ -1752,8 +1764,6 @@ class SessionRepositoryMixin:
         values: dict[str, Any] = {}
         if status is not None:
             values["status"] = status
-        if title is not None:
-            values["title"] = title
         if external_session_id is not None:
             values["external_session_id"] = external_session_id
         if last_synced_at is not None:
@@ -1774,6 +1784,7 @@ class SessionRepositoryMixin:
                         sessions_t.c.project_id,
                         sessions_t.c.status,
                         sessions_t.c.title,
+                        sessions_t.c.title_source,
                         sessions_t.c.cwd,
                         sessions_t.c.external_session_id,
                         sessions_t.c.last_activity_at,
@@ -1786,6 +1797,13 @@ class SessionRepositoryMixin:
             ).first()
             if row is None:
                 raise KeyError(session_id)
+            if (
+                title is not None
+                and row.title_source != TITLE_SOURCE_USER
+                and row.title != title
+            ):
+                values["title"] = title
+                values["title_source"] = TITLE_SOURCE_CONNECTOR
             if cwd is not None or row.project_id is None:
                 project_id, normalized_cwd = await self._ensure_project_for_workspace(
                     conn,
