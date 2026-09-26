@@ -56,6 +56,12 @@ async def main(home: Path) -> None:
     async with app.router.lifespan_context(app):
         store = app.state.store
         connector, credential, _ = await store.create_connector(name="test", user_id="dsh-test")
+        await store.create_project(
+            user_id="dsh-test",
+            connector_id=connector.id,
+            name=home.name or "Workspace",
+            workspace_path=str(home),
+        )
         token = create_connector_access_token(
             connector.id,
             credential_hash=hashlib.sha256(credential.encode("utf-8")).hexdigest(),

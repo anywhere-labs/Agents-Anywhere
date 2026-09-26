@@ -231,7 +231,7 @@ def test_runtime_deletion_removes_only_its_sessions_and_related_data(api):
         store = client.app.state.store
         async with store.engine.connect() as conn:
             assert set((await conn.execute(select(db.projects.c.id))).scalars()) == {
-                session.projectId for session in kept
+                session.projectId for session in kept if session.projectId is not None
             }
         for session in deleted:
             assert not (store.files.root / session.id).exists()

@@ -33,7 +33,7 @@ Connector 先验证发现文件、进程与回环地址，再执行限时鉴权�
 
 列表通过 `sessionQuery.listSessions()` 合并 live 和 persisted 会话，使用官方顺序，并按官方侧栏规则排除子代理、归档和非当前空会话。按页批量调用 `readTitleSnapshots`，标题读取失败时保留错误标记。详情与分页也校验可见性，不把 live 标记当作正在运行。
 
-`session.getState` 返回 sourceState；归档时返回 blocked，不尝试加载 Agent。发送前再次检查来源。明确归档状态通过现有通知同步到 AA，AA 元数据操作不会修改 DSH。插件不推送 DSH 项目名称或分组，后端沿用 CWD 分类和末段命名。
+`session.getState` 返回 sourceState；归档时返回 blocked，不尝试加载 Agent。发送前再次检查来源。明确归档状态通过现有通知同步到 AA，AA 元数据操作不会修改 DSH。插件不推送 DSH 项目名称或分组；后端只按 CWD 复用已存在的显式项目，忽略旧的自动项目，未知 CWD 保持未分组，不再自动创建项目。
 
 状态读取、发送消息、配置修改和会话 ID 解析共享本次 Host 启动的会话清单，后续由原生事件维护，不为单个 RPC 重列整个 corpus。配置与最后轮次结果按日志身份缓存：live 会话使用 `session.seq`，冷会话使用官方 `locate(header)` 指向的单个文件的 stat 身份，不通过 `listSnapshots()` 扫描全部日志。空白可见性判断也随日志身份变化而失效。
 
