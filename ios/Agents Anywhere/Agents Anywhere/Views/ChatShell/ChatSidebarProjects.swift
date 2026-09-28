@@ -134,7 +134,7 @@ struct ChatSidebarProjects: View {
             Button(String(localized: "新建会话"), systemImage: "square.and.pencil") { onNewSession(project.id) }
             Button(String(localized: "编辑项目"), systemImage: "pencil") { editing = project }
                 .disabled(!repository.canWrite || isBusy)
-            Button(project.pinned ? String(localized: "取消置顶") : String(localized: "置顶"), systemImage: "pin") {
+            Button(project.pinned ? String(localized: "取消置顶") : String(localized: "置顶"), systemImage: project.pinned ? "pin.slash" : "pin") {
                 perform(project.id) { try await repository.updateProject(project.id, pinned: !project.pinned) }
             }.disabled(!repository.canWrite || isBusy)
         }
