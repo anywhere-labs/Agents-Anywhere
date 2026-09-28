@@ -31,6 +31,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,14 +43,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -57,7 +64,14 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.window.Popup
+import com.agentsanywhere.app.feature.sessiondetail.SessionSendMode
+import com.agentsanywhere.app.ui.designsystem.AADropdownMenu
+import com.agentsanywhere.app.ui.designsystem.AADropdownMenuItem
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.ChevronDown
+import com.composables.icons.lucide.Square
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
@@ -85,6 +99,53 @@ internal fun ComposerVeil(
 }
 
 @Composable
+internal fun SessionComposerTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    color: Color,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    placeholder: String = "",
+    placeholderColor: Color = color,
+    fontSize: TextUnit = 16.sp,
+    lineHeight: TextUnit = 21.sp,
+    fontWeight: FontWeight = FontWeight.Medium,
+    maxLines: Int = 4,
+    submitEnabled: Boolean = true,
+    onSubmit: () -> Unit = {},
+    imeAction: ImeAction = ImeAction.Send,
+    autoFocus: Boolean = false,
+) {
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(autoFocus) {
+        if (autoFocus) {
+            focusRequester.requestFocus()
+            keyboard?.show()
+        }
+    }
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        enabled = enabled,
+        modifier = modifier.focusRequester(focusRequester),
+        textStyle = TextStyle(color = color, fontSize = fontSize, lineHeight = lineHeight, fontWeight = fontWeight),
+        cursorBrush = SolidColor(color),
+        maxLines = maxLines,
+        keyboardOptions = KeyboardOptions(imeAction = imeAction),
+        keyboardActions = KeyboardActions(onSend = { if (submitEnabled) onSubmit() }, onDone = { if (submitEnabled) onSubmit() }),
+        decorationBox = { innerTextField ->
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopStart) {
+                if (value.isEmpty() && placeholder.isNotEmpty()) {
+                    Text(placeholder, color = placeholderColor, fontSize = fontSize, fontWeight = fontWeight, maxLines = maxLines)
+                }
+                innerTextField()
+            }
+        },
+    )
+}
+
+@Composable
 internal fun MessageComposer(
     darkMode: Boolean,
     draft: String,
@@ -97,6 +158,11 @@ internal fun MessageComposer(
     sending: Boolean,
     showInterrupt: Boolean,
     interrupting: Boolean,
+    busy: Boolean,
+    hasInput: Boolean,
+    sendMode: SessionSendMode,
+    canSteer: Boolean,
+    onSendModeChange: (SessionSendMode) -> Unit,
     placeholder: String,
     attachments: List<PendingAttachment>,
     onToggleTakeover: () -> Unit,
@@ -158,40 +224,16 @@ internal fun MessageComposer(
                     onPreviewAttachment = onPreviewAttachment,
                 )
             }
-            BasicTextField(
+            SessionComposerTextField(
                 value = draft,
                 onValueChange = onDraftChange,
                 enabled = inputEnabled,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 28.dp, max = textFieldMaxHeight),
-                textStyle = TextStyle(
-                    color = input,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium,
-                    lineHeight = 21.sp,
-                ),
-                cursorBrush = SolidColor(input),
-                maxLines = 4,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { if (canSend) onSend() }),
-                decorationBox = { innerTextField ->
-                    Box(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentAlignment = Alignment.TopStart,
-                    ) {
-                        if (draft.isEmpty()) {
-                            Text(
-                                text = placeholder,
-                                color = muted,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 4,
-                            )
-                        }
-                        innerTextField()
-                    }
-                },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 28.dp, max = textFieldMaxHeight),
+                color = input,
+                placeholder = placeholder,
+                placeholderColor = muted,
+                submitEnabled = canSend,
+                onSubmit = onSend,
             )
             ComposerActions(
                 darkMode = darkMode,
@@ -202,6 +244,11 @@ internal fun MessageComposer(
                 sending = sending,
                 showInterrupt = showInterrupt,
                 interrupting = interrupting,
+                busy = busy,
+                hasInput = hasInput,
+                sendMode = sendMode,
+                canSteer = canSteer,
+                onSendModeChange = onSendModeChange,
                 onToggleTakeover = onToggleTakeover,
                 onOpenAttachMenu = { if (attachmentsEnabled) showAttachMenu = true },
                 onSend = onSend,
@@ -480,6 +527,11 @@ private fun ComposerActions(
     sending: Boolean,
     showInterrupt: Boolean,
     interrupting: Boolean,
+    busy: Boolean,
+    hasInput: Boolean,
+    sendMode: SessionSendMode,
+    canSteer: Boolean,
+    onSendModeChange: (SessionSendMode) -> Unit,
     onToggleTakeover: () -> Unit,
     onOpenAttachMenu: () -> Unit,
     onSend: () -> Unit,
@@ -494,17 +546,26 @@ private fun ComposerActions(
         darkMode -> Color(0xFFA1A1AA)
         else -> Color(0xFF3A3935)
     }
-    val primaryActionEnabled = if (showInterrupt) !interrupting else canSend
-    val primaryActionBusy = sending || interrupting
+    var showModeMenu by remember { mutableStateOf(false) }
+    val primaryIsInterrupt = showInterrupt && !hasInput
+    val primaryActionEnabled = if (primaryIsInterrupt) !interrupting else canSend
+    val primaryActionBusy = (sending && !(busy && sendMode == SessionSendMode.Queue)) || interrupting
+    val primaryActionLabel = stringResource(when {
+        primaryIsInterrupt -> R.string.session_interrupt
+        busy && sendMode == SessionSendMode.Steer -> R.string.session_steer_message
+        busy -> R.string.session_queue_message
+        else -> R.string.session_send
+    })
+    val sendModeLabel = stringResource(R.string.session_send_mode)
     val primaryActionSurface = when {
-        showInterrupt -> Color(0xFFEF4444)
+        primaryIsInterrupt -> Color(0xFFEF4444)
         canSend && darkMode -> Color(0xFFFAFAFA)
         canSend -> Color(0xFF2B2B2B)
         darkMode -> Color(0xFF3F3F46)
         else -> Color(0xFFE2E0DC)
     }
     val primaryActionIcon = when {
-        showInterrupt -> Color.White
+        primaryIsInterrupt -> Color.White
         canSend && darkMode -> Color(0xFF09090B)
         canSend -> Color.White
         darkMode -> Color(0xFF71717A)
@@ -567,35 +628,57 @@ private fun ComposerActions(
                 )
             }
         }
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(CircleShape)
-                .background(primaryActionSurface)
-                .then(
-                    if (primaryActionEnabled) {
-                        Modifier.noRippleClickable(
-                            onClick = if (showInterrupt) onInterrupt else onSend,
-                        )
-                    } else {
-                        Modifier
-                    },
-                ),
-            contentAlignment = Alignment.Center,
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            when {
-                primaryActionBusy -> CircularProgressIndicator(
-                    color = primaryActionIcon,
-                    strokeWidth = 2.dp,
-                    modifier = Modifier.size(17.dp),
-                )
-                showInterrupt -> Box(
-                    modifier = Modifier
-                        .size(10.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(primaryActionIcon),
-                )
-                else -> ArrowUpGlyph(primaryActionIcon)
+            if (busy) {
+                Box {
+                    Row(Modifier.noRippleClickable { showModeMenu = true }.semantics { contentDescription = sendModeLabel }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(if (sendMode == SessionSendMode.Steer) R.string.session_steer_message else R.string.session_queue_message), color = label, fontSize = 12.sp)
+                        Icon(Lucide.ChevronDown, null, tint = icon, modifier = Modifier.size(14.dp))
+                    }
+                    AADropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }, width = 180.dp) {
+                        AADropdownMenuItem(text = stringResource(R.string.session_queue_message), selected = sendMode == SessionSendMode.Queue, onClick = {
+                            showModeMenu = false; onSendModeChange(SessionSendMode.Queue)
+                        })
+                        AADropdownMenuItem(text = stringResource(if (canSteer) R.string.session_steer_message else R.string.session_steer_unavailable), selected = sendMode == SessionSendMode.Steer, enabled = canSteer, onClick = {
+                            showModeMenu = false; onSendModeChange(SessionSendMode.Steer)
+                        })
+                    }
+                }
+            }
+            if (showInterrupt && hasInput) {
+                IconButton(onClick = onInterrupt, enabled = !interrupting, modifier = Modifier.size(34.dp)) {
+                    Icon(Lucide.Square, stringResource(R.string.session_interrupt), tint = icon, modifier = Modifier.size(22.dp))
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .semantics { contentDescription = primaryActionLabel }
+                    .clip(CircleShape)
+                    .background(primaryActionSurface)
+                    .then(
+                        if (primaryActionEnabled) {
+                            Modifier.noRippleClickable(
+                                onClick = if (primaryIsInterrupt) onInterrupt else onSend,
+                            )
+                        } else {
+                            Modifier
+                        },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                when {
+                    primaryActionBusy -> CircularProgressIndicator(
+                        color = primaryActionIcon,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(17.dp),
+                    )
+                    primaryIsInterrupt -> Icon(Lucide.Square, null, tint = primaryActionIcon, modifier = Modifier.size(22.dp))
+                    else -> ArrowUpGlyph(primaryActionIcon)
+                }
             }
         }
     }

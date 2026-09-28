@@ -21,6 +21,8 @@ import kotlin.math.max
 private const val INITIAL_TIMELINE_LIMIT = 100
 private const val TIMELINE_PAGE_LIMIT = 100
 
+class RuntimeSteerRejectedException : IllegalStateException("The current task no longer accepts guidance.")
+
 class SessionDetailController(
     private val sessionsApi: SessionsApi,
     private val sessionStore: AuthSessionReader,
@@ -492,6 +494,9 @@ class SessionDetailController(
                 if (!response.ok) {
                     throw IllegalStateException(response.failureMessage("Runtime rejected the message."))
                 }
+                if (steer && (response.result["ok"] == false || response.result["steered"] == false)) {
+                    throw RuntimeSteerRejectedException()
+                }
                 SendMessageResult(attachments = uploaded)
             }
         }
@@ -761,6 +766,7 @@ class SessionDetailController(
             clientMessageId = clientMessageId,
             optimistic = true,
             retryAction = retryAction,
+            sourceRawType = if (retryAction == RuntimeMessageAction.Steer) "steeringUserMessage" else null,
         )
         optimisticStore.upsert(sessionId, message)
         return state.copy(

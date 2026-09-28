@@ -24,6 +24,25 @@ The client supports Android 8.0+ (API 26), sessions, devices, runtime configurat
 approvals, files and terminals through the v2 API. Cloud is the default service;
 a self-hosted address can be selected in the login flow.
 
+## Messages during a running turn
+
+The composer defaults to **Queue** while the agent is busy. **Steer now** is available
+when the running agent supports receiving an instruction in the current turn.
+Queued messages retain their uploaded attachments and runtime selections, and
+can be edited, deleted, or sent immediately. **Send now** interrupts the current
+turn and waits for the session to become idle before sending the chosen message.
+The queue is attached to the upper edge of the composer. Editing opens a text
+field directly in the queued row, with Save and Cancel beside it. The editor
+shares the composer's text input component; the regular draft and queued
+attachments remain unchanged.
+
+Queues are saved locally per server/account/session. Automatic sending runs while
+that session is open in the foreground, connected, idle, and taken over. Stopping
+a turn also pauses its queue; a successful fresh send while idle resumes it.
+A failed send holds later messages until retried or deleted. Requests
+interrupted by an app restart are shown as failed for explicit retry, using the
+same client message ID.
+
 ## Build from the command line
 
 Use JDK 17 and the Android SDK matching `compileSdk` in `app/build.gradle.kts`

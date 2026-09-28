@@ -1294,8 +1294,11 @@ private fun UserBubble(
 ) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val maxBubbleWidth = maxWidth * 0.78f
-        val meta = when (message.status) {
-            "failed" -> stringResource(R.string.session_status_failed)
+        val meta = when {
+            message.status == "failed" -> stringResource(R.string.session_status_failed)
+            message.sourceRawType == "steeringUserMessage" -> stringResource(
+                if (message.optimistic && message.status == "pending") R.string.session_steering else R.string.session_steered,
+            )
             else -> ""
         }
 
