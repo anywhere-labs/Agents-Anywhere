@@ -48,6 +48,16 @@ from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulat
 from connector.runtimes.codex.turns.controller import CodexTurnController
 
 
+def configured_codex_home(config: RuntimeConfig) -> str | None:
+    """The Codex home whose ``auth.json`` this runtime authenticates with."""
+
+    for source in (config.values, config.metadata):
+        home = source.get("codexHome") if isinstance(source, Mapping) else None
+        if isinstance(home, str) and home.strip():
+            return home
+    return None
+
+
 @dataclass(slots=True)
 class CodexRuntime(AgentRuntime):
     config: RuntimeConfig
@@ -87,6 +97,7 @@ class CodexRuntime(AgentRuntime):
         self._lifecycle = CodexRuntimeLifecycle(
             client=self.client,
             notifications=self._notifications,
+            codex_home=configured_codex_home(self.config),
         )
         self._catalogs = CodexCatalogReader(
             config=self.config,
