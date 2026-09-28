@@ -1,5 +1,8 @@
 package com.agentsanywhere.app.ui.screens.home
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -40,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -74,6 +78,7 @@ import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.screens.common.AppEmptyState
 import com.composables.icons.lucide.Archive
 import com.composables.icons.lucide.ChevronDown
+import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.FolderOpen
 import com.composables.icons.lucide.Ellipsis
@@ -95,7 +100,6 @@ internal data class HomeProjectActionMenu(
 @Composable
 internal fun HomeProjectList(
     projects: List<AgentProject>,
-    deviceNamesById: Map<String, String>,
     devices: List<AgentDevice>,
     agentRuntimes: List<String>,
     deviceAgentFilter: ProjectDeviceAgentFilter,
@@ -145,9 +149,8 @@ internal fun HomeProjectList(
             )
             // Keep a way out of an empty filter without restoring the section title.
             if (hasProjectsInOtherStatuses || filtersActive) Box(Modifier.align(Alignment.TopEnd)) {
-                HomeProjectIconButton(
-                    Lucide.Ellipsis,
-                    stringResource(R.string.home_project_filter_sessions),
+                HomeProjectFilterButton(
+                    expanded = filterAnchor != null,
                     onClick = { filterAnchor = it },
                     active = filtersActive,
                 )
@@ -169,7 +172,6 @@ internal fun HomeProjectList(
                 items(pinnedProjects, key = { "pinned-project-${it.id}" }) { project ->
                     HomeProjectTreeItem(
                         project = project,
-                        deviceName = deviceNamesById[project.connectorId],
                         agentLabel = agentLabel,
                         sessions = sessionsByProject[project.id].orEmpty(),
                         expanded = project.id in expandedProjectIds,
@@ -200,6 +202,7 @@ internal fun HomeProjectList(
                 expanded = projectsExpanded,
                 onClick = projectPreferences::toggleSection,
                 onFilter = { filterAnchor = it },
+                filterExpanded = filterAnchor != null,
                 filterActive = filtersActive,
                 onCreate = onCreateProject,
             )
@@ -217,7 +220,6 @@ internal fun HomeProjectList(
                 items(regularProjects, key = { "project-${it.id}" }) { project ->
                     HomeProjectTreeItem(
                         project = project,
-                        deviceName = deviceNamesById[project.connectorId],
                         agentLabel = agentLabel,
                         sessions = sessionsByProject[project.id].orEmpty(),
                         expanded = project.id in expandedProjectIds,
@@ -253,7 +255,6 @@ internal fun HomeProjectList(
 @Composable
 private fun HomeProjectTreeItem(
     project: AgentProject,
-    deviceName: String?,
     agentLabel: String?,
     sessions: List<AgentSession>,
     expanded: Boolean,
@@ -268,7 +269,6 @@ private fun HomeProjectTreeItem(
 ) {
     HomeProjectRow(
         project = project,
-        deviceName = deviceName,
         agentLabel = agentLabel,
         expanded = expanded,
         onClick = { onExpandedChange(!expanded) },
@@ -328,7 +328,6 @@ private fun HomeProjectTreeItem(
 @Composable
 private fun HomeProjectRow(
     project: AgentProject,
-    deviceName: String?,
     agentLabel: String?,
     expanded: Boolean,
     onClick: () -> Unit,
@@ -367,7 +366,7 @@ private fun HomeProjectRow(
             modifier = Modifier.size(21.dp),
         )
         Column(modifier = Modifier.weight(1f)) {
-            HomeProjectTitle(project, deviceName, Modifier.fillMaxWidth())
+            HomeProjectTitle(project, Modifier.fillMaxWidth())
             if (agentLabel != null) Text(
                 text = agentLabel,
                 color = colors.faint,
@@ -401,30 +400,16 @@ private fun HomeProjectRow(
 }
 
 @Composable
-private fun HomeProjectTitle(project: AgentProject, deviceName: String?, modifier: Modifier = Modifier) {
-    val colors = LocalAAColors.current
-    val trimmedDeviceName = deviceName?.trim().orEmpty()
-    Row(
+private fun HomeProjectTitle(project: AgentProject, modifier: Modifier = Modifier) {
+    Text(
+        text = project.name,
         modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = project.name,
-            color = colors.inkSoft,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (trimmedDeviceName.isNotEmpty()) Text(
-            text = " · $trimmedDeviceName",
-            modifier = Modifier.weight(1f, fill = false),
-            color = colors.faint,
-            fontSize = 12.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
+        color = LocalAAColors.current.inkSoft,
+        fontSize = 16.sp,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 @Composable
@@ -433,6 +418,7 @@ internal fun HomeListSectionHeader(
     expanded: Boolean,
     onClick: () -> Unit,
     onFilter: ((Rect) -> Unit)? = null,
+    filterExpanded: Boolean = false,
     filterActive: Boolean = false,
     onCreate: (() -> Unit)? = null,
 ) {
@@ -443,6 +429,7 @@ internal fun HomeListSectionHeader(
             .fillMaxWidth()
             .height(44.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(
             modifier = Modifier.weight(1f).height(44.dp).clickable(
@@ -473,9 +460,8 @@ internal fun HomeListSectionHeader(
             )
         }
         onFilter?.let { onShow ->
-            HomeProjectIconButton(
-                Lucide.Ellipsis,
-                stringResource(R.string.home_project_filter_sessions),
+            HomeProjectFilterButton(
+                expanded = filterExpanded,
                 active = filterActive,
                 onClick = onShow,
             )
@@ -487,7 +473,23 @@ internal fun HomeListSectionHeader(
 }
 
 @Composable
-private fun HomeProjectIconButton(icon: ImageVector, description: String, active: Boolean = false, onClick: (Rect) -> Unit) {
+private fun HomeProjectFilterButton(expanded: Boolean, active: Boolean, onClick: (Rect) -> Unit) {
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) -90f else 0f,
+        animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing),
+        label = "project-filter-chevron-rotation",
+    )
+    HomeProjectIconButton(
+        icon = Lucide.ChevronLeft,
+        description = stringResource(R.string.home_project_filter_sessions),
+        active = active,
+        iconRotation = rotation,
+        onClick = onClick,
+    )
+}
+
+@Composable
+private fun HomeProjectIconButton(icon: ImageVector, description: String, active: Boolean = false, iconRotation: Float = 0f, onClick: (Rect) -> Unit) {
     var bounds by remember { mutableStateOf(Rect.Zero) }
     Box(
         modifier = Modifier.size(38.dp).clip(CircleShape)
@@ -499,7 +501,7 @@ private fun HomeProjectIconButton(icon: ImageVector, description: String, active
             icon,
             contentDescription = description,
             tint = if (active) LocalAAColors.current.inkSoft else LocalAAColors.current.faint,
-            modifier = Modifier.size(19.dp),
+            modifier = Modifier.size(19.dp).rotate(iconRotation),
         )
     }
 }
@@ -524,7 +526,6 @@ private fun HomeProjectEmptyText(message: String) {
 @Composable
 internal fun HomeProjectActionOverlay(
     menu: HomeProjectActionMenu,
-    deviceName: String?,
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
     onTogglePinned: () -> Unit,
@@ -571,7 +572,7 @@ internal fun HomeProjectActionOverlay(
                 .clip(highlightShape)
                 .background(if (darkMode) Color(0xFF202020) else Color.White),
         ) {
-            HomeProjectHighlightRow(menu.project, deviceName, menu.expanded)
+            HomeProjectHighlightRow(menu.project, menu.expanded)
         }
         HomeProjectActionCard(
             project = menu.project,
@@ -584,7 +585,7 @@ internal fun HomeProjectActionOverlay(
 }
 
 @Composable
-private fun HomeProjectHighlightRow(project: AgentProject, deviceName: String?, expanded: Boolean) {
+private fun HomeProjectHighlightRow(project: AgentProject, expanded: Boolean) {
     val colors = LocalAAColors.current
     Row(
         modifier = Modifier
@@ -595,7 +596,7 @@ private fun HomeProjectHighlightRow(project: AgentProject, deviceName: String?, 
     ) {
         Icon(if (expanded) Lucide.FolderOpen else Lucide.Folder, contentDescription = null, tint = colors.faint, modifier = Modifier.size(21.dp))
         Column(modifier = Modifier.weight(1f)) {
-            HomeProjectTitle(project, deviceName, Modifier.fillMaxWidth())
+            HomeProjectTitle(project, Modifier.fillMaxWidth())
             Text(
                 text = project.workspacePath,
                 color = colors.faint,
