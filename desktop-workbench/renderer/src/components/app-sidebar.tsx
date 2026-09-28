@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { DesktopConnectionStatus } from "@/components/desktop/desktop-shell-header"
-import { Plus, Smartphone } from "lucide-react"
+import { FolderPlus, Plus, Smartphone } from "lucide-react"
 import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth/auth-context"
@@ -41,6 +41,8 @@ import {
 import { useWorkspace } from "@/components/workspace-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
+import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
+import { availableProjectName, findWorkspaceProject, workspaceName } from "@/features/dashboard/project-workspaces"
 import type { ProjectView } from "@/features/dashboard/types"
 import { useMobileConnectionsSidebarVisibility } from "@/features/mobile-connections/sidebar-visibility"
 import { useTranslations } from "next-intl"
@@ -62,6 +64,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     navigateToDevice,
     startProjectSession,
     sidebarShowsSessions,
+    setSidebarShowsSessions,
     createProject,
     updateProject,
     archiveProjectSessions,
@@ -71,7 +74,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     refreshData,
   } = useWorkspace()
   const { signOut, me, session: authSession } = useAuth()
-  const { isLocalConnector } = useDesktopConnector()
+  const { isLocalConnector, binding, state: localConnectorState } = useDesktopConnector()
   const [mobileConnectionsSidebarVisible] = useMobileConnectionsSidebarVisibility()
   const t = useTranslations("dashboard")
   const [pairOpen, setPairOpen] = React.useState(false)
@@ -79,6 +82,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     useProjectSidebarPreferences(authSession?.userId ?? "signed-out")
   const [projectEditor, setProjectEditor] = React.useState<ProjectEditorState>(null)
   const [projectToArchive, setProjectToArchive] = React.useState<ProjectView | null>(null)
+  const [folderDropActive, setFolderDropActive] = React.useState(false)
   const [projectSessionStatus, setProjectSessionStatus] =
     React.useState<ProjectSessionStatusFilter>("active")
 
@@ -127,6 +131,43 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     const updated = await updateProject(project.id, { pinned: !project.pinned })
     if (!updated) toast.error(t("projects.updateFailed"))
   }, [t, updateProject])
+
+  const handleFolderDrop = async (file: File | undefined) => {
+    const folderBridge = getDesktopWorkbenchBridge()?.files
+    if (!folderBridge) return
+    try {
+      const folder = file ? await folderBridge.droppedFolderPath(file) : null
+      if (!folder) {
+        toast.error(t("projects.folderRequired"))
+        return
+      }
+      const localConnectorId = binding?.connectorId ?? localConnectorState?.connectorId
+      const connector = connectors.find((item) => item.id === localConnectorId && item.status === "online")
+      if (!connector) {
+        toast.error(t("projects.localDeviceRequired"))
+        return
+      }
+      const token = authSession?.accessToken
+      if (!token) return
+      const latestProjects = (await dashboardApi.listProjects(token)).projects
+      const existing = findWorkspaceProject(latestProjects, connector.id, folder, connector.deviceOs)
+      if (existing?.manuallyCreated) {
+        toast.info(t("projects.folderAlreadyAdded"))
+        return
+      }
+      const name = existing?.name ?? availableProjectName(workspaceName(folder), latestProjects)
+      const created = await createProject({ name, connectorId: connector.id, workspacePath: folder, manuallyCreated: true })
+      if (!created) throw new Error(t("projects.createFailed"))
+      setSidebarShowsSessions(false)
+      setProjectsExpanded(true)
+      toast.success(t("projects.folderAdded"))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("projects.createFailed"))
+    }
+  }
+
+  const acceptsFolderDrop = (event: React.DragEvent) => Boolean(getDesktopWorkbenchBridge()?.files)
+    && Array.from(event.dataTransfer.types).includes("Files")
 
   const showSessionUnarchivedToast = React.useCallback((sessionId: string) => {
     toast.success(t("actions.unarchiveSuccess"), {
@@ -185,7 +226,25 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   }
 
   return (
-    <Sidebar contained={contained} className="border-sidebar-border">
+    <Sidebar
+      contained={contained}
+      className="border-sidebar-border [&_[data-slot=sidebar-inner]]:relative"
+      onDragOver={(event) => {
+        if (!acceptsFolderDrop(event)) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = "copy"
+        setFolderDropActive(true)
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFolderDropActive(false)
+      }}
+      onDrop={(event) => {
+        if (!acceptsFolderDrop(event)) return
+        event.preventDefault()
+        setFolderDropActive(false)
+        void handleFolderDrop(event.dataTransfer.files[0])
+      }}
+    >
       <SidebarHeader className="gap-0 px-4 pb-2 pt-4">
         <div className="flex min-h-7 items-center justify-between">
           <button type="button" onClick={goHome} className="aa-wordmark min-w-0 text-left text-xl">
@@ -221,7 +280,6 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
       </SidebarHeader>
 
       <SidebarContent className="px-2">
-
         <DevicesSection
           connectors={connectors}
           isLoading={isLoading}
@@ -286,6 +344,15 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
       </SidebarContent>
 
       <SidebarAccountFooter me={me} navigate={navigate} signOut={signOut} />
+
+      {folderDropActive ? (
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-sidebar/90 px-4 text-center text-sidebar-foreground">
+          <div className="flex flex-col items-center gap-2 rounded-lg border-2 border-dashed border-primary px-5 py-6">
+            <FolderPlus className="size-7 text-primary" aria-hidden="true" />
+            <span className="text-sm font-medium">{t("projects.dropFolder")}</span>
+          </div>
+        </div>
+      ) : null}
 
       <PairDeviceDialog
         open={pairOpen}

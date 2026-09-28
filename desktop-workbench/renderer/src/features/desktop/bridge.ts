@@ -117,6 +117,9 @@ export type DesktopOnboardingOpen = {
 
 export type DesktopWorkbenchBridge = {
   platform: string
+  files?: {
+    droppedFolderPath: (file: File) => Promise<string | null>
+  }
   windowMaterial?: "transparent" | "mica" | "opaque"
   ownership?: {
     getState: () => Promise<LocalOwnershipState>
