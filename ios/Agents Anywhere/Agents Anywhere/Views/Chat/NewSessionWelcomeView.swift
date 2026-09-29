@@ -47,11 +47,11 @@ struct NewSessionWelcomeView: View {
                               revealedPhrases: titlePhraseCount, ledger: titleLedger)
                     .font(.system(size: titleSize, weight: .bold))
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                    .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1 : 0.65)
+                    .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1 : 0.45)
             }
             .buttonStyle(.plain)
             // Left aligned, but kept clear of the trailing edge.
-            .padding(.trailing, 56)
+            .padding(.trailing, 24)
             .padding(.bottom, 4)
             .accessibilityAddTraits(.isHeader)
             .accessibilityHint(String(localized: "选择设备和 Agent"))

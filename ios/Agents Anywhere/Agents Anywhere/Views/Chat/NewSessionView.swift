@@ -143,14 +143,15 @@ struct NewSessionView: View, Equatable {
     }
 
     private var deviceMenu: some View {
+        // Menu rows use SF Symbols like the rest of the system menu.
         Menu {
-            Button(String(localized: "选择设备和 Agent"), appSymbol: "sparkle") { chooseTarget() }
-            Button(String(localized: "选择工作目录"), appSymbol: "folder") { showsWorkspace = true }
+            Button(String(localized: "选择设备和 Agent"), systemImage: "sparkles") { chooseTarget() }
+            Button(String(localized: "选择工作目录"), systemImage: "folder") { showsWorkspace = true }
                 .disabled(model.connector == nil)
             if let device = model.connector {
                 Divider()
-                Button(String(localized: "设备详情"), appSymbol: "desktopcomputer") { onOpenDevice(device.id) }
-                Button(String(localized: "Copy device ID"), appSymbol: "doc.on.doc") { UIPasteboard.general.string = device.id }
+                Button(String(localized: "设备详情"), systemImage: "info.circle") { onOpenDevice(device.id) }
+                Button(String(localized: "Copy device ID"), systemImage: "doc.on.doc") { UIPasteboard.general.string = device.id }
             }
         } label: {
             if model.isPreparing { ProgressView().controlSize(.mini) } else { AppSymbol("ellipsis") }
