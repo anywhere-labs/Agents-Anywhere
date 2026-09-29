@@ -49,10 +49,13 @@ struct NewSessionView: View, Equatable {
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(alignment: .leading, spacing: 0) {
-                    // Leading edge matches the composer's glass in both states.
+                    // Follows the composer's glass edge in both states, a few
+                    // points inside it and slightly apart, to sit balanced.
                     workspaceButton
                         .padding(.horizontal, model.draft.isExpanded
                             ? ChatControlMetrics.expandedHorizontalInset : ChatControlMetrics.collapsedHorizontalInset)
+                        .padding(.leading, 6)
+                        .padding(.bottom, 6)
                 ChatComposerDock(draft: model.draft, settings: model.settings,
                     maximumEditorHeight: min(160, max(72, geometry.size.height * 0.30)), controls: controls,
                     canSend: model.canCreate, canAttach: model.canAttach && model.prepared != nil,
