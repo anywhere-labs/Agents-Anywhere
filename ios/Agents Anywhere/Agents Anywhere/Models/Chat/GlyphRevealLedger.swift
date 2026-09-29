@@ -9,22 +9,38 @@ nonisolated struct GlyphRevealEffect {
     var offsetY: Double { 3 * (1 - progress) }
 }
 
+/// Glyphs before `settledCount` draw normally. Each batch is one flush's
+/// appended glyphs; they were born together and share one reveal progress.
+nonisolated struct GlyphRevealProgress: Equatable {
+    struct Batch: Equatable {
+        let range: Range<Int>
+        let progress: Double
+    }
+
+    let settledCount: Int
+    let batches: [Batch]
+
+    func value(at index: Int) -> Double {
+        batches.first { $0.range.contains(index) }?.progress ?? 1
+    }
+}
+
 /// TextRenderer may draw off the main actor. Birth times belong to the newly
 /// appended glyphs; a later flush never restarts an earlier batch's animation.
 nonisolated final class GlyphRevealLedger: @unchecked Sendable {
     private let lock = NSLock()
     private let duration: TimeInterval
     private var settledCount = 0
-    // Only the newly revealed suffix needs per-glyph birth times. Static
-    // history must not allocate a character-sized array on every draw.
-    private var births: [TimeInterval] = []
+    // One entry per flush, oldest first. A frame costs O(batches), not
+    // O(characters), however long the paragraph grows.
+    private var births: [(count: Int, born: TimeInterval)] = []
 
     init(duration: TimeInterval = ReplyPresentation.revealSeconds) {
         precondition(duration > 0 && duration.isFinite)
         self.duration = duration
     }
 
-    func progress(count: Int, now: TimeInterval, enabled: Bool) -> [Double]? {
+    func progress(count: Int, now: TimeInterval, enabled: Bool) -> GlyphRevealProgress? {
         lock.lock()
         defer { lock.unlock() }
         // Textual can briefly emit an empty Text while rebuilding a heading or
@@ -37,18 +53,24 @@ nonisolated final class GlyphRevealLedger: @unchecked Sendable {
         }
         settledCount = min(settledCount, count)
         let revealingCount = count - settledCount
-        if revealingCount < births.count { births.removeLast(births.count - revealingCount) }
-        if revealingCount > births.count {
-            births.append(contentsOf: repeatElement(now, count: revealingCount - births.count))
+        var birthCount = births.reduce(0) { $0 + $1.count }
+        while birthCount > revealingCount, let last = births.last {
+            let removed = min(last.count, birthCount - revealingCount)
+            if removed == last.count { births.removeLast() } else { births[births.count - 1].count -= removed }
+            birthCount -= removed
         }
-        guard births.contains(where: { now - $0 < duration }) else {
-            settledCount = count
-            births.removeAll(keepingCapacity: true)
-            return nil
+        if revealingCount > birthCount { births.append((revealingCount - birthCount, now)) }
+        // Finished batches join the settled prefix and leave the per-frame work.
+        while let first = births.first, now - first.born >= duration {
+            settledCount += first.count
+            births.removeFirst()
         }
-        return Array(repeating: 1, count: settledCount) + births.map { born in
-            let progress = min(1, max(0, (now - born) / duration))
-            return 1 - pow(1 - progress, 3)
-        }
+        guard !births.isEmpty else { return nil }
+        var start = settledCount
+        return GlyphRevealProgress(settledCount: settledCount, batches: births.map { birth in
+            defer { start += birth.count }
+            let progress = min(1, max(0, (now - birth.born) / duration))
+            return .init(range: start..<(start + birth.count), progress: 1 - pow(1 - progress, 3))
+        })
     }
 }

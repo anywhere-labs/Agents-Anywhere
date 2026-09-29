@@ -101,8 +101,21 @@ import Testing
         let firstProgress = try #require(ledger.progress(count: 2, now: 0.1, enabled: true))
         _ = ledger.progress(count: 0, now: 0.1, enabled: true)
         let appended = try #require(ledger.progress(count: 4, now: 0.1, enabled: true))
-        #expect(Array(appended.prefix(2)) == firstProgress)
-        #expect(Array(appended.suffix(2)) == [0, 0])
+        #expect(appended.value(at: 0) == firstProgress.value(at: 0))
+        #expect(appended.value(at: 1) == firstProgress.value(at: 1))
+        #expect(appended.value(at: 2) == 0 && appended.value(at: 3) == 0)
+        #expect(appended.batches.count == 2)
+    }
+
+    @Test func finishedRevealBatchesJoinTheSettledPrefix() throws {
+        let ledger = GlyphRevealLedger()
+        _ = ledger.progress(count: 3, now: 0, enabled: true)
+        let both = try #require(ledger.progress(count: 5, now: 0.2, enabled: true))
+        #expect(both.settledCount == 0 && both.batches.map(\.range) == [0..<3, 3..<5])
+        let later = try #require(ledger.progress(count: 5, now: 0.3, enabled: true))
+        #expect(later.settledCount == 3 && later.batches.map(\.range) == [3..<5])
+        #expect(later.value(at: 1) == 1)
+        #expect(ledger.progress(count: 5, now: 0.5, enabled: true) == nil)
     }
 
     @Test func longerWelcomeRevealKeepsTheStreamingCurveAndDefaultDuration() throws {
@@ -112,7 +125,7 @@ import Testing
         _ = welcome.progress(count: 4, now: 0, enabled: true)
         let streamed = try #require(streaming.progress(count: 4, now: 0.06, enabled: true))
         let slower = try #require(welcome.progress(count: 4, now: 0.1, enabled: true))
-        #expect(abs(streamed[0] - slower[0]) < 0.000001)
+        #expect(abs(streamed.value(at: 0) - slower.value(at: 0)) < 0.000001)
         #expect(streaming.progress(count: 4, now: 0.25, enabled: true) == nil)
         #expect(welcome.progress(count: 4, now: 0.25, enabled: true) != nil)
         #expect(welcome.progress(count: 4, now: 0.4, enabled: true) == nil)
