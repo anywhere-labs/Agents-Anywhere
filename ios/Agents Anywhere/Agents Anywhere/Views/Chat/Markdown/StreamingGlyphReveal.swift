@@ -40,8 +40,8 @@ struct StreamingGlyphReveal: ViewModifier {
 
     func body(content: Content) -> some View {
         let enabled = isStreaming && !reduceMotion
-        // Text flushes at 5 Hz. Drawing can use the display's refresh cadence
-        // to interpolate between flushes without reparsing or appending text.
+        // Text arrives in batches, one after the previous reveal ends. Drawing
+        // interpolates each batch without reparsing or appending text.
         if !enabled && revealedPhraseCount == nil {
             // Settled history uses native Text drawing with no clock or glyph walk.
             content

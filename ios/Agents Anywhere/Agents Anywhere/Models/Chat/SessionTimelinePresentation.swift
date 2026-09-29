@@ -18,8 +18,10 @@ final class ChatTimelineRowModel: Identifiable {
         text = animate ? "" : value.displayText
     }
 
-    func flush(_ next: V2TimelineItem, animate: Bool, now: TimeInterval) {
-        if animate && hasFlushed && value == next { settle(now: now); return }
+    /// Returns true when newly displayed text starts a reveal batch.
+    @discardableResult
+    func flush(_ next: V2TimelineItem, animate: Bool, now: TimeInterval) -> Bool {
+        if animate && hasFlushed && value == next { settle(now: now); return false }
         hasFlushed = true
         let received = next.displayText
         let appending = received.hasPrefix(text)
@@ -28,15 +30,18 @@ final class ChatTimelineRowModel: Identifiable {
         let safeText = animate && appending && next.isStreamingText && !received.isEmpty
             ? String(received.dropLast()) : received
         let displayed = safeText.hasPrefix(text) || !appending ? safeText : received
+        var started = false
         if displayed != text {
             isRevealing = animate && appending
-            if isRevealing { settlesAt = now + ReplyPresentation.revealSeconds + 2 / ReplyPresentation.flushesPerSecond }
+            started = isRevealing
+            if isRevealing { settlesAt = now + ReplyPresentation.revealSeconds + ReplyPresentation.drawSlack }
             text = displayed
         }
         if value != next { value = next }
         let nextStructure = TimelineRowStructure(next)
         if structure != nextStructure { structure = nextStructure }
         if !animate || now >= settlesAt { isRevealing = false }
+        return started
     }
 
     /// The drawing clock follows the last revealed batch, not the item's
@@ -48,7 +53,8 @@ final class ChatTimelineRowModel: Identifiable {
 }
 
 /// Receives full repository projections without exposing each transport frame to
-/// SwiftUI. Only flush() publishes rows, on a fixed 5 Hz presentation deadline.
+/// SwiftUI. Only flush() publishes rows. Received text waits in `pending` while
+/// the previous batch reveals; the next batch goes on screen when it ends.
 @MainActor @Observable
 final class SessionTimelinePresentation {
     private(set) var rows: [ChatTimelineRowModel] = []
@@ -59,6 +65,8 @@ final class SessionTimelinePresentation {
     @ObservationIgnored private var initialized = false
     @ObservationIgnored private var lastConnection: V2SessionConnectionState = .inactive
     @ObservationIgnored private var wake: AsyncStream<Void>.Continuation?
+    /// When the newest reveal batch ends and the buffer may publish again.
+    @ObservationIgnored private(set) var nextBatchAt: TimeInterval = 0
 
     func presentOpening(_ items: [V2TimelineItem], pendingMessages: [V2PendingMessage]) {
         stage(items, animate: false)
@@ -87,12 +95,14 @@ final class SessionTimelinePresentation {
         if let pending {
             let existing = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
             let previousTail = rows.last?.value.orderSeq ?? Int.min
+            var started = false
             let updated = pending.map { value in
                 let animate = animatePending && (existing[value.id] != nil || value.orderSeq > previousTail)
                 let row = existing[value.id] ?? ChatTimelineRowModel(value, animate: animate && value.isAssistantText)
-                row.flush(value, animate: animate, now: now)
+                if row.flush(value, animate: animate, now: now) { started = true }
                 return row
             }
+            if started { nextBatchAt = now + ReplyPresentation.batchInterval }
             if rows.map(\.id) != updated.map(\.id) { rows = updated }
             if !hasPresentedSnapshot { hasPresentedSnapshot = true }
             self.pending = nil; pendingWasStaged = false
@@ -114,22 +124,30 @@ final class SessionTimelinePresentation {
                 }
             }
             group.addTask { @MainActor [weak self] in
-                let clock = ContinuousClock()
-                var schedule = ReplyFlushSchedule(start: clock.now)
                 for await _ in signal.stream {
                     guard !Task.isCancelled, let self else { return }
-                    if schedule.deadline < clock.now { schedule = ReplyFlushSchedule(start: clock.now) }
                     repeat {
-                        do { try await clock.sleep(until: schedule.deadline) } catch { return }
-                        self.flush()
+                        // Text received during a reveal waits for it to end, then
+                        // goes on screen as one batch. Text after a pause shows at
+                        // once. Without new text, poll briefly to notice arrivals
+                        // and settle rows whose reveal has ended.
+                        let now = ProcessInfo.processInfo.systemUptime
+                        let wait = self.pending != nil ? self.nextBatchAt - now : Self.idlePoll
+                        if wait > 0 {
+                            do { try await Task.sleep(for: .seconds(wait)) } catch { return }
+                        }
+                        let current = ProcessInfo.processInfo.systemUptime
+                        guard self.pending == nil || current >= self.nextBatchAt else { continue }
+                        self.flush(now: current)
                         self.synchronizePending(session.pendingMessages)
-                        schedule.advance(after: clock.now)
                     } while !Task.isCancelled && (self.pending != nil || self.rows.contains { $0.isRevealing })
                 }
             }
             await group.waitForAll()
         }
     }
+
+    private static let idlePoll: TimeInterval = 1.0 / 30
 
     func synchronizePending(_ messages: [V2PendingMessage]) {
         // Change optimistic membership in the same tick that publishes echoes,

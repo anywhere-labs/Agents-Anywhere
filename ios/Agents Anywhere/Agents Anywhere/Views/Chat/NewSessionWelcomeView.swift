@@ -3,6 +3,8 @@ import SwiftUI
 struct NewSessionWelcomeView<Workspace: View>: View {
     @ViewBuilder let workspace: () -> Workspace
     private static var revealDuration: Double { 0.4 }
+    /// Known copy cascades: each phrase starts before the previous one ends.
+    private static var phraseInterval: Duration { .milliseconds(200) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .largeTitle) private var titleSize: CGFloat = 40
@@ -98,7 +100,7 @@ struct NewSessionWelcomeView<Workspace: View>: View {
         withAnimation(.timingCurve(1.0 / 3, 1, 2.0 / 3, 1, duration: Self.revealDuration)) {
             workspaceRevealed = true
         }
-        var schedule = ReplyFlushSchedule(start: .now)
+        var schedule = ReplyFlushSchedule(start: .now, interval: Self.phraseInterval)
         do {
             for count in TextPhraseSequence.chunks(in: title).indices {
                 try Task.checkCancellation()
@@ -112,7 +114,7 @@ struct NewSessionWelcomeView<Workspace: View>: View {
                 try await Task.sleep(until: schedule.deadline, clock: .continuous)
                 schedule.advance(after: .now)
             }
-            try await Task.sleep(for: .seconds(Self.revealDuration + 2 / ReplyPresentation.flushesPerSecond))
+            try await Task.sleep(for: .seconds(Self.revealDuration + ReplyPresentation.drawSlack))
             try Task.checkCancellation()
             if canReveal { revealCompletion += 1 }
         } catch {

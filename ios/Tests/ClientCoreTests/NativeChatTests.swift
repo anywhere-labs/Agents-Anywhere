@@ -86,13 +86,24 @@ import Testing
         #expect(timeline.rows.count == 1)
     }
 
-    @Test func fiveHzDeadlinesAndGlyphBirthsRemainIndependent() throws {
+    @Test func nextBatchWaitsForThePreviousRevealToEnd() throws {
+        let timeline = SessionTimelinePresentation()
+        timeline.stage([try item("Hello")], animate: false); timeline.flush(now: 0)
+        #expect(timeline.nextBatchAt == 0)
+        timeline.stage([try item("Hello world", revision: 2)], animate: true); timeline.flush(now: 1)
+        #expect(timeline.nextBatchAt == 1 + ReplyPresentation.batchInterval)
+        #expect(ReplyPresentation.batchInterval > ReplyPresentation.revealSeconds)
+        // A flush without new text doesn't start a batch or move the gate.
+        timeline.stage([try item("Hello world", revision: 2)], animate: true); timeline.flush(now: 1.1)
+        #expect(timeline.nextBatchAt == 1 + ReplyPresentation.batchInterval)
+    }
+
+    @Test func glyphBirthsRemainIndependent() throws {
         let start = ContinuousClock.now
-        var schedule = ReplyFlushSchedule(start: start)
-        #expect(schedule.interval == .seconds(1.0 / 5))
+        var schedule = ReplyFlushSchedule(start: start, interval: .milliseconds(200))
         let first = schedule.deadline
         schedule.advance(after: first.advanced(by: .milliseconds(4)))
-        #expect(schedule.deadline == first.advanced(by: .seconds(1.0 / 5)))
+        #expect(schedule.deadline == first.advanced(by: .milliseconds(200)))
         let late = start.advanced(by: .seconds(2))
         schedule.advance(after: late)
         #expect(schedule.deadline > late)
