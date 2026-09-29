@@ -62,7 +62,7 @@ struct SessionTimelineEventView: View {
                 TimelineFold(id: row.id, title: value.title, symbol: value.symbol, status: row.value.status, disclosures: disclosures) {
                     ChatMarkdownView(text: row.text, isStreaming: row.isRevealing, resolvesFileReferences: true)
                         .id(row.layoutGeneration).padding(.leading, 24).foregroundStyle(.secondary)
-                        // Reasoning sits three Dynamic Type steps below the reply.
+                        // Reasoning stays well below the reply text.
                         .environment(\.chatMarkdownFont, .caption2)
                 }
             }

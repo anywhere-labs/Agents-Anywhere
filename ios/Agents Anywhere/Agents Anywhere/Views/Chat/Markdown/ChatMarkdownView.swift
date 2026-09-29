@@ -3,8 +3,8 @@ import Textual
 
 extension EnvironmentValues {
     @Entry var chatLayoutTraceOwner = "markdown"
-    /// Two Dynamic Type steps below body; every block scales from this.
-    @Entry var chatMarkdownFont: Font = .subheadline
+    /// One Dynamic Type step below body; every block scales from this.
+    @Entry var chatMarkdownFont: Font = .callout
 }
 
 struct ChatMarkdownView: View {
