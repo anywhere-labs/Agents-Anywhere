@@ -21,6 +21,7 @@ from loguru import logger
 from starlette.requests import HTTPConnection
 
 from agent_server.api.connector_runtimes import (
+    parse_runtime_agent_catalog_response,
     parse_runtime_model_catalog_response,
     parse_runtime_permission_catalog_response,
 )
@@ -61,6 +62,7 @@ from agent_server.core.models import (
     TakeoverResponse,
 )
 from agent_server.core.protocol import (
+    ProtocolAgentCatalogResponse,
     ProtocolCapabilitiesResponse,
     ProtocolCapabilitySet,
     ProtocolEventRecoveryResponse,
@@ -787,6 +789,40 @@ async def session_runtime_permission_catalog(
     )
 
 
+@router.get(
+    "/{session_id}/runtime/catalogs/agent",
+    response_model=ProtocolAgentCatalogResponse,
+)
+async def session_runtime_agent_catalog(
+    session_id: str,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
+) -> ProtocolAgentCatalogResponse:
+    try:
+        session = await db.get_session(session_id, user_id=user_id)
+        await device_runtimes.ensure_active_running(
+            session.connectorId,
+            _session_runtime_id(session),
+            user_id=user_id,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found") from None
+    except DeviceRuntimeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    result = await request_session_runtime_catalog(
+        manager,
+        session,
+        method="runtime.agentCatalog",
+        limit=200,
+    )
+    return ProtocolAgentCatalogResponse(
+        catalog=parse_runtime_agent_catalog_response(result),
+        serverTime=utc_now(),
+    )
+
+
 @router.patch("/{session_id}/runtime/selections", response_model=SessionSelectionPatchResponse)
 async def patch_session_selections(
     session_id: str,
@@ -954,6 +990,11 @@ async def session_snapshot(
             runtime_id=_session_runtime_id(session),
             user_id=user_id,
         )
+        agent_catalog = await catalogs.agent_catalog(
+            session.connectorId,
+            runtime_id=_session_runtime_id(session),
+            user_id=user_id,
+        )
         log_snapshot_stage("catalogs", stage_started_at)
 
         stage_started_at = time.monotonic()
@@ -1001,6 +1042,7 @@ async def session_snapshot(
             for key, catalog in (
                 ("model", model_catalog),
                 ("permission", permission_catalog),
+                ("agent", agent_catalog),
             )
             if catalog is not None
         },

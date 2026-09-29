@@ -23,6 +23,13 @@ test('plugin OAuth accepts only its exact native loopback client, S256 and state
   assert.equal(readNativeOAuthParams(params, 'plugin'), null)
 })
 
+test('plugin OAuth also accepts the OpenCode plug-in client and rejects others', () => {
+  const params = new URLSearchParams({ response_type: 'code', client_id: 'agents-anywhere-opencode-plugin', redirect_uri: 'http://127.0.0.1:51234/oauth/callback', code_challenge: 'a'.repeat(43), state: 'b'.repeat(43) })
+  assert.ok(readNativeOAuthParams(params, 'plugin'))
+  params.set('client_id', 'agents-anywhere-other-plugin')
+  assert.equal(readNativeOAuthParams(params, 'plugin'), null)
+})
+
 test('login and registration preserve onboarding context without allowing external redirects', () => {
   const store = storage()
   const hash = '#/onboarding?source=dsh-plugin&connectorId=conn_demo&flowId=abcdefghijklmnop'

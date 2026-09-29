@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://www.agents-anywhere.com"><img src="docs/images/readme-hero-zh.webp" alt="Agents Anywhere：跨设备的开源 Agent 工作台。支持 Codex、Claude Code 和 DeepSeek Harness，更多 Agent 即将支持。" width="100%"></a>
+  <a href="https://www.agents-anywhere.com"><img src="docs/images/readme-hero-zh.webp" alt="Agents Anywhere：跨设备的开源 Agent 工作台。支持 Codex、Claude Code、OpenCode 和 DeepSeek Harness，更多 Agent 即将支持。" width="100%"></a>
 </p>
 
 <p align="center">
@@ -21,7 +21,7 @@
   <a href="docker/README.md"><img src="https://img.shields.io/badge/self--hosted-Docker-222222?style=flat" alt="Self-host with Docker"></a>
 </p>
 
-**Agents Anywhere** 是跨设备的开源 Agent 工作台。连接运行 **Codex、Claude Code 或 DeepSeek Harness** 的工作设备，在桌面、手机和 Web 查看会话、回复请求、管理文件与终端。Agent 在连接的工作设备上执行任务。
+**Agents Anywhere** 是跨设备的开源 Agent 工作台。连接运行 **Codex、Claude Code、OpenCode 或 DeepSeek Harness** 的工作设备，在桌面、手机和 Web 查看会话、回复请求、管理文件与终端。Agent 在连接的工作设备上执行任务。
 
 ## 下载与入口
 
@@ -78,9 +78,9 @@ macOS、Windows 和 Android 的下载文件均为 **Agents Anywhere** 安装包�
 | **管理项目与会话** | 在设备、项目和会话之间切换，通过时间线（Timeline）查看运行进度。 |
 | **审批操作与回复请求** | 响应工具审批和输入请求；按 Runtime 能力打断或继续任务。 |
 | **查看文件与使用终端** | 浏览与预览文件、上传下载附件，打开远程 shell 和交互式终端。 |
-| **配置 Agent** | 配置 Codex、Claude Code 和 DSH；根据对应 Runtime 支持的能力选择模型、权限与操作。 |
+| **配置 Agent** | 配置 Codex、Claude Code、OpenCode 和 DSH；根据对应 Runtime 支持的能力选择模型、权限与操作。 |
 
-Runtime 是工作设备上运行和连接 Agent 的组件。模型账号和调用费用遵循所使用 Agent 的规则。各 Runtime 的能力存在差异，具体操作以客户端显示为准。[DSH 接入说明 →](dsh-bridge-next/README.md)
+Runtime 是工作设备上运行和连接 Agent 的组件。模型账号和调用费用遵循所使用 Agent 的规则。各 Runtime 的能力存在差异，具体操作以客户端显示为准。[DSH 接入说明 →](dsh-bridge-next/README.md) · [OpenCode 接入说明 →](docs/opencode-server-surface.md)
 
 ## 桌面、移动端与 Web
 
@@ -109,7 +109,7 @@ Agent 使用 Connector 所在机器的工作区与权限。可以连接 Cloud，
 flowchart LR
     Clients["桌面 · 手机 · Web"] <-->|"访问与控制"| Server["Agents Anywhere Server"]
     Server <-->|"Connector RPC"| Connector["工作设备上的 Connector"]
-    Connector <--> Agents["Codex · Claude Code · DSH"]
+    Connector <--> Agents["Codex · Claude Code · OpenCode · DSH"]
     Connector <--> Workspace["工作区 · 文件 · 终端"]
 ```
 
@@ -144,6 +144,7 @@ docker compose -f docker/docker-compose.postgres.yml up --build
 | Web 与桌面客户端 | [Web 源码](web-next/) · [Desktop Workbench](desktop-workbench/README.md) |
 | 原生移动客户端 | [Android](android/README.md) · [iOS 源码](ios/) |
 | DSH 集成 | [DSH Bridge Next](dsh-bridge-next/README.md) |
+| OpenCode 集成 | [OpenCode 宿主服务面实测](docs/opencode-server-surface.md) · [Connector](connector/README.md) |
 | 更多文档 | [文档目录](docs/README.md) · [协议契约](contracts/) |
 
 欢迎通过 [Issues](https://github.com/anywhere-labs/Agents-Anywhere/issues) 反馈问题，或通过 [Pull Requests](https://github.com/anywhere-labs/Agents-Anywhere/pulls) 参与改进。报告问题时，请附上客户端版本、系统、Runtime 类型和复现步骤，并移除日志中的凭据。

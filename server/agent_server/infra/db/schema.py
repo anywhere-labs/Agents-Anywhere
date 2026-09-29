@@ -271,6 +271,42 @@ oauth_authorization_codes = Table(
 )
 
 
+oauth_device_codes = Table(
+    "oauth_device_codes",
+    metadata,
+    Column("device_code_hash", Text, primary_key=True),
+    Column("user_code_hash", Text, nullable=False),
+    Column("client_id", Text, nullable=False),
+    Column("scope", Text, nullable=False),
+    # Flow state: pending | approved | denied (consumed/expired are derived from
+    # the timestamps below).
+    Column("status", Text, nullable=False),
+    # Set only when a signed-in user approves the request with their own account.
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE")),
+    Column("interval_seconds", Integer, nullable=False),
+    Column("expires_at", Text, nullable=False),
+    Column("last_polled_at", Text),
+    Column("approved_at", Text),
+    Column("consumed_at", Text),
+    Column("created_at", Text, nullable=False),
+    Index("idx_oauth_device_codes_user_code_hash", "user_code_hash"),
+)
+
+
+oauth_device_code_attempts = Table(
+    "oauth_device_code_attempts",
+    metadata,
+    Column(
+        "user_id",
+        Text,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("failed_attempts", Integer, nullable=False, server_default="0"),
+    Column("window_start", BigInteger, nullable=False),
+)
+
+
 mobile_login_tokens = Table(
     "mobile_login_tokens",
     metadata,
@@ -571,6 +607,7 @@ dashboard_user_daily_facts = Table(
     Column("unknown_devices", Integer, nullable=False, server_default="0"),
     Column("codex_agents", Integer, nullable=False, server_default="0"),
     Column("claude_agents", Integer, nullable=False, server_default="0"),
+    Column("opencode_agents", Integer, nullable=False, server_default="0"),
     Column("dsh_agents", Integer, nullable=False, server_default="0"),
     Column("last_activity_at", Text),
     Column("computed_at", Text, nullable=False),

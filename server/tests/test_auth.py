@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 from agent_server.app import create_app
 from agent_server.core.auth import hash_password
+from agent_server.core.oauth_device import DEVICE_GRANT_TYPE
 from agent_server.core.setup_token import SetupToken
 from agent_server.services.oauth import OAuthIdentity, create_pending_token
 from conftest import ApiV2TestClient as TestClient, make_test_client
@@ -709,7 +710,8 @@ def test_oauth_metadata_advertises_authorization_code_pkce(tmp_path):
     body = client.get("/.well-known/oauth-authorization-server").json()
     assert body["authorization_endpoint"].endswith("/api/v2/oauth/authorize")
     assert body["token_endpoint"].endswith("/api/v2/oauth/token")
-    assert body["grant_types_supported"] == ["authorization_code"]
+    assert body["device_authorization_endpoint"].endswith("/api/v2/oauth/device/code")
+    assert body["grant_types_supported"] == ["authorization_code", DEVICE_GRANT_TYPE]
     assert body["code_challenge_methods_supported"] == ["S256"]
 
 

@@ -188,6 +188,28 @@ class ProtocolPermissionCatalogResponse(ProtocolWireModel):
     serverTime: str
 
 
+ProtocolAgentMode = Literal["primary", "subagent", "all"]
+
+
+class ProtocolAgentItem(ProtocolWireModel):
+    id: str
+    name: str | None = None
+    description: str | None = None
+    mode: ProtocolAgentMode
+    hidden: bool = False
+
+
+class ProtocolAgentCatalog(ProtocolWireModel):
+    runtime: RuntimeName
+    revision: int = Field(ge=0, le=PROTOCOL_MAX_REVISION)
+    agents: list[ProtocolAgentItem] = Field(default_factory=list)
+
+
+class ProtocolAgentCatalogResponse(ProtocolWireModel):
+    catalog: ProtocolAgentCatalog
+    serverTime: str
+
+
 class ProtocolTimelineSnapshot(ProtocolWireModel):
     items: list[TimelineItem] = Field(default_factory=list)
     nextSeq: int

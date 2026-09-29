@@ -67,6 +67,9 @@ async def seed_dashboard_activity(client: TestClient) -> dict[str, str]:
     await store.set_connector_status(admin_connector, "offline", device_os="macos")
     await store.set_connector_status(bob_connector, "offline", device_os="windows")
     await configure_runtime(store, admin_connector, "codex")
+    # A second runtime on the same device keeps the OpenCode agent counter on a
+    # non-zero expected value: deleting the wiring must fail this suite.
+    await configure_runtime(store, admin_connector, "opencode")
     await configure_runtime(store, bob_connector, "claude")
     admin_session = await store.upsert_connector_session(
         connector_id=admin_connector,
@@ -180,11 +183,13 @@ def test_admin_dashboard_overview_builds_daily_snapshot(tmp_path):
     assert {item["key"]: item["value"] for item in body["agentBreakdown"]} == {
         "codex": 1.0,
         "claude": 1.0,
+        "opencode": 1.0,
         "dsh": 0.0,
     }
     assert {item["key"]: item["value"] for item in body["sessionAgentBreakdown"]} == {
         "codex": 1.0,
         "claude": 1.0,
+        "opencode": 0.0,
         "dsh": 0.0,
     }
     assert body["settings"]["intensity"] == {"basis": "messages", "lightMax": 1, "mediumMax": 2}
@@ -274,11 +279,13 @@ def test_admin_dashboard_ignores_connector_history_for_usage_metrics(tmp_path):
     assert {item["key"]: item["value"] for item in body["sessionAgentBreakdown"]} == {
         "codex": 0.0,
         "claude": 0.0,
+        "opencode": 0.0,
         "dsh": 0.0,
     }
     assert {item["key"]: item["value"] for item in body["agentBreakdown"]} == {
         "codex": 1.0,
         "claude": 0.0,
+        "opencode": 0.0,
         "dsh": 0.0,
     }
 
@@ -319,11 +326,62 @@ def test_admin_dashboard_counts_dsh_separately(tmp_path):
     assert {item["key"]: item["value"] for item in body["agentBreakdown"]} == {
         "codex": 0.0,
         "claude": 0.0,
+        "opencode": 0.0,
         "dsh": 1.0,
     }
     assert {
         item["key"]: item["value"] for item in body["sessionAgentBreakdown"]
-    } == {"codex": 0.0, "claude": 0.0, "dsh": 1.0}
+    } == {"codex": 0.0, "claude": 0.0, "opencode": 0.0, "dsh": 1.0}
+
+
+def test_admin_dashboard_counts_opencode_sessions(tmp_path):
+    """Drive the OpenCode counters with real facts (M8).
+
+    Every other expectation in this module is 0.0 for OpenCode, so a broken
+    counter would still look correct without this case.
+    """
+
+    client = make_client(tmp_path)
+    store = client.app.state.store
+    headers = register_admin(client)
+    connector_id = create_connector(client, headers, "admin-opencode")
+    current = today()
+
+    async def seed() -> None:
+        await store.set_connector_status(connector_id, "offline", device_os="macos")
+        await configure_runtime(store, connector_id, "opencode")
+        session = await store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id="sess_admin_opencode",
+            runtime="opencode",
+            external_session_id="opencode-native-session",
+            title="Admin OpenCode",
+            cwd="/repo",
+            status="idle",
+            origin="platform",
+        )
+        await store.upsert_timeline_item(
+            session_id=session.id,
+            item=_platform_user_message(session.id, 1, "opencode", "cm_opencode_1"),
+        )
+
+    asyncio.run(seed())
+    response = client.get(
+        "/admin/dashboard/overview",
+        headers=headers,
+        params={"from": current, "to": current},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert {item["key"]: item["value"] for item in body["agentBreakdown"]} == {
+        "codex": 0.0,
+        "claude": 0.0,
+        "opencode": 1.0,
+        "dsh": 0.0,
+    }
+    assert {
+        item["key"]: item["value"] for item in body["sessionAgentBreakdown"]
+    } == {"codex": 0.0, "claude": 0.0, "opencode": 1.0, "dsh": 0.0}
 
 
 def test_admin_dashboard_settings_drive_segments(tmp_path):

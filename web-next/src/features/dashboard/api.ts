@@ -29,6 +29,7 @@ import type {
   ProtocolCapabilitiesResponse,
   ProtocolModelCatalogResponse,
   ProtocolPermissionCatalogResponse,
+  ProtocolAgentCatalogResponse,
   PublicSessionShareResponse,
   ProjectCreateRequest,
   ProjectCreateResponse,
@@ -838,6 +839,16 @@ export class DashboardApi {
     );
   }
 
+  getSessionAgentCatalog(
+    token: string,
+    sessionId: string,
+  ): Promise<ProtocolAgentCatalogResponse> {
+    return this.client.get<ProtocolAgentCatalogResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/catalogs/agent`,
+      { token },
+    );
+  }
+
   uploadSessionAttachments(
     token: string,
     sessionId: string,
@@ -881,6 +892,17 @@ export class DashboardApi {
   ): Promise<ProtocolPermissionCatalogResponse> {
     return this.client.get<ProtocolPermissionCatalogResponse>(
       `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/catalogs/permission`,
+      { token },
+    );
+  }
+
+  getConnectorRuntimeAgentCatalog(
+    token: string,
+    connectorId: string,
+    runtimeId: string,
+  ): Promise<ProtocolAgentCatalogResponse> {
+    return this.client.get<ProtocolAgentCatalogResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/catalogs/agent`,
       { token },
     );
   }

@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from agent_server.core.catalogs import (
     CatalogType,
+    validate_agent_catalog,
     validate_model_catalog,
     validate_permission_catalog,
 )
@@ -17,6 +18,7 @@ from agent_server.core.models import (
     TimelineItemIn,
 )
 from agent_server.core.protocol import (
+    ProtocolAgentCatalog,
     ProtocolCapability,
     ProtocolCapabilitySet,
     ProtocolModelCatalog,
@@ -100,6 +102,7 @@ class ConnectorNotificationService:
         if method in {
             "protocol.modelCatalogUpdated",
             "protocol.permissionCatalogUpdated",
+            "protocol.agentCatalogUpdated",
         }:
             raise NotificationValidationError(
                 "unsupported_notification",
@@ -1049,18 +1052,18 @@ def capability_set_fingerprint(value: ProtocolCapabilitySet) -> list[dict[str, A
 
 def runtime_catalog_type_from_params(params: dict[str, Any]) -> CatalogType:
     catalog_type = params.get("catalogType")
-    if catalog_type == "model" or catalog_type == "permission":
+    if catalog_type == "model" or catalog_type == "permission" or catalog_type == "agent":
         return catalog_type
     raise NotificationValidationError(
         "invalid_runtime_catalog",
-        "runtime.catalog.updated requires catalogType model or permission",
+        "runtime.catalog.updated requires catalogType model, permission or agent",
     )
 
 
 def runtime_catalog_from_params(
     catalog_type: CatalogType,
     params: dict[str, Any],
-) -> ProtocolModelCatalog | ProtocolPermissionCatalog:
+) -> ProtocolModelCatalog | ProtocolPermissionCatalog | ProtocolAgentCatalog:
     raw_catalog = params.get("catalog")
     if not isinstance(raw_catalog, dict):
         raise NotificationValidationError(
@@ -1072,9 +1075,13 @@ def runtime_catalog_from_params(
             model_catalog = ProtocolModelCatalog.model_validate(raw_catalog)
             validate_model_catalog(model_catalog)
             return model_catalog
-        permission_catalog = ProtocolPermissionCatalog.model_validate(raw_catalog)
-        validate_permission_catalog(permission_catalog)
-        return permission_catalog
+        if catalog_type == "permission":
+            permission_catalog = ProtocolPermissionCatalog.model_validate(raw_catalog)
+            validate_permission_catalog(permission_catalog)
+            return permission_catalog
+        agent_catalog = ProtocolAgentCatalog.model_validate(raw_catalog)
+        validate_agent_catalog(agent_catalog)
+        return agent_catalog
     except ValidationError as exc:
         raise NotificationValidationError("invalid_runtime_catalog", str(exc)) from exc
     except ValueError as exc:
@@ -1421,7 +1428,7 @@ def runtime_identity_from_params(params: dict[str, Any]) -> tuple[str, str]:
 
 def runtime_catalog_identity_from_params(
     params: dict[str, Any],
-    catalog: ProtocolModelCatalog | ProtocolPermissionCatalog,
+    catalog: ProtocolModelCatalog | ProtocolPermissionCatalog | ProtocolAgentCatalog,
 ) -> tuple[str, str]:
     if "runtime" not in params and "runtimeId" not in params:
         return runtime_identity_from_params(

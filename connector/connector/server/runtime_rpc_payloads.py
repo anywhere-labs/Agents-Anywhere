@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from connector.runtime_protocol import (
+    RuntimeAgentCatalog,
     RuntimeCapability,
     RuntimeCapabilitySet,
     RuntimeCommand,
@@ -332,6 +333,24 @@ def permission_catalog_payload(catalog: RuntimePermissionCatalog) -> dict[str, A
                 },
             }
             for permission in catalog.permissions
+        ],
+    }
+
+
+def agent_catalog_payload(catalog: RuntimeAgentCatalog) -> dict[str, Any]:
+    return {
+        "runtime": catalog.runtime,
+        **({"runtimeId": catalog.runtime_id} if catalog.runtime_id is not None else {}),
+        "revision": catalog.revision,
+        "agents": [
+            {
+                "id": agent.id,
+                "name": agent.name,
+                "description": agent.description,
+                "mode": agent.mode,
+                "hidden": agent.hidden,
+            }
+            for agent in catalog.agents
         ],
     }
 

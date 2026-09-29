@@ -10,6 +10,7 @@ export const CAPABILITY = {
   modelCatalog: "catalog.model",
   permissionCatalog: "catalog.permission",
   effortCatalog: "catalog.effort",
+  agentCatalog: "catalog.agent",
 } as const
 
 export type KnownCapabilityId = (typeof CAPABILITY)[keyof typeof CAPABILITY]

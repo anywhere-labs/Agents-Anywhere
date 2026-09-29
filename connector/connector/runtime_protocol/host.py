@@ -6,6 +6,7 @@ from typing import Any
 from connector.core.json_kv import JsonKeyValueStore
 
 from connector.runtime_protocol.models import (
+    RuntimeAgentCatalog,
     RuntimeAttachmentContent,
     RuntimeCapabilitySet,
     RuntimeModelCatalog,
@@ -108,6 +109,12 @@ class RuntimeHostClient(ABC):
     async def permission_catalog_update(
         self,
         catalog: RuntimePermissionCatalog,
+    ) -> None:
+        raise NotImplementedError
+
+    async def agent_catalog_update(
+        self,
+        catalog: RuntimeAgentCatalog,
     ) -> None:
         raise NotImplementedError
 

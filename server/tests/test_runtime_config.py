@@ -70,6 +70,28 @@ class FakeRpc:
                     ],
                 }
             }
+        if method == "runtime.agentCatalog":
+            return {
+                "catalog": {
+                    "runtime": params["runtime"],
+                    "revision": 3,
+                    "agents": [
+                        {
+                            "id": "build",
+                            "name": "Build",
+                            "description": "Primary build agent",
+                            "mode": "primary",
+                            "hidden": False,
+                        },
+                        {
+                            "id": "plan",
+                            "name": "Plan",
+                            "mode": "primary",
+                            "hidden": False,
+                        },
+                    ],
+                }
+            }
         if method == "runtime.capabilities":
             return {
                 "capabilitySet": {
@@ -634,6 +656,146 @@ def test_session_runtime_catalog_reads_start_active_runtime_before_rpc(tmp_path)
         "runtimeId": "codex",
         "limit": 200,
     }
+
+
+def test_connector_runtime_agent_catalog_returns_agents(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    active_url = f"{_runtime_url(connector_id)}/active"
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
+    assert (
+        client.put(active_url, headers=headers, json={"active": True}).status_code
+        == 200
+    )
+    asyncio.run(
+        client.app.state.store.set_device_runtime_status(
+            connector_id,
+            "codex",
+            "stopped",
+        )
+    )
+    rpc.requests.clear()
+
+    response = client.get(
+        f"{_runtime_url(connector_id)}/catalogs/agent",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    agents = response.json()["catalog"]["agents"]
+    assert [agent["id"] for agent in agents] == ["build", "plan"]
+    assert agents[0]["mode"] == "primary"
+    assert agents[0]["hidden"] is False
+    assert [request[1] for request in rpc.requests] == [
+        "runtime.start",
+        "runtime.agentCatalog",
+    ]
+    assert rpc.requests[1][2] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "limit": 200,
+    }
+
+
+def test_session_runtime_agent_catalog_reads_live_catalog(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    project_id = _create_project(client, connector_id, headers)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    active_url = f"{_runtime_url(connector_id)}/active"
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
+    assert (
+        client.put(active_url, headers=headers, json={"active": True}).status_code
+        == 200
+    )
+    session_response = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "projectId": project_id,
+            "runtime": "codex",
+            "externalSessionId": "thr_existing",
+            "title": "Existing",
+            "cwd": "/repo",
+        },
+    )
+    assert session_response.status_code == 200, session_response.text
+    session_id = session_response.json()["session"]["id"]
+    asyncio.run(
+        client.app.state.store.set_device_runtime_status(
+            connector_id,
+            "codex",
+            "stopped",
+        )
+    )
+    rpc.requests.clear()
+
+    response = client.get(
+        f"/sessions/{session_id}/runtime/catalogs/agent",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert [agent["id"] for agent in response.json()["catalog"]["agents"]] == [
+        "build",
+        "plan",
+    ]
+    assert [request[1] for request in rpc.requests] == [
+        "runtime.start",
+        "runtime.agentCatalog",
+    ]
+
+
+def test_runtime_agent_catalog_degrades_when_runtime_unsupported(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    project_id = _create_project(client, connector_id, headers)
+    config_url = f"{_runtime_url(connector_id)}/config"
+    active_url = f"{_runtime_url(connector_id)}/active"
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
+    assert (
+        client.put(active_url, headers=headers, json={"active": True}).status_code
+        == 200
+    )
+    session_response = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "projectId": project_id,
+            "runtime": "codex",
+            "externalSessionId": "thr_existing",
+            "title": "Existing",
+            "cwd": "/repo",
+        },
+    )
+    assert session_response.status_code == 200, session_response.text
+    session_id = session_response.json()["session"]["id"]
+    asyncio.run(
+        client.app.state.store.set_device_runtime_status(
+            connector_id,
+            "codex",
+            "stopped",
+        )
+    )
+    rpc.errors["runtime.agentCatalog"] = ConnectorRpcError(
+        "method_not_found",
+        "runtime.agentCatalog is not supported",
+    )
+    rpc.requests.clear()
+
+    response = client.get(
+        f"/sessions/{session_id}/runtime/catalogs/agent",
+        headers=headers,
+    )
+
+    assert response.status_code == 502, response.text
+    assert response.json()["detail"]["code"] == "method_not_found"
 
 
 def test_editing_active_config_restarts_runtime(tmp_path):

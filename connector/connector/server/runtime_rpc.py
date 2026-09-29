@@ -19,6 +19,7 @@ from connector.server.runtime_rpc_params import (
     scoped_runtime,
 )
 from connector.server.runtime_rpc_payloads import (
+    agent_catalog_payload,
     capability_set_payload,
     model_catalog_payload,
     permission_catalog_payload,
@@ -61,6 +62,7 @@ class RuntimeRpcHandler:
         "runtime.capabilities",
         "runtime.commands",
         "runtime.modelCatalog",
+        "runtime.agentCatalog",
         "runtime.permissionCatalog",
         "session.discover",
         "session.create",
@@ -180,6 +182,19 @@ class RuntimeRpcHandler:
             return self._runtime_result(
                 runtime,
                 {"catalog": model_catalog_payload(catalog)},
+            )
+        if method == "runtime.agentCatalog":
+            runtime = self._resolve_agent_runtime(params)
+            # The agent directory has no query/limit contract; validate the
+            # shared catalog params exactly like the model branch, then call the
+            # runtime's zero-argument method. Runtimes that do not implement it
+            # fall through to AgentRuntime.list_agent_catalog, which raises
+            # RuntimeUnsupportedError instead of an AttributeError.
+            RuntimeCatalogParams.parse(params)
+            catalog = await runtime.list_agent_catalog()
+            return self._runtime_result(
+                runtime,
+                {"catalog": agent_catalog_payload(catalog)},
             )
         if method == "runtime.permissionCatalog":
             runtime = self._resolve_agent_runtime(params)

@@ -6,10 +6,12 @@ from agent_server.core.catalogs import (
     CatalogDomainError,
     CatalogType,
     CatalogUpdateOutcome,
+    validate_agent_catalog,
     validate_model_catalog,
     validate_permission_catalog,
 )
 from agent_server.core.protocol import (
+    ProtocolAgentCatalog,
     ProtocolModelCatalog,
     ProtocolPermissionCatalog,
 )
@@ -89,6 +91,24 @@ class CatalogService:
         catalog = self._parse("permission", raw)
         return catalog
 
+    async def agent_catalog(
+        self,
+        connector_id: str,
+        *,
+        runtime_id: str,
+        user_id: str | None = None,
+    ) -> ProtocolAgentCatalog | None:
+        raw = await self._store.get_protocol_catalog(
+            connector_id,
+            runtime_id=runtime_id,
+            catalog_type="agent",
+            user_id=user_id,
+        )
+        if raw is None:
+            return None
+        catalog = self._parse("agent", raw)
+        return catalog
+
     async def resolve_model(
         self,
         connector_id: str,
@@ -132,14 +152,23 @@ class CatalogService:
     def _parse(
         catalog_type: CatalogType,
         payload: dict[str, object],
-    ) -> ProtocolModelCatalog | ProtocolPermissionCatalog:
-        model = ProtocolModelCatalog if catalog_type == "model" else ProtocolPermissionCatalog
+    ) -> (
+        ProtocolModelCatalog
+        | ProtocolPermissionCatalog
+        | ProtocolAgentCatalog
+    ):
+        if catalog_type == "model":
+            model_type, validate = ProtocolModelCatalog, validate_model_catalog
+        elif catalog_type == "permission":
+            model_type, validate = (
+                ProtocolPermissionCatalog,
+                validate_permission_catalog,
+            )
+        else:
+            model_type, validate = ProtocolAgentCatalog, validate_agent_catalog
         try:
-            catalog = model.model_validate(payload)
-            if isinstance(catalog, ProtocolModelCatalog):
-                validate_model_catalog(catalog)
-            else:
-                validate_permission_catalog(catalog)
+            catalog = model_type.model_validate(payload)
+            validate(catalog)
             return catalog
         except (CatalogDomainError, ValidationError) as exc:
             raise CatalogServiceError("invalid_catalog", str(exc)) from exc

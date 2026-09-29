@@ -143,6 +143,36 @@ def seed_codex_permission_catalog(app: Any, connector_id: str) -> str:
     return selection_id
 
 
+def seed_codex_agent_catalog(app: Any, connector_id: str) -> None:
+    asyncio.run(
+        app.state.store.update_protocol_catalog(
+            connector_id,
+            runtime="codex",
+            catalog_type="agent",
+            revision=1,
+            catalog={
+                "runtime": "codex",
+                "revision": 1,
+                "agents": [
+                    {
+                        "id": "build",
+                        "name": "Build",
+                        "description": "Primary build agent",
+                        "mode": "primary",
+                        "hidden": False,
+                    },
+                    {
+                        "id": "plan",
+                        "name": "Plan",
+                        "mode": "primary",
+                        "hidden": False,
+                    },
+                ],
+            },
+        )
+    )
+
+
 def seed_runtime_capabilities(
     app: Any,
     connector_id: str,
@@ -1684,6 +1714,28 @@ class FakeLocalRpc:
                             "default": True,
                             "metadata": {"source": "runtime"},
                         }
+                    ],
+                }
+            }
+        if method == "runtime.agentCatalog":
+            return {
+                "catalog": {
+                    "runtime": params["runtime"],
+                    "revision": 92,
+                    "agents": [
+                        {
+                            "id": "build",
+                            "name": "Build",
+                            "description": "Primary build agent",
+                            "mode": "primary",
+                            "hidden": False,
+                        },
+                        {
+                            "id": "plan",
+                            "name": "Plan",
+                            "mode": "primary",
+                            "hidden": False,
+                        },
                     ],
                 }
             }
@@ -4819,6 +4871,7 @@ def test_session_snapshot_returns_persisted_runtime_catalogs(tmp_path):
     connector_id, _access_token, session_id, headers = create_connector_and_session(client)
     model_selection_id = seed_codex_model_catalog(client.app, connector_id)
     permission_selection_id = seed_codex_permission_catalog(client.app, connector_id)
+    seed_codex_agent_catalog(client.app, connector_id)
 
     response = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
 
@@ -4826,6 +4879,92 @@ def test_session_snapshot_returns_persisted_runtime_catalogs(tmp_path):
     catalogs = response.json()["catalogs"]
     assert catalogs["model"]["models"][0]["reasoningItems"][0]["selectionId"] == model_selection_id
     assert catalogs["permission"]["permissions"][0]["selectionId"] == permission_selection_id
+    assert [agent["id"] for agent in catalogs["agent"]["agents"]] == ["build", "plan"]
+    assert catalogs["agent"]["agents"][0]["mode"] == "primary"
+
+
+def test_session_snapshot_reports_agent_catalog_capability(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.timeout_session_methods = {"session.capabilities"}
+    client.app.state.rpc = fake_rpc
+
+    ingest = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "protocol.capabilitiesUpdated",
+                    "params": {
+                        "revision": 5,
+                        "capabilities": [
+                            {
+                                "capabilityId": "catalog.agent",
+                                "scope": "runtime",
+                                "runtime": "codex",
+                                "supported": True,
+                                "available": True,
+                                "allowed": True,
+                            }
+                        ],
+                    },
+                }
+            ]
+        },
+    )
+    assert ingest.status_code == 200, ingest.text
+
+    response = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+
+    assert response.status_code == 200, response.text
+    capabilities = {
+        item["capabilityId"]: item
+        for item in response.json()["runtimeCapabilities"]["capabilities"]
+    }
+    assert capabilities["catalog.agent"]["supported"] is True
+    assert capabilities["catalog.agent"]["available"] is True
+
+
+def test_runtime_agent_catalog_update_ingest_accepts_agent_catalog_type(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "runtime.catalog.updated",
+                        "params": {
+                            "catalogType": "agent",
+                            "catalog": {
+                                "runtime": "codex",
+                                "revision": 7,
+                                "agents": [
+                                    {
+                                        "id": "build",
+                                        "name": "Build",
+                                        "mode": "primary",
+                                        "hidden": False,
+                                    }
+                                ],
+                            },
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+        event = receive_session_ws_event(ws, "runtime.catalog.updated")
+
+    assert event["payload"]["catalogType"] == "agent"
+    assert event["payload"]["catalog"]["agents"][0]["id"] == "build"
 
 
 def test_session_snapshot_falls_back_when_live_notices_and_capabilities_timeout(

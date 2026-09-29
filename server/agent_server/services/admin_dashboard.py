@@ -55,7 +55,7 @@ from agent_server.infra.repositories.store_support import _json_loads
 from agent_server.services.repository_ports import AdminDashboardRepository
 
 DASHBOARD_SETTINGS_KEY = "settings"
-DASHBOARD_SNAPSHOT_VERSION = 5
+DASHBOARD_SNAPSHOT_VERSION = 6
 SNAPSHOT_REFRESH_SECONDS = 300
 METRIC_KEYS = {
     "totalUsers": "users.total",
@@ -74,6 +74,7 @@ METRIC_KEYS = {
 AGENT_LABELS = {
     "codex": "Codex",
     "claude": "Claude Code",
+    "opencode": "OpenCode",
     "dsh": "DeepSeek Harness",
 }
 DEVICE_LABELS = {
@@ -103,6 +104,7 @@ class UserDailyFact:
     unknown_devices: int = 0
     codex_agents: int = 0
     claude_agents: int = 0
+    opencode_agents: int = 0
     dsh_agents: int = 0
 
 
@@ -318,7 +320,7 @@ class AdminDashboardService:
                     dimension_value=key,
                 )
             )
-        for key in ("codex", "claude", "dsh"):
+        for key in ("codex", "claude", "opencode", "dsh"):
             metrics.append(
                 _metric(
                     target_date,
@@ -390,6 +392,7 @@ class AdminDashboardService:
                 "unknown_devices": fact.unknown_devices,
                 "codex_agents": fact.codex_agents,
                 "claude_agents": fact.claude_agents,
+                "opencode_agents": fact.opencode_agents,
                 "dsh_agents": fact.dsh_agents,
                 "last_activity_at": fact.last_activity_at,
                 "computed_at": computed_at,
@@ -533,6 +536,7 @@ class AdminDashboardService:
                 "unknown_devices": 0,
                 "codex_agents": 0,
                 "claude_agents": 0,
+                "opencode_agents": 0,
                 "dsh_agents": 0,
             }
         )
@@ -543,7 +547,7 @@ class AdminDashboardService:
             item = by_user[connector.userId]
             item["devices"] += 1
             item[f"{os_key}_devices"] += 1
-            for agent in ("codex", "claude", "dsh"):
+            for agent in ("codex", "claude", "opencode", "dsh"):
                 if agent in runtimes_by_connector.get(connector.id, set()):
                     item[f"{agent}_agents"] += 1
                     agent_counts[agent] += 1
@@ -674,7 +678,7 @@ class AdminDashboardService:
             ).mappings().all()
         for row in [*session_rows, *timeline_rows]:
             runtime = row["runtime"]
-            if runtime in {"codex", "claude", "dsh"}:
+            if runtime in {"codex", "claude", "opencode", "dsh"}:
                 active[row["id"]] = runtime
         return Counter(active.values())
 

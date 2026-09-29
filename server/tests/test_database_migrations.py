@@ -37,6 +37,10 @@ def _sqlite_url(path) -> str:
     return f"sqlite+aiosqlite:///{path}"
 
 
+def _index_names(engine, table: str) -> set[str]:
+    return {index["name"] for index in inspect(engine).get_indexes(table)}
+
+
 def test_protocol_clock_revisions_use_64_bit_columns() -> None:
     assert isinstance(connector_protocol_capabilities.c.revision.type, BigInteger)
     assert isinstance(connector_runtime_catalogs.c.revision.type, BigInteger)
@@ -383,6 +387,12 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_30", "v2_31"),
         ("v2_31", "v2_32"),
         ("v2_32", "v2_33"),
+        ("v2_33", "v2_34"),
+        ("v2_34", "v2_35"),
+        ("v2_35", "v2_36"),
+        ("v2_36", "v2_37"),
+        ("v2_37", "v2_38"),
+        ("v2_38", "v2_39"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -1125,9 +1135,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_37() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_37"
-    assert CURRENT_SCHEMA_VERSION == "2.37"
+def test_current_schema_version_is_v2_39() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_39"
+    assert CURRENT_SCHEMA_VERSION == "2.39"
 
 
 def test_v2_37_adds_session_title_source(tmp_path) -> None:
@@ -1145,6 +1155,85 @@ def test_v2_37_adds_session_title_source(tmp_path) -> None:
         engine.dispose()
 
     assert "title_source" in after
+
+
+def test_v2_38_adds_oauth_device_code_storage(tmp_path) -> None:
+    path = tmp_path / "oauth-device-codes.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_36")
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        assert "oauth_device_codes" not in inspect(engine).get_table_names()
+        upgrade_database(db_url=url)
+        upgrade_database(db_url=url)
+        schema = inspect(engine)
+        assert schema.get_pk_constraint("oauth_device_codes")["constrained_columns"] == ["device_code_hash"]
+        assert {
+            column["name"] for column in schema.get_columns("oauth_device_codes")
+        } >= {"user_code_hash", "client_id", "status", "expires_at", "consumed_at"}
+        assert schema.get_pk_constraint("oauth_device_code_attempts")["constrained_columns"] == ["user_id"]
+        assert _index_names(engine, "oauth_device_codes") >= {
+            "idx_oauth_device_codes_user_code_hash"
+        }
+    finally:
+        engine.dispose()
+
+
+def test_v2_38_restores_a_missing_user_code_index(tmp_path) -> None:
+    """A rerun must add the user-code index even when the table pre-exists.
+
+    SQLite DDL is not transactional, so an upgrade killed between CREATE TABLE
+    and CREATE INDEX leaves a table without the index; guarding both under the
+    same ``has_table`` check made the rerun skip the index forever.
+    """
+
+    path = tmp_path / "oauth-device-index.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_36")
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE TABLE oauth_device_codes ("
+                    " device_code_hash TEXT PRIMARY KEY,"
+                    " user_code_hash TEXT NOT NULL)"
+                )
+            )
+
+        upgrade_database(db_url=url)
+
+        assert _index_names(engine, "oauth_device_codes") >= {
+            "idx_oauth_device_codes_user_code_hash"
+        }
+
+        # A downgrade must survive the index already being gone.
+        with engine.begin() as connection:
+            connection.execute(text("DROP INDEX idx_oauth_device_codes_user_code_hash"))
+        command.downgrade(_alembic_config(url), "v2_36")
+        assert not inspect(engine).has_table("oauth_device_codes")
+    finally:
+        engine.dispose()
+
+
+def test_v2_39_adds_opencode_agent_facts(tmp_path) -> None:
+    path = tmp_path / "opencode-agents.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_37")
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        assert "opencode_agents" not in {
+            column["name"]
+            for column in inspect(engine).get_columns("dashboard_user_daily_facts")
+        }
+        upgrade_database(db_url=url)
+        upgrade_database(db_url=url)
+        assert "opencode_agents" in {
+            column["name"]
+            for column in inspect(engine).get_columns("dashboard_user_daily_facts")
+        }
+    finally:
+        engine.dispose()
 
 
 def test_v2_36_adds_retired_runtime_identity_storage(tmp_path) -> None:

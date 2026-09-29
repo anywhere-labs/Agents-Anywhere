@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Check, Monitor } from "lucide-react"
+import { Check } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -12,21 +12,22 @@ import {
   DrawerTitle,
   DrawerTrigger,
 } from "@/components/ui/drawer"
-import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
 import type { SelectionOption } from "@/components/session/selection-settings-drawer"
 
+/**
+ * Runtime agent picker (Build/Plan-style). The selected value is the catalog
+ * agent id, which is what `session.updateSelections` sends as the `agent` key.
+ *
+ * This is not the new-session device/target picker — that one lives in
+ * `device-runtime-selection-drawer.tsx`.
+ */
 export function AgentSelectionDrawer({
   disabled,
   buttonLabel,
   title,
   description,
-  deviceLabel,
-  agentLabel,
-  deviceItems,
-  selectedDevice,
-  onDeviceChange,
-  agentItems,
+  options,
   selectedAgent,
   onAgentChange,
 }: {
@@ -34,12 +35,7 @@ export function AgentSelectionDrawer({
   buttonLabel: string
   title: string
   description?: string
-  deviceLabel: string
-  agentLabel: string
-  deviceItems: SelectionOption[]
-  selectedDevice: string
-  onDeviceChange: (id: string) => void
-  agentItems: SelectionOption[]
+  options: SelectionOption[]
   selectedAgent: string
   onAgentChange: (id: string) => void
 }) {
@@ -51,13 +47,13 @@ export function AgentSelectionDrawer({
         <Button
           type="button"
           variant="ghost"
-          size="icon"
+          size="sm"
           disabled={disabled}
-          className="rounded-xl text-muted-foreground"
+          className="h-8 min-w-0 shrink gap-1.5 rounded-xl px-2.5 text-muted-foreground"
           aria-label={buttonLabel}
           title={buttonLabel}
         >
-          <Monitor />
+          <span className="min-w-0 max-w-40 truncate text-foreground">{buttonLabel}</span>
         </Button>
       </DrawerTrigger>
       <DrawerContent>
@@ -65,71 +61,55 @@ export function AgentSelectionDrawer({
           <DrawerTitle>{title}</DrawerTitle>
           {description ? <DrawerDescription>{description}</DrawerDescription> : null}
         </DrawerHeader>
-        <div className="flex max-h-[58vh] flex-col gap-5 overflow-y-auto px-4 pb-4">
-          <SelectionSection title={deviceLabel}>
-            {deviceItems.map((item) => (
-              <SelectionRow
-                key={item.id}
-                selected={selectedDevice === item.id}
-                label={item.label}
-                onClick={() => onDeviceChange(item.id)}
-              />
-            ))}
-          </SelectionSection>
-
-          {agentItems.length > 0 ? (
-            <>
-              <Separator />
-              <SelectionSection title={agentLabel}>
-                {agentItems.map((item) => (
-                  <SelectionRow
-                    key={item.id}
-                    selected={selectedAgent === item.id}
-                    label={item.label}
-                    onClick={() => {
-                      onAgentChange(item.id)
-                      setOpen(false)
-                    }}
-                  />
-                ))}
-              </SelectionSection>
-            </>
-          ) : null}
+        <div className="flex max-h-[58vh] flex-col gap-1 overflow-y-auto px-4 pb-4">
+          {options.map((item) => (
+            <SelectionRow
+              key={item.id}
+              selected={selectedAgent === item.id}
+              label={item.label}
+              helper={item.enabled === false ? item.disabledReason ?? undefined : item.description ?? undefined}
+              disabled={disabled || item.enabled === false}
+              onClick={() => {
+                onAgentChange(item.id)
+                setOpen(false)
+              }}
+            />
+          ))}
         </div>
       </DrawerContent>
     </Drawer>
   )
 }
 
-function SelectionSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="flex flex-col gap-2">
-      <h3 className="px-1 text-sm font-medium text-foreground">{title}</h3>
-      <div className="flex flex-col gap-1">{children}</div>
-    </section>
-  )
-}
-
 function SelectionRow({
   selected,
   label,
+  helper,
+  disabled = false,
   onClick,
 }: {
   selected: boolean
   label: string
+  helper?: string
+  disabled?: boolean
   onClick: () => void
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={cn(
         "flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors",
         selected ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+        disabled && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground",
       )}
     >
       <Check className={cn("size-4 shrink-0", selected ? "opacity-100" : "opacity-0")} />
-      <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-medium">{label}</span>
+        {helper ? <span className="block truncate text-xs opacity-70">{helper}</span> : null}
+      </span>
     </button>
   )
 }

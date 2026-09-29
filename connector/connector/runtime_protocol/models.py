@@ -40,6 +40,7 @@ CAPABILITY_RUNTIME_CONFIG = "runtime.config"
 CAPABILITY_CATALOG_MODEL = "catalog.model"
 CAPABILITY_CATALOG_PERMISSION = "catalog.permission"
 CAPABILITY_CATALOG_EFFORT = "catalog.effort"
+CAPABILITY_CATALOG_AGENT = "catalog.agent"
 CAPABILITY_SESSION_COMMANDS = "session.commands"
 
 
@@ -121,6 +122,21 @@ class RuntimePermissionItem:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeAgentItem:
+    """One selectable agent from a runtime's agent directory (D3)."""
+
+    id: str
+    name: str | None = None
+    description: str | None = None
+    #: `"primary" | "subagent" | "all"`; an unknown/absent mode decodes to
+    #: `"all"`, which the platform may offer as switchable.
+    mode: str = "all"
+    #: Passed through verbatim. Whether the Hub filters hidden agents is
+    #: unverified, so the Connector must not assume it means "already removed".
+    hidden: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeModelCatalog:
     runtime: str
     revision: int
@@ -133,6 +149,16 @@ class RuntimePermissionCatalog:
     runtime: str
     revision: int
     permissions: tuple[RuntimePermissionItem, ...]
+    runtime_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeAgentCatalog:
+    """Agent directory (D3), mirroring `ProtocolAgentCatalog`."""
+
+    runtime: str
+    revision: int
+    agents: tuple[RuntimeAgentItem, ...]
     runtime_id: str | None = None
 
 

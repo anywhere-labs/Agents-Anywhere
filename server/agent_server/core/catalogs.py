@@ -3,11 +3,12 @@ from __future__ import annotations
 from typing import Literal
 
 from agent_server.core.protocol import (
+    ProtocolAgentCatalog,
     ProtocolModelCatalog,
     ProtocolPermissionCatalog,
 )
 
-CatalogType = Literal["model", "permission"]
+CatalogType = Literal["model", "permission", "agent"]
 CatalogUpdateOutcome = Literal["accepted", "idempotent", "stale", "conflict"]
 
 
@@ -52,6 +53,10 @@ def validate_permission_catalog(catalog: ProtocolPermissionCatalog) -> None:
         "permission catalog",
         [permission.default for permission in catalog.permissions],
     )
+
+
+def validate_agent_catalog(catalog: ProtocolAgentCatalog) -> None:
+    _require_unique("agent id", [agent.id for agent in catalog.agents])
 
 
 def _require_unique(label: str, values: list[str]) -> None:

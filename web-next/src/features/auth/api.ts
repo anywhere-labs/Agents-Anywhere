@@ -24,7 +24,8 @@ import type {
   ServiceInfo,
   UserRole,
   MobileLoginQrCreateResponse,
-  MobileLoginStatusResponse
+  MobileLoginStatusResponse,
+  DeviceCodeApprovalResponse
 } from "@/features/auth/types";
 
 export class AuthApi {
@@ -277,6 +278,14 @@ export class AuthApi {
 
   confirmMobileLogin(token: string, loginToken: string, approved: boolean): Promise<MobileLoginStatusResponse> {
     return this.client.post<MobileLoginStatusResponse>("/auth/mobile-login/confirm", { loginToken, approved }, { token });
+  }
+
+  lookupDeviceCode(token: string, userCode: string): Promise<DeviceCodeApprovalResponse> {
+    return this.client.post<DeviceCodeApprovalResponse>("/oauth/device/lookup", { userCode }, { token });
+  }
+
+  approveDeviceCode(token: string, userCode: string, approved: boolean): Promise<DeviceCodeApprovalResponse> {
+    return this.client.post<DeviceCodeApprovalResponse>("/oauth/device/approve", { userCode, approved }, { token });
   }
 }
 export const authApi = new AuthApi();

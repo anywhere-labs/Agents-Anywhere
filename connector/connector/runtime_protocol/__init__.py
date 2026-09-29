@@ -42,6 +42,7 @@ from connector.runtime_protocol.interactions import (
     InputRequestValidationError,
 )
 from connector.runtime_protocol.models import (
+    CAPABILITY_CATALOG_AGENT,
     CAPABILITY_CATALOG_EFFORT,
     CAPABILITY_CATALOG_MODEL,
     CAPABILITY_CATALOG_PERMISSION,
@@ -52,6 +53,8 @@ from connector.runtime_protocol.models import (
     CAPABILITY_SESSION_INTERRUPT,
     CAPABILITY_SESSION_SEND_MESSAGE,
     CAPABILITY_SESSION_STEER,
+    RuntimeAgentCatalog,
+    RuntimeAgentItem,
     RuntimeAttachment,
     RuntimeAttachmentContent,
     RuntimeCapability,
@@ -159,6 +162,7 @@ from connector.runtime_protocol.timeline import (
 )
 
 __all__ = [
+    "CAPABILITY_CATALOG_AGENT",
     "CAPABILITY_CATALOG_EFFORT",
     "CAPABILITY_CATALOG_MODEL",
     "CAPABILITY_CATALOG_PERMISSION",
@@ -210,6 +214,8 @@ __all__ = [
     "PlatformTimelineItem",
     "ReasoningSystemContent",
     "RuntimeAgentCall",
+    "RuntimeAgentCatalog",
+    "RuntimeAgentItem",
     "RuntimeAttachment",
     "RuntimeAttachmentContent",
     "RuntimeCapability",

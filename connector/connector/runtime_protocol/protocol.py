@@ -7,6 +7,7 @@ from typing import Any
 from connector.runtime_protocol.errors import RuntimeUnsupportedError
 from connector.runtime_protocol.models import (
     PreparedSessionTimelineSync,
+    RuntimeAgentCatalog,
     RuntimeAttachment,
     RuntimeCapabilitySet,
     RuntimeCommand,
@@ -70,6 +71,9 @@ class AgentRuntime(ABC):
         limit: int = 100,
     ) -> RuntimePermissionCatalog:
         raise RuntimeUnsupportedError("list_permission_catalog")
+
+    async def list_agent_catalog(self) -> RuntimeAgentCatalog:
+        raise RuntimeUnsupportedError("list_agent_catalog")
 
     async def list_sessions(
         self,

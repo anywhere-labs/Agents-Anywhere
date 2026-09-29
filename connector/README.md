@@ -13,7 +13,7 @@ back to the backend.
 ```text
 connector/
   runtime_protocol/  AgentRuntime, RuntimeProvider, RuntimeHostClient contracts
-  runtimes/          Codex, Claude and DSH RuntimeProvider/AgentRuntime packages
+  runtimes/          Codex, Claude, DSH and OpenCode RuntimeProvider/AgentRuntime packages
   server/            Backend auth, ingest, RPC channel, request dispatch, host mapping
   core/              Connector config, JSON-RPC, runtime owner, runtime config storage
   local/             Local filesystem, shell, and terminal backends
@@ -135,7 +135,7 @@ atomic file transactions and legacy migration.
 
 ## Runtime Discovery
 
-The default providers are Codex, Claude and DSH. The connector reports attached runtime
+The default providers are Codex, Claude, DSH and OpenCode. The connector reports attached runtime
 capabilities to the server. Codex is discovered through the official
 `openai-codex` SDK package; the connector does not use a Codex CLI/app-server
 path or IPC switch as an active runtime surface. If Claude Code is not on
@@ -146,8 +146,26 @@ CLAUDE_BIN=/path/to/claude
 ```
 
 DSH requires the bridge integration described in
-[DSH Bridge Next](../dsh-bridge-next/README.md). Legacy ACP adapters are not part
-of the default provider registry.
+[DSH Bridge Next](../dsh-bridge-next/README.md). OpenCode attaches to the OpenCode
+host's own HTTP service, the same shape as Codex and Claude: OpenCode registers a
+machine-wide service in `$XDG_STATE_HOME/opencode/service.json` (the `stateDir`
+setting overrides that state home, and naming the directory that holds
+`service.json` itself works too; or start one with `opencode serve --service`),
+and the connector joins that endpoint over
+`127.0.0.1` with Basic auth — it never spawns OpenCode and nothing is installed
+inside it. Each runtime instance binds one `(servicePid, location)` pair, so
+`location` scopes the session inventory and is required for complete discovery.
+Endpoint semantics, measured quirks and the reproduction commands live in
+[docs/opencode-server-surface.md](../docs/opencode-server-surface.md). OpenCode also publishes
+its agent and model directories (`GET /api/agent`, `GET /api/model`), surfaced to
+the server as the generic `runtime.agentCatalog` RPC and pushed as the
+`agent_catalog_update` notification when the host announces a change. Note that
+the model catalog keys on `providerID/modelID` because the host repeats bare ids
+across providers, and those two endpoints are service-wide — `?directory=` does
+not scope them. This runtime reports attachments and mid-turn steering as
+unavailable: the host has no attachment upload on this surface, and `steer` is
+only declared as a `delivery` mode on prompt, unproven against a live turn.
+Legacy ACP adapters are not part of the default provider registry.
 
 The connector uses local runtime credentials and local filesystem permissions.
 Agents Anywhere does not proxy Claude or Codex account credentials.

@@ -6,6 +6,7 @@ import type {
 } from "@/generated/protocol/v1/capabilities-response";
 import type { ProtocolModelCatalog } from "@/generated/protocol/v1/model-catalog-response";
 import type { ProtocolPermissionCatalog } from "@/generated/protocol/v1/permission-catalog-response";
+import type { ProtocolAgentCatalog } from "@/generated/protocol/v1/agent-catalog-response";
 import type { ProtocolSessionSnapshotResponse } from "@/generated/protocol/v1/session-snapshot-response";
 import type { ProtocolWsTicketResponse } from "@/generated/protocol/v1/ws-ticket-response";
 
@@ -24,6 +25,11 @@ export type {
   ProtocolPermissionCatalogResponse,
   ProtocolPermissionItem,
 } from "@/generated/protocol/v1/permission-catalog-response";
+export type {
+  ProtocolAgentCatalog,
+  ProtocolAgentCatalogResponse,
+  ProtocolAgentItem,
+} from "@/generated/protocol/v1/agent-catalog-response";
 
 export type { ProtocolCapability, ProtocolCapabilitySet, ProtocolCapabilitiesResponse };
 
@@ -570,6 +576,7 @@ export type SessionSnapshotResponse = Pick<
   catalogs: {
     model?: ProtocolModelCatalog;
     permission?: ProtocolPermissionCatalog;
+    agent?: ProtocolAgentCatalog;
     [key: string]: unknown;
   };
 };

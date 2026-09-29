@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://www.agents-anywhere.com/en"><img src="docs/images/readme-hero-en.webp" alt="Agents Anywhere: an agent workbench across your devices. Supports Codex, Claude Code and DeepSeek Harness, with more agents coming soon." width="100%"></a>
+  <a href="https://www.agents-anywhere.com/en"><img src="docs/images/readme-hero-en.webp" alt="Agents Anywhere: an agent workbench across your devices. Supports Codex, Claude Code, OpenCode and DeepSeek Harness, with more agents coming soon." width="100%"></a>
 </p>
 
 <p align="center">
@@ -21,7 +21,7 @@
   <a href="docker/README.md"><img src="https://img.shields.io/badge/self--hosted-Docker-222222?style=flat" alt="Self-host with Docker"></a>
 </p>
 
-**Agents Anywhere** is an open-source agent workbench across your devices. Connect a work machine running **Codex, Claude Code or DeepSeek Harness**, then view sessions, respond to requests, manage files and use terminals from desktop, mobile and Web. Agents execute tasks on the connected work machine.
+**Agents Anywhere** is an open-source agent workbench across your devices. Connect a work machine running **Codex, Claude Code, OpenCode or DeepSeek Harness**, then view sessions, respond to requests, manage files and use terminals from desktop, mobile and Web. Agents execute tasks on the connected work machine.
 
 ## Downloads and access
 
@@ -78,9 +78,9 @@ The macOS, Windows and Android files are **Agents Anywhere** installers hosted i
 | **Manage projects and sessions** | Switch between devices, projects and sessions, and follow progress through live timelines. |
 | **Approve actions and respond to requests** | Respond to approvals and input requests; interrupt or continue tasks where the runtime supports it. |
 | **Browse files and use terminals** | Browse and preview files, upload and download attachments, and open remote shells and interactive terminals. |
-| **Configure agents** | Configure Codex, Claude Code and DSH; choose models, permissions and actions from the capabilities each runtime supports. |
+| **Configure agents** | Configure Codex, Claude Code, OpenCode and DSH; choose models, permissions and actions from the capabilities each runtime supports. |
 
-A runtime is the component that runs or connects an agent on your work machine. Model accounts and usage charges follow the rules of the agent you use. Capabilities vary by runtime; follow the options shown in the client. [Connect DSH →](dsh-bridge-next/README.md)
+A runtime is the component that runs or connects an agent on your work machine. Model accounts and usage charges follow the rules of the agent you use. Capabilities vary by runtime; follow the options shown in the client. [Connect DSH →](dsh-bridge-next/README.md) · [Connect OpenCode →](docs/opencode-server-surface.md)
 
 ## Desktop, mobile and Web
 
@@ -109,7 +109,7 @@ Agents use the workspace and permissions of the Connector machine. Connect to Cl
 flowchart LR
     Clients["Desktop · Mobile · Web"] <-->|"Access and control"| Server["Agents Anywhere Server"]
     Server <-->|"Connector RPC"| Connector["Connector on your work machine"]
-    Connector <--> Agents["Codex · Claude Code · DSH"]
+    Connector <--> Agents["Codex · Claude Code · OpenCode · DSH"]
     Connector <--> Workspace["Workspace · Files · Terminal"]
 ```
 
@@ -144,6 +144,7 @@ Development uses **Python 3.12+ / uv / Node.js 22 / Corepack + Yarn**. Start wit
 | Web and desktop clients | [Web source](web-next/) · [Desktop Workbench](desktop-workbench/README.md) |
 | Native mobile clients | [Android](android/README.md) · [iOS source](ios/) |
 | DSH integration | [DSH Bridge Next](dsh-bridge-next/README.md) |
+| OpenCode integration | [OpenCode host service surface, measured](docs/opencode-server-surface.md) · [Connector](connector/README.md) |
 | More documentation | [Documentation index](docs/README.md) · [Protocol contracts](contracts/) |
 
 Report problems in [Issues](https://github.com/anywhere-labs/Agents-Anywhere/issues) or contribute through [Pull Requests](https://github.com/anywhere-labs/Agents-Anywhere/pulls). Include the client version, operating system, runtime type and reproduction steps, with credentials removed from logs.

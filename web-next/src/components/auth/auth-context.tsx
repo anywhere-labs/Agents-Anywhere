@@ -22,6 +22,7 @@ export type AuthScreen =
   | "mobile-oauth"
   | "desktop-oauth"
   | "plugin-oauth"
+  | "plugin-device"
   | "onboarding"
   | "preview"
   | "app"
@@ -76,6 +77,7 @@ function hashToScreen(hash: string): AuthScreen {
     "mobile-oauth": "mobile-oauth",
     "desktop-oauth": "desktop-oauth",
     "plugin-oauth": "plugin-oauth",
+    "plugin-device": "plugin-device",
     onboarding: "onboarding",
     preview: "preview",
   }
@@ -110,6 +112,7 @@ function screenToHash(s: AuthScreen): string {
     "mobile-oauth": "#/mobile-oauth",
     "desktop-oauth": "#/desktop-oauth",
     "plugin-oauth": "#/plugin-oauth",
+    "plugin-device": "#/plugin-device",
     onboarding: "#/onboarding",
     preview: "#/preview",
     app: "#/",

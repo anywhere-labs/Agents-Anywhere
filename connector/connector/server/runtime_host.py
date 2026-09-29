@@ -8,6 +8,7 @@ from typing import Any
 
 from connector.logging import logger
 from connector.runtime_protocol import (
+    RuntimeAgentCatalog,
     RuntimeAttachmentContent,
     RuntimeCapabilitySet,
     RuntimeModelCatalog,
@@ -20,6 +21,7 @@ from connector.runtime_protocol import (
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.server.runtime_rpc_payloads import (
     DeferredServerPayload,
+    agent_catalog_payload,
     capability_set_payload,
     model_catalog_payload,
     permission_catalog_payload,
@@ -239,6 +241,26 @@ class ConnectorRuntimeHost(RuntimeHostClient):
                 "runtimeId": catalog.runtime_id or catalog.runtime,
                 "catalogType": "permission",
                 "catalog": permission_catalog_payload(catalog),
+            },
+        )
+
+    async def agent_catalog_update(
+        self,
+        catalog: RuntimeAgentCatalog,
+    ) -> None:
+        """Publish the latest runtime agent directory to the platform.
+
+        Side effects:
+        - sends `runtime.catalog.updated` through the backend notifier
+        """
+
+        await self._notify_server(
+            "runtime.catalog.updated",
+            {
+                "runtime": catalog.runtime,
+                "runtimeId": catalog.runtime_id or catalog.runtime,
+                "catalogType": "agent",
+                "catalog": agent_catalog_payload(catalog),
             },
         )
 

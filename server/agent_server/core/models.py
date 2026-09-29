@@ -560,9 +560,35 @@ class OAuthMetadataResponse(BaseModel):
     issuer: str
     authorization_endpoint: str
     token_endpoint: str
+    device_authorization_endpoint: str | None = None
     response_types_supported: list[str]
     grant_types_supported: list[str]
     code_challenge_methods_supported: list[str]
+
+
+class OAuthDeviceCodeResponse(BaseModel):
+    device_code: str
+    user_code: str
+    verification_uri: str
+    verification_uri_complete: str
+    expires_in: int
+    interval: int
+
+
+class OAuthDeviceLookupRequest(BaseModel):
+    userCode: str
+
+
+class OAuthDeviceApproveRequest(BaseModel):
+    userCode: str
+    approved: bool
+
+
+class OAuthDeviceApprovalResponse(BaseModel):
+    status: str
+    clientName: str
+    expiresAt: str
+    serverTime: str
 
 
 class MobileLoginQrCreateResponse(BaseModel):

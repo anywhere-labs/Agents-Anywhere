@@ -25,6 +25,7 @@ import {
 } from "@/components/attachment-input"
 import { cn } from "@/lib/utils"
 import type {
+  ProtocolAgentCatalog,
   ProtocolCapabilitySet,
   ProtocolModelCatalog,
   ProtocolPermissionCatalog,
@@ -35,6 +36,7 @@ import type {
 } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 import {
+  agentIdForSelectionId,
   catalogItemDisabledReason,
   catalogItemEnabled,
   catalogI18nText,
@@ -43,10 +45,12 @@ import {
   modelIdsForSelectionId,
   permissionIdForSelectionId,
   permissionCatalogI18nText,
+  selectionIdForAgentCatalog,
   selectionIdForModelCatalog,
   selectionIdForPermissionCatalog,
 } from "@/components/session/catalog-selection"
 import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
+import { AgentSelectionDrawer } from "@/components/session/agent-selection-drawer"
 import { CAPABILITY, capabilityIsUsable, findCapability, attachmentMimeTypes } from "@/components/session/capabilities"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
@@ -66,6 +70,7 @@ export function SessionComposer({
   effectiveCapabilities,
   modelCatalog,
   permissionCatalog,
+  agentCatalog = null,
   runtimeCommands,
   commandsLoading = false,
   onCommandQueryChange,
@@ -90,15 +95,16 @@ export function SessionComposer({
   effectiveCapabilities: ProtocolCapabilitySet | null
   modelCatalog: ProtocolModelCatalog | null
   permissionCatalog: ProtocolPermissionCatalog | null
+  agentCatalog?: ProtocolAgentCatalog | null
   runtimeCommands: RuntimeCommand[]
   commandsLoading?: boolean
   onCommandQueryChange: (query: string | null) => void
   onValueChange: (value: string) => void
-  onSelectionChange: (selections: { model?: string; permission?: string }) => Promise<boolean>
+  onSelectionChange: (selections: { model?: string; permission?: string; agent?: string }) => Promise<boolean>
   onSend: (
     content: string,
     attachments: AttachedFile[],
-    selections: { model?: string; permission?: string },
+    selections: { model?: string; permission?: string; agent?: string },
     mode?: "queue" | "steer",
   ) => Promise<boolean>
   onInterrupt: () => void
@@ -153,6 +159,7 @@ export function SessionComposer({
     CAPABILITY.permissionCatalog,
     runtimeScope,
   )
+  const canUseAgentCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.agentCatalog, runtimeScope)
   const canUseEffortCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.effortCatalog, runtimeScope)
   const canUseAttachments = capabilityIsUsable(effectiveCapabilities, CAPABILITY.attachment, runtimeScope)
   const allowedMimeTypes = React.useMemo(() => attachmentMimeTypes(effectiveCapabilities, runtimeScope), [effectiveCapabilities, runtimeScope])
@@ -191,6 +198,7 @@ export function SessionComposer({
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
   const [selectedModel, setSelectedModel] = React.useState("")
   const [selectedReasoning, setSelectedReasoning] = React.useState("")
+  const [selectedAgentId, setSelectedAgentId] = React.useState("")
   const permissionItems = permissionCatalog?.permissions.map((item) => ({
     id: item.id,
     label: permissionCatalogI18nText(tNew, permissionCatalog, item, "labelKey"),
@@ -223,10 +231,19 @@ export function SessionComposer({
       selectionId: reasoning.selectionId,
     })),
   })) ?? []
+  const agentItems = agentCatalog?.agents
+    .filter((agent) => !agent.hidden)
+    .map((agent) => ({
+      id: agent.id,
+      label: agent.name?.trim() || agent.id,
+      description: agent.description ?? null,
+      enabled: true,
+    })) ?? []
   const selectedModelItem = modelItems.find((item) => item.id === selectedModel)
   const effortItems = selectedModelItem?.reasoningItems ?? []
   const modelSelectionValue = modelIdsForSelectionId(modelCatalog, runtimeSelections.model ?? null, dsh)
   const permissionSelectionValue = permissionIdForSelectionId(permissionCatalog, runtimeSelections.permission ?? null, dsh)
+  const agentSelectionValue = agentIdForSelectionId(agentCatalog, runtimeSelections.agent ?? null)
   const permissionValue = permissionSelectionValue
   const modelValue = modelSelectionValue?.modelId ?? ""
   const effortValue = modelSelectionValue?.reasoningId ?? ""
@@ -242,6 +259,7 @@ export function SessionComposer({
   const permissionSelectorDisabled = creatingSession || sourceUnavailable || !connectorOnline || !canUsePermissionCatalog
   const modelSelectorDisabled = creatingSession || sourceUnavailable || !connectorOnline || !canUseModelCatalog
   const effortSelectorDisabled = creatingSession || sourceUnavailable || !connectorOnline || !canUseEffortCatalog
+  const agentSelectorDisabled = creatingSession || sourceUnavailable || !connectorOnline || !canUseAgentCatalog
   const selectorsDisabled = permissionSelectorDisabled && modelSelectorDisabled
 
   React.useEffect(() => {
@@ -284,8 +302,29 @@ export function SessionComposer({
       hasRuntimeEffort || !current || !effortItems.some((item) => item.id === current && item.enabled) ? nextEffort : current,
     )
   }, [dsh, effortItems, effortValue])
+  React.useEffect(() => {
+    if (dsh) { setSelectedAgentId(agentSelectionValue); return }
+    const hasRuntimeAgent = agentItems.some((item) => item.id === agentSelectionValue && item.enabled)
+    const nextAgent = hasRuntimeAgent
+      ? agentSelectionValue
+      : agentItems.find((item) => item.enabled)?.id ?? ""
+    setSelectedAgentId((current) =>
+      hasRuntimeAgent || !current || !agentItems.some((item) => item.id === current && item.enabled) ? nextAgent : current,
+    )
+  }, [agentItems, agentSelectionValue, dsh])
   const selectedModelSelection = selectionIdForModelCatalog(modelCatalog, selectedModel, selectedReasoning) ?? (dsh ? runtimeSelections.model : null)
   const selectedPermissionSelection = selectionIdForPermissionCatalog(permissionCatalog, selectedPermissionMode) ?? (dsh && actualPermission?.id !== 'custom' ? runtimeSelections.permission : null)
+  const selectedAgentSelection = selectionIdForAgentCatalog(agentCatalog, selectedAgentId) ?? (dsh ? runtimeSelections.agent : null)
+  const chooseAgent = (agentId: string) => {
+    if (agentId === selectedAgentId) return
+    const previousAgent = selectedAgentId
+    const nextSelection = selectionIdForAgentCatalog(agentCatalog, agentId)
+    if (!nextSelection) return
+    setSelectedAgentId(agentId)
+    void onSelectionChange({ agent: nextSelection }).then((ok) => {
+      if (!ok && !dsh) setSelectedAgentId(previousAgent)
+    })
+  }
   const choosePermission = (permissionId: string) => {
     if (permissionId === selectedPermissionMode) return
     const previousPermission = selectedPermissionMode
@@ -371,6 +410,7 @@ export function SessionComposer({
     const sent = await onSend(text, files, {
       ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
       ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
+      ...(selectedAgentSelection ? { agent: selectedAgentSelection } : {}),
     }, busy ? effectiveSendMode : undefined)
     if (!sent && valueRef.current === "") {
       updateValue(text)
@@ -625,6 +665,16 @@ export function SessionComposer({
                 ) : null}
                 </>
               )
+            ) : null}
+            {agentItems.length > 0 ? (
+              <AgentSelectionDrawer
+                disabled={agentSelectorDisabled}
+                buttonLabel={tNew("agent")}
+                title={tNew("agent")}
+                options={agentItems}
+                selectedAgent={selectedAgentId}
+                onAgentChange={chooseAgent}
+              />
             ) : null}
             <div
               role="switch"

@@ -1,6 +1,7 @@
 "use client"
 
 import type {
+  ProtocolAgentCatalog,
   ProtocolModelCatalog,
   ProtocolModelItem,
   ProtocolPermissionCatalog,
@@ -162,6 +163,26 @@ export function permissionIdForSelectionId(
   return catalog.permissions.find(
     (item) => item.selectionId === selectionId && (includeDisabled || catalogItemEnabled(item)),
   )?.id ?? ""
+}
+
+/**
+ * Agent selection value is the catalog agent id (no separate selectionId), and
+ * hidden agents are never selectable.
+ */
+export function selectionIdForAgentCatalog(
+  catalog: ProtocolAgentCatalog | null,
+  agentId: string,
+): string | null {
+  if (!catalog || !agentId) return null
+  return catalog.agents?.find((agent) => agent.id === agentId && !agent.hidden)?.id ?? null
+}
+
+export function agentIdForSelectionId(
+  catalog: ProtocolAgentCatalog | null,
+  selectionId: string | null | undefined,
+): string {
+  if (!catalog || !selectionId) return ""
+  return catalog.agents?.find((agent) => !agent.hidden && agent.id === selectionId)?.id ?? ""
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

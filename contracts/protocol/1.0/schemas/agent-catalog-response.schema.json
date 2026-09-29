@@ -1,0 +1,114 @@
+{
+  "$defs": {
+    "ProtocolAgentCatalog": {
+      "properties": {
+        "agents": {
+          "items": {
+            "$ref": "#/$defs/ProtocolAgentItem"
+          },
+          "title": "Agents",
+          "type": "array"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "runtime": {
+          "enum": [
+            "codex",
+            "claude",
+            "opencode",
+            "acp",
+            "dsh"
+          ],
+          "title": "Runtime",
+          "type": "string"
+        }
+      },
+      "required": [
+        "runtime",
+        "revision",
+        "agents"
+      ],
+      "title": "ProtocolAgentCatalog",
+      "type": "object"
+    },
+    "ProtocolAgentItem": {
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "hidden": {
+          "default": false,
+          "title": "Hidden",
+          "type": "boolean"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "primary",
+            "subagent",
+            "all"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "description",
+        "mode",
+        "hidden"
+      ],
+      "title": "ProtocolAgentItem",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:protocol:1.0:agent-catalog-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "catalog": {
+      "$ref": "#/$defs/ProtocolAgentCatalog"
+    },
+    "serverTime": {
+      "title": "Servertime",
+      "type": "string"
+    }
+  },
+  "required": [
+    "catalog",
+    "serverTime"
+  ],
+  "title": "ProtocolAgentCatalogResponse",
+  "type": "object",
+  "x-direction": "egress",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "serialization"
+}

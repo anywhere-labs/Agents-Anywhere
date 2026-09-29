@@ -14,7 +14,7 @@ runtime instances.
 Runtime Control 2.0 keeps provider and instance identity separate:
 
 - `runtimeType` is the immutable provider key on type and instance records,
-  such as `codex`, `claude`, or `dsh`.
+  such as `codex`, `claude`, `dsh`, or `opencode`.
 - `runtime` has the same provider-type meaning in every scoped RPC payload.
 - `runtimeId` is the immutable identity of one configured instance.
 - `name` is user-editable and is never used as an identity or source key.

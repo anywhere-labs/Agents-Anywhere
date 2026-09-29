@@ -212,7 +212,7 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
     catalogs = payload.get("catalogs")
     if isinstance(catalogs, dict) and next_sequence > 0:
         for catalog_type, catalog in catalogs.items():
-            if catalog_type not in {"model", "permission"}:
+            if catalog_type not in {"model", "permission", "agent"}:
                 continue
             if not isinstance(catalog, dict):
                 continue

@@ -182,3 +182,14 @@ export type MobileLoginStatusResponse = {
   approvedAt: string | null;
   serverTime: string;
 };
+
+// ─── Device code sign-in (headless plug-ins) ─────────────────────
+
+export type DeviceCodeStatus = "pending" | "approved" | "denied";
+
+export type DeviceCodeApprovalResponse = {
+  status: DeviceCodeStatus;
+  clientName: string;
+  expiresAt: string;
+  serverTime: string;
+};

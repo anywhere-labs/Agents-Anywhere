@@ -12,6 +12,7 @@ from connector.runtime_protocol.instance_models import (
 )
 from connector.runtime_protocol.models import (
     PreparedSessionTimelineSync,
+    RuntimeAgentCatalog,
     RuntimeAttachment,
     RuntimeAttachmentContent,
     RuntimeCapability,
@@ -308,6 +309,15 @@ class RuntimeInstanceHost(RuntimeHostClient):
             )
         )
 
+    async def agent_catalog_update(self, catalog: RuntimeAgentCatalog) -> None:
+        await self.base.agent_catalog_update(
+            replace(
+                catalog,
+                runtime=self.instance.runtime_type,
+                runtime_id=self.instance.runtime_id,
+            )
+        )
+
     async def timeline_sync(
         self,
         session_id: str,
@@ -495,6 +505,14 @@ class RuntimeInstance(AgentRuntime):
             query=query,
             limit=limit,
         )
+        return replace(
+            catalog,
+            runtime=self.instance.runtime_type,
+            runtime_id=self.instance.runtime_id,
+        )
+
+    async def list_agent_catalog(self) -> RuntimeAgentCatalog:
+        catalog = await self.native_runtime.list_agent_catalog()
         return replace(
             catalog,
             runtime=self.instance.runtime_type,

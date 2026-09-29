@@ -1,5 +1,5 @@
 const KEY = 'agents-anywhere.auth-continuation'
-const flows = new Set(['mobile-oauth', 'desktop-oauth', 'plugin-oauth', 'onboarding'])
+const flows = new Set(['mobile-oauth', 'desktop-oauth', 'plugin-oauth', 'plugin-device', 'onboarding'])
 
 export function authFlowHash(hash: string): string | null {
   if (!hash.startsWith('#') || hash.length > 8192) return null

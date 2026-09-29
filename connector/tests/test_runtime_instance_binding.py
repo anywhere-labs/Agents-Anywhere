@@ -9,6 +9,8 @@ import pytest
 
 from connector.runtime_protocol import (
     AgentRuntime,
+    RuntimeAgentCatalog,
+    RuntimeAgentItem,
     RuntimeAttachmentContent,
     RuntimeCapability,
     RuntimeCapabilitySet,
@@ -84,6 +86,13 @@ class CompleteInventoryRuntime(AgentRuntime):
                     selection_id="default",
                 ),
             ),
+        )
+
+    async def list_agent_catalog(self) -> RuntimeAgentCatalog:
+        return RuntimeAgentCatalog(
+            runtime="dsh",
+            revision=1,
+            agents=(RuntimeAgentItem(id="agent", name="Agent", mode="primary"),),
         )
 
     async def list_complete_session_inventory(
@@ -300,6 +309,20 @@ def test_runtime_instance_preserves_type_and_adds_instance_scope() -> None:
         assert state is not None and state.runtime_id == "rti_dsh_one"
         assert notices[0].runtime_id == "rti_dsh_one"
         assert notices[0].source["runtimeId"] == "rti_dsh_one"
+
+    asyncio.run(run())
+
+
+def test_runtime_instance_scopes_agent_catalog() -> None:
+    async def run() -> None:
+        instance = RuntimeInstanceSpec("rti_dsh_one", "dsh", "DSH One")
+        runtime = RuntimeInstance(instance, CompleteInventoryRuntime())
+
+        catalog = await runtime.list_agent_catalog()
+
+        assert catalog.runtime == "dsh"
+        assert catalog.runtime_id == "rti_dsh_one"
+        assert catalog.agents[0].id == "agent"
 
     asyncio.run(run())
 

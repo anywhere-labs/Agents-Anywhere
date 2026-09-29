@@ -11,6 +11,8 @@ from pydantic import BaseModel
 
 from agent_server.core.protocol import (
     PROTOCOL_VERSION_1,
+    ProtocolAgentCatalog,
+    ProtocolAgentCatalogResponse,
     ProtocolCapabilitiesResponse,
     ProtocolCapabilitySet,
     ProtocolEventEnvelope,
@@ -52,6 +54,13 @@ SCHEMAS = (
     ProtocolSchema(
         "permission-catalog-response",
         ProtocolPermissionCatalogResponse,
+        "egress",
+        "serialization",
+    ),
+    ProtocolSchema("agent-catalog", ProtocolAgentCatalog, "bidirectional", "validation"),
+    ProtocolSchema(
+        "agent-catalog-response",
+        ProtocolAgentCatalogResponse,
         "egress",
         "serialization",
     ),
