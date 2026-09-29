@@ -86,13 +86,13 @@ import Testing
         #expect(timeline.rows.count == 1)
     }
 
-    @Test func thirtyHzDeadlinesAndGlyphBirthsRemainIndependent() throws {
+    @Test func tenHzDeadlinesAndGlyphBirthsRemainIndependent() throws {
         let start = ContinuousClock.now
         var schedule = ReplyFlushSchedule(start: start)
-        #expect(schedule.interval == .seconds(1.0 / 30))
+        #expect(schedule.interval == .seconds(1.0 / 10))
         let first = schedule.deadline
         schedule.advance(after: first.advanced(by: .milliseconds(4)))
-        #expect(schedule.deadline == first.advanced(by: .seconds(1.0 / 30)))
+        #expect(schedule.deadline == first.advanced(by: .seconds(1.0 / 10)))
         let late = start.advanced(by: .seconds(2))
         schedule.advance(after: late)
         #expect(schedule.deadline > late)

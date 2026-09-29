@@ -48,7 +48,7 @@ final class ChatTimelineRowModel: Identifiable {
 }
 
 /// Receives full repository projections without exposing each transport frame to
-/// SwiftUI. Only flush() publishes rows, on a fixed 30 Hz presentation deadline.
+/// SwiftUI. Only flush() publishes rows, on a fixed 10 Hz presentation deadline.
 @MainActor @Observable
 final class SessionTimelinePresentation {
     private(set) var rows: [ChatTimelineRowModel] = []

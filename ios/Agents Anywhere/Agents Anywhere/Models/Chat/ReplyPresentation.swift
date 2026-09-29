@@ -1,7 +1,7 @@
 import Foundation
 
 nonisolated enum ReplyPresentation {
-    static let flushesPerSecond = 30.0
+    static let flushesPerSecond = 10.0
     static let flushInterval: Duration = .seconds(1 / flushesPerSecond)
     static let revealSeconds: TimeInterval = 0.24
     // Allow two layout/drawing frames after the final flush before removing the
