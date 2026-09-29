@@ -15349,40 +15349,6 @@
         }
       }
     },
-    "使用 %@ 开始一个专注会话。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Start a focused session with %@."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "使用 %@ 开始一个专注会话。"
-          }
-        }
-      }
-    },
-    "使用 %@ 看看哪里需要关注。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "See what needs attention with %@."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "使用 %@ 看看哪里需要关注。"
-          }
-        }
-      }
-    },
     "设备详情": {
       "extractionState": "manual",
       "localizations": {
@@ -15413,6 +15379,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "浏览文件"
+          }
+        }
+      }
+    },
+    "使用 %@ 实现一个新功能。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Build a new feature with %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 %@ 实现一个新功能。"
+          }
+        }
+      }
+    },
+    "使用 %@ 审查最近的改动。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review recent changes with %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 %@ 审查最近的改动。"
           }
         }
       }

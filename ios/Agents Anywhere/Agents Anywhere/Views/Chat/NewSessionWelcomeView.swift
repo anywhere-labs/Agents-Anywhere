@@ -50,6 +50,9 @@ struct NewSessionWelcomeView: View {
                     .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1 : 0.65)
             }
             .buttonStyle(.plain)
+            // Left aligned, but kept clear of the trailing edge.
+            .padding(.trailing, 56)
+            .padding(.bottom, 4)
             .accessibilityAddTraits(.isHeader)
             .accessibilityHint(String(localized: "选择设备和 Agent"))
             .accessibilityIdentifier("chat.new.device")
@@ -134,15 +137,15 @@ private struct WelcomeRevealKey: Equatable {
 /// Chosen once for this page presentation, independently of network updates,
 /// target selection, typing, or opening and closing a sheet.
 private enum NewSessionWelcomeCopy: CaseIterable {
-    case start, issue, nextStep, focused, attention
+    case start, issue, nextStep, feature, review
 
     func detail(agent: String) -> String {
         switch self {
         case .start: String(localized: "使用 \(agent) 构建接下来的内容。")
         case .issue: String(localized: "使用 \(agent) 排查一个问题。")
         case .nextStep: String(localized: "使用 \(agent) 推进下一步。")
-        case .focused: String(localized: "使用 \(agent) 开始一个专注会话。")
-        case .attention: String(localized: "使用 \(agent) 看看哪里需要关注。")
+        case .feature: String(localized: "使用 \(agent) 实现一个新功能。")
+        case .review: String(localized: "使用 \(agent) 审查最近的改动。")
         }
     }
 }
