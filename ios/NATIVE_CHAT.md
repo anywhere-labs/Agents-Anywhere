@@ -37,7 +37,7 @@ Semantic error and availability colors remain separate from the primary color.
   The app opts into iPhone ProMotion refresh rates; the system still chooses the
   actual cadence. This is not a measured 120 FPS guarantee.
 - `SessionTimelinePresentation` stages received projections separately from
-  observable rows. It publishes at 10 Hz while work is pending; static history
+  observable rows. It publishes at 5 Hz while work is pending; static history
   does not keep a polling clock awake. New glyphs use a 240 ms opacity, blur and
   vertical reveal. Initial history and recovery snapshots do not replay reveals.
 - Pending user-message removal and authoritative echo insertion happen in the
@@ -62,7 +62,7 @@ Semantic error and availability colors remain separate from the primary color.
   flag; recovery updates cannot reinsert rows before its pagination boundary.
   Opening reveals the window when the initial projection is
   ready, and animates to the native bottom edge. It never pages backward to
-  find a user message. Spinner dismissal and the 10 Hz presentation clock do not wait
+  find a user message. Spinner dismissal and the 5 Hz presentation clock do not wait
   for scroll/layout acknowledgements; there is no frozen opening snapshot or
   positioning retry loop. Network failures still offer Retry.
 - `TimelineScrollState` owns three navigation modes: reading, following and
@@ -72,7 +72,7 @@ Semantic error and availability colors remain separate from the primary color.
   later manual reading back down. Command IDs stop interrupted/old completions
   from releasing a newer target. Layout changes are
   coalesced for 24 ms, and offset callbacks cannot reissue the same target. The
-  10 Hz token presentation and spring scroll animation remain independent.
+  5 Hz token presentation and spring scroll animation remain independent.
 - Two native visibility probes overlap the existing tail spacer. The 2-point end
   marker decides arrival; the 96-point region hides the small borderless “到底部”
   pill before the reader reaches the exact end. The end marker wins if callbacks
@@ -537,7 +537,7 @@ Verified on 2026-09-06, without starting a server or simulator:
 
 - 177 headless Swift tests across 23 suites pass against production client-core
   sources. They cover API contracts, recovery/cache races, uncertain delivery,
-  10 Hz presentation, echo handoff, target preparation, preference scope, schema
+  5 Hz presentation, echo handoff, target preparation, preference scope, schema
   payloads and interaction lifecycle/IME guards. Session-detail checks cover
   tool/diff parsing, grouping identity, file routing, export pagination/cancellation,
   OAuth callback validation, local-server classification and waiting-approval

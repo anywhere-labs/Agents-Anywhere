@@ -80,7 +80,7 @@ as network updates. Views never own a second session socket or network reducer.
 - `SessionChatModel` coordinates actual message, attachment, selection and notice
   actions through the existing repository and services.
 - `SessionTimelinePresentation` receives repository projections and publishes
-  stable rendered rows at 10 Hz. Its idle clock sleeps. Initial/recovered history
+  stable rendered rows at 5 Hz. Its idle clock sleeps. Initial/recovered history
   and live token appends have distinct presentation semantics.
 - `SessionNoticeStore` owns stable form drafts and response submission state;
   authoritative runtime notices determine blocking and completion.
