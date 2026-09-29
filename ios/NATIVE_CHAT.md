@@ -320,6 +320,8 @@ reuse requires confirmation before the endpoint can change the existing name.
 
 The welcome title is the target device's name, and the detail names the Agent
 ("使用 Codex …"). Both names are underlined and open the target picker. The
+directory picker sits directly above the composer, aligned with its leading
+edge in both collapsed and expanded states. The
 toolbar has a file browser for the selected device and directory and a "…"
 menu to change the target or directory, open the device's details page or copy
 its ID.

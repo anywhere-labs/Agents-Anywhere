@@ -35,7 +35,7 @@ struct NewSessionView: View, Equatable {
                     NewSessionContentLayout(viewportHeight: max(0, viewport.size.height - 48)) {
                         NewSessionWelcomeView(deviceName: model.connector?.name,
                             agentName: model.runtime?.sessionDisplayName,
-                            onChooseTarget: chooseTarget) { workspaceButton }
+                            onChooseTarget: chooseTarget)
                         statusContent
                     }
                         .padding(24)
@@ -48,6 +48,11 @@ struct NewSessionView: View, Equatable {
                 .refreshable { await refresh() }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    // Leading edge matches the composer's glass in both states.
+                    workspaceButton
+                        .padding(.horizontal, model.draft.isExpanded
+                            ? ChatControlMetrics.expandedHorizontalInset : ChatControlMetrics.collapsedHorizontalInset)
                 ChatComposerDock(draft: model.draft, settings: model.settings,
                     maximumEditorHeight: min(160, max(72, geometry.size.height * 0.30)), controls: controls,
                     canSend: model.canCreate, canAttach: model.canAttach && model.prepared != nil,
@@ -57,6 +62,8 @@ struct NewSessionView: View, Equatable {
                     onSend: { text in if let session = await model.create(text: text) { onCreated(session) } },
                     onApplySettings: { model.saveSelections(); return true },
                     onDraftChange: { model.saveDraft() })
+                }
+                .frame(maxWidth: ChatControlMetrics.maximumContentWidth).frame(maxWidth: .infinity)
             }
         }
         .modifier(ChatPageToolbar(title: "", onMenu: onMenu))
@@ -114,6 +121,7 @@ struct NewSessionView: View, Equatable {
     private var workspaceButton: some View {
         Button { showsWorkspace = true } label: {
             HStack(spacing: 6) {
+                AppSymbol("folder", size: 14).foregroundStyle(.secondary)
                 Text(workspaceName).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
                     .lineLimit(1).layoutPriority(1)
                 if !model.workspace.isEmpty {
@@ -124,8 +132,7 @@ struct NewSessionView: View, Equatable {
                     ProgressView().controlSize(.mini)
                 } else { AppSymbol("chevron.down", size: 12).foregroundStyle(.secondary) }
             }
-            .padding(.vertical, 12)
-            .overlay(alignment: .bottom) { Rectangle().fill(.secondary.opacity(0.35)).frame(height: 1) }
+            .padding(.top, 8)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
