@@ -83,7 +83,7 @@ struct SessionInteractionCard: View {
     private func status(at now: Date) -> String {
         switch item.submission {
         case .sending: return String(localized: "正在提交…")
-        case .accepted: return String(localized: "已提交，等待 Agent")
+        case .accepted: return String(localized: "已提交，等待 \(chat.agentName)")
         case .uncertain: return String(localized: "结果未确认 · 查看详情")
         case .unavailable: return String(localized: "此交互已结束")
         case .idle: break
@@ -91,7 +91,7 @@ struct SessionInteractionCard: View {
         if item.isExpired(at: now) { return String(localized: "此交互已过期") }
         if item.responseError != nil || item.notice.status == .failed { return String(localized: "回应失败 · 查看详情") }
         if chat.responseUnavailableReason != nil { return String(localized: "连接不可用 · 查看详情") }
-        if [.responding, .responseAccepted, .resolving].contains(item.notice.status) { return String(localized: "Agent 正在处理…") }
+        if [.responding, .responseAccepted, .resolving].contains(item.notice.status) { return String(localized: "\(chat.agentName) 正在处理…") }
         if let form = item.form { return String(localized: "\(form.questions.count) 个问题") }
         return ""
     }

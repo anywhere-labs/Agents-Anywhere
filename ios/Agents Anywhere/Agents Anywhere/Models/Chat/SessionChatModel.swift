@@ -37,13 +37,22 @@ final class SessionChatModel {
         guard let status = session.runtime.state?.status else { return false }
         return [.running, .pending, .waiting, .waitingApproval, .stopping, .blocked].contains(status)
     }
+    /// The configured instance name, like Web, then its runtime type. Status
+    /// copy names the Agent the user chose instead of a generic "Agent".
+    var agentName: String {
+        let meta = session.metadata
+        for name in [meta?.runtimeName, meta?.runtimeTypeDisplayName] {
+            if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty { return name }
+        }
+        return String(localized: "Agent")
+    }
     var sendingPlaceholder: String? {
         let submitting = session.pendingMessages.contains { $0.delivery == .sending || $0.delivery == .accepted }
-        if submitting || session.awaitingReplyID != nil { return session.isLocalCreation ? String(localized: "正在创建会话…") : String(localized: "等待 Agent 回应…") }
+        if submitting || session.awaitingReplyID != nil { return session.isLocalCreation ? String(localized: "正在创建会话…") : String(localized: "等待 \(agentName) 回应…") }
         guard session.runtime.isFresh, let status = session.runtime.state?.status else { return nil }
         switch status {
-        case .waiting, .pending: return String(localized: "等待 Agent 回应…")
-        case .running: return String(localized: "Agent 正在处理任务…")
+        case .waiting, .pending: return String(localized: "等待 \(agentName) 回应…")
+        case .running: return String(localized: "\(agentName) 正在处理任务…")
         default: return nil
         }
     }

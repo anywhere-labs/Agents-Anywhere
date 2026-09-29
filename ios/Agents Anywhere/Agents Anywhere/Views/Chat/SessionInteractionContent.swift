@@ -145,7 +145,7 @@ struct SessionInteractionContent: View {
                 Button(String(localized: "处理未确认的回应")) { confirmsRetry = true }.font(.footnote)
             case .idle:
                 if [.responding, .responseAccepted, .resolving].contains(item.notice.status) {
-                    Text(String(localized: "Agent 正在处理回应…")).font(.footnote).foregroundStyle(.secondary)
+                    Text(String(localized: "\(chat.agentName) 正在处理回应…")).font(.footnote).foregroundStyle(.secondary)
                 }
                 if item.notice.status == .failed {
                     Text(String(localized: "上次回应未完成，请检查后重新选择。"))

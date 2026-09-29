@@ -713,57 +713,6 @@
         }
       }
     },
-    "Agent 正在处理…": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Agent is working…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Agent 正在处理…"
-          }
-        }
-      }
-    },
-    "Agent 正在处理任务…": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Agent is working…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Agent 正在处理任务…"
-          }
-        }
-      }
-    },
-    "Agent 正在处理回应…": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Agent is processing your response…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Agent 正在处理回应…"
-          }
-        }
-      }
-    },
     "Agent 类型": {
       "comment": "Shared with Web: dashboard.session.runtimeType. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -10594,23 +10543,6 @@
         }
       }
     },
-    "已提交，等待 Agent": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Submitted. Waiting for Agent"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已提交，等待 Agent"
-          }
-        }
-      }
-    },
     "已检查，允许再次回应": {
       "extractionState": "manual",
       "localizations": {
@@ -12953,23 +12885,6 @@
         }
       }
     },
-    "等待 Agent 回应…": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Waiting for the Agent…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "等待 Agent 回应…"
-          }
-        }
-      }
-    },
     "等待中": {
       "extractionState": "manual",
       "localizations": {
@@ -15294,6 +15209,91 @@
           "stringUnit": {
             "state": "translated",
             "value": "单行显示会话"
+          }
+        }
+      }
+    },
+    "等待 %@ 回应…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for %@…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待 %@ 回应…"
+          }
+        }
+      }
+    },
+    "%@ 正在处理任务…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is working…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 正在处理任务…"
+          }
+        }
+      }
+    },
+    "%@ 正在处理…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is working…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 正在处理…"
+          }
+        }
+      }
+    },
+    "%@ 正在处理回应…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is processing your response…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 正在处理回应…"
+          }
+        }
+      }
+    },
+    "已提交，等待 %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Submitted. Waiting for %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已提交，等待 %@"
           }
         }
       }
