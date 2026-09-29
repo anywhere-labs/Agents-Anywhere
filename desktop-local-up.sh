@@ -367,11 +367,13 @@ start_screen_session \
   AGENT_SERVER_FILES_LOCAL_ROOT="${LOCAL_DIR}/files" \
   AGENT_SERVER_PUBLIC_ORIGIN="${DESKTOP_URL}" \
   AGENT_SERVER_CORS_ORIGINS="${DESKTOP_URL},http://localhost:${DESKTOP_PORT}" \
+  LOGURU_LEVEL="${LOGURU_LEVEL:-INFO}" \
   "${SERVER_DIR}/.venv/bin/uvicorn" \
   agent_server.app:create_app \
   --factory \
   --host 127.0.0.1 \
-  --port "${SERVER_PORT}"
+  --port "${SERVER_PORT}" \
+  --no-access-log
 wait_for_url "${SERVER_URL}/api/v2/health" "Server" 60
 
 printf '[desktop] starting on %s with local API %s\n' "${DESKTOP_URL}" "${SERVER_URL}"

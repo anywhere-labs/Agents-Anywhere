@@ -345,7 +345,10 @@ class ConnectorIngestService:
                         previous_runtime_state is None
                         or previous_runtime_state.status != runtime_state.status
                     ):
-                        logger.info(
+                        # A cold cache reports every synced session once; keep
+                        # INFO for real transitions only.
+                        logger.log(
+                            "DEBUG" if previous_runtime_state is None else "INFO",
                             "session_status_trace layer=server session_id={} runtime={} "
                             "runtime_id={} previous_status={} next_status={} source={} "
                             "previous_updated_seq={} ingest_next_seq={}",

@@ -15,6 +15,7 @@ LISTEN_HOST_CLI=""
 SKIP_INSTALL=false
 WITH_CONNECTOR=false
 SERVER_RELOAD=false
+SERVER_ACCESS_LOG=false
 RESET_DATA=false
 SHUTTING_DOWN=false
 
@@ -39,6 +40,7 @@ Options:
   --connector-config P  Connector config used with --with-connector
   --reload              Enable uvicorn source reload (off by default)
   --no-reload           Disable uvicorn source reload (default)
+  --access-log          Print uvicorn per-request access logs (off by default)
   --reset-data          Remove the local PostgreSQL and Redis volumes first
   -h, --help            Show this help
 
@@ -96,6 +98,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-reload)
       SERVER_RELOAD=false
+      shift
+      ;;
+    --access-log)
+      SERVER_ACCESS_LOG=true
       shift
       ;;
     --reset-data)
@@ -418,6 +424,7 @@ SERVER_COMMAND=(
   "AGENT_SERVER_FILES_LOCAL_ROOT=${AGENT_SERVER_FILES_LOCAL_ROOT}"
   "AGENT_SERVER_PUBLIC_ORIGIN=${SERVER_PUBLIC_ORIGIN}"
   "AGENT_SERVER_CORS_ORIGINS=${SERVER_CORS_ORIGINS}"
+  "LOGURU_LEVEL=${LOGURU_LEVEL:-INFO}"
   uv run uvicorn agent_server.app:create_app
   --factory
   --host "${SERVER_HOST}"
@@ -425,6 +432,10 @@ SERVER_COMMAND=(
 )
 if [[ "${SERVER_RELOAD}" == true ]]; then
   SERVER_COMMAND+=(--reload)
+fi
+# Connector ingest posts once per session update, which floods the terminal.
+if [[ "${SERVER_ACCESS_LOG}" != true ]]; then
+  SERVER_COMMAND+=(--no-access-log)
 fi
 
 start_service server "${CYAN}" "${SERVER_DIR}" "${SERVER_COMMAND[@]}"

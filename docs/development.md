@@ -19,6 +19,7 @@
 - `--skip-install`：复用依赖。
 - `--with-connector`：一起启动 Connector；默认不启动。
 - `--reload`：启用 Server 热重载；默认关闭以减少实时连接中断。
+- `--access-log`：打印 uvicorn 逐请求访问日志；默认关闭。Server 日志级别默认为 INFO，可用 `LOGURU_LEVEL=DEBUG` 查看调试日志（`desktop-local-up.sh` 同样适用）。
 - `--listen`：监听局域网地址；默认只监听回环。
 - `--reset-data`：删除本地数据库数据卷，仅在明确不要这些数据时使用。
 
