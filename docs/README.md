@@ -12,6 +12,7 @@
 | Desktop 开发、打包、签名 | [Desktop Workbench](../desktop-workbench/README.md) |
 | 接入无图形界面的机器 | [Connector](../connector/README.md) |
 | Android 构建 | [Android](../android/README.md) |
+| HarmonyOS 构建 | [HarmonyOS](../harmony/README.md) |
 | 架构和 API | [Server 架构](server-architecture.md)、[API](api/README.md) |
 | Runtime 和本机协议 | [Runtime protocol](runtime-protocol/README.md)、[本机协议](../contracts/local-machine/2.0/README.md) |
 

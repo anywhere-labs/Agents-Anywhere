@@ -1,0 +1,17 @@
+{
+  "plural": [
+    {
+      "name": "devices_agents_online",
+      "value": [
+        {
+          "quantity": "one",
+          "value": "%d agent online"
+        },
+        {
+          "quantity": "other",
+          "value": "%d agents online"
+        }
+      ]
+    }
+  ]
+}
