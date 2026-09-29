@@ -73,26 +73,40 @@ nonisolated struct GlyphRevealRenderer: TextRenderer {
             }
             return
         }
+        guard let progress else { return }
+        // Glyphs from one flush share a birth time and so share one effect.
+        // Draw each batch with a single context instead of one per glyph, and
+        // skip blur: an offscreen blur per glyph every frame saturated the
+        // main thread while a reply streamed.
+        var batches: [(progress: Double, slices: [Text.Layout.RunSlice])] = []
         var index = 0
         for line in layout {
             for run in line where isRevealed(run) {
-                guard let progress else { context.draw(run); continue }
-                // Already settled runs keep the system's efficient drawing path.
-                if progress[index..<(index + run.count)].allSatisfy({ $0 >= 1 }) {
-                    context.draw(run)
-                    index += run.count
-                } else {
-                    for glyph in run {
-                        var copy = context
-                        let effect = GlyphRevealEffect(progress: progress[index])
-                        copy.opacity *= effect.opacity
-                        copy.translateBy(x: 0, y: effect.offsetY)
-                        copy.addFilter(.blur(radius: effect.blurRadius))
-                        copy.draw(glyph, options: .disablesSubpixelQuantization)
-                        index += 1
+                var start = 0
+                while start < run.count {
+                    let value = progress[index + start]
+                    var end = start + 1
+                    while end < run.count && progress[index + end] == value { end += 1 }
+                    let slice = run[start..<end]
+                    if value >= 1 {
+                        // Settled glyphs keep the system's efficient drawing path.
+                        context.draw(slice)
+                    } else if let batch = batches.firstIndex(where: { $0.progress == value }) {
+                        batches[batch].slices.append(slice)
+                    } else {
+                        batches.append((value, [slice]))
                     }
+                    start = end
                 }
+                index += run.count
             }
+        }
+        for batch in batches {
+            var copy = context
+            let effect = GlyphRevealEffect(progress: batch.progress)
+            copy.opacity *= effect.opacity
+            copy.translateBy(x: 0, y: effect.offsetY)
+            for slice in batch.slices { copy.draw(slice, options: .disablesSubpixelQuantization) }
         }
     }
 
