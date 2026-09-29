@@ -318,6 +318,12 @@ while preserving the draft. The project sheet creates/renames projects and reuse
 the existing half-height file browser to choose a directory. Canonical directory
 reuse requires confirmation before the endpoint can change the existing name.
 
+The welcome title is the target device's name, and the detail names the Agent
+("使用 Codex …"). Both names are underlined and open the target picker. The
+toolbar has a file browser for the selected device and directory and a "…"
+menu to change the target or directory, open the device's details page or copy
+its ID.
+
 Project creation is available for a known device even when that device is offline
 using a typed absolute path; browsing requires it online. Starting a session also
 requires phone connectivity, a ready instance, fresh preparation and valid model/

@@ -13,11 +13,23 @@ extension EnvironmentValues {
 nonisolated struct StreamingTextPhrase: TextAttribute {
     let index: Int
 
-    @MainActor static func text(_ value: String) -> Text {
+    /// `underlined` marks a tappable name. Its characters keep the underline
+    /// even when a phrase boundary splits them.
+    @MainActor static func text(_ value: String, underlined: Range<String.Index>? = nil) -> Text {
         let phrases = TextPhraseSequence.chunks(in: value)
         var interpolation = LocalizedStringKey.StringInterpolation(literalCapacity: 0, interpolationCount: phrases.count)
+        var start = value.startIndex
         for (index, phrase) in phrases.enumerated() {
-            interpolation.appendInterpolation(Text(verbatim: phrase).customAttribute(Self(index: index)))
+            let end = value.index(start, offsetBy: phrase.count)
+            var text = Text(verbatim: phrase)
+            if let underlined, underlined.overlaps(start..<end) {
+                let lower = max(underlined.lowerBound, start), upper = min(underlined.upperBound, end)
+                text = Text(verbatim: String(value[start..<lower]))
+                    + Text(verbatim: String(value[lower..<upper])).underline()
+                    + Text(verbatim: String(value[upper..<end]))
+            }
+            interpolation.appendInterpolation(text.customAttribute(Self(index: index)))
+            start = end
         }
         return Text(LocalizedStringKey(stringInterpolation: interpolation))
     }

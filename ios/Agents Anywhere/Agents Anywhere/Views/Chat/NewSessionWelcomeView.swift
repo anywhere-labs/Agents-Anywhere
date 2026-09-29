@@ -1,6 +1,11 @@
 import SwiftUI
 
+/// The device is the title and the Agent leads the detail. Both names are
+/// underlined and open the target picker.
 struct NewSessionWelcomeView<Workspace: View>: View {
+    let deviceName: String?
+    let agentName: String?
+    let onChooseTarget: () -> Void
     @ViewBuilder let workspace: () -> Workspace
     private static var revealDuration: Double { 0.4 }
     /// Known copy cascades: each phrase starts before the previous one ends.
@@ -19,11 +24,9 @@ struct NewSessionWelcomeView<Workspace: View>: View {
     @State private var titleLedger = GlyphRevealLedger(duration: NewSessionWelcomeView.revealDuration)
     @State private var detailLedger = GlyphRevealLedger(duration: NewSessionWelcomeView.revealDuration)
 
-    private var title: String { String(localized: copy.title) }
-    private var detail: String {
-        [String(localized: "dashboard.new.typewriter.rightDevice"),
-         String(localized: "dashboard.new.typewriter.focusedSession")].joined(separator: "\n")
-    }
+    private var title: String { deviceName ?? String(localized: "选择设备") }
+    private var agent: String { agentName ?? String(localized: "Agent") }
+    private var detail: String { copy.detail(agent: agent) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 28) {
@@ -47,22 +50,35 @@ struct NewSessionWelcomeView<Workspace: View>: View {
     private var welcomeText: some View {
         VStack(alignment: .leading, spacing: 12) {
             AppSymbol("sparkles", size: 28).foregroundStyle(.primary)
-            streamingText(title, revealedPhrases: titlePhraseCount, ledger: titleLedger)
-                .font(.system(size: titleSize, weight: .bold))
-                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1 : 0.65)
-                .accessibilityAddTraits(.isHeader)
-            streamingText(detail, revealedPhrases: detailPhraseCount, ledger: detailLedger)
-                .font(.body).foregroundStyle(.secondary)
-                .lineLimit(2...)
-                .fixedSize(horizontal: false, vertical: true)
+            Button(action: onChooseTarget) {
+                streamingText(title, underlined: title.startIndex..<title.endIndex,
+                              revealedPhrases: titlePhraseCount, ledger: titleLedger)
+                    .font(.system(size: titleSize, weight: .bold))
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1 : 0.65)
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityHint(String(localized: "选择设备和 Agent"))
+            .accessibilityIdentifier("chat.new.device")
+            Button(action: onChooseTarget) {
+                streamingText(detail, underlined: detail.range(of: agent),
+                              revealedPhrases: detailPhraseCount, ledger: detailLedger)
+                    .font(.body).foregroundStyle(.secondary)
+                    .lineLimit(2...)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(String(localized: "选择设备和 Agent"))
+            .accessibilityIdentifier("chat.new.agent")
         }
     }
 
-    private func streamingText(_ text: String, revealedPhrases: Int, ledger: GlyphRevealLedger) -> some View {
+    private func streamingText(_ text: String, underlined: Range<String.Index>?, revealedPhrases: Int,
+                               ledger: GlyphRevealLedger) -> some View {
         // Future phrases take part in line breaking from the first
         // frame. The shared renderer alone controls their visibility and reveal.
-        StreamingTextPhrase.text(text)
+        StreamingTextPhrase.text(text, underlined: underlined)
             .modifier(StreamingGlyphReveal(ledger: ledger, revealedPhraseCount: revealedPhrases))
             .environment(\.streamingGlyphAnimation, isRevealing)
             .multilineTextAlignment(.leading)
@@ -88,8 +104,9 @@ struct NewSessionWelcomeView<Workspace: View>: View {
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) {
-                titlePhraseCount = TextPhraseSequence.chunks(in: title).count
-                detailPhraseCount = TextPhraseSequence.chunks(in: detail).count
+                // Names can arrive or change after the reveal; show all phrases.
+                titlePhraseCount = .max
+                detailPhraseCount = .max
                 workspaceRevealed = true
                 isRevealing = false
             }
@@ -146,16 +163,15 @@ private struct WelcomeWorkspaceReveal: ViewModifier, Animatable {
 /// Chosen once for this page presentation, independently of network updates,
 /// target selection, typing, or opening and closing a sheet.
 private enum NewSessionWelcomeCopy: CaseIterable {
-    case start, idea, question, nextStep, explore, together
+    case start, issue, nextStep, focused, attention
 
-    var title: LocalizedStringResource {
+    func detail(agent: String) -> String {
         switch self {
-        case .start: "dashboard.new.typewriter.buildNext"
-        case .idea: "dashboard.new.typewriter.startWhere"
-        case .question: "dashboard.new.typewriter.workOn"
-        case .nextStep: "dashboard.new.typewriter.giveTask"
-        case .explore: "dashboard.new.typewriter.startWorkspace"
-        case .together: "dashboard.new.typewriter.needsAttention"
+        case .start: String(localized: "使用 \(agent) 构建接下来的内容。")
+        case .issue: String(localized: "使用 \(agent) 排查一个问题。")
+        case .nextStep: String(localized: "使用 \(agent) 推进下一步。")
+        case .focused: String(localized: "使用 \(agent) 开始一个专注会话。")
+        case .attention: String(localized: "使用 \(agent) 看看哪里需要关注。")
         }
     }
 }

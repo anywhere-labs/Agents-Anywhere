@@ -204,6 +204,7 @@ struct ChatShellView: View {
                     dashboardLoading: appState.isDashboardLoading,
                     dashboardError: appState.connectorsError,
                     onMenu: toggleSidebar,
+                    onOpenDevice: openDevice,
                     onCreated: { session in
                         appState.updateSession(session)
                         if case .newSession = selection { openSession(session.id) }
