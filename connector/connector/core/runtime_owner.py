@@ -65,10 +65,25 @@ def _claim_state_lock(port: int, deadline: float) -> socket.socket:
             return lease
         except OSError as exc:
             lease.close()
-            if exc.errno not in {errno.EADDRINUSE, errno.EACCES}:
+            if exc.errno == errno.EACCES:
+                # The operating system refused the bind outright; this is not a
+                # holder of the lock. Windows reserves 49152-65535 for dynamic
+                # ports, and Hyper-V, WSL or a system service can own part of it.
+                # Retrying cannot succeed, and reporting it as "busy" hides the
+                # real cause from the operator.
+                raise RuntimeError(
+                    f"Cannot bind the Connector lock port {port}: permission "
+                    "denied. The port may be reserved or held by another program "
+                    "(on Windows check 'netsh int ipv4 show excludedportrange "
+                    "protocol=tcp')."
+                ) from exc
+            if exc.errno != errno.EADDRINUSE:
                 raise
             if time.monotonic() >= deadline:
-                raise RuntimeError("The local Connector record is busy. Please retry.") from exc
+                raise RuntimeError(
+                    "The local Connector record is busy"
+                    f" on lock port {port}. Please retry."
+                ) from exc
             time.sleep(0.02)
 
 
