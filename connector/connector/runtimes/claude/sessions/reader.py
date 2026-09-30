@@ -728,7 +728,29 @@ def _session_title(session: Any) -> str | None:
     # Claude SDK-created sessions may update `summary` to the latest user
     # prompt after every turn. `first_prompt` is the stable fallback title;
     # `custom_title` also contains persisted Claude Code AI titles when present.
-    return _string_attr(session, "custom_title", "first_prompt", "summary", "title")
+    custom_title = _string_attr(session, "custom_title")
+    if custom_title:
+        return custom_title
+    # `first_prompt` / `summary` are raw user prompts that can be an entire
+    # pasted document; cap them like the server's derived titles so a single
+    # prompt never becomes a multi-kilobyte session title.
+    prompt_title = _string_attr(session, "first_prompt", "summary")
+    if prompt_title:
+        return _prompt_derived_title(prompt_title)
+    return _string_attr(session, "title")
+
+
+# Mirrors DERIVED_SESSION_TITLE_MAX_CHARS in the server's store_support.py.
+_PROMPT_TITLE_MAX_CHARS = 48
+
+
+def _prompt_derived_title(text: str) -> str | None:
+    collapsed = " ".join(text.split())
+    if not collapsed:
+        return None
+    if len(collapsed) <= _PROMPT_TITLE_MAX_CHARS:
+        return collapsed
+    return f"{collapsed[:_PROMPT_TITLE_MAX_CHARS].rstrip()}..."
 
 
 def _sync_marker(session: Any) -> str:
