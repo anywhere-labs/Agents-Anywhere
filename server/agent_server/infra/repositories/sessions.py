@@ -451,11 +451,14 @@ class SessionRepositoryMixin:
                 )
             ).first()
             if existing is None:
-                project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                # Connector imports carry a cwd, not a user-selected project.
+                # Reuse an existing explicit project when one matches, but do
+                # not create a project for every historical working directory.
+                project_id, normalized_cwd = await self._project_for_workspace(
                     conn,
                     connector_id=connector_id,
                     workspace_path=cwd,
-                    now=now,
+                    manual_only=normalized_origin == "connector_import",
                 )
                 await conn.execute(
                     insert(sessions_t).values(
@@ -527,11 +530,11 @@ class SessionRepositoryMixin:
                     values["title"] = title
                     values["title_source"] = TITLE_SOURCE_CONNECTOR
                 if cwd is not None or current.project_id is None:
-                    project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                    project_id, normalized_cwd = await self._project_for_workspace(
                         conn,
                         connector_id=connector_id,
                         workspace_path=cwd or current.cwd,
-                        now=now,
+                        manual_only=normalized_origin == "connector_import",
                     )
                     values["project_id"] = project_id
                     values["cwd"] = normalized_cwd
@@ -1790,10 +1793,11 @@ class SessionRepositoryMixin:
                 values["title"] = title
                 values["title_source"] = TITLE_SOURCE_CONNECTOR
             if cwd is not None or row.project_id is None:
-                project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                project_id, normalized_cwd = await self._project_for_workspace(
                     conn,
                     connector_id=row.connector_id,
                     workspace_path=cwd if cwd is not None else row.cwd,
+                    manual_only=True,
                 )
                 values["project_id"] = project_id
                 values["cwd"] = normalized_cwd

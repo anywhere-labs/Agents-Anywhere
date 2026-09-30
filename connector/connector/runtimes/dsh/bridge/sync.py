@@ -163,7 +163,7 @@ class SyncRelay:
             await self.ingest_notifications(pending)
         elif kind == "workspace.inventory":
             # Older plugin builds sent native project facts. Ignore those batches;
-            # all project grouping and naming use the existing session cwd path.
+            # grouping is resolved server-side from explicit projects and cwd.
             return
         else:
             raise ValueError(f"Unsupported bridge operation: {kind}")

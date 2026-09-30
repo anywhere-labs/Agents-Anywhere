@@ -143,21 +143,22 @@ def _project_view_query() -> Any:
 
 
 class ProjectRepositoryMixin:
-    async def _ensure_project_for_workspace(
+    async def _project_for_workspace(
         self,
         conn: Any,
         *,
         connector_id: str,
         workspace_path: str | None,
-        now: str | None = None,
-    ) -> tuple[str, str]:
-        """Find or create the project that owns a connector workspace.
+        manual_only: bool = False,
+    ) -> tuple[str | None, str]:
+        """Resolve an existing project without creating one.
 
-        The helper is intentionally transaction-friendly so session upserts can
-        assign the project and write the session in one transaction.
+        Connector session imports must not turn every observed ``cwd`` into a
+        project.  Keep path validation and lookup in the same transaction as
+        the caller so an import can still reuse an explicitly created project.
+        Connector imports also pass ``manual_only`` so legacy automatic rows do
+        not keep attracting new sessions after the import fix.
         """
-        # Share-lock the active device until the project/session write commits.
-        # Deletion then either cleans up this write or prevents it from starting.
         connector = (
             (
                 await conn.execute(
@@ -178,25 +179,66 @@ class ProjectRepositoryMixin:
         if connector is None:
             raise KeyError(connector_id)
 
-        device_os = connector["device_os"]
         if not isinstance(workspace_path, str) or not workspace_path.strip():
             raise MissingWorkspaceError("session workdir is required")
-        candidate_path = workspace_path.strip()
-        cleaned_path, workspace_key = _clean_workspace_path(candidate_path, device_os)
+        cleaned_path, workspace_key = _clean_workspace_path(
+            workspace_path.strip(), connector["device_os"]
+        )
+        conditions = [
+            projects_t.c.user_id == connector["user_id"],
+            projects_t.c.connector_id == connector_id,
+            projects_t.c.workspace_key == workspace_key,
+        ]
+        if manual_only:
+            conditions.append(projects_t.c.manually_created == 1)
         existing = (
             await conn.execute(
                 select(projects_t.c.id)
-                .where(
-                    projects_t.c.user_id == connector["user_id"],
-                    projects_t.c.connector_id == connector_id,
-                    projects_t.c.workspace_key == workspace_key,
-                )
+                .where(*conditions)
                 .order_by(projects_t.c.created_at.asc(), projects_t.c.id.asc())
                 .limit(1)
             )
         ).first()
-        if existing is not None:
-            return str(existing.id), cleaned_path
+        return (str(existing.id) if existing is not None else None), cleaned_path
+
+    async def _ensure_project_for_workspace(
+        self,
+        conn: Any,
+        *,
+        connector_id: str,
+        workspace_path: str | None,
+        now: str | None = None,
+    ) -> tuple[str, str]:
+        """Find or create the project that owns a connector workspace.
+
+        The helper is intentionally transaction-friendly so session upserts can
+        assign the project and write the session in one transaction.
+        """
+        project_id, cleaned_path = await self._project_for_workspace(
+            conn,
+            connector_id=connector_id,
+            workspace_path=workspace_path,
+        )
+        if project_id is not None:
+            return project_id, cleaned_path
+
+        connector = (
+            (
+                await conn.execute(
+                    select(connectors_t.c.user_id, connectors_t.c.device_os)
+                    .where(
+                        connectors_t.c.id == connector_id,
+                        connectors_t.c.revoked == 0,
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if connector is None:
+            raise KeyError(connector_id)
+        device_os = connector["device_os"]
+        _, workspace_key = _clean_workspace_path(cleaned_path, device_os)
 
         existing_names = {
             str(row[0])
