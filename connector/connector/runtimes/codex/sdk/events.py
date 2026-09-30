@@ -471,8 +471,8 @@ def _sdk_thread_item(item: ThreadItem) -> dict[str, Any]:
     if isinstance(root, PlanThreadItem):
         return {
             "id": root.id,
-            "type": "systemMessage",
-            "message": "Plan updated",
+            "type": "plan",
+            "text": root.text,
         }
     return {
         "id": _string_attr(root, "id"),

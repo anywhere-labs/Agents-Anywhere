@@ -71,6 +71,7 @@ class CodexTurnController:
             active_turn_ids=self.active_turn_ids,
             notices=self.notices,
             ensure_started=self.ensure_started,
+            turn_actions=self.actions,
         )
         self.selections = CodexSelectionController(
             client=self.client,

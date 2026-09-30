@@ -8,33 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from openai_codex import InvalidRequestError
-from openai_codex.generated.v2_all import (
-    AgentMessageThreadItem,
-    ApprovalsReviewer,
-    AskForApprovalValue,
-    ContextCompactedNotification,
-    ContextCompactionThreadItem,
-    LocalImageUserInput,
-    MentionUserInput,
-    TextUserInput,
-    Thread,
-    ThreadItem,
-    Turn,
-    TurnError,
-    TurnStatus,
-    UserInput,
-    UserMessageThreadItem,
-)
-from openai_codex.models import (
-    AgentMessageDeltaNotification,
-    CommandExecutionOutputDeltaNotification,
-    ItemCompletedNotification,
-    Notification,
-    ReasoningTextDeltaNotification,
-    TurnCompletedNotification,
-)
-
 from connector.core.json_kv import JsonKeyValueStore
 from connector.runtime_protocol import (
     CAPABILITY_CATALOG_MODEL,
@@ -141,6 +114,33 @@ from connector.runtimes.codex.timeline.projection import (
     CodexTimelineProjection,
     timeline_item_from_projection,
     timeline_projection_from_raw,
+)
+from openai_codex import InvalidRequestError
+from openai_codex.generated.v2_all import (
+    AgentMessageThreadItem,
+    ApprovalsReviewer,
+    AskForApprovalValue,
+    ContextCompactedNotification,
+    ContextCompactionThreadItem,
+    LocalImageUserInput,
+    MentionUserInput,
+    PlanThreadItem,
+    TextUserInput,
+    Thread,
+    ThreadItem,
+    Turn,
+    TurnError,
+    TurnStatus,
+    UserInput,
+    UserMessageThreadItem,
+)
+from openai_codex.models import (
+    AgentMessageDeltaNotification,
+    CommandExecutionOutputDeltaNotification,
+    ItemCompletedNotification,
+    Notification,
+    ReasoningTextDeltaNotification,
+    TurnCompletedNotification,
 )
 
 
@@ -6836,3 +6836,136 @@ class _SdkLowLevelTurnResult:
 @dataclass
 class _SdkId:
     id: str
+
+
+@pytest.mark.parametrize("action,mode", [("implement_plan", "default"), ("revise_plan", "plan")])
+def test_codex_plan_review_starts_next_turn_with_edited_plan(action: str, mode: str) -> None:
+    async def run() -> None:
+        from connector.runtimes.codex.sdk.client import codex_turn_start_params
+
+        class PlanClient(FakeCodexClient):
+            def __init__(self) -> None:
+                super().__init__()
+                self.plan_requests: list[CodexStartTurnRequest] = []
+
+            async def start_turn(self, request: CodexStartTurnRequest) -> CodexTurnResult:
+                self.plan_requests.append(request)
+                return await super().start_turn(request)
+
+        host = FakeHost()
+        client = PlanClient()
+        runtime = CodexRuntime(config=_config(), host=host, client=client)
+        async def emit(method: str, **params: Any) -> None:
+            await runtime._notifications.handle({"method": method, "params": {
+                "threadId": "thread_plan", "platformSessionId": "session_plan", **params,
+            }})
+        await emit("turn/started", turn={"id": "turn_plan"})
+        await emit("item/completed", turnId="turn_plan", item={"id": "plan_item", "type": "plan", "text": "# Original plan"})
+        assert not host.notice_upserts
+        await emit("turn/completed", turn={"id": "turn_plan", "status": "completed"})
+        notice = host.notice_upserts[-1]
+        assert notice.source["component"] == "codex.plan_review"
+        assert notice.message == "# Original plan"
+        assert host.state_updates[-1]["status"] == "waiting_approval"
+        await emit("turn/completed", turn={"id": "turn_plan", "status": "completed"})
+        assert runtime._notices.get(notice.notice_id).status == "open"
+        assert host.state_updates[-1]["status"] == "waiting_approval"
+        invalid = await runtime.respond_interaction("session_plan", notice.notice_id, action, {"plan": " "})
+        assert not invalid.ok
+        result = await runtime.respond_interaction("session_plan", notice.notice_id, action, {
+            "plan": "# Edited plan\n\nWrite tests first.", "feedback": "Check edge cases.",
+        })
+        assert result.ok
+        request = client.plan_requests[-1]
+        assert request.collaboration_mode == mode
+        assert "# Edited plan" in request.content
+        assert "# Original plan" not in request.content
+        if action == "revise_plan":
+            assert "Check edge cases." in request.content
+        wire = codex_turn_start_params(replace(request, model="gpt-example")).model_dump(mode="json", by_alias=True)
+        assert wire["collaborationMode"]["mode"] == mode
+        assert wire["collaborationMode"]["settings"]["model"] == "gpt-example"
+        duplicate = await runtime.respond_interaction("session_plan", notice.notice_id, action, {"plan": "# Again"})
+        assert not duplicate.ok
+        assert len(client.plan_requests) == 1
+        assert host.notice_upserts[-1].status == "resolved"
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("status", ["failed", "interrupted"])
+def test_codex_incomplete_plan_turn_does_not_offer_execution(status: str) -> None:
+    async def run() -> None:
+        host = FakeHost()
+        runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+        await runtime._notifications.handle({"method": "item/completed", "params": {
+            "threadId": "thread_plan", "platformSessionId": "session_plan", "turnId": "turn_plan",
+            "item": {"id": "plan_item", "type": "plan", "text": "# Incomplete"},
+        }})
+        await runtime._notifications.handle({"method": "turn/completed", "params": {
+            "threadId": "thread_plan", "platformSessionId": "session_plan", "turn": {"id": "turn_plan", "status": status},
+        }})
+        assert not [n for n in host.notice_upserts if n.source.get("component") == "codex.plan_review"]
+        assert not runtime._notifications.plans.pending_plans
+    asyncio.run(run())
+
+
+def test_codex_typed_plan_event_preserves_plan_text() -> None:
+    event = CodexSdkEvent.from_value(Notification(
+        method="item/completed",
+        payload=ItemCompletedNotification(
+            thread_id="thread_plan", turn_id="turn_plan", completed_at_ms=0,
+            item=ThreadItem(root=PlanThreadItem(id="plan_item", type="plan", text="# Proposed plan")),
+        ),
+    ))
+    assert event.item_type == "plan"
+    assert event.content == "# Proposed plan"
+
+
+def test_codex_plan_start_failure_retains_edited_plan_for_retry() -> None:
+    async def run() -> None:
+        class FailingClient(FakeCodexClient):
+            async def start_turn(self, request: CodexStartTurnRequest) -> CodexTurnResult:
+                raise ValueError("start failed")
+        host = FakeHost()
+        runtime = CodexRuntime(config=_config(), host=host, client=FailingClient())
+        notice = SessionNotice(
+            notice_id="plan_retry", session_id="session_plan", runtime="codex", type="interaction",
+            title="Review plan", message="# Original", severity="info", status="open", interaction_type="approval",
+            response_required=True, actions=({"actionId": "implement_plan", "label": "Execute"},),
+            source={"component": "codex.plan_review"}, context={"threadId": "thread_plan"},
+        )
+        runtime._notices.upsert(notice)
+        with pytest.raises(ValueError, match="start failed"):
+            await runtime.respond_interaction("session_plan", "plan_retry", "implement_plan", {"plan": "# Edited"})
+        pending = runtime._notices.get("plan_retry")
+        assert pending.status == "open"
+        assert pending.message == "# Edited"
+        assert host.state_updates[-1]["status"] == "waiting_approval"
+    asyncio.run(run())
+
+
+def test_codex_plan_mode_uses_resumed_model_when_no_selection_exists() -> None:
+    async def run() -> None:
+        from types import SimpleNamespace
+
+        from openai_codex.generated.v2_all import ReasoningEffort
+
+        class PlanServer(_FakeLowLevelCodexServer):
+            async def thread_resume(self, thread_id: str, params: Any) -> Any:
+                self.thread_resumes.append((thread_id, params))
+                return SimpleNamespace(model="current-model", reasoning_effort=ReasoningEffort.high)
+
+        class PlanSdk(_LazyLowLevelSdkClient):
+            async def _ensure_initialized(self) -> None:
+                self.initialized = True
+                self._client = PlanServer()
+
+        sdk = PlanSdk()
+        client = CodexSdkClient(sdk, sdk=_SdkWithHandles())
+        await client.start_turn(CodexStartTurnRequest(thread_id="thread_1", content="Implement edited plan", collaboration_mode="default"))
+        wire = sdk.low_level.turn_starts[0][2].model_dump(mode="json", by_alias=True)
+        assert wire["collaborationMode"]["mode"] == "default"
+        assert wire["collaborationMode"]["settings"]["model"] == "current-model"
+        assert wire["collaborationMode"]["settings"]["reasoning_effort"] == "high"
+        assert len(sdk.low_level.thread_resumes) == 1
+    asyncio.run(run())

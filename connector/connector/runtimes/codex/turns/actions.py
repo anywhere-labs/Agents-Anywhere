@@ -60,6 +60,7 @@ class CodexTurnActions:
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
         cwd: str | None = None,
+        collaboration_mode: str | None = None,
     ) -> RuntimeOperationResult:
         _ = cwd
         if self.client is None or external_session_id is None:
@@ -131,6 +132,7 @@ class CodexTurnActions:
                     approvals_reviewer=native_permission.approvals_reviewer,
                     sandbox=native_permission.sandbox,
                     attachments=codex_attachments,
+                    collaboration_mode=collaboration_mode,
                 )
             )
         except Exception as exc:

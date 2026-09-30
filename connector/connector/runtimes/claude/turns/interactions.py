@@ -15,19 +15,24 @@ from connector.runtimes.claude.domain.approvals import (
     decision_from_action,
     notice_transition,
     permission_result_from_decision,
+    plan_decision_from_action,
 )
-from connector.runtimes.claude.domain.session import ClaudeSession
 from connector.runtimes.claude.domain.input_requests import (
     ClaudeInputRequest,
     claude_input_request,
     input_request_notice,
 )
+from connector.runtimes.claude.domain.permissions import (
+    permission_mode_from_selection_id,
+)
+from connector.runtimes.claude.domain.session import ClaudeSession
 from connector.runtimes.claude.notifications.notices import ClaudeNoticeRegistry
 from connector.runtimes.claude.notifications.projector import (
     ClaudeNotificationProjector,
 )
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.timeline.messages import stable_tool_item_id
+from connector.server.protocol import protocol_selection_id
 
 
 @dataclass(slots=True)
@@ -68,7 +73,15 @@ class ClaudeInteractionController:
                 message="Claude approval notice is not waiting for a response",
             )
 
-        decision = decision_from_action(action_id)
+        if notice.source.get("component") == "claude.plan_review":
+            try:
+                decision = plan_decision_from_action(notice, action_id, input_data)
+            except InputRequestValidationError as exc:
+                return RuntimeOperationResult(
+                    ok=False, code="claude_input_invalid", message=str(exc),
+                )
+        else:
+            decision = decision_from_action(action_id)
         if notice.interaction_type == "input_request" and decision.allowed:
             request = self._input_requests.get(notice_id)
             if request is None:
@@ -113,9 +126,14 @@ class ClaudeInteractionController:
 
         session = self.session_store.get(session_id)
         if session is not None:
+            if decision.permission_mode is not None:
+                session.selections["permission"] = protocol_selection_id(
+                    "claude", "permission", {"permission_id": decision.permission_mode},
+                )
             await self.notifications.session_state.session_state_update(
                 session,
                 "running" if self.has_active_turn(session_id) else "idle",
+                selections=session.selections if decision.permission_mode is not None else None,
                 metadata={
                     "source": "claude.approval/responded",
                     "notice_id": notice_id,
@@ -186,6 +204,7 @@ class ClaudeInteractionController:
             tool_input=tool_input,
             context=context,
             approval_id=self._next_approval_id(turn_id),
+            permission_mode=permission_mode_from_selection_id(session.selections.get("permission")),
         )
         future: asyncio.Future[ClaudeApprovalDecision] = (
             asyncio.get_running_loop().create_future()

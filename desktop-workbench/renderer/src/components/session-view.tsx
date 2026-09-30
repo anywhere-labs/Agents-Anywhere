@@ -251,7 +251,7 @@ export function SessionView() {
 
           <div className="min-h-0 flex-1 overflow-hidden">
             {token ? (
-              <SessionFilePreviewProvider onOpenFilePreview={handleOpenFilePreview}>
+              <SessionFilePreviewProvider onOpenFilePreview={handleOpenFilePreview} planLocation={{ token, connectorId: session.connectorId, root: session.cwd || "." }}>
                 <SessionDetail
                   token={token}
                   sessionId={detailSessionId ?? session.id}

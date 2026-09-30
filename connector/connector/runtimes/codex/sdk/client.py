@@ -6,7 +6,7 @@ import hashlib
 import importlib
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, TypeVar
 
 from openai_codex import JsonRpcError, MethodNotFoundError, TransportClosedError
@@ -14,6 +14,7 @@ from openai_codex.generated.v2_all import (
     ApprovalsReviewer,
     AskForApproval,
     AskForApprovalValue,
+    CollaborationMode,
     DangerFullAccessSandboxPolicy,
     LocalImageUserInput,
     ReadOnlySandboxPolicy,
@@ -114,6 +115,11 @@ class TurnStreamState:
     thread_id: str
     turn_id: str
     terminal_delivery: asyncio.Task[None] | None = None
+
+
+# The SDK's generated stable schema omits this app-server experimental field.
+class CodexPlanTurnStartParams(TurnStartParams):
+    collaboration_mode: CollaborationMode = Field(alias="collaborationMode")
 
 
 class CodexThreadTurnsListResponse(BaseModel):
@@ -509,6 +515,13 @@ class CodexSdkClient:
         await ensure_codex_initialized(self._client)
         low_level_client = codex_low_level_client(self._client)
         if low_level_client is not None:
+            if request.collaboration_mode is not None and request.model is None:
+                resumed = await low_level_client.thread_resume(
+                    request.thread_id,
+                    codex_thread_resume_params(CodexResumeThreadRequest(thread_id=request.thread_id), self._model_gateway),
+                )
+                request = replace(request, model=resumed.model, effort=request.effort or (resumed.reasoning_effort.value if resumed.reasoning_effort is not None else None))
+                self._loaded_thread_ids.add(request.thread_id)
             await self.ensure_thread_resumed_for_turn(low_level_client, request)
             started = await self.start_low_level_turn_with_resume_retry(
                 low_level_client,
@@ -1238,6 +1251,7 @@ def codex_request_requires_low_level_turn_start(
         request.approval_policy is not None
         or request.approvals_reviewer is not None
         or len(request.attachments) > 0
+        or request.collaboration_mode is not None
     )
 
 
@@ -1311,7 +1325,7 @@ def codex_turn_start_params(request: CodexStartTurnRequest) -> TurnStartParams:
         request.approval_policy,
         request.approvals_reviewer,
     )
-    return TurnStartParams(
+    params = TurnStartParams(
         approvalPolicy=approval_policy,
         approvalsReviewer=approvals_reviewer,
         clientUserMessageId=request.client_message_id,
@@ -1321,6 +1335,15 @@ def codex_turn_start_params(request: CodexStartTurnRequest) -> TurnStartParams:
         sandboxPolicy=codex_turn_sandbox_policy(request.sandbox),
         threadId=request.thread_id,
     )
+    if request.collaboration_mode is not None:
+        return CodexPlanTurnStartParams(
+            **params.model_dump(),
+            collaborationMode=CollaborationMode.model_validate({
+                "mode": request.collaboration_mode,
+                "settings": {"model": request.model, "reasoning_effort": request.effort, "developer_instructions": None},
+            }),
+        )
+    return params
 
 
 def codex_turn_user_input(request: CodexStartTurnRequest) -> list[UserInput]:

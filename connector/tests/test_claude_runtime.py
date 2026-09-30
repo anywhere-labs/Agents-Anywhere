@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from claude_agent_sdk import PermissionUpdate
 
 from connector.runtime_protocol import (
     RuntimeAttachment,
@@ -29,6 +30,7 @@ from connector.runtimes.claude.sdk.connection import (
     RECONCILE_DONE_MARKER,
     RECONCILE_PROMPT,
 )
+from connector.server.protocol import protocol_selection_id
 
 
 @pytest.mark.parametrize(
@@ -3602,6 +3604,113 @@ async def _test_claude_runtime_tool_approval_round_trips_to_sdk() -> None:
     assert host.session_state_updates[-1]["status"] == "idle"
 
 
+@pytest.mark.parametrize(
+    ("action_id", "initial_mode", "expected_mode"),
+    [
+        ("approve_automated", None, "acceptEdits"),
+        ("approve_automated", "auto", "auto"),
+        ("approve_automated", "bypassPermissions", "bypassPermissions"),
+        ("approve_manual", "bypassPermissions", "default"),
+        ("approve_manual", "plan", "default"),
+        ("revise_plan", "plan", None),
+    ],
+)
+def test_claude_runtime_plan_review_round_trips_to_sdk(
+    action_id: str, initial_mode: str | None, expected_mode: str | None,
+) -> None:
+    asyncio.run(_test_claude_runtime_plan_review_round_trips_to_sdk(
+        action_id, initial_mode, expected_mode,
+    ))
+
+
+async def _test_claude_runtime_plan_review_round_trips_to_sdk(
+    action_id: str, initial_mode: str | None, expected_mode: str | None,
+) -> None:
+    plan = "# Implementation plan\n\n1. Inspect the code.\n2. Add regression tests."
+    tool_input = {"plan": plan, "allowedPrompts": [{"tool": "Bash", "prompt": "run tests"}]}
+    host = _RecordingHost()
+    client = _ApprovalClaudeClient()
+    client.tool_name = "ExitPlanMode"
+    client.tool_input = tool_input
+    runtime = _runtime(host=host, client=client)
+    selections = {"permission": protocol_selection_id(
+        "claude", "permission", {"permission_id": initial_mode},
+    )} if initial_mode else None
+
+    result = await runtime.start_turn(
+        "sess_approval", "claude_session_approval", "Plan the change first", selections=selections,
+    )
+    task = runtime._sessions["sess_approval"].active_task
+    assert result.ok is True
+    assert task is not None
+    await _wait_until(lambda: bool(host.notice_upserts))
+
+    notice = host.notice_upserts[0]
+    assert notice.title == "Review plan"
+    assert notice.message == plan
+    assert notice.source["component"] == "claude.plan_review"
+    assert notice.interaction_type == "approval"
+    assert notice.response_required is True
+    assert notice.context["toolInput"] == tool_input
+    assert [action["actionId"] for action in notice.actions] == [
+        "approve_automated", "approve_manual", "revise_plan",
+    ]
+    assert host.session_state_updates[-1]["status"] == "waiting_approval"
+    assert not task.done()
+
+    invalid = await runtime.respond_interaction("sess_approval", notice.notice_id, "approve")
+    assert invalid.code == "claude_input_invalid"
+    assert not task.done()
+    if action_id == "revise_plan":
+        for invalid_input in (None, {"feedback": "  "}, {"feedback": 123}):
+            invalid = await runtime.respond_interaction(
+                "sess_approval", notice.notice_id, action_id, input_data=invalid_input,
+            )
+            assert invalid.code == "claude_input_invalid"
+            assert not task.done()
+        input_data = {"feedback": "  Add regression tests first.  ", "plan": "# Revised by user"}
+    else:
+        for invalid_plan in ("", "  ", 123, None):
+            invalid = await runtime.respond_interaction(
+                "sess_approval", notice.notice_id, action_id, input_data={"plan": invalid_plan},
+            )
+            assert invalid.code == "claude_input_invalid"
+            assert not task.done()
+        # The client cannot replace the server's offered permission mode.
+        input_data = {"automatedPermissionMode": "bypassPermissions", "plan": "# Edited plan\n\nUse the user's changes."}
+    response = await runtime.respond_interaction(
+        "sess_approval", notice.notice_id, action_id, input_data=input_data,
+    )
+    assert response.ok is True
+    await task
+
+    decision = client.permission_results[0]
+    if expected_mode is not None:
+        assert isinstance(decision, _PermissionResultAllow)
+        assert decision.updated_input == {**tool_input, "plan": input_data["plan"]}
+        assert host.notice_upserts[-1].message == input_data["plan"]
+        assert [update.to_dict() for update in decision.updated_permissions] == [
+            {"type": "setMode", "mode": expected_mode, "destination": "session"},
+        ]
+        expected_selection = protocol_selection_id(
+            "claude", "permission", {"permission_id": expected_mode},
+        )
+        assert runtime._sessions["sess_approval"].selections["permission"] == expected_selection
+        assert any(update.get("selections", {}).get("permission") == expected_selection
+                   for update in host.session_state_updates if update.get("selections"))
+    else:
+        assert isinstance(decision, _PermissionResultDeny)
+        assert decision.message.startswith("Add regression tests first.")
+        assert input_data["plan"] in decision.message
+        assert runtime._sessions["sess_approval"].selections == selections
+    assert [item.status for item in host.notice_upserts] == ["open", "responding", "resolved"]
+    assert await runtime.get_session_notices("sess_approval") == ()
+    assert host.session_state_updates[-1]["status"] == "idle"
+    duplicate = await runtime.respond_interaction("sess_approval", notice.notice_id, action_id)
+    assert duplicate.ok is False
+    assert len(client.permission_results) == 1
+
+
 def test_claude_runtime_ask_user_question_round_trips_answers_to_sdk() -> None:
     asyncio.run(_test_claude_runtime_ask_user_question_round_trips_answers_to_sdk())
 
@@ -3734,6 +3843,7 @@ def _default_sdk(**overrides: Any) -> Any:
         ClaudeAgentOptions=_FakeOptions,
         PermissionResultAllow=_PermissionResultAllow,
         PermissionResultDeny=_PermissionResultDeny,
+        PermissionUpdate=PermissionUpdate,
         list_sessions=lambda **_: [],
         get_session_info=lambda **_: None,
         get_session_messages=lambda **_: [],
@@ -3896,13 +4006,15 @@ class _FakeClaudeClient:
 class _ApprovalClaudeClient(_FakeClaudeClient):
     def __init__(self) -> None:
         super().__init__()
+        self.tool_name = "Bash"
+        self.tool_input: dict[str, Any] = {"command": "ls"}
         self.permission_results: list[Any] = []
 
     async def receive_response(self) -> list[Any]:
         can_use_tool = self.options.kwargs["can_use_tool"]
         result = await can_use_tool(
-            "Bash",
-            {"command": "ls"},
+            self.tool_name,
+            self.tool_input,
             SimpleNamespace(session_id="claude_session_approval"),
         )
         self.permission_results.append(result)
@@ -5412,9 +5524,11 @@ class _PermissionResultAllow:
         self,
         behavior: str = "allow",
         updated_input: dict[str, Any] | None = None,
+        updated_permissions: list[PermissionUpdate] | None = None,
     ) -> None:
         self.behavior = behavior
         self.updated_input = updated_input
+        self.updated_permissions = updated_permissions or []
 
 
 class _PermissionResultDeny:
