@@ -76,7 +76,7 @@ async def main(home: Path) -> None:
 
             checkpoint_path = home / "connector-state.json"
             base_host = ConnectorRuntimeHost(connector.id, notify, download,
-                sync_state_store=JsonSyncStateStore(checkpoint_path), ingest_notifications=ingest.ingest_notifications)
+                sync_state_store=JsonSyncStateStore(checkpoint_path), ingest_notifications=ingest.ingest_notifications, ingest_snapshot=ingest.ingest_snapshot)
             host = await base_host.prepare_runtime_host("dsh")
             config = await DshProvider().validate_config({"dshHome": str(home), "restartBackoffMs": 100})
             runtime = CheckedRuntime(config, host)
@@ -142,7 +142,7 @@ async def main(home: Path) -> None:
                 offset = len(transport.notifications)
                 count = completed_inventories()
                 base_host = ConnectorRuntimeHost(connector.id, notify, download,
-                    sync_state_store=JsonSyncStateStore(checkpoint_path), ingest_notifications=ingest.ingest_notifications)
+                    sync_state_store=JsonSyncStateStore(checkpoint_path), ingest_notifications=ingest.ingest_notifications, ingest_snapshot=ingest.ingest_snapshot)
                 host = await base_host.prepare_runtime_host("dsh")
                 runtime = CheckedRuntime(config, host)
                 await runtime.start()
@@ -158,7 +158,7 @@ async def main(home: Path) -> None:
                 offset = len(transport.notifications)
                 count = completed_inventories()
                 base_host = ConnectorRuntimeHost(connector.id, notify, download,
-                    sync_state_store=JsonSyncStateStore(checkpoint_path), ingest_notifications=ingest.ingest_notifications)
+                    sync_state_store=JsonSyncStateStore(checkpoint_path), ingest_notifications=ingest.ingest_notifications, ingest_snapshot=ingest.ingest_snapshot)
                 host = await base_host.prepare_runtime_host("dsh")
                 runtime = CheckedRuntime(config, host)
                 await runtime.start()

@@ -120,6 +120,26 @@ the asynchronous notification/coalescing queue. Native changes are still batched
 at the Bridge's bounded cadence. Snapshot page ACK only means page receipt;
 snapshot.commit waits for ingestion of the assembled complete snapshot.
 
+### Slow uploads (negotiated upload progress v1)
+
+Connector requests `uploadProgressVersion:1` alongside `checkpointVersion:1`;
+Bridge echoes it only when supported. The Connector may then call
+`runtime.sync.progress {streamId,batchSeq,bytesSent}` while ingesting that batch.
+`bytesSent` is a positive safe integer counting cumulative request-body bytes
+handed to the HTTP transport, including retransmissions within the batch.
+An increasing count renews the pending batch's 60-second inactivity deadline.
+Repeated or decreasing counts do not renew it; invalid identities/counts fail.
+Progress does not ACK a batch, send the next one, or advance a checkpoint.
+The final ACK still follows cloud acceptance. HTTP connect/write/read/pool
+inactivity timeouts remain active. A slow but advancing upload can therefore
+finish without a fixed 60-second total limit; a stalled upload still expires.
+
+Only negotiated peers send progress. Existing peers retain their ACK behavior.
+This extension affects the local Bridge transport, not the Server/client API.
+HTTP ingestion still submits one complete snapshot, preserving atomic history
+replacement. It does not add resumable cloud chunks; an actual failed upload
+may retransmit the full snapshot on recovery.
+
 Without the negotiated extension, live notifications retain the typed Host
 publishers and their WebSocket/coalescing/HTTP fallback queue. Their ACK does not
 mean server persistence. No resumable checkpoint is inferred from legacy ACKs;

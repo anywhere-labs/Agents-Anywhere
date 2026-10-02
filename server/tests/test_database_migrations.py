@@ -1125,9 +1125,32 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_41() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_41"
-    assert CURRENT_SCHEMA_VERSION == "2.41"
+def test_current_schema_version_is_v2_42() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_42"
+    assert CURRENT_SCHEMA_VERSION == "2.42"
+
+
+def test_v2_42_adds_snapshot_staging_tables(tmp_path) -> None:
+    path = tmp_path / "snapshot-staging.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_41")
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        assert not inspect(engine).has_table("connector_uploads")
+    finally:
+        engine.dispose()
+    upgrade_database(db_url=url)
+    upgrade_database(db_url=url)
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        assert inspect(engine).has_table("connector_uploads")
+        assert inspect(engine).has_table("connector_upload_chunks")
+        assert inspect(engine).has_table("connector_snapshot_watermarks")
+        fk = inspect(engine).get_foreign_keys("connector_upload_chunks")[0]
+        assert fk["referred_table"] == "connector_uploads"
+        assert fk["options"]["ondelete"] == "CASCADE"
+    finally:
+        engine.dispose()
 
 
 def test_v2_41_drops_the_sidebar_order_table(tmp_path) -> None:
