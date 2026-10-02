@@ -23,6 +23,7 @@ from connector.runtime_protocol import (
 from connector.runtime_protocol import (
     RuntimeSupervisor as AgentRuntimeSupervisor,
 )
+from connector.runtime_protocol.host import UploadProgress
 from connector.runtimes import default_runtime_providers
 from connector.server.auth import ConnectorAuthenticationError, ConnectorAuthenticator
 from connector.server.capabilities import protocol_capabilities_from_runtime_types
@@ -434,8 +435,9 @@ class BackendRpcClient:
             entry.runtime_type, runtime_id, status, error
         )
 
-    async def ingest_notifications(self, notifications: list[dict[str, Any]]) -> None:
-        await self._ingest.ingest_notifications(notifications)
+    async def ingest_notifications(self, notifications: list[dict[str, Any]], *, on_progress: UploadProgress | None = None) -> None:
+        kwargs = {"on_progress": on_progress} if on_progress is not None else {}
+        await self._ingest.ingest_notifications(notifications, **kwargs)
 
     async def download_attachment(
         self, session_id: str, file_id: str

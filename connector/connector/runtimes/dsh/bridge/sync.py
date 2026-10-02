@@ -9,7 +9,7 @@ from contextlib import ExitStack
 from typing import Any
 
 from connector.logging import logger
-from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtime_protocol.host import RuntimeHostClient, UploadProgress
 from connector.runtime_protocol.models import (
     SessionSourceObservation,
     SessionSourceState,
@@ -66,6 +66,7 @@ class SyncRelay:
         self.item_ids: set[str] = set()
         self.durable_checkpoints = False
         self.loaded_checkpoint: dict[str, Any] | None = None
+        self.on_progress: UploadProgress | None = None
 
     def start(self) -> None:
         self.task = asyncio.create_task(self.run(), name="dsh-event-sync")
@@ -136,11 +137,12 @@ class SyncRelay:
                 items = await self.load_items()
                 meta = self.snapshot["meta"]
                 # Reuse the existing complete snapshot API only after every page is received.
+                kwargs = {"on_progress": self.on_progress} if self.on_progress is not None else {}
                 await self.host.publish_runtime_notifications("dsh", [
                     {"method": "session.meta.upsert", "params": {"sessionId": op["sessionId"], **meta}},
                     {"method": "timeline.sync", "params": {"sessionId": op["sessionId"],
                         "externalSessionId": meta["externalSessionId"], "items": items, "complete": True}},
-                ])
+                ], **kwargs)
                 self.clear_snapshot()
             else:
                 self.clear_snapshot()
@@ -171,7 +173,8 @@ class SyncRelay:
     async def ingest_notifications(self, notifications: list[dict[str, Any]]) -> None:
         if not notifications:
             return
-        await self.host.publish_runtime_notifications("dsh", notifications)
+        kwargs = {"on_progress": self.on_progress} if self.on_progress is not None else {}
+        await self.host.publish_runtime_notifications("dsh", notifications, **kwargs)
         if any(n["method"] == "session.inventory.complete" and n["params"].get("complete") is True for n in notifications):
             await self.host.runtime_health_update("running")
 
@@ -260,7 +263,8 @@ class SyncRelay:
         elif method == "catalog.permission.update":
             await self.host.permission_catalog_update(permission_catalog(params))
         elif method in {"session.inventory.begin", "session.inventory.complete"}:
-            await self.host.publish_runtime_notifications("dsh", [notice])
+            kwargs = {"on_progress": self.on_progress} if self.on_progress is not None else {}
+            await self.host.publish_runtime_notifications("dsh", [notice], **kwargs)
             if method == "session.inventory.complete" and params.get("complete") is True:
                 await self.host.runtime_health_update("running")
         else:
@@ -294,13 +298,14 @@ class SyncRelay:
             await self.host.runtime_health_update("starting", {
                 "code": "runtime_initializing", "message": "正在同步 DSH 会话…", "retryable": True,
             })
-            subscription = await self.client.request("runtime.sync.subscribe", {"checkpointVersion": 1})
+            subscription = await self.client.request("runtime.sync.subscribe", {"checkpointVersion": 1, "uploadProgressVersion": 1})
             projection_version = subscription.get("projectionVersion")
             if projection_version not in (2, 3):
                 raise ValueError("Unsupported DSH projection version")
             stream_id, expected = subscription["streamId"], 1
             self.durable_checkpoints = subscription.get("checkpointVersion") == 1
             self.stream_id = stream_id
+            progress_enabled = subscription.get("uploadProgressVersion") == 1
             while True:
                 batch = await self.queue.get()
                 if batch is None:
@@ -312,14 +317,27 @@ class SyncRelay:
                 if batch.get("projectionVersion") != projection_version or not isinstance(batch.get("operations"), list) or not batch["operations"]:
                     raise ValueError("Invalid DSH event batch")
                 self.loaded_checkpoint = None
+                batch_seq = expected
+                bytes_sent = 0
+
+                async def progress(bytes_written: int, seq: int = batch_seq) -> None:
+                    nonlocal bytes_sent
+                    bytes_sent += bytes_written
+                    await self.client.request("runtime.sync.progress", {
+                        "streamId": stream_id, "batchSeq": seq, "bytesSent": bytes_sent,
+                    })
+
+                self.on_progress = progress if progress_enabled else None
                 for operation in batch["operations"]:
                     await self.operation(operation)
                 ack = {"streamId": stream_id, "batchSeq": expected}
                 if any(op.get("kind") == "checkpoint.load" for op in batch["operations"]):
                     ack["checkpoint"] = self.loaded_checkpoint
                 await self.client.request("runtime.sync.ack", ack)
+                self.on_progress = None
                 expected += 1
         finally:
+            self.on_progress = None
             self.clear_snapshot()
 
 

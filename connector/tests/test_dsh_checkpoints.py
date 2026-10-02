@@ -51,7 +51,7 @@ def test_ingestion_precedes_checkpoint_and_ack_and_json_survives_restart(tmp_pat
 
         async def request(method, params=None):
             if method == "runtime.sync.subscribe":
-                assert params == {"checkpointVersion": 1}
+                assert params == {"checkpointVersion": 1, "uploadProgressVersion": 1}
                 return {"streamId": "stream", "projectionVersion": projection_version, "checkpointVersion": 1}
             acks.append(params)
             acked.set()

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
-from connector.core.json_kv import JsonKeyValueStore
 
+from connector.core.json_kv import JsonKeyValueStore
 from connector.runtime_protocol.models import (
     RuntimeAttachmentContent,
     RuntimeCapabilitySet,
@@ -15,6 +15,9 @@ from connector.runtime_protocol.models import (
     SessionNotice,
     SessionSourceObservation,
 )
+
+# Each callback reports newly written body bytes, not a cumulative total or ACK.
+UploadProgress = Callable[[int], Awaitable[None]]
 
 
 class RuntimeHostClient(ABC):
@@ -29,7 +32,8 @@ class RuntimeHostClient(ABC):
         return JsonKeyValueStore.default()
 
     async def publish_runtime_notifications(
-        self, runtime: str, notifications: list[dict[str, Any]], runtime_id: str | None = None
+        self, runtime: str, notifications: list[dict[str, Any]], runtime_id: str | None = None,
+        on_progress: UploadProgress | None = None,
     ) -> None:
         """Await the existing Connector ingest path, without the fallback queue."""
         raise NotImplementedError("Synchronous notification ingestion is unavailable")

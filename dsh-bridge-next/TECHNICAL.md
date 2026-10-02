@@ -6,6 +6,8 @@ Agents Anywhere 的 DSH 插件。支持没有安装 AA Desktop 时的账号登�
 
 职责与后续开发见 [开发计划](./DEVELOPMENT_PLAN.md)，完整产品设计见 [Onboarding 业务方案](./ONBOARDING_PLAN.md)，检查命令与手动验收见 [验证记录](./VERIFICATION.md)。
 
+历史同步的慢速上传通过协商 `uploadProgressVersion:1` 延长 ACK 的无进展等待窗口。进度只表示 HTTP 传输继续推进；云端确认成功后才能 ACK 和保存检查点。完整快照仍一次提交，详细约束见[本机契约](../contracts/dsh-bridge/1.0/README.md#slow-uploads-negotiated-upload-progress-v1)和[慢速上传说明](../docs/dsh-slow-upload.md)。
+
 ## 已实现
 
 ```text

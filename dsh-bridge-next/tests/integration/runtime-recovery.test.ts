@@ -42,6 +42,32 @@ function connect(endpoint: Endpoint) {
     close: () => { lines.close(); socket.destroy() } }
 }
 
+test('upload progress negotiates over loopback RPC and never releases the next batch', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-upload-progress-'))
+  const fixture = await nativeRuntime(home)
+  const server = new RuntimeServer(join(home, 'rpc/endpoint.json'), {
+    native: fixture.ctx.agentsAnywhereRuntime.native, query: fixture.ctx.sessionQuery, status: () => 'idle',
+  })
+  let wire: ReturnType<typeof connect> | undefined
+  try {
+    wire = connect(await server.start())
+    await wire.initialize()
+    const subscription = await wire.rpc('runtime.sync.subscribe', { checkpointVersion: 1, uploadProgressVersion: 1 })
+    assert.equal(subscription.result.uploadProgressVersion, 1)
+    await until(() => wire!.messages.some(message => message.method === 'runtime.sync.batch'))
+    const batch = wire.messages.find(message => message.method === 'runtime.sync.batch')!.params
+    const progress = { streamId: batch.streamId, batchSeq: batch.batchSeq, bytesSent: 65_536 }
+    assert.equal((await wire.rpc('runtime.sync.progress', progress)).result.ok, true)
+    assert.equal((await wire.rpc('runtime.sync.progress', { ...progress, streamId: 'old-stream' })).error.data.code, 'INVALID_PARAMS')
+    assert.equal(wire.messages.filter(message => message.method === 'runtime.sync.batch').length, 1)
+    await wire.rpc('runtime.sync.ack', { streamId: batch.streamId, batchSeq: batch.batchSeq })
+    await until(() => wire!.messages.filter(message => message.method === 'runtime.sync.batch').length > 1)
+    const legacy = await wire.rpc('runtime.sync.subscribe', { checkpointVersion: 1 })
+    assert.equal(legacy.result.uploadProgressVersion, undefined)
+    assert.equal((await wire.rpc('runtime.sync.progress', { ...progress, streamId: legacy.result.streamId })).error.data.code, 'INVALID_PARAMS')
+  } finally { wire?.close(); await server.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
 test('RPC failures, oversized frames, cancellation and timeout preserve other requests and allow retries', { timeout: 30_000 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'dsh-rpc-recovery-'))
   const fixture = await nativeRuntime(home)
