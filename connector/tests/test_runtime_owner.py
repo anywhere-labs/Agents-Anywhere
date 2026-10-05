@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import socket
@@ -147,6 +148,39 @@ def test_state_lock_excludes_a_socket_that_has_not_started_listening(tmp_path):
         holder.close()
     with runtime_owner.state_lock(path, timeout=0.2):
         pass
+
+
+def test_state_lock_reports_a_reserved_port_without_retrying(tmp_path, monkeypatch):
+    """An OS-level refusal (e.g. a Windows reserved range) is not a busy lock.
+
+    The port is a deterministic hash of the record path, so retrying can never
+    succeed; the operator must see the real cause instead of "busy".
+    """
+    path = tmp_path / "connector-runtime.json"
+    port = runtime_owner.state_lock_port(path)
+    attempts = 0
+
+    class RefusingLease:
+        def setsockopt(self, *args, **kwargs):
+            pass
+
+        def bind(self, address):
+            nonlocal attempts
+            attempts += 1
+            raise OSError(errno.EACCES, "permission denied")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(runtime_owner.socket, "socket", lambda *args, **kwargs: RefusingLease())
+
+    with (
+        pytest.raises(RuntimeError, match=f"lock port {port}.*permission") as excinfo,
+        runtime_owner.state_lock(path, timeout=5),
+    ):
+        pass
+    assert attempts == 1, "A permission failure must not be retried as a busy lock"
+    assert "netsh" in str(excinfo.value)
 
 
 def test_live_unrelated_process_does_not_block_connector_start():
