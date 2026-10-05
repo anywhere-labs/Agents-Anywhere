@@ -182,6 +182,16 @@ Reports asynchronous runtime errors that do not naturally belong to a command RP
 
 Materializes a user-uploaded attachment for runtime use.
 
+Codex 和 Claude Code 适配器下载附件失败时，仍会继续发送正文及成功下载的附件，
+但会通过现有 `notice_upsert` 发布非阻塞的 warning，列出未交付的文件并提示重新发送。
+每个会话保留一条当前附件交付提醒；新的失败更新这条提醒，下一次带附件的发送全部
+下载成功后将其标为 resolved。纯文本发送不会清除提醒。当前提醒保存在 Runtime 的
+notice registry 中，可通过 `get_session_notices` 重新获取，不作为 Server 数据库中的
+当前状态保存，也不保证 Connector 重启后保留。
+
+这条提醒只说明 AA 下载失败；附件交付后 Runtime 自身的读取、解析或执行错误仍由
+原生 Runtime 的错误路径处理。DSH 的全量附件准备失败即终止发送的行为不变。
+
 ### `sync_state_*`
 
 Provides adapter-owned local sync state. Keys must be runtime-namespaced, for example:

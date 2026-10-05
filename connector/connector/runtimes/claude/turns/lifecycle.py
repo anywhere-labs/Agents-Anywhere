@@ -360,6 +360,7 @@ class ClaudeTurnRunner:
                 self.host,
                 session.session_id,
                 attachments,
+                self.notifications.notices,
             )
             effective_content = content_with_attachment_notes(
                 content,
