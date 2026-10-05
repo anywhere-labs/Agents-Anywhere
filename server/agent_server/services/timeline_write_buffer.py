@@ -499,6 +499,12 @@ class TimelineWriteBuffer:
     ) -> None:
         """Publish a durable low-frequency writer before releasing its fence."""
 
+        if operation == "commit_snapshot_upload":
+            # The revision fence already holds this lane's lock.
+            lane = await self._lane(session_id)
+            lane.latest.clear()
+            lane.max_order_seq = None
+            lane.seeded = False
         durable_sequence = await self._store.get_session_seq(session_id)
         published_through = await self._sequences.published_head(session_id)
         if (
@@ -530,8 +536,16 @@ class TimelineWriteBuffer:
                 envelope["items"] = [
                     item.model_dump(mode="json") for item in result_items
                 ]
-            if operation == "replace_timeline_snapshot" and "items" in envelope:
+            if (
+                operation in {"replace_timeline_snapshot", "commit_snapshot_upload"}
+                and "items" in envelope
+            ):
                 envelope["timelineReset"] = True
+            if operation == "commit_snapshot_upload":
+                session = await self._project_session_connector_status(
+                    await self._store.get_session(session_id)
+                )
+                envelope["session"] = session.model_dump(mode="json")
         else:
             session = await self._project_session_connector_status(
                 await self._store.get_session(session_id)
@@ -539,6 +553,13 @@ class TimelineWriteBuffer:
             envelope["session"] = session.model_dump(mode="json")
         await self._broker.publish(session_id, envelope)
         await self._sequences.mark_published(session_id, durable_sequence)
+        if operation == "commit_snapshot_upload":
+            await publish_dashboard_changed(
+                self._store,
+                self._broker,
+                session_id=session_id,
+                reason=operation,
+            )
 
     async def live_sequence(self, session_id: str) -> int:
         """Return the highest live or durable revision for an envelope."""

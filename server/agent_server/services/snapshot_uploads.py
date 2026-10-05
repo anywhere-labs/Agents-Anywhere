@@ -7,20 +7,31 @@ import tempfile
 from collections.abc import AsyncIterator
 from typing import Protocol
 
-from agent_server.core.models import ConnectorIngestRequest
+from agent_server.core.models import ConnectorIngestRequest, TimelineItemIn
 from agent_server.core.snapshot_upload import CHUNK_BYTES, SnapshotUploadError
-from agent_server.services.connector_ingest import ConnectorIngestService
+from agent_server.core.timeline import TimelineBatchWriteResult
+from agent_server.services.connector_notifications import (
+    session_meta_source_observation,
+)
 
 
 class SnapshotUploadRepository(Protocol):
     async def get_snapshot_upload(self, connector_id: str, upload_id: str) -> dict: ...
     def read_snapshot_chunks(self, connector_id: str, upload_id: str) -> AsyncIterator[tuple[int, bytes]]: ...
-    async def complete_snapshot_upload(self, connector_id: str, upload_id: str) -> None: ...
+    async def get_unconfigured_runtime_ids(self, connector_id: str) -> set[str]: ...
+    async def resolve_connector_session_id(
+        self, *, connector_id: str, session_id: str, external_session_id: str,
+        runtime: str, runtime_id: str,
+    ) -> str: ...
+    async def commit_snapshot_upload(
+        self, connector_id: str, upload_id: str, *, session_id: str,
+        metadata: dict, items: list[TimelineItemIn], source_observation: dict,
+    ) -> TimelineBatchWriteResult: ...
 
 
 class SnapshotUploadService:
-    def __init__(self, store: SnapshotUploadRepository, ingest: ConnectorIngestService):
-        self.store, self.ingest = store, ingest
+    def __init__(self, store: SnapshotUploadRepository):
+        self.store = store
 
     async def commit(self, connector_id: str, upload_id: str) -> dict:
         upload = await self.store.get_snapshot_upload(connector_id, upload_id)
@@ -67,8 +78,39 @@ class SnapshotUploadService:
             or external_id != notices[0].params.get("externalSessionId")
         ):
             raise SnapshotUploadError(400, "Incomplete or inconsistent snapshot")
-        result = await self.ingest.ingest(connector_id=connector_id, payload=payload)
-        if result.rejected:
-            return {"committed": False, "rejected": [r.model_dump() for r in result.rejected]}
-        await self.store.complete_snapshot_upload(connector_id, upload_id)
+        metadata = notices[0].params
+        for field in ("title", "cwd", "lastSyncedAt", "sourceObservedAt", "lastActivityAt"):
+            if metadata.get(field) is not None and not isinstance(metadata[field], str):
+                raise SnapshotUploadError(400, f"Invalid snapshot metadata: {field}")
+        history = params.get("items", [])
+        if not isinstance(history, list):
+            raise SnapshotUploadError(400, "Invalid snapshot history")
+        try:
+            items = [TimelineItemIn.model_validate(item) for item in history]
+        except ValueError as exc:
+            raise SnapshotUploadError(400, "Invalid snapshot history") from exc
+        source_observation = session_meta_source_observation(metadata, "dsh")
+        if upload["runtime_id"] in await self.store.get_unconfigured_runtime_ids(connector_id):
+            raise SnapshotUploadError(409, "Snapshot runtime is not configured")
+        try:
+            session_id = await self.store.resolve_connector_session_id(
+                connector_id=connector_id, session_id=upload["session_id"],
+                external_session_id=external_id, runtime="dsh", runtime_id=upload["runtime_id"],
+            )
+        except KeyError:
+            session_id = upload["session_id"]
+        items = [
+            item if item.sessionId == session_id
+            else item.model_copy(update={"sessionId": session_id})
+            for item in items
+        ]
+        try:
+            await self.store.commit_snapshot_upload(
+                connector_id, upload_id, session_id=session_id,
+                metadata=metadata, items=items, source_observation=source_observation,
+            )
+        except SnapshotUploadError:
+            raise
+        except ValueError as exc:
+            raise SnapshotUploadError(400, str(exc)) from exc
         return {"committed": True}

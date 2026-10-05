@@ -489,13 +489,13 @@ async def put_snapshot_chunk(
 @router.post("/connector/ingest/uploads/{upload_id}/commit")
 async def commit_snapshot_upload(
     upload_id: str, authorization: str = Header(..., alias="Authorization"),
-    db: Store = Depends(get_store), ingest: ConnectorIngestService = Depends(get_connector_ingest_service),
+    db: Store = Depends(get_store),
 ) -> dict:
     connector_id = _access_token_connector_id(authorization)
     async with db.connector_lifecycle(connector_id):
         await _require_active_connector(authorization, db)
         try:
-            return await SnapshotUploadService(db, ingest).commit(connector_id, upload_id)
+            return await SnapshotUploadService(db).commit(connector_id, upload_id)
         except SnapshotUploadError as exc:
             raise HTTPException(exc.status, detail=str(exc)) from exc
         except NotificationValidationError as exc:

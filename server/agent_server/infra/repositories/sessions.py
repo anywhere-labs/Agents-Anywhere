@@ -426,6 +426,47 @@ class SessionRepositoryMixin:
         origin: str = "connector_import",
         source_state: str | None = None,
     ) -> SessionView:
+        async with self._engine.begin() as conn:
+            await self._write_connector_session(
+                conn,
+                connector_id=connector_id,
+                session_id=session_id,
+                runtime=runtime,
+                runtime_id=runtime_id,
+                external_session_id=external_session_id,
+                title=title,
+                cwd=cwd,
+                status=status,
+                last_synced_at=last_synced_at,
+                source_observed_at=source_observed_at,
+                last_activity_at=last_activity_at,
+                model_selection_id=model_selection_id,
+                permission_selection_id=permission_selection_id,
+                origin=origin,
+                source_state=source_state,
+            )
+        return await self.get_session(session_id)
+
+    async def _write_connector_session(
+        self,
+        conn: AsyncConnection,
+        *,
+        connector_id: str,
+        session_id: str,
+        runtime: str,
+        runtime_id: str | None = None,
+        external_session_id: str | None,
+        title: str | None = None,
+        cwd: str | None = None,
+        status: str | None = None,
+        last_synced_at: str | None = None,
+        source_observed_at: str | None = None,
+        last_activity_at: str | None = None,
+        model_selection_id: str | None = None,
+        permission_selection_id: str | None = None,
+        origin: str = "connector_import",
+        source_state: str | None = None,
+    ) -> None:
         identity = _runtime_identity(runtime, runtime_id)
         runtime = str(identity.runtime_type)
         runtime_id = str(identity.runtime_id)
@@ -433,153 +474,151 @@ class SessionRepositoryMixin:
         has_permission_selection_id = permission_selection_id is not None
         now = utc_now()
         normalized_origin = _normalize_session_origin(origin)
-        async with self._engine.begin() as conn:
-            connector = (
+        connector = (
+            await conn.execute(
+                select(
+                    connectors_t.c.status,
+                    connectors_t.c.user_id,
+                    connectors_t.c.device_os,
+                ).where(connectors_t.c.id == connector_id, connectors_t.c.revoked == 0)
+            )
+        ).first()
+        if connector is None:
+            raise KeyError(connector_id)
+        existing = (
+            await conn.execute(
+                select(sessions_t.c.id).where(sessions_t.c.id == session_id)
+            )
+        ).first()
+        if existing is None:
+            project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                conn,
+                connector_id=connector_id,
+                workspace_path=cwd,
+                now=now,
+            )
+            await conn.execute(
+                insert(sessions_t).values(
+                    id=session_id,
+                    connector_id=connector_id,
+                    project_id=project_id,
+                    runtime=runtime,
+                    runtime_id=runtime_id,
+                    origin=normalized_origin,
+                    model_selection_id=model_selection_id,
+                    permission_selection_id=permission_selection_id,
+                    external_session_id=external_session_id,
+                    title=title,
+                    title_source=TITLE_SOURCE_CONNECTOR if title is not None else None,
+                    cwd=normalized_cwd,
+                    status=status or "idle",
+                    takeover=0,
+                    last_synced_at=last_synced_at,
+                    source_observed_at=source_observed_at,
+                    last_activity_at=last_activity_at,
+                    sort_at=last_activity_at or now,
+                    source_state=source_state or "visible",
+                    source_state_at=now if source_state is not None else None,
+                    seq=1,
+                    seq_allocated_high=1,
+                    updated_seq=1,
+                    created_at=now,
+                    updated_at=now,
+                    **_source_archive_update(
+                        None, source_state, archived=False, observed_at=now
+                    ),
+                )
+            )
+        else:
+            current = (
                 await conn.execute(
                     select(
-                        connectors_t.c.status,
-                        connectors_t.c.user_id,
-                        connectors_t.c.device_os,
-                    ).where(connectors_t.c.id == connector_id, connectors_t.c.revoked == 0)
+                        sessions_t.c.connector_id,
+                        sessions_t.c.runtime,
+                        sessions_t.c.runtime_id,
+                        sessions_t.c.external_session_id,
+                        sessions_t.c.title,
+                        sessions_t.c.title_source,
+                        sessions_t.c.cwd,
+                        sessions_t.c.project_id,
+                        sessions_t.c.status,
+                        sessions_t.c.model_selection_id,
+                        sessions_t.c.permission_selection_id,
+                        sessions_t.c.source_state,
+                        sessions_t.c.archived,
+                        sessions_t.c.dsh_archive_legacy,
+                    ).where(sessions_t.c.id == session_id)
                 )
             ).first()
-            if connector is None:
-                raise KeyError(connector_id)
-            existing = (
-                await conn.execute(
-                    select(sessions_t.c.id).where(sessions_t.c.id == session_id)
-                )
-            ).first()
-            if existing is None:
+            if current is None:
+                raise KeyError(session_id)
+            if current.connector_id != connector_id:
+                raise ValueError("session connector binding is immutable")
+            if current.runtime != runtime or current.runtime_id != runtime_id:
+                raise ValueError("session runtime identity is immutable")
+            values: dict[str, Any] = {}
+            if external_session_id is not None:
+                values["external_session_id"] = external_session_id
+            if (
+                title is not None
+                and current.title_source != TITLE_SOURCE_USER
+                and current.title != title
+            ):
+                values["title"] = title
+                values["title_source"] = TITLE_SOURCE_CONNECTOR
+            if cwd is not None or current.project_id is None:
                 project_id, normalized_cwd = await self._ensure_project_for_workspace(
                     conn,
                     connector_id=connector_id,
-                    workspace_path=cwd,
+                    workspace_path=cwd or current.cwd,
                     now=now,
                 )
-                await conn.execute(
-                    insert(sessions_t).values(
-                        id=session_id,
-                        connector_id=connector_id,
-                        project_id=project_id,
-                        runtime=runtime,
-                        runtime_id=runtime_id,
-                        origin=normalized_origin,
-                        model_selection_id=model_selection_id,
-                        permission_selection_id=permission_selection_id,
-                        external_session_id=external_session_id,
-                        title=title,
-                        title_source=TITLE_SOURCE_CONNECTOR if title is not None else None,
-                        cwd=normalized_cwd,
-                        status=status or "idle",
-                        takeover=0,
-                        last_synced_at=last_synced_at,
-                        source_observed_at=source_observed_at,
-                        last_activity_at=last_activity_at,
-                        sort_at=last_activity_at or now,
-                        source_state=source_state or "visible",
-                        source_state_at=now if source_state is not None else None,
-                        seq=1,
-                        seq_allocated_high=1,
-                        updated_seq=1,
-                        created_at=now,
-                        updated_at=now,
-                        **_source_archive_update(
-                            None, source_state, archived=False, observed_at=now
-                        ),
+                values["project_id"] = project_id
+                values["cwd"] = normalized_cwd
+            if status is not None:
+                values["status"] = status
+            if last_synced_at is not None:
+                values["last_synced_at"] = last_synced_at
+            if source_observed_at is not None:
+                values["source_observed_at"] = source_observed_at
+            if last_activity_at is not None:
+                values["last_activity_at"] = last_activity_at
+            if has_model_selection_id:
+                values["model_selection_id"] = model_selection_id
+            if has_permission_selection_id:
+                values["permission_selection_id"] = permission_selection_id
+            if source_state is not None:
+                values["source_state"] = source_state
+                values["source_state_at"] = now
+                values["source_scan_token"] = None
+                values.update(
+                    _source_archive_update(
+                        current.source_state,
+                        source_state,
+                        archived=current.archived,
+                        observed_at=now,
                     )
                 )
-            else:
-                current = (
-                    await conn.execute(
-                        select(
-                            sessions_t.c.connector_id,
-                            sessions_t.c.runtime,
-                            sessions_t.c.runtime_id,
-                            sessions_t.c.external_session_id,
-                            sessions_t.c.title,
-                            sessions_t.c.title_source,
-                            sessions_t.c.cwd,
-                            sessions_t.c.project_id,
-                            sessions_t.c.status,
-                            sessions_t.c.model_selection_id,
-                            sessions_t.c.permission_selection_id,
-                            sessions_t.c.source_state,
-                            sessions_t.c.archived,
-                            sessions_t.c.dsh_archive_legacy,
-                        ).where(sessions_t.c.id == session_id)
-                    )
-                ).first()
-                if current is None:
-                    raise KeyError(session_id)
-                if current.connector_id != connector_id:
-                    raise ValueError("session connector binding is immutable")
-                if current.runtime != runtime or current.runtime_id != runtime_id:
-                    raise ValueError("session runtime identity is immutable")
-                values: dict[str, Any] = {}
-                if external_session_id is not None:
-                    values["external_session_id"] = external_session_id
-                if (
-                    title is not None
-                    and current.title_source != TITLE_SOURCE_USER
-                    and current.title != title
-                ):
-                    values["title"] = title
-                    values["title_source"] = TITLE_SOURCE_CONNECTOR
-                if cwd is not None or current.project_id is None:
-                    project_id, normalized_cwd = await self._ensure_project_for_workspace(
-                        conn,
-                        connector_id=connector_id,
-                        workspace_path=cwd or current.cwd,
-                        now=now,
-                    )
-                    values["project_id"] = project_id
-                    values["cwd"] = normalized_cwd
-                if status is not None:
-                    values["status"] = status
-                if last_synced_at is not None:
-                    values["last_synced_at"] = last_synced_at
-                if source_observed_at is not None:
-                    values["source_observed_at"] = source_observed_at
-                if last_activity_at is not None:
-                    values["last_activity_at"] = last_activity_at
-                if has_model_selection_id:
-                    values["model_selection_id"] = model_selection_id
-                if has_permission_selection_id:
-                    values["permission_selection_id"] = permission_selection_id
-                if source_state is not None:
-                    values["source_state"] = source_state
-                    values["source_state_at"] = now
-                    values["source_scan_token"] = None
-                    values.update(
-                        _source_archive_update(
-                            current.source_state,
-                            source_state,
-                            archived=current.archived,
-                            observed_at=now,
-                        )
-                    )
-                semantic_changed = any(
-                    field in values and values[field] != getattr(current, field)
-                    for field in (
-                        "external_session_id",
-                        "title",
-                        "cwd",
-                        "project_id",
-                        "status",
-                        "model_selection_id",
-                        "permission_selection_id",
-                        "source_state",
-                        "archived",
-                        "dsh_archive_legacy",
-                    )
+            semantic_changed = any(
+                field in values and values[field] != getattr(current, field)
+                for field in (
+                    "external_session_id",
+                    "title",
+                    "cwd",
+                    "project_id",
+                    "status",
+                    "model_selection_id",
+                    "permission_selection_id",
+                    "source_state",
+                    "archived",
+                    "dsh_archive_legacy",
                 )
-                if semantic_changed:
-                    await self._bump_session(conn, session_id)
-                await conn.execute(
-                    update(sessions_t).where(sessions_t.c.id == session_id).values(**values)
-                )
-        return await self.get_session(session_id)
+            )
+            if semantic_changed:
+                await self._bump_session(conn, session_id)
+            await conn.execute(
+                update(sessions_t).where(sessions_t.c.id == session_id).values(**values)
+            )
 
 
     async def resolve_connector_session_id(
@@ -1184,54 +1223,73 @@ class SessionRepositoryMixin:
         observed_at: str | None,
         observation_origin: str,
     ) -> SessionView:
-        effective_observed_at = observed_at or utc_now()
         async with self._engine.begin() as conn:
-            row = (
-                await conn.execute(
-                    select(
-                        sessions_t.c.source_state,
-                        sessions_t.c.source_state_at,
-                        sessions_t.c.source_state_reason,
-                        sessions_t.c.source_observation_origin,
-                        sessions_t.c.runtime,
-                        sessions_t.c.archived,
-                        sessions_t.c.dsh_archive_legacy,
-                    ).where(sessions_t.c.id == session_id)
-                )
-            ).first()
-            if row is None:
-                raise KeyError(session_id)
-            if row.source_state_at is not None and effective_observed_at < row.source_state_at:
-                pass
-            else:
-                changed = (
-                    row.source_state != availability
-                    or row.source_state_reason != reason
-                    or row.source_observation_origin != observation_origin
-                )
-                if changed:
-                    await self._bump_session(conn, session_id)
-                values: dict[str, Any] = {
-                    "source_state": availability,
-                    "source_state_at": effective_observed_at,
-                    "source_state_reason": reason,
-                    "source_observation_origin": observation_origin,
-                    "source_scan_token": None,
-                }
-                values.update(
-                    _source_archive_update(
-                        row.source_state,
-                        availability,
-                        archived=row.archived,
-                        observed_at=effective_observed_at,
-                    )
-                )
-                await conn.execute(
-                    update(sessions_t)
-                    .where(sessions_t.c.id == session_id)
-                    .values(**values)
-                )
+            await self._write_session_source_state(
+                conn,
+                session_id=session_id,
+                availability=availability,
+                reason=reason,
+                observed_at=observed_at,
+                observation_origin=observation_origin,
+            )
         return await self.get_session(session_id)
+
+    async def _write_session_source_state(
+        self,
+        conn: AsyncConnection,
+        session_id: str,
+        *,
+        availability: str,
+        reason: str | None,
+        observed_at: str | None,
+        observation_origin: str,
+    ) -> None:
+        effective_observed_at = observed_at or utc_now()
+        row = (
+            await conn.execute(
+                select(
+                    sessions_t.c.source_state,
+                    sessions_t.c.source_state_at,
+                    sessions_t.c.source_state_reason,
+                    sessions_t.c.source_observation_origin,
+                    sessions_t.c.runtime,
+                    sessions_t.c.archived,
+                    sessions_t.c.dsh_archive_legacy,
+                ).where(sessions_t.c.id == session_id)
+            )
+        ).first()
+        if row is None:
+            raise KeyError(session_id)
+        if row.source_state_at is not None and effective_observed_at < row.source_state_at:
+            pass
+        else:
+            changed = (
+                row.source_state != availability
+                or row.source_state_reason != reason
+                or row.source_observation_origin != observation_origin
+            )
+            if changed:
+                await self._bump_session(conn, session_id)
+            values: dict[str, Any] = {
+                "source_state": availability,
+                "source_state_at": effective_observed_at,
+                "source_state_reason": reason,
+                "source_observation_origin": observation_origin,
+                "source_scan_token": None,
+            }
+            values.update(
+                _source_archive_update(
+                    row.source_state,
+                    availability,
+                    archived=row.archived,
+                    observed_at=effective_observed_at,
+                )
+            )
+            await conn.execute(
+                update(sessions_t)
+                .where(sessions_t.c.id == session_id)
+                .values(**values)
+            )
 
 
     async def list_running_sessions_for_connector_agent(
@@ -1746,6 +1804,37 @@ class SessionRepositoryMixin:
         mark_read_on_change: bool = False,
         source_state: str | None = None,
     ) -> SessionView:
+        async with self._engine.begin() as conn:
+            await self._write_session_snapshot(
+                conn,
+                session_id=session_id,
+                status=status,
+                title=title,
+                cwd=cwd,
+                external_session_id=external_session_id,
+                last_synced_at=last_synced_at,
+                source_observed_at=source_observed_at,
+                last_activity_at=last_activity_at,
+                mark_read_on_change=mark_read_on_change,
+                source_state=source_state,
+            )
+        return await self.get_session(session_id)
+
+    async def _write_session_snapshot(
+        self,
+        conn: AsyncConnection,
+        *,
+        session_id: str,
+        status: str | None = None,
+        title: str | None = None,
+        cwd: str | None = None,
+        external_session_id: str | None = None,
+        last_synced_at: str | None = None,
+        source_observed_at: str | None = None,
+        last_activity_at: str | None = None,
+        mark_read_on_change: bool = False,
+        source_state: str | None = None,
+    ) -> None:
         values: dict[str, Any] = {}
         if status is not None:
             values["status"] = status
@@ -1761,72 +1850,70 @@ class SessionRepositoryMixin:
             values["source_state"] = source_state
             values["source_state_at"] = utc_now()
             values["source_scan_token"] = None
-        async with self._engine.begin() as conn:
-            row = (
-                await conn.execute(
-                    select(
-                        sessions_t.c.connector_id,
-                        sessions_t.c.project_id,
-                        sessions_t.c.status,
-                        sessions_t.c.title,
-                        sessions_t.c.title_source,
-                        sessions_t.c.cwd,
-                        sessions_t.c.external_session_id,
-                        sessions_t.c.last_activity_at,
-                        sessions_t.c.source_state,
-                        sessions_t.c.runtime,
-                        sessions_t.c.archived,
-                        sessions_t.c.dsh_archive_legacy,
-                    ).where(sessions_t.c.id == session_id)
+        row = (
+            await conn.execute(
+                select(
+                    sessions_t.c.connector_id,
+                    sessions_t.c.project_id,
+                    sessions_t.c.status,
+                    sessions_t.c.title,
+                    sessions_t.c.title_source,
+                    sessions_t.c.cwd,
+                    sessions_t.c.external_session_id,
+                    sessions_t.c.last_activity_at,
+                    sessions_t.c.source_state,
+                    sessions_t.c.runtime,
+                    sessions_t.c.archived,
+                    sessions_t.c.dsh_archive_legacy,
+                ).where(sessions_t.c.id == session_id)
+            )
+        ).first()
+        if row is None:
+            raise KeyError(session_id)
+        if (
+            title is not None
+            and row.title_source != TITLE_SOURCE_USER
+            and row.title != title
+        ):
+            values["title"] = title
+            values["title_source"] = TITLE_SOURCE_CONNECTOR
+        if cwd is not None or row.project_id is None:
+            project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                conn,
+                connector_id=row.connector_id,
+                workspace_path=cwd if cwd is not None else row.cwd,
+            )
+            values["project_id"] = project_id
+            values["cwd"] = normalized_cwd
+        if source_state is not None:
+            values.update(
+                _source_archive_update(
+                    row.source_state,
+                    source_state,
+                    archived=row.archived,
+                    observed_at=values["source_state_at"],
                 )
-            ).first()
-            if row is None:
-                raise KeyError(session_id)
-            if (
-                title is not None
-                and row.title_source != TITLE_SOURCE_USER
-                and row.title != title
-            ):
-                values["title"] = title
-                values["title_source"] = TITLE_SOURCE_CONNECTOR
-            if cwd is not None or row.project_id is None:
-                project_id, normalized_cwd = await self._ensure_project_for_workspace(
-                    conn,
-                    connector_id=row.connector_id,
-                    workspace_path=cwd if cwd is not None else row.cwd,
-                )
-                values["project_id"] = project_id
-                values["cwd"] = normalized_cwd
-            if source_state is not None:
-                values.update(
-                    _source_archive_update(
-                        row.source_state,
-                        source_state,
-                        archived=row.archived,
-                        observed_at=values["source_state_at"],
-                    )
-                )
-            semantic_fields = {
-                "status",
-                "title",
-                "cwd",
-                "project_id",
-                "external_session_id",
-                "source_state",
-                "archived",
-                "dsh_archive_legacy",
-            }
-            if any(field in values and values[field] != getattr(row, field) for field in semantic_fields):
-                await self._bump_session(
-                    conn,
-                    session_id,
-                    mark_read=mark_read_on_change,
-                )
-            if values:
-                await conn.execute(
-                    update(sessions_t).where(sessions_t.c.id == session_id).values(**values)
-                )
-        return await self.get_session(session_id)
+            )
+        semantic_fields = {
+            "status",
+            "title",
+            "cwd",
+            "project_id",
+            "external_session_id",
+            "source_state",
+            "archived",
+            "dsh_archive_legacy",
+        }
+        if any(field in values and values[field] != getattr(row, field) for field in semantic_fields):
+            await self._bump_session(
+                conn,
+                session_id,
+                mark_read=mark_read_on_change,
+            )
+        if values:
+            await conn.execute(
+                update(sessions_t).where(sessions_t.c.id == session_id).values(**values)
+            )
 
 
     async def _derive_title_from_first_user_message(self, session_id: str) -> str | None:

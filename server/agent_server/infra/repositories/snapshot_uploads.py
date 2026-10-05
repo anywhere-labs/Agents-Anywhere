@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, func, insert, select, update
 
+from agent_server.core.models import TimelineItemIn
 from agent_server.core.snapshot_upload import (
     CHUNK_BYTES,
     MAX_PENDING_BYTES,
@@ -12,10 +13,13 @@ from agent_server.core.snapshot_upload import (
     SnapshotUploadError,
     SnapshotUploadManifest,
 )
+from agent_server.core.timeline import TimelineBatchWriteResult
 from agent_server.core.utc import utc_now
 from agent_server.infra.db.schema import connector_snapshot_watermarks as watermarks
 from agent_server.infra.db.schema import connector_upload_chunks as chunks
 from agent_server.infra.db.schema import connector_uploads as uploads
+from agent_server.infra.db.schema import sessions
+from agent_server.infra.repositories.store_support import session_revision_fenced
 
 
 class SnapshotUploadRepositoryMixin:
@@ -104,8 +108,44 @@ class SnapshotUploadRepositoryMixin:
                 async for index, body in result:
                     yield index, body
 
-    async def complete_snapshot_upload(self, connector_id: str, upload_id: str) -> None:
-        async with self._engine.begin() as conn:
+    @session_revision_fenced
+    async def commit_snapshot_upload(
+        self, connector_id: str, upload_id: str, *, session_id: str,
+        metadata: dict, items: list[TimelineItemIn], source_observation: dict,
+    ) -> TimelineBatchWriteResult:
+        async with self._timeline_lock(session_id), self._engine.begin() as conn:
+            upload = (await conn.execute(select(uploads).where(
+                uploads.c.connector_id == connector_id, uploads.c.upload_id == upload_id,
+            ))).mappings().first()
+            if upload is None or upload["expires_at"] < utc_now():
+                raise SnapshotUploadError(404, "Unknown or expired snapshot upload")
+            if upload["status"] != "pending":
+                raise SnapshotUploadError(409, "Upload is no longer pending")
+            previous = (await conn.execute(select(sessions.c.connector_id, sessions.c.runtime_id,
+                sessions.c.runtime, sessions.c.updated_seq).where(sessions.c.id == session_id))).first()
+            fields = {
+                "title": metadata.get("title"), "cwd": metadata.get("cwd"),
+                "external_session_id": metadata["externalSessionId"],
+                "last_synced_at": metadata.get("lastSyncedAt"),
+                "source_observed_at": metadata.get("sourceObservedAt"),
+                "last_activity_at": metadata.get("lastActivityAt"),
+            }
+            if previous is None:
+                await self._write_connector_session(conn, connector_id=connector_id,
+                    session_id=session_id, runtime="dsh", runtime_id=upload["runtime_id"], **fields)
+            else:
+                if (previous.connector_id, previous.runtime, previous.runtime_id) != (
+                    connector_id, "dsh", upload["runtime_id"],
+                ):
+                    raise SnapshotUploadError(409, "Snapshot session binding does not match")
+                await self._write_session_snapshot(conn, session_id=session_id,
+                    mark_read_on_change=True, **fields)
+            await self._write_session_source_state(conn, session_id=session_id, **source_observation)
+            result = await self._replace_timeline_snapshot(conn, session_id=session_id, items=items,
+                source_observed_at=metadata.get("sourceObservedAt"), mark_read_on_change=True)
             await conn.execute(update(uploads).where(uploads.c.connector_id == connector_id,
                 uploads.c.upload_id == upload_id).values(status="committed"))
             await conn.execute(delete(chunks).where(chunks.c.connector_id == connector_id, chunks.c.upload_id == upload_id))
+            next_seq = await conn.scalar(select(sessions.c.updated_seq).where(sessions.c.id == session_id))
+        return TimelineBatchWriteResult(items=result.items,
+            changed=previous is None or previous.updated_seq != next_seq)
