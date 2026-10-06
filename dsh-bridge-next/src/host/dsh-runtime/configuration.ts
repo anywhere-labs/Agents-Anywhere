@@ -7,12 +7,17 @@ import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { SessionLogOffset, type SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
 import { BridgeError } from './errors.js'
+import { RuntimeInsights } from './insights.js'
 import { decodeModelSelection, decodePermissionSelection, modelSelectionId, permissionSelectionId, type Selections, type ModelSelection } from './selections.js'
 import { record } from './types.js'
 
 /** Official configuration writes are immediate; the Agent owns their execution timing. */
 export class RuntimeConfiguration {
-  constructor(private ctx: Context) {}
+  readonly insights: RuntimeInsights
+
+  constructor(private ctx: Context) {
+    this.insights = new RuntimeInsights(ctx)
+  }
 
   get canSelectModel(): boolean { return Boolean(this.ctx.get('sessionController') && this.ctx.get('llm')) }
   get canSelectPermission(): boolean { return Boolean(this.ctx.get('sessionController') && this.ctx.get('permissionPresets') && this.ctx.get('commands')) }
@@ -100,6 +105,7 @@ export class RuntimeConfiguration {
     const permission = projected?.values.permissions?.currentValue
     const presetEvent = events.findLast(event => event.type === 'agent-preset/selected')
     const agentPreset = projected?.values.agentPreset ?? (presetEvent?.type === 'agent-preset/selected' ? presetEvent.data.agentPreset : header.agentPreset)
+    const insights = await this.insights.session(live, id, log)
     return { selections: {
       ...(model ? { model: modelSelectionId(model) } : {}),
       ...(permission ? { permission: permissionSelectionId(permission) } : {}),
@@ -109,6 +115,7 @@ export class RuntimeConfiguration {
       ...(permission ? { permissionPreset: { id: permission, name: this.ctx.get('permissionPresets')?.optionOf(permission).name ?? permission, selectable: permission !== 'custom' } } : {}),
       ...(lastUsed ? { lastUsedModel: lastUsed } : {}),
       ...(permission === 'custom' ? { permission: { id: 'custom', name: 'Custom', selectable: false } } : {}),
+      ...(Object.keys(insights).length ? { insights } : {}),
     } }
   }
 }

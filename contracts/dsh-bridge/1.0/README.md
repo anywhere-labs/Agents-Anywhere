@@ -163,6 +163,27 @@ platform protocol. Question ACK means handoff to those publishers; reconnect and
 `runtime.sync.unsubscribe` stops delivery. Event runtimes bypass periodic history
 scanning. History and live events share stable item identities and ordering.
 
+## Session insights (additive 1.x)
+
+`session.state.updated` `metadata.insights` is an optional object carrying
+detailed AI-call facts for client display. Every member is independently
+optional and absent when the owning DSH unit is not mounted:
+
+- `tokenUsage`: cumulative `{uncachedInputTokens, outputTokens, cacheReadTokens, cacheWriteTokens}`.
+- `contextPressure`: `{pressureTokens?, projectedTokens?, contextWindow?}`.
+- `sessionStats`: `{turns, steps, llmMs, toolMs, ttftMs, ttftSteps, decodeMs, decodeTokens}`;
+  decode speed is `decodeTokens / (decodeMs / 1000)` when both are positive.
+- `goal`: `{id, revision, objective, phase, blockedReason?, maxGoalRounds, roundsStarted, createdAt, updatedAt}` or `null`.
+- `todos`: `[{content, status}]` (`pending` | `in_progress` | `completed`) or `null`.
+- `subagentCatalog`: `[{id, createdAt, mode, label?}]` of direct child agents.
+
+Insight-bearing events (assistant messages, turn/step boundaries, goal/todo
+writes, subagent catalog changes) schedule a `session.state.updated` refresh
+even when the session status is unchanged. `session.turnEnded` adds an
+optional `usage` object `{uncachedInputTokens, outputTokens, totalTokens,
+cacheReadTokens?, cacheWriteTokens?, reasoningTokens?}` with exact per-turn
+accounting; it is omitted when the turn's usage cannot be proven complete.
+
 ## Error isolation and recovery
 
 Each request has its own cancellation and a 60-second Host deadline. Parse,
