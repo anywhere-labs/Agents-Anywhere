@@ -37,6 +37,13 @@ jobs:
           java-version: 17
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+      - name: Accept SDK licenses and install required packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "platform-tools" > /dev/null
       - name: Set up Gradle caching and wrapper validation
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -88,6 +95,7 @@ jobs:
         run: |
           ls /Applications | grep -i xcode || true
           xcode-select -p
+          xcodebuild -version
       - name: Run SwiftPM tests
         working-directory: ios
         run: swift test
