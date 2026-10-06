@@ -61,6 +61,7 @@ data class RemoteSessionCreateAndStartRequest(
     val clientMessageId: String?,
     val runtimeId: String = runtime,
     val runtimeType: String = runtime,
+    val agentPreset: String? = null,
 )
 
 data class RemoteInlineAttachmentRef(

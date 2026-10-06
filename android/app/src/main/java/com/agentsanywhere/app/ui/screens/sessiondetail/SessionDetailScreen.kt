@@ -83,6 +83,8 @@ import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.AttachmentTransferException
 import com.agentsanywhere.app.api.AttachmentTransferFailure
 import com.agentsanywhere.app.api.UploadFilePart
+import com.agentsanywhere.app.feature.devices.DeviceRuntime
+import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
 import com.agentsanywhere.app.feature.sessiondetail.DownloadedAttachment
@@ -132,6 +134,8 @@ import com.agentsanywhere.app.feature.sessions.NewSessionCreateDraft
 import com.agentsanywhere.app.feature.sessions.NewSessionAttachmentPart
 import com.agentsanywhere.app.feature.sessions.NewSessionDraft
 import com.agentsanywhere.app.feature.sessions.NewSessionSelections
+import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeScope
+import com.agentsanywhere.app.feature.sessions.dshAgentPresetOptions
 import com.agentsanywhere.app.feature.sessions.firstMessageRequest
 import com.agentsanywhere.app.feature.sessions.NewSessionModelCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionPermissionCatalog
@@ -144,6 +148,7 @@ import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.AAToastHost
 import com.agentsanywhere.app.ui.designsystem.AAToastVisuals
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
+import com.agentsanywhere.app.ui.designsystem.dshAgentPresetLabel
 import com.agentsanywhere.app.ui.designsystem.runtimePermissionLocalizer
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
@@ -172,6 +177,9 @@ fun SessionDetailScreen(
     },
     onLoadPreparedPermissionCatalog: suspend (String, String) -> Result<NewSessionPermissionCatalog> = { _, _ ->
         Result.failure(IllegalStateException("Permission catalog is unavailable."))
+    },
+    onDiscoverRuntimes: suspend (String) -> Result<DeviceRuntimeList> = {
+        Result.failure(IllegalStateException("Runtime discovery is unavailable."))
     },
     devices: List<AgentDevice>,
     controller: SessionDetailController,
@@ -204,6 +212,9 @@ fun SessionDetailScreen(
     }
     var draft by remember(composerDraftSessionId) { mutableStateOf(restoredComposerDraft.text) }
     var showRuntimeSettings by remember(sessionId) { mutableStateOf(false) }
+    var presetRuntimeCatalog by remember(sessionId) {
+        mutableStateOf<Pair<NewSessionRuntimeScope, DeviceRuntime?>?>(null)
+    }
     var noticeResponseErrors by remember(sessionId) { mutableStateOf(emptyMap<String, String>()) }
     var forceLatestRequest by remember(sessionId) { mutableStateOf(0) }
     var streamLatestRequest by remember(sessionId) { mutableStateOf(0) }
@@ -1272,6 +1283,27 @@ fun SessionDetailScreen(
     val takeoverEnabled = if (isPreparedSession) true else state.session?.takeover == true
     val runtimeId = state.session?.runtimeId ?: state.runtime.runtimeId
     val runtimeType = state.session?.runtimeType ?: state.runtime.runtimeType
+    val presetScope = if (runtimeType == "dsh") {
+        val connectorId = preparedSession?.connectorId ?: state.session?.connectorId
+        if (connectorId != null && runtimeId != null) NewSessionRuntimeScope(connectorId, runtimeId) else null
+    } else null
+    LaunchedEffect(showRuntimeSettings, presetScope) {
+        if (!showRuntimeSettings || presetScope == null) return@LaunchedEffect
+        val runtime = onDiscoverRuntimes(presetScope.connectorId).getOrNull()
+            ?.runtimes?.firstOrNull { it.id == presetScope.runtimeId && it.type == "dsh" }
+        presetRuntimeCatalog = presetScope to runtime
+    }
+    val agentPresetId = if (runtimeType == "dsh") {
+        (preparedSession?.agentPreset ?: state.runtime.metadata["agentPreset"] as? String)
+            ?.trim()?.takeIf(String::isNotEmpty)
+    } else null
+    val agentPresetName = if (runtimeType == "dsh") {
+        agentPresetId?.let { id ->
+            val runtime = presetRuntimeCatalog?.takeIf { it.first == presetScope }?.second
+            val label = dshAgentPresetOptions(runtime).firstOrNull { it.id == id }?.label ?: id
+            dshAgentPresetLabel(id, label)
+        } ?: stringResource(R.string.new_session_catalog_unavailable)
+    } else null
     val canUseSendMessage = state.capabilities.isUsable(SESSION_SEND_MESSAGE_CAPABILITY, runtimeId, runtimeType)
     val canUseInterrupt = state.capabilities.isUsable(SESSION_INTERRUPT_CAPABILITY, runtimeId, runtimeType)
     val canRespondToNotice = state.capabilities.isUsable(
@@ -1819,6 +1851,7 @@ fun SessionDetailScreen(
                             ) {
                                 Text(
                                     text = sessionInsights.agentPreset
+                                        ?.let { dshAgentPresetLabel(it) }
                                         ?: stringResource(R.string.session_insights_goal),
                                     style = MaterialTheme.typography.labelSmall,
                                     maxLines = 1,
@@ -1903,6 +1936,7 @@ fun SessionDetailScreen(
     if (showRuntimeSettings) {
         SessionRuntimeSettingsSheet(
             runtimeLabel = state.session?.runtimeContextLabel.orEmpty(),
+            agentPresetLabel = agentPresetName,
             modelOptions = modelOptions,
             permissionOptions = permissionOptions,
             selectedModelId = modelSelection,

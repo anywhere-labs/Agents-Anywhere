@@ -306,6 +306,11 @@
     <string name="new_session_create_failed">Could not create session.</string>
     <string name="new_session_device">Device</string>
     <string name="new_session_agent">Agent</string>
+    <string name="dsh_agent_preset">Agent preset</string>
+    <string name="dsh_agent_preset_standard">Standard mode</string>
+    <string name="dsh_agent_preset_ptc">PTC mode</string>
+    <string name="dsh_agent_preset_minimal">Minimal mode</string>
+    <string name="dsh_agent_preset_cordis">Creative mode</string>
     <string name="new_session_no_device">No device</string>
     <string name="new_session_no_agent">No agent</string>
     <string name="new_session_no_online_agent">No online device with an attached agent.</string>

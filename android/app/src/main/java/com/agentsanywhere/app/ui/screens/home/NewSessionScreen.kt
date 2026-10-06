@@ -43,6 +43,7 @@ import com.agentsanywhere.app.feature.files.normalizeRemotePath
 import com.agentsanywhere.app.feature.files.remoteFileRequest
 import com.agentsanywhere.app.feature.files.remoteParentPath
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
+import com.agentsanywhere.app.feature.devices.DeviceRuntime
 import com.agentsanywhere.app.feature.sessions.NewSessionDirectory
 import com.agentsanywhere.app.feature.sessions.NewSessionDraft
 import com.agentsanywhere.app.feature.sessions.NewSessionModelCatalog
@@ -51,11 +52,14 @@ import com.agentsanywhere.app.feature.sessions.NewSessionPermissionCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionPreferenceStore
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeCapabilities
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeSelectionState
+import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeScope
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.feature.sessions.availableProjectName
 import com.agentsanywhere.app.feature.sessions.activeNewSessionRuntimes
+import com.agentsanywhere.app.feature.sessions.dshAgentPresetOptions
+import com.agentsanywhere.app.feature.sessions.dshNewSessionAgentPreset
 import com.agentsanywhere.app.feature.sessions.workspaceProject
 import com.agentsanywhere.app.feature.sessions.workspaceProjectName
 import com.agentsanywhere.app.feature.sessions.workspacePathKey
@@ -66,6 +70,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeout
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
+import com.agentsanywhere.app.ui.designsystem.dshAgentPresetLabel
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.agentsanywhere.app.ui.designsystem.runtimePermissionLocalizer
@@ -84,6 +89,7 @@ fun NewSessionScreen(
     onLoadProjects: suspend () -> Result<List<AgentProject>> = { Result.success(sessionsState.projects) },
     onListDirectory: suspend (String, String, String) -> Result<NewSessionDirectory>,
     onListRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
+    onDiscoverRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
     onLoadRuntimeCapabilities: suspend (String, String) -> Result<NewSessionRuntimeCapabilities>,
     onLoadModelCatalog: suspend (String, String) -> Result<NewSessionModelCatalog>,
     onLoadPermissionCatalog: suspend (String, String) -> Result<NewSessionPermissionCatalog>,
@@ -150,6 +156,8 @@ fun NewSessionScreen(
             ),
         )
     }
+    var discoveredPresetRuntime by remember { mutableStateOf<Pair<NewSessionRuntimeScope, DeviceRuntime?>?>(null) }
+    var agentPresetSelections by remember { mutableStateOf<Map<NewSessionRuntimeScope, String>>(emptyMap()) }
     var selectedWorkspacePath by rememberSaveable { mutableStateOf("") }
     var homePath by rememberSaveable { mutableStateOf<String?>(null) }
     var choosePath by rememberSaveable { mutableStateOf(false) }
@@ -190,11 +198,13 @@ fun NewSessionScreen(
                 runtimeSelection.selectedPermissionSelectionId?.takeIf { runtimeSelection.permissionCatalog.fresh }?.let {
                     preferenceStore.savePermission(connectorId, runtimeId, it)
                 }
+            NewSessionConfigurationKey.AgentPreset -> preference
         } ?: preference
     }
 
     fun selectDevice(id: String?, persist: Boolean = false) {
         if (selectedDeviceId != id) {
+            discoveredPresetRuntime = null
             selectedDeviceId = id
             selectedProjectId = null
             selectedWorkspacePath = ""
@@ -292,6 +302,26 @@ fun NewSessionScreen(
     val selectedDeviceOs = selectedDevice?.deviceOs
     val isWindowsDevice = isWindowsDeviceOs(selectedDeviceOs)
     val selectedRuntime = runtimeSelection.selectedRuntime
+    val agentPresetScope = selectedRuntime?.let { runtime ->
+        selectedDeviceId?.let { connectorId -> NewSessionRuntimeScope(connectorId, runtime.id) }
+    }
+    LaunchedEffect(agentPresetScope, selectedRuntime?.type) {
+        if (selectedRuntime?.type != "dsh" || agentPresetScope == null) return@LaunchedEffect
+        val discovered = onDiscoverRuntimes(agentPresetScope.connectorId).getOrNull()
+            ?.runtimes?.firstOrNull { it.id == agentPresetScope.runtimeId && it.type == "dsh" }
+        discoveredPresetRuntime = agentPresetScope to discovered
+    }
+    val agentPresetLoading = selectedRuntime?.type == "dsh" && discoveredPresetRuntime?.first != agentPresetScope
+    val agentPresetRuntime = discoveredPresetRuntime?.takeIf { it.first == agentPresetScope }?.second ?: selectedRuntime
+    val agentPresetOptions = dshAgentPresetOptions(agentPresetRuntime)
+    val selectedAgentPreset = dshNewSessionAgentPreset(
+        agentPresetRuntime,
+        agentPresetOptions,
+        agentPresetScope?.let(agentPresetSelections::get),
+    )
+    val selectedAgentPresetLabel = selectedAgentPreset?.let { id ->
+        dshAgentPresetLabel(id, agentPresetOptions.firstOrNull { it.id == id }?.label ?: id)
+    }
     val hasAvailableSelectedRuntime = selectedDevice != null && selectedDevice.id !in inventory.errors &&
         runtimeSelection.connectorId == selectedDevice.id &&
         !runtimeSelection.runtimesLoading && runtimeSelection.runtimesErrorMessage == null &&
@@ -554,6 +584,25 @@ fun NewSessionScreen(
                 loading = checkingDevices || checkingAgents || (selectedDevice != null && runtimeSelection.runtimesLoading),
             ),
         )
+        if (!projectOnly && selectedRuntime?.type == "dsh") {
+            add(
+                NewSessionConfigurationField(
+                    key = NewSessionConfigurationKey.AgentPreset,
+                    label = stringResource(R.string.dsh_agent_preset),
+                    value = if (agentPresetLoading) loadingLabel else selectedAgentPresetLabel ?: unavailableLabel,
+                    selectedId = selectedAgentPreset,
+                    options = agentPresetOptions.map { option ->
+                        NewSessionConfigurationOption(
+                            id = option.id,
+                            label = dshAgentPresetLabel(option.id, option.label),
+                            enabled = option.enabled,
+                        )
+                    },
+                    enabled = !creatingProject && !agentPresetLoading,
+                    loading = agentPresetLoading,
+                ),
+            )
+        }
         if (!projectOnly && showModelConfiguration) {
             add(
                 NewSessionConfigurationField(
@@ -636,6 +685,8 @@ fun NewSessionScreen(
         runtimeSelection.connectorId == selectedDevice.id &&
         selectedRuntime != null &&
         runtimeSelection.readyForCreate &&
+        !agentPresetLoading &&
+        (agentPresetOptions.isEmpty() || selectedAgentPreset != null) &&
         workspaceReady &&
         !creatingProject
 
@@ -675,6 +726,7 @@ fun NewSessionScreen(
                 runtimeName = runtime.name,
                 selections = runtimeSelection.selections,
                 attachmentsEnabled = runtimeSelection.canUseAttachments,
+                agentPreset = selectedAgentPreset,
             ),
         )
     }
@@ -906,7 +958,15 @@ fun NewSessionScreen(
                                 selectDevice(id, persist = !creatingProject)
                             }
                             NewSessionConfigurationKey.Agent -> {
+                                if (runtimeSelection.selectedRuntimeId != id) discoveredPresetRuntime = null
                                 runtimeSelection = runtimeSelection.selectRuntime(id)
+                            }
+                            NewSessionConfigurationKey.AgentPreset -> {
+                                agentPresetScope?.let { scope ->
+                                    if (agentPresetOptions.any { it.id == id && it.enabled }) {
+                                        agentPresetSelections = agentPresetSelections + (scope to id)
+                                    }
+                                }
                             }
                             NewSessionConfigurationKey.Model -> {
                                 runtimeSelection = runtimeSelection.selectModel(id)
@@ -918,7 +978,7 @@ fun NewSessionScreen(
                                 runtimeSelection = runtimeSelection.selectPermission(id)
                             }
                         }
-                        if (key != NewSessionConfigurationKey.Device) persistSelection(key)
+                        if (key != NewSessionConfigurationKey.Device && key != NewSessionConfigurationKey.AgentPreset) persistSelection(key)
                     },
                 )
 

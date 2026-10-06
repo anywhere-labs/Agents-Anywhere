@@ -16,6 +16,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessiondetail.SessionInsights
+import com.agentsanywhere.app.ui.designsystem.dshAgentPresetLabel
 
 /**
  * Read-only goal / task / sub-agent dialog for runtimes that report insights
@@ -38,7 +39,7 @@ fun SessionInsightsDialog(
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 insights.agentPreset?.let { preset ->
                     InsightsSection(title = stringResource(R.string.session_insights_agent_preset)) {
-                        Text(preset, style = MaterialTheme.typography.bodyMedium)
+                        Text(dshAgentPresetLabel(preset), style = MaterialTheme.typography.bodyMedium)
                     }
                 }
                 insights.goal?.let { goal ->

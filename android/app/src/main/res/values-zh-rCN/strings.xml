@@ -305,6 +305,11 @@
     <string name="new_session_create_failed">无法创建会话。</string>
     <string name="new_session_device">设备</string>
     <string name="new_session_agent">Agent</string>
+    <string name="dsh_agent_preset">Agent 预设</string>
+    <string name="dsh_agent_preset_standard">标准模式</string>
+    <string name="dsh_agent_preset_ptc">PTC 模式</string>
+    <string name="dsh_agent_preset_minimal">极简模式</string>
+    <string name="dsh_agent_preset_cordis">创造模式</string>
     <string name="new_session_no_device">未选择设备</string>
     <string name="new_session_no_agent">未选择 Agent</string>
     <string name="new_session_no_online_agent">没有可用的在线设备。</string>
