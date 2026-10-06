@@ -1,0 +1,141 @@
+name: Desktop Release
+
+# Builds directly-installable artifacts for every desktop platform plus the
+# DSH plugin tarball. Artifacts are attached to the GitHub Release with the
+# stable names the hosting directory and the clients' baked update URLs use:
+#
+#   agents-anywhere-linux-x64.AppImage
+#   agents-anywhere-win-x64.exe
+#   agents-anywhere-mac-universal.dmg
+#   agents-anywhere-dsh-bridge-next-<version>.tgz
+#
+# The installer download addresses are stamped at build time through
+# WORKBENCH_UPDATE_URL_* (see scripts/write-build-info.mjs). The update check
+# compares the live Server version against the baked serverVersion, so every
+# desktop package shipped from a tag must be built while all ends share one
+# version. Unsigned by default: signing activates automatically once the
+# platform credential secrets exist in the repository.
+
+on:
+  workflow_dispatch:
+    inputs:
+      download_base_url:
+        description: Base URL under which artifacts are hosted (/desktop/...)
+        required: false
+        default: https://dsh.chyu.top/downloads
+  push:
+    tags:
+      - "v*"
+
+env:
+  DOWNLOAD_BASE_URL: ${{ inputs.download_base_url || vars.DOWNLOAD_BASE_URL || 'https://dsh.chyu.top/downloads' }}
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runs-on: ubuntu-latest
+            bundle-targets: linux-x64
+            builder-args: --linux AppImage --x64
+            artifact-name: agents-anywhere-linux-x64.AppImage
+            artifact-glob: "desktop-workbench/release/*.AppImage"
+          - platform: windows
+            runs-on: windows-latest
+            bundle-targets: win32-x64
+            builder-args: --win nsis --x64
+            artifact-name: agents-anywhere-win-x64.exe
+            artifact-glob: "desktop-workbench/release/*.exe"
+          - platform: mac
+            runs-on: macos-latest
+            bundle-targets: darwin-arm64,darwin-x64
+            builder-args: --mac dmg --universal --config.mac.notarize=false
+            artifact-name: agents-anywhere-mac-universal.dmg
+            artifact-glob: "desktop-workbench/release/*.dmg"
+    name: Desktop (${{ matrix.platform }})
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Enable corepack and install dependencies
+        working-directory: desktop-workbench
+        run: |
+          corepack enable
+          yarn install --mode=skip-build
+      - name: Prepare uv and CPython bundles
+        working-directory: desktop-workbench
+        env:
+          UV_BUNDLE_TARGETS: ${{ matrix.bundle-targets }}
+          PYTHON_BUNDLE_TARGETS: ${{ matrix.bundle-targets }}
+        run: |
+          yarn bundle:uv
+          yarn bundle:python
+      - name: Build the application
+        working-directory: desktop-workbench
+        env:
+          # write-build-info.mjs stamps these into build-info.json during the
+          # build, and tsc inlines that JSON into main.js; they must be present
+          # here, not only at the electron-builder step. Clients pick their own
+          # platform's URL at runtime via process.platform.
+          WORKBENCH_UPDATE_URL_LINUX: ${{ env.DOWNLOAD_BASE_URL }}/desktop/agents-anywhere-linux-x64.AppImage
+          WORKBENCH_UPDATE_URL_WIN32: ${{ env.DOWNLOAD_BASE_URL }}/desktop/agents-anywhere-win-x64.exe
+          WORKBENCH_UPDATE_URL_DARWIN: ${{ env.DOWNLOAD_BASE_URL }}/desktop/agents-anywhere-mac-universal.dmg
+        run: yarn build
+      - name: Package with electron-builder
+        working-directory: desktop-workbench
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        # dist-desktop.mjs enforces native signing flows; CI packages through
+        # electron-builder directly so unsigned artifacts build on any runner.
+        run: yarn electron-builder ${{ matrix.builder-args }} --publish never
+      - name: Upload the installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.artifact-glob }}
+          if-no-files-found: error
+          retention-days: 30
+      - name: Attach to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact-glob }}
+
+  plugin:
+    name: DSH plugin tarball
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build and pack @agents-anywhere/dsh-bridge-next
+        working-directory: dsh-bridge-next
+        run: |
+          corepack enable
+          yarn install --mode=skip-build
+          yarn build
+          yarn check:build
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
+      - name: Upload the tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-bridge-next-tarball
+          path: ${{ runner.temp }}/*.tgz
+          if-no-files-found: error
+          retention-days: 30
+      - name: Attach to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ runner.temp }}/*.tgz

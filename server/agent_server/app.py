@@ -299,6 +299,14 @@ def create_app(
         android_update_url = os.environ.get("AGENT_SERVER_ANDROID_UPDATE_URL", "").strip()
         if android_update_url:
             payload["androidUpdateUrl"] = android_update_url
+        # Optional iOS store link. iOS cannot sideload, so on a newer Server the
+        # client offers an in-app button that opens this App Store / TestFlight
+        # page for the user to update. Defaults to the published App Store page.
+        ios_store_url = os.environ.get(
+            "AGENT_SERVER_IOS_STORE_URL", "https://apps.apple.com/cn/app/id6787125178"
+        ).strip()
+        if ios_store_url:
+            payload["iosStoreUrl"] = ios_store_url
         return payload
 
     @app.get(f"{API_V2_PREFIX}/health/ready")

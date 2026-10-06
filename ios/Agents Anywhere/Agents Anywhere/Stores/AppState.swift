@@ -41,6 +41,14 @@ final class AppState: ObservableObject {
     @Published private(set) var sessionActionError: String?
     @Published private(set) var isAccountWorking = false
     @Published private(set) var accountError: String?
+    /// Set when the connected Server reports a newer release than this app.
+    /// iOS cannot sideload updates, so the UI offers an App Store redirect.
+    @Published private(set) var appUpdateAvailable: AppUpdateOffer?
+
+    struct AppUpdateOffer: Equatable {
+        let version: String
+        let storeURL: URL
+    }
 
     private let keychain = KeychainStore()
     private let restoration = V2RestorationStore()
@@ -103,6 +111,41 @@ final class AppState: ObservableObject {
         await accountSyncTask?.value
     }
 
+    /// Compares the connected Server's release against this app's version and,
+    /// when the Server is newer, publishes an offer that the UI turns into an
+    /// App Store / TestFlight redirect. A health fetch here never blocks sign-in
+    /// or fails the session; any error simply leaves no offer. A version the
+    /// user dismissed is remembered so the offer does not nag on every sync.
+    private func refreshAppUpdateOffer(client: APIClient) async {
+        guard let health = try? await client.health() else { return }
+        guard let serverVersion = health.version?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !serverVersion.isEmpty else { return }
+        if serverVersion == UserDefaults.standard.string(forKey: Self.dismissedUpdateVersionKey) {
+            appUpdateAvailable = nil
+            return
+        }
+        let currentVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        guard let comparison = compareUpdateVersions(serverVersion, currentVersion), comparison > 0 else {
+            appUpdateAvailable = nil
+            return
+        }
+        // Prefer the Server-published store link; fall back to the shipped one.
+        let trimmed = health.iosStoreUrl?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let storeURL = URL(string: trimmed.isEmpty ? Self.defaultStoreURL.absoluteString : trimmed) ?? Self.defaultStoreURL
+        let offer = AppUpdateOffer(version: serverVersion, storeURL: storeURL)
+        if offer != appUpdateAvailable { appUpdateAvailable = offer }
+    }
+
+    func dismissAppUpdateOffer() {
+        if let version = appUpdateAvailable?.version {
+            UserDefaults.standard.set(version, forKey: Self.dismissedUpdateVersionKey)
+        }
+        appUpdateAvailable = nil
+    }
+
+    static let defaultStoreURL = URL(string: "https://apps.apple.com/cn/app/id6787125178")!
+    private static let dismissedUpdateVersionKey = "agentsAnywhere.iosUpdate.dismissedVersion"
+
     private func beginAccountSynchronization(force: Bool = false) {
         guard !isInBackground, route == .signedIn, let serverURL, let token = accessToken(), !token.isEmpty else { return }
         if accountSyncTask != nil && !force { return }
@@ -118,7 +161,8 @@ final class AppState: ObservableObject {
             var attempt = 0
             while !Task.isCancelled, authenticationEpoch == epoch, !isInBackground {
                 do {
-                    let profile = try await APIClient(serverURL: serverURL).me(token: token)
+                    let client = APIClient(serverURL: serverURL)
+                    let profile = try await client.me(token: token)
                     guard !Task.isCancelled, authenticationEpoch == epoch, accountSyncID == id else { return }
                     let accountChanged = me?.userId != profile.userId
                     if accountChanged {
@@ -130,6 +174,8 @@ final class AppState: ObservableObject {
                     restoreConnectionError = nil
                     startDashboardUpdates()
                     await refreshDashboard()
+                    guard !Task.isCancelled, authenticationEpoch == epoch, accountSyncID == id else { return }
+                    await refreshAppUpdateOffer(client: client)
                     return
                 } catch {
                     guard !Task.isCancelled, authenticationEpoch == epoch, accountSyncID == id else { return }
@@ -663,6 +709,7 @@ final class AppState: ObservableObject {
     func signOutAndDeleteCredentials(showSignedOutRoute: Bool = true) throws {
         dashboardUpdatesTask?.cancel()
         dashboardUpdatesTask = nil
+        appUpdateAvailable = nil
         try keychain.delete(account: tokenAccount)
         authenticationEpoch = UUID(); accountSyncID = UUID()
         accountSyncTask?.cancel(); accountSyncTask = nil; isRetryingServerConnection = false
