@@ -88,7 +88,10 @@ jobs:
 
   ios:
     name: iOS SwiftPM tests (macOS)
-    runs-on: macos-15
+    # Package.swift requires swift-tools-version 6.2 and the iOS 26.5 SDK,
+    # both of which only ship with Xcode 26.5 on the macOS 26 images.
+    # macos-15 tops out at Xcode 16.x and cannot parse the manifest.
+    runs-on: macos-26
     timeout-minutes: 40
     steps:
       - name: Check out repository
