@@ -20,6 +20,7 @@ import coil3.memory.MemoryCache
 import com.agentsanywhere.app.app.AgentsAnywhereApp
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
 import com.agentsanywhere.app.feature.sessiondetail.SessionActivityMonitor
+import com.agentsanywhere.app.feature.sessiondetail.SessionActivityWorker
 import com.agentsanywhere.app.feature.update.AppUpdateInstaller
 import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.ui.designsystem.AAAppearanceMode
@@ -75,6 +76,10 @@ class MainActivity : ComponentActivity() {
         )
         oauthCallbackUri.value = intent?.takeIf { it.data != null }?.data
         notificationSessionId.value = intent?.getStringExtra(SessionActivityMonitor.EXTRA_SESSION_ID)
+        // Doze-resilient notification fallback: the live dashboard WebSocket
+        // dies with the process, so a periodic worker re-polls session
+        // activity and posts anything the socket missed.
+        SessionActivityWorker.schedule(this)
         setContent {
             AgentsAnywhereTheme(appearanceMode = appearanceMode) {
                 AgentsAnywhereApp(

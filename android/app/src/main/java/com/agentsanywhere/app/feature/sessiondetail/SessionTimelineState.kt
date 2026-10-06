@@ -68,6 +68,8 @@ data class TimelineAgentCall(
     val action: TimelineAgentCallAction,
     val description: String = "",
     val parentItemId: String? = null,
+    /** Runtime-reported tokens for this call, when available. */
+    val usageTokens: Long? = null,
 )
 
 enum class TimelineAgentCallAction {

@@ -38,6 +38,8 @@ import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -87,6 +89,7 @@ import com.agentsanywhere.app.feature.sessiondetail.DownloadedAttachment
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.SessionMeta
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailState
+import com.agentsanywhere.app.feature.sessiondetail.SessionInsights
 import com.agentsanywhere.app.feature.sessiondetail.SessionRuntimeStatus
 import com.agentsanywhere.app.feature.sessiondetail.SessionTimelineState
 import com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment
@@ -228,6 +231,7 @@ fun SessionDetailScreen(
     var terminalVerticalDragActive by remember(sessionId) { mutableStateOf(false) }
     var composerHeightPx by remember { mutableStateOf(0) }
     var readOnlyComposerTapCount by remember(sessionId) { mutableStateOf(0) }
+    var showInsights by remember(sessionId) { mutableStateOf(false) }
     var modelCatalogRefreshKey by remember(sessionId) { mutableStateOf<String?>(null) }
     var permissionCatalogRefreshKey by remember(sessionId) { mutableStateOf<String?>(null) }
     val refetchInFlight = remember(sessionId) { AtomicBoolean(false) }
@@ -256,6 +260,8 @@ fun SessionDetailScreen(
             ),
         )
     }
+
+    val sessionInsights = SessionInsights.from(state.runtime.metadata)
 
     fun showError(message: String) {
         scope.launch {
@@ -1787,6 +1793,10 @@ fun SessionDetailScreen(
                                     onSend = ::sendDraft,
                                     onInterrupt = ::interrupt,
                                 )
+                                SessionStatsBar(
+                                    insights = sessionInsights,
+                                    modifier = Modifier.padding(top = 2.dp),
+                                )
                             }
                         }
                         HeaderVeil(
@@ -1800,6 +1810,21 @@ fun SessionDetailScreen(
                             onRightClick = { scope.launch { pagerState.animateScrollToPage(1) } },
                             modifier = Modifier.align(Alignment.TopCenter),
                         )
+                        if (sessionInsights != null) {
+                            TextButton(
+                                onClick = { showInsights = true },
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(top = 58.dp, end = 18.dp),
+                            ) {
+                                Text(
+                                    text = sessionInsights.agentPreset
+                                        ?: stringResource(R.string.session_insights_goal),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
                         if (previewImage == null) {
                             AAToastHost(
                                 hostState = snackbarHostState,
@@ -1864,6 +1889,14 @@ fun SessionDetailScreen(
             onSelectScope = { if (!shareBusy) shareScope = it },
             onDismiss = { if (!shareBusy) pendingShareItemIds = null },
             onConfirm = ::createShare,
+        )
+    }
+
+    if (showInsights && sessionInsights != null) {
+        SessionInsightsDialog(
+            insights = sessionInsights,
+            onOpenSubagent = { /* Sub-agent sessions are not imported; view-only. */ },
+            onDismiss = { showInsights = false },
         )
     }
 

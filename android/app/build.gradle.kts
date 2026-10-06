@@ -27,8 +27,8 @@ android {
         applicationId = "com.agentsanywhere.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "2.0.4"
+        versionCode = 11
+        versionName = "2.1.0"
         buildConfigField("String", "OFFICIAL_SERVER_URL", officialServerUrl.asBuildConfigString())
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -93,6 +93,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.webkit)
+    implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.lucide.icons)
     implementation(libs.mlkit.barcode.scanning)
     implementation(libs.okhttp)

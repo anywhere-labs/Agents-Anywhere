@@ -349,6 +349,7 @@ private fun RemoteTimelineItem.toAgentCallMessage(): TimelineMessage {
             action = action,
             description = description,
             parentItemId = content.text("parentItemId"),
+            usageTokens = content.optJSONObject("usage")?.optLong("tokens")?.takeIf { it > 0 },
         ),
         rawContent = content.toString(2),
         orderSeq = orderSeq,

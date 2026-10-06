@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -88,6 +89,7 @@ import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNotice
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNoticeAction
 import com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment
+import com.agentsanywhere.app.feature.sessiondetail.formatTokenCount
 import com.agentsanywhere.app.feature.sessiondetail.TimelineAgentCallAction
 import com.agentsanywhere.app.feature.sessiondetail.TimelineMessage
 import com.agentsanywhere.app.feature.sessiondetail.TimelineMessageKind
@@ -590,6 +592,16 @@ private fun AgentReplyActions(
             MessageShareButton(
                 onClick = { onShareReply(action.itemIds) },
             )
+            action.usageTokens?.let { tokens ->
+                Text(
+                    text = stringResource(R.string.session_usage_label, formatTokenCount(tokens)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                    modifier = Modifier
+                        .align(Alignment.CenterVertically)
+                        .padding(start = 2.dp),
+                )
+            }
         }
     }
 }
@@ -683,6 +695,8 @@ internal fun groupTimelineMessages(
 private data class AgentReplyAction(
     val copyText: String,
     val itemIds: List<String>,
+    /** Aggregated runtime-reported tokens for the whole turn, when known. */
+    val usageTokens: Long? = null,
 )
 
 private fun buildAgentActionsByTurnEnd(
@@ -694,6 +708,7 @@ private fun buildAgentActionsByTurnEnd(
         val replyItemIds = linkedSetOf<String>()
         var turnEndKey: String? = null
         var hasOpenTurn = false
+        var turnTokens = 0L
 
         fun finishTurn(includeCopyAction: Boolean = true) {
             val copyText = replyParts
@@ -707,6 +722,7 @@ private fun buildAgentActionsByTurnEnd(
                         AgentReplyAction(
                             copyText = copyText,
                             itemIds = replyItemIds.toList(),
+                            usageTokens = turnTokens.takeIf { tokens -> tokens > 0 },
                         ),
                     )
                 }
@@ -715,6 +731,7 @@ private fun buildAgentActionsByTurnEnd(
             replyItemIds.clear()
             turnEndKey = null
             hasOpenTurn = false
+            turnTokens = 0L
         }
 
         items.forEach { item ->
@@ -739,6 +756,9 @@ private fun buildAgentActionsByTurnEnd(
                     .map(TimelineMessage::sourceItemId)
                     .filter(String::isNotBlank)
                     .forEach(replyItemIds::add)
+                item.messages
+                    .mapNotNull { it.agentCall?.usageTokens }
+                    .forEach { turnTokens += it }
             }
         }
         if (hasOpenTurn) finishTurn(includeCopyAction = !latestTurnInProgress)

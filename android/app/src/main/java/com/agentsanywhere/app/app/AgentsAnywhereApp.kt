@@ -248,7 +248,7 @@ fun AgentsAnywhereApp(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     LaunchedEffect(sessionActivityMonitor, appVisible) {
-        if (appVisible) sessionActivityMonitor?.onAppVisible()
+        if (appVisible) sessionActivityMonitor?.onAppVisible() else sessionActivityMonitor?.onAppHidden()
     }
     LaunchedEffect(sessionActivityMonitor, selectedSessionId, currentDestination) {
         // Only the session actually on screen counts as "seen"; leaving the
@@ -554,7 +554,6 @@ fun AgentsAnywhereApp(
     // completion, failure, and interaction waits into system notifications.
     LaunchedEffect(hasAuthSession, appVisible, sessionActivityMonitor) {
         if (!hasAuthSession || appVisible) return@LaunchedEffect
-        sessionActivityMonitor?.onAppHidden()
         dashboardRealtimeController.start(
             scope = this,
             onSnapshot = { snapshot ->

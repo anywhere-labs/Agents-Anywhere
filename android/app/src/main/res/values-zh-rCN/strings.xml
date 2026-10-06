@@ -713,4 +713,26 @@
     <string name="announcement_title">公告</string>
     <string name="announcement_published_at">发布于 %1$s</string>
     <string name="announcement_acknowledge">我知道了</string>
+    <string name="session_stats_turns">%1$d 轮 %2$d 步</string>
+    <string name="session_stats_turns_speed">%1$d 轮 %2$d 步 · %3$d tok/s</string>
+    <string name="session_stats_tokens">%1$s tok</string>
+    <string name="session_stats_tokens_cache">%1$s tok · 缓存 %2$d%%</string>
+    <string name="session_stats_context">上下文 %1$d%%</string>
+    <string name="session_usage_label">用量 %1$s</string>
+    <string name="session_insights_goal">对话目标</string>
+    <string name="session_insights_todos">任务面板</string>
+    <string name="session_insights_subagents">子 Agent</string>
+    <string name="session_insights_agent_preset">Agent 预设</string>
+    <string name="session_insights_goal_rounds">第 %1$d 轮 / 共 %2$d 轮</string>
+    <string name="session_insights_unnamed_subagent">未命名子 Agent</string>
+    <string name="session_insights_goal_active">进行中</string>
+    <string name="session_insights_goal_paused">已暂停</string>
+    <string name="session_insights_goal_blocked">已阻塞</string>
+    <string name="session_insights_goal_complete">已完成</string>
+    <string name="session_insights_todo_pending">待处理</string>
+    <string name="session_insights_todo_in_progress">进行中</string>
+    <string name="session_insights_todo_completed">已完成</string>
+    <string name="session_insights_subagent_one_shot">一次性</string>
+    <string name="session_insights_subagent_continuable">可持续</string>
+    <string name="session_insights_subagent_unknown">未知</string>
 </resources>

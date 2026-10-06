@@ -715,4 +715,26 @@
     <string name="announcement_title">Announcement</string>
     <string name="announcement_published_at">Published %1$s</string>
     <string name="announcement_acknowledge">Got it</string>
+    <string name="session_stats_turns">%1$d turns %2$d steps</string>
+    <string name="session_stats_turns_speed">%1$d turns %2$d steps · %3$d tok/s</string>
+    <string name="session_stats_tokens">%1$s tok</string>
+    <string name="session_stats_tokens_cache">%1$s tok · cache %2$d%%</string>
+    <string name="session_stats_context">Context %1$d%%</string>
+    <string name="session_usage_label">Usage %1$s</string>
+    <string name="session_insights_goal">Conversation goal</string>
+    <string name="session_insights_todos">Task panel</string>
+    <string name="session_insights_subagents">Sub-agents</string>
+    <string name="session_insights_agent_preset">Agent preset</string>
+    <string name="session_insights_goal_rounds">Round %1$d of %2$d</string>
+    <string name="session_insights_unnamed_subagent">Unnamed sub-agent</string>
+    <string name="session_insights_goal_active">Active</string>
+    <string name="session_insights_goal_paused">Paused</string>
+    <string name="session_insights_goal_blocked">Blocked</string>
+    <string name="session_insights_goal_complete">Complete</string>
+    <string name="session_insights_todo_pending">Pending</string>
+    <string name="session_insights_todo_in_progress">In progress</string>
+    <string name="session_insights_todo_completed">Completed</string>
+    <string name="session_insights_subagent_one_shot">One-shot</string>
+    <string name="session_insights_subagent_continuable">Continuable</string>
+    <string name="session_insights_subagent_unknown">Unknown</string>
 </resources>
