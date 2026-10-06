@@ -8,3 +8,4 @@ out
 .pnp.*
 tsconfig.tsbuildinfo
 next-env.d.ts
+public/downloads/

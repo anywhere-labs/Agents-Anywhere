@@ -288,7 +288,18 @@ def create_app(
     @app.get(f"{API_V2_PREFIX}/health")
     @app.get(f"{API_V2_PREFIX}/health/live")
     def health() -> dict[str, str]:
-        return {"status": "ok", "version": app.version, "serverTime": utc_now()}
+        payload: dict[str, str] = {
+            "status": "ok",
+            "version": app.version,
+            "serverTime": utc_now(),
+        }
+        # Optional Android in-app update pointer. When configured, Android
+        # clients prefer this HTTPS address over their build-time download
+        # default, so a new APK can be published without rebuilding clients.
+        android_update_url = os.environ.get("AGENT_SERVER_ANDROID_UPDATE_URL", "").strip()
+        if android_update_url:
+            payload["androidUpdateUrl"] = android_update_url
+        return payload
 
     @app.get(f"{API_V2_PREFIX}/health/ready")
     async def readiness() -> JSONResponse:

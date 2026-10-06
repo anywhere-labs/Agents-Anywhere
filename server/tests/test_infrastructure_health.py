@@ -24,6 +24,16 @@ def test_health_reports_the_application_version_and_releases_are_retired(tmp_pat
     assert client.post("/api/v2/admin/client-releases", json={}).status_code == 404
 
 
+def test_health_publishes_android_update_url_only_when_configured(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_SERVER_ANDROID_UPDATE_URL", raising=False)
+    client = TestClient(create_app(tmp_path / "health-android.sqlite3"))
+    assert "androidUpdateUrl" not in client.get("/api/v2/health").json()
+
+    monkeypatch.setenv("AGENT_SERVER_ANDROID_UPDATE_URL", " https://cdn.example.com/app.apk ")
+    payload = client.get("/api/v2/health").json()
+    assert payload["androidUpdateUrl"] == "https://cdn.example.com/app.apk"
+
+
 def test_liveness_and_readiness_are_separate(tmp_path) -> None:
     client = TestClient(create_app(tmp_path / "health.sqlite3"))
 
