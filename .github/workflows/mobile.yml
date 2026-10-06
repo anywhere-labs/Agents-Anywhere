@@ -22,9 +22,6 @@ concurrency:
   group: mobile-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.console=plain"
-
 jobs:
   android:
     name: Android build and unit tests
@@ -40,15 +37,28 @@ jobs:
           java-version: 17
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-      - name: Compile debug Kotlin sources
+      - name: Set up Gradle caching and wrapper validation
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          # The wrapper is trusted as committed; checksum validation would need
+          # a pinned distributionSha256Sum in gradle-wrapper.properties.
+          validate-wrappers: false
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Grant execute permission to gradlew
         working-directory: android
-        run: ./gradlew :app:compileDebugKotlin
+        run: chmod +x gradlew
+      - name: Show Gradle/toolchain versions
+        working-directory: android
+        run: ./gradlew --version
+      - name: Assemble debug APK (compiles main sources)
+        working-directory: android
+        run: ./gradlew :app:assembleDebug
       - name: Run unit tests
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest
-      - name: Assemble debug APK
+      - name: Check release build compiles without signing
         working-directory: android
-        run: ./gradlew :app:assembleDebug
+        run: ./gradlew :app:assembleRelease
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
@@ -56,6 +66,16 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
           if-no-files-found: error
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-reports
+          path: |
+            android/app/build/reports/tests/
+            android/app/build/outputs/androidTest-results/
+          retention-days: 7
+          if-no-files-found: ignore
 
   ios:
     name: iOS SwiftPM tests (macOS)
