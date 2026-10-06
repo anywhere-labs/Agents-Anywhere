@@ -1,19 +1,17 @@
 # Docker
 
-Docker deployment for the Agents Anywhere v2 mainline. For existing databases,
-read [Upgrading](../docs/upgrading.md) before running Compose. The current
-schema revision is `v2_35`; historical migration notes below explain individual
-changes, not the latest target revision.
+Agents Anywhere v2 主线的 Docker 部署。已有数据库时，运行 Compose 之前先读
+[升级指南](../docs/upgrading.md)。当前 schema 版本为 `v2_35`；下文的历史迁移说明
+只解释各自的变更，不代表最新目标版本。
 
-The current Web console lives in `web-next/`. Production Docker builds export it
-as static files and the FastAPI backend serves those files and API/WebSocket
-paths from the same origin.
+当前 Web 控制台位于 `web-next/`。生产 Docker 构建会把导出的静态文件打进最终
+镜像，由 FastAPI 后端以同一 origin 同时提供这些文件与 API/WebSocket 路径。
 
-## Quickstart
+## 快速开始
 
-Run from the repository root.
+从仓库根目录运行。
 
-Development container (requires reachable PostgreSQL and Redis services):
+开发容器（需要可达的 PostgreSQL 与 Redis 服务）：
 
 ```bash
 docker build -f docker/Dockerfile.dev -t agents-anywhere:dev . \
@@ -26,9 +24,9 @@ docker build -f docker/Dockerfile.dev -t agents-anywhere:dev . \
     agents-anywhere:dev
 ```
 
-Open `http://127.0.0.1:5174`.
+打开 `http://127.0.0.1:5174`。
 
-PostgreSQL-backed compose:
+基于 PostgreSQL 的 Compose：
 
 ```bash
 POSTGRES_PASSWORD=change-me \
@@ -36,12 +34,11 @@ AGENT_SERVER_SECRET=change-me-too \
 docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 
-Open `http://127.0.0.1:5174`.
+打开 `http://127.0.0.1:5174`。
 
-## Development Image
+## 开发镜像
 
-`docker/Dockerfile.dev` starts the FastAPI backend and the Next.js dev server in
-one container.
+`docker/Dockerfile.dev` 在一个容器里同时启动 FastAPI 后端与 Next.js 开发服务器。
 
 ```bash
 docker build -f docker/Dockerfile.dev -t agents-anywhere:dev .
@@ -53,20 +50,20 @@ docker run --rm -it \
   agents-anywhere:dev
 ```
 
-Inside the container:
+容器内部：
 
-- backend listens on `127.0.0.1:8000`
-- Next dev listens on `0.0.0.0:5174`
-- Next rewrites API/WebSocket traffic to the backend
-- PostgreSQL is required and configured with `AGENT_SERVER_DB_URL`
-- local uploads and attachments can be stored under `/data`
+- 后端监听 `127.0.0.1:8000`
+- Next 开发服务器监听 `0.0.0.0:5174`
+- Next 把 API/WebSocket 流量重写到后端
+- 需要 PostgreSQL，并通过 `AGENT_SERVER_DB_URL` 配置
+- 本地上传与附件可以存放在 `/data` 下
 
-## Production Images
+## 生产镜像
 
-`docker/Dockerfile` builds the `web-next` static export in an intermediate
-stage and copies it into the final `server` image.
+`docker/Dockerfile` 在中间阶段构建 `web-next` 静态导出，再把它拷贝进最终的
+`server` 镜像。
 
-Build and run the PostgreSQL-backed service manually:
+手动构建并运行基于 PostgreSQL 的服务：
 
 ```bash
 docker build -f docker/Dockerfile --target server -t agents-anywhere-server:latest .
@@ -81,14 +78,13 @@ docker run -d \
   agents-anywhere-server:latest
 ```
 
-Database state is stored by PostgreSQL. Uploaded files and attachments use
-`/data/agent-server.files/` unless S3-compatible storage is configured.
+数据库状态由 PostgreSQL 存储。除非配置了 S3 兼容存储，上传的文件与附件存放在
+`/data/agent-server.files/`。
 
-Set `AGENT_SERVER_FILES_BACKEND=s3` and the matching
-`AGENT_SERVER_FILES_S3_*` variables to store uploaded files in S3-compatible
-object storage instead of the local `/data/agent-server.files/` directory.
+设置 `AGENT_SERVER_FILES_BACKEND=s3` 和对应的 `AGENT_SERVER_FILES_S3_*` 变量，
+可以把上传文件存到 S3 兼容对象存储，而不是本地 `/data/agent-server.files/`。
 
-Use Debian apt and PyPI mirrors when official sources are slow:
+官方源较慢时使用 Debian apt 与 PyPI 镜像：
 
 ```bash
 docker build -f docker/Dockerfile --target server -t agents-anywhere-server:latest \
@@ -100,9 +96,8 @@ docker build -f docker/Dockerfile --target server -t agents-anywhere-server:late
 
 ## PostgreSQL Compose
 
-`docker/docker-compose.postgres.yml` runs PostgreSQL and the FastAPI server under
-the fixed Compose project name `agents-anywhere`. The server image includes the
-statically exported Web console.
+`docker/docker-compose.postgres.yml` 以固定的 Compose 项目名 `agents-anywhere`
+运行 PostgreSQL 与 FastAPI 服务器。服务器镜像内含静态导出的 Web 控制台。
 
 ```bash
 POSTGRES_PASSWORD=change-me \
@@ -110,24 +105,24 @@ AGENT_SERVER_SECRET=change-me-too \
 docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 
-The compose file uses:
+Compose 文件包含：
 
-- `postgres-next` service for PostgreSQL 17
-- `redis-next` service for cross-instance coordination, Pub/Sub, and the live Timeline sequencer/write buffer
-- `migrate-next` one-shot service that upgrades the database before server startup
-- `server-next` service for the FastAPI backend and statically exported Web UI
-- `agents-anywhere-pg-next` volume for PostgreSQL data
-- `agents-anywhere-redis-next` volume mounted at `/data` for Redis AOF data
-- `agents-anywhere-files-next` volume mounted at `/data` for uploads / attachments
-- public Web port `${AGENTS_ANYWHERE_WEB_PORT:-5174}`
-- static `web-next` files served by FastAPI from the same origin as the API
-- optional `AGENT_SERVER_PUBLIC_ORIGIN=https://agents.example.com` for OAuth redirect URLs behind a reverse proxy
-- PostgreSQL migration serialization through a session advisory lock
-- Redis memory capped by `REDIS_MAXMEMORY` (default `256mb`) with `noeviction`
-- Redis AOF persistence with `appendfsync everysec`; RDB snapshots remain disabled
-- Timeline revision leases configurable through `AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE` (default `4096`)
+- `postgres-next` 服务：PostgreSQL 17
+- `redis-next` 服务：跨实例协调、Pub/Sub，以及实时 Timeline 序列器/写缓冲
+- `migrate-next` 一次性服务：在服务器启动前升级数据库
+- `server-next` 服务：FastAPI 后端与静态导出的 Web UI
+- `agents-anywhere-pg-next` 卷：PostgreSQL 数据
+- `agents-anywhere-redis-next` 卷挂载到 `/data`：Redis AOF 数据
+- `agents-anywhere-files-next` 卷挂载到 `/data`：上传/附件
+- 对外 Web 端口 `${AGENTS_ANYWHERE_WEB_PORT:-5174}`
+- 静态 `web-next` 文件由 FastAPI 提供服务，与 API 同一 origin
+- 反向代理之后可选 `AGENT_SERVER_PUBLIC_ORIGIN=https://agents.example.com`，用于 OAuth 回调 URL
+- 通过会话级 advisory lock 串行化 PostgreSQL 迁移
+- Redis 内存由 `REDIS_MAXMEMORY` 限制（默认 `256mb`），策略 `noeviction`
+- Redis AOF 持久化，`appendfsync everysec`；RDB 快照保持关闭
+- Timeline revision lease 通过 `AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE` 配置（默认 `4096`）
 
-Publish the Web console on a different host port:
+把 Web 控制台发布到其他主机端口：
 
 ```bash
 AGENTS_ANYWHERE_WEB_PORT=18000 \
@@ -136,8 +131,7 @@ AGENT_SERVER_SECRET=change-me-too \
 docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 
-For an initialized deployment on a machine with up to eight CPUs, use the
-conservative four-worker starting profile:
+对于最多 8 CPU 机器上的已初始化部署，使用保守的四 worker 起步配置：
 
 ```bash
 docker compose \
@@ -146,92 +140,78 @@ docker compose \
   up -d --build server-next
 ```
 
-The same override can follow a production Compose file whose server service is
-named `server-next`. It uses four Uvicorn workers and one compute child per
-worker, caps the Server container at eight CPUs, and pins each worker's database
-pool to four base plus four overflow connections (32 total). Event preparation
-admits at most 16 jobs / 16 MiB per worker, including running jobs. These are
-input-admission budgets; process memory also includes application state, output
-buffers and IPC copies. The image starts through `agent_server.main`, which
-reads these settings and rejects multi-worker use without Redis or with the
-single-instance Timeline shortcut enabled.
+同一个 override 也可以叠加到 server 服务名为 `server-next` 的生产 Compose 文件
+上。它使用四个 Uvicorn worker、每个 worker 一个计算子进程，把 Server 容器限制在
+8 CPU，并把每个 worker 的数据库池固定为 4 个基础加 4 个溢出连接（共 32）。事件
+准备阶段每个 worker 最多接收 16 个任务 / 16 MiB（含运行中的任务）。这些是输入
+准入预算；进程内存还包括应用状态、输出缓冲与 IPC 拷贝。镜像通过
+`agent_server.main` 启动，它会读取这些设置，并在没有 Redis 或启用了单实例
+Timeline 快捷方式时拒绝多 worker 运行。
 
-On an empty database, complete the existing bootstrap flow with one worker
-before applying this profile: the initial setup token remains process-local.
-Use a shared upload volume or S3 and the same auth secret for all workers.
-Per-worker RPC identities remain unique even if an instance-name prefix is set.
+在空数据库上，先以单 worker 完成既有的 bootstrap 流程，再应用该配置：初始 setup
+token 是进程本地的。所有 worker 使用共享的上传卷或 S3，以及相同的认证密钥。
+即使设置了实例名前缀，每个 worker 的 RPC 身份仍保持唯一。
 
-The profile's measured scaling and its single-connection limit are documented
-in [the session performance report](../docs/performance/session-pipeline.md).
+该配置的实测扩展性与单连接上限见
+[会话性能报告](../docs/performance/session-pipeline.md)。
 
-Use a non-default `AGENT_SERVER_SECRET` and database password outside local
-development. Put HTTPS in front of the Web service for production.
+本地开发之外请使用非默认的 `AGENT_SERVER_SECRET` 与数据库密码。生产环境请在 Web
+服务前加 HTTPS。
 
-PostgreSQL remains the durable source of truth after Timeline writes flush. Redis
-also carries accepted-but-unflushed Timeline upserts and the live sequence head,
-in addition to invalidations, short-lived WebSocket tickets, and distributed
-locks. The sequence head uses ranges leased durably from PostgreSQL, so Redis
-state loss may leave a sequence gap but does not reuse allocated values.
+Timeline 写入刷写之后，PostgreSQL 仍是持久事实来源。除失效通知、短生命周期
+WebSocket ticket 与分布式锁外，Redis 还承载已接受但未刷写的 Timeline upsert 与
+实时 sequence head。sequence head 使用从 PostgreSQL 持久租借的区间，因此 Redis
+状态丢失可能留下 sequence 空洞，但不会复用已分配的值。
 
-Because pending Timeline and sequencer keys have no TTL, Redis uses AOF
-`everysec`, a persistent `/data` volume, and `noeviction`. A failure before the
-latest AOF sync can still lose an unflushed upsert; consistency-sensitive/manual
-reads fence and flush pending Timeline writes to PostgreSQL first.
+由于待刷写的 Timeline 与序列器 key 没有 TTL，Redis 使用 AOF `everysec`、持久化
+的 `/data` 卷和 `noeviction`。最近一次 AOF 同步之前发生故障仍可能丢失一条未刷写
+的 upsert；一致性敏感/手动读取会先加围栏，把待写的 Timeline 刷入 PostgreSQL。
 
-The Redis ACL used by `server-next` must allow `INFO server` in addition to the
-normal data commands. The current Timeline path reads the Redis `run_id` with
-`INFO server` for every high-frequency upsert and rechecks it after allocating a
-revision for an accepted change. Validate both the ACL and this command rate
-against the production Redis service before rollout.
+`server-next` 使用的 Redis ACL 除常规数据命令外必须允许 `INFO server`。当前
+Timeline 路径每次高频 upsert 都用 `INFO server` 读取 Redis `run_id`，并在为一次
+已接受变更分配 revision 后重新读取。上线前请对照生产 Redis 服务验证 ACL 与该
+命令的调用频率。
 
-`appendfsync everysec` leaves the latest not-yet-fsynced Redis commands exposed
-to loss if Redis or its host fails. If `AGENT_SERVER_REDIS_URL` is omitted, the
-single-process fallback instead keeps accepted-but-unflushed Timeline payloads
-only in process memory; a process crash loses everything accepted since the last
-flush (normally up to the configured flush interval). In both cases, the durable
-PostgreSQL allocation watermark prevents revision reuse but cannot recover a
-lost payload, so the local fallback is for development rather than a durable or
-multi-instance deployment.
+`appendfsync everysec` 下，Redis 或其主机故障可能丢失最近一个尚未 fsync 的命令
+区间。如果省略 `AGENT_SERVER_REDIS_URL`，单进程回退会把已接受但未刷写的 Timeline
+payload 只保存在进程内存中；进程崩溃会丢失自上次刷写以来接受的所有内容（通常是
+最多一个配置的刷写间隔）。两种情况下，PostgreSQL 的持久分配水位都能防止 revision
+复用，但无法找回丢失的 payload，因此本地回退只用于开发，不是持久化或多实例部署
+方案。
 
-### v2.24 rollout and rollback
+### v2.24 上线与回滚
 
-`v2.23` (or older) and `v2.24` Server writers must never run against the same database at
-the same time. Use a stop-migrate-start deployment: stop every old Server and
-external writer, take a backup and run the migration, then start only `v2.24`
-writers. The `migrate-next` dependency orders the new Compose services, but it
-does not fence an old container, another Compose project, or an external Server
-that is still running.
+绝不能让 `v2.23`（或更早）与 `v2.24` 的 Server 写入进程同时写同一个数据库。使用
+停止-迁移-启动的部署方式：停止所有旧 Server 与外部写入方，备份数据库并执行迁移，
+然后只启动 `v2.24` 的写入进程。`migrate-next` 依赖关系决定了新 Compose 服务的
+启动顺序，但它不会隔离仍在运行的旧容器、其他 Compose 项目或外部 Server。
 
-On PostgreSQL, `v2.24` widens the session and Timeline sequence columns from
-`int4` to `int8`. Depending on PostgreSQL version, table size, indexes, and
-available resources, these `ALTER TABLE` operations can take strong locks and
-may rewrite table or index storage. Rehearse the migration on a production-sized
-copy, measure lock and runtime behavior, and reserve a maintenance window before
-running it in production.
+在 PostgreSQL 上，`v2.24` 把会话与 Timeline 的 sequence 列从 `int4` 扩到 `int8`。
+依据 PostgreSQL 版本、表大小、索引与可用资源，这些 `ALTER TABLE` 操作可能持有
+强锁，并可能重写表或索引存储。请先在生产规模的副本上演练迁移、测量锁与耗时特征，
+并在生产执行前预留维护窗口。
 
-A downgrade must also run with all writers stopped. It refuses when any session
-has an unconsumed revision lease (`seq_allocated_high <> seq`) or when a sequence
-value no longer fits signed 32-bit storage. Because normal `v2.24` traffic can
-leave an active lease ahead of the durable sequence immediately, treat the
-schema migration as forward-only unless the downgrade checks have been verified
-before restarting writers.
+降级同样必须在所有写入进程停止后执行。只要存在任何会话有未消费的 revision lease
+（`seq_allocated_high <> seq`），或某个 sequence 值超出有符号 32 位存储范围，降级
+就会拒绝。由于正常的 `v2.24` 流量可能立即让活跃 lease 超前于持久 sequence，请把
+schema 迁移视为只进不退，除非在重启写入进程之前已验证过降级检查。
 
-The first startup on an empty database logs a bootstrap token in the
-`server-next` logs. Use it in the Web UI to create the first admin user.
+在空数据库上首次启动时，`server-next` 日志会打印一个 bootstrap token。用它在
+Web 界面创建第一个管理员用户。
 
-## Connector Ubuntu Image
+## Connector Ubuntu 镜像
 
-`docker/Dockerfile.connector-ubuntu` builds an Ubuntu 24.04 environment with
-common CLI tools, `uv`, OpenSSH server, and the Agents Anywhere Connector. It
-does not contain server credentials; choose token startup or pairing at runtime.
+`docker/Dockerfile.connector-ubuntu` 构建一个 Ubuntu 24.04 环境，包含常用 CLI
+工具、`uv`、OpenSSH 服务器以及 Agents Anywhere Connector。镜像不含服务器凭据；
+运行时选择 token 启动或配对。
 
-Build:
+构建：
 
 ```bash
 docker build -f docker/Dockerfile.connector-ubuntu -t agents-anywhere-connector:ubuntu2404 .
 ```
 
-Start with an existing connector token:
+使用已有的 connector token 启动：
 
 ```bash
 docker run --rm -it \
@@ -245,7 +225,7 @@ docker run --rm -it \
   agents-anywhere-connector:ubuntu2404
 ```
 
-Start pairing from the container instead:
+也可以从容器内发起配对：
 
 ```bash
 docker run --rm -it \
@@ -258,18 +238,18 @@ docker run --rm -it \
   agents-anywhere-connector:ubuntu2404
 ```
 
-## Connector Ubuntu Image With Agent Installers
+## 带 Agent 安装器的 Connector Ubuntu 镜像
 
-`docker/Dockerfile.connector-agents-ubuntu` extends the Connector Ubuntu image
-with Node.js and runtime install hooks for Codex CLI and Claude Code.
+`docker/Dockerfile.connector-agents-ubuntu` 在 Connector Ubuntu 镜像基础上增加了
+Node.js，以及 Codex CLI 和 Claude Code 的运行时安装钩子。
 
-Build:
+构建：
 
 ```bash
 docker build -f docker/Dockerfile.connector-agents-ubuntu -t agents-anywhere-connector:agents-ubuntu2404 .
 ```
 
-Start and install both agent CLIs at runtime:
+启动并在运行时安装两个 Agent CLI：
 
 ```bash
 docker run --rm -it \
@@ -284,14 +264,14 @@ docker run --rm -it \
   agents-anywhere-connector:agents-ubuntu2404
 ```
 
-Runtime install variables:
+运行时安装变量：
 
-| Variable | Purpose |
+| 变量 | 用途 |
 | --- | --- |
-| `INSTALL_CODEX` | Install Codex CLI before starting the Connector when true/yes/1/on. |
-| `CODEX_NPM_PACKAGE` | Codex npm package. Defaults to `@openai/codex`. |
-| `CODEX_VERSION` | Optional Codex package version. |
-| `INSTALL_CLAUDE` | Install Claude Code before starting the Connector when true/yes/1/on. |
-| `CLAUDE_NPM_PACKAGE` | Claude Code npm package. Defaults to `@anthropic-ai/claude-code`. |
-| `CLAUDE_VERSION` | Optional Claude Code package version. |
-| `NPM_CONFIG_REGISTRY` | Optional npm registry mirror. |
+| `INSTALL_CODEX` | 为 true/yes/1/on 时，启动 Connector 前安装 Codex CLI。 |
+| `CODEX_NPM_PACKAGE` | Codex npm 包。默认 `@openai/codex`。 |
+| `CODEX_VERSION` | 可选的 Codex 包版本。 |
+| `INSTALL_CLAUDE` | 为 true/yes/1/on 时，启动 Connector 前安装 Claude Code。 |
+| `CLAUDE_NPM_PACKAGE` | Claude Code npm 包。默认 `@anthropic-ai/claude-code`。 |
+| `CLAUDE_VERSION` | 可选的 Claude Code 包版本。 |
+| `NPM_CONFIG_REGISTRY` | 可选的 npm registry 镜像。 |
