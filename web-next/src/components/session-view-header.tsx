@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input"
 import { WorkspaceHeader } from "@/components/workspace-header"
 import { WorkspaceSidebarToggleButton } from "@/components/workspace-sidebar-toggle-button"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
+import { SessionInsightsPanel } from "@/components/session/session-insights-panel"
 import { useWorkspace } from "@/components/workspace-context"
 import type { SessionMemorySnapshot } from "@/components/session-detail"
 import { cn } from "@/lib/utils"
@@ -28,6 +29,7 @@ type SessionViewHeaderProps = {
   exporting?: boolean
   toolsOpen?: boolean
   onToggleTools?: () => void
+  onOpenSubagent?: (sessionId: string) => void
 }
 
 export function SessionViewHeader({
@@ -39,6 +41,7 @@ export function SessionViewHeader({
   exporting,
   toolsOpen,
   onToggleTools,
+  onOpenSubagent,
 }: SessionViewHeaderProps) {
   const { renameSession } = useWorkspace()
   const tSession = useTranslations("dashboard.session")
@@ -121,6 +124,7 @@ export function SessionViewHeader({
         onExportRemoteTimeline={onExportRemoteTimeline}
         exporting={exporting}
       />
+      <SessionInsightsPanel runtimeState={memorySnapshot?.state} onOpenSubagent={onOpenSubagent} />
       <div className="ml-auto flex items-center gap-1">
         {!toolsOpen ? (
           <WorkspaceSidebarToggleButton side="right" aria-expanded={false}

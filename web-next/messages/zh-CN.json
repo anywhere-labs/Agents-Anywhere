@@ -1030,8 +1030,6 @@
       "timelineUnknownItem": "未识别的 timeline item：{type}",
       "timelineTurnFailed": "本轮任务执行失败。",
       "timelineErrorDetail": "展开或收起错误详情",
-      "runtimeStopping": "{runtime} 正在停止...",
-      "runtimeErrorBanner": "{runtime} 遇到错误",
       "toolSearched": "搜索了 {query}",
       "toolWebFallback": "网页",
       "toolMcpFallback": "mcp",
@@ -1091,6 +1089,35 @@
         "reviewOpenFilePreview": "打开 {file} 的完整文件预览",
         "reviewPreviewBlocked": "文件预览窗口被浏览器拦截了。",
         "reviewDiffCard": "第 {index}/{count} 次修改"
+      },
+      "usageLabel": "用量 {tokens}",
+      "usageCacheHit": "缓存命中 {percent}%",
+      "statsTurns": "{turns} 轮 {steps} 步",
+      "statsTurnsWithSpeed": "{turns} 轮 {steps} 步 · {speed} tok/s",
+      "statsTurnsHint": "本会话累计轮次与步数",
+      "statsTokens": "{tokens} tok",
+      "statsTokensWithCache": "{tokens} tok · 缓存 {percent}%",
+      "statsContext": "上下文 {percent}%",
+      "statsContextHint": "上下文占用 {used} / {window}",
+      "insightsAgentPreset": "Agent 预设",
+      "insightsGoal": "对话目标",
+      "insightsGoalShort": "目标",
+      "insightsGoalRounds": "第 {rounds} 轮 / 共 {max} 轮",
+      "insightsTodos": "任务面板",
+      "insightsTodosShort": "任务 {count}/{total}",
+      "insightsSubagents": "子 Agent",
+      "insightsSubagentsShort": "子 Agent {count}",
+      "insightsSubagentUnnamed": "未命名子 Agent",
+      "insightsGoalPhase": {
+        "active": "进行中",
+        "paused": "已暂停",
+        "blocked": "已阻塞",
+        "complete": "已完成"
+      },
+      "insightsSubagentMode": {
+        "one-shot": "一次性",
+        "continuable": "可持续",
+        "unknown": "未知"
       }
     },
     "sessionStatus": {

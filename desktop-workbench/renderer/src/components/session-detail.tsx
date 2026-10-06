@@ -2057,18 +2057,25 @@ function buildTurnActionsByGroupKey(
   let itemIds: string[] = []
   let endGroupKey: string | null = null
   let turnOpen = false
+  let turnTokens = 0
 
   const commitTurn = () => {
     if (endGroupKey && itemIds.length > 0) {
       actions.set(endGroupKey, {
         copyText: copyParts.join("\n\n").trim(),
         itemIds: [...new Set(itemIds)],
+        // The runtime-reported per-turn total rides on agent_call items;
+        // assistant text alone carries no usage.
+        usage: turnTokens > 0
+          ? { uncachedInputTokens: 0, outputTokens: turnTokens, totalTokens: turnTokens }
+          : null,
       })
     }
     copyParts = []
     itemIds = []
     endGroupKey = null
     turnOpen = false
+    turnTokens = 0
   }
 
   for (const group of groups) {
@@ -2086,6 +2093,12 @@ function buildTurnActionsByGroupKey(
       itemIds.push(item.id)
       const text = stripInjectedAttachmentMentions(messageText(item)).trim()
       if (text) copyParts.push(text)
+    }
+    for (const item of items) {
+      const content = item.content as { kind?: unknown; usage?: unknown }
+      if (content?.kind !== "agent_call" || !content.usage || typeof content.usage !== "object") continue
+      const tokens = (content.usage as { tokens?: unknown }).tokens
+      if (typeof tokens === "number" && Number.isFinite(tokens) && tokens > 0) turnTokens += tokens
     }
   }
   if (!suppressLatestTurn) commitTurn()

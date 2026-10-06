@@ -16,12 +16,23 @@ import {
 } from "@/components/ui/dialog"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { SessionShareScope } from "@/features/dashboard/types"
+import {
+  formatTokenCount,
+  insightCacheHitPercent,
+  insightTotalTokens,
+  type TurnUsage,
+} from "@/features/dashboard/session-insights"
 import { cn } from "@/lib/utils"
 import { copyText } from "@/lib/clipboard"
 
 export type TurnAction = {
   copyText: string
   itemIds: string[]
+  /**
+   * Per-turn token accounting, aggregated from the turn's agent_call items
+   * (`usage.tokens`) when the runtime reports it.
+   */
+  usage?: TurnUsage | null
 }
 
 export function TurnActions({
@@ -106,6 +117,7 @@ export function TurnActions({
           >
             <SquareArrowOutUpRight />
           </Button>
+          {action.usage ? <TurnUsageChip usage={action.usage} /> : null}
         </div>
       </div>
 
@@ -138,6 +150,28 @@ export function TurnActions({
         </DialogContent>
       </Dialog>
     </>
+  )
+}
+
+function TurnUsageChip({ usage }: { usage: TurnUsage }) {
+  const t = useTranslations("dashboard.session")
+  const total = usage.totalTokens || insightTotalTokens(usage)
+  if (total <= 0) return null
+  const cacheHit = insightCacheHitPercent(usage)
+  const title = [
+    `↑ ${formatTokenCount((usage.uncachedInputTokens ?? 0) + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0))}`,
+    `↓ ${formatTokenCount(usage.outputTokens ?? 0)}`,
+    cacheHit != null ? t("usageCacheHit", { percent: Math.round(cacheHit) }) : null,
+  ]
+    .filter(Boolean)
+    .join(" · ")
+  return (
+    <span
+      className="ml-1 inline-flex items-center self-center rounded-md px-1.5 py-0.5 text-[11px] leading-4 text-muted-foreground/80"
+      title={title}
+    >
+      {t("usageLabel", { tokens: formatTokenCount(total) })}
+    </span>
   )
 }
 

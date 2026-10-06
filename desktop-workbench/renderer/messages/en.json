@@ -359,9 +359,15 @@
       "permissionMode": "Permission mode",
       "permissionModes": {
         "dsh": {
-          "readOnly": { "label": "Read Only" },
-          "workspaceWrite": { "label": "Workspace Write" },
-          "fullAccess": { "label": "Full access" },
+          "readOnly": {
+            "label": "Read Only"
+          },
+          "workspaceWrite": {
+            "label": "Workspace Write"
+          },
+          "fullAccess": {
+            "label": "Full access"
+          },
           "auto": {
             "label": "Auto review"
           }
@@ -1104,7 +1110,36 @@
       "fileChangeUnknown": "Changed",
       "showCode": "Show code",
       "hideCode": "Hide code",
-      "loadCodeFailed": "Failed to load code"
+      "loadCodeFailed": "Failed to load code",
+      "usageLabel": "Usage {tokens}",
+      "usageCacheHit": "cache hit {percent}%",
+      "statsTurns": "{turns} turns {steps} steps",
+      "statsTurnsWithSpeed": "{turns} turns {steps} steps · {speed} tok/s",
+      "statsTurnsHint": "Total turns and steps in this session",
+      "statsTokens": "{tokens} tok",
+      "statsTokensWithCache": "{tokens} tok · cache {percent}%",
+      "statsContext": "Context {percent}%",
+      "statsContextHint": "Context occupancy {used} / {window}",
+      "insightsAgentPreset": "Agent preset",
+      "insightsGoal": "Conversation goal",
+      "insightsGoalShort": "Goal",
+      "insightsGoalRounds": "Round {rounds} of {max}",
+      "insightsTodos": "Task panel",
+      "insightsTodosShort": "Tasks {count}/{total}",
+      "insightsSubagents": "Sub-agents",
+      "insightsSubagentsShort": "{count} sub-agents",
+      "insightsSubagentUnnamed": "Unnamed sub-agent",
+      "insightsGoalPhase": {
+        "active": "Active",
+        "paused": "Paused",
+        "blocked": "Blocked",
+        "complete": "Complete"
+      },
+      "insightsSubagentMode": {
+        "one-shot": "One-shot",
+        "continuable": "Continuable",
+        "unknown": "Unknown"
+      }
     },
     "sessionStatus": {
       "idle": "Idle",
