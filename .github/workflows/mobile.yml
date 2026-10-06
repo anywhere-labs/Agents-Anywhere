@@ -1,0 +1,73 @@
+name: Mobile CI
+
+on:
+  pull_request:
+    paths:
+      - android/**
+      - ios/**
+      - .github/workflows/mobile.yml
+  push:
+    branches:
+      - main
+    paths:
+      - android/**
+      - ios/**
+      - .github/workflows/mobile.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.console=plain"
+
+jobs:
+  android:
+    name: Android build and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Compile debug Kotlin sources
+        working-directory: android
+        run: ./gradlew :app:compileDebugKotlin
+      - name: Run unit tests
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest
+      - name: Assemble debug APK
+        working-directory: android
+        run: ./gradlew :app:assembleDebug
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
+          if-no-files-found: error
+
+  ios:
+    name: iOS SwiftPM tests (macOS)
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Select Xcode
+        run: |
+          ls /Applications | grep -i xcode || true
+          xcode-select -p
+      - name: Run SwiftPM tests
+        working-directory: ios
+        run: swift test
