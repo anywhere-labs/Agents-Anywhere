@@ -35,10 +35,12 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
       - name: Accept SDK licenses and install required packages
         run: |
+          # GitHub ubuntu runners preinstall the Android SDK with ANDROID_HOME
+          # set; android-actions/setup-android@v3 has been failing immediately,
+          # so rely on the preinstalled cmdline-tools instead.
+          echo "ANDROID_HOME=$ANDROID_HOME"
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             "platforms;android-36" \
@@ -91,10 +93,19 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-      - name: Select Xcode
+      - name: Show available Xcode toolchains
         run: |
           ls /Applications | grep -i xcode || true
           xcode-select -p
+          xcodebuild -version
+          swift --version
+      - name: Select newest Xcode
+        # Package.swift requires swift-tools-version 6.2; pick the newest
+        # installed toolchain so the runner default cannot silently fail.
+        run: |
+          NEWEST_XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Selecting $NEWEST_XCODE"
+          sudo xcode-select -s "$NEWEST_XCODE"
           xcodebuild -version
       - name: Run SwiftPM tests
         working-directory: ios
