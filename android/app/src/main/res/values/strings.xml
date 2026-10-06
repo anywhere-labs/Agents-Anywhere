@@ -418,7 +418,16 @@
     <string name="session_approval_resolve_failed">Could not resolve approval.</string>
     <string name="session_agent_working">%1$s is working</string>
     <string name="session_agent_interrupting">Interrupting %1$s</string>
+    <string name="session_agent_stopping">Stopping %1$s</string>
     <string name="session_agent_fallback">Agent</string>
+    <string name="session_notification_channel_name">Session activity</string>
+    <string name="session_notification_channel_description">Questions from agents, finished turns, and failures.</string>
+    <string name="session_notification_question_title">Agent needs your reply</string>
+    <string name="session_notification_complete_title">Task complete</string>
+    <string name="session_notification_interrupted_title">Task interrupted</string>
+    <string name="session_notification_failed_title">Task failed</string>
+    <string name="session_notification_fallback_body">Open Agents Anywhere to see the session.</string>
+    <string name="session_runtime_error_banner">Agent ran into an error</string>
     <string name="session_device_offline_placeholder">Device is offline. You can\'t chat right now.</string>
     <string name="session_reply_to">Reply to %1$s</string>
     <string name="session_read_only_placeholder">Read-only mode - turn on takeover to send messages</string>

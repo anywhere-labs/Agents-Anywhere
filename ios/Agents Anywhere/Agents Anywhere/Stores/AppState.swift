@@ -44,6 +44,7 @@ final class AppState: ObservableObject {
 
     private let keychain = KeychainStore()
     private let restoration = V2RestorationStore()
+    private let notificationCoordinator = SessionNotificationCoordinator()
     private var accountSyncTask: Task<Void, Never>?
     private var accountSyncID = UUID()
     private var authenticationEpoch = UUID()
@@ -58,6 +59,11 @@ final class AppState: ObservableObject {
     private var visibleSessionID: V2SessionID?
 
     init() {
+        // Notification taps reuse the sidebar's selection channel; ChatShellView
+        // renders the session page from chatSelection.
+        notificationCoordinator.onOpenSession = { [weak self] sessionID in
+            self?.chatSelection = .session(sessionID)
+        }
         Task { await restoreSession() }
     }
 
@@ -178,6 +184,7 @@ final class AppState: ObservableObject {
             self.serverURL = serverURL
             me = profile
             route = .signedIn
+            await notificationCoordinator.requestAuthorizationIfNeeded()
             await refreshDashboard()
             startDashboardUpdates()
         } catch {
@@ -211,6 +218,7 @@ final class AppState: ObservableObject {
             me = profile
             if showSignedInRoute {
                 route = .signedIn
+                await notificationCoordinator.requestAuthorizationIfNeeded()
                 await refreshDashboard()
                 startDashboardUpdates()
             }
@@ -232,6 +240,7 @@ final class AppState: ObservableObject {
             me = profile
             if showSignedInRoute {
                 route = .signedIn
+                await notificationCoordinator.requestAuthorizationIfNeeded()
                 await refreshDashboard()
                 startDashboardUpdates()
             }
@@ -291,6 +300,7 @@ final class AppState: ObservableObject {
             me = profile
             if showSignedInRoute {
                 route = .signedIn
+                await notificationCoordinator.requestAuthorizationIfNeeded()
                 await refreshDashboard()
                 startDashboardUpdates()
             }
@@ -661,6 +671,7 @@ final class AppState: ObservableObject {
         cachedServices = nil
         cachedServicesTokenProvider?.update(nil)
         cachedServicesTokenProvider = nil
+        notificationCoordinator.stop()
         chatSelection = .newSession; restoreConnectionError = nil
         visibleSessionID = nil
         me = nil
@@ -746,6 +757,7 @@ final class AppState: ObservableObject {
 
     func setAppInBackground(_ background: Bool) {
         isInBackground = background
+        notificationCoordinator.setAppInBackground(background)
         cachedServices?.sessionReads.setActive(!background)
         cachedServices?.agentSetup.setActive(!background)
         if background {
@@ -788,6 +800,7 @@ final class AppState: ObservableObject {
         let services = V2ClientServices(api: api, accountID: accountID)
         cachedServices = services
         cachedServicesTokenProvider = tokenProvider
+        notificationCoordinator.start(services: services)
         services.dashboardRepository.reconcile = { [weak services] in services?.sessionReads.ingest($0) ?? $0 }
         services.dashboardRepository.onChange = { [weak self, weak services] in
             guard let services else { return }

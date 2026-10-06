@@ -18,6 +18,7 @@ from connector.runtime_protocol import (
     SessionSourceObservation,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtime_protocol.timeline import timeline_content_hash
 from connector.server.runtime_rpc_payloads import (
     DeferredServerPayload,
     capability_set_payload,
@@ -252,9 +253,17 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
         instance_metadata = dict(metadata or {})
-        server_items = tuple(
-            item for item in items if item.type not in {"turn.start", "turn.end"}
-        )
+        server_items: list[RuntimeTimelineItem] = []
+        for item in items:
+            if item.type in {"turn.start", "turn.end"}:
+                # Turn lifecycle markers have no Server-side storage, but a
+                # failed turn end carries the error users must see. Project it
+                # onto a system error item, matching Codex/Claude behavior.
+                error_item = _turn_end_error_item(item)
+                if error_item is not None:
+                    server_items.append(error_item)
+                continue
+            server_items.append(item)
         payload: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": runtime,
@@ -282,7 +291,10 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         item: RuntimeTimelineItem,
     ) -> None:
         if item.type in {"turn.start", "turn.end"}:
-            return
+            error_item = _turn_end_error_item(item)
+            if error_item is None:
+                return
+            item = error_item
         source = item.source
         runtime_id = source.get("runtimeId")
         await self._notify_server(
@@ -401,6 +413,51 @@ class ConnectorRuntimeHost(RuntimeHostClient):
                 "sync state key must be runtime-namespaced, e.g. codex/history/cursor/{id}"
             )
         return runtime, self._connector_id, key
+
+
+def _turn_end_error_item(item: RuntimeTimelineItem) -> RuntimeTimelineItem | None:
+    """Project a failed ``turn.end`` marker onto a system error timeline item.
+
+    The platform contract has no storage for ``turn.*`` markers, so the host
+    filters them. A failed turn end is the only place runtimes such as DSH
+    publish the turn error message, so dropping it hides session errors from
+    every client. The projected item mirrors Codex/Claude: ``system`` type with
+    ``content.kind == "error"``, which the timeline renders as an error card.
+    """
+
+    if item.type != "turn.end" or item.status != "failed":
+        return None
+    reason = item.content.get("reason")
+    reason = dict(reason) if isinstance(reason, Mapping) else {}
+    error_details = reason.get("error")
+    message = (
+        reason.get("message")
+        or (error_details.get("message") if isinstance(error_details, Mapping) else None)
+        or reason.get("text")
+        or "The agent turn failed."
+    )
+    if not isinstance(message, str) or not message.strip():
+        message = "The agent turn failed."
+    content: dict[str, Any] = {
+        "kind": "error",
+        "text": message,
+        "format": "markdown",
+        "reason": reason,
+    }
+    return RuntimeTimelineItem(
+        id=item.id,
+        session_id=item.session_id,
+        type="system",
+        status="failed",
+        order_seq=item.order_seq,
+        content_hash=timeline_content_hash("system", "failed", "system", content),
+        role="system",
+        turn_id=item.turn_id,
+        content=content,
+        source={**dict(item.source), "itemType": "turnEnd"},
+        revision=item.revision,
+        metadata=dict(item.metadata),
+    )
 
 
 def _timeline_item_payload(item: RuntimeTimelineItem) -> dict[str, Any]:

@@ -15898,6 +15898,60 @@
           }
         }
       }
+    },
+    "任务已中断": {
+      "comment": "Session notification title. Localized manually; not synced from Web.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Task interrupted"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "任务已中断"
+          }
+        }
+      }
+    },
+    "任务完成": {
+      "comment": "Session notification title. Localized manually; not synced from Web.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Task complete"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "任务完成"
+          }
+        }
+      }
+    },
+    "任务失败": {
+      "comment": "Session notification title. Localized manually; not synced from Web.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Task failed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "任务失败"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

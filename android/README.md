@@ -45,6 +45,16 @@ prevents an in-place update of an installed app signed with another key.
 `local.properties` remains machine-specific and ignored. The manifest allows
 HTTP for local/self-hosted addresses; use HTTPS for public service endpoints.
 
+## Notifications
+
+After signing in, the app asks once for the Android 13+ `POST_NOTIFICATIONS`
+permission. With permission granted, a `session_activity` channel keeps
+working while the app is in the background: a pending agent question or
+approval, a finished turn, and a failed turn each raise a system notification
+that opens the session when tapped. Nothing is posted while the app is on
+screen. Denying the permission silences these alerts; re-enable them from
+system settings.
+
 ## Application updates
 
 After entering the signed-in app, Android reads the saved server's

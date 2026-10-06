@@ -977,6 +977,8 @@
       "noActivity": "暂无活动。",
       "runtimePending": "等待 {runtime} 接收任务...",
       "runtimeWorking": "{runtime} 正在工作...",
+      "runtimeStopping": "{runtime} 正在停止...",
+      "runtimeErrorBanner": "{runtime} 遇到错误",
       "approvalRequested": "请求确认",
       "approve": "批准",
       "approveSession": "本会话内批准",
@@ -1081,6 +1083,8 @@
       "reconnectSummary": "正在重连：{attempts}",
       "timelineUnknownMessage": "未识别的消息：{role}",
       "timelineUnknownItem": "未识别的 timeline item：{type}",
+      "timelineTurnFailed": "本轮任务执行失败。",
+      "timelineErrorDetail": "展开或收起错误详情",
       "toolSearched": "搜索了 {query}",
       "toolWebFallback": "网页",
       "toolMcpFallback": "mcp",
@@ -1285,6 +1289,8 @@
     "approvalTitle": "会话等待你的确认",
     "attentionTitle": "会话需要处理",
     "completedTitle": "会话已完成",
+    "interruptedTitle": "任务已中断",
+    "questionTitle": "会话向你提问",
     "untitledSession": "未命名会话"
   },
   "auth": {

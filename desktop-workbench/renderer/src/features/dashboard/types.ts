@@ -547,6 +547,11 @@ export type Notice = {
   resolvedAt?: string | null;
 };
 
+export type RuntimeNoticeListResponse = {
+  notices: Notice[];
+  serverTime: string;
+};
+
 export type SessionTimelineSnapshot = {
   items: TimelineItem[];
   nextSeq: number;

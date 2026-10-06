@@ -1,6 +1,6 @@
 {
   "name": "@agents-anywhere/dsh-bridge-next",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Agents Anywhere onboarding, Connector management and event-driven session runtime for DeepSeek Harness",
   "type": "module",
   "main": "./lib/index.js",

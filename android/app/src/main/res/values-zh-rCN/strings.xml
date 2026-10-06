@@ -417,7 +417,16 @@
     <string name="session_approval_resolve_failed">无法处理审批。</string>
     <string name="session_agent_working">%1$s 正在处理</string>
     <string name="session_agent_interrupting">正在中断 %1$s</string>
+    <string name="session_agent_stopping">正在停止 %1$s</string>
     <string name="session_agent_fallback">Agent</string>
+    <string name="session_notification_channel_name">会话动态</string>
+    <string name="session_notification_channel_description">Agent 提问、任务完成与失败提醒。</string>
+    <string name="session_notification_question_title">Agent 等待你的回复</string>
+    <string name="session_notification_complete_title">任务完成</string>
+    <string name="session_notification_interrupted_title">任务已中断</string>
+    <string name="session_notification_failed_title">任务失败</string>
+    <string name="session_notification_fallback_body">打开 Agents Anywhere 查看会话。</string>
+    <string name="session_runtime_error_banner">Agent 遇到错误</string>
     <string name="session_device_offline_placeholder">设备已离线，暂时不能聊天。</string>
     <string name="session_reply_to">回复 %1$s</string>
     <string name="session_read_only_placeholder">只读模式-开启接管后可发送消息</string>

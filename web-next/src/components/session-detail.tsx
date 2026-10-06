@@ -401,6 +401,13 @@ export function SessionDetail({
   const session = state?.session ?? fallbackSession
   const runtimeState = state?.state ?? null
   const runtimeStatus = effectiveRuntimeStatus(runtimeState, session)
+  const runtimeStateError = (() => {
+    if (!runtimeState) return null
+    const reason = typeof runtimeState.statusReason === "string" ? runtimeState.statusReason.trim() : ""
+    if (reason) return reason
+    const message = runtimeState.error?.["message"]
+    return typeof message === "string" && message.trim() ? message.trim() : null
+  })()
   const turnInProgress = runtimeStatus === "waiting"
     || runtimeStatus === "pending"
     || runtimeStatus === "running"
@@ -1735,14 +1742,31 @@ export function SessionDetail({
             {detachedNotifications.map((notice) => (
               <NotificationCard key={notice.noticeId} notice={notice} />
             ))}
-            {runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running" ? (
+            {runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running"
+            || runtimeStatus === "stopping" ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
                 <span>
                   {runtimeStatus === "waiting" || runtimeStatus === "pending"
                     ? tSession("runtimePending", { runtime: takeoverAgent })
-                    : tSession("runtimeWorking", { runtime: takeoverAgent })}
+                    : runtimeStatus === "stopping"
+                      ? tSession("runtimeStopping", { runtime: takeoverAgent })
+                      : tSession("runtimeWorking", { runtime: takeoverAgent })}
                 </span>
+              </div>
+            ) : null}
+            {runtimeStatus === "error" ? (
+              <div
+                role="alert"
+                className="flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/5 px-3.5 py-3 text-sm"
+              >
+                <CircleAlert data-icon="inline-start" className="mt-0.5 size-4 shrink-0 text-destructive" />
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <span className="font-medium text-destructive">
+                    {tSession("runtimeErrorBanner", { runtime: takeoverAgent })}
+                  </span>
+                  {runtimeStateError ? <span className="break-words text-muted-foreground">{runtimeStateError}</span> : null}
+                </div>
               </div>
             ) : null}
           </div>

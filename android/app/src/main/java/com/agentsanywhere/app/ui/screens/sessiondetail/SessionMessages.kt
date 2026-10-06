@@ -263,6 +263,7 @@ internal fun MessageList(
     bottomContentPadding: Dp = 168.dp,
     hasMore: Boolean,
     loadingOlder: Boolean,
+    runtimeErrorText: String? = null,
     onLoadOlder: () -> Unit,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
     onOpenAttachment: (TimelineAttachment) -> Unit,
@@ -442,6 +443,13 @@ internal fun MessageList(
                     item(key = "working-indicator") {
                         DisableSelection {
                             WorkingIndicator(label = displayWorkingLabel)
+                        }
+                    }
+                }
+                if (runtimeErrorText != null) {
+                    item(key = "runtime-error-banner") {
+                        DisableSelection {
+                            RuntimeStatusErrorBanner(message = runtimeErrorText)
                         }
                     }
                 }
@@ -1084,6 +1092,42 @@ private fun WorkingIndicator(label: String) {
             fontSize = 13.sp,
             fontWeight = FontWeight.Bold,
         )
+    }
+}
+
+@Composable
+private fun RuntimeStatusErrorBanner(message: String) {
+    val colors = LocalAAColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(colors.errorSurface)
+            .border(1.2.dp, colors.errorBorder, RoundedCornerShape(14.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(
+            imageVector = Lucide.CircleAlert,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = colors.errorIcon,
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = stringResource(R.string.session_runtime_error_banner),
+                color = colors.errorText,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = message,
+                color = colors.errorText,
+                fontSize = 12.5.sp,
+                lineHeight = 16.sp,
+            )
+        }
     }
 }
 

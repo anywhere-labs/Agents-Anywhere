@@ -977,6 +977,8 @@
       "noActivity": "No activity yet.",
       "runtimePending": "Waiting for {runtime} to accept the task...",
       "runtimeWorking": "{runtime} is working...",
+      "runtimeStopping": "{runtime} is stopping...",
+      "runtimeErrorBanner": "{runtime} hit an error",
       "approvalRequested": "Approval requested",
       "approve": "Approve",
       "approveSession": "Approve session",
@@ -1081,6 +1083,8 @@
       "reconnectSummary": "Reconnecting: {attempts}",
       "timelineUnknownMessage": "Unknown message: {role}",
       "timelineUnknownItem": "Unknown timeline item: {type}",
+      "timelineTurnFailed": "The agent turn failed.",
+      "timelineErrorDetail": "Toggle error details",
       "toolSearched": "Searched {query}",
       "toolWebFallback": "web",
       "toolMcpFallback": "mcp",
@@ -1285,6 +1289,8 @@
     "approvalTitle": "A session needs your approval",
     "attentionTitle": "A session needs attention",
     "completedTitle": "Session completed",
+    "interruptedTitle": "Task interrupted",
+    "questionTitle": "A session has a question for you",
     "untitledSession": "Untitled session"
   },
   "auth": {

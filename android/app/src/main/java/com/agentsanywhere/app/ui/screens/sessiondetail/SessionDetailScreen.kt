@@ -1596,6 +1596,8 @@ fun SessionDetailScreen(
         state.interrupting -> context.getString(R.string.session_agent_interrupting, agentLabel)
         runtimeStatus in setOf(SessionRuntimeStatus.Waiting, SessionRuntimeStatus.Pending) ->
             context.getString(R.string.session_agent_pending, agentLabel)
+        runtimeStatus == SessionRuntimeStatus.Stopping ->
+            context.getString(R.string.session_agent_stopping, agentLabel)
         state.sending ||
             runtimeStatus == SessionRuntimeStatus.Running ||
             state.messages.any { it.optimistic && it.status == "running" } -> {
@@ -1603,6 +1605,11 @@ fun SessionDetailScreen(
         }
         else -> null
     }
+    val runtimeErrorText = (state.runtime.error?.get("message") as? String)?.takeIf(String::isNotBlank)
+        ?: state.runtime.errorMessage?.takeIf(String::isNotBlank)
+        ?: state.runtime.statusReason?.takeIf(String::isNotBlank)
+        .orEmpty()
+    val showRuntimeErrorBanner = runtimeStatus == SessionRuntimeStatus.Error || state.runtime.error != null
     val showInterrupt = state.interrupting || (
         connectorOnline && canUseInterrupt && runtimeStatus in setOf(
             SessionRuntimeStatus.Waiting,
@@ -1719,6 +1726,7 @@ fun SessionDetailScreen(
                                 onShareReply = ::requestShare,
                                 onOpenFile = ::openReferencedFile,
                                 onRespondNotice = ::respondNotice,
+                                runtimeErrorText = if (showRuntimeErrorBanner) runtimeErrorText else null,
                             )
                         }
                         ComposerVeil(

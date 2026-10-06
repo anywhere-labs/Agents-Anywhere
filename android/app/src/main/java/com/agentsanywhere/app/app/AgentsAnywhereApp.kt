@@ -1,11 +1,16 @@
 package com.agentsanywhere.app.app
 
 import android.content.Context
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Network
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -61,12 +66,14 @@ import com.agentsanywhere.app.feature.sessions.withPatchedSessions
 import com.agentsanywhere.app.feature.sessions.withMissingSessionsRemoved
 import com.agentsanywhere.app.feature.sessions.withAppendedSessionPage
 import com.agentsanywhere.app.feature.sessions.withSessionPageLoading
+import com.agentsanywhere.app.feature.sessiondetail.SessionActivityMonitor
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalPool
 import com.agentsanywhere.app.feature.terminal.TerminalController
 import com.agentsanywhere.app.model.MobileLoginQrPayload
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.model.AgentProject
+import com.agentsanywhere.app.model.SessionStatus
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereTheme
 import com.agentsanywhere.app.ui.designsystem.AALanguageMode
@@ -93,6 +100,8 @@ fun AgentsAnywhereApp(
     onSidebarViewModeChange: (String) -> Unit = {},
     oauthCallbackUri: Uri? = null,
     onOAuthCallbackConsumed: () -> Unit = {},
+    notificationSessionId: String? = null,
+    onNotificationSessionConsumed: () -> Unit = {},
     webLoginViewModel: WebLoginViewModel,
     appUpdateViewModel: AppUpdateViewModel,
     onInstallUpdate: (File) -> Unit = {},
@@ -176,6 +185,18 @@ fun AgentsAnywhereApp(
     }
     val currentDestination = AppDestination.valueOf(destinationName)
     val hasAuthSession = sessionStore.hasAuthSession()
+    val notificationPermissionLauncher = rememberNotificationPermissionLauncher(context)
+    val sessionActivityMonitor = remember(context, sessionStore, sessionsController, hasAuthSession) {
+        if (hasAuthSession) {
+            SessionActivityMonitor(
+                context = context,
+                sessionStore = sessionStore,
+                sessionsApi = SessionsApi(apiClient),
+            )
+        } else {
+            null
+        }
+    }
     val updateServerUrl = sessionStore.readServerUrl()
     val updatesAllowed = hasAuthSession && updateServerUrl.isNotBlank() && currentDestination !in setOf(
         AppDestination.LoginMethods, AppDestination.ServerSetup, AppDestination.QrLogin, AppDestination.QrWaiting,
@@ -225,6 +246,21 @@ fun AgentsAnywhereApp(
         lifecycleOwner.lifecycle.addObserver(observer)
         appVisible = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(sessionActivityMonitor, appVisible) {
+        if (appVisible) sessionActivityMonitor?.onAppVisible()
+    }
+    LaunchedEffect(sessionActivityMonitor, selectedSessionId, currentDestination) {
+        // Only the session actually on screen counts as "seen"; leaving the
+        // detail page clears it so background waits notify again.
+        sessionActivityMonitor?.markSessionVisible(
+            if (currentDestination == AppDestination.SessionDetail) selectedSessionId else null,
+        )
+    }
+    LaunchedEffect(hasAuthSession, sessionActivityMonitor) {
+        if (sessionActivityMonitor != null) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
     DisposableEffect(context, dashboardRealtimeController, sessionRealtimeController) {
         val connectivity = context.getSystemService(ConnectivityManager::class.java)
@@ -405,6 +441,28 @@ fun AgentsAnywhereApp(
         }
     }
 
+    fun openSession(session: AgentSession) {
+        preparedSessionDraft = null
+        selectedSessionId = session.id
+        destinationName = AppDestination.SessionDetail.name
+        if (!session.unread) return
+        val request = sessionsState.beginSessionRequest(listOf(session.id))
+        sessionsState = request.state
+        scope.launch {
+            sessionsController.markSessionRead(session.id, sessionsState.devices)
+                .onSuccess { updated ->
+                    sessionsState = sessionsState.withPatchedSession(updated, request.generation)
+                }
+                .onFailure { error ->
+                    Toast.makeText(
+                        context,
+                        error.message ?: "Could not mark this session as read.",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+        }
+    }
+
     val navigate: (AppDestination) -> Unit = { destination ->
         if (destination == AppDestination.QrLogin) {
             pendingMobileLoginQr = null
@@ -464,10 +522,12 @@ fun AgentsAnywhereApp(
         dashboardRealtimeController.start(
             scope = this,
             onSnapshot = { snapshot ->
+                val snapshotSessions = snapshot.sessions
                 scope.launch {
                     if (sessionStore.readServerUrl() != realtimeServerUrl ||
                         sessionStore.readAccessToken() != realtimeAccessToken
                     ) return@launch
+                    sessionActivityMonitor?.applySnapshot(snapshotSessions)
                     projectsRequestVersion++
                     sessionsState = sessionsState.replacedByDashboardSnapshot(
                         sessionsController.dashboardSnapshotState(snapshot),
@@ -487,6 +547,22 @@ fun AgentsAnywhereApp(
         ).join()
     }
 
+    // The dashboard WebSocket is the app's only background feed: the server
+    // follows every dashboard.changed invalidation with a fresh snapshot, and
+    // each snapshot projects the runtime status of every session. Keeping it
+    // connected while the app is hidden lets SessionActivityMonitor turn turn
+    // completion, failure, and interaction waits into system notifications.
+    LaunchedEffect(hasAuthSession, appVisible, sessionActivityMonitor) {
+        if (!hasAuthSession || appVisible) return@LaunchedEffect
+        sessionActivityMonitor?.onAppHidden()
+        dashboardRealtimeController.start(
+            scope = this,
+            onSnapshot = { snapshot ->
+                sessionActivityMonitor?.applySnapshot(snapshot.sessions)
+            },
+        ).join()
+    }
+
     LaunchedEffect(oauthCallbackUri) {
         val uri = oauthCallbackUri ?: return@LaunchedEffect
         if (currentDestination == AppDestination.ServerSetup &&
@@ -495,6 +571,41 @@ fun AgentsAnywhereApp(
             webLoginViewModel.handleCallback(uri.toString())
         }
         onOAuthCallbackConsumed()
+    }
+
+    LaunchedEffect(notificationSessionId, hasAuthSession) {
+        val sessionId = notificationSessionId ?: return@LaunchedEffect
+        onNotificationSessionConsumed()
+        if (!hasAuthSession) return@LaunchedEffect
+        val session = sessionsState.sessions.firstOrNull { it.id == sessionId }
+            ?: projectSessionsById.values.flatten().firstOrNull { it.id == sessionId }
+            ?: sessionsState.archivedSessions.firstOrNull { it.id == sessionId }
+            ?: AgentSession(
+                id = sessionId,
+                connectorId = "",
+                projectId = null,
+                deviceName = "",
+                title = "",
+                summary = "",
+                cwd = null,
+                workspaceLabel = "",
+                runtime = "",
+                runtimeLabel = "",
+                status = SessionStatus.Unknown,
+                statusLabel = "",
+                updatedAtLabel = "",
+                metaLabel = "",
+                pinned = false,
+                archived = false,
+                unread = false,
+                lastReadSeq = 0,
+                takeover = false,
+                connectorOnline = false,
+                live = false,
+                sortKey = sessionId,
+                updatedSeq = 0,
+            )
+        openSession(session)
     }
 
     AgentsAnywhereNavHost(
@@ -545,28 +656,7 @@ fun AgentsAnywhereApp(
             }
         },
         onLoadMoreSessions = ::loadMoreSessions,
-        onOpenSession = { session ->
-            preparedSessionDraft = null
-            selectedSessionId = session.id
-            destinationName = AppDestination.SessionDetail.name
-            if (session.unread) {
-                val request = sessionsState.beginSessionRequest(listOf(session.id))
-                sessionsState = request.state
-                scope.launch {
-                    sessionsController.markSessionRead(session.id, sessionsState.devices)
-                        .onSuccess { updated ->
-                            sessionsState = sessionsState.withPatchedSession(updated, request.generation)
-                        }
-                        .onFailure { error ->
-                            Toast.makeText(
-                                context,
-                                error.message ?: "Could not mark this session as read.",
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        }
-                }
-            }
-        },
+        onOpenSession = ::openSession,
         onOpenDevice = { device ->
             deviceDetailReturnDestinationName = destinationName
             selectedDeviceId = device.id
@@ -915,6 +1005,14 @@ private fun Context.hasUsableNetwork(): Boolean {
     val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return false
     return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
 }
+
+// Android 13 gates notifications behind a runtime permission. The app asks
+// once, silently, after the user signs in; a denial is never re-prompted here
+// (system settings remain the way to re-enable). SessionActivityMonitor checks
+// the granted permission again before every post, so no extra bookkeeping.
+@Composable
+private fun rememberNotificationPermissionLauncher(context: Context): ActivityResultLauncher<String> =
+    rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { _ -> }
 
 private val NewSessionDraftSaver = listSaver<NewSessionDraft?, Any>(
     save = { draft ->
