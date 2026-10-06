@@ -1,47 +1,28 @@
 # Connector Structure
 
-Status: current target and migration map.
+状态：当前目标与迁移映射。
 
-This document describes the Connector module structure for the Agent Runtime
-Protocol refactor. It is authoritative for active Connector code organization:
-old adapter code may be mined as migration source material, but active code
-should flow through `RuntimeProvider`, `AgentRuntime`, and `RuntimeHostClient`.
+本文档描述 Agent Runtime Protocol 重构下的 Connector 模块结构。它对生效的 Connector 代码组织方式具有权威性：旧适配器代码可以作为迁移素材来挖掘，但生效代码应统一走 `RuntimeProvider`、`AgentRuntime` 和 `RuntimeHostClient`。
 
-## Migration stance
+## 迁移立场
 
-This refactor is a breaking migration. Merging useful logic from old Codex or
-Claude adapters is part of migration, but keeping the old adapter contract in
-the active path is not.
+本次重构是一次破坏性迁移。从旧 Codex 或 Claude 适配器中合并有用的逻辑属于迁移的一部分，但把旧适配器契约保留在生效路径上不是。
 
-Rules:
+规则：
 
-- Do not add shims for removed root modules such as `connector.runtime`,
-  `connector.adapter`, `connector.codex`, or `connector.claude`.
-- Do not add a legacy adapter wrapper around `backendNotifications` or
-  `notification_sink`.
-- Runtime code must call `RuntimeHostClient` semantic methods and must not emit
-  server notification method names directly.
-- `_reference/` is read-only source material for migration. It must not be
-  imported by the active Connector runtime path.
-- Connector-local durable state uses JSON stores. SQLite is not part of the v2
-  Connector path.
-- Native runtime adapters must preserve native SDK types until the runtime
-  boundary has projected them into runtime protocol dataclasses. Do not
-  immediately collapse known SDK objects into generic dicts.
-- For known SDK types, use attribute access and type dispatch. Do not use
-  `.get(...)`, `model_dump()`, `vars()`, `__dict__`, or recursive dataclass dumps
-  as the primary reducer mechanism.
-- `model_dump()` and plain dict payloads are allowed at JSON/HTTP/WebSocket
-  boundaries, in tests that assert wire shape, and in unknown-SDK fallback
-  diagnostics. They are not the internal representation for known runtime
-  events.
-- Dynamic `Mapping[str, Any]` fields are limited to intentionally extensible
-  protocol surfaces such as `metadata`, `source`, `content`, runtime config
-  values, JSON Schema, and UI schema.
+- 不要为已移除的根模块（如 `connector.runtime`、`connector.adapter`、`connector.codex`、`connector.claude`）添加 shim。
+- 不要在 `backendNotifications` 或 `notification_sink` 外面再包一层旧适配器 wrapper。
+- 运行时代码必须调用 `RuntimeHostClient` 的语义方法，不得直接发出 Server 通知方法名。
+- `_reference/` 是只读的迁移源素材。生效的 Connector 运行时路径不得导入它。
+- Connector 本地持久化状态使用 JSON store。SQLite 不属于 v2 Connector 路径。
+- 原生运行时适配器必须保留原生 SDK 类型，直到运行时边界把它们投影为运行时协议 dataclass。不要立即把已知的 SDK 对象压扁成通用 dict。
+- 对已知的 SDK 类型，使用属性访问和类型分发。不要把 `.get(...)`、`model_dump()`、`vars()`、`__dict__` 或递归 dataclass dump 作为主要的归约机制。
+- `model_dump()` 和纯 dict 载荷允许出现在 JSON/HTTP/WebSocket 边界、断言线上格式的测试，以及未知 SDK 的兜底诊断中。它们不是已知运行时事件的内部表示。
+- 动态 `Mapping[str, Any]` 字段仅限于刻意可扩展的协议面，例如 `metadata`、`source`、`content`、运行时配置值、JSON Schema 和 UI schema。
 
-These rules are enforced by `connector/tests/test_connector_architecture.py`.
+这些规则由 `connector/tests/test_connector_architecture.py` 强制执行。
 
-## Current tree
+## 当前目录树
 
 ```text
 connector/connector/
@@ -104,62 +85,49 @@ connector/connector/
     runtime_discovery.py
 ```
 
-The root package is now intentionally thin. It still contains CLI/control
-entrypoints and small cross-layer utilities. Large mixed modules such as
-`runtime.py`, `adapter.py`, `runtime_lifecycle.py`, root `json_rpc.py`,
-root `attachments.py`, root `protocol_revision.py`, and root `sync_state.py`
-have been removed from the active root.
+根包现在刻意保持很薄。它只保留 CLI/控制入口和少量跨层工具。`runtime.py`、`adapter.py`、`runtime_lifecycle.py`、根 `json_rpc.py`、根 `attachments.py`、根 `protocol_revision.py`、根 `sync_state.py` 这类大型混合模块已从生效的根目录移除。
 
-`runtime_protocol` is the current package name because the historical
-`connector.runtime` root module existed when the protocol was introduced. Do
-not rename it casually; if we later rename it to `connector.runtime`, do it as
-a dedicated breaking move after all old root paths are gone and guarded.
+`runtime_protocol` 是当前的包名，因为协议引入时历史上存在 `connector.runtime` 根模块。不要随意重命名它；如果以后要改名为 `connector.runtime`，应在所有旧根路径都消失并有防护之后，作为一个专门的破坏性变更来进行。
 
-## Layer responsibilities
+## 各层职责
 
-### Root entrypoints
+### 根入口
 
-User-facing and desktop-control entry points:
+面向用户和桌面控制的入口：
 
-- CLI command parsing.
-- Desktop JSON-RPC controller.
-- Pairing control exposed to local UI.
-- Start/stop/restart of the Connector process from desktop RPC.
+- CLI 命令解析。
+- 桌面 JSON-RPC 控制器。
+- 暴露给本地 UI 的配对控制。
+- 通过桌面 RPC 启动/停止/重启 Connector 进程。
 
-Root entrypoints may assemble the Connector application. They must not know
-Codex/Claude adapter internals.
+根入口可以组装 Connector 应用。它们不得了解 Codex/Claude 适配器内部。
 
 ### `core/`
 
-Small shared primitives:
+小型共享原语：
 
-- config file loading/saving
-- local preferences
-- JSON-RPC frame helpers for local control
-- runtime owner lock/state helpers
+- 配置文件读取/保存
+- 本地偏好设置
+- 本地控制用的 JSON-RPC 帧辅助
+- 运行时 owner 锁/状态辅助
 
-`core/` must not import runtime adapters or server application code.
+`core/` 不得导入运行时适配器或 Server 应用代码。
 
-Runtime config values are not Connector-local durable state. The Server owns
-runtime configuration values and decides activation/startup. Runtime providers
-only report config schemas/defaults and validate config values passed by Server
-RPC before startup. Connector-local durable files are limited to Connector app
-configuration, runtime ownership/sync cursors, attachments, and similar local
-operation state.
+运行时配置值不是 Connector 本地的持久化状态。Server 持有运行时配置值并决定激活/启动。运行时 provider 只负责上报配置 schema/默认值，并在启动前校验 Server RPC 传入的配置值。Connector 本地的持久化文件仅限于 Connector 应用配置、运行时 owner/sync 游标、附件等类似的本地操作状态。
 
 ### `server/`
 
-Connector application layer for talking to Agents Anywhere Server:
+与 Agents Anywhere Server 通信的 Connector 应用层：
 
-- connector auth
-- HTTP helpers
-- WebSocket connection loop
-- server RPC dispatch
-- ingest batching/flushing
-- mapping `RuntimeHostClient` calls to server ingest notifications
-- attachment download/upload bridge
+- connector 认证
+- HTTP 辅助
+- WebSocket 连接循环
+- Server RPC 分发
+- ingest 批处理/冲刷
+- 把 `RuntimeHostClient` 调用映射为 Server ingest 通知
+- 附件下载/上传桥接
 
-Current implementation:
+当前实现：
 
 ```text
 server/client.py
@@ -178,60 +146,49 @@ server/sync_state.py
   JsonSyncStateStore
 ```
 
-`ConnectorRuntimeHost` is the transport mapping boundary that maps semantic runtime host calls to server-facing connector notifications such as `session.state.updated`, `timeline.sync`, `timeline.itemUpsert`, `notice.upsert`, and `runtime.error`. Live runtime host notifications normally travel over `WS /api/v2/connector/ws`; `POST /api/v2/connector/ingest` is reserved for explicit bulk sync and disconnected WebSocket fallback. Runtime adapters should call the host client, not emit server notification method names themselves.
+`ConnectorRuntimeHost` 是传输映射边界，把语义化的运行时 host 调用映射为面向 Server 的 connector 通知，例如 `session.state.updated`、`timeline.sync`、`timeline.itemUpsert`、`notice.upsert` 和 `runtime.error`。实时的运行时 host 通知通常走 `WS /api/v2/connector/ws`；`POST /api/v2/connector/ingest` 只用于显式的批量同步和 WebSocket 断连兜底。运行时适配器应调用 host client，而不是自己发出 Server 通知方法名。
 
-`server/` owns the actual network client. Runtime adapters must not call server HTTP/WS directly.
+`server/` 持有真正的网络客户端。运行时适配器不得直接调用 Server 的 HTTP/WS。
 
-Runtime discovery publishes two different views:
+运行时发现发布两个不同的视图：
 
-- `runtime.inventoryUpdated` reports local runtime discovery details and
-  adapter-native capability flags such as `modelCatalog` and
-  `permissionCatalog`.
-- `protocol.capabilitiesUpdated` is the UI/server contract. The connector
-  explicitly maps adapter-native flags to protocol capability ids such as
-  `catalog.model`, `catalog.permission`, `catalog.effort`,
-  `session.send_message`, `session.steer`, and `session.interrupt`.
+- `runtime.inventoryUpdated` 上报本地运行时发现细节和适配器原生能力标志，例如 `modelCatalog` 和 `permissionCatalog`。
+- `protocol.capabilitiesUpdated` 是 UI/Server 契约。Connector 把适配器原生标志显式映射为协议能力 id，例如 `catalog.model`、`catalog.permission`、`catalog.effort`、`session.send_message`、`session.steer` 和 `session.interrupt`。
 
-Web must gate selectors and controls from effective protocol capabilities, not
-from raw runtime inventory.
+Web 必须根据生效的协议能力来决定选择器和控件的显示，而不是根据原始的运行时 inventory。
 
 ### `runtime_protocol/`
 
-Generic runtime framework:
+通用运行时框架：
 
 - `AgentRuntime` ABC
 - `RuntimeHostClient` ABC
-- dataclass models
-- runtime errors
-- provider lifecycle interface
-- registry/supervisor
-- runtime dispatch helpers
+- dataclass 模型
+- 运行时错误
+- provider 生命周期接口
+- 注册表/supervisor
+- 运行时分发辅助
 
-`runtime_protocol/` must not import Codex/Claude modules. Concrete providers
-are registered by composition in `runtimes/providers.py`.
+`runtime_protocol/` 不得导入 Codex/Claude 模块。具体的 provider 通过 `runtimes/providers.py` 中的组合方式注册。
 
 ### `runtimes/*/`
 
-Concrete runtime integrations.
+具体的运行时集成。
 
-Each runtime package owns:
+每个运行时包负责：
 
-- runtime discovery
-- config validation details
-- adapter construction
-- native process/SDK/transport integration
-- native event reduction into protocol timeline/state/selection projections
-- runtime-specific sync state keys
+- 运行时发现
+- 配置校验细节
+- 适配器构造
+- 原生进程/SDK/传输集成
+- 把原生事件归约为协议的 Timeline/状态/选择项投影
+- 运行时特有的 sync state 键
 
-For example, active Codex owns the official SDK adapter, local rollout history,
-and Codex reducer logic. Historical Codex app-server and IPC implementations
-live under `_reference/codex` and are not imported by active provider/runtime
-code. Claude owns SDK integration, transcript/history normalization, and trust
-handling.
+例如，生效的 Codex 拥有官方 SDK 适配器、本地 rollout 历史和 Codex 归约逻辑。历史上的 Codex app-server 与 IPC 实现放在 `_reference/codex` 下，不被生效的 provider/runtime 代码导入。Claude 拥有 SDK 集成、transcript/历史归一化和信任处理。
 
-Runtime packages implement `AgentRuntime` and call `RuntimeHostClient`.
+运行时包实现 `AgentRuntime` 并调用 `RuntimeHostClient`。
 
-Runtime package internals should follow this projection flow:
+运行时包内部应遵循以下投影流程：
 
 ```text
 native SDK object
@@ -240,7 +197,7 @@ native SDK object
   -> server/client JSON serializer
 ```
 
-Avoid this anti-pattern in active runtime code:
+在生效的运行时代码中要避免这个反模式：
 
 ```text
 native SDK object
@@ -249,7 +206,7 @@ native SDK object
   -> maybe runtime protocol dataclass
 ```
 
-Current native runtime packages:
+当前的原生运行时包：
 
 ```text
 runtimes/codex/provider.py
@@ -258,25 +215,22 @@ runtimes/claude/provider.py
 runtimes/claude/runtime.py
 ```
 
-The first native Codex/Claude runtimes are protocol implementations, not
-adapter wrappers. They may still be feature-incomplete; unsupported behavior
-must be explicit through `RuntimeUnsupportedError` or an unsuccessful protocol
-result.
+首批原生 Codex/Claude 运行时是协议实现，不是适配器 wrapper。它们可能仍然功能不完整；不支持的行为必须通过 `RuntimeUnsupportedError` 或一个不成功的协议结果显式表达。
 
 ### `local/`
 
-Local machine operations that are not agent-runtime-specific:
+与 Agent 运行时无关的本地机器操作：
 
-- filesystem reads/writes
-- shell commands
-- terminal sessions
-- path validation
+- 文件系统读写
+- shell 命令
+- 终端会话
+- 路径校验
 
-These are host capabilities exposed through server RPC, not part of `AgentRuntime`.
+这些是通过 Server RPC 暴露的主机能力，不属于 `AgentRuntime`。
 
-## Runtime lifecycle model
+## 运行时生命周期模型
 
-Lifecycle is separate from runtime interaction.
+生命周期与运行时交互是分离的。
 
 ```text
 RuntimeProvider
@@ -294,21 +248,15 @@ AgentRuntime
   ...
 ```
 
-`RuntimeProvider` answers: how do we find, configure, start, and stop this runtime?
+`RuntimeProvider` 回答的问题：如何发现、配置、启动和停止这个运行时？
 
-`AgentRuntime` answers: once started, how do we interact with this runtime, including reading its effective runtime-owned config.
+`AgentRuntime` 回答的问题：启动之后，如何与这个运行时交互，包括读取它生效的运行时自有配置。
 
-This separation keeps discovery/bootstrap details out of session operations,
-while still making runtime config visible through the generic runtime protocol.
-For example, Codex active runtime config currently contains only SDK runtime
-environment overrides; Claude owns its executable discovery path; future local
-feature flags belong to runtime config, not to `ConnectorConfig`. Config
-mutation flows through `RuntimeProvider` and the supervisor, not through a
-running `AgentRuntime`.
+这种分离把发现/引导细节挡在会话操作之外，同时让运行时配置通过通用运行时协议保持可见。例如，Codex 生效运行时配置目前只包含 SDK 运行环境覆盖项；Claude 拥有自己的可执行文件发现路径；未来的本地 feature flag 属于运行时配置，不属于 `ConnectorConfig`。配置修改经 `RuntimeProvider` 和 supervisor 流转，而不是通过运行中的 `AgentRuntime`。
 
-## Provider and supervisor
+## Provider 与 supervisor
 
-Target provider shape:
+目标 provider 形态：
 
 ```py
 class RuntimeProvider(ABC):
@@ -332,19 +280,19 @@ class RuntimeProvider(ABC):
     async def stop_runtime(self, runtime: AgentRuntime) -> None: ...
 ```
 
-`get_config_schema()` is for live UI/CLI form rendering. `validate_config()` is the authoritative startup-time validation and normalization step; schema validation may be part of it, but provider code must still perform runtime-specific checks such as executable presence, SDK availability, socket availability, and OS-specific support.
+`get_config_schema()` 用于实时的 UI/CLI 表单渲染。`validate_config()` 是启动时权威的校验与归一化步骤；schema 校验可以是它的一部分，但 provider 代码仍必须执行运行时特有的检查，例如可执行文件是否存在、SDK 是否可用、socket 是否可用以及操作系统特有的支持情况。
 
-The supervisor owns:
+supervisor 负责：
 
-- active runtime instances
-- runtime start/stop locks
-- runtime status publication
-- provider registry
-- resolving a runtime id to an active `AgentRuntime`
+- 活跃的运行时实例
+- 运行时启动/停止锁
+- 运行时状态发布
+- provider 注册表
+- 把运行时 id 解析为活跃的 `AgentRuntime`
 
-The supervisor should not know Codex/Claude construction details beyond the provider interface.
+除 provider 接口之外，supervisor 不应了解 Codex/Claude 的构造细节。
 
-Current protocol implementation:
+当前协议实现：
 
 ```text
 runtime_protocol/supervisor.py
@@ -352,9 +300,9 @@ runtime_protocol/supervisor.py
   RuntimeSupervisorEntry
 ```
 
-The protocol supervisor is intentionally not a config store. It accepts raw config values for `validate_config()` and `start()`, delegates validation to `RuntimeProvider`, and keeps only the effective `RuntimeConfig` associated with an active runtime. Durable runtime config storage belongs to the Server, not Connector local disk.
+协议 supervisor 刻意不做配置存储。它接收原始配置值用于 `validate_config()` 和 `start()`，把校验委托给 `RuntimeProvider`，只保留与活跃运行时关联的生效 `RuntimeConfig`。持久化的运行时配置存储属于 Server，不属于 Connector 本地磁盘。
 
-Supervisor start flow:
+Supervisor 启动流程：
 
 ```text
 start(runtime, raw_values)
@@ -372,20 +320,13 @@ start(runtime, raw_values)
   -> status = running
 ```
 
-The supervisor must never stop a healthy running runtime before the replacement
-configuration has been validated. Raw config values and effective config values
-are intentionally distinct: providers may normalize `auto` or aliases into a
-stable effective config, and equivalent effective configs should not force a
-restart.
+在替换配置通过校验之前，supervisor 绝不能停止健康运行中的运行时。原始配置值和生效配置值是刻意区分的：provider 可能把 `auto` 或别名归一化为稳定的生效配置，等价的生效配置不应强制重启。
 
-`validate_config(runtime, raw_values)` is a validation-only call. If the runtime
-is already running, it must not mark the runtime stopped and must not replace
-the active effective config. Validation failures should be returned to the
-caller while preserving the currently running runtime.
+`validate_config(runtime, raw_values)` 是只做校验的调用。如果运行时已经在运行，它不得把运行时标记为已停止，也不得替换当前生效的配置。校验失败应返回给调用方，同时保留当前运行中的运行时。
 
-## Connector application flow
+## Connector 应用流程
 
-Startup:
+启动：
 
 ```text
 app entrypoint
@@ -405,7 +346,7 @@ app entrypoint
   -> publish runtime inventory/status
 ```
 
-Server RPC dispatch:
+Server RPC 分发：
 
 ```text
 server websocket request
@@ -415,7 +356,7 @@ server websocket request
   -> return RuntimeOperationResult or typed result
 ```
 
-Runtime event flow:
+运行时事件流：
 
 ```text
 runtime adapter
@@ -426,9 +367,9 @@ runtime adapter
   -> web receives websocket/event update
 ```
 
-## Dependency rules
+## 依赖规则
 
-Allowed:
+允许：
 
 ```text
 root entrypoints -> server, core
@@ -438,7 +379,7 @@ runtimes/* -> runtime_protocol, core
 local -> core
 ```
 
-Avoid:
+避免：
 
 ```text
 runtime_protocol -> runtimes/*
@@ -448,45 +389,40 @@ local -> runtimes/*
 core -> server/runtime_protocol/runtimes/local
 ```
 
-## Completed migration nodes
+## 已完成的迁移节点
 
-- Added `runtime_protocol` ABCs and dataclasses.
-- Added `RuntimeProvider`, `RuntimeSupervisor`, and JSON runtime config store.
-- Connector startup restores saved JSON runtime configs through the supervisor.
-- Added native `runtimes/codex` provider/runtime.
-- Added native `runtimes/claude` provider/runtime.
-- Moved server transport/client/dispatch/ingest/sync/protocol helpers under
-  `server/`.
-- Moved local operations under `local/`.
-- Moved connector-local runtime owner and JSON-RPC helpers under `core/`.
-- Moved attachment helpers under `runtime_protocol/`.
-- Moved old Codex/Claude/adapter code under `_reference/`.
-- Added architecture tests that forbid active imports of deprecated root
-  modules.
+- 新增 `runtime_protocol` ABC 与 dataclass。
+- 新增 `RuntimeProvider`、`RuntimeSupervisor` 和 JSON 运行时配置存储。
+- Connector 启动时通过 supervisor 恢复已保存的 JSON 运行时配置。
+- 新增原生 `runtimes/codex` provider/runtime。
+- 新增原生 `runtimes/claude` provider/runtime。
+- 把 server 传输/客户端/分发/ingest/同步/协议辅助移到 `server/` 下。
+- 把本地操作移到 `local/` 下。
+- 把 connector 本地的运行时 owner 和 JSON-RPC 辅助移到 `core/` 下。
+- 把附件辅助移到 `runtime_protocol/` 下。
+- 把旧 Codex/Claude/adapter 代码移到 `_reference/` 下。
+- 新增架构测试，禁止导入已弃用的根模块。
 
-## Remaining migration nodes
+## 剩余迁移节点
 
-1. Finish runtime command support:
-   - command catalog is read live from `AgentRuntime.list_commands()`;
-   - execution calls `AgentRuntime.execute_command()`;
-   - command execution must not create a normal user message.
-2. Finish live state fidelity:
-   - RuntimeLive state is the UI display-state source;
-   - session-scoped effective capability is the action availability source;
-   - tool calls and SDK events keep work state and capability accurate while work is active.
-3. Finish Codex SDK parity:
-   - map SDK state/timeline/notice changes into host-client calls;
-   - keep SDK-specific method names inside the Codex runtime package.
-4. Finish create-and-start attachment design:
-   - current create-and-start path is text-first;
-   - new-session attachment upload needs a draft/preallocation flow before it
-     is enabled in Web.
-5. Finish Web protocol-driven reads:
-   - live command menu on `/`;
-   - live model/permission catalog reads at interaction time;
-   - no periodic snapshot polling except explicit recovery.
-6. Remove or replace old server API projections that still exist only for
-   migration visibility.
+1. 完成运行时命令支持：
+   - 命令目录通过 `AgentRuntime.list_commands()` 实时读取；
+   - 执行调用 `AgentRuntime.execute_command()`；
+   - 命令执行不得创建普通用户消息。
+2. 完成实时状态保真：
+   - RuntimeLive 状态是 UI 展示状态的来源；
+   - 会话级生效能力是操作可用性的来源；
+   - 工具调用和 SDK 事件在工作进行期间保持工作状态与能力的准确。
+3. 完成 Codex SDK 对等：
+   - 把 SDK 状态/Timeline/通知变化映射为 host client 调用；
+   - SDK 特有的方法名留在 Codex 运行时包内。
+4. 完成 create-and-start 附件设计：
+   - 当前 create-and-start 路径以文本为先；
+   - 新会话的附件上传需要先有草稿/预分配流程，然后才能在 Web 中启用。
+5. 完成 Web 协议驱动读取：
+   - `/` 触发的实时命令菜单；
+   - 交互时实时读取模型/权限目录；
+   - 除显式恢复外不做周期性快照轮询。
+6. 移除或替换仅因迁移可见性而保留的旧 Server API 投影。
 
-Each remaining node should be independently testable and should avoid adding
-legacy compatibility wrappers.
+每个剩余节点都应可独立测试，且不应引入旧兼容 wrapper。
