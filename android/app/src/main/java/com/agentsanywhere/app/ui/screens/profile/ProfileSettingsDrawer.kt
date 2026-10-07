@@ -43,6 +43,25 @@ import com.composables.icons.lucide.Moon
 import com.composables.icons.lucide.PackageCheck
 import com.composables.icons.lucide.Server
 import kotlinx.coroutines.launch
+import androidx.compose.animation.core.exponentialDecay
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.AnchoredDraggableState
+import androidx.compose.foundation.gestures.DraggableAnchors
+import androidx.compose.foundation.gestures.animateTo
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.anchoredDraggable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 
 private enum class ProfileDetailPage { None, Account, Language, Updates }
 
@@ -54,6 +73,9 @@ private fun ProfileDetailPage.titleLabel(): String = when (this) {
     ProfileDetailPage.None -> ""
 }
 
+private enum class DrawerDragAnchor { Closed, Open }
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ProfileSettingsDrawer(
     open: Boolean,
@@ -78,6 +100,7 @@ fun ProfileSettingsDrawer(
     onOpenArchivedSessions: () -> Unit,
     onSignOut: () -> Unit,
     onClose: () -> Unit,
+    onOpen: () -> Unit = {},
     onNotice: (String, Boolean) -> Unit,
 ) {
     val context = LocalContext.current
@@ -142,14 +165,67 @@ fun ProfileSettingsDrawer(
             .onFailure { onNotice(it.message ?: context.getString(R.string.profile_account_load_failed), true) }
     }
 
-    AnimatedVisibility(
-        visible = open,
-        enter = slideInHorizontally(initialOffsetX = { -it }) + fadeIn(),
-        exit = slideOutHorizontally(targetOffsetX = { -it }) + fadeOut(),
+    // RikkaHub-style swipe-to-follow drawer: while dragging, the sheet tracks
+    // the finger 1:1 and only animates once released.
+    val density = LocalDensity.current
+    val sheetWidthDp = with(LocalConfiguration.current) { screenWidthDp.dp.coerceAtMost(400.dp) }
+    val sheetWidthPx = with(density) { sheetWidthDp.toPx() }
+    val dragState = remember(sheetWidthPx) {
+        AnchoredDraggableState(
+            initialValue = DrawerDragAnchor.Closed,
+            anchors = DraggableAnchors<DrawerDragAnchor> {
+                DrawerDragAnchor.Closed at 0f
+                DrawerDragAnchor.Open at sheetWidthPx
+            },
+            positionalThreshold = { distance: Float -> distance * 0.5f },
+            velocityThreshold = { with(density) { 700.dp.toPx() } },
+            snapAnimationSpec = spring(stiffness = 500f, dampingRatio = 0.9f),
+            decayAnimationSpec = exponentialDecay(),
+        )
+    }
+    LaunchedEffect(open) {
+        dragState.animateTo(if (open) DrawerDragAnchor.Open else DrawerDragAnchor.Closed)
+    }
+    LaunchedEffect(dragState.settledValue) {
+        if (dragState.settledValue == DrawerDragAnchor.Open && !open) onOpen()
+    }
+    val sheetFraction = (dragState.offset / sheetWidthPx).coerceIn(0f, 1f)
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
     ) {
+        // Edge strip: while closed, a horizontal drag starting at the left
+        // screen edge follows the finger and opens the sheet.
+        if (!open) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(28.dp)
+                    .anchoredDraggable(state = dragState, orientation = Orientation.Horizontal),
+            )
+        }
+        if (dragState.offset > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.35f * sheetFraction))
+                    .pointerInput(Unit) {
+                        detectTapGestures(onTap = { scope.launch { dragState.animateTo(DrawerDragAnchor.Closed) } })
+                    },
+            )
+            // While the sheet is visible the whole surface can drag it back,
+            // 1:1 with the finger.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .anchoredDraggable(state = dragState, orientation = Orientation.Horizontal),
+            )
+        }
         Box(
             modifier = Modifier
-                .fillMaxSize()
+                .width(sheetWidthDp)
+                .fillMaxHeight()
+                .offset { IntOffset(x = (dragState.offset - sheetWidthPx).roundToInt(), y = 0) }
                 .background(profilePageBackground(colors)),
         ) {
             LazyColumn(
