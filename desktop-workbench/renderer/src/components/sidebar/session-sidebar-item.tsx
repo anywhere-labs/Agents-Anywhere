@@ -37,6 +37,17 @@ import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 import { useWorkspace } from "@/components/workspace-context"
 
+/** Session status → `dashboard.sessionStatus.*` message key for the
+ *  in-progress status chip. */
+const SESSION_STATUS_LABEL_KEYS: Record<string, string> = {
+  running: "running",
+  waiting: "waiting",
+  pending: "pending",
+  stopping: "stopping",
+  waiting_approval: "waitingApproval",
+  blocked: "blocked",
+}
+
 
 export function SessionSidebarItem({
   item,
@@ -64,7 +75,7 @@ export function SessionSidebarItem({
   const t = useTranslations("dashboard")
   const tSession = useTranslations("dashboard.session")
   const tCommon = useTranslations("common")
-  const { connectors, projects, sidebarShowsSessions, sidebarCompactSessions } = useWorkspace()
+  const { connectors, projects, sidebarShowsSessions, sidebarCompactSessions, filter } = useWorkspace()
   const deviceName = connectors.find((connector) => connector.id === item.connectorId)?.name ?? item.connectorId
   const projectName = projects.find((project) => project.id === item.projectId)?.name
     || item.cwd?.split(/[\\/]/).filter(Boolean).pop()
@@ -79,6 +90,11 @@ export function SessionSidebarItem({
   const isWaitingApproval = item.status === "waiting_approval"
   const isUnreadIdle = item.unread && item.status === "idle"
   const hasStatusIndicator = isBusy || isWaitingApproval || isUnreadIdle
+  // In the "in progress" view every row names its live status so the sidebar
+  // works as a per-device Agent status board.
+  const statusChipLabel = filter?.status === "working" && SESSION_STATUS_LABEL_KEYS[item.status]
+    ? t(`sessionStatus.${SESSION_STATUS_LABEL_KEYS[item.status]}`)
+    : null
 
   React.useEffect(() => {
     if (!renameOpen) setTitleDraft(item.title ?? "")
@@ -161,6 +177,11 @@ export function SessionSidebarItem({
                 {meta ? (
                   <span className="block w-full min-w-0 truncate text-[11px] leading-4 text-muted-foreground/80">
                     {meta}
+                  </span>
+                ) : null}
+                {statusChipLabel ? (
+                  <span className="block w-full min-w-0 truncate text-[11px] leading-4 text-muted-foreground/70">
+                    {statusChipLabel}
                   </span>
                 ) : null}
               </SidebarMenuButton>

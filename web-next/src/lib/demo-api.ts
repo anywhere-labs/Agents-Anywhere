@@ -1,3 +1,5 @@
+import { sessionStatusIsActive } from "../components/session/session-list-order.ts"
+
 // ─────────────────────────────────────────────────────────────
 // Domain types  (mirrors backend OpenAPI / pseudocode shapes)
 // ─────────────────────────────────────────────────────────────
@@ -660,7 +662,7 @@ export type FilterValue = {
   status: SessionStatusFilter
 }
 
-export type SessionStatusFilter = "all" | "archived"
+export type SessionStatusFilter = "all" | "archived" | "working"
 
 export const defaultFilter: FilterValue = { connectorId: "all", runtime: "all", status: "all" }
 
@@ -674,6 +676,10 @@ export function filterSessions(
     if (filter.runtime !== "all" && s.runtime !== filter.runtime) return false
     if (filter.status === "archived") {
       if (!s.archived) return false
+    } else if (filter.status === "working") {
+      // The "in progress" view lists what every device Agent is doing right
+      // now; archived sessions never belong here.
+      if (s.archived || !sessionStatusIsActive(s.status)) return false
     } else {
       if (s.archived) return false
     }

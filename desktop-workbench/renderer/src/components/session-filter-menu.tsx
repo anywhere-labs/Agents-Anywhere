@@ -34,7 +34,7 @@ export function SessionFilterMenu({
   const t = useTranslations("dashboard")
   const [open, setOpen] = React.useState(false)
 
-  const active = filter.connectorId !== "all" || filter.runtime !== "all"
+  const active = filter.connectorId !== "all" || filter.runtime !== "all" || filter.status !== "all"
 
   const update = (patch: Partial<FilterValue>) => setFilter({ ...filter, ...patch })
 
@@ -65,6 +65,16 @@ export function SessionFilterMenu({
         side="right"
         className="w-56"
       >
+        <FilterSection
+          label={t("filters.status")}
+          options={[
+            { value: "all", label: t("filters.allStatus") },
+            { value: "working", label: t("filters.inProgress") },
+          ]}
+          value={filter.status}
+          onSelect={(v) => update({ status: v as FilterValue["status"] })}
+        />
+        <DropdownMenuSeparator />
         <FilterSection
           label={t("filters.devices")}
           options={[

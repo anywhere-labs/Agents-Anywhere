@@ -2,6 +2,8 @@ export type SessionListOrderValue = {
   id: string
   status: string
   sortAt?: string | null
+  /** Time of the last user-visible timeline item; preferred recency key. */
+  lastItemAt?: string | null
 }
 
 export type SessionListOrderOptions = {
@@ -9,6 +11,26 @@ export type SessionListOrderOptions = {
   optimisticTopUntil?: ReadonlyMap<string, number>
 }
 
+/**
+ * Statuses that mean "the Agent is still working on (or blocked in) this
+ * session". Shared by the list order, the row indicator and the
+ * "in progress" sidebar view so a session never jumps between the pinned
+ * active group and the recency group while its status flaps.
+ */
+export const ACTIVE_SESSION_STATUSES: readonly string[] = [
+  "running",
+  "waiting",
+  "pending",
+  "stopping",
+  "waiting_approval",
+  "blocked",
+]
+
+export function sessionStatusIsActive(status: string): boolean {
+  return ACTIVE_SESSION_STATUSES.includes(status)
+}
+
+/** Kept for callers that only care about the spinner subset. */
 export function sessionStatusIsRunning(status: string): boolean {
   return status === "running"
 }
@@ -19,10 +41,20 @@ function compareAscii(left: string, right: string): number {
   return 0
 }
 
-function sessionSortMillis(session: SessionListOrderValue): number {
-  if (!session.sortAt) return 0
-  const value = Date.parse(session.sortAt)
-  return Number.isFinite(value) ? value : 0
+function millis(value: string | null | undefined): number {
+  if (!value) return 0
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+/**
+ * Recency key for sessions that are not actively working. The last
+ * user-visible timeline item wins so background-only syncs (status flips,
+ * inventory refreshes that advance `sortAt`) no longer reshuffle the list;
+ * `sortAt` remains the fallback for sessions without any item yet.
+ */
+function sessionRecencyMillis(session: SessionListOrderValue): number {
+  return millis(session.lastItemAt) || millis(session.sortAt)
 }
 
 export function compareSessionListOrder(
@@ -31,18 +63,20 @@ export function compareSessionListOrder(
   options: SessionListOrderOptions = {},
 ): number {
   const now = options.now ?? Date.now()
-  const leftRunning =
-    sessionStatusIsRunning(left.status) ||
+  const leftActive =
+    sessionStatusIsActive(left.status) ||
     (options.optimisticTopUntil?.get(left.id) ?? 0) > now
-  const rightRunning =
-    sessionStatusIsRunning(right.status) ||
+  const rightActive =
+    sessionStatusIsActive(right.status) ||
     (options.optimisticTopUntil?.get(right.id) ?? 0) > now
 
-  if (leftRunning !== rightRunning) return leftRunning ? -1 : 1
-  if (leftRunning) return compareAscii(left.id, right.id)
+  if (leftActive !== rightActive) return leftActive ? -1 : 1
+  // Within the active group order is fixed by id: status flips and syncs
+  // never reshuffle working sessions.
+  if (leftActive) return compareAscii(left.id, right.id)
 
   return (
-    sessionSortMillis(right) - sessionSortMillis(left) ||
+    sessionRecencyMillis(right) - sessionRecencyMillis(left) ||
     compareAscii(right.id, left.id)
   )
 }

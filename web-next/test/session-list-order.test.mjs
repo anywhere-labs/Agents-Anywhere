@@ -3,11 +3,12 @@ import test from "node:test"
 
 import {
   compareSessionListOrder,
+  sessionStatusIsActive,
   sortSessionViews,
 } from "../src/components/session/session-list-order.ts"
 
-function session(id, status, sortAt) {
-  return { id, status, sortAt }
+function session(id, status, sortAt, lastItemAt = null) {
+  return { id, status, sortAt, lastItemAt }
 }
 
 function ids(sessions) {
@@ -30,30 +31,67 @@ test("running sessions ignore high-frequency sortAt updates and use ASCII id ord
   assert.deepEqual(ids(sortSessionViews(after)), ["sess_a", "sess_b", "sess_c"])
 })
 
-test("running sessions always sort before non-running sessions without consulting sortAt", () => {
+test("every working status sorts before settled sessions without consulting sortAt", () => {
   const sessions = [
     session("idle_future", "idle", "2099-01-01T00:00:00Z"),
     session("running_old", "running", "2000-01-01T00:00:00Z"),
     session("running_missing", "running", null),
     session("pending_recent", "pending", "2098-01-01T00:00:00Z"),
     session("waiting_invalid", "waiting", "not-a-date"),
+    session("blocked_new", "blocked", "2097-01-01T00:00:00Z"),
+    session("approval_new", "waiting_approval", "2096-01-01T00:00:00Z"),
   ]
 
   assert.deepEqual(ids(sortSessionViews(sessions)), [
+    "approval_new",
+    "blocked_new",
+    "pending_recent",
     "running_missing",
     "running_old",
-    "idle_future",
-    "pending_recent",
     "waiting_invalid",
+    "idle_future",
   ])
 })
 
-test("non-running sessions retain sortAt descending and id descending order", () => {
+test("status flaps inside the working group never reshuffle the list", () => {
+  const base = [
+    session("sess_b", "running", "2026-09-03T01:00:00Z"),
+    session("sess_a", "running", "2026-09-03T02:00:00Z"),
+    session("idle_z", "idle", "2099-01-01T00:00:00Z"),
+  ]
+  const order = ids(sortSessionViews(base))
+  assert.deepEqual(order, ["sess_a", "sess_b", "idle_z"])
+
+  const flapped = base.map((value) => (
+    value.id === "sess_a" ? { ...value, status: "waiting_approval" } : value
+  )).map((value) => (
+    value.id === "sess_b" ? { ...value, status: "blocked", sortAt: "2099-06-01T00:00:00Z" } : value
+  ))
+  assert.deepEqual(ids(sortSessionViews(flapped)), order)
+})
+
+test("settled sessions keep the last visible item time and ignore sync-only sortAt bumps", () => {
+  const before = [
+    session("sess_a", "idle", "2026-09-03T02:00:00Z", "2026-09-03T02:00:00Z"),
+    session("sess_b", "idle", "2026-09-03T01:00:00Z", "2026-09-03T03:00:00Z"),
+  ]
+  // A background sync advances sortAt only; the visible order must not move.
+  const after = [
+    session("sess_a", "idle", "2026-09-04T09:00:00Z", "2026-09-03T02:00:00Z"),
+    session("sess_b", "idle", "2026-09-03T01:00:00Z", "2026-09-03T03:00:00Z"),
+  ]
+
+  const expected = ["sess_b", "sess_a"]
+  assert.deepEqual(ids(sortSessionViews(before)), expected)
+  assert.deepEqual(ids(sortSessionViews(after)), expected)
+})
+
+test("settled sessions without items fall back to sortAt then id descending", () => {
   const sessions = [
     session("sess_a", "idle", "2026-09-03T02:00:00Z"),
     session("sess_z", "error", "2026-09-03T02:00:00Z"),
     session("sess_latest", "idle", "2026-09-03T03:00:00Z"),
-    session("sess_invalid", "blocked", "not-a-date"),
+    session("sess_invalid", "error", "not-a-date"),
     session("sess_missing", "idle", null),
   ]
 
@@ -66,7 +104,7 @@ test("non-running sessions retain sortAt descending and id descending order", ()
   ])
 })
 
-test("a locally messaged session shares the running group during its optimistic second", () => {
+test("a locally messaged session shares the working group during its optimistic second", () => {
   const optimisticTopUntil = new Map([["sess_b", 2_000]])
   const sessions = [
     session("sess_c", "running", "2026-09-03T01:00:00Z"),
@@ -86,7 +124,7 @@ test("optimistic ordering expires exactly at its deadline and uses the latest se
   const optimisticTopUntil = new Map([["sess_old", 2_000]])
   const sessions = [
     session("sess_running", "running", "2026-09-03T01:00:00Z"),
-    session("sess_old", "waiting", "2000-01-01T00:00:00Z"),
+    session("sess_old", "idle", "2000-01-01T00:00:00Z"),
     session("sess_latest", "idle", "2099-01-01T00:00:00Z"),
   ]
 
@@ -108,7 +146,16 @@ test("optimistic ordering expires exactly at its deadline and uses the latest se
   )
 })
 
-test("mixed running and non-running ordering is antisymmetric and transitive", () => {
+test("the working-status predicate drives the in-progress view", () => {
+  for (const status of ["running", "waiting", "pending", "stopping", "waiting_approval", "blocked"]) {
+    assert.equal(sessionStatusIsActive(status), true, status)
+  }
+  for (const status of ["idle", "error", "unknown", ""]) {
+    assert.equal(sessionStatusIsActive(status), false, status)
+  }
+})
+
+test("mixed working and settled ordering is antisymmetric and transitive", () => {
   const values = [
     session("sess_a", "running", "2026-09-03T01:00:00Z"),
     session("sess_b", "running", "2026-09-03T03:00:00Z"),
