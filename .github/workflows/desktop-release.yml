@@ -86,6 +86,35 @@ jobs:
         run: |
           corepack enable
           corepack yarn install
+      - name: Collect install diagnostics
+        if: failure()
+        env:
+          COREPACK_INTEGRITY_KEYS: "0"
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+          YARN_NPM_MINIMAL_AGE_GATE: "0"
+        run: |
+          {
+            echo "=== env ==="
+            uname -a || ver
+            node --version
+            npm --version
+            which corepack yarn npm node || where corepack yarn npm node || true
+            corepack --version
+            echo "=== yarn --version (bootstrap) ==="
+            cd desktop-workbench
+            corepack yarn --version 2>&1
+            echo "=== yarn install ==="
+            corepack yarn install 2>&1
+            echo "=== install exit: $? ==="
+          } > ci-diag.txt 2>&1 || true
+          head -200 ci-diag.txt
+      - name: Publish diagnostics to the Release
+        if: failure()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.1.1
+          files: ci-diag.txt
+          fail_on_unmatched_files: false
       - name: Prepare uv and CPython bundles
         working-directory: desktop-workbench
         env:
@@ -154,6 +183,33 @@ jobs:
           yarn build
           yarn check:build
           npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
+      - name: Collect install diagnostics
+        if: failure()
+        working-directory: dsh-bridge-next
+        env:
+          COREPACK_INTEGRITY_KEYS: "0"
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+          YARN_NPM_MINIMAL_AGE_GATE: "0"
+        run: |
+          {
+            echo "=== env ==="
+            node --version
+            which corepack yarn npm node || true
+            corepack --version
+            echo "=== yarn --version ==="
+            corepack yarn --version 2>&1
+            echo "=== yarn install ==="
+            corepack yarn install 2>&1
+            echo "=== install exit: $? ==="
+          } > ../ci-diag.txt 2>&1 || true
+          head -200 ../ci-diag.txt
+      - name: Publish diagnostics to the Release
+        if: failure()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.1.1
+          files: ci-diag.txt
+          fail_on_unmatched_files: false
       - name: Upload the tarball
         uses: actions/upload-artifact@v4
         with:
