@@ -5,6 +5,7 @@
     <string name="home_project_session_status">会话状态</string>
     <string name="home_project_filter_active">活跃会话</string>
     <string name="home_project_filter_archived">已归档</string>
+    <string name="home_project_filter_working">进行中的任务</string>
     <string name="home_project_filter_all">全部</string>
     <string name="home_project_filter_devices">设备</string>
     <string name="home_project_filter_all_devices">所有设备</string>
@@ -111,6 +112,14 @@
     <string name="home_no_active_sessions">没有活跃会话。</string>
     <string name="home_no_archived_sessions">没有已归档会话。</string>
     <string name="home_no_sessions_yet">还没有会话。</string>
+    <string name="home_section_working">进行中的任务</string>
+    <string name="home_working_empty">当前没有设备上的 Agent 在工作。</string>
+    <string name="home_working_status_running">运行中</string>
+    <string name="home_working_status_waiting">等待中</string>
+    <string name="home_working_status_pending">排队中</string>
+    <string name="home_working_status_stopping">停止中</string>
+    <string name="home_working_status_waiting_approval">等待批准</string>
+    <string name="home_working_status_blocked">阻塞</string>
     <string name="home_pinned">置顶</string>
     <string name="home_no_pinned_sessions">没有置顶会话。</string>
     <string name="home_recents">最近</string>

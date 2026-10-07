@@ -8,15 +8,36 @@ import java.time.Instant
 internal fun timestampMillis(value: String?): Long =
     value?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrDefault(0L) } ?: 0L
 
+/**
+ * Statuses that mean "the Agent is still working on (or blocked in) this
+ * session". Shared by the list order, the in-progress view and the project
+ * status filter so a session never jumps between groups while its status
+ * flaps between e.g. running and waiting_approval.
+ */
+fun sessionIsWorking(session: AgentSession, now: Long = System.currentTimeMillis()): Boolean =
+    session.status in setOf(
+        SessionStatus.Running,
+        SessionStatus.Waiting,
+        SessionStatus.Pending,
+        SessionStatus.Stopping,
+        SessionStatus.WaitingApproval,
+        SessionStatus.Blocked,
+    ) || session.optimisticTopUntil > now
+
 fun sessionListComparator(now: Long = System.currentTimeMillis()): Comparator<AgentSession> = Comparator { left, right ->
     val pinned = right.pinned.compareTo(left.pinned)
-    val leftRunning = left.status == SessionStatus.Running || left.optimisticTopUntil > now
-    val rightRunning = right.status == SessionStatus.Running || right.optimisticTopUntil > now
+    val leftWorking = sessionIsWorking(left, now)
+    val rightWorking = sessionIsWorking(right, now)
     when {
         pinned != 0 -> pinned
-        leftRunning != rightRunning -> if (leftRunning) -1 else 1
-        leftRunning -> left.id.compareTo(right.id)
-        else -> timestampMillis(right.sortKey).compareTo(timestampMillis(left.sortKey))
+        leftWorking != rightWorking -> if (leftWorking) -1 else 1
+        // Inside the working group the order is pinned by id: status flips and
+        // background syncs never reshuffle sessions that are still working.
+        leftWorking -> left.id.compareTo(right.id)
+        // Settled sessions sort by the last user-visible item time so
+        // sync-only sortAt bumps cannot reshuffle the list either.
+        else -> timestampMillis(right.recencyKey).compareTo(timestampMillis(left.recencyKey))
+            .takeIf { it != 0 } ?: timestampMillis(right.sortKey).compareTo(timestampMillis(left.sortKey))
             .takeIf { it != 0 } ?: right.id.compareTo(left.id)
     }
 }
@@ -28,6 +49,8 @@ enum class ProjectSessionStatusFilter(val archiveStates: List<Boolean>) {
     Active(listOf(false)),
     Archived(listOf(true)),
     All(listOf(false, true)),
+    // Only sessions a device Agent is actively working on (or blocked in).
+    Working(listOf(false)),
 }
 
 data class ProjectSessionLoadKey(val projectId: String, val archived: Boolean)
@@ -47,6 +70,7 @@ fun projectSessionMatchesStatus(session: AgentSession, status: ProjectSessionSta
     ProjectSessionStatusFilter.Active -> !session.archived && !session.pinned
     ProjectSessionStatusFilter.Archived -> session.archived
     ProjectSessionStatusFilter.All -> session.archived || !session.pinned
+    ProjectSessionStatusFilter.Working -> !session.archived && sessionIsWorking(session)
 }
 
 fun projectHasVisibleSessions(
@@ -66,6 +90,14 @@ fun projectHasVisibleSessions(
             ProjectSessionStatusFilter.Active -> counts.active > 0
             ProjectSessionStatusFilter.Archived -> counts.archived > 0
             ProjectSessionStatusFilter.All -> counts.active + counts.archived > 0
+            // Server-side counts cannot name working sessions; be exact when
+            // the project's sessions are loaded and optimistic otherwise.
+            ProjectSessionStatusFilter.Working ->
+                if (sessions.any { it.projectId == project.id }) {
+                    sessions.any { it.projectId == project.id && !it.archived && sessionIsWorking(it) }
+                } else {
+                    counts.active > 0
+                }
         }
     } ?: sessions.any { it.projectId == project.id && projectSessionMatchesStatus(it, status) })
 }

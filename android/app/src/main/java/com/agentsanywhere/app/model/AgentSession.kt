@@ -31,6 +31,9 @@ data class AgentSession(
     val optimisticTopUntil: Long = 0L,
     // Preserve the canonical timestamp, including null, separately from the display activity fallback.
     val sortAt: String? = null,
+    // Last user-visible timeline item time; the recency key for settled
+    // sessions so background syncs cannot reshuffle the list.
+    val recencyKey: String? = null,
 ) {
     val runtimeLabels: RuntimeInstanceLabels
         get() = runtimeInstanceLabels(runtimeName, runtimeType)

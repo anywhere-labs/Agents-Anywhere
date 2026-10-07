@@ -5,6 +5,7 @@
     <string name="home_project_session_status">Session status</string>
     <string name="home_project_filter_active">Active sessions</string>
     <string name="home_project_filter_archived">Archived</string>
+    <string name="home_project_filter_working">In progress</string>
     <string name="home_project_filter_all">All</string>
     <string name="home_project_filter_devices">Devices</string>
     <string name="home_project_filter_all_devices">All devices</string>
@@ -111,6 +112,14 @@
     <string name="home_no_active_sessions">No active sessions.</string>
     <string name="home_no_archived_sessions">No archived sessions.</string>
     <string name="home_no_sessions_yet">No sessions yet.</string>
+    <string name="home_section_working">In progress</string>
+    <string name="home_working_empty">No Agent is working on any device right now.</string>
+    <string name="home_working_status_running">Running</string>
+    <string name="home_working_status_waiting">Waiting</string>
+    <string name="home_working_status_pending">Pending</string>
+    <string name="home_working_status_stopping">Stopping</string>
+    <string name="home_working_status_waiting_approval">Waiting approval</string>
+    <string name="home_working_status_blocked">Blocked</string>
     <string name="home_pinned">Pinned</string>
     <string name="home_no_pinned_sessions">No pinned sessions.</string>
     <string name="home_recents">Recents</string>

@@ -74,6 +74,7 @@ internal fun HomeProjectFilterMenu(
                 ProjectSessionStatusFilter.Active -> R.string.home_project_filter_active
                 ProjectSessionStatusFilter.Archived -> R.string.home_project_filter_archived
                 ProjectSessionStatusFilter.All -> R.string.home_project_filter_all
+                ProjectSessionStatusFilter.Working -> R.string.home_project_filter_working
             }
             AADropdownMenuItem(
                 text = stringResource(label),
