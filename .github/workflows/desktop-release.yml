@@ -19,6 +19,11 @@ name: Desktop Release
 # longer maintained in this project (2026-10 decision), so no darwin artifact
 # or update URL is produced here.
 
+permissions:
+  # softprops/action-gh-release attaches installers (and failure diagnostics)
+  # to the GitHub Release; the default fork token is read-only without this.
+  contents: write
+
 on:
   workflow_dispatch:
     inputs:
