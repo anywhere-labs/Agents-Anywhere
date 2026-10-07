@@ -61,7 +61,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22.23.2
-      - name: Enable corepack and install dependencies
+      - name: Enable corepack
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+        run: corepack enable
+      - name: Install dependencies
         working-directory: desktop-workbench
         env:
           # Node 24's corepack prompts before downloading the pinned Yarn; CI
@@ -69,6 +73,10 @@ jobs:
           # install` (no --mode=skip-build) is required: native deps such as
           # esbuild fetch their binaries in postinstall and the build needs them.
           COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+          # Mirrors dsh-bridge-next.yml: resolve the pinned DSH release
+          # candidates even though Yarn's supply-chain age gate would
+          # otherwise reject freshly published packages.
+          YARN_NPM_MINIMAL_AGE_GATE: "0"
         run: corepack yarn install
       - name: Prepare uv and CPython bundles
         working-directory: desktop-workbench
@@ -123,6 +131,7 @@ jobs:
         working-directory: dsh-bridge-next
         env:
           COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+          YARN_NPM_MINIMAL_AGE_GATE: "0"
         run: |
           corepack enable
           corepack yarn install
