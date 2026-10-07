@@ -6,7 +6,6 @@ name: Desktop Release
 #
 #   agents-anywhere-linux-x64.AppImage
 #   agents-anywhere-win-x64.exe
-#   agents-anywhere-mac-universal.dmg
 #   agents-anywhere-dsh-bridge-next-<version>.tgz
 #
 # The installer download addresses are stamped at build time through
@@ -15,6 +14,10 @@ name: Desktop Release
 # desktop package shipped from a tag must be built while all ends share one
 # version. Unsigned by default: signing activates automatically once the
 # platform credential secrets exist in the repository.
+#
+# macOS is intentionally absent: Apple-platform clients (iOS / macOS) are no
+# longer maintained in this project (2026-10 decision), so no darwin artifact
+# or update URL is produced here.
 
 on:
   workflow_dispatch:
@@ -48,12 +51,6 @@ jobs:
             builder-args: --win nsis --x64
             artifact-name: agents-anywhere-win-x64.exe
             artifact-glob: "desktop-workbench/release/*.exe"
-          - platform: mac
-            runs-on: macos-latest
-            bundle-targets: darwin-arm64,darwin-x64
-            builder-args: --mac dmg --universal --config.mac.notarize=false
-            artifact-name: agents-anywhere-mac-universal.dmg
-            artifact-glob: "desktop-workbench/release/*.dmg"
     name: Desktop (${{ matrix.platform }})
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 90
@@ -86,7 +83,6 @@ jobs:
           # platform's URL at runtime via process.platform.
           WORKBENCH_UPDATE_URL_LINUX: ${{ env.DOWNLOAD_BASE_URL }}/desktop/agents-anywhere-linux-x64.AppImage
           WORKBENCH_UPDATE_URL_WIN32: ${{ env.DOWNLOAD_BASE_URL }}/desktop/agents-anywhere-win-x64.exe
-          WORKBENCH_UPDATE_URL_DARWIN: ${{ env.DOWNLOAD_BASE_URL }}/desktop/agents-anywhere-mac-universal.dmg
         run: yarn build
       - name: Package with electron-builder
         working-directory: desktop-workbench
