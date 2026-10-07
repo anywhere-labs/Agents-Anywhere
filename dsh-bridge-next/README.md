@@ -33,6 +33,16 @@ dsh plugin --profile desktop add @agents-anywhere/dsh-bridge-next
 
 安装命令不锁定插件版本，会获取 npm 当前的默认发布版本。插件包与 DSH 的兼容范围请以所安装版本的 `peerDependencies` 为准；较新的 DSH 不代表旧插件包自动兼容。当前仓库源码声明支持 DSH `0.2.0-rc.1` 及之后的 0.2.x 版本（peer 范围 `>=0.2.0-rc.1 <0.3.0-0`），开发与测试基线为 `0.2.0-rc.2`。DSH 在安装和启动插件时都会按这个范围检查，不满足时拒绝安装或跳过加载；DSH Desktop 使用与自身版本配套的内置构建，不能简单等同于 npm 上的包。需要固定可复现的部署时，再在包名后添加经过验证的版本号。
 
+## 从托管 tarball 安装（自托管）
+
+自托管部署可以从 `https://dsh.chyu.top/downloads/plugin/` 直接安装，**请使用版本化文件名**（最新版本见同目录 `manifest.json` 的 `latest`，含 sha512 integrity）：
+
+```bash
+dsh plugin --profile desktop add https://dsh.chyu.top/downloads/plugin/agents-anywhere-dsh-bridge-next-<版本>.tgz
+```
+
+不要在安装命令中使用不带版本号的稳定名文件 `agents-anywhere-dsh-bridge-next.tgz`：在已有 lockfile 的环境中升级会触发 pnpm 的 `ERR_PNPM_MISSING_TARBALL_INTEGRITY` 错误。已受影响时的修复步骤、原理与发版清单见[插件分发规范](../docs/plugin-distribution.md)。
+
 ## 确认 DSH 已接入
 
 完成连接后，在 Agents Anywhere 的设备页面可以看到设备在线，以及 DSH 运行时的状态。下图展示了 DSH 正在运行的设备；如果状态未出现或显示断开，先检查工作设备上的 DSH 和 Connector。

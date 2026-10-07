@@ -170,7 +170,7 @@ def create_app(
                                 finally:
                                     await app.state.store.close()
 
-    app = FastAPI(title="Agent Server", version="2.0.3", lifespan=lifespan)
+    app = FastAPI(title="Agent Server", version="2.1.1", lifespan=lifespan)
     app.add_exception_handler(
         ConnectorServiceError,
         error_handlers.connector_service_error_handler,
@@ -288,7 +288,26 @@ def create_app(
     @app.get(f"{API_V2_PREFIX}/health")
     @app.get(f"{API_V2_PREFIX}/health/live")
     def health() -> dict[str, str]:
-        return {"status": "ok", "version": app.version, "serverTime": utc_now()}
+        payload: dict[str, str] = {
+            "status": "ok",
+            "version": app.version,
+            "serverTime": utc_now(),
+        }
+        # Optional Android in-app update pointer. When configured, Android
+        # clients prefer this HTTPS address over their build-time download
+        # default, so a new APK can be published without rebuilding clients.
+        android_update_url = os.environ.get("AGENT_SERVER_ANDROID_UPDATE_URL", "").strip()
+        if android_update_url:
+            payload["androidUpdateUrl"] = android_update_url
+        # Optional iOS store link. iOS cannot sideload, so on a newer Server the
+        # client offers an in-app button that opens this App Store / TestFlight
+        # page for the user to update. Defaults to the published App Store page.
+        ios_store_url = os.environ.get(
+            "AGENT_SERVER_IOS_STORE_URL", "https://apps.apple.com/cn/app/id6787125178"
+        ).strip()
+        if ios_store_url:
+            payload["iosStoreUrl"] = ios_store_url
+        return payload
 
     @app.get(f"{API_V2_PREFIX}/health/ready")
     async def readiness() -> JSONResponse:

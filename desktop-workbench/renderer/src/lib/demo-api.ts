@@ -1,3 +1,5 @@
+import { sessionStatusIsActive } from "../components/session/session-list-order.ts"
+
 // ─────────────────────────────────────────────────────────────
 // Domain types  (mirrors backend OpenAPI / pseudocode shapes)
 // ─────────────────────────────────────────────────────────────
@@ -596,9 +598,12 @@ export async function fsList(
 export type FilterValue = {
   connectorId: string | "all"
   runtime: string | "all"
+  status: SessionStatusFilter
 }
 
-export const defaultFilter: FilterValue = { connectorId: "all", runtime: "all" }
+export type SessionStatusFilter = "all" | "working"
+
+export const defaultFilter: FilterValue = { connectorId: "all", runtime: "all", status: "all" }
 
 export function filterSessions(
   list: SessionView[],
@@ -609,6 +614,7 @@ export function filterSessions(
     if (filter.connectorId !== "all" && s.connectorId !== filter.connectorId) return false
     if (filter.runtime !== "all" && s.runtime !== filter.runtime) return false
     if (s.archived) return false
+    if (filter.status === "working" && !sessionStatusIsActive(s.status)) return false
     if (query.trim() && !(s.title ?? "").toLowerCase().includes(query.trim().toLowerCase())) return false
     return true
   })

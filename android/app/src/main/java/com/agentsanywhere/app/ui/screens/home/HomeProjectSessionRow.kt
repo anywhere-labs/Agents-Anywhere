@@ -32,13 +32,14 @@ import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 internal fun HomeProjectSessionRow(
     session: AgentSession,
     inset: Boolean = true,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onLongPress: (Rect) -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
     var bounds by remember { mutableStateOf(Rect.Zero) }
     Row(
-        modifier = Modifier.fillMaxWidth().height(44.dp)
+        modifier = modifier.fillMaxWidth().height(44.dp)
             .onGloballyPositioned { bounds = it.boundsInRoot() }
             .pointerInput(onClick, onLongPress, bounds) {
                 detectTapGestures(

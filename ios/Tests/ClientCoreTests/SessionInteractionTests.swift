@@ -232,6 +232,43 @@ import Testing
         #expect(realtime.tickets == 1)
     }
 
+    @Test func dshBridgeNoticesRemainVisibleThroughLifecycleWithoutActionInputFields() throws {
+        // The bridge omits `input` on cancel actions (server defaults required=false)
+        // and drops `blocking` once pending; neither may break decoding or the dock.
+        func dshNotice(status: String, revision: Int, blocking: Bool, withSubmitInput: Bool) throws -> V2RuntimeNotice {
+            var value = (try fixtureObject("notices")["notices"] as! [[String: Any]])[0]
+            value["type"] = "interaction"; value["interactionType"] = "input_request"
+            value["title"] = "需要你的回答"; value["status"] = status; value["revision"] = revision
+            value["blocking"] = blocking ? ["scope": "session", "targetId": "session"] : NSNull()
+            // The bridge only offers actions while pending, and cancel carries no input.
+            var actions: [[String: Any]] = withSubmitInput ? [["actionId": "submit", "label": "提交回答", "style": "primary", "input": [
+                "required": true,
+                "uiSchema": ["component": "inputRequest", "version": 1, "questions": [
+                    ["id": "approach", "prompt": "采用哪个方案？", "multiple": false, "allowCustom": true,
+                     "options": [["id": "o_0", "label": "方案 A"], ["id": "o_1", "label": "方案 B"]]],
+                ]],
+            ]]] : []
+            if withSubmitInput { actions.append(["actionId": "cancel", "label": "取消", "style": "secondary"]) }
+            value["actions"] = actions
+            return try decode(value)
+        }
+
+        let open = SessionNoticeModel(try dshNotice(status: "open", revision: 1, blocking: true, withSubmitInput: true))
+        #expect(open.isVisible)                       // dock filter requires this
+        #expect(open.blocks("session"))               // SessionInteractionDock items
+        #expect(open.notice.blocking?.scope == "session" && open.notice.blocking?.targetId == "session")
+        #expect(open.form?.questions.first?.prompt == "采用哪个方案？")
+        #expect(open.canRespond(fresh: true))
+
+        // Client answered; the bridge flips to responding and keeps blocking.
+        open.update(try dshNotice(status: "responding", revision: 2, blocking: true, withSubmitInput: true))
+        #expect(open.isVisible && !open.canRespond(fresh: true))
+
+        // Resolved pushes close the dock entry and clear blocking.
+        open.update(try dshNotice(status: "resolved", revision: 3, blocking: false, withSubmitInput: false))
+        #expect(!open.isVisible && !open.blocks("session"))
+    }
+
     @Test func genericActionSchemaBuildsTypedNestedInputsAndRejectsUnknownConstraints() throws {
         let schema: JSONValue = .object([
             "type": .string("object"), "required": .array([.string("reason"), .string("options")]),

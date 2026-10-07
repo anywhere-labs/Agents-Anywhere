@@ -24,6 +24,23 @@ def test_health_reports_the_application_version_and_releases_are_retired(tmp_pat
     assert client.post("/api/v2/admin/client-releases", json={}).status_code == 404
 
 
+def test_health_publishes_update_pointers_for_mobile_clients(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_SERVER_ANDROID_UPDATE_URL", raising=False)
+    monkeypatch.delenv("AGENT_SERVER_IOS_STORE_URL", raising=False)
+    client = TestClient(create_app(tmp_path / "health-android.sqlite3"))
+    payload = client.get("/api/v2/health").json()
+    # Android sideloads, so its URL only ships when a deployment configures one.
+    assert "androidUpdateUrl" not in payload
+    # iOS has no sideload channel, so the store pointer always ships a default.
+    assert payload["iosStoreUrl"] == "https://apps.apple.com/cn/app/id6787125178"
+
+    monkeypatch.setenv("AGENT_SERVER_ANDROID_UPDATE_URL", " https://cdn.example.com/app.apk ")
+    monkeypatch.setenv("AGENT_SERVER_IOS_STORE_URL", "https://testflight.apple.com/join/Xy")
+    payload = client.get("/api/v2/health").json()
+    assert payload["androidUpdateUrl"] == "https://cdn.example.com/app.apk"
+    assert payload["iosStoreUrl"] == "https://testflight.apple.com/join/Xy"
+
+
 def test_liveness_and_readiness_are_separate(tmp_path) -> None:
     client = TestClient(create_app(tmp_path / "health.sqlite3"))
 

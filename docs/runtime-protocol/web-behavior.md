@@ -1,46 +1,42 @@
 # Web Behavior Target
 
-Status: draft.
+状态：草案。
 
-This document defines how Web should consume Agent Runtime Protocol v1.
+本文档定义 Web 应如何消费 Agent Runtime Protocol v1。
 
-## Principles
+## 原则
 
-- Web must not infer behavior from runtime names.
-- Web must not maintain server catalog caches as source of truth.
-- Web may remember the user's most recent model/permission selection locally for new sessions only.
-- Message sending must not carry model/permission selection ids for existing sessions.
-- Commands are not messages.
+- Web 不得从运行时名称推断行为。
+- Web 不得把 Server 目录缓存当作事实来源维护。
+- Web 可以在本地记住用户最近一次的模型/权限选择，但仅限新会话。
+- 既有会话的消息发送不得携带模型/权限 selection id。
+- 命令不是消息。
 
-## Device runtime presentation
+## 设备运行时展示
 
-Runtime types and runtime instances carry different facts; Web must not mix them.
+运行时类型和运行时实例承载不同的事实；Web 不得混用。
 
-- A runtime type in the device list means "this connector supports this type". It
-  carries no availability and no error state, so it is never rendered with a
-  warning or error colour. Whether the local program is running is not part of
-  the type list.
-- Only a configured instance has availability and error states. Availability
-  means "configured and running". A configured instance that was never started
-  is a neutral state, not a failure.
-- The connector decides real usability when the user configures or starts an
-  instance (`runtime.validateConfig` / `runtime.start`), never during
-  `runtime.discover`. A failed configuration or start records its reason on the
-  instance, and Web renders that reason on the instance.
-- `runtime_unavailable`, `runtime_not_started`, `runtime_not_configured` and
-  `connector_offline` mean "not usable yet" and are rendered as a warning with
-  the connector's reason, not as a fault.
-- `starting` and `stopping` are real states. Web shows the transition instead of
-  jumping from stopped straight to running.
-- `instancePolicy` and `maxInstances` limit simultaneously running instances.
-  Saved configurations do not hide an otherwise addable runtime type. The
-  Connector checks capacity when starting, and Server returns HTTP 409 with
-  `runtime_conflict` when the limit is reached. Stopping an instance releases
-  its running slot without deleting its configuration.
+- 设备列表里的运行时类型表示"这个 connector 支持该类型"。它不带可用性，
+  也没有错误状态，因此永远不要用警告或错误颜色渲染。本地程序是否在运行
+  不属于类型列表。
+- 只有已配置的实例才有可用性和错误状态。可用性表示"已配置且在运行"。
+  一个配置过但从未启动的实例是中性状态，不是失败。
+- connector 在用户配置或启动实例时（`runtime.validateConfig` /
+  `runtime.start`）判定真实可用性，绝不在 `runtime.discover` 时判定。
+  配置或启动失败的原因会记录在实例上，Web 在实例上渲染该原因。
+- `runtime_unavailable`、`runtime_not_started`、`runtime_not_configured` 和
+  `connector_offline` 表示"尚不可用"，应带 connector 给出的原因渲染为警告，
+  而不是故障。
+- `starting` 和 `stopping` 是真实状态。Web 应展示过渡过程，而不是从已停止
+  直接跳到运行中。
+- `instancePolicy` 和 `maxInstances` 限制同时运行的实例数。已保存的配置不会
+  隐藏一个本可添加的运行时类型。Connector 在启动时检查容量，达到上限时
+  Server 返回 HTTP 409 和 `runtime_conflict`。停止实例会释放它的运行位，
+  但不删除其配置。
 
-## New session
+## 新会话
 
-Flow:
+流程：
 
 ```text
 Open new session
@@ -51,13 +47,13 @@ Open new session
   -> create_and_start with selections + first message
 ```
 
-There is no runtime default in the protocol. Defaulting is a frontend behavior.
+协议中没有运行时默认值。默认选择是前端行为。
 
-Blank new session creation is not supported in the first target.
+第一个目标不支持创建空白新会话。
 
-## Existing session
+## 既有会话
 
-Initial load:
+初次加载：
 
 ```text
 Load session snapshot
@@ -68,7 +64,7 @@ Load session snapshot
   -> render timeline/notices
 ```
 
-Opening selectors:
+打开选择器：
 
 ```text
 Open model selector
@@ -78,7 +74,7 @@ Open permission selector
   -> live read runtime permission catalog
 ```
 
-Changing selectors:
+变更选择器：
 
 ```text
 User chooses selection
@@ -88,95 +84,91 @@ User chooses selection
   -> Web reconciles from runtime.state.updated or GET /runtime/state
 ```
 
-The runtime may also update selections without direct user action. Web must
-treat RuntimeLive state updates as authoritative.
+运行时也可能在没有用户直接操作的情况下更新选择项。Web 必须把 RuntimeLive
+状态更新视为权威。
 
-## Message composer
+## 消息输入框
 
-For existing sessions:
+对既有会话：
 
 ```text
 POST /sessions/{id}/runtime/messages
 ```
 
-Payload should include:
+载荷应包含：
 
 - content
 - attachments
 - client message id
 
-Payload must not include:
+载荷不得包含：
 
 - model selection id
 - permission selection id
 
-## Commands
+## 命令
 
-When the input begins with `/`, Web should list commands by live RPC:
+当输入以 `/` 开头时，Web 应通过实时 RPC 列出命令：
 
 ```text
 GET /sessions/{id}/runtime/commands
 ```
 
-The frontend handles:
+前端负责：
 
-- filtering
-- fuzzy matching
-- ranking
-- keyboard navigation
-- completion
-- displaying disabled reason
+- 过滤
+- 模糊匹配
+- 排序
+- 键盘导航
+- 补全
+- 展示禁用原因
 
-The protocol does not include `autocomplete`.
+协议不包含 `autocomplete`。
 
-Executing a command:
+执行命令：
 
 ```text
 POST /sessions/{id}/runtime/commands
 ```
 
-Command execution returns a normal RPC result. If the runtime changes timeline, state, selection, or notices, those changes arrive through normal runtime events.
+命令执行返回普通的 RPC 结果。如果运行时改变了 Timeline、状态、选择项或通知，这些变化通过正常的运行时事件到达。
 
-If command catalog lookup or execution fails, Web must show an error and must not send the `/xxx` input as a normal message.
+如果命令目录查询或执行失败，Web 必须显示错误，不得把 `/xxx` 输入作为普通消息发送。
 
-Selecting a command with arguments inserts an editable draft; explicit submission
-preserves the full `raw` input. A command's `metadata.ui` selects native execution
-or a supported model/reasoning/permission selector. Commands without that metadata
-retain legacy single-line execution in idle/error states. Multiline input is
-allowed only when advertised. Attachments stay in the draft.
+选择带参数的命令会插入可编辑草稿；显式提交会保留完整的 `raw` 输入。命令的
+`metadata.ui` 决定走原生命令执行，还是打开受支持的模型/reasoning/权限选择器。
+没有该元数据的命令在 idle/error 状态下保留旧式单行执行。只有明确声明时才允许
+多行输入。附件保留在草稿中。
 
-Web distinguishes accepted, completed and unknown execution results, displays
-native text and treats `ok: false` as a failure even with HTTP 200. Failures and
-uncertain outcomes preserve input; unknown outcomes are never retried
-automatically. Late responses cannot clear newer drafts or change another
-session, including when the user leaves and revisits the original session.
+Web 区分 accepted、completed 和 unknown 执行结果，展示原生文本，并且即使
+HTTP 200 也把 `ok: false` 视为失败。失败和不确定的结果都会保留输入；unknown
+结果绝不自动重试。迟到响应不能清空更新的草稿，也不能影响另一个会话，包括
+用户离开又回到原会话的情况。
 
-Refetch the catalog on session changes, command-menu reopening, reconnect,
-runtime status/availability changes and `session.commands` catalog revision
-changes. Hide a previous session's catalog immediately during navigation. Command
-availability still requires effective capabilities, an online writable session
-and the command's native status restrictions.
+在会话切换、命令菜单重新打开、重连、运行时状态/可用性变化以及
+`session.commands` 目录 revision 变化时重新拉取目录。导航时立即隐藏上一个
+会话的目录。命令可用性仍然要求生效能力、在线可写的会话，以及命令自身的
+原生状态限制。
 
-## Session RuntimeLive UI
+## 会话 RuntimeLive UI
 
-Web should render busy/blocking labels from RuntimeLive state. Action
-availability, including interrupt and steer, comes from session-scoped effective
-capabilities. Timeline and notices explain what is happening but must not
-replace RuntimeLive state or effective capability.
-- selections
-- status reason
-- error
-- metadata
+Web 应从 RuntimeLive 状态渲染忙碌/阻塞标签。操作可用性（包括 interrupt 和
+steer）来自会话级生效能力。Timeline 和通知解释正在发生什么，但不得取代
+RuntimeLive 状态或生效能力。
+- 选择项
+- 状态原因
+- 错误
+- 元数据
 
-It does not include:
+它不包含：
 
-- active turn id
-- command list
-- catalog data
-- timeline items
+- 活跃 turn id
+- 命令列表
+- 目录数据
+- Timeline 条目
 
-## Snapshot and recovery
+## 快照与恢复
 
-Snapshot is for initial load and explicit recovery, not periodic refresh. Normal updates should flow through WebSocket/event recovery.
+快照用于初次加载和显式恢复，不是周期性刷新。常规更新应通过 WebSocket/事件恢复流转。
 
-Sequence gaps should not force snapshot unless the server explicitly marks recovery as impossible. Timeline items are upsert-only; hiding replaces deletion.
+序列缺口不应强制使用快照，除非 Server 明确标记恢复不可能。Timeline 条目只做 upsert；隐藏取代删除。

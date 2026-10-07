@@ -918,6 +918,8 @@
       "noActivity": "No activity yet.",
       "runtimePending": "Waiting for {runtime} to accept the task...",
       "runtimeWorking": "{runtime} is working...",
+      "runtimeStopping": "{runtime} is stopping...",
+      "runtimeErrorBanner": "{runtime} hit an error",
       "approvalRequested": "Approval requested",
       "approve": "Approve",
       "approveSession": "Approve session",
@@ -1026,6 +1028,8 @@
       "reconnectSummary": "Reconnecting: {attempts}",
       "timelineUnknownMessage": "Unknown message: {role}",
       "timelineUnknownItem": "Unknown timeline item: {type}",
+      "timelineTurnFailed": "The agent turn failed.",
+      "timelineErrorDetail": "Toggle error details",
       "toolSearched": "Searched {query}",
       "toolWebFallback": "web",
       "toolMcpFallback": "mcp",
@@ -1085,6 +1089,35 @@
         "reviewOpenFilePreview": "Open full preview for {file}",
         "reviewPreviewBlocked": "The file preview window was blocked.",
         "reviewDiffCard": "Change {index} of {count}"
+      },
+      "usageLabel": "Usage {tokens}",
+      "usageCacheHit": "cache hit {percent}%",
+      "statsTurns": "{turns} turns {steps} steps",
+      "statsTurnsWithSpeed": "{turns} turns {steps} steps · {speed} tok/s",
+      "statsTurnsHint": "Total turns and steps in this session",
+      "statsTokens": "{tokens} tok",
+      "statsTokensWithCache": "{tokens} tok · cache {percent}%",
+      "statsContext": "Context {percent}%",
+      "statsContextHint": "Context occupancy {used} / {window}",
+      "insightsAgentPreset": "Agent preset",
+      "insightsGoal": "Conversation goal",
+      "insightsGoalShort": "Goal",
+      "insightsGoalRounds": "Round {rounds} of {max}",
+      "insightsTodos": "Task panel",
+      "insightsTodosShort": "Tasks {count}/{total}",
+      "insightsSubagents": "Sub-agents",
+      "insightsSubagentsShort": "{count} sub-agents",
+      "insightsSubagentUnnamed": "Unnamed sub-agent",
+      "insightsGoalPhase": {
+        "active": "Active",
+        "paused": "Paused",
+        "blocked": "Blocked",
+        "complete": "Complete"
+      },
+      "insightsSubagentMode": {
+        "one-shot": "One-shot",
+        "continuable": "Continuable",
+        "unknown": "Unknown"
       }
     },
     "sessionStatus": {

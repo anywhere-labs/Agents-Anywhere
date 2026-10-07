@@ -109,6 +109,16 @@ test("the config download URL is used, progress is published, and only a complet
   assert.ok(h.states.every((s, index) => !index || s.revision > h.states[index - 1].revision));
 });
 
+test("a win32 build downloads and opens an .exe installer from its baked URL", async (t) => {
+  const h = harness(t, { platform: "win32", downloadUrl: "https://download.test/desktop" });
+  await h.service.check(server);
+  const state = await h.service.download();
+  assert.equal(state.phase, "downloaded");
+  assert.equal(h.opened.length, 1);
+  assert.equal(path.extname(h.opened[0]), ".exe");
+  assert.equal(h.requests[1].url, "https://download.test/desktop");
+});
+
 test("partial downloads are removed and can be retried without closing the dialog", async (t) => {
   let fail = true;
   const h = harness(t, { fetcher: async (input) => String(input).endsWith("/health") ? healthy() : new Response("installer", { headers: { "content-length": fail ? "100" : "9", "content-type": "application/octet-stream" } }) });

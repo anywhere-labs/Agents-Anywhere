@@ -49,6 +49,7 @@ import {
   selectionIdForPermissionCatalog,
 } from "@/components/session/catalog-selection"
 import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
+import { SessionStatsBar } from "@/components/session/session-stats-bar"
 import { CAPABILITY, capabilityIsUsable, findCapability, attachmentMimeTypes } from "@/components/session/capabilities"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
@@ -897,6 +898,7 @@ export function SessionComposer({
               )}
             </Button>
           </div>
+          <SessionStatsBar runtimeState={runtimeState} />
         </div>
       </div>
     </div>

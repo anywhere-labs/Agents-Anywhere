@@ -215,6 +215,7 @@ function SystemCard({ token, session, item }: { token: string; session: SessionV
   const kind = textOf(item.content.kind) || "system"
   if (kind === "reasoning") return <ReasoningEntry token={token} session={session} item={item} />
   if (kind === "compact") return <CompactMarker item={item} />
+  if (kind === "error") return <ErrorEntry item={item} />
   const text = textOf(item.content.text) || textOf(item.content.message) || textOf(item.content.rawText)
   const failed = item.status === "failed" || kind === "error"
   const title = text ? `${kind}: ${text}` : `${kind}: ${item.status}`
@@ -226,6 +227,58 @@ function SystemCard({ token, session, item }: { token: string; session: SessionV
       destructive={failed}
       detail={systemDetail(item.content)}
     />
+  )
+}
+
+function ErrorEntry({ item }: { item: TimelineItem }) {
+  const tSession = useTranslations("dashboard.session")
+  const message = textOf(item.content.text) || textOf(item.content.message) || textOf(item.content.rawText)
+  const reason = item.content.reason
+  const errorDetail = item.content.error
+  const fallback = textOf(reason && typeof reason === "object" ? (reason as Record<string, unknown>).message : null)
+  const detail = systemDetail(item.content)
+  const hasDetail = detail != null && Object.keys(detail).length > 0
+  const body = (
+    <div
+      className={cn(
+        "flex w-full min-w-0 gap-2 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2.5",
+        hasDetail && "group cursor-pointer text-left",
+      )}
+      role="alert"
+    >
+      <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-destructive">
+          {message || fallback || tSession("timelineTurnFailed")}
+        </div>
+        {errorDetail && typeof errorDetail === "object" ? (
+          <div className="mt-0.5 wrap-break-word text-xs text-muted-foreground">
+            {textOf((errorDetail as Record<string, unknown>).code)
+              ? `${textOf((errorDetail as Record<string, unknown>).code)} · `
+              : null}
+            {textOf((errorDetail as Record<string, unknown>).message)}
+          </div>
+        ) : null}
+      </div>
+      {hasDetail ? (
+        <ChevronDown className="mt-0.5 size-4 shrink-0 text-destructive/70 transition-transform group-data-[state=open]/error:rotate-0 -rotate-90" />
+      ) : null}
+    </div>
+  )
+  if (!hasDetail) return body
+  return (
+    <Collapsible className="group/error min-w-0 max-w-full overflow-hidden">
+      <CollapsibleTrigger asChild>
+        <button type="button" className="w-full text-left" aria-label={tSession("timelineErrorDetail")}>
+          {body}
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="min-w-0 max-w-full overflow-hidden">
+        <div className="mt-2 pl-6">
+          <JsonBlock value={detail} />
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 

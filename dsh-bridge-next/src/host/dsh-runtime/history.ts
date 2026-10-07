@@ -147,6 +147,13 @@ export function createProjection(externalId: string, platformId: string, fingerp
         changed.set(id, closed)
       }
       put('turn.end', String(turnStart), event, 'turn.end', status, 'system', { kind: 'turn_end', reason: json(reason) })
+      if (status === 'failed') {
+        // Turn errors surface only through this marker, and the platform drops
+        // turn.* items. Mirror the failure as a system error item so every
+        // client shows it, matching how Codex/Claude publish error entries.
+        put('turn.error', String(turnStart), event, 'system', 'failed', 'system',
+          { kind: 'error', text: turnErrorMessage(record(reason)), reason: json(reason) })
+      }
       turnId = null
     } else if (event.type === 'step/start') {
       steps.set(stepKey, Number(event.seq))
@@ -274,6 +281,16 @@ export function createProjection(externalId: string, platformId: string, fingerp
 }
 
 export type SessionProjection = ReturnType<typeof createProjection>
+
+/** Best-effort human message from a turn/end error reason; reason stays in the item. */
+function turnErrorMessage(reason: Record<string, unknown>): string {
+  const error = record(reason.error)
+  const message = typeof reason.message === 'string' ? reason.message
+    : typeof error.message === 'string' ? error.message
+    : typeof reason.text === 'string' ? reason.text : ''
+  const trimmed = message.trim()
+  return trimmed.length > 0 ? trimmed : '本轮任务失败，请查看错误详情。'
+}
 
 export function projectHistory(snapshot: AttachmentSnapshot, platformId: string): TimelineItem[] {
   const projection = createProjection(snapshot.session.id, platformId)

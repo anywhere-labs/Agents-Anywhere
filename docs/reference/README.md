@@ -1,7 +1,6 @@
-# Reference Caches
+# 参考文档缓存
 
-This directory is reserved for generated or downloaded reference documentation,
-such as Claude Code and Codex docs snapshots used during local development.
+本目录用于存放生成或下载的参考文档，例如本地开发时使用的 Claude Code 与 Codex
+文档快照。
 
-The cache contents are ignored by Git to keep pull requests focused on product
-source and first-party docs.
+缓存内容被 Git 忽略，以保持 pull request 聚焦在产品源码与第一方文档上。

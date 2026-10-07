@@ -39,6 +39,7 @@ import type {
   ProjectResponse,
   ProjectSessionListResponse,
   RpcResponse,
+  RuntimeNoticeListResponse,
   RuntimeTypeListResponse,
   SessionCommandListResponse,
   SessionCreateAndStartRequest,
@@ -747,6 +748,13 @@ export class DashboardApi {
     return this.client.post<RpcResponse<unknown>>(
       `/sessions/${encodeURIComponent(sessionId)}/runtime/notices/${encodeURIComponent(noticeId)}/respond`,
       { actionId, ...(input ? { input } : {}) },
+      { token },
+    );
+  }
+
+  listSessionRuntimeNotices(token: string, sessionId: string): Promise<RuntimeNoticeListResponse> {
+    return this.client.get<RuntimeNoticeListResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/notices`,
       { token },
     );
   }

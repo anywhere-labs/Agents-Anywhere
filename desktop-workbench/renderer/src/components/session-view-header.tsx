@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/tooltip"
 import { WorkspaceHeader } from "@/components/workspace-header"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
+import { SessionInsightsPanel } from "@/components/session/session-insights-panel"
 import { useWorkspace } from "@/components/workspace-context"
 import { useIsMobile } from "@/hooks/use-mobile"
 import type { SessionMemorySnapshot } from "@/components/session-detail"
@@ -38,6 +39,7 @@ type SessionViewHeaderProps = {
   toolsOverlayWidth: number
   toolsMotionEnabled: boolean
   onToggleTools: () => void
+  onOpenSubagent?: (sessionId: string) => void
 }
 
 export function SessionViewHeader({
@@ -52,6 +54,7 @@ export function SessionViewHeader({
   toolsOverlayWidth,
   toolsMotionEnabled,
   onToggleTools,
+  onOpenSubagent,
 }: SessionViewHeaderProps) {
   const { renameSession } = useWorkspace()
   const tSession = useTranslations("dashboard.session")
@@ -115,6 +118,9 @@ export function SessionViewHeader({
       exporting={exporting}
     />
   )
+  const insightsBadge = (
+    <SessionInsightsPanel runtimeState={memorySnapshot?.state} onOpenSubagent={onOpenSubagent} />
+  )
 
   if (!isMobile) {
     if (!desktopPortalTargets) return null
@@ -167,6 +173,7 @@ export function SessionViewHeader({
               </button>
             )}
             {metaBadge}
+            {insightsBadge}
           </div>,
           desktopPortalTargets.session,
         )}
@@ -243,6 +250,7 @@ export function SessionViewHeader({
         )}
       </div>
       {metaBadge}
+      {insightsBadge}
       <div className="ml-auto flex items-center gap-1">
         <MobileFilesButton />
       </div>

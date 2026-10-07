@@ -154,6 +154,11 @@ class SessionsApi(
             put("content", request.content)
             request.title?.takeIf(String::isNotBlank)?.let { put("title", it) }
             request.cwd?.takeIf(String::isNotBlank)?.let { put("cwd", it) }
+            if (request.runtimeType == "dsh") {
+                request.agentPreset?.takeIf(String::isNotBlank)?.let {
+                    put("runtimeOptions", JSONObject().put("agentPreset", it))
+                }
+            }
             request.selections.filterValues(String::isNotBlank).takeIf { it.isNotEmpty() }?.let {
                 put("selections", JSONObject(it))
             }

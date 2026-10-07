@@ -15,7 +15,6 @@ Agents Anywhere 是一个跨设备的 Agent 工作台。工作设备上的 **Con
 | `web-next/` | Web 客户端（另有自己的 [AGENTS.md](web-next/AGENTS.md)） | Next.js、TypeScript、Yarn |
 | `desktop-workbench/` | **当前**桌面客户端，内含受管理的本机 Connector | Electron、TypeScript、Yarn |
 | `android/` | Android 客户端，见 `android/ARCHITECTURE.md` | Kotlin、Gradle、JDK 17 |
-| `ios/` | iOS / iPadOS 客户端，见 `ios/ARCHITECTURE.md` | Swift、Xcode |
 | `dsh-bridge-next/` | **当前** DSH 插件（npm 包，也随 DSH Desktop 分发） | TypeScript、Yarn |
 | `contracts/` | 跨端契约与 fixtures，按 `<name>/<version>/` 组织 | JSON Schema / 文档 |
 | `docker/` | 自托管部署与本地数据库 compose | Docker Compose |
@@ -23,6 +22,7 @@ Agents Anywhere 是一个跨设备的 Agent 工作台。工作设备上的 **Con
 
 不在当前主线上开发的目录：
 
+- `ios/` 与桌面 macOS 目标：**已停止维护**（2026-10 决定，苹果系客户端不再跟进）。不要为它们新增功能、修 bug 或补测试；既有的 `ios/` 代码仅作历史保留，发布 CI 也不再产出 darwin 产物。
 - `desktop-next/`、`dsh-bridge/`：已分别被 `desktop-workbench/`、`dsh-bridge-next/` 取代，除非任务明确要求，否则不要修改。
 - `_deprecated/`、`_reference/`，以及各子项目内同名目录：历史代码或参考实现，不参与构建，不要从中导入。
 - `docs/` 中名字带 proposal、plan、target、gap 的文档，以及 `docs/migrations/`：描述设计或某个时间点的状态，使用前要和源码、契约核对。

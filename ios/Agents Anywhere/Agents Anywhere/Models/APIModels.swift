@@ -80,6 +80,8 @@ struct PublicAnnouncementResponse: Decodable {
 struct HealthResponse: Decodable {
     let status: String
     let serverTime: String
+    let version: String?
+    let iosStoreUrl: String?
 }
 
 struct MobileLoginPayload: Decodable, Hashable {

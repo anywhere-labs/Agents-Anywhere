@@ -53,6 +53,7 @@ internal fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>)
             SessionStatus.WaitingApproval,
         ),
         sortKey = sortAt ?: lastActivityAt ?: lastItemAt ?: "",
+        recencyKey = lastItemAt,
         updatedSeq = updatedSeq,
         runtimeId = runtimeId,
         runtimeType = runtimeType,

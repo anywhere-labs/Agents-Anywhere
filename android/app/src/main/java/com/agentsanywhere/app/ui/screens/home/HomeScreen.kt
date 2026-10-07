@@ -336,6 +336,7 @@ fun HomeScreen(
                 onOpenArchivedSessions = onOpenArchivedSessions,
                 onSignOut = onSignOut,
                 onClose = { onProfileOpenChange(false) },
+                onOpen = { onProfileOpenChange(true) },
                 onNotice = ::showToast,
             )
             AAToastHost(

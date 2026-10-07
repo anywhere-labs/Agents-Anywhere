@@ -236,6 +236,9 @@ def runtime_state_semantically_equal(
         and left.externalSessionId == right.externalSessionId
         and left.statusReason == right.statusReason
         and left.error == right.error
+        # metadata.insights carries the detailed AI-call stats clients render;
+        # a stats-only refresh is observable and must republish.
+        and left.metadata.get("insights") == right.metadata.get("insights")
     )
 
 

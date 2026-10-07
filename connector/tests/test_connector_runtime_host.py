@@ -617,6 +617,89 @@ def test_connector_runtime_host_maps_attachment_download() -> None:
     asyncio.run(_exercise_attachment_download())
 
 
+def test_connector_runtime_host_projects_failed_turn_end_to_system_error() -> None:
+    asyncio.run(_exercise_failed_turn_end_projection())
+
+
+def test_connector_runtime_host_drops_successful_turn_markers() -> None:
+    asyncio.run(_exercise_successful_turn_markers_dropped())
+
+
+async def _exercise_failed_turn_end_projection() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def notify(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        _ = session_id
+        return b"data", f"{file_id}.txt", "text/plain"
+
+    host = ConnectorRuntimeHost("conn_1", notify, download)
+    await host.timeline_item_upsert(
+        RuntimeTimelineItem(
+            id="dsh_turn_12",
+            session_id="sess_1",
+            type="turn.end",
+            status="failed",
+            order_seq=12,
+            content_hash="sha256:abc",
+            content={
+                "kind": "turn_end",
+                "reason": {
+                    "kind": "error",
+                    "message": "模型调用失败：额度不足。",
+                    "error": {"name": "ProviderError", "code": "E_BAD_TOKEN"},
+                },
+            },
+            source={"runtime": "dsh", "sessionId": "native_1"},
+        )
+    )
+
+    assert len(notifications) == 1
+    method, params = notifications[0]
+    assert method == "timeline.itemUpsert"
+    item = params["item"]
+    assert item["type"] == "system"
+    assert item["status"] == "failed"
+    assert item["role"] == "system"
+    assert item["id"] == "dsh_turn_12"
+    assert item["orderSeq"] == 12
+    assert item["content"]["kind"] == "error"
+    assert item["content"]["text"] == "模型调用失败：额度不足。"
+    assert item["content"]["reason"]["kind"] == "error"
+    assert item["source"]["itemType"] == "turnEnd"
+    assert item["source"]["runtime"] == "dsh"
+
+
+async def _exercise_successful_turn_markers_dropped() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def notify(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        _ = session_id
+        return b"data", f"{file_id}.txt", "text/plain"
+
+    host = ConnectorRuntimeHost("conn_1", notify, download)
+    for item_type, status in (("turn.start", "done"), ("turn.end", "done")):
+        await host.timeline_item_upsert(
+            RuntimeTimelineItem(
+                id=f"{item_type}_1",
+                session_id="sess_1",
+                type=item_type,
+                status=status,
+                order_seq=1,
+                content_hash="sha256:abc",
+                content={"kind": "turn_end", "reason": {"kind": "completed"}},
+                source={"runtime": "dsh"},
+            )
+        )
+
+    assert notifications == []
+
+
 async def _exercise_attachment_download() -> None:
     async def notify(method: str, params: dict[str, Any]) -> None:
         _ = method

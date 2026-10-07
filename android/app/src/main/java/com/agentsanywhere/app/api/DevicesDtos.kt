@@ -36,6 +36,7 @@ data class RemoteDeviceRuntime(
     val schema: Map<String, Any?>?,
     val uiSchema: Map<String, Any?>,
     val config: Map<String, Any?>?,
+    val defaults: Map<String, Any?> = emptyMap(),
     val error: Map<String, Any?>?,
     val lastDiscoveredAt: String?,
     val updatedAt: String?,

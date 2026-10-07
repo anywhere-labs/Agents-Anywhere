@@ -990,7 +990,12 @@ if (hasSingleInstanceLock) {
       directory: path.join(app.getPath("userData"), "updates"),
       currentVersion: app.getVersion(),
       serverVersion: buildInfo.serverVersion,
-      downloadUrl: config.updates.downloadUrl,
+      // Prefer the installer URL baked for this platform at build time; the
+      // live Server never supplies a download address (untrusted). A platform
+      // with no baked URL keeps the config default, which safely reports
+      // "download not configured" instead of fetching arbitrary bytes.
+      downloadUrl: (buildInfo as { updates?: Record<string, string> }).updates?.[process.platform]
+        ?? config.updates.downloadUrl,
       platform: process.platform,
       healthTimeoutMs: config.healthTimeoutMs,
       fetcher: (input, init) => net.fetch(String(input), init),

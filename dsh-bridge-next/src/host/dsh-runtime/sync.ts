@@ -2,10 +2,11 @@ import { jsonBytes } from './json-size.js'
 import { randomUUID } from 'node:crypto'
 import { receiptKey } from './attachments.js'
 import { setTimeout as delay } from 'node:timers/promises'
-import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
 import { createProjection, replayHistory, PROJECTION_VERSION, type SessionProjection } from './history.js'
 import { sessionId } from './identity.js'
+import { RuntimeInsights, deriveTurnUsage } from './insights.js'
 import type { NativeChange, NativeRuntime } from './native.js'
 import { record, type TimelineItem } from './types.js'
 import { BridgeError } from './errors.js'
@@ -347,14 +348,19 @@ export class SyncFeed {
         }
         if (change.type === 'event') {
           if (['model/selection', 'agent-preset/selected'].includes(change.event.type)) capabilities.add(id)
-          if (change.event.type === 'turn/end') ended.push([id, {
-            sessionId: this.published.get(id), externalSessionId: id,
-            sourceObservedAt: new Date(change.event.time).toISOString(),
-            outcome: change.event.data.reason.kind === 'error' ? 'failed'
-              : ['aborted', 'interrupted'].includes(change.event.data.reason.kind) ? 'interrupted' : 'completed',
-          }])
+          if (change.event.type === 'turn/end') {
+            const usage = turnUsage(this.native, id, change.event)
+            ended.push([id, {
+              sessionId: this.published.get(id), externalSessionId: id,
+              sourceObservedAt: new Date(change.event.time).toISOString(),
+              outcome: change.event.data.reason.kind === 'error' ? 'failed'
+                : ['aborted', 'interrupted'].includes(change.event.data.reason.kind) ? 'interrupted' : 'completed',
+              ...(usage ? { usage } : {}),
+            }])
+          }
           if (['turn/start', 'turn/end', 'approval/asked', 'approval/decided', 'model/selection', 'request/header',
-            'permission/preset', 'sandbox/mode', 'approval/policy', 'agent-preset/selected'].includes(change.event.type)) statuses.add(id)
+            'permission/preset', 'sandbox/mode', 'approval/policy', 'agent-preset/selected'].includes(change.event.type)
+            || RuntimeInsights.affects(change.event)) statuses.add(id)
           const projection = this.projections.get(id)
           if (!projection) { await this.baseline(id); return }
           this.projections.delete(id); this.projections.set(id, projection)
@@ -433,4 +439,29 @@ export class SyncFeed {
 function contentItems(items: TimelineItem[]): TimelineItem[] {
   // Lifecycle belongs to session.state.updated / session.turnEnded in the platform.
   return items.filter(item => item.type !== 'turn.start' && item.type !== 'turn.end')
+}
+
+/**
+ * Exact per-turn token accounting from the session's durable log. The events
+ * of the closing turn are sliced out of the live snapshot and folded by the
+ * bridge-local accountant; a cold or unavailable log yields no disclosure.
+ */
+function turnUsage(native: NativeRuntime, id: string, end: SessionEvent) {
+  try {
+    const events = native.ctx.sessions.get(id as SessionId)?.snapshotEvents()
+    if (!events) return undefined
+    const endIndex = events.findIndex(event => event.seq === end.seq)
+    if (endIndex < 0) return undefined
+    let startIndex = endIndex
+    while (startIndex > 0) {
+      const previous = events[startIndex - 1]
+      if (!previous || previous.type === 'turn/end') return undefined
+      if (previous.type === 'turn/start') break
+      startIndex -= 1
+    }
+    if (events[startIndex]?.type !== 'turn/start') return undefined
+    return deriveTurnUsage(native.ctx, events.slice(startIndex, endIndex + 1))
+  } catch {
+    return undefined
+  }
 }

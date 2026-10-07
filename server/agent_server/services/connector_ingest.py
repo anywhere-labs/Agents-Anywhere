@@ -546,4 +546,8 @@ def runtime_state_fingerprint(value: SessionRuntimeState) -> dict[str, Any]:
         "selections": value.selections,
         "statusReason": value.statusReason,
         "error": value.error,
+        # Detailed AI-call insights (token usage, context pressure, turn/step
+        # stats, goal, todos, sub-agent catalog) ride in metadata but are
+        # client-visible facts: a stats-only change must still publish.
+        "insights": value.metadata.get("insights"),
     }

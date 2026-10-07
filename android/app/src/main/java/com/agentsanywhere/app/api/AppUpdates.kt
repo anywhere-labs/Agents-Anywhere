@@ -18,9 +18,13 @@ class AppUpdatesApi(private val client: ApiClient = ApiClient()) {
         val comparison = compareUpdateVersions(latestVersion, currentVersionName)
             ?: throw ApiException("Server health response has no valid version.")
         if (comparison <= 0) return null
+        // The server may publish the APK address alongside its version; that
+        // wins over the address baked into this build so releases can move
+        // the download without shipping a new client first.
+        val serverDownloadUrl = payload.optString("androidUpdateUrl").trim()
         return AndroidAppRelease(
             versionName = latestVersion,
-            downloadUrl = AppConfig.UPDATE_DOWNLOAD_URL,
+            downloadUrl = serverDownloadUrl.ifBlank { AppConfig.UPDATE_DOWNLOAD_URL },
         )
     }
 }

@@ -1,6 +1,7 @@
 package com.agentsanywhere.app.ui.screens.home
 
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -66,6 +67,7 @@ import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.feature.sessions.listIndicator
 import com.agentsanywhere.app.feature.sessions.pinnedSessions
 import com.agentsanywhere.app.feature.sessions.recentSessions
+import com.agentsanywhere.app.feature.sessions.sessionIsWorking
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
@@ -249,7 +251,11 @@ private fun SessionList(
     var pinnedExpanded by remember { mutableStateOf(true) }
     var recentExpanded by remember { mutableStateOf(true) }
     val pinned = remember(sessions) { SessionsState(sessions = sessions).pinnedSessions }
-    val recent = remember(sessions) { SessionsState(sessions = sessions).recentSessions }
+    // Working sessions live on the in-progress board above; keeping them out
+    // of the recency list stops the two groups swapping rows on every flip.
+    val recent = remember(sessions) {
+        SessionsState(sessions = sessions).recentSessions.filterNot { sessionIsWorking(it) }
+    }
     val projectsById = remember(projects) { projects.associateBy { it.id } }
     val devicesById = remember(devices) { devices.associateBy { it.id } }
     val listState = rememberLazyListState()
@@ -269,6 +275,11 @@ private fun SessionList(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 96.dp),
     ) {
+        workingSection(
+            sessions = sessions.workingSessions(),
+            onOpenSession = onOpenSession,
+            onSessionLongPress = onSessionLongPress,
+        )
         if (sessions.isEmpty()) {
             item("empty") { EmptyListText(stringResource(R.string.home_no_sessions_yet)) }
         }
@@ -291,6 +302,11 @@ private fun SessionList(
                             deviceName = devicesById[session.connectorId]?.name,
                         ),
                         showDivider = session.id != pinned.lastOrNull()?.id,
+                        modifier = Modifier.animateItem(
+                            placementSpec = spring(stiffness = 700f),
+                            fadeOutSpec = null,
+                            fadeInSpec = null,
+                        ),
                         onClick = { onOpenSession(session) },
                         onLongPress = { bounds -> onSessionLongPress(session, bounds) },
                     )
@@ -314,6 +330,11 @@ private fun SessionList(
                         contextLabel = session.sidebarContextLabel(
                             projectName = projectsById[session.projectId]?.name,
                             deviceName = devicesById[session.connectorId]?.name,
+                        ),
+                        modifier = Modifier.animateItem(
+                            placementSpec = spring(stiffness = 700f),
+                            fadeOutSpec = null,
+                            fadeInSpec = null,
                         ),
                         onClick = { onOpenSession(session) },
                         onLongPress = { bounds -> onSessionLongPress(session, bounds) },
@@ -444,12 +465,14 @@ internal fun HomeSessionRow(
     session: AgentSession,
     contextLabel: String,
     showDivider: Boolean = true,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onLongPress: (Rect) -> Unit,
 ) {
     HomeSessionRowShell(
         height = 66.dp,
         showDivider = showDivider,
+        modifier = modifier,
         onClick = onClick,
         onLongPress = onLongPress,
     ) {
@@ -626,6 +649,7 @@ private fun SessionUnreadIndicator(
 private fun HomeSessionRowShell(
     height: androidx.compose.ui.unit.Dp,
     showDivider: Boolean = true,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onLongPress: (Rect) -> Unit,
     content: @Composable RowScope.() -> Unit,
@@ -634,7 +658,7 @@ private fun HomeSessionRowShell(
     val haptic = LocalHapticFeedback.current
     var bounds by remember { mutableStateOf(Rect.Zero) }
 
-    Column {
+    Column(modifier = modifier) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -683,7 +707,7 @@ private fun EmptyListText(message: String) {
 }
 
 @Composable
-private fun SectionEmptyText(message: String) {
+internal fun SectionEmptyText(message: String) {
     Box(
         modifier = Modifier
             .fillMaxWidth()

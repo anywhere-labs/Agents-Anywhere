@@ -32,6 +32,27 @@ struct RootView: View {
                 showingQRCodeLogin = false
             }
         }
+        .alert(
+            String(localized: "发现新版本"),
+            isPresented: Binding(
+                get: { appState.appUpdateAvailable != nil },
+                set: { if !$0 { appState.dismissAppUpdateOffer() } }
+            )
+        ) {
+            if let offer = appState.appUpdateAvailable {
+                Button(String(localized: "前往更新")) {
+                    UIApplication.shared.open(offer.storeURL)
+                }
+            }
+            Button(String(localized: "稍后再说"), role: .cancel, action: appState.dismissAppUpdateOffer)
+        } message: {
+            if let offer = appState.appUpdateAvailable {
+                Text(String(
+                    format: String(localized: "服务器运行版本 %@，比当前应用新。请在 App Store / TestFlight 更新后继续使用最新功能。", comment: "In-app update offer pointing to the store"),
+                    offer.version
+                ))
+            }
+        }
         .announcementGate(
             server: appState.serverURL,
             route: appState.route,

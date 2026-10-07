@@ -1,24 +1,24 @@
 # Runtime -> Connector Host Client
 
-Status: draft.
+状态：草案。
 
-This document defines the northbound half of Agent Runtime Protocol v1: calls made by a runtime adapter back into its Connector host.
+本文档定义 Agent Runtime Protocol v1 的北向部分：运行时适配器回调 Connector 宿主的部分。
 
-The host client replaces these current adapter dependencies:
+host client 取代当前适配器的这些依赖：
 
 - `notification_sink`
 - `attachment_downloader`
 - `sync_state_store`
-- returning `backendNotifications` from runtime methods
+- 在运行时方法中直接返回 `backendNotifications`
 
-Runtime adapters must not emit server notification method names directly. They call the host client's semantic methods, and the Connector application layer maps those calls to server ingest/RPC behavior.
+运行时适配器不得直接发出 Server 通知方法名。它们调用 host client 的语义方法，由 Connector 应用层把这些调用映射为 Server ingest/RPC 行为。
 
-## Style rules
+## 风格规则
 
-- Do not use keyword-only `*` parameters.
-- Keep high-frequency state methods flat.
-- Use dataclasses for complex entities such as timeline items, notices, and attachment content.
-- The host client is not a server client. It is the runtime adapter's local host API.
+- 不要使用 keyword-only 的 `*` 参数。
+- 高频状态方法保持扁平。
+- 对 Timeline 条目、通知、附件内容等复杂实体使用 dataclass。
+- host client 不是 server client。它是运行时适配器的本地宿主 API。
 
 ## Host client ABC
 
@@ -124,9 +124,9 @@ class RuntimeHostClient(ABC):
         raise NotImplementedError
 ```
 
-## Notice entity
+## 通知实体
 
-`notice_upsert` accepts a dataclass because notice/action/interactions are complex and should stay close to the server `SessionNotice` model. Interaction notices must carry `interaction_type`, `blocking`, `actions`, and `context` when the runtime expects a later `respond_interaction` call.
+`notice_upsert` 接收 dataclass，因为通知/动作/交互较为复杂，应尽量贴近 Server 的 `SessionNotice` 模型。当运行时期待后续的 `respond_interaction` 调用时，交互型通知必须携带 `interaction_type`、`blocking`、`actions` 和 `context`。
 
 ```py
 @dataclass(frozen=True, slots=True)
@@ -148,43 +148,43 @@ class SessionNotice:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 ```
 
-## Semantics
+## 语义
 
 ### `session_meta_upsert`
 
-Reports the existence and metadata of a runtime session. This is `SessionMeta`, not current running state and not `SessionState` selections. `ordering_time` belongs here and controls session ordering/display time.
+上报一个运行时会话的存在与元数据。这是 `SessionMeta`，不是当前运行状态，也不是 `SessionState` 的选择项。`ordering_time` 属于这里，决定会话的排序/展示时间。
 
 ### `session_state_update`
 
-Reports persisted `SessionState`: status, selections, reason, error, and metadata. Runtime may call this at any time. User-triggered selection changes are only one source of state updates.
+上报持久化的 `SessionState`：状态、选择项、原因、错误与元数据。运行时可以随时调用。用户触发的选择变更只是状态更新的来源之一。
 
-Updates are partial. The host/server merges provided fields and rejects completely empty updates. Selection updates merge by scope.
+更新是部分的。host/server 合并给到的字段，拒绝完全为空的更新。选择项更新按 scope 合并。
 
 ### `timeline_sync`
 
-Reports a snapshot for initial import or recovery. Normal live updates should prefer `timeline_item_upsert`.
+上报快照，用于初始导入或恢复。常规实时更新应优先使用 `timeline_item_upsert`。
 
-Timeline sync must not be used as a periodic UI refresh mechanism.
+Timeline sync 不得用作周期性的 UI 刷新机制。
 
 ### `timeline_item_upsert`
 
-Reports one durable timeline item state. Timeline is upsert-only. If a runtime needs to hide something, it should upsert hidden state rather than delete.
+上报一条持久化 Timeline 条目的状态。Timeline 只做 upsert。如果运行时需要隐藏某些内容，应 upsert 隐藏状态而不是删除。
 
 ### `notice_upsert`
 
-Reports session-level `SessionNotice` data: notifications and interactions, including approval/input/confirmation prompts. User responses flow back through `AgentRuntime.respond_interaction`.
+上报会话级的 `SessionNotice` 数据：通知与交互，包括审批/输入/确认提示。用户的响应经 `AgentRuntime.respond_interaction` 流回。
 
 ### `runtime_error`
 
-Reports asynchronous runtime errors that do not naturally belong to a command RPC result.
+上报不属于任何命令 RPC 结果的异步运行时错误。
 
 ### `attachment_download`
 
-Materializes a user-uploaded attachment for runtime use.
+把用户上传的附件物化为运行时可用的内容。
 
 ### `sync_state_*`
 
-Provides adapter-owned local sync state. Keys must be runtime-namespaced, for example:
+提供适配器持有的本地同步状态。键必须带运行时命名空间，例如：
 
 ```text
 codex/history/cursor/{thread_id}

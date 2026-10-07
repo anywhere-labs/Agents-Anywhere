@@ -53,6 +53,7 @@ export function SessionView() {
     upsertSession,
     reportSessionStreamProgress,
     markSessionRead,
+    openSession,
   } = useWorkspace()
   const session = activeSession
   const detailSessionId = activeSessionId ?? session?.id ?? null
@@ -238,6 +239,7 @@ export function SessionView() {
             exporting={exporting}
             toolsOpen={toolSidebar.open}
             onToggleTools={toolSidebar.toggleSidebar}
+            onOpenSubagent={openSession}
           />
 
           <div className="min-h-0 flex-1 overflow-hidden">

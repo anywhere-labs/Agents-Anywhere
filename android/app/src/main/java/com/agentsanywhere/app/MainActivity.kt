@@ -19,6 +19,8 @@ import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import com.agentsanywhere.app.app.AgentsAnywhereApp
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
+import com.agentsanywhere.app.feature.sessiondetail.SessionActivityMonitor
+import com.agentsanywhere.app.feature.sessiondetail.SessionActivityWorker
 import com.agentsanywhere.app.feature.update.AppUpdateInstaller
 import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.ui.designsystem.AAAppearanceMode
@@ -34,6 +36,7 @@ import okio.Path.Companion.toOkioPath
 
 class MainActivity : ComponentActivity() {
     private val oauthCallbackUri = mutableStateOf<Uri?>(null)
+    private val notificationSessionId = mutableStateOf<String?>(null)
     private val webLoginViewModel by viewModels<WebLoginViewModel>()
     private val appUpdateViewModel by viewModels<AppUpdateViewModel>()
     private var appearanceMode by mutableStateOf(AAAppearanceMode.System)
@@ -71,7 +74,12 @@ class MainActivity : ComponentActivity() {
         sidebarViewMode = HomeSidebarViewMode.normalize(
             preferences.getString(KEY_SIDEBAR_VIEW_MODE, HomeSidebarViewMode.Project),
         )
-        oauthCallbackUri.value = intent?.data
+        oauthCallbackUri.value = intent?.takeIf { it.data != null }?.data
+        notificationSessionId.value = intent?.getStringExtra(SessionActivityMonitor.EXTRA_SESSION_ID)
+        // Doze-resilient notification fallback: the live dashboard WebSocket
+        // dies with the process, so a periodic worker re-polls session
+        // activity and posts anything the socket missed.
+        SessionActivityWorker.schedule(this)
         setContent {
             AgentsAnywhereTheme(appearanceMode = appearanceMode) {
                 AgentsAnywhereApp(
@@ -95,6 +103,8 @@ class MainActivity : ComponentActivity() {
                     },
                     oauthCallbackUri = oauthCallbackUri.value,
                     onOAuthCallbackConsumed = { oauthCallbackUri.value = null },
+                    notificationSessionId = notificationSessionId.value,
+                    onNotificationSessionConsumed = { notificationSessionId.value = null },
                     webLoginViewModel = webLoginViewModel,
                     appUpdateViewModel = appUpdateViewModel,
                     onInstallUpdate = ::requestUpdateInstall,
@@ -106,7 +116,12 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        oauthCallbackUri.value = intent.data
+        if (intent.data != null) {
+            oauthCallbackUri.value = intent.data
+        } else {
+            val sessionId = intent.getStringExtra(SessionActivityMonitor.EXTRA_SESSION_ID)
+            if (sessionId != null) notificationSessionId.value = sessionId
+        }
     }
 
     override fun onResume() {

@@ -1,110 +1,102 @@
-# Session API Current Gap
+# Session API 现状差距
 
-Status: implementation audit for `v2-connector-refactor`.
+状态：`v2-connector-refactor` 的实现审计。
 
-This document is the working checklist between the target contract in
-[`session-api-proposal.md`](./session-api-proposal.md) and the current Server
-implementation. It exists to keep the backend cleanup ordered before the
-frontend migration starts.
+本文档是[目标契约](./session-api-proposal.md)与当前 Server 实现之间的工作清单，
+用于在后端清理完成之前保持前端迁移的有序性。
 
-## Summary
+## 概览
 
-Current backend state:
+当前后端状态：
 
-- Connector ingress endpoints are intentionally unchanged:
+- Connector 入口端点刻意保持不变：
   - `POST /api/v2/connector/auth`
   - `POST /api/v2/connector/ingest`
   - `WS /api/v2/connector/ws`
-- Runtime-scoped connector endpoints mostly exist under
-  `/api/v2/connectors/{connectorId}/runtimes/{runtimeId}/...`.
-- Session runtime action endpoints mostly exist under
-  `/api/v2/sessions/{sessionId}/runtime/...`.
-- Effective capability calculation has been moved away from persisted
-  `sessions.status` and now uses runtime/session capability facts plus Server
-  policy.
-- Several old session aliases still exist as migration shims.
-- Target session read endpoints exist. Remaining backend cleanup is now about
-  migration shims and a few realtime event policy edges.
+- 运行时维度的连接器端点大多已存在于
+  `/api/v2/connectors/{connectorId}/runtimes/{runtimeId}/...`。
+- 会话运行时操作端点大多已存在于 `/api/v2/sessions/{sessionId}/runtime/...`。
+- 有效能力的计算已不再依赖持久化的 `sessions.status`，改用运行时/会话能力事实加
+  服务器策略。
+- 若干旧会话别名仍作为迁移垫片存在。
+- 目标的会话读取端点已存在。剩余的后端清理工作集中在迁移垫片与少数实时事件策略
+  边界。
 
-## Endpoint gap table
+## 端点差距表
 
-| Area | Target endpoint | Current status | Action |
+| 区域 | 目标端点 | 当前状态 | 行动 |
 | --- | --- | --- | --- |
-| Session list | `GET /api/v2/sessions` | exists | Keep. Ensure response is treated as `SessionMeta` plus presence projection, not runtime truth. |
-| Session create/start | `POST /api/v2/sessions/create-and-start` | exists | Keep. Verify selections flow through runtime-owned startup. |
-| Session bind | `POST /api/v2/sessions` | exists | Keep only as bind/import path during migration. Do not use for new user tasks. |
-| SessionMeta read | `GET /api/v2/sessions/{sessionId}/meta` | exists | Keep. Returns Server-owned metadata plus connector presence projection. |
-| SessionMeta update | `PATCH /api/v2/sessions/{sessionId}/meta` | exists | Keep. Updates only Server-owned display metadata. |
-| SessionMeta compatibility update | `PATCH /api/v2/sessions/{sessionId}` | removed | Use `/sessions/{sessionId}/meta`. |
-| Read sessions | `POST /api/v2/sessions/read` with direct id array | exists | Keep as target. |
-| Archive sessions | `POST /api/v2/sessions/archive` with direct id array | exists | Keep as target. |
-| Unarchive sessions | `POST /api/v2/sessions/unarchive` with direct id array | exists | Keep as target. |
-| Old read one | `POST /api/v2/sessions/{sessionId}/read` | removed | Use `/sessions/read` with a direct id array. |
-| Old bulk read | `POST /api/v2/sessions/bulk-read` | removed | Use `/sessions/read` with a direct id array. |
-| Old bulk archive | `POST /api/v2/sessions/bulk-archive` | removed | Use `/sessions/archive` or `/sessions/unarchive` with a direct id array. |
-| SessionTimeline read | `GET /api/v2/sessions/{sessionId}/timeline` | exists | Keep. Returns durable timeline only. |
-| Old timeline/state read | `GET /api/v2/sessions/{sessionId}/state` | removed | Use `/snapshot`, `/timeline`, and `/runtime/state` by data boundary. |
-| Aggregate snapshot | `GET /api/v2/sessions/{sessionId}/snapshot` | exists | Keep. Verify runtime fields are live RPC/projection, not DB truth. |
-| Runtime state read | `GET /api/v2/sessions/{sessionId}/runtime/state` | exists | Keep. Must use runtime live fact or explicit disconnected projection. |
-| Old runtime state read | `GET /api/v2/sessions/{sessionId}/runtime-state` | removed | Use `/sessions/{sessionId}/runtime/state`. |
-| Session capabilities | `GET /api/v2/sessions/{sessionId}/runtime/capabilities` | exists | Keep. Verify frontend uses this for action availability. |
-| Session model catalog | `GET /api/v2/sessions/{sessionId}/runtime/catalogs/model` | exists | Keep as a session path to the runtime-level live catalog for existing session selectors. |
-| Session permission catalog | `GET /api/v2/sessions/{sessionId}/runtime/catalogs/permission` | exists | Keep as a session path to the runtime-level live catalog for existing session selectors. |
-| Runtime model catalog | `GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/model` | exists | Keep for setup/new-session UI. |
-| Runtime permission catalog | `GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/permission` | exists | Keep for setup/new-session UI. |
-| Runtime capabilities | `GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/capabilities` | exists | Keep for dashboard/setup UI. |
-| Runtime commands | `GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/commands` | exists | Keep. |
-| Session commands list | `GET /api/v2/sessions/{sessionId}/runtime/commands` | exists | Keep. Must not use query matching. |
-| Session commands execute | `POST /api/v2/sessions/{sessionId}/runtime/commands` | exists | Keep. Command execution returns RPC acceptance/result, later timeline updates are decoupled. |
-| Old session commands | `GET/POST /api/v2/sessions/{sessionId}/commands` | removed | Use `/sessions/{sessionId}/runtime/commands`; frontend matches command text locally. |
-| Selection update | `PATCH /api/v2/sessions/{sessionId}/runtime/selections` | exists | Keep. Runtime state should update immediately; effect boundary is runtime-owned. |
-| Old selection update | `PATCH /api/v2/sessions/{sessionId}/state/selections` | removed | Use `/sessions/{sessionId}/runtime/selections`. |
-| Send message | `POST /api/v2/sessions/{sessionId}/runtime/messages` | exists | Keep. |
-| Old send message | `POST /api/v2/sessions/{sessionId}/messages` | removed | Use `/sessions/{sessionId}/runtime/messages`. |
-| Steer | `POST /api/v2/sessions/{sessionId}/runtime/steer` | exists | Keep. |
-| Old steer | `POST /api/v2/sessions/{sessionId}/steer` | removed | Use `/sessions/{sessionId}/runtime/steer`. |
-| Interrupt | `POST /api/v2/sessions/{sessionId}/runtime/interrupt` | exists | Keep. If runtime reports no active turn, runtime state/capability should converge to idle/unavailable. |
-| Old interrupt | `POST /api/v2/sessions/{sessionId}/interrupt` | removed | Use `/sessions/{sessionId}/runtime/interrupt`. |
-| Runtime notices read | `GET /api/v2/sessions/{sessionId}/runtime/notices` | exists | Keep. Must be non-durable runtime truth. |
-| Runtime notice response | `POST /api/v2/sessions/{sessionId}/runtime/notices/{noticeId}/respond` | exists | Keep. |
-| Old interaction response | `POST /api/v2/sessions/{sessionId}/interactions/{noticeId}/respond` | removed | Use `/sessions/{sessionId}/runtime/notices/{noticeId}/respond`. |
-| Event recovery | `GET /api/v2/sessions/{sessionId}/events` | exists | Keep for durable meta/timeline recovery only. Do not recover runtime live facts from DB. |
-| Session WS | `WS /api/v2/sessions/{sessionId}/ws` | exists | Keep. Runtime event names are the active contract; old session/notice compatibility events have been removed. |
-| Dashboard WS | `WS /api/v2/dashboard/ws` | exists | Keep. Do not mix dashboard lifecycle with session lifecycle. |
-| Old dashboard SSE | `GET /api/v2/sessions/events/dashboard` | removed | Use `/dashboard/ws`. |
+| 会话列表 | `GET /api/v2/sessions` | 已存在 | 保留。确保响应被视为 `SessionMeta` 加在线投影，而不是运行时事实。 |
+| 会话创建/启动 | `POST /api/v2/sessions/create-and-start` | 已存在 | 保留。验证 selections 经过运行时所有的启动流程。 |
+| 会话绑定 | `POST /api/v2/sessions` | 已存在 | 仅作为迁移期的绑定/导入路径保留。不要用于新的用户任务。 |
+| SessionMeta 读取 | `GET /api/v2/sessions/{sessionId}/meta` | 已存在 | 保留。返回 Server 持有的元数据加连接器在线投影。 |
+| SessionMeta 更新 | `PATCH /api/v2/sessions/{sessionId}/meta` | 已存在 | 保留。只更新 Server 持有的展示元数据。 |
+| SessionMeta 兼容更新 | `PATCH /api/v2/sessions/{sessionId}` | 已移除 | 使用 `/sessions/{sessionId}/meta`。 |
+| 标记已读 | `POST /api/v2/sessions/read`，直接 id 数组 | 已存在 | 作为目标保留。 |
+| 归档 | `POST /api/v2/sessions/archive`，直接 id 数组 | 已存在 | 作为目标保留。 |
+| 取消归档 | `POST /api/v2/sessions/unarchive`，直接 id 数组 | 已存在 | 作为目标保留。 |
+| 旧的单条已读 | `POST /api/v2/sessions/{sessionId}/read` | 已移除 | 使用带直接 id 数组的 `/sessions/read`。 |
+| 旧的批量已读 | `POST /api/v2/sessions/bulk-read` | 已移除 | 使用带直接 id 数组的 `/sessions/read`。 |
+| 旧的批量归档 | `POST /api/v2/sessions/bulk-archive` | 已移除 | 使用带直接 id 数组的 `/sessions/archive` 或 `/sessions/unarchive`。 |
+| SessionTimeline 读取 | `GET /api/v2/sessions/{sessionId}/timeline` | 已存在 | 保留。只返回持久 timeline。 |
+| 旧 timeline/状态读取 | `GET /api/v2/sessions/{sessionId}/state` | 已移除 | 按数据边界使用 `/snapshot`、`/timeline` 与 `/runtime/state`。 |
+| 聚合快照 | `GET /api/v2/sessions/{sessionId}/snapshot` | 已存在 | 保留。验证运行时字段来自实时 RPC/投影，而非数据库事实。 |
+| 运行时状态读取 | `GET /api/v2/sessions/{sessionId}/runtime/state` | 已存在 | 保留。必须使用运行时实时事实或显式的离线投影。 |
+| 旧运行时状态读取 | `GET /api/v2/sessions/{sessionId}/runtime-state` | 已移除 | 使用 `/sessions/{sessionId}/runtime/state`。 |
+| 会话能力 | `GET /api/v2/sessions/{sessionId}/runtime/capabilities` | 已存在 | 保留。验证前端用它判断操作可用性。 |
+| 会话模型目录 | `GET /api/v2/sessions/{sessionId}/runtime/catalogs/model` | 已存在 | 作为既有会话选择器到运行时级实时目录的会话路径保留。 |
+| 会话权限目录 | `GET /api/v2/sessions/{sessionId}/runtime/catalogs/permission` | 已存在 | 作为既有会话选择器到运行时级实时目录的会话路径保留。 |
+| 运行时模型目录 | `GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/model` | 已存在 | 为设置/新建会话 UI 保留。 |
+| 运行时权限目录 | `GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/permission` | 已存在 | 为设置/新建会话 UI 保留。 |
+| 运行时能力 | `GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/capabilities` | 已存在 | 为 dashboard/设置 UI 保留。 |
+| 运行时命令 | `GET /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/commands` | 已存在 | 保留。 |
+| 会话命令列表 | `GET /api/v2/sessions/{sessionId}/runtime/commands` | 已存在 | 保留。不得使用查询匹配。 |
+| 会话命令执行 | `POST /api/v2/sessions/{sessionId}/runtime/commands` | 已存在 | 保留。命令执行返回 RPC 受理/结果，后续 timeline 更新解耦。 |
+| 旧会话命令 | `GET/POST /api/v2/sessions/{sessionId}/commands` | 已移除 | 使用 `/sessions/{sessionId}/runtime/commands`；前端在本地匹配命令文本。 |
+| 选择更新 | `PATCH /api/v2/sessions/{sessionId}/runtime/selections` | 已存在 | 保留。运行时状态应立即更新；生效边界由运行时所有。 |
+| 旧选择更新 | `PATCH /api/v2/sessions/{sessionId}/state/selections` | 已移除 | 使用 `/sessions/{sessionId}/runtime/selections`。 |
+| 发送消息 | `POST /api/v2/sessions/{sessionId}/runtime/messages` | 已存在 | 保留。 |
+| 旧发送消息 | `POST /api/v2/sessions/{sessionId}/messages` | 已移除 | 使用 `/sessions/{sessionId}/runtime/messages`。 |
+| Steer | `POST /api/v2/sessions/{sessionId}/runtime/steer` | 已存在 | 保留。 |
+| 旧 steer | `POST /api/v2/sessions/{sessionId}/steer` | 已移除 | 使用 `/sessions/{sessionId}/runtime/steer`。 |
+| 中断 | `POST /api/v2/sessions/{sessionId}/runtime/interrupt` | 已存在 | 保留。若运行时报告无活跃 turn，运行时状态/能力应收敛到 idle/不可用。 |
+| 旧中断 | `POST /api/v2/sessions/{sessionId}/interrupt` | 已移除 | 使用 `/sessions/{sessionId}/runtime/interrupt`。 |
+| 运行时通知读取 | `GET /api/v2/sessions/{sessionId}/runtime/notices` | 已存在 | 保留。必须是非持久的运行时事实。 |
+| 运行时通知回应 | `POST /api/v2/sessions/{sessionId}/runtime/notices/{noticeId}/respond` | 已存在 | 保留。 |
+| 旧交互回应 | `POST /api/v2/sessions/{sessionId}/interactions/{noticeId}/respond` | 已移除 | 使用 `/sessions/{sessionId}/runtime/notices/{noticeId}/respond`。 |
+| 事件恢复 | `GET /api/v2/sessions/{sessionId}/events` | 已存在 | 仅用于持久的 meta/timeline 恢复。不要从数据库恢复运行时实时事实。 |
+| 会话 WS | `WS /api/v2/sessions/{sessionId}/ws` | 已存在 | 保留。运行时事件名是活跃契约；旧的会话/通知兼容事件已移除。 |
+| Dashboard WS | `WS /api/v2/dashboard/ws` | 已存在 | 保留。不要把 dashboard 生命周期与会话生命周期混用。 |
+| 旧 dashboard SSE | `GET /api/v2/sessions/events/dashboard` | 已移除 | 使用 `/dashboard/ws`。 |
 
-## Realtime gap table
+## 实时事件差距表
 
-| Target event | Current status | Action |
+| 目标事件 | 当前状态 | 行动 |
 | --- | --- | --- |
-| `session.subscribed` | exists | Keep. |
-| `session.meta.updated` | exists for connector invalidation pushes and event recovery | Frontend should use this for durable SessionMeta updates. |
-| `timeline.item_created` | exists | Keep. Must be emitted for ingest and connector WS timeline upserts. |
-| `timeline.item_updated` | exists | Keep. Must be emitted for content-hash changes. |
-| `timeline.snapshot` | exists | Keep only for explicit snapshot/recovery cases. |
-| `runtime.state.updated` | exists for connector invalidation pushes | Use as the runtime state truth. |
-| `runtime.notice.snapshot` | exists for connector invalidation pushes | Use as the runtime notice snapshot. Notices remain non-durable runtime truth. |
-| `runtime.notice.updated` | exists for connector invalidation pushes and event recovery | Use as the runtime notice update. Notices remain non-durable runtime truth. |
-| `runtime.capability.updated` | exists for session WS capability projections and event recovery | Use as the scoped effective capability update. |
-| `runtime.catalog.updated` | not implemented by design yet; legacy catalog update notifications are rejected | Keep live catalog reads as the source. Add this event only when a runtime actually pushes catalog invalidations. |
-| `runtime.refetch_required` | not implemented by design yet | Add only when a runtime reports missed live facts. Current durable timeline overflow uses `session.refetch_required`. |
-| `session.refetch_required` | exists | Restrict to durable meta/timeline recovery. |
+| `session.subscribed` | 已存在 | 保留。 |
+| `session.meta.updated` | 已存在，用于连接器失效推送与事件恢复 | 前端应用它处理持久的 SessionMeta 更新。 |
+| `timeline.item_created` | 已存在 | 保留。ingest 与连接器 WS 的 timeline upsert 必须发出。 |
+| `timeline.item_updated` | 已存在 | 保留。内容哈希变化时必须发出。 |
+| `timeline.snapshot` | 已存在 | 仅用于显式快照/恢复场景。 |
+| `runtime.state.updated` | 已存在，用于连接器失效推送 | 作为运行时状态事实使用。 |
+| `runtime.notice.snapshot` | 已存在，用于连接器失效推送 | 作为运行时通知快照使用。通知保持为非持久的运行时事实。 |
+| `runtime.notice.updated` | 已存在，用于连接器失效推送与事件恢复 | 作为运行时通知更新使用。通知保持为非持久的运行时事实。 |
+| `runtime.capability.updated` | 已存在，用于会话 WS 能力投影与事件恢复 | 作为带作用域的有效能力更新使用。 |
+| `runtime.catalog.updated` | 设计上暂未实现；旧版目录更新通知被拒绝 | 继续以实时目录读取为来源。只有当运行时确实推送目录失效时才添加该事件。 |
+| `runtime.refetch_required` | 设计上暂未实现 | 只有当运行时报告错过实时事实时才添加。当前持久 timeline 溢出使用 `session.refetch_required`。 |
+| `session.refetch_required` | 已存在 | 限定于持久的 meta/timeline 恢复。 |
 
-## Required backend sequence
+## 后端必要的顺序
 
-1. Add explicit code comments for remaining compatibility session aliases so
-   callers know the target migration path.
-2. Keep old aliases until frontend migration is complete, then remove them in
-   one cleanup commit.
+1. 为剩余的兼容性会话别名补充显式代码注释，让调用方知道目标迁移路径。
+2. 旧别名保留到前端迁移完成，然后在一个清理提交中移除。
 
-## Acceptance for backend cleanup
+## 后端清理的验收标准
 
-Backend cleanup is complete when:
+后端清理完成的条件：
 
-- the route list has a target endpoint for every row marked missing above;
-- every old route has either been removed or has an inline migration comment;
-- runtime state, notices, capabilities, catalogs, commands, and selections are
-  not treated as durable Server truth;
-- session WS emits durable timeline/meta events and runtime live events through
-  distinct event names;
-- backend tests for MVP, runtime config, and effective capability pass.
+- 路由表中每个标记为缺失的行都有了目标端点；
+- 每条旧路由要么已移除，要么带有内联迁移注释；
+- 运行时状态、通知、能力、目录、命令与选择不再被当作持久的 Server 事实；
+- 会话 WS 通过不同的事件名分别发出持久 timeline/meta 事件与运行时实时事件；
+- MVP、运行时配置与有效能力的后端测试全部通过。

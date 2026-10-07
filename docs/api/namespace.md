@@ -1,12 +1,13 @@
-# API v2 Namespace Migration
+# API v2 Namespace 迁移
 
-Agents Anywhere v2 serves product APIs under `/api/v2`.
+Agents Anywhere v2 在 `/api/v2` 下提供产品 API。
 
-The web UI may still be served from `/`, locale routes such as `/en`, and static assets such as `/_next/*`. Only API, SSE, and WebSocket endpoints move.
+Web UI 仍可从 `/`、`/en` 这类语言路由以及 `/_next/*` 等静态资产提供。只有 API、
+SSE 与 WebSocket 端点迁移。
 
-## Route Mapping
+## 路由映射
 
-| Old root path | New v2 path |
+| 旧的根路径 | 新的 v2 路径 |
 | --- | --- |
 | `/health` | `/api/v2/health` |
 | `/auth/*` | `/api/v2/auth/*` |
@@ -19,29 +20,32 @@ The web UI may still be served from `/`, locale routes such as `/en`, and static
 | `/sessions/*` | `/api/v2/sessions/*` |
 | `/connector/*` | `/api/v2/connector/*` |
 
-## Web Migration
+## Web 迁移
 
-Keep `AGENTS_ANYWHERE_API` and `NEXT_PUBLIC_AGENTS_ANYWHERE_API` as the server origin, not the API namespace:
+`AGENTS_ANYWHERE_API` 与 `NEXT_PUBLIC_AGENTS_ANYWHERE_API` 保持为服务器 origin，
+而不是 API namespace：
 
 ```bash
 AGENTS_ANYWHERE_API=http://127.0.0.1:8000 yarn dev
 ```
 
-Do not set it to `http://127.0.0.1:8000/api/v2`.
+不要设置成 `http://127.0.0.1:8000/api/v2`。
 
-`web-next/src/lib/api/client.ts` owns the namespace through `apiPath()`. Normal API calls should continue to pass product paths such as `/auth/login` or `/sessions`. The client turns them into `/api/v2/auth/login` and `/api/v2/sessions`.
+`web-next/src/lib/api/client.ts` 通过 `apiPath()` 管理 namespace。常规 API 调用应
+继续传产品路径，例如 `/auth/login` 或 `/sessions`；客户端会将其转换为
+`/api/v2/auth/login` 与 `/api/v2/sessions`。
 
-Any Web code that builds a URL without `ApiClient` must call `apiPath()` explicitly. This applies to:
+任何不经过 `ApiClient` 构造 URL 的 Web 代码必须显式调用 `apiPath()`。这适用于：
 
-- SSE endpoints such as session events and dashboard events.
-- WebSocket endpoints such as connector terminal streams.
-- Direct browser links such as attachment open/download URLs.
+- SSE 端点，如会话事件与 dashboard 事件。
+- WebSocket 端点，如连接器终端流。
+- 直接的浏览器链接，如附件打开/下载 URL。
 
-The Next.js dev proxy rewrites `/api/v2/*` to the backend. New root-level API rewrites should not be added.
+Next.js 开发代理把 `/api/v2/*` 重写到后端。不要再新增根级别的 API rewrite。
 
-## Connector Migration
+## Connector 迁移
 
-Connector config still stores the server origin:
+Connector 配置仍然保存服务器 origin：
 
 ```bash
 uvx anywhere-cli configure \
@@ -50,10 +54,10 @@ uvx anywhere-cli configure \
   --connector-token cxt_xxx
 ```
 
-Do not store `/api/v2` in `serverUrl`.
+不要把 `/api/v2` 存进 `serverUrl`。
 
-`connector.server.urls` owns endpoint construction through `api_v2_path()`,
-`api_v2_url()`, and `ws_url()`. Connector HTTP and WebSocket calls now target:
+`connector.server.urls` 通过 `api_v2_path()`、`api_v2_url()` 与 `ws_url()` 负责
+端点构造。Connector 的 HTTP 与 WebSocket 调用现在指向：
 
 - `POST /api/v2/connector/auth`
 - `POST /api/v2/connector/ingest`
@@ -62,10 +66,13 @@ Do not store `/api/v2` in `serverUrl`.
 - `PUT /api/v2/connector/fs/transfers/{transfer_id}`
 - `WS /api/v2/connector/terminals/{terminal_id}/relay`
 
-Connector health probes use `/api/v2/health`.
+Connector 健康探测使用 `/api/v2/health`。
 
-Server-generated connector URLs, such as file transfer `uploadUrl` and runtime attachment `downloadUrl`, are also returned with `/api/v2` included. Connector URL helpers are idempotent for already-prefixed paths.
+服务器生成的连接器 URL，例如文件传输的 `uploadUrl` 与运行时附件的
+`downloadUrl`，返回时也已带 `/api/v2`。Connector 的 URL 辅助函数对已带前缀的
+路径是幂等的。
 
-## Compatibility Rule
+## 兼容规则
 
-Do not add new root-level API routes in v2. If a route is product API, SSE, or WebSocket, mount it under `/api/v2`.
+v2 中不要再新增根级别的 API 路由。只要一个路由属于产品 API、SSE 或 WebSocket，
+就挂到 `/api/v2` 下。

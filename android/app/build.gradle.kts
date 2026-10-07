@@ -13,6 +13,13 @@ val localSettings = Properties().apply {
 val debugServerUrl = providers.gradleProperty("agentsAnywhere.serverUrl")
     .orElse(localSettings.getProperty("agentsAnywhere.serverUrl", officialServerUrl))
     .get()
+// In-app update download address. Distribution builds inject a real HTTPS URL
+// through gradle/local properties; the repository default stays a non-routable
+// placeholder so accidental self-updates cannot point anywhere unintended.
+val defaultUpdateDownloadUrl = "https://downloads.example.invalid/agents-anywhere.apk"
+val updateDownloadUrl = providers.gradleProperty("agentsAnywhere.updateDownloadUrl")
+    .orElse(localSettings.getProperty("agentsAnywhere.updateDownloadUrl", defaultUpdateDownloadUrl))
+    .get()
 
 fun String.asBuildConfigString(): String = "\"" + replace("\\", "\\\\")
     .replace("\"", "\\\"")
@@ -27,9 +34,10 @@ android {
         applicationId = "com.agentsanywhere.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "2.0.3"
+        versionCode = 12
+        versionName = "2.1.1"
         buildConfigField("String", "OFFICIAL_SERVER_URL", officialServerUrl.asBuildConfigString())
+        buildConfigField("String", "UPDATE_DOWNLOAD_URL", updateDownloadUrl.asBuildConfigString())
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         vectorDrawables {
@@ -93,6 +101,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.webkit)
+    implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.lucide.icons)
     implementation(libs.mlkit.barcode.scanning)
     implementation(libs.okhttp)

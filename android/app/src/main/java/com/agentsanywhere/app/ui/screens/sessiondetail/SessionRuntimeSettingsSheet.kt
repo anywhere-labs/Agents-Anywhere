@@ -30,6 +30,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,6 +68,7 @@ private fun List<RuntimeSelectionOption>.groupByModelLabel(): List<ModelOptionGr
 @Composable
 internal fun SessionRuntimeSettingsSheet(
     runtimeLabel: String,
+    agentPresetLabel: String?,
     modelOptions: List<RuntimeSelectionOption>,
     permissionOptions: List<RuntimeSelectionOption>,
     selectedModelId: String?,
@@ -106,6 +109,7 @@ internal fun SessionRuntimeSettingsSheet(
     ) {
         when (page) {
             RuntimeSettingsPage.Model -> ModelPage(
+                agentPresetLabel = agentPresetLabel,
                 groups = groupedModels,
                 selectedId = selectedModelId,
                 permissionLabel = selectedPermissionLabel,
@@ -139,6 +143,7 @@ internal fun SessionRuntimeSettingsSheet(
 
 @Composable
 private fun ModelPage(
+    agentPresetLabel: String?,
     groups: List<ModelOptionGroup>,
     selectedId: String?,
     permissionLabel: String?,
@@ -151,6 +156,30 @@ private fun ModelPage(
     onOpenModeEffort: () -> Unit,
     onSelect: (String) -> Unit,
 ) {
+    if (agentPresetLabel != null) {
+        Row(
+            modifier = Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.dsh_agent_preset),
+                color = palette.secondaryContent,
+                fontSize = 14.sp,
+            )
+            Text(
+                text = agentPresetLabel,
+                color = palette.content,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.End,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        DividerLine(palette.divider)
+    }
     ModelOptions(
         groups = groups,
         selectedId = selectedId,

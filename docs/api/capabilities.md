@@ -1,22 +1,20 @@
-# Effective Capability API
+# 有效能力 API
 
-Status: authoritative proposal for capability semantics in the next breaking API cleanup.
+状态：下一轮破坏性 API 清理中能力语义的权威提案。
 
-Agents Anywhere exposes effective capabilities to Web clients. Raw runtime
-capabilities, runtime state, connector presence, user authorization, takeover,
-and Server policy are internal inputs. Web should not run its own state machine
-to decide whether an action is possible.
+Agents Anywhere 向 Web 客户端暴露有效能力。原始运行时能力、运行时状态、连接器
+在线状态、用户授权、接管与 Server 策略都是内部输入。Web 不应自建状态机去判断
+某个操作是否可行。
 
-## Scopes
+## 作用域
 
-There are two effective capability scopes.
+有效能力有两个作用域。
 
-### Runtime-scoped effective capability
+### 运行时级有效能力
 
-Runtime-scoped capability describes what a connector runtime can do outside a
-specific session.
+运行时级能力描述连接器运行时在具体会话之外能做什么。
 
-Examples:
+示例：
 
 ```text
 runtime.config
@@ -29,16 +27,14 @@ runtime.ipc
 runtime.attachment
 ```
 
-Runtime-scoped capabilities affect dashboard/setup/create behavior, runtime
-configuration UI, global runtime catalogs before a session exists, and feature
-entry points such as IPC controls.
+运行时级能力影响 dashboard/设置/新建会话行为、运行时配置 UI、会话存在之前的
+全局运行时目录，以及 IPC 控制之类的功能入口。
 
-### Session-scoped effective capability
+### 会话级有效能力
 
-Session-scoped capability describes what is possible for one active session
-right now.
+会话级能力描述某个活跃会话此刻能做什么。
 
-Examples:
+示例：
 
 ```text
 session.send_message
@@ -51,13 +47,12 @@ session.catalog.model
 session.catalog.permission
 ```
 
-Session-scoped capability is RuntimeLive. It can change while a turn is running,
-while a command is executing, while the runtime is compacting context, or after
-the runtime notices that an active turn no longer exists.
+会话级能力是 RuntimeLive。它可以在 turn 运行中、命令执行中、运行时压缩上下文
+期间，或运行时发现活跃 turn 已不存在之后发生变化。
 
-## Capability shape
+## 能力形状
 
-The wire shape should stay simple and flat:
+线上的形状应保持简单扁平：
 
 ```json
 {
@@ -74,7 +69,7 @@ The wire shape should stay simple and flat:
 }
 ```
 
-Capability set:
+能力集合：
 
 ```json
 {
@@ -87,74 +82,69 @@ Capability set:
 }
 ```
 
-Field semantics:
+字段语义：
 
-- `supported=false`: the runtime or connector implementation does not support
-  this capability at all.
-- `available=false`: the capability exists but cannot be used now. This is
-  usually runtime-owned live state, for example no active turn, compact in
-  progress, command already running, or runtime process unavailable.
-- `allowed=false`: the capability exists and may be technically available, but
-  platform policy, user authorization, takeover, or connector ownership does
-  not allow this user to use it.
-- `unavailableReason` is a stable machine-readable code. UI may map it to
-  localized text, but should not rely on free-form messages.
-- `revision` orders capability-set updates for one scope. Clients ignore older
-  revisions.
+- `supported=false`：运行时或连接器实现完全不支持该能力。
+- `available=false`：能力存在但此刻不可用。通常属于运行时持有的实时状态，例如
+  没有活跃 turn、压缩进行中、命令已在执行，或运行时进程不可用。
+- `allowed=false`：能力存在且技术上可能可用，但平台策略、用户授权、接管或
+  连接器属主不允许该用户使用。
+- `unavailableReason` 是稳定的机器可读代码。UI 可以把它映射为本地化文本，但不应
+  依赖自由格式的消息。
+- `revision` 为同一作用域的能力集合更新排序。客户端忽略更旧的 revision。
 
-## Ownership
+## 所有权
 
-Runtime owns runtime facts:
+运行时拥有运行时事实：
 
 ```text
-currently running
-currently waiting
-active turn exists
-interrupt handle exists
-steer accepted now
-compact in progress
-selection can be changed now
-command can execute now
+当前是否运行中
+当前是否等待中
+是否存在活跃 turn
+是否存在 interrupt 句柄
+此刻 steer 是否被接受
+压缩是否进行中
+此刻能否修改选择
+此刻能否执行命令
 ```
 
-Server owns platform policy:
+Server 拥有平台策略：
 
 ```text
-connector online/offline projection
-runtime reachable/unreachable projection
-user authorization
-session ownership
-takeover
-server feature policy
+连接器在线/离线投影
+运行时可达/不可达投影
+用户授权
+会话归属
+接管
+服务器功能策略
 ```
 
-Server must not infer runtime-owned capability from:
+Server 不得从以下来源推断运行时所有的能力：
 
 ```text
 sessions.status
-timeline active items
-open notices
+活跃的 timeline 条目
+打开的通知
 session_active_runs
-historical compact/tool/approval items
+历史的 compact/工具/审批条目
 ```
 
-Web owns presentation only:
+Web 只负责呈现：
 
 ```text
-render enabled/disabled state from effective capability
-show status labels from RuntimeLive state
-show timeline from SessionTimeline
-call live read endpoints when a capability set is missing or stale
+从有效能力渲染启用/禁用状态
+从 RuntimeLive 状态展示状态标签
+从 SessionTimeline 展示 timeline
+能力集合缺失或过期时调用实时读取端点
 ```
 
-Web must not decide action availability from a local status state machine when
-an effective capability exists for that action.
+某个操作存在有效能力时，Web 不得用本地状态状态机决定该操作的可用性。
 
-## Pull API
+## 拉取 API
 
-All routes are mounted under `/api/v2`.
+所有路由挂在 `/api/v2` 下。
 
-Runtime-scoped capabilities live under runtime resources:
+运行时级能力位于运行时资源下：
 
 ```text
 GET /runtimes/{runtime}/capabilities
@@ -163,8 +153,8 @@ GET /runtimes/{runtime}/catalogs/permission
 GET /runtimes/{runtime}/commands
 ```
 
-If a connector must be selected because multiple local connectors expose the
-same runtime, encode that connector in the path rather than a query parameter:
+如果多个本地连接器暴露同一运行时、必须指定连接器，则把连接器编码进路径而不是
+查询参数：
 
 ```text
 GET /connectors/{connectorId}/runtimes/{runtime}/capabilities
@@ -173,7 +163,7 @@ GET /connectors/{connectorId}/runtimes/{runtime}/catalogs/permission
 GET /connectors/{connectorId}/runtimes/{runtime}/commands
 ```
 
-Session-scoped capabilities live under session runtime resources:
+会话级能力位于会话运行时资源下：
 
 ```text
 GET /sessions/{sessionId}/runtime/capabilities
@@ -182,55 +172,50 @@ GET /sessions/{sessionId}/runtime/catalogs/permission
 GET /sessions/{sessionId}/runtime/commands
 ```
 
-Command endpoints return the current command list. Web performs fuzzy matching
-and filtering locally after reading the list.
+命令端点返回当前命令列表。Web 在读取列表之后在本地做模糊匹配与过滤。
 
-Do not add new APIs like:
+不要再新增类似这样的 API：
 
 ```text
 GET /agents/{runtime}/model-catalog?connectorId=conn_...
 GET /connectors/{connectorId}/protocol/capabilities
 ```
 
-Those legacy routes are removed from the target API. If old agent catalog query
-routes or connector protocol capability reads still exist in a migration build,
-they should return an explicit migration error. They must not start runtimes,
-perform connector RPC, or serve UI capability facts. Other temporary shims
-should point callers to the scoped runtime or session endpoints above.
+这些旧路由已从目标 API 移除。如果迁移构建中仍存在旧的 Agent 目录查询路由或
+连接器协议能力读取，它们应返回显式的迁移错误，不得启动运行时、执行连接器 RPC
+或提供 UI 能力事实。其他临时垫片应把调用方指向上面带作用域的运行时或会话端点。
 
-## Push API
+## 推送 API
 
-Dashboard/runtime lifecycle:
+Dashboard/运行时生命周期：
 
 ```text
 runtime.capability.updated
 ```
 
-Session lifecycle:
+会话生命周期：
 
 ```text
 runtime.capability.updated
 ```
 
-The event name can be the same because the WebSocket scope is different. A
-dashboard or runtime socket receives runtime-scoped capability sets. A session
-socket receives session-scoped capability sets.
+事件名可以相同，因为 WebSocket 的作用域不同。dashboard/运行时 socket 接收
+运行时级能力集合；会话 socket 接收会话级能力集合。
 
-Session-scoped runtime actions should normally trigger capability updates when
-their availability changes. Examples:
+会话级运行时操作在可用性变化时通常应触发能力更新。例如：
 
 ```text
-turn starts       -> session.send_message false, session.interrupt true
-turn finishes     -> session.send_message true, session.interrupt false
-compact starts    -> session.send_message false, session.command.execute false
-compact finishes  -> session.send_message true, session.command.execute true
-no active turn    -> session.interrupt false
-takeover changes  -> allowed changes on session actions
+turn 开始       -> session.send_message false, session.interrupt true
+turn 结束       -> session.send_message true, session.interrupt false
+压缩开始        -> session.send_message false, session.command.execute false
+压缩结束        -> session.send_message true, session.command.execute true
+无活跃 turn     -> session.interrupt false
+接管状态变化    -> 会话操作的 allowed 变化
 ```
 
-## Relationship to runtime state
+## 与运行时状态的关系
 
-Runtime state remains useful for display:
+运行时状态对展示仍然有用：
 
 ```text
 idle
@@ -241,27 +226,22 @@ error
 disconnected
 ```
 
-Capability is the source for actions.
+能力是操作的事实来源。
 
-For example, Web may render "Codex is working" from `runtime.state.updated`, but
-the interrupt button is shown only when `session.interrupt` is effective.
+例如，Web 可以从 `runtime.state.updated` 渲染"Codex 正在工作"，但中断按钮只在
+`session.interrupt` 有效时才显示。
 
-## Migration notes
+## 迁移说明
 
-Existing `ProtocolCapabilitySet` fields can be reused during migration, but the
-source of truth changes:
+既有的 `ProtocolCapabilitySet` 字段可以在迁移期间复用，但事实来源发生了变化：
 
-- `effectiveCapabilities` remains in session snapshots as a transitional HTTP
-  aggregate field. Session realtime updates use
-  `runtime.capability.updated.payload.capabilitySet`.
-- `protocol.capabilitiesUpdated` is compatibility connector input.
-- `connector_protocol_capabilities` must not be used as authoritative UI truth.
-- Removed connector protocol capability reads migrate to scoped effective
-  capability endpoints.
-- Removed agent catalog reads with `connectorId` query params migrate to
-  connector runtime catalog paths.
-- Removed command query endpoints migrate to full command-list reads plus Web
-  local fuzzy matching.
+- `effectiveCapabilities` 作为过渡性的 HTTP 聚合字段保留在会话快照中。会话实时
+  更新使用 `runtime.capability.updated.payload.capabilitySet`。
+- `protocol.capabilitiesUpdated` 是兼容性的连接器输入。
+- `connector_protocol_capabilities` 不得作为权威的 UI 事实。
+- 被移除的连接器协议能力读取迁到带作用域的有效能力端点。
+- 被移除的带 `connectorId` 查询参数的 Agent 目录读取迁到连接器运行时目录路径。
+- 被移除的命令查询端点迁到完整的命令列表读取加 Web 本地模糊匹配。
 
-The target client reads effective capabilities from scoped live endpoints and
-listens for scoped `runtime.capability.updated` events.
+目标客户端从带作用域的实时端点读取有效能力，并监听带作用域的
+`runtime.capability.updated` 事件。

@@ -3,6 +3,7 @@ package com.agentsanywhere.app.ui.screens.home
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -141,6 +142,7 @@ internal fun HomeProjectList(
                         ProjectSessionStatusFilter.Active -> R.string.home_no_active_projects_create
                         ProjectSessionStatusFilter.Archived -> R.string.home_no_archived_projects_yet
                         ProjectSessionStatusFilter.All -> R.string.home_no_projects_create
+                        ProjectSessionStatusFilter.Working -> R.string.home_working_empty
                     },
                 ),
                 buttonLabel = stringResource(if (filtersActive) R.string.home_project_filter_clear else R.string.new_session_create_project),
@@ -176,6 +178,11 @@ internal fun HomeProjectList(
                         sessions = sessionsByProject[project.id].orEmpty(),
                         expanded = project.id in expandedProjectIds,
                         loading = project.id in loadingProjectIds,
+                        modifier = Modifier.animateItem(
+                                                placementSpec = spring(stiffness = 700f),
+                                                fadeOutSpec = null,
+                                                fadeInSpec = null,
+                                            ),
                         onExpandedChange = { onProjectExpandedChange(project, it) },
                         onMenu = onProjectMenu,
                         error = projectErrors[project.id],
@@ -188,6 +195,11 @@ internal fun HomeProjectList(
                 items(pinnedSessions, key = { "pinned-session-${it.id}" }) { session ->
                     HomeProjectSessionRow(
                         session = session,
+                        modifier = Modifier.animateItem(
+                            placementSpec = spring(stiffness = 700f),
+                            fadeOutSpec = null,
+                            fadeInSpec = null,
+                        ),
                         inset = false,
                         onClick = { onOpenSession(session) },
                         onLongPress = { onSessionLongPress(session, it) },
@@ -224,6 +236,11 @@ internal fun HomeProjectList(
                         sessions = sessionsByProject[project.id].orEmpty(),
                         expanded = project.id in expandedProjectIds,
                         loading = project.id in loadingProjectIds,
+                        modifier = Modifier.animateItem(
+                                                placementSpec = spring(stiffness = 700f),
+                                                fadeOutSpec = null,
+                                                fadeInSpec = null,
+                                            ),
                         onExpandedChange = { onProjectExpandedChange(project, it) },
                         onMenu = onProjectMenu,
                         error = projectErrors[project.id],
@@ -259,6 +276,7 @@ private fun HomeProjectTreeItem(
     sessions: List<AgentSession>,
     expanded: Boolean,
     loading: Boolean,
+    modifier: Modifier = Modifier,
     onExpandedChange: (Boolean) -> Unit,
     onMenu: (HomeProjectActionMenu) -> Unit,
     error: String?,
@@ -270,6 +288,7 @@ private fun HomeProjectTreeItem(
     HomeProjectRow(
         project = project,
         agentLabel = agentLabel,
+        modifier = modifier,
         expanded = expanded,
         onClick = { onExpandedChange(!expanded) },
         onMenu = onMenu,
@@ -329,6 +348,7 @@ private fun HomeProjectTreeItem(
 private fun HomeProjectRow(
     project: AgentProject,
     agentLabel: String?,
+    modifier: Modifier = Modifier,
     expanded: Boolean,
     onClick: () -> Unit,
     onMenu: (HomeProjectActionMenu) -> Unit,
@@ -339,7 +359,7 @@ private fun HomeProjectRow(
     var bounds by remember { mutableStateOf(Rect.Zero) }
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(if (agentLabel == null) 56.dp else 64.dp)
             .onGloballyPositioned { bounds = it.boundsInRoot() }

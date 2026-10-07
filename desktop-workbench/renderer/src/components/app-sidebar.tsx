@@ -29,6 +29,7 @@ import {
   selectPinnedSessions,
   selectAllSessions,
   groupSessionsByProject,
+  scopeSessionsByStatusFilter,
   selectProjectSessions,
   selectRegularProjects,
   type ProjectSessionStatusFilter,
@@ -103,16 +104,16 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   )
   // Same list without the device/Agent gate, used to explain an empty section.
   const projectsWithoutDeviceAgentFilter = React.useMemo(
-    () => selectRegularProjects(projects, sessions, projectSessionStatus, defaultFilter),
-    [projectSessionStatus, projects, sessions],
+    () => selectRegularProjects(projects, sessions, projectSessionStatus, { ...defaultFilter, status: filter.status }),
+    [filter.status, projectSessionStatus, projects, sessions],
   )
   const allSessions = React.useMemo(
     () => selectAllSessions(sessions, filter, search),
     [filter, search, sessions],
   )
   const projectSessionsById = React.useMemo(
-    () => groupSessionsByProject(sessions),
-    [sessions],
+    () => groupSessionsByProject(scopeSessionsByStatusFilter(sessions, filter)),
+    [filter, sessions],
   )
   const unassignedSessions = React.useMemo(() => {
     const projectIds = new Set(projects.map((project) => project.id))
@@ -124,11 +125,13 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
 
   // A row only shows the dimension that is actually filtered: with "all
   // devices" the device name stays off, with "all Agents" the Agent stays off,
-  // and with both on "all" the row keeps its original single line.
+  // and with both on "all" the row keeps its original single line. The
+  // in-progress view is the exception: its whole point is showing which
+  // device Agent is doing what, so both dimensions are always on.
   const identityParts = React.useMemo(() => ({
-    includeDevice: filter.connectorId !== "all",
-    includeAgents: filter.runtime !== "all",
-  }), [filter.connectorId, filter.runtime])
+    includeDevice: filter.connectorId !== "all" || filter.status === "working",
+    includeAgents: filter.runtime !== "all" || filter.status === "working",
+  }), [filter.connectorId, filter.runtime, filter.status])
 
   const sessionsForProject = React.useCallback(
     (projectId: string, status: ProjectSessionStatusFilter = "active") => selectProjectSessions(

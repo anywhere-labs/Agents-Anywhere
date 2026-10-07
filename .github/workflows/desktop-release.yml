@@ -1,0 +1,206 @@
+name: Desktop Release
+
+# Builds directly-installable artifacts for every desktop platform plus the
+# DSH plugin tarball. Artifacts are attached to the GitHub Release with the
+# stable names the hosting directory and the clients' baked update URLs use:
+#
+#   agents-anywhere-linux-x64.AppImage
+#   agents-anywhere-win-x64.exe
+#   agents-anywhere-dsh-bridge-next-<version>.tgz
+#
+# The installer download addresses are stamped at build time through
+# WORKBENCH_UPDATE_URL_* (see scripts/write-build-info.mjs). The update check
+# compares the live Server version against the baked serverVersion, so every
+# desktop package shipped from a tag must be built while all ends share one
+# version. Unsigned by default: signing activates automatically once the
+# platform credential secrets exist in the repository.
+#
+# macOS is intentionally absent: Apple-platform clients (iOS / macOS) are no
+# longer maintained in this project (2026-10 decision), so no darwin artifact
+# or update URL is produced here.
+
+permissions:
+  # softprops/action-gh-release attaches installers (and failure diagnostics)
+  # to the GitHub Release; the default fork token is read-only without this.
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      download_base_url:
+        description: Base URL under which artifacts are hosted (/desktop/...)
+        required: false
+        default: https://dsh.chyu.top/downloads
+  push:
+    tags:
+      - "v*"
+
+env:
+  DOWNLOAD_BASE_URL: ${{ inputs.download_base_url || vars.DOWNLOAD_BASE_URL || 'https://dsh.chyu.top/downloads' }}
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runs-on: ubuntu-latest
+            bundle-targets: linux-x64
+            builder-args: --linux AppImage --x64
+            artifact-name: agents-anywhere-linux-x64.AppImage
+            artifact-glob: "desktop-workbench/release/*.AppImage"
+          - platform: windows
+            runs-on: windows-latest
+            bundle-targets: win32-x64
+            builder-args: --win nsis --x64
+            artifact-name: agents-anywhere-win-x64.exe
+            artifact-glob: "desktop-workbench/release/*.exe"
+    name: Desktop (${{ matrix.platform }})
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash   # windows-latest defaults to pwsh; steps use bash syntax
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+      - name: Install dependencies
+        working-directory: desktop-workbench
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+          COREPACK_INTEGRITY_KEYS: "0"
+          # CI=true makes Yarn default to --immutable, but this repo
+          # intentionally ships no lockfiles, so the install would fail
+          # instantly with YN0028. Allow it to generate one on the fly.
+          YARN_ENABLE_IMMUTABLE_INSTALLS: "false"
+        # Identical flow to the green dsh-bridge-next.yml headless job. The
+        # retries absorb the transient npm-registry/corepack signature errors
+        # that made installs exit 1 within one second after the runner image
+        # migration; on persistent failure the last attempt's output is
+        # captured and attached to the Release (fork logs are not readable
+        # without repo-admin credentials).
+        run: |
+          corepack enable
+          for attempt in 1 2 3; do
+            echo "=== install attempt ${attempt} ==="
+            if corepack yarn install > yarn-install.log 2>&1; then
+              cat yarn-install.log
+              rm -f yarn-install.log
+              exit 0
+            fi
+            echo "--- attempt ${attempt} failed; output: ---"
+            cat yarn-install.log || true
+            sleep 20
+          done
+          cp yarn-install.log ../ci-diag-desktop.txt || true
+          node --version > node-version.txt 2>&1 || true
+          corepack --version >> node-version.txt 2>&1 || true
+          npm config get registry >> node-version.txt 2>&1 || true
+          exit 1
+      - name: Publish install diagnostics to the Release
+        if: failure()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            ci-diag-desktop.txt
+            desktop-workbench/node-version.txt
+          fail_on_unmatched_files: false
+      - name: Prepare uv and CPython bundles
+        working-directory: desktop-workbench
+        env:
+          UV_BUNDLE_TARGETS: ${{ matrix.bundle-targets }}
+          PYTHON_BUNDLE_TARGETS: ${{ matrix.bundle-targets }}
+        run: |
+          yarn bundle:uv
+          yarn bundle:python
+      - name: Build the application
+        working-directory: desktop-workbench
+        env:
+          # write-build-info.mjs stamps these into build-info.json during the
+          # build, and tsc inlines that JSON into main.js; they must be present
+          # here, not only at the electron-builder step. Clients pick their own
+          # platform's URL at runtime via process.platform.
+          WORKBENCH_UPDATE_URL_LINUX: ${{ env.DOWNLOAD_BASE_URL }}/desktop/agents-anywhere-linux-x64.AppImage
+          WORKBENCH_UPDATE_URL_WIN32: ${{ env.DOWNLOAD_BASE_URL }}/desktop/agents-anywhere-win-x64.exe
+        run: yarn build
+      - name: Package with electron-builder
+        working-directory: desktop-workbench
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        # dist-desktop.mjs enforces native signing flows; CI packages through
+        # electron-builder directly so unsigned artifacts build on any runner.
+        run: yarn electron-builder ${{ matrix.builder-args }} --publish never
+      - name: Upload the installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.artifact-glob }}
+          if-no-files-found: error
+          retention-days: 30
+      - name: Attach to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact-glob }}
+
+  plugin:
+    name: DSH plugin tarball
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+      - name: Build and pack @agents-anywhere/dsh-bridge-next
+        working-directory: dsh-bridge-next
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+          COREPACK_INTEGRITY_KEYS: "0"
+          YARN_ENABLE_IMMUTABLE_INSTALLS: "false"
+          YARN_NPM_MINIMAL_AGE_GATE: "0"
+        # Retry install like the desktop job: transient corepack/registry
+        # signature errors made runs exit 1 within one second.
+        run: |
+          corepack enable
+          for attempt in 1 2 3; do
+            echo "=== install attempt ${attempt} ==="
+            if corepack yarn install > yarn-install.log 2>&1; then
+              cat yarn-install.log
+              break
+            fi
+            cat yarn-install.log || true
+            sleep 20
+          done
+          test -f node_modules/.yarn-state.yml || exit 1
+          rm -f yarn-install.log
+          yarn build
+          yarn check:build
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
+      - name: Publish install diagnostics to the Release
+        if: failure()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: dsh-bridge-next/yarn-install.log
+          fail_on_unmatched_files: false
+      - name: Upload the tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-bridge-next-tarball
+          path: ${{ runner.temp }}/*.tgz
+          if-no-files-found: error
+          retention-days: 30
+      - name: Attach to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ runner.temp }}/*.tgz

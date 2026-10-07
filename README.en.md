@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/2.0.3.md"><img src="https://img.shields.io/badge/release-2.0.3-222222?style=flat" alt="Release 2.0.3"></a>
+  <a href="docs/releases/2.1.1.md"><img src="https://img.shields.io/badge/release-2.0.3-222222?style=flat" alt="Release 2.0.3"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-222222?style=flat" alt="MIT"></a>
   <a href="docker/README.md"><img src="https://img.shields.io/badge/self--hosted-Docker-222222?style=flat" alt="Self-host with Docker"></a>
 </p>
@@ -31,27 +31,30 @@ Install the desktop client on your work machine, then access it from your phone,
 
 | Platform | Get the client |
 | --- | --- |
-| **macOS** | [Universal DMG · 2.0.3](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/Agents%20Anywhere-2.0.3-universal.dmg) |
-| **Windows** | [x64 installer · 2.0.3](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/Agents%20Anywhere%20Setup%202.0.3.exe) |
-| **iOS / iPadOS** | [Download on the App Store](https://apps.apple.com/cn/app/agents-anywhere/id6787125178) · [Join TestFlight](https://testflight.apple.com/join/GKGaut99) |
-| **Android** | [APK · 2.0.3](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/agents-anywhere-2.0.3-release.apk) |
+| **Windows** | [x64 installer](https://dsh.chyu.top/downloads/desktop/agents-anywhere-win-x64.exe) (release CI, unsigned) |
+| **Linux desktop** | [x64 AppImage](https://dsh.chyu.top/downloads/desktop/agents-anywhere-linux-x64.AppImage) |
+| **Android** | [APK](https://dsh.chyu.top/downloads/android/agents-anywhere.apk) |
 | **Web** | [Open Web](https://web.agents-anywhere.com) |
 | **Linux / headless** | [Run the Connector CLI](connector/README.md) |
+| **macOS** | No longer maintained: no new releases; historical [2.0.3 DMG](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/Agents%20Anywhere-2.0.3-universal.dmg) |
+| **iOS / iPadOS** | No longer maintained: App Store / TestFlight builds remain available but unfixed |
 
 See the [download page](https://www.agents-anywhere.com/en/download) for platform details. Read the [upgrade guide](docs/upgrading.md) before upgrading a legacy deployment.
 
 <details>
 <summary>Platform requirements, installers and updates</summary>
 
-- macOS: Universal for Apple Silicon / Intel; signed and notarized; requires macOS 12 or later.
-- Windows: x64 desktop workbench with a managed Connector; the current installer is not code signed.
+- Windows: x64 desktop workbench with a managed Connector; the installer is not code signed (choose "Run anyway" at the SmartScreen prompt).
+- Linux desktop: x64 AppImage, no installation needed.
 - Android: Android 8.0 or later.
-- iOS / iPadOS: download from the App Store, or install the beta through TestFlight; beta availability is shown on the invitation page.
+- macOS / iOS / iPadOS: no longer maintained since 2.1.1; App Store, TestFlight and the historical DMG still provide old builds.
 - Linux / headless: run the Connector on the work machine and control it from another client.
 
-The macOS, Windows and Android files are **Agents Anywhere** installers hosted in the ModelScope repository `t4wefan/deepseek-harness-desktop`; the same files are also attached to the [v2.0.3 GitHub Release](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v2.0.3). Historical 0.1.x GitHub Releases are not the 2.0 download channel. In-app update addresses in the current released clients are still placeholders; download manually using the links above.
+Windows, Linux and Android installers are self-hosted under `https://dsh.chyu.top/downloads/` (directories `desktop/`, `android/`, `plugin/`), produced by the release CI and overwritten in place; file names are stable so older clients can fetch newer builds from their baked addresses. The DSH plugin ships as versioned tarballs per the [plugin distribution guide](docs/plugin-distribution.md).
 
-`main` is the current development branch. New source fixes may not yet be included in the 2.0.3 installers. Each client and service releases PATCH versions independently, and database schema revisions are numbered separately; see the [versioning rules](docs/versioning.md). See the [2.0.3 release notes](docs/releases/2.0.3.md) for release scope.
+Android and recent Desktop installers update in-app. Existing Windows builds that predate baked download addresses need one manual install, after which in-app updates work.
+
+`main` is the current development branch. New source fixes may not yet be included in the hosted installers. Each client and service releases PATCH versions independently, and database schema revisions are numbered separately; see the [versioning rules](docs/versioning.md). See the [2.1.1 release notes](docs/releases/2.1.1.md) for release scope.
 
 </details>
 
@@ -142,7 +145,7 @@ Development uses **Python 3.12+ / uv / Node.js 22 / Corepack + Yarn**. Start wit
 | Architecture and API | [Server architecture](docs/server-architecture.md) · [API documentation](docs/api/README.md) |
 | Agent integrations and local execution | [Connector](connector/README.md) · [Runtime protocol](docs/runtime-protocol/README.md) |
 | Web and desktop clients | [Web source](web-next/) · [Desktop Workbench](desktop-workbench/README.md) |
-| Native mobile clients | [Android](android/README.md) · [iOS source](ios/) |
+| Native mobile clients | [Android](android/README.md) (iOS is unmaintained; source kept for history) |
 | DSH integration | [DSH Bridge Next](dsh-bridge-next/README.md) |
 | More documentation | [Documentation index](docs/README.md) · [Protocol contracts](contracts/) |
 
