@@ -61,23 +61,31 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22.23.2
-      - name: Enable corepack
+      - name: Upgrade corepack and enable shims
         env:
+          # A fresh runner ships an older corepack whose bundled npm signing
+          # keys no longer match after registry key rotation, which makes
+          # "corepack yarn" exit 1 within a second. Installing the current
+          # corepack globally picks up the new keys; INTEGRITY_KEYS=0 is the
+          # belt-and-braces fallback, ENABLE_DOWNLOAD_PROMPT keeps it quiet.
+          COREPACK_INTEGRITY_KEYS: "0"
           COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
-        run: corepack enable
+        run: |
+          npm install -g corepack@latest
+          corepack --version
+          corepack enable
       - name: Install dependencies
         working-directory: desktop-workbench
         env:
-          # Node 24's corepack prompts before downloading the pinned Yarn; CI
-          # has no TTY, so make the download non-interactive. Plain `yarn
-          # install` (no --mode=skip-build) is required: native deps such as
-          # esbuild fetch their binaries in postinstall and the build needs them.
+          COREPACK_INTEGRITY_KEYS: "0"
           COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
           # Mirrors dsh-bridge-next.yml: resolve the pinned DSH release
           # candidates even though Yarn's supply-chain age gate would
           # otherwise reject freshly published packages.
           YARN_NPM_MINIMAL_AGE_GATE: "0"
-        run: corepack yarn install
+        run: |
+          corepack enable
+          corepack yarn install
       - name: Prepare uv and CPython bundles
         working-directory: desktop-workbench
         env:
@@ -127,13 +135,21 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22.23.2
+      - name: Upgrade corepack and enable shims
+        env:
+          COREPACK_INTEGRITY_KEYS: "0"
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+        run: |
+          npm install -g corepack@latest
+          corepack --version
+          corepack enable
       - name: Build and pack @agents-anywhere/dsh-bridge-next
         working-directory: dsh-bridge-next
         env:
+          COREPACK_INTEGRITY_KEYS: "0"
           COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
           YARN_NPM_MINIMAL_AGE_GATE: "0"
         run: |
-          corepack enable
           corepack yarn install
           yarn build
           yarn check:build
