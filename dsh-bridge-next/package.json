@@ -50,7 +50,8 @@
     "check:build": "node scripts/check-build.ts",
     "check": "yarn typecheck && yarn build && yarn check:build && yarn test",
     "prepack": "yarn check",
-    "test": "tsx --test tests/unit/*.test.ts tests/integration/*.test.ts"
+    "test": "tsx --test tests/unit/*.test.ts tests/integration/*.test.ts",
+    "release:manifest": "node scripts/write-release-manifest.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.4",
