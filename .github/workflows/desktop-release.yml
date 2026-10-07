@@ -74,6 +74,10 @@ jobs:
         env:
           COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
           COREPACK_INTEGRITY_KEYS: "0"
+          # CI=true makes Yarn default to --immutable, but this repo
+          # intentionally ships no lockfiles, so the install would fail
+          # instantly with YN0028. Allow it to generate one on the fly.
+          YARN_ENABLE_IMMUTABLE_INSTALLS: "false"
         # Identical flow to the green dsh-bridge-next.yml headless job. The
         # retries absorb the transient npm-registry/corepack signature errors
         # that made installs exit 1 within one second after the runner image
@@ -161,6 +165,7 @@ jobs:
         env:
           COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
           COREPACK_INTEGRITY_KEYS: "0"
+          YARN_ENABLE_IMMUTABLE_INSTALLS: "false"
           YARN_NPM_MINIMAL_AGE_GATE: "0"
         # Retry install like the desktop job: transient corepack/registry
         # signature errors made runs exit 1 within one second.
