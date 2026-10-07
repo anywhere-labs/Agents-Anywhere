@@ -59,6 +59,9 @@ jobs:
     name: Desktop (${{ matrix.platform }})
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash   # windows-latest defaults to pwsh; steps use bash syntax
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -66,59 +69,43 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22.23.2
-      - name: Upgrade corepack and enable shims
-        env:
-          # A fresh runner ships an older corepack whose bundled npm signing
-          # keys no longer match after registry key rotation, which makes
-          # "corepack yarn" exit 1 within a second. Installing the current
-          # corepack globally picks up the new keys; INTEGRITY_KEYS=0 is the
-          # belt-and-braces fallback, ENABLE_DOWNLOAD_PROMPT keeps it quiet.
-          COREPACK_INTEGRITY_KEYS: "0"
-          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
-        run: |
-          npm install -g corepack@latest
-          corepack --version
-          corepack enable
       - name: Install dependencies
         working-directory: desktop-workbench
         env:
-          COREPACK_INTEGRITY_KEYS: "0"
           COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
-          # Mirrors dsh-bridge-next.yml: resolve the pinned DSH release
-          # candidates even though Yarn's supply-chain age gate would
-          # otherwise reject freshly published packages.
-          YARN_NPM_MINIMAL_AGE_GATE: "0"
+          COREPACK_INTEGRITY_KEYS: "0"
+        # Identical flow to the green dsh-bridge-next.yml headless job. The
+        # retries absorb the transient npm-registry/corepack signature errors
+        # that made installs exit 1 within one second after the runner image
+        # migration; on persistent failure the last attempt's output is
+        # captured and attached to the Release (fork logs are not readable
+        # without repo-admin credentials).
         run: |
           corepack enable
-          corepack yarn install
-      - name: Collect install diagnostics
-        if: failure()
-        env:
-          COREPACK_INTEGRITY_KEYS: "0"
-          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
-          YARN_NPM_MINIMAL_AGE_GATE: "0"
-        run: |
-          {
-            echo "=== env ==="
-            uname -a || ver
-            node --version
-            npm --version
-            which corepack yarn npm node || where corepack yarn npm node || true
-            corepack --version
-            echo "=== yarn --version (bootstrap) ==="
-            cd desktop-workbench
-            corepack yarn --version 2>&1
-            echo "=== yarn install ==="
-            corepack yarn install 2>&1
-            echo "=== install exit: $? ==="
-          } > ci-diag.txt 2>&1 || true
-          head -200 ci-diag.txt
-      - name: Publish diagnostics to the Release
+          for attempt in 1 2 3; do
+            echo "=== install attempt ${attempt} ==="
+            if corepack yarn install > yarn-install.log 2>&1; then
+              cat yarn-install.log
+              rm -f yarn-install.log
+              exit 0
+            fi
+            echo "--- attempt ${attempt} failed; output: ---"
+            cat yarn-install.log || true
+            sleep 20
+          done
+          cp yarn-install.log ../ci-diag-desktop.txt || true
+          node --version > node-version.txt 2>&1 || true
+          corepack --version >> node-version.txt 2>&1 || true
+          npm config get registry >> node-version.txt 2>&1 || true
+          exit 1
+      - name: Publish install diagnostics to the Release
         if: failure()
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v2.1.1
-          files: ci-diag.txt
+          files: |
+            ci-diag-desktop.txt
+            desktop-workbench/node-version.txt
           fail_on_unmatched_files: false
       - name: Prepare uv and CPython bundles
         working-directory: desktop-workbench
@@ -169,51 +156,36 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22.23.2
-      - name: Upgrade corepack and enable shims
-        env:
-          COREPACK_INTEGRITY_KEYS: "0"
-          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
-        run: |
-          npm install -g corepack@latest
-          corepack --version
-          corepack enable
       - name: Build and pack @agents-anywhere/dsh-bridge-next
         working-directory: dsh-bridge-next
         env:
-          COREPACK_INTEGRITY_KEYS: "0"
           COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+          COREPACK_INTEGRITY_KEYS: "0"
           YARN_NPM_MINIMAL_AGE_GATE: "0"
+        # Retry install like the desktop job: transient corepack/registry
+        # signature errors made runs exit 1 within one second.
         run: |
-          corepack yarn install
+          corepack enable
+          for attempt in 1 2 3; do
+            echo "=== install attempt ${attempt} ==="
+            if corepack yarn install > yarn-install.log 2>&1; then
+              cat yarn-install.log
+              break
+            fi
+            cat yarn-install.log || true
+            sleep 20
+          done
+          test -f node_modules/.yarn-state.yml || exit 1
+          rm -f yarn-install.log
           yarn build
           yarn check:build
           npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
-      - name: Collect install diagnostics
-        if: failure()
-        working-directory: dsh-bridge-next
-        env:
-          COREPACK_INTEGRITY_KEYS: "0"
-          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
-          YARN_NPM_MINIMAL_AGE_GATE: "0"
-        run: |
-          {
-            echo "=== env ==="
-            node --version
-            which corepack yarn npm node || true
-            corepack --version
-            echo "=== yarn --version ==="
-            corepack yarn --version 2>&1
-            echo "=== yarn install ==="
-            corepack yarn install 2>&1
-            echo "=== install exit: $? ==="
-          } > ../ci-diag.txt 2>&1 || true
-          head -200 ../ci-diag.txt
-      - name: Publish diagnostics to the Release
+      - name: Publish install diagnostics to the Release
         if: failure()
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v2.1.1
-          files: ci-diag.txt
+          files: dsh-bridge-next/yarn-install.log
           fail_on_unmatched_files: false
       - name: Upload the tarball
         uses: actions/upload-artifact@v4
