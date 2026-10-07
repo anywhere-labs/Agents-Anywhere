@@ -60,12 +60,16 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22.23.2
       - name: Enable corepack and install dependencies
         working-directory: desktop-workbench
-        run: |
-          corepack enable
-          yarn install --mode=skip-build
+        env:
+          # Node 24's corepack prompts before downloading the pinned Yarn; CI
+          # has no TTY, so make the download non-interactive. Plain `yarn
+          # install` (no --mode=skip-build) is required: native deps such as
+          # esbuild fetch their binaries in postinstall and the build needs them.
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+        run: corepack yarn install
       - name: Prepare uv and CPython bundles
         working-directory: desktop-workbench
         env:
@@ -114,12 +118,14 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22.23.2
       - name: Build and pack @agents-anywhere/dsh-bridge-next
         working-directory: dsh-bridge-next
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
         run: |
           corepack enable
-          yarn install --mode=skip-build
+          corepack yarn install
           yarn build
           yarn check:build
           npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
