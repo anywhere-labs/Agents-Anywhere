@@ -106,7 +106,7 @@ jobs:
         if: failure()
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.1.1
+          tag_name: ${{ github.ref_name }}
           files: |
             ci-diag-desktop.txt
             desktop-workbench/node-version.txt
@@ -189,7 +189,7 @@ jobs:
         if: failure()
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.1.1
+          tag_name: ${{ github.ref_name }}
           files: dsh-bridge-next/yarn-install.log
           fail_on_unmatched_files: false
       - name: Upload the tarball
