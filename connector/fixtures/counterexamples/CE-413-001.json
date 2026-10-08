@@ -1,0 +1,7 @@
+{
+  "description": "Synthetic incremental timeline exceeds a small test HTTP budget",
+  "budgetBytes": 900,
+  "itemCount": 12,
+  "content": "测试\\\"🙂",
+  "repeat": 24
+}

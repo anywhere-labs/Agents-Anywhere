@@ -9,6 +9,12 @@ import httpx
 from connector.logging import logger
 from connector.server.auth import ConnectorAuthenticationError
 from connector.server.errors import ConnectorNetworkError
+from connector.server.ingest_batching import (
+    MAX_INGEST_BODY_BYTES,
+    ConnectorIngestSizeError,
+    iter_ingest_batches,
+    next_ingest_batch,
+)
 from connector.server.urls import api_v2_url
 
 # HTTP ingest owns explicit bulk sync and disconnected WebSocket fallback.
@@ -47,6 +53,7 @@ class ConnectorIngestClient:
         self._post_lock = asyncio.Lock()
         self._available = asyncio.Event()
         self._posting = False
+        self._max_body_bytes = MAX_INGEST_BODY_BYTES
 
     @property
     def has_pending(self) -> bool:
@@ -107,7 +114,7 @@ class ConnectorIngestClient:
                     logger.warning("connector ingest deferred notifications={} attempt={} error={}", len(self._inflight), attempt, exc)
                 await asyncio.sleep(min(30.0, self._retry_delay * 2 ** min(attempt - 1, 5)))
                 continue
-            except (ConnectorIngestRejectedError, httpx.HTTPStatusError) as exc:
+            except (ConnectorIngestRejectedError, ConnectorIngestSizeError, httpx.HTTPStatusError) as exc:
                 logger.warning("connector ingest permanently rejected notifications={} error={}", len(self._inflight), exc)
             self._inflight = []
             attempt = 0
@@ -128,7 +135,15 @@ class ConnectorIngestClient:
                 remaining = len(self._inflight) + self._notify_queue.qsize()
                 while remaining:
                     self._collect_pending()
-                    await self._post_batch(self._inflight)
+                    try:
+                        await self._post_batch(self._inflight)
+                    except ConnectorIngestSizeError as exc:
+                        # This queued batch belongs to an earlier producer. Its
+                        # permanent failure must not quarantine the direct caller.
+                        logger.warning(
+                            "queued ingest size rejected; continuing direct sync reason={} observed_bytes={} limit_bytes={}",
+                            exc.reason, exc.size_bytes, exc.limit_bytes,
+                        )
                     remaining = max(0, remaining - len(self._inflight))
                     self._inflight = []
                 await self._post_batch(notifications)
@@ -148,37 +163,46 @@ class ConnectorIngestClient:
         owned = client is None
         if client is None:
             client = self._http_client_factory(60)
+        pages = iter_ingest_batches(notifications, self._max_body_bytes)
+        page_number = 0
         try:
-            try:
-                response = await self._post_ingest_batch(
-                    client, access_token, notifications
-                )
-            except httpx.RequestError as exc:
-                raise ConnectorNetworkError(
-                    f"backend ingest request failed: {exc}"
-                ) from exc
-            if getattr(response, "status_code", None) == 401:
-                logger.warning(
-                    "connector ingest token rejected; refreshing access token and retrying"
-                )
-                access_token = await self._access_token_provider(True)
+            while (page := await asyncio.to_thread(next_ingest_batch, pages)) is not None:
+                body, last_page = page
+                # Encode each page once, off-loop. Both an auth retry and an
+                # ambiguous network replay retain the exact item IDs and order.
                 try:
-                    response = await self._post_ingest_batch(
-                        client, access_token, notifications
-                    )
+                    response = await self._post_ingest_batch(client, access_token, body)
                 except httpx.RequestError as exc:
                     raise ConnectorNetworkError(
-                        f"backend ingest retry failed: {exc}"
+                        f"backend ingest request failed: {type(exc).__name__}"
                     ) from exc
                 if getattr(response, "status_code", None) == 401:
-                    raise ConnectorAuthenticationError(
-                        "connector credential no longer valid"
+                    logger.warning(
+                        "connector ingest token rejected; refreshing access token and retrying"
                     )
-            status = getattr(response, "status_code", 200)
-            if status in {408, 429} or status >= 500:
-                raise ConnectorNetworkError(f"backend ingest temporarily unavailable: HTTP {status}")
-            response.raise_for_status()
-            _raise_for_rejected_notifications(response)
+                    access_token = await self._access_token_provider(True)
+                    try:
+                        response = await self._post_ingest_batch(client, access_token, body)
+                    except httpx.RequestError as exc:
+                        raise ConnectorNetworkError(
+                            f"backend ingest retry failed: {type(exc).__name__}"
+                        ) from exc
+                    if getattr(response, "status_code", None) == 401:
+                        raise ConnectorAuthenticationError("connector credential no longer valid")
+                status = getattr(response, "status_code", 200)
+                if status == 413:
+                    raise ConnectorIngestSizeError(len(body), self._max_body_bytes, "http_413")
+                if status in {408, 429} or status >= 500:
+                    raise ConnectorNetworkError(f"backend ingest temporarily unavailable: HTTP {status}")
+                response.raise_for_status()
+                _raise_for_rejected_notifications(response)
+                page_number += 1
+                if len(body) >= 1024 * 1024 or page_number > 1:
+                    logger.info("bounded ingest page accepted page={} bytes={}", page_number, len(body))
+                if last_page:
+                    # Allow the caller to clear inflight/commit without a new
+                    # cancellation point after final acceptance.
+                    break
         finally:
             if owned:
                 await client.aclose()
@@ -187,12 +211,12 @@ class ConnectorIngestClient:
         self,
         client: httpx.AsyncClient,
         access_token: str,
-        notifications: list[dict[str, Any]],
+        body: bytes,
     ) -> httpx.Response:
         return await client.post(
             api_v2_url(self._server_url, "/connector/ingest"),
-            headers={"Authorization": f"Bearer {access_token}"},
-            json={"notifications": notifications},
+            headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+            content=body,
             timeout=60,
         )
 

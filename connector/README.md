@@ -13,7 +13,7 @@ back to the backend.
 ```text
 connector/
   runtime_protocol/  AgentRuntime, RuntimeProvider, RuntimeHostClient contracts
-  runtimes/          Codex, Claude and DSH RuntimeProvider/AgentRuntime packages
+  runtimes/          Codex, Claude, DSH and Pi RuntimeProvider/AgentRuntime packages
   server/            Backend auth, ingest, RPC channel, request dispatch, host mapping
   core/              Connector config, JSON-RPC, runtime owner, runtime config storage
   local/             Local filesystem, shell, and terminal backends
@@ -135,7 +135,7 @@ atomic file transactions and legacy migration.
 
 ## Runtime Discovery
 
-The default providers are Codex, Claude and DSH. The connector reports attached runtime
+The default providers are Codex, Claude, DSH and Pi. The connector reports attached runtime
 capabilities to the server. Codex is discovered through the official
 `openai-codex` SDK package; the connector does not use a Codex CLI/app-server
 path or IPC switch as an active runtime surface. If Claude Code is not on
@@ -188,6 +188,23 @@ The server can ask an online connector to perform local work:
 | `AGENT_CONNECTOR_KV_FILE` | Legacy KV copy source. Defaults to `~/.agents-anywhere/connector-kv.json`; new runtime writes use the instance's `kv.json`. |
 | `AGENT_CONNECTOR_ATTACHMENTS_ROOT` | Runtime attachment download directory. Defaults to `~/.agents-anywhere/attachments`. |
 | `CLAUDE_BIN` | Explicit Claude Code CLI path. |
+
+## Pi Runtime and bounded history uploads
+
+Pi is registered natively by the standard Connector; no external `pi_aa` package,
+separate Connector process, or desktop `.pth` hook is required. Install Pi/Node
+separately and configure a Pi runtime with an executable, session directory and
+working directory. `ask-writes` remains the default; tool approval is not an OS
+sandbox. Pointing at an existing session directory uploads its history to AA.
+
+Incremental history ingest is byte-batched (8 MiB by default). Whole replacement
+snapshots are never split or mislabelled as a final page; oversized indivisible
+records fail explicitly without truncation. Checkpoints advance only after every
+page is accepted. See [Pi integration and sync boundaries](../docs/runtime-protocol/pi.md)
+for configuration, migration, verification and licensing details.
+
+An offline native smoke probe, which uses an empty agent directory and makes no
+model requests, is available as `uv run python scripts/probe_pi.py`.
 
 ## Verify
 
