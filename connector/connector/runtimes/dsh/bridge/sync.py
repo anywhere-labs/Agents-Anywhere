@@ -50,7 +50,7 @@ REJECTED_RETRY_MAX_DELAY_SECONDS = 30 * 60.0
 _QUARANTINED_HISTORY = {"timeline.itemUpsert", "session.turnEnded"}
 
 
-@dataclass(frozen=True)
+@dataclass
 class _Quarantine:
     external_session_id: str
     through_seq: Any
@@ -58,6 +58,9 @@ class _Quarantine:
     # Not a size refusal: request a new capture after a backoff.
     retryable: bool = False
     attempts: int = 1
+    # The Host reported a source fact other than "available" (for example
+    # archived) while quarantined; a recovery must not override it.
+    host_fact: bool = False
 
 
 def _checkpoint(value: Any) -> dict[str, Any] | None:
@@ -230,7 +233,17 @@ class SyncRelay:
         except _SESSION_INGEST_ERRORS as error:
             await self.quarantine(session_id, meta["externalSessionId"], snapshot["throughSeq"], error)
             return
-        self.quarantined.pop(session_id, None)
+        released = self.quarantined.pop(session_id, None)
+        source = meta.get("sourceState")
+        if released is not None and not released.host_fact and isinstance(source, dict):
+            # The capture's source fact carries its capture time, which can be
+            # older than an unavailable observation reported while its pages
+            # arrived; the Server keeps the newer one. Restate it as of now.
+            await self.host.publish_runtime_notifications("dsh", [{
+                "method": "session.source.updated",
+                "params": {"sessionId": session_id, "externalSessionId": meta["externalSessionId"],
+                           **source, "observedAt": _observed_now()},
+            }])
 
     async def quarantine(self, session_id: str, external_id: str, through_seq: Any, error: Exception) -> None:
         """Isolate one session whose history the backend refused.
@@ -280,7 +293,10 @@ class SyncRelay:
     def source_state_for(self, session_id: str, source: dict[str, Any]) -> dict[str, Any]:
         """The source fact to report for a session, honouring its quarantine."""
         rejected = self.quarantined.get(session_id)
-        if rejected is None or source.get("availability") != "available":
+        if rejected is None:
+            return source
+        if source.get("availability") != "available":
+            rejected.host_fact = True
             return source
         return {**rejected.source_state, "observedAt": _observed_now()}
 
@@ -291,12 +307,16 @@ class SyncRelay:
         method, params = notice.get("method"), notice.get("params")
         if not isinstance(params, dict):
             return notice
-        if self._quarantine_for(params) is not None:
+        if (rejected := self._quarantine_for(params)) is not None:
             if method in _QUARANTINED_HISTORY:
                 return None
-            if method == "session.source.updated" and params.get("availability") == "available":
-                return None
+            if method == "session.source.updated":
+                if params.get("availability") == "available":
+                    return None
+                rejected.host_fact = True
             if method == "session.meta.upsert" and isinstance(params.get("sourceState"), dict):
+                if params["sourceState"].get("availability") != "available":
+                    rejected.host_fact = True
                 source = self.source_state_for(params["sessionId"], params["sourceState"])
                 return {**notice, "params": {**params, "sourceState": source}}
         if method == "session.inventory.complete" and isinstance(params.get("sessions"), list):

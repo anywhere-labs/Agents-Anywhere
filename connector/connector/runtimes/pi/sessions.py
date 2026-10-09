@@ -96,7 +96,7 @@ def _parse_line(raw: bytes) -> Mapping[str, Any] | None:
         return None
     try:
         record = json.loads(stripped)
-    except json.JSONDecodeError:
+    except ValueError:  # bad JSON, or a line cut inside a UTF-8 sequence
         return None
     return record if isinstance(record, Mapping) else None
 
@@ -241,11 +241,17 @@ class SessionDirectory:
         return summary
 
 
+class LastEntryUnknown(Exception):
+    """The last entry could not be read within the budget."""
+
+
 def last_entry_id(path: Path, *, limit: int = 8 * 1024 * 1024) -> str | None:
     """The id of the last complete entry in a session file, reading from its end.
 
     One entry can be large (an inlined attachment), so blocks are read back
-    until a whole line is in hand. The header and unparseable lines are skipped.
+    until a whole line is in hand. The header and unparseable lines are
+    skipped. ``None`` means the file has no entry; ``LastEntryUnknown`` that
+    the last ``limit`` bytes held none, so the answer is not known.
     """
 
     try:
@@ -271,6 +277,8 @@ def last_entry_id(path: Path, *, limit: int = 8 * 1024 * 1024) -> str | None:
                 entry_id = record.get("id")
                 if isinstance(entry_id, str) and entry_id:
                     return entry_id
+        if position > 0:
+            raise LastEntryUnknown(str(path))
     return None
 
 

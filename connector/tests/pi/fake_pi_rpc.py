@@ -12,6 +12,13 @@ Behaviour is controlled by environment variables:
 - A ``/hold-dialog`` prompt behaves like an extension command whose handler
   opens a select dialog: Pi answers the prompt (``handled``) only after the
   dialog is answered, and records the answer as a custom message.
+- ``/hold-sleep <seconds>`` is an extension command that works that long
+  before answering ``handled``; ``/fail-late <seconds>`` fails after that long;
+  ``/switch-model`` switches the model the way ``pi.setModel`` does, without
+  an event.
+- ``PI_FAKE_GET_STATE_FAIL``: ``get_state`` fails.
+- ``PI_FAKE_IMAGE_HINT``: like Pi's image normalization, a prompt with images
+  gets a hint appended to its text.
 """
 
 from __future__ import annotations
@@ -25,14 +32,29 @@ from pathlib import Path
 
 VERSION = os.environ.get("PI_FAKE_VERSION", "9.9.9-fake")
 
-STATE: dict[str, object] = {
-    "model": {
+MODELS: list[dict] = [
+    {
         "id": "test-model",
         "name": "Test Model",
         "provider": "test",
         "reasoning": True,
         "contextWindow": 128_000,
     },
+    {"id": "other-model", "name": "Other Model", "provider": "test"},
+    # Same model name under another provider: pi allows it, so the catalog
+    # must keep ids unique and label the titles.
+    {
+        "id": "test-model",
+        "name": "Test Model",
+        "provider": "alt",
+        "reasoning": True,
+        "thinkingLevelMap": {"minimal": None, "xhigh": "xhigh"},
+    },
+]
+LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+STATE: dict[str, object] = {
+    "model": dict(MODELS[0]),
     "thinkingLevel": "medium",
     "isStreaming": False,
     "isCompacting": False,
@@ -46,7 +68,42 @@ STATE: dict[str, object] = {
     "heldPrompt": None,
     # Entry ids this process knows: loaded at startup or written by it.
     "knownIds": set(),
+    # Like Pi's in-memory session tree: new entries continue from this leaf,
+    # not from whatever another process appended to the file.
+    "leaf": None,
 }
+
+
+def supported_levels(model: dict) -> list[str]:
+    """pi-ai getSupportedThinkingLevels."""
+
+    if not model.get("reasoning"):
+        return ["off"]
+    mapping = model.get("thinkingLevelMap") or {}
+    return [
+        level
+        for level in LEVELS
+        if not (level in mapping and mapping[level] is None)
+        and not (level in ("xhigh", "max") and level not in mapping)
+    ]
+
+
+def clamp_level(model: dict, level: str) -> str:
+    """pi-ai clampThinkingLevel."""
+
+    available = supported_levels(model)
+    if level in available:
+        return level
+    index = LEVELS.index(level) if level in LEVELS else -1
+    if index == -1:
+        return available[0]
+    for candidate in LEVELS[index:]:
+        if candidate in available:
+            return candidate
+    for candidate in reversed(LEVELS[:index]):
+        if candidate in available:
+            return candidate
+    return available[0]
 
 
 def emit(record: dict) -> None:
@@ -84,6 +141,7 @@ def last_entry_id() -> str | None:
 def append(record: dict) -> None:
     if isinstance(record.get("id"), str) and record.get("type") != "session":
         STATE["knownIds"].add(record["id"])  # type: ignore[union-attr]
+        STATE["leaf"] = record["id"]
     path = session_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
@@ -156,7 +214,7 @@ def save_message(message: dict) -> None:
         {
             "type": "message",
             "id": uuid.uuid4().hex[:8],
-            "parentId": last_entry_id(),
+            "parentId": STATE["leaf"],
             "timestamp": "2026-01-01T00:00:02.000Z",
             "message": message,
         }
@@ -215,6 +273,8 @@ def finish_tool(tool: dict, allowed: bool) -> None:
 def handle_prompt(command: dict) -> None:
     text = command.get("message", "")
     images = command.get("images") or []
+    if images and os.environ.get("PI_FAKE_IMAGE_HINT"):
+        text = f"{text}\n\n[Image resized to fit the model]"
     content = text if not images else [{"type": "text", "text": text}, *images]
     ensure_header()
     STATE["isStreaming"] = True
@@ -313,7 +373,17 @@ def handle_command(command: dict) -> None:
     log_command(command)
     command_type = command.get("type")
     request_id = command.get("id")
-    if command_type == "get_state":
+    if command_type == "get_state" and os.environ.get("PI_FAKE_GET_STATE_FAIL"):
+        emit(
+            {
+                "id": request_id,
+                "type": "response",
+                "command": "get_state",
+                "success": False,
+                "error": "state unavailable",
+            }
+        )
+    elif command_type == "get_state":
         emit(
             {
                 "id": request_id,
@@ -321,6 +391,43 @@ def handle_command(command: dict) -> None:
                 "command": "get_state",
                 "success": True,
                 "data": state_data(),
+            }
+        )
+    elif command_type == "prompt" and str(command.get("message", "")).startswith(
+        ("/hold-sleep", "/fail-late")
+    ):
+        name, _, seconds = str(command["message"]).partition(" ")
+        time.sleep(float(seconds or "1"))
+        if name == "/fail-late":
+            emit(
+                {
+                    "id": request_id,
+                    "type": "response",
+                    "command": "prompt",
+                    "success": False,
+                    "error": "late failure",
+                }
+            )
+        else:
+            emit(
+                {
+                    "id": request_id,
+                    "type": "response",
+                    "command": "prompt",
+                    "success": True,
+                    "data": {"disposition": "handled"},
+                }
+            )
+    elif command_type == "prompt" and command.get("message") == "/switch-model":
+        STATE["model"] = dict(MODELS[1])
+        STATE["thinkingLevel"] = clamp_level(STATE["model"], str(STATE["thinkingLevel"]))  # type: ignore[arg-type]
+        emit(
+            {
+                "id": request_id,
+                "type": "response",
+                "command": "prompt",
+                "success": True,
+                "data": {"disposition": "handled"},
             }
         )
     elif command_type == "prompt" and str(command.get("message", "")).startswith("/hold-dialog"):
@@ -355,10 +462,10 @@ def handle_command(command: dict) -> None:
             {
                 "type": "compaction",
                 "id": uuid.uuid4().hex[:8],
-                "parentId": last_entry_id(),
+                "parentId": STATE["leaf"],
                 "timestamp": "2026-01-01T00:00:03.000Z",
                 "summary": "Compacted: " + str(command.get("customInstructions") or "all"),
-                "firstKeptEntryId": last_entry_id(),
+                "firstKeptEntryId": STATE["leaf"],
                 "tokensBefore": 1000,
             }
         )
@@ -380,12 +487,25 @@ def handle_command(command: dict) -> None:
         emit({"id": request_id, "type": "response", "command": "abort", "success": True})
         emit({"type": "agent_settled"})
     elif command_type == "set_model":
-        model = dict(STATE["model"])  # type: ignore[arg-type]
-        if isinstance(command.get("modelId"), str):
-            model["id"] = command["modelId"]
-        if isinstance(command.get("provider"), str):
-            model["provider"] = command["provider"]
+        provider = command.get("provider") or STATE["model"]["provider"]  # type: ignore[index]
+        found = next(
+            (m for m in MODELS if m["id"] == command.get("modelId") and m["provider"] == provider),
+            None,
+        )
+        if found is None:
+            emit(
+                {
+                    "id": request_id,
+                    "type": "response",
+                    "command": "set_model",
+                    "success": False,
+                    "error": f"Model not found: {provider}/{command.get('modelId')}",
+                }
+            )
+            return
+        model = dict(found)
         STATE["model"] = model
+        STATE["thinkingLevel"] = clamp_level(model, str(STATE["thinkingLevel"]))
         emit(
             {
                 "id": request_id,
@@ -396,7 +516,9 @@ def handle_command(command: dict) -> None:
             }
         )
     elif command_type == "set_thinking_level":
-        STATE["thinkingLevel"] = command.get("level")
+        STATE["thinkingLevel"] = clamp_level(
+            STATE["model"], str(command.get("level"))  # type: ignore[arg-type]
+        )
         emit(
             {
                 "id": request_id,
@@ -427,24 +549,7 @@ def handle_command(command: dict) -> None:
                 "type": "response",
                 "command": "get_available_models",
                 "success": True,
-                "data": {
-                    "models": [
-                        dict(STATE["model"]),  # type: ignore[arg-type]
-                        {
-                            "id": "other-model",
-                            "name": "Other Model",
-                            "provider": "test",
-                        },
-                        # Same model name under another provider: pi allows
-                        # it, so the catalog must keep ids unique and label
-                        # the titles.
-                        {
-                            "id": "test-model",
-                            "name": "Test Model",
-                            "provider": "alt",
-                        },
-                    ]
-                },
+                "data": {"models": [dict(model) for model in MODELS]},
             }
         )
     elif command_type == "get_entries":
@@ -467,7 +572,7 @@ def handle_command(command: dict) -> None:
                     "type": "response",
                     "command": "get_entries",
                     "success": True,
-                    "data": {"entries": [], "leafId": last_entry_id()},
+                    "data": {"entries": [], "leafId": STATE["leaf"]},
                 }
             )
     elif command_type == "get_commands":
@@ -505,7 +610,7 @@ def handle_command(command: dict) -> None:
             {
                 "type": "custom_message",
                 "id": uuid.uuid4().hex[:8],
-                "parentId": last_entry_id(),
+                "parentId": STATE["leaf"],
                 "timestamp": "2026-01-01T00:00:04.000Z",
                 "customType": "held-dialog",
                 "content": "held dialog answered: " + str(command.get("value")),
@@ -554,6 +659,9 @@ def run_rpc() -> int:
         if not isinstance(command, dict):
             continue
         handle_command(command)
+    # PI_FAKE_EXIT_DELAY: keep running a while after stdin closes, like a Pi
+    # process finishing its shutdown.
+    time.sleep(float(os.environ.get("PI_FAKE_EXIT_DELAY", "0")))
     return 0
 
 
@@ -581,6 +689,7 @@ def main() -> int:
                                 continue
                             if isinstance(record.get("id"), str) and record.get("type") != "session":
                                 STATE["knownIds"].add(record["id"])  # type: ignore[union-attr]
+                                STATE["leaf"] = record["id"]
         log_command(
             {
                 "type": "startup",

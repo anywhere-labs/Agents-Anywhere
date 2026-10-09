@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from connector.runtimes.pi.projection import project_session
+from connector.runtimes.pi.projection import project_session, receipt_key
 from connector.runtimes.pi.stream import PiStreamAccumulator
 
 
@@ -358,8 +358,9 @@ async def test_user_message_streams_first_with_its_final_identity(fake_host) -> 
         "s", "/s.jsonl", publish=fake_host.timeline_item_upsert, throttle_seconds=0
     )
     display = {"text": "look", "attachments": [{"fileId": "f1", "name": "a.png"}]}
+    receipt = {"clientMessageId": "client-1", "display": display}
     # Bound after the stream was seeded, as a send to an idle session does.
-    stream.bind_client_message("look\n[note]", "client-1", display)
+    stream.bind_receipt(receipt_key(5), receipt)
     user = await user_turn(stream, "look\n[note]", 5)
     await stream.handle_event({"type": "message_start", "message": message("assistant", [], 6)})
     await stream.handle_event(update("text_delta", 0, delta="seen"))
@@ -375,8 +376,7 @@ async def test_user_message_streams_first_with_its_final_identity(fake_host) -> 
     final = projected(
         entry(user, "assigned-later"),
         entry(assistant, "a"),
-        client_messages=[("look\n[note]", "client-1")],
-        client_displays={"client-1": display},
+        client_receipts={receipt_key(5): receipt},
     )
     assert_final_identity(stream, final)
     await stream.close()

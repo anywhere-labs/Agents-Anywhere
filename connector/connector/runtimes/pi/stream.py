@@ -51,7 +51,7 @@ class PiStreamAccumulator:
         publish: Callable[[RuntimeTimelineItem], Awaitable[None]],
         entries: Sequence[Mapping[str, Any]] = (),
         client_messages: Sequence[tuple[str, str]] = (),
-        client_displays: Mapping[str, Mapping[str, Any]] | None = None,
+        client_receipts: Mapping[str, Mapping[str, Any]] | None = None,
         throttle_seconds: float = 0.12,
     ) -> None:
         self.session_id = session_id
@@ -68,13 +68,13 @@ class PiStreamAccumulator:
         self._blocks: dict[int, dict[str, Any]] = {}
         self._arguments: dict[int, str] = {}
         self._other_start: Mapping[str, Any] | None = None
-        self._seed(entries, client_messages, client_displays)
+        self._seed(entries, client_messages, client_receipts)
 
     def _seed(
         self,
         entries: Sequence[Mapping[str, Any]],
         client_messages: Sequence[tuple[str, str]],
-        client_displays: Mapping[str, Mapping[str, Any]] | None = None,
+        client_receipts: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
         # Messages without entry ids are keyed per run; anchor them to the seed
         # so a later run cannot reuse an earlier run's live identities.
@@ -86,7 +86,7 @@ class PiStreamAccumulator:
             self.session_id,
             self.external_session_id,
             client_messages=client_messages,
-            client_displays=client_displays,
+            client_receipts=client_receipts,
             live_key_anchor=anchor,
         )
         # Leave the last turn open: a subsequent user message closes it in
@@ -102,7 +102,7 @@ class PiStreamAccumulator:
         *,
         entries: Sequence[Mapping[str, Any]] = (),
         client_messages: Sequence[tuple[str, str]] = (),
-        client_displays: Mapping[str, Mapping[str, Any]] | None = None,
+        client_receipts: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
         """Start a new run from an authoritative branch, discarding old partials."""
 
@@ -115,14 +115,17 @@ class PiStreamAccumulator:
             self._pending.clear()
             self._live_items.clear()
             self._last_flush = float("-inf")
-            self._seed(entries, client_messages, client_displays)
+            self._seed(entries, client_messages, client_receipts)
 
-    def bind_client_message(
-        self, text: str, client_message_id: str, display: Mapping[str, Any] | None = None
-    ) -> None:
+    def bind_client_message(self, text: str, client_message_id: str) -> None:
         """Let the user message of the next run carry its client message id."""
 
-        self._projector.bind_client_message(text, client_message_id, display)
+        self._projector.bind_client_message(text, client_message_id)
+
+    def bind_receipt(self, key: str, receipt: Mapping[str, Any]) -> None:
+        """Tie a user message Pi just emitted to the client send it came from."""
+
+        self._projector.bind_receipt(key, receipt)
 
     def items(self) -> tuple[RuntimeTimelineItem, ...]:
         """Current live user/assistant/tool items, including any unflushed changes."""

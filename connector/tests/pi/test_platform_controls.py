@@ -60,14 +60,22 @@ async def test_model_catalog_offers_thinking_levels_as_reasoning_items(
     await runtime.start()
     try:
         catalog = await runtime.list_model_catalog()
-        reasoning, plain = catalog.models[0], catalog.models[1]
+        reasoning, plain, mapped = catalog.models
         assert [item.id for item in reasoning.reasoning_items] == list(BASE_LEVELS)
-        assert reasoning.reasoning_items[3].selection_id == "test:test-model#medium"
+        assert reasoning.reasoning_items[3].selection_id == "test:test-model#thinking=medium"
         assert reasoning.reasoning_items[3].title == "Medium"
         # The model alone stays selectable; Pi keeps the session's level.
         assert reasoning.selection_id == "test:test-model"
         assert plain.reasoning_items == ()
         assert plain.selection_id == "test:other-model"
+        # thinkingLevelMap: null drops a level, xhigh/max only when mapped.
+        assert [item.id for item in mapped.reasoning_items] == [
+            "off",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+        ]
     finally:
         await runtime.stop()
 
@@ -83,10 +91,10 @@ async def test_reasoning_selection_sets_model_and_level_only_when_they_change(
         await runtime.create_and_start_session("levels", "hi")
         await wait_for(lambda: bool(fake_host.turn_ends))
         await runtime.update_session_selections(
-            "levels", None, {"model": "test:other-model#high"}
+            "levels", None, {"model": "alt:test-model#thinking=high"}
         )
         state = await runtime.get_session_state("levels")
-        assert state.selections["model"] == "test:other-model#high"
+        assert state.selections["model"] == "alt:test-model#thinking=high"
         assert state.selections["thinkingLevel"] == "high"
 
         def sent(kind: str) -> int:
@@ -101,14 +109,16 @@ async def test_reasoning_selection_sets_model_and_level_only_when_they_change(
             "levels",
             None,
             "again",
-            selections={"model": "test:other-model#high", "permission": "ask-writes"},
+            selections={"model": "alt:test-model#thinking=high", "permission": "ask-writes"},
         )
         await wait_for(lambda: len(fake_host.turn_ends) > ended)
         assert (sent("set_model"), sent("set_thinking_level")) == (1, 1)
-        await runtime.update_session_selections("levels", None, {"model": "test:other-model#low"})
+        await runtime.update_session_selections(
+            "levels", None, {"model": "alt:test-model#thinking=low"}
+        )
         assert (sent("set_model"), sent("set_thinking_level")) == (1, 2)
         assert (await runtime.get_session_state("levels")).selections["model"] == (
-            "test:other-model#low"
+            "alt:test-model#thinking=low"
         )
     finally:
         await runtime.stop()
@@ -150,7 +160,7 @@ async def test_idle_session_state_reports_the_model_and_level_pi_restores(
         session_id = platform_session_id(fake_host.session_namespace, str(path))
         state = await runtime.get_session_state(session_id, str(path))
         assert state is not None and state.status == "idle"
-        assert state.selections["model"] == "test:test-model#high"
+        assert state.selections["model"] == "test:test-model#thinking=high"
         assert state.selections["thinkingLevel"] == "high"
     finally:
         await runtime.stop()
@@ -259,6 +269,12 @@ async def test_a_session_another_pi_process_wrote_is_reloaded_before_the_next_tu
         # The live process reopened the file before the prompt, so it
         # continues after the terminal's entry instead of branching.
         assert startups() == 2
+        entries = [json.loads(line) for line in session_file.read_text(encoding="utf-8").splitlines()]
+        (third,) = (
+            e for e in entries
+            if e.get("type") == "message" and e["message"].get("content") == "third"
+        )
+        assert third["parentId"] == "ext-1"
         assert str(session_file) in [c for c in commands(log) if c["type"] == "startup"][-1]["argv"]
         assert not any(t.get("outcome") == "failed" for t in fake_host.turn_ends)
     finally:

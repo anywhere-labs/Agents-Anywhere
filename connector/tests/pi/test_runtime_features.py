@@ -181,7 +181,7 @@ async def test_permission_catalog_restart_and_persistence(
         await runtime.update_session_selections(
             "modes",
             str(session_file),
-            {"permission": "read-only", "model": "test:other-model", "thinkingLevel": "high"},
+            {"permission": "read-only", "model": "alt:test-model", "thinkingLevel": "high"},
         )
         assert live.process.pid != previous_pid
         assert live.external_id == str(session_file)
@@ -189,7 +189,7 @@ async def test_permission_catalog_restart_and_persistence(
         state = await runtime.get_session_state("modes")
         assert state.selections == {
             "permission": "read-only",
-            "model": "test:other-model#high",
+            "model": "alt:test-model#thinking=high",
             "thinkingLevel": "high",
         }
         starts = [c for c in commands(log) if c["type"] == "startup"]

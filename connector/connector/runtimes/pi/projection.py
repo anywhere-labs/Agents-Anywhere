@@ -120,7 +120,7 @@ class TranscriptProjector:
         external_session_id: str,
         *,
         client_messages: Sequence[tuple[str, str]] = (),
-        client_displays: Mapping[str, Mapping[str, Any]] | None = None,
+        client_receipts: Mapping[str, Mapping[str, Any]] | None = None,
         live_key_anchor: str = "",
     ) -> None:
         self.session_id = session_id
@@ -133,8 +133,9 @@ class TranscriptProjector:
         self._turn_counter = 0
         self._current_turn_id: str | None = None
         self._client_messages: list[tuple[str, str]] = list(client_messages)
-        # clientMessageId -> {"text", "attachments"} the user actually sent.
-        self._client_displays: dict[str, Mapping[str, Any]] = dict(client_displays or {})
+        # receipt_key(user message timestamp) -> {"clientMessageId", "display"?}:
+        # which client send a stored user message came from, and what it showed.
+        self._client_receipts: dict[str, Mapping[str, Any]] = dict(client_receipts or {})
         self._user_timestamps: dict[str, int] = {}
         self._assistant_counter = 0
         self._assistant_timestamps: dict[str, int] = {}
@@ -208,8 +209,16 @@ class TranscriptProjector:
             self.end_turn(status=self._turn_end_status())
             self.begin_turn()
             text = content_text(message.get("content"))
-            client_message_id = self._client_message_id_for(text) if text else None
-            display = self._client_displays.get(client_message_id or "")
+            receipt = self._client_receipts.get(receipt_key(message.get("timestamp")) or "")
+            if receipt is not None:
+                client_message_id = _as_text(receipt.get("clientMessageId"))
+                display = receipt.get("display")
+                display = display if isinstance(display, Mapping) else None
+            else:
+                # Messages sent before receipts existed: the text pairing only
+                # dedupes optimistic copies, so it never decides content.
+                client_message_id = self._client_message_id_for(text) if text else None
+                display = None
             attachments = _display_attachments(display)
             if display is not None and isinstance(display.get("text"), str):
                 # Pi stores attachment notes and image blocks in the prompt;
@@ -267,14 +276,13 @@ class TranscriptProjector:
         self._live_occurrences[kind] = occurrence
         return f"live:{self._live_key_anchor}:{kind}:{occurrence}"
 
-    def bind_client_message(
-        self, text: str, client_message_id: str, display: Mapping[str, Any] | None = None
-    ) -> None:
+    def bind_client_message(self, text: str, client_message_id: str) -> None:
         """Pair a message sent after this projector was seeded."""
 
         self._client_messages.append((text, client_message_id))
-        if display is not None:
-            self._client_displays[client_message_id] = display
+
+    def bind_receipt(self, key: str, receipt: Mapping[str, Any]) -> None:
+        self._client_receipts[key] = receipt
 
     def _user_key(self, message: Mapping[str, Any], entry_id: str | None) -> str:
         """Like assistant keys: the live message and its history entry agree.
@@ -729,7 +737,7 @@ def project_session(
     session_id: str,
     external_session_id: str,
     client_messages: Sequence[tuple[str, str]] = (),
-    client_displays: Mapping[str, Mapping[str, Any]] | None = None,
+    client_receipts: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[RuntimeTimelineItem, ...]:
     """Project the active branch of a parsed Pi session document."""
 
@@ -737,10 +745,18 @@ def project_session(
         session_id,
         external_session_id,
         client_messages=client_messages,
-        client_displays=client_displays,
+        client_receipts=client_receipts,
     )
     projector.project_entries(doc_entries)
     return projector.items()
+
+
+def receipt_key(timestamp: Any) -> str | None:
+    """Identity of a user message shared by its RPC event and its stored entry."""
+
+    if isinstance(timestamp, (str, int, float)) and not isinstance(timestamp, bool):
+        return _canonical_json(timestamp)
+    return None
 
 
 def _display_attachments(display: Mapping[str, Any] | None) -> tuple[Mapping[str, Any], ...]:

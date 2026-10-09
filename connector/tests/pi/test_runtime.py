@@ -218,8 +218,15 @@ async def test_model_catalog_and_selections(
         assert result.ok is True
         state = await runtime.get_session_state("sess-model")
         assert state is not None
+        # Pi clamps the level of a model without reasoning to off.
+        assert state.selections["model"] == "test:other-model"
+        assert state.selections["thinkingLevel"] == "off"
+        await runtime.update_session_selections(
+            "sess-model", None, {"model": "alt:test-model#thinking=high"}
+        )
+        state = await runtime.get_session_state("sess-model")
         # A reasoning model reports its reasoning item, as clients select it.
-        assert state.selections["model"] == "test:other-model#high"
+        assert state.selections["model"] == "alt:test-model#thinking=high"
         assert state.selections["thinkingLevel"] == "high"
     finally:
         await runtime.stop()

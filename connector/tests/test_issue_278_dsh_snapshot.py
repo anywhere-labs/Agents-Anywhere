@@ -218,7 +218,9 @@ def test_issue278_unchanged_rejected_capture_is_not_uploaded_again_and_a_new_one
                 # A later capture that the backend accepts lifts the quarantine.
                 gateway.notes.clear()
                 await capture(relay, make_items(2, 1024), through_seq=12)
-                assert gateway.methods() == ["session.meta.upsert", "timeline.sync"]
+                assert gateway.methods() == [
+                    "session.meta.upsert", "timeline.sync", "session.source.updated"]
+                assert gateway.notes[-1]["params"]["availability"] == "available"
                 assert gateway.complete_flags[-1] is True
                 await relay.operation({"kind": "checkpoint.save", "externalSessionId": EXTERNAL,
                                        "checkpoint": {**CHECKPOINT, "throughSeq": 12}})
@@ -333,6 +335,7 @@ def test_issue278_rejected_snapshot_is_retried_with_a_fresh_capture():
                     await capture(relay, items)
                     assert gateway.notes[-1]["method"] == "session.source.updated"
                     assert gateway.notes[-1]["params"]["reason"] == "history_rejected"
+                    unavailable_at = gateway.notes[-1]["params"]["observedAt"]
                     assert relay.quarantined[SESSION].attempts == attempt
                     params = await asyncio.wait_for(refreshes.get(), 2)
                     assert params == {"sessionId": SESSION, "externalSessionId": EXTERNAL}
@@ -341,14 +344,47 @@ def test_issue278_rejected_snapshot_is_retried_with_a_fresh_capture():
                 # is uploaded again, not skipped like an oversized one.
                 gateway.notes.clear()
                 await capture(relay, items)
-                assert gateway.methods() == ["session.meta.upsert", "timeline.sync"]
+                assert gateway.methods() == [
+                    "session.meta.upsert", "timeline.sync", "session.source.updated"]
                 assert gateway.complete_flags == [True]
                 assert not relay.quarantined
+                # The capture's own source fact may predate the unavailable
+                # one; the recovery is restated as of now so the Server keeps it.
+                restated = gateway.notes[-1]["params"]
+                assert restated["availability"] == "available"
+                assert restated["observedAt"] > unavailable_at
                 await relay.operation({"kind": "checkpoint.save", "externalSessionId": EXTERNAL,
                                        "checkpoint": CHECKPOINT})
                 assert await host.sync_state_read(CHECKPOINT_KEY) == CHECKPOINT
                 await asyncio.sleep(0.05)
                 assert refreshes.empty()
+            finally:
+                await relay.close()
+    asyncio.run(run())
+
+
+def test_issue278_recovery_does_not_restate_over_a_newer_host_fact():
+    async def run():
+        gateway = RejectingGateway(failures=1)
+
+        async def request(method, params=None):
+            return None
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(gateway)) as http:
+            host, _ = stack(http)
+            relay = SyncRelay(SimpleNamespace(request=request), host, rejected_retry_delay=60)
+            items = make_items(2, 1024)
+            try:
+                await capture(relay, items)
+                assert SESSION in relay.quarantined
+                # The user archives the session while its history is held back.
+                await relay.operation(notifications({"method": "session.source.updated", "params": {
+                    "sessionId": SESSION, "externalSessionId": EXTERNAL,
+                    "availability": "archived", "observedAt": "2099-01-01T00:00:00.000Z"}}))
+                gateway.notes.clear()
+                await capture(relay, items)
+                assert gateway.methods() == ["session.meta.upsert", "timeline.sync"]
+                assert not relay.quarantined
             finally:
                 await relay.close()
     asyncio.run(run())

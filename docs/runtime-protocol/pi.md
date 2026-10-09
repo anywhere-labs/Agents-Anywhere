@@ -72,7 +72,11 @@ Windows 支持 npm `pi.cmd` 解析为 Node + CLI 参数数组；不要把完整 
   这次修改改变了用户消息的 id 规则，已同步的会话在文件下次变化时会整份替换一次。
 - 带附件的消息：Pi 收到的是附件说明加图片块，AA 时间线显示用户原文和附件
   （`content.attachments`，含 fileId、文件名、类型、大小），客户端据此显示缩略图和
-  文件卡片。对应关系随 client message 绑定持久化，Connector 重启后不变。
+  文件卡片。Pi 发出这条用户消息时，Connector 把它和刚发出的那次发送对上（Pi 存的
+  文本以发送的文本开头，图片缩放会追加提示），按消息时间戳记一条回执
+  `pi/client-message-receipts/…`，历史投影按时间戳取回执，不按文本猜测，所以文字
+  相同的两条消息各自保留自己的附件。带附件的回执随会话保留；不带附件的只用于
+  乐观发送去重，保留最近 200 条。
 - 流式阶段 Pi 还没有给消息分配 entry id。自定义消息、`!` 命令、分支摘要
   在这一阶段使用本轮内唯一的临时 id，结束后由整份替换换成正式 id。
 - 轮次结束的 `outcome`：用户中断或 `stopReason=aborted` 为 `interrupted`，
@@ -90,7 +94,12 @@ Windows 支持 npm `pi.cmd` 解析为 Node + CLI 参数数组；不要把完整 
 - Pi 没有跨进程写锁。AA 的 Pi 进程仍在运行时，外部 Pi 终端可能续写同一会话文件。
   每次向空闲的活进程发消息、执行命令或修改选择之前，Connector 用文件最后一条记录的
   id 调用 `get_entries`（`since`）；进程不认识它就重开进程、从文件重新加载，避免 AA
-  的下一轮从旧位置分叉。Pi 不支持 `get_entries` 时不做此检查。
+  的下一轮从旧位置分叉。文件尾 8 MiB 内找不到完整记录时无法判断，也重开。Pi 不支持
+  `get_entries` 时不做此检查。
+- 进程的关闭和重新启动（切换权限、外部写入后重开）在同一把启动锁内完成，其间
+  不会有其他请求用旧的权限模式启动进程。被替换掉的进程，其迟到的事件和退出回调
+  一律忽略。新会话启动时取不到 `get_state`（没有会话文件就没有流式和同步路径）
+  按启动失败处理。
 - 一轮之外写入的消息（扩展命令的 `sendMessage`）不流式发布，命令结束后从文件发布，
   只有正式 id，不会短暂出现两次。
 - `externalSessionId` 必须位于 `sessionsDir` 内，否则请求被拒绝，不会传给
@@ -107,10 +116,13 @@ Windows 支持 npm `pi.cmd` 解析为 Node + CLI 参数数组；不要把完整 
 
 - 模型目录中支持推理的模型带有思考等级（reasoning items），等级按 Pi 的
   `getSupportedThinkingLevels` 计算（`thinkingLevelMap` 中为 null 的等级不提供，
-  `xhigh`/`max` 需显式映射）。选择 id 为 `<provider>:<model>#<level>`，下发时依次
-  执行 `set_model`、`set_thinking_level`；只选模型（`<provider>:<model>`）时保留会话
-  当前等级，由 Pi 按模型收敛。会话状态的 `selections.model` 回报同样的组合 id，
-  `selections.thinkingLevel` 仍单独给出。
+  `xhigh`/`max` 需显式映射）。选择 id 为 `<provider>:<model>#thinking=<level>`，下发时
+  依次执行 `set_model`、`set_thinking_level`，并读回 Pi 收敛后的实际等级（不支持推理的
+  模型为 `off`）；只选模型（`<provider>:<model>`）时保留会话当前等级，由 Pi 按模型
+  收敛。正好等于某个目录模型 id 的值总是按模型处理。会话状态的 `selections.model`
+  回报同样的组合 id，`selections.thinkingLevel` 仍单独给出。
+- 扩展可以调用 `pi.setModel` 切换模型，Pi 不发事件；每轮结束和扩展命令结束后，
+  Connector 用 `get_state` 重新读取模型与等级。
 - Pi 每次 `set_model`/`set_thinking_level` 都会写入会话文件，客户端发消息前也可能
   重复下发同一选择；没有变化的选择不再发送给 Pi，切换权限重启进程后也只补发
   真正不同的模型和等级。
@@ -123,7 +135,10 @@ Windows 支持 npm `pi.cmd` 解析为 Node + CLI 参数数组；不要把完整 
   时间线中的压缩标记。
 - 扩展命令的处理函数结束后 Pi 才响应这次 prompt，处理函数可能在等用户回答对话框。
   Connector 最多等 10 秒，之后按"已接受"返回（服务端命令和发消息的超时都是 30 秒），
-  在后台继续等待；期间会话不会被空闲回收。命令结束后立即发布它写入的内容。
+  在后台继续等待。从发出起就算作进行中，期间会话不会被空闲回收或重开。命令结束后
+  立即发布它写入的内容；之后才失败的命令或消息、自动压缩失败（`compaction_end`
+  的 `errorMessage`）以会话通知（`type=notification`、`severity=error`）告知用户，
+  下一次发送时关闭。
 
 ## 有界历史同步
 
