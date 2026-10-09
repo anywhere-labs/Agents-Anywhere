@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 60.0
 EVENT_DRAIN_TIMEOUT_SECONDS = 2.0
+# Longest stderr prefix logged per line; the remainder is drained and dropped.
+STDERR_LOG_LINE_BYTES = 8192
 
 EventListener = Callable[[Mapping[str, Any]], Awaitable[None]]
 ExitListener = Callable[[int | None], Awaitable[None]]
@@ -307,15 +309,40 @@ class PiRpcProcess:
             logger.exception("pi rpc event handler failed for type=%r", record.get("type"))
 
     async def _read_stderr(self) -> None:
+        # Read raw chunks: readline() raises on lines over the StreamReader limit
+        # (minified stack traces easily exceed it), and an exited drain task
+        # lets the pipe fill until Pi blocks on its next stderr write.
         assert self._process is not None and self._process.stderr is not None
         stream = self._process.stderr
+        line = bytearray()
+        # After logging a bounded prefix, drop the rest of an oversized line.
+        discarding = False
         while True:
-            line = await stream.readline()
-            if not line:
+            chunk = await stream.read(65536)
+            if not chunk:
                 break
-            text = line.decode("utf-8", errors="replace").rstrip()
-            if text:
-                logger.debug("pi stderr: %s", text)
+            start = 0
+            while (newline := chunk.find(b"\n", start)) >= 0:
+                if not discarding:
+                    line.extend(chunk[start:newline])
+                    _log_stderr(line)
+                line.clear()
+                discarding = False
+                start = newline + 1
+            if not discarding:
+                line.extend(chunk[start:])
+                if len(line) > STDERR_LOG_LINE_BYTES:
+                    _log_stderr(line, truncated=True)
+                    line.clear()
+                    discarding = True
+        if not discarding:
+            _log_stderr(line)
+
+
+def _log_stderr(raw: bytearray, *, truncated: bool = False) -> None:
+    text = bytes(raw[:STDERR_LOG_LINE_BYTES]).decode("utf-8", errors="replace").rstrip()
+    if text:
+        logger.debug("pi stderr: %s%s", text, " …(truncated)" if truncated else "")
 
 
 def response_data(response: Mapping[str, Any]) -> Mapping[str, Any]:

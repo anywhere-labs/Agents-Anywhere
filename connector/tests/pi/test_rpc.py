@@ -87,3 +87,29 @@ async def test_slow_events_keep_wire_order_without_blocking_responses(fake_pi: P
 
 async def _collect(events: list[dict], record) -> None:
     events.append(dict(record))
+
+
+async def test_long_stderr_lines_do_not_stop_draining() -> None:
+    """A stderr line over the StreamReader limit must not stall the process."""
+
+    import sys
+
+    script = r"""
+import json, sys
+sys.stderr.write("x" * 200_000 + "\n"); sys.stderr.flush()
+for line in sys.stdin:
+    # Far more than one pipe buffer: blocks forever unless stderr is drained.
+    sys.stderr.write(("y" * 1023 + "\n") * 4096); sys.stderr.flush()
+    request = json.loads(line)
+    sys.stdout.write(json.dumps({"type": "response", "id": request["id"],
+                                 "success": True, "data": {"ok": True}}) + "\n")
+    sys.stdout.flush()
+"""
+    process = PiRpcProcess([sys.executable, "-c", script], request_timeout=10.0)
+    await process.start()
+    try:
+        response = await process.request({"type": "get_state"})
+        assert response_data(response) == {"ok": True}
+        assert process._stderr_task is not None and not process._stderr_task.done()
+    finally:
+        await process.close()

@@ -68,6 +68,9 @@ class FakeHost(RuntimeHostClient):
     async def session_capabilities_update(self, capabilities: Any) -> None:
         self.capability_sets.append(capabilities)
 
+    async def runtime_capabilities_update(self, capabilities: Any) -> None:
+        self.capability_sets.append(capabilities)
+
     async def attachment_download(self, session_id: str, file_id: str) -> RuntimeAttachmentContent:
         self.attachment_downloads.append({"session_id": session_id, "file_id": file_id})
         return RuntimeAttachmentContent(

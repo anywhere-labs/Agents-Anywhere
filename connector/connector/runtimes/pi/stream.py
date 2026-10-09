@@ -74,10 +74,17 @@ class PiStreamAccumulator:
         entries: Sequence[Mapping[str, Any]],
         client_messages: Sequence[tuple[str, str]],
     ) -> None:
+        # Messages without entry ids are keyed per run; anchor them to the seed
+        # so a later run cannot reuse an earlier run's live identities.
+        anchor = next(
+            (str(entry["id"]) for entry in reversed(entries) if entry.get("id")),
+            str(len(entries)),
+        )
         self._projector = TranscriptProjector(
             self.session_id,
             self.external_session_id,
             client_messages=client_messages,
+            live_key_anchor=anchor,
         )
         # Leave the last turn open: a subsequent user message closes it in
         # exactly the same location as a complete history projection does.

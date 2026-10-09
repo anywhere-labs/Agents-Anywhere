@@ -296,3 +296,44 @@ async def test_adjacent_content_blocks_share_final_identity(fake_host) -> None:
     assert [item.content["text"] for item in stream.items()] == ["first\n\nsecond", "hello world"]
     assert_final_identity(stream, projected(entry(user, "u"), entry(assistant, "a")))
     await stream.close()
+
+
+@pytest.mark.parametrize(
+    "first,second",
+    [
+        (
+            message("custom", "extension one", customType="note"),
+            message("custom", "extension two", customType="note"),
+        ),
+        (
+            message("bashExecution", None, command="ls", output="a", exitCode=0),
+            message("bashExecution", None, command="pwd", output="/", exitCode=0),
+        ),
+        (
+            message("branchSummary", None, summary="left branch"),
+            message("branchSummary", None, summary="right branch"),
+        ),
+    ],
+)
+async def test_streamed_messages_without_entry_ids_keep_distinct_identities(
+    fake_host, first: dict, second: dict
+) -> None:
+    """Pi assigns entry ids after streaming; two such messages must not share an id."""
+
+    stream = PiStreamAccumulator(
+        "s", "/s.jsonl", publish=fake_host.timeline_item_upsert, throttle_seconds=0
+    )
+    await user_turn(stream)
+    for value in (first, second):
+        await stream.handle_event({"type": "message_start", "message": value})
+        await stream.handle_event({"type": "message_end", "message": value})
+    await stream.handle_event({"type": "agent_settled"})
+    ids = [item.id for item in stream.items()]
+    assert len(ids) == 2
+    assert len(set(ids)) == 2
+    by_id: dict[str, list[Any]] = {}
+    for item in fake_host.timeline_items:
+        by_id.setdefault(item.id, []).append(item.content)
+    # Each identity is published once, with its own content only.
+    assert all(len(contents) == 1 for contents in by_id.values())
+    await stream.close()

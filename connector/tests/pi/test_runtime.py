@@ -139,7 +139,14 @@ async def test_list_sessions_and_snapshot(
         sessions = await runtime.list_sessions()
         assert sessions[0].metadata["sync"]["changed"] is True
 
+        # A plain read is not a sync; only a sync the platform accepted is.
         await runtime.get_session_snapshot(sessions[0].session_id, sessions[0].external_session_id)
+        sessions = await runtime.list_sessions()
+        assert sessions[0].metadata["sync"]["changed"] is True
+        prepared = await runtime.prepare_session_timeline_sync(
+            sessions[0].session_id, sessions[0].external_session_id
+        )
+        await prepared.commit()
         sessions = await runtime.list_sessions()
         assert sessions[0].metadata["sync"]["changed"] is False
 
@@ -541,8 +548,10 @@ async def test_reannounce_session_states_after_reconnect(
         # while the inventory knows the same session under a path-derived id.
         await runtime.create_and_start_session("sess-live", "你好", cwd=str(tmp_path))
         await wait_for(lambda: "sess-live" in runtime._live)
-        await wait_for(lambda: runtime._live["sess-live"].status == "idle")
+        # Let the run settle so the announced status cannot race its events.
+        await wait_for(lambda: len(fake_host.turn_ends) == 1)
         live = runtime._live["sess-live"]
+        assert live.status == "idle"
 
         monkeypatch.setattr(runtime_module, "REANNOUNCE_MIN_INTERVAL_SECONDS", 0.0)
         fake_host.states.clear()

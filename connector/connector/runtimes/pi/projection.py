@@ -120,9 +120,12 @@ class TranscriptProjector:
         external_session_id: str,
         *,
         client_messages: Sequence[tuple[str, str]] = (),
+        live_key_anchor: str = "",
     ) -> None:
         self.session_id = session_id
         self.external_session_id = external_session_id
+        self._live_key_anchor = live_key_anchor
+        self._live_occurrences: dict[str, int] = {}
         self._items: list[RuntimeTimelineItem] = []
         self._tool_index: dict[str, int] = {}
         self._order = 0
@@ -151,6 +154,7 @@ class TranscriptProjector:
         projector._items = list(self._items)
         projector._tool_index = dict(self._tool_index)
         projector._assistant_timestamps = dict(self._assistant_timestamps)
+        projector._live_occurrences = dict(self._live_occurrences)
         return projector
 
     # -- entry level --------------------------------------------------------
@@ -216,7 +220,7 @@ class TranscriptProjector:
             text = content_text(message.get("content"))
             if text and message.get("display") is not False:
                 self._add_system_text(
-                    key=f"{entry_id or 'custom'}:body",
+                    key=f"{self._message_key(entry_id, 'custom')}:body",
                     text=text,
                     kind="system",
                 )
@@ -224,17 +228,31 @@ class TranscriptProjector:
             summary = _as_text(message.get("summary"))
             if summary:
                 self._add_system_text(
-                    key=f"{entry_id or 'branch-summary'}:body",
+                    key=f"{self._message_key(entry_id, 'branch-summary')}:body",
                     text=summary,
                     kind="notice",
                 )
         elif role == "compactionSummary":
             self._add_marker(
-                key=f"{entry_id or 'compaction'}:marker",
+                key=f"{self._message_key(entry_id, 'compaction')}:marker",
                 label="Context compacted",
                 text=_as_text(message.get("summary")),
                 kind="compact",
             )
+
+    def _message_key(self, entry_id: str | None, kind: str) -> str:
+        """Native identity for a message that Pi keys by its JSONL entry id.
+
+        Live RPC messages arrive before Pi persists them, so they have no entry
+        id yet. Give each one its own per-run occurrence key instead of a shared
+        constant; the settled snapshot replaces these with entry-id identities.
+        """
+
+        if entry_id:
+            return entry_id
+        occurrence = self._live_occurrences.get(kind, 0) + 1
+        self._live_occurrences[kind] = occurrence
+        return f"live:{self._live_key_anchor}:{kind}:{occurrence}"
 
     def _assistant_key(self, message: Mapping[str, Any]) -> str:
         """Use only fields available both on RPC message_start and in history.
@@ -420,7 +438,7 @@ class TranscriptProjector:
         if isinstance(exit_code, int) and not isinstance(exit_code, bool):
             content["exitCode"] = exit_code
         self._append(
-            key=f"{entry_id or 'bash'}:bash",
+            key=f"{self._message_key(entry_id, 'bash')}:bash",
             item_type="tool",
             role="tool",
             status=status,

@@ -9,12 +9,13 @@ snapshot when a run settles.
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import json
 import logging
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ from connector.runtime_protocol import (
     CAPABILITY_SESSION_SEND_MESSAGE,
     CAPABILITY_SESSION_STEER,
     AgentRuntime,
+    PreparedSessionTimelineSync,
     RuntimeAttachment,
     RuntimeCapability,
     RuntimeCapabilitySet,
@@ -42,6 +44,7 @@ from connector.runtime_protocol import (
     RuntimeModelItem,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
+    RuntimeTimelineItem,
     RuntimeTimelineSnapshot,
     RuntimeUnavailableError,
     SessionMeta,
@@ -96,6 +99,15 @@ PLATFORM_SESSION_PREFIX = "sess_pi_"
 RECLAIM_INTERVAL_SECONDS = 15.0
 
 DIALOG_METHODS = frozenset({"select", "confirm", "input", "editor"})
+
+# Pi resolves a dialog itself once its timeout passes, without an RPC event.
+# Expire the platform notice shortly after so the session is not left blocked.
+DIALOG_TIMEOUT_GRACE_SECONDS = 1.0
+
+# Per session file: the file stamp and item fingerprints of the last timeline
+# the platform accepted. Bump the version to force one complete resync.
+TIMELINE_CHECKPOINT_VERSION = 1
+TURN_MARKER_TYPES = frozenset({"turn.start", "turn.end"})
 
 
 def _merge_client_message_pairs(
@@ -195,6 +207,14 @@ class PendingInteraction:
         self.approval = parse_approval_request(request)
         self.external_session_id = external_session_id
         self.turn_id = turn_id
+        # Set for dialogs a run opened; that run settling means Pi closed them.
+        self.during_run = False
+        self.expiry: asyncio.Task[None] | None = None
+
+    def cancel_expiry(self) -> None:
+        if self.expiry is not None and self.expiry is not asyncio.current_task():
+            self.expiry.cancel()
+        self.expiry = None
 
     @property
     def notice_id(self) -> str:
@@ -316,6 +336,10 @@ class PiLiveSession:
         self.is_compacting = False
         self.message_count = 0
         self.status_reason: str | None = None
+        # How the current run ends: the last assistant stopReason, and whether
+        # the platform asked to interrupt it.
+        self.run_stop_reason: str | None = None
+        self.abort_requested = False
         self.pending_ui: dict[str, PendingInteraction] = {}
         # (text, clientMessageId) pairs waiting for their projected user message.
         self.client_messages: list[tuple[str, str]] = []
@@ -494,7 +518,16 @@ class PiRuntime(AgentRuntime):
         self._live: dict[str, PiLiveSession] = {}
         self._live_locks: dict[str, asyncio.Lock] = {}
         self._known_paths: dict[str, str] = {}
+        # Platform-allocated ids persisted in the session index (id -> path).
+        self._indexed_paths: dict[str, str] = {}
+        # Committed (mtime, size) per session file. Loaded lazily from the
+        # timeline checkpoints and advanced only after the platform accepted a
+        # sync, so a read or a failed upload never marks a file as synced.
         self._synced: dict[str, tuple[float, int]] = {}
+        self._synced_loaded: set[str] = set()
+        # Live-stream item ids per session file that no committed sync has
+        # reconciled yet. A final timeline without them must replace history.
+        self._stream_ids: dict[str, set[str]] = {}
         self._utility: PiRpcProcess | None = None
         self._catalog_revision = 0
         self._stopping = False
@@ -535,17 +568,13 @@ class PiRuntime(AgentRuntime):
             self._reclaim_task = asyncio.create_task(self._reclaim_loop())
 
     async def _publish_runtime_capabilities(self) -> None:
-        """Push runtime-scoped facts so the platform persists them.
+        """Push this instance's runtime-scoped facts so the platform persists them.
 
-        The connector's discovery publication drops runtime types outside its
-        hard-coded allowlist, so pi's runtime-scoped entries would never reach
-        the platform's persisted capability facts. Without them, sessions that
-        never published their own facts project as unsupported. Publishing
-        through the runtime capability channel merges them into that store.
+        Sessions that never published their own facts fall back to these.
         """
 
         try:
-            await self.host.session_capabilities_update(await self.get_runtime_capabilities())
+            await self.host.runtime_capabilities_update(await self.get_runtime_capabilities())
         except Exception:  # publishing must not block startup
             logger.exception("failed to publish pi runtime capabilities")
 
@@ -598,7 +627,6 @@ class PiRuntime(AgentRuntime):
                     now - self._last_reannounce_at,
                 )
                 return
-            self._last_reannounce_at = now
             try:
                 summaries = await self.list_complete_session_inventory()
             except asyncio.CancelledError:
@@ -607,11 +635,16 @@ class PiRuntime(AgentRuntime):
                 logger.exception("failed to list sessions for state re-announce")
                 return
             announced = 0
+            failed = False
+            covered: set[int] = set()
             for summary in summaries:
                 live = self._live_for_meta(summary)
                 try:
                     if live is not None:
-                        await self._push_state(live, force=True)
+                        covered.add(id(live))
+                        if not await self._push_state(live, force=True):
+                            failed = True
+                            continue
                     else:
                         await self.host.session_state_update(
                             session_id=summary.session_id,
@@ -624,14 +657,30 @@ class PiRuntime(AgentRuntime):
                 except asyncio.CancelledError:
                     raise
                 except Exception:
+                    failed = True
                     logger.exception(
                         "failed to re-announce session state for %s",
                         summary.session_id,
                     )
+            # A new session's file appears only once Pi saves its first entry,
+            # so a running first turn is live but not yet in the inventory.
+            for live in list(self._live.values()):
+                if id(live) in covered:
+                    continue
+                if await self._push_state(live, force=True):
+                    announced += 1
+                else:
+                    failed = True
+            # Only a complete pass starts the cooldown: a cancelled or partly
+            # failed one (e.g. the connection dropped again) must not suppress
+            # the next reconnect's re-announcement.
+            if not failed:
+                self._last_reannounce_at = now
             logger.info(
-                "reannounced session states reason=%s sessions=%d",
+                "reannounced session states reason=%s sessions=%d failed=%s",
                 reason,
                 announced,
+                failed,
             )
 
     def _live_for_meta(self, summary: SessionMeta) -> PiLiveSession | None:
@@ -716,6 +765,7 @@ class PiRuntime(AgentRuntime):
         summaries = await asyncio.to_thread(
             self.directory.list_sessions, limit if limit and limit > 0 else 0
         )
+        await self._load_synced_stamps(summaries)
         return tuple(self._session_meta(summary) for summary in summaries)
 
     async def list_complete_session_inventory(
@@ -725,7 +775,20 @@ class PiRuntime(AgentRuntime):
     ) -> tuple[SessionMeta, ...]:
         _ = page_size, force
         summaries = await asyncio.to_thread(self.directory.list_sessions, 0)
+        await self._load_synced_stamps(summaries)
         return tuple(self._session_meta(summary) for summary in summaries)
+
+    async def _load_synced_stamps(self, summaries: Sequence[PiSessionSummary]) -> None:
+        """Seed committed file stamps from the persisted timeline checkpoints."""
+
+        for summary in summaries:
+            if summary.path in self._synced_loaded:
+                continue
+            checkpoint = await self._read_timeline_checkpoint(summary.path)
+            stamp = _checkpoint_stamp(checkpoint)
+            if stamp is not None:
+                self._synced.setdefault(summary.path, stamp)
+            self._synced_loaded.add(summary.path)
 
     def _session_meta(self, summary: PiSessionSummary) -> SessionMeta:
         platform_id = platform_session_id(self.host.session_namespace, summary.path)
@@ -830,7 +893,18 @@ class PiRuntime(AgentRuntime):
         external_session_id: str | None = None,
         limit: int | None = None,
     ) -> RuntimeTimelineSnapshot:
-        path = self._resolve_session_path(session_id, external_session_id)
+        snapshot, _stamp = await self._read_snapshot(session_id, external_session_id, limit)
+        return snapshot
+
+    async def _read_snapshot(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+        limit: int | None = None,
+    ) -> tuple[RuntimeTimelineSnapshot, tuple[float, int] | None]:
+        """Project a session file; the stamp identifies the file version read."""
+
+        path = await self._resolve_session_path(session_id, external_session_id)
         if path is None:
             return RuntimeTimelineSnapshot(
                 session_id=session_id,
@@ -840,7 +914,7 @@ class PiRuntime(AgentRuntime):
                 items=(),
                 complete=False,
                 metadata={"reason": "session file not found"},
-            )
+            ), None
         doc = await asyncio.to_thread(load_session_doc, path)
         if doc is None:
             return RuntimeTimelineSnapshot(
@@ -851,7 +925,7 @@ class PiRuntime(AgentRuntime):
                 items=(),
                 complete=False,
                 metadata={"reason": "session file unreadable"},
-            )
+            ), None
         live = self._live.get(session_id)
         if live is None:
             live = next(
@@ -892,7 +966,6 @@ class PiRuntime(AgentRuntime):
         truncated = limit is not None and limit > 0
         if truncated:
             items = items[-limit:]
-        self._synced[doc.summary.path] = (doc.summary.modified_at, doc.summary.size)
         self._known_paths[session_id] = doc.summary.path
         return RuntimeTimelineSnapshot(
             session_id=session_id,
@@ -907,7 +980,81 @@ class PiRuntime(AgentRuntime):
                 "itemCount": len(items),
                 "piSessionId": doc.summary.session_id,
             },
-        )
+        ), (doc.summary.modified_at, doc.summary.size)
+
+    # -- checkpointed timeline sync ----------------------------------------
+
+    def _timeline_checkpoint_key(self, path: str) -> str:
+        return f"pi/timeline-sync/{path}"
+
+    async def _read_timeline_checkpoint(self, path: str) -> Mapping[str, Any] | None:
+        try:
+            value = await self.host.sync_state_read(self._timeline_checkpoint_key(path))
+        except Exception:
+            logger.exception("failed to read pi timeline checkpoint session=%s", path)
+            return None
+        return value if isinstance(value, Mapping) else None
+
+    async def prepare_session_timeline_sync(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> PreparedSessionTimelineSync:
+        """Diff the session file against the last timeline the platform accepted.
+
+        Only new or changed items are sent. A complete replacement is sent when
+        no valid checkpoint exists, or when an incremental sync would leave the
+        platform wrong: it never deletes items, keeps an existing item where it
+        is and appends new ids after its newest one. So removed items (another
+        branch, live-only stream ids), moved items and new items placed before
+        an already published one all need a replacement. ``commit`` records the
+        checkpoint and must only run after the platform accepted the sync.
+        """
+
+        snapshot, stamp = await self._read_snapshot(session_id, external_session_id)
+        path = snapshot.external_session_id
+        if stamp is None or not path:
+            return PreparedSessionTimelineSync(snapshot=None)
+        published = _checkpoint_items(await self._read_timeline_checkpoint(path))
+        # Capture before publishing: ids streamed after this read stay pending.
+        streamed = frozenset(self._stream_ids.get(path, ()))
+        items = tuple(item for item in snapshot.items if item.type not in TURN_MARKER_TYPES)
+        fingerprints = {item.id: _item_fingerprint(item) for item in items}
+        if published is None or _incremental_sync_misplaces(published, streamed, items):
+            replacement, delta = True, items
+        else:
+            replacement = False
+            delta = tuple(
+                item
+                for item in items
+                if item.id in streamed or published.get(item.id) != fingerprints[item.id]
+            )
+        prepared = replace(snapshot, items=delta, complete=replacement) if delta or replacement else None
+
+        async def commit() -> None:
+            await self.host.sync_state_write(
+                self._timeline_checkpoint_key(path),
+                {
+                    "version": TIMELINE_CHECKPOINT_VERSION,
+                    "sessionId": session_id,
+                    "stamp": list(stamp),
+                    "items": fingerprints,
+                },
+            )
+            self._synced[path] = stamp
+            self._synced_loaded.add(path)
+            pending = self._stream_ids.get(path)
+            if pending is not None:
+                pending.difference_update(streamed)
+                if not pending:
+                    self._stream_ids.pop(path, None)
+
+        return PreparedSessionTimelineSync(snapshot=prepared, commit=commit)
+
+    async def _publish_stream_item(self, path: str, item: RuntimeTimelineItem) -> None:
+        # Record first: a failed callback may still have reached the platform.
+        self._stream_ids.setdefault(path, set()).add(item.id)
+        await self.host.timeline_item_upsert(item)
 
     # -- state / notices ----------------------------------------------------
 
@@ -919,7 +1066,7 @@ class PiRuntime(AgentRuntime):
         live = self._live.get(session_id)
         if live is not None:
             return self._live_state(live)
-        path = self._resolve_session_path(session_id, external_session_id)
+        path = await self._resolve_session_path(session_id, external_session_id)
         if path is None:
             return None
         return SessionState(
@@ -1294,6 +1441,7 @@ class PiRuntime(AgentRuntime):
             return RuntimeOperationResult(result={"sessionId": session_id, "noop": True})
         if not (live.is_streaming or live.is_compacting):
             return RuntimeOperationResult(result={"sessionId": session_id, "noop": True})
+        live.abort_requested = True
         await live.command({"type": "abort"}, timeout=max(self.request_timeout, 120.0))
         return RuntimeOperationResult(result={"sessionId": session_id})
 
@@ -1334,6 +1482,7 @@ class PiRuntime(AgentRuntime):
         assert live.process is not None
         await live.process.notify(payload)
         live.pending_ui.pop(request_id, None)
+        pending.cancel_expiry()
         await self.host.notice_upsert(
             pending.as_notice(session_id, status="resolved", action_id=action_id)
         )
@@ -1356,10 +1505,14 @@ class PiRuntime(AgentRuntime):
             message = record.get("message")
             if isinstance(message, Mapping) and message.get("role") == "assistant":
                 live.message_count += 1
+                stop_reason = message.get("stopReason")
+                live.run_stop_reason = stop_reason if isinstance(stop_reason, str) else None
             return
         if event_type == "agent_start":
             live.status_reason = None
             live.is_streaming = True
+            live.run_stop_reason = None
+            live.abort_requested = False
             await self._push_state(live)
             return
         if event_type == "agent_settled":
@@ -1368,19 +1521,17 @@ class PiRuntime(AgentRuntime):
             live.is_streaming = False
             live.is_compacting = False
             live.status_reason = None
+            outcome = _turn_outcome(live.run_stop_reason, live.abort_requested)
+            live.run_stop_reason = None
+            live.abort_requested = False
+            # A dialog the run opened and left unanswered was cancelled or timed
+            # out inside Pi; Pi sends no event for that.
+            await self._close_pending_interactions(live, status="cancelled", run_only=True)
             await self._push_state(live, force=True)
             await self._publish_timeline(live)
             await self._reset_stream(live)
             await self._push_meta(live)
-            try:
-                await self.host.session_turn_ended(
-                    session_id=live.platform_id,
-                    runtime=RUNTIME,
-                    external_session_id=live.external_id,
-                    outcome="completed",
-                )
-            except Exception:
-                logger.exception("failed to publish turn end for %s", live.platform_id)
+            await self._publish_turn_end(live, outcome)
             return
         if event_type == "compaction_start":
             live.is_compacting = True
@@ -1418,13 +1569,21 @@ class PiRuntime(AgentRuntime):
         logger.info("pi session %s process exited code=%s", live.platform_id, code)
         if live.stream is not None:
             await live.stream.close()
+        for pending in live.pending_ui.values():
+            pending.cancel_expiry()
         if self._stopping:
             return
+        interrupted_run = live.is_streaming or live.is_compacting
         live.is_streaming = False
         live.is_compacting = False
-        for pending in list(live.pending_ui.values()):
-            await self.host.notice_upsert(pending.as_notice(live.platform_id, status="resolved"))
-        live.pending_ui.clear()
+        await self._close_pending_interactions(live, status="resolved")
+        if interrupted_run:
+            # The run never settled; close the platform turn instead of leaving
+            # it open. A restart or an interrupt ends it deliberately.
+            outcome = "interrupted" if live.restarting or live.abort_requested else "failed"
+            live.run_stop_reason = None
+            live.abort_requested = False
+            await self._publish_turn_end(live, outcome)
         if live.restarting:
             return
         try:
@@ -1441,6 +1600,43 @@ class PiRuntime(AgentRuntime):
         except Exception:
             logger.exception("failed to publish exit state for %s", live.platform_id)
 
+    async def _publish_turn_end(self, live: PiLiveSession, outcome: str) -> None:
+        try:
+            await self.host.session_turn_ended(
+                session_id=live.platform_id,
+                runtime=RUNTIME,
+                external_session_id=live.external_id,
+                outcome=outcome,
+            )
+        except Exception:
+            logger.exception("failed to publish turn end for %s", live.platform_id)
+
+    async def _close_pending_interactions(
+        self, live: PiLiveSession, *, status: str, run_only: bool = False
+    ) -> None:
+        for pending in list(live.pending_ui.values()):
+            if run_only and not pending.during_run:
+                continue
+            await self._close_interaction(live, pending, status=status)
+
+    async def _close_interaction(
+        self, live: PiLiveSession, pending: PendingInteraction, *, status: str
+    ) -> None:
+        live.pending_ui.pop(pending.request_id, None)
+        pending.cancel_expiry()
+        try:
+            await self.host.notice_upsert(pending.as_notice(live.platform_id, status=status))
+        except Exception:
+            logger.exception("failed to close pi interaction %s", pending.notice_id)
+
+    async def _expire_interaction(self, live: PiLiveSession, pending: PendingInteraction) -> None:
+        assert pending.timeout_ms is not None
+        await asyncio.sleep(pending.timeout_ms / 1000 + DIALOG_TIMEOUT_GRACE_SECONDS)
+        if live.pending_ui.get(pending.request_id) is not pending:
+            return
+        await self._close_interaction(live, pending, status="expired")
+        await self._push_state(live, force=True)
+
     async def _handle_ui_request(self, live: PiLiveSession, record: Mapping[str, Any]) -> None:
         method = record.get("method")
         if method in DIALOG_METHODS:
@@ -1450,7 +1646,10 @@ class PiRuntime(AgentRuntime):
                 external_session_id=live.external_id,
                 turn_id=(items[-1].turn_id or "") if items else "",
             )
+            pending.during_run = live.is_streaming or live.is_compacting
             live.pending_ui[pending.request_id] = pending
+            if pending.timeout_ms is not None and pending.timeout_ms > 0:
+                pending.expiry = asyncio.create_task(self._expire_interaction(live, pending))
             await self.host.notice_upsert(pending.as_notice(live.platform_id))
             await self._push_state(live, force=True)
             return
@@ -1490,14 +1689,20 @@ class PiRuntime(AgentRuntime):
             # concurrent RPCs for the same session share one live session (and one
             # pi process) instead of overwriting each other.
             session_path: str | None = None
+            if external_session_id and not self._within_sessions_root(Path(external_session_id)):
+                # Pi would open (and append to) any file passed as --session.
+                raise RuntimeInvalidRequestError(
+                    "Pi session path is outside the configured sessions directory"
+                )
             workdir = self._resolve_cwd(cwd)
-            resolved = self._resolve_session_path(session_id, external_session_id)
+            resolved = await self._resolve_session_path(session_id, external_session_id)
             if resolved is not None:
                 session_path = str(resolved)
                 doc_cwd = await asyncio.to_thread(self._session_cwd, resolved)
                 if doc_cwd:
                     workdir = doc_cwd
             elif external_session_id:
+                # Inside sessionsDir but not written yet: Pi creates it lazily.
                 session_path = external_session_id
             async with self._live_lock(session_id):
                 live = self._live.get(session_id)
@@ -1537,7 +1742,7 @@ class PiRuntime(AgentRuntime):
             raise RuntimeInvalidRequestError(f"working directory does not exist: {candidate}")
         return str(candidate)
 
-    def _resolve_session_path(
+    async def _resolve_session_path(
         self,
         session_id: str,
         external_session_id: str | None,
@@ -1559,12 +1764,68 @@ class PiRuntime(AgentRuntime):
             path = Path(candidate)
             if path.is_file():
                 return path
-        # Fall back to a scan when the platform id is not yet known.
-        for summary in self.directory.list_sessions(limit=0):
-            if platform_session_id(self.host.session_namespace, summary.path) == session_id:
-                self._known_paths[session_id] = summary.path
-                return Path(summary.path)
+        indexed = await self._indexed_session_path(session_id)
+        if indexed is not None:
+            return indexed
+        # Inventory ids derive from the path alone: match file names off the
+        # event loop instead of re-reading every session file.
+        found = await asyncio.to_thread(
+            self._scan_session_path, self.host.session_namespace, session_id
+        )
+        if found is not None:
+            self._known_paths[session_id] = found
+            return Path(found)
         return None
+
+    def _scan_session_path(self, namespace: str, session_id: str) -> str | None:
+        root = self.directory.root
+        if not root.is_dir():
+            return None
+        for path in root.rglob("*.jsonl"):
+            if platform_session_id(namespace, str(path)) == session_id and path.is_file():
+                return str(path)
+        return None
+
+    def _session_index_key(self, session_id: str) -> str:
+        return f"pi/session-index/{session_id}"
+
+    async def _indexed_session_path(self, session_id: str) -> Path | None:
+        """Path of a platform-created session, persisted across restarts."""
+
+        try:
+            value = await self.host.sync_state_read(self._session_index_key(session_id))
+        except Exception:
+            logger.exception("failed to read pi session index session=%s", session_id)
+            return None
+        raw = value.get("path") if isinstance(value, Mapping) else None
+        if not isinstance(raw, str) or not raw:
+            return None
+        path = Path(raw)
+        if not self._within_sessions_root(path) or not path.is_file():
+            return None
+        self._known_paths[session_id] = raw
+        self._indexed_paths[session_id] = raw
+        return path
+
+    async def _remember_session_path(self, live: PiLiveSession) -> None:
+        path = live.external_id
+        if not path:
+            return
+        self._known_paths[live.platform_id] = path
+        # Inventory ids are derivable from the path; only platform-allocated
+        # ids need the persisted index.
+        if platform_session_id(self.host.session_namespace, path) == live.platform_id:
+            return
+        if self._indexed_paths.get(live.platform_id) == path:
+            return
+        try:
+            await self.host.sync_state_write(
+                self._session_index_key(live.platform_id), {"path": path}
+            )
+        except Exception:
+            logger.exception("failed to persist pi session index session=%s", live.platform_id)
+            return
+        self._indexed_paths[live.platform_id] = path
 
     def _within_sessions_root(self, path: Path) -> bool:
         """Whether a platform-supplied path stays inside the sessions directory."""
@@ -1595,7 +1856,7 @@ class PiRuntime(AgentRuntime):
                 external_session_id=live.external_id,
                 entries=entries,
                 client_messages=tuple(live.client_messages),
-                publish=self.host.timeline_item_upsert,
+                publish=functools.partial(self._publish_stream_item, live.external_id),
             )
         else:
             await live.stream.reset(entries=entries, client_messages=tuple(live.client_messages))
@@ -1612,7 +1873,7 @@ class PiRuntime(AgentRuntime):
 
     async def _persist_permission(self, live: PiLiveSession) -> None:
         if live.external_id:
-            self._known_paths[live.platform_id] = live.external_id
+            await self._remember_session_path(live)
             await self.host.sync_state_write(
                 self._permission_key(live.external_id), {"mode": live.permission_mode}
             )
@@ -1628,6 +1889,7 @@ class PiRuntime(AgentRuntime):
             # Finish pending dialogs as denials before interrupting this run.
             if live.process is not None:
                 for pending in list(live.pending_ui.values()):
+                    pending.cancel_expiry()
                     await live.process.notify(pending.response_payload("reject", None))
                     await self.host.notice_upsert(
                         pending.as_notice(live.platform_id, status="resolved", action_id="reject")
@@ -1691,10 +1953,10 @@ class PiRuntime(AgentRuntime):
             else:
                 logger.debug("ignoring unknown selection key %r", key)
 
-    async def _push_state(self, live: PiLiveSession, *, force: bool = False) -> None:
+    async def _push_state(self, live: PiLiveSession, *, force: bool = False) -> bool:
         key = live.state_key()
         if not force and key == live.last_state_key:
-            return
+            return True
         state = self._live_state(live)
         logger.info(
             "pi state push session_id=%s status=%s force=%s",
@@ -1716,8 +1978,9 @@ class PiRuntime(AgentRuntime):
             live.last_state_key = key
         except Exception:
             logger.exception("failed to push pi session state for %s", live.platform_id)
-            return
+            return False
         await self._publish_session_capabilities(live.platform_id)
+        return True
 
     async def _push_meta(self, live: PiLiveSession) -> None:
         path = live.session_file or live.session_path
@@ -1738,20 +2001,28 @@ class PiRuntime(AgentRuntime):
             logger.exception("failed to push pi session meta for %s", live.platform_id)
 
     async def _publish_timeline(self, live: PiLiveSession) -> None:
+        """Publish the settled run through the same checkpoint as the scanner.
+
+        The host notifier keeps this ordered behind the run's streamed items.
+        Without a commit the scanner retries from the previous checkpoint.
+        """
+
         path = live.session_file or live.session_path
         if not path or not Path(path).is_file():
             return
-        snapshot = await self.get_session_snapshot(live.platform_id, path)
-        if not snapshot.complete:
-            return
         try:
-            await self.host.timeline_sync(
-                session_id=live.platform_id,
-                runtime=RUNTIME,
-                items=snapshot.items,
-                external_session_id=snapshot.external_session_id,
-                complete=True,
-            )
+            prepared = await self.prepare_session_timeline_sync(live.platform_id, path)
+            snapshot = prepared.snapshot
+            if snapshot is not None:
+                await self.host.timeline_sync(
+                    session_id=live.platform_id,
+                    runtime=RUNTIME,
+                    items=snapshot.items,
+                    external_session_id=snapshot.external_session_id,
+                    complete=snapshot.complete,
+                )
+            if prepared.commit is not None:
+                await prepared.commit()
         except Exception:
             logger.exception("failed to push pi timeline for %s", live.platform_id)
 
@@ -1784,6 +2055,90 @@ class PiRuntime(AgentRuntime):
 
 def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _turn_outcome(stop_reason: str | None, abort_requested: bool) -> str:
+    if abort_requested or stop_reason == "aborted":
+        return "interrupted"
+    if stop_reason == "error":
+        return "failed"
+    return "completed"
+
+
+def _item_fingerprint(item: RuntimeTimelineItem) -> str:
+    """``<orderSeq>:<digest>`` of everything the platform stores for an item.
+
+    Revisions rise on every live re-publication and one file is synced under
+    both its platform-created and its inventory session id; neither changes
+    the item itself.
+    """
+
+    data = asdict(item)
+    data.pop("revision")
+    data.pop("session_id")
+    encoded = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return f"{item.order_seq}:{hashlib.sha256(encoded.encode()).hexdigest()}"
+
+
+def _fingerprint_order(fingerprint: str) -> int | None:
+    order, separator, digest = fingerprint.partition(":")
+    if not separator or not digest:
+        return None
+    try:
+        return int(order)
+    except ValueError:
+        return None
+
+
+def _checkpoint_items(value: Mapping[str, Any] | None) -> dict[str, str] | None:
+    if not isinstance(value, Mapping) or value.get("version") != TIMELINE_CHECKPOINT_VERSION:
+        return None
+    items = value.get("items")
+    if not isinstance(items, Mapping) or _checkpoint_stamp(value) is None:
+        return None
+    if not all(
+        isinstance(key, str) and isinstance(fingerprint, str) and _fingerprint_order(fingerprint) is not None
+        for key, fingerprint in items.items()
+    ):
+        return None
+    return dict(items)
+
+
+def _checkpoint_stamp(value: Mapping[str, Any] | None) -> tuple[float, int] | None:
+    if not isinstance(value, Mapping) or value.get("version") != TIMELINE_CHECKPOINT_VERSION:
+        return None
+    stamp = value.get("stamp")
+    if not isinstance(stamp, list) or len(stamp) != 2:
+        return None
+    modified_at, size = stamp
+    if isinstance(modified_at, bool) or not isinstance(modified_at, (int, float)):
+        return None
+    if isinstance(size, bool) or not isinstance(size, int):
+        return None
+    return float(modified_at), size
+
+
+def _incremental_sync_misplaces(
+    published: Mapping[str, str],
+    streamed: frozenset[str],
+    items: Sequence[RuntimeTimelineItem],
+) -> bool:
+    """Whether an incremental sync would leave the platform timeline wrong."""
+
+    current = {item.id: item.order_seq for item in items}
+    if (published.keys() | streamed) - current.keys():
+        return True
+    newest = max((current[item_id] for item_id in streamed), default=-1)
+    for item_id, fingerprint in published.items():
+        order = _fingerprint_order(fingerprint)
+        if order != current[item_id]:
+            return True
+        newest = max(newest, order)
+    return any(
+        order < newest
+        for item_id, order in current.items()
+        if item_id not in published and item_id not in streamed
+    )
 
 
 def _prompt_text(content: str, images: Sequence[Mapping[str, Any]]) -> str:

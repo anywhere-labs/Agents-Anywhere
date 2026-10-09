@@ -6,6 +6,7 @@ KNOWN_RUNTIME_CAPABILITY_IDS = {
     "codex",
     "claude",
     "dsh",
+    "pi",
     "opencode",
     "acp",
 }
