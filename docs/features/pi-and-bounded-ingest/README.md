@@ -145,3 +145,8 @@
 - 第二轮修复后按用户要求在 macOS 复跑自动化测试与全部真实联调项目，均通过；新发现
   扩展命令抛错时用户看不到失败、失败通知刷新后消失，已修复并在 Mac 上实测。WSL 完整
   套件 1272 passed、3 skipped。
+- Pi 第三轮审阅（3 个 P1、5 个 P2）核实后修复 5 项，其余写入已知局限。按"多端都能
+  连接 Pi、正确传参并调度"验收，在 Windows 上用 Web 和 Android 模拟器真实联调，修复
+  Android 整份回传选择覆盖等级、新建会话不预选 Pi 默认值、skill 命令执行 422、等待
+  审批时中断挂起 4 项 Connector 问题。WSL 完整套件 1282 passed、3 skipped。Desktop、
+  iOS 未联调，见 [联调记录](aa-e2e-verification.md)。

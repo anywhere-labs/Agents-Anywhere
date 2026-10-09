@@ -13,6 +13,7 @@ import functools
 import hashlib
 import json
 import logging
+import re
 import time
 from collections.abc import Coroutine, Mapping, Sequence
 from dataclasses import asdict, replace
@@ -146,6 +147,11 @@ COMPACT_COMMAND = "compact"
 
 # Message events a run streams; outside a run they are not streamed.
 RUN_MESSAGE_EVENTS = frozenset({"message_start", "message_update", "message_end"})
+# Prompt dispositions after which Pi emits the sent text as a user message.
+# "handled" (and a command still running, "pending") never does.
+SENT_AS_MESSAGE = frozenset({"started", "queued"})
+# Command ids the platform accepts; Pi names skills "skill:<name>".
+COMMAND_ID_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
 
 
 def _merge_client_message_pairs(
@@ -213,6 +219,20 @@ def supported_thinking_levels(model: Mapping[str, Any]) -> tuple[str, ...]:
             continue
         levels.append(level)
     return tuple(levels)
+
+
+def clamp_thinking_level(level: str, supported: Sequence[str]) -> str | None:
+    """The level Pi uses for ``level`` on a model (pi-ai clampThinkingLevel)."""
+
+    if level in supported:
+        return level
+    if level not in THINKING_LEVELS:
+        return supported[0] if supported else None
+    index = THINKING_LEVELS.index(level)
+    for candidate in (*THINKING_LEVELS[index:], *reversed(THINKING_LEVELS[:index])):
+        if candidate in supported:
+            return candidate
+    return supported[0] if supported else None
 
 
 def _thinking_selection_id(model_selection_id: str, level: str) -> str:
@@ -445,6 +465,10 @@ class PendingInteraction:
         }
 
 
+class PiSessionRetired(PiRpcProcessExited):
+    """The live session left the registry; it must not start a process again."""
+
+
 class PiLiveSession:
     """A platform session backed by one running Pi RPC process."""
 
@@ -485,10 +509,11 @@ class PiLiveSession:
         # Prompts Pi has not answered yet, such as extension commands waiting
         # on a dialog; the session is not idle while any is in flight.
         self.pending_prompts: set[asyncio.Future[Mapping[str, Any]]] = set()
-        # The open failure notification, listed with the session's notices
-        # (clients that open the session later read notices from the runtime).
-        self.failure_notice: SessionNotice | None = None
         self.last_activity = time.monotonic()
+        # Set when idle reclaim or shutdown removed this object from the
+        # registry. A caller still holding it must not revive a process nobody
+        # tracks; a new live session takes over the file instead.
+        self.retired = False
         self._start_lock = asyncio.Lock()
         self.last_state_key: tuple[Any, ...] | None = None
         self.permission_mode = runtime.default_permission_mode
@@ -561,6 +586,8 @@ class PiLiveSession:
             await self._start_locked()
 
     async def _start_locked(self) -> None:
+        if self.retired:
+            raise PiSessionRetired("Pi session was closed; open it again")
         if not self._permission_loaded:
             self.permission_mode = await self.runtime._load_permission(self.external_id)
             self._permission_loaded = True
@@ -675,8 +702,9 @@ class PiLiveSession:
             payload: dict[str, Any] = {"type": "steer", "message": content}
             if images:
                 payload["images"] = list(images)
-            await self.command(payload)
-            return "queued"
+            steered = response_data(await self.command(payload)).get("disposition")
+            # An input handler may consume a steer ("handled").
+            return steered if isinstance(steered, str) else "queued"
         payload = {"type": "prompt", "message": content}
         if images:
             payload["images"] = list(images)
@@ -750,6 +778,7 @@ class PiLiveSession:
         self.runtime._after_command(self)
 
     async def stop(self) -> None:
+        self.retired = True
         async with self._start_lock:
             process = self.process
             self.process = None
@@ -783,6 +812,11 @@ class PiRuntime(AgentRuntime):
         self.sessions_dir = Path(str(values["sessionsDir"]))
         self.directory = SessionDirectory(self.sessions_dir)
         self._live: dict[str, PiLiveSession] = {}
+        # Open failure notifications by platform session id, with the session
+        # file. Kept apart from the live session so they stay listed after
+        # idle reclaim (clients that open a session later read its notices
+        # from the runtime).
+        self._failures: dict[str, tuple[SessionNotice, str | None]] = {}
         self._live_locks: dict[str, asyncio.Lock] = {}
         self._known_paths: dict[str, str] = {}
         # Platform-allocated ids persisted in the session index (id -> path).
@@ -809,6 +843,9 @@ class PiRuntime(AgentRuntime):
         self._receipts: dict[str, dict[str, dict[str, Any]]] = {}
         # Model objects from the last catalog read, by model selection id.
         self._catalog_models: dict[str, Mapping[str, Any]] = {}
+        # Platform command id -> Pi command name; they differ for names the
+        # platform's command ids cannot carry (skill:<name>).
+        self._command_names: dict[str, str] = {}
         # Per session file: the file stamp and the selections Pi restores from it.
         self._file_selections: dict[str, tuple[tuple[float, int], dict[str, str]]] = {}
         self._last_reannounce_at: float | None = None
@@ -1030,6 +1067,7 @@ class PiRuntime(AgentRuntime):
                     continue
                 if live.busy:
                     continue
+                live.retired = True
                 self._live.pop(session_id, None)
             logger.info(
                 "reclaimed idle pi session session_id=%s idle_seconds=%.0f",
@@ -1534,11 +1572,27 @@ class PiRuntime(AgentRuntime):
         external_session_id: str | None = None,
     ) -> tuple[SessionNotice, ...]:
         live = self._live_for(session_id, external_session_id)
+        failure = self._failure_for(
+            live.platform_id if live is not None else session_id, external_session_id
+        )
+        failures = (failure,) if failure is not None else ()
         if live is None:
-            return ()
+            return failures
         # Notices carry no external id: use the id the platform knows.
         notices = tuple(pending.as_notice(live.platform_id) for pending in live.pending_ui.values())
-        return notices + ((live.failure_notice,) if live.failure_notice is not None else ())
+        return notices + failures
+
+    def _failure_for(
+        self, session_id: str, external_session_id: str | None
+    ) -> SessionNotice | None:
+        entry = self._failures.get(session_id)
+        if entry is not None:
+            return entry[0]
+        if external_session_id:
+            for notice, path in self._failures.values():
+                if path == external_session_id:
+                    return notice
+        return None
 
     async def get_runtime_capabilities(self) -> RuntimeCapabilitySet:
         """Runtime-scoped capability facts advertised to the platform.
@@ -1643,6 +1697,18 @@ class PiRuntime(AgentRuntime):
         limit: int = 100,
     ) -> RuntimeModelCatalog:
         data = response_data(await self._utility_command({"type": "get_available_models"}))
+        # The session-less utility process starts like a new session would:
+        # its model and thinking level are the defaults clients preselect.
+        try:
+            defaults = response_data(await self._utility_command({"type": "get_state"}))
+        except PiRpcError:
+            logger.debug("pi default model lookup failed", exc_info=True)
+            defaults = {}
+        default_model = defaults.get("model")
+        default_model_id = (
+            _model_selection_id(default_model) if isinstance(default_model, Mapping) else None
+        )
+        default_level = defaults.get("thinkingLevel")
         # Pi allows the same model name under several providers; the platform
         # rejects catalogs with duplicate ids, so ids are provider-qualified
         # and titles carry the provider when a name is ambiguous.
@@ -1667,6 +1733,12 @@ class PiRuntime(AgentRuntime):
             haystack = f"{catalog_id} {name} {title}".lower()
             if query and query.lower() not in haystack:
                 continue
+            levels = supported_thinking_levels(raw)
+            level_default = (
+                clamp_thinking_level(default_level, levels)
+                if isinstance(default_level, str)
+                else None
+            )
             models.append(
                 RuntimeModelItem(
                     id=catalog_id,
@@ -1680,8 +1752,9 @@ class PiRuntime(AgentRuntime):
                             id=level,
                             title=THINKING_LABELS[level],
                             selection_id=_thinking_selection_id(catalog_id, level),
+                            is_default=level == level_default,
                         )
-                        for level in supported_thinking_levels(raw)
+                        for level in levels
                         # Never shadow another model's own selection id.
                         if _thinking_selection_id(catalog_id, level) not in self._catalog_models
                     ),
@@ -1690,6 +1763,7 @@ class PiRuntime(AgentRuntime):
                         "contextWindow": raw.get("contextWindow"),
                         "reasoning": raw.get("reasoning") is True,
                     },
+                    is_default=catalog_id == default_model_id,
                 )
             )
             if len(models) >= limit:
@@ -1709,7 +1783,9 @@ class PiRuntime(AgentRuntime):
         return RuntimePermissionCatalog(
             runtime=RUNTIME,
             revision=self._next_catalog_revision(),
-            permissions=permission_items(query=query, limit=limit),
+            permissions=permission_items(
+                query=query, limit=limit, default_mode=self.default_permission_mode
+            ),
             runtime_id=self.config.runtime_id,
         )
 
@@ -1735,11 +1811,14 @@ class PiRuntime(AgentRuntime):
     ) -> tuple[RuntimeCommand, ...]:
         _ = external_session_id
         live = self._live.get(session_id)
-        data = (
-            await live.command({"type": "get_commands"})
-            if live is not None
-            else await self._utility_command({"type": "get_commands"})
-        )
+        try:
+            data = (
+                await live.command({"type": "get_commands"})
+                if live is not None
+                else await self._utility_command({"type": "get_commands"})
+            )
+        except PiSessionRetired:
+            data = await self._utility_command({"type": "get_commands"})
         commands: list[RuntimeCommand] = [
             _command(
                 COMPACT_COMMAND,
@@ -1753,6 +1832,11 @@ class PiRuntime(AgentRuntime):
             name = raw.get("name")
             if not isinstance(name, str) or not name or name == COMPACT_COMMAND:
                 continue
+            command_id = _command_id(name)
+            if any(command.id == command_id for command in commands):
+                logger.debug("skipping pi command %r: id %r is taken", name, command_id)
+                continue
+            self._command_names[command_id] = name
             description = raw.get("description")
             commands.append(
                 _command(
@@ -1776,7 +1860,10 @@ class PiRuntime(AgentRuntime):
     ) -> RuntimeCommandResult:
         live = await self._ensure_live(session_id, external_session_id, None)
         await self._clear_failure(live)
-        text = raw if raw else "/" + command + (" " + " ".join(args) if args else "")
+        name = await self._command_name(session_id, command)
+        text = _command_text(raw, command, name) if raw else (
+            "/" + name + (" " + " ".join(args) if args else "")
+        )
         logger.info("pi command execute session_id=%s text=%r", session_id, text)
         if command == COMPACT_COMMAND:
             return await self._compact(live, session_id, _command_arguments(text, command))
@@ -1793,6 +1880,19 @@ class PiRuntime(AgentRuntime):
                 "executionState": "completed" if completed else "accepted",
             },
         )
+
+    async def _command_name(self, session_id: str, command: str) -> str:
+        """The Pi name behind a platform command id."""
+
+        if command == COMPACT_COMMAND:
+            return command
+        if command not in self._command_names:
+            # Not listed since the Connector started: list once to learn it.
+            try:
+                await self.list_commands(session_id)
+            except Exception:
+                logger.debug("pi command lookup failed", exc_info=True)
+        return self._command_names.get(command, command)
 
     async def _compact(
         self, live: PiLiveSession, session_id: str, instructions: str
@@ -1852,15 +1952,24 @@ class PiRuntime(AgentRuntime):
         if selections and selections.get("permission") is not None:
             live.permission_mode = validate_permission_mode(selections["permission"])
             live._permission_loaded = True
+        pending = None
         if client_message_id:
-            self._bind_client_message(live, content, images, client_message_id, sent, attachments)
+            pending = self._bind_client_message(
+                live, content, images, client_message_id, sent, attachments
+            )
         self._live[session_id] = live
-        await live.ensure_started()
-        if is_meaningful_title(title):
-            await live.command({"type": "set_session_name", "name": title})
-        if selections:
-            await self._apply_selections(live, selections)
-        await live.send_prompt(content, images=images)
+        try:
+            await live.ensure_started()
+            if is_meaningful_title(title):
+                await live.command({"type": "set_session_name", "name": title})
+            if selections:
+                await self._apply_selections(live, selections)
+            disposition = await live.send_prompt(content, images=images)
+        except BaseException:
+            self._forget_send(live, pending)
+            raise
+        if disposition not in SENT_AS_MESSAGE:
+            self._forget_send(live, pending)
         if client_message_id:
             await self._persist_client_bindings(live)
         await self._push_meta(live)
@@ -1888,13 +1997,22 @@ class PiRuntime(AgentRuntime):
             session_id,
             client_message_id,
         )
+        pending = None
         if client_message_id:
-            self._bind_client_message(live, content, images, client_message_id, sent, attachments)
+            pending = self._bind_client_message(
+                live, content, images, client_message_id, sent, attachments
+            )
             await self._persist_client_bindings(live)
-        if selections:
-            await self._apply_selections(live, selections)
-        behavior = "followUp" if (live.is_streaming or live.is_compacting) else None
-        await live.send_prompt(content, streaming_behavior=behavior, images=images)
+        try:
+            if selections:
+                await self._apply_selections(live, selections)
+            behavior = "followUp" if (live.is_streaming or live.is_compacting) else None
+            disposition = await live.send_prompt(content, streaming_behavior=behavior, images=images)
+        except BaseException:
+            self._forget_send(live, pending)
+            raise
+        if disposition not in SENT_AS_MESSAGE:
+            self._forget_send(live, pending)
         return RuntimeOperationResult(
             result={"sessionId": session_id, "queued": behavior is not None}
         )
@@ -1911,14 +2029,23 @@ class PiRuntime(AgentRuntime):
         images, content = await self._prepare_prompt(session_id, content, attachments)
         live = await self._ensure_live(session_id, external_session_id, None)
         await self._clear_failure(live)
+        pending = None
         if client_message_id:
-            self._bind_client_message(live, content, images, client_message_id, sent, attachments)
+            pending = self._bind_client_message(
+                live, content, images, client_message_id, sent, attachments
+            )
             await self._persist_client_bindings(live)
-        if live.is_streaming:
-            await live.send_prompt(content, streaming_behavior="steer", images=images)
-            return RuntimeOperationResult(result={"sessionId": session_id, "steered": True})
-        await live.send_prompt(content, images=images)
-        return RuntimeOperationResult(result={"sessionId": session_id, "steered": False})
+        steered = live.is_streaming
+        try:
+            disposition = await live.send_prompt(
+                content, streaming_behavior="steer" if steered else None, images=images
+            )
+        except BaseException:
+            self._forget_send(live, pending)
+            raise
+        if disposition not in SENT_AS_MESSAGE:
+            self._forget_send(live, pending)
+        return RuntimeOperationResult(result={"sessionId": session_id, "steered": steered})
 
     async def interrupt_session(
         self,
@@ -1932,7 +2059,24 @@ class PiRuntime(AgentRuntime):
         if not (live.is_streaming or live.is_compacting):
             return RuntimeOperationResult(result={"sessionId": session_id, "noop": True})
         live.abort_requested = True
-        await live.command({"type": "abort"}, timeout=max(self.request_timeout, 120.0))
+        process = live.process
+        assert process is not None
+        live.touch()
+        request_id, aborted = await process.submit({"type": "abort"})
+        # Pi's abort waits for the run to settle, and a run waiting on a dialog
+        # settles only once the dialog is answered; an extension that passes no
+        # abort signal to it would keep abort waiting. Once Pi has the abort,
+        # dismiss the run's dialogs, as Esc does in Pi's terminal.
+        for pending in list(live.pending_ui.values()):
+            if not pending.during_run:
+                continue
+            await process.notify(
+                {"type": "extension_ui_response", "id": pending.request_id, "cancelled": True}
+            )
+            await self._close_interaction(live, pending, status="cancelled")
+        await process.wait_response(
+            request_id, aborted, "abort", timeout=max(self.request_timeout, 120.0)
+        )
         return RuntimeOperationResult(result={"sessionId": session_id})
 
     async def update_session_selections(
@@ -2208,9 +2352,27 @@ class PiRuntime(AgentRuntime):
         external_session_id: str | None,
         cwd: str | None,
     ) -> PiLiveSession:
+        for _attempt in range(3):
+            try:
+                return await self._open_live(session_id, external_session_id, cwd)
+            except PiSessionRetired:
+                # Reclaimed while this request used it: open the session again.
+                continue
+        raise RuntimeUnavailableError("Pi session keeps closing; try again")
+
+    async def _open_live(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+        cwd: str | None,
+    ) -> PiLiveSession:
         live = self._live.get(session_id)
-        if live is not None and live.alive:
-            await self._reload_if_written_elsewhere(live)
+        if live is not None:
+            # Before any await: the reclaim pass re-checks activity under the
+            # session lock, so it now leaves this session alone.
+            live.touch()
+            if live.alive:
+                await self._reload_if_written_elsewhere(live)
         if live is None:
             # Resolve the target first; installation below is synchronous, so two
             # concurrent RPCs for the same session share one live session (and one
@@ -2421,20 +2583,33 @@ class PiRuntime(AgentRuntime):
         client_message_id: str,
         content: str,
         attachments: tuple[RuntimeAttachment, ...],
-    ) -> None:
+    ) -> dict[str, Any]:
         """Remember a client send until Pi emits its user message."""
 
         prompt = _prompt_text(message, images)
         live.client_messages.append((prompt, client_message_id))
-        live.pending_sends.append(
-            {
-                "message": message,
-                "clientMessageId": client_message_id,
-                "display": PiRuntime._display(content, attachments),
-            }
-        )
+        pending = {
+            "message": message,
+            "clientMessageId": client_message_id,
+            "display": PiRuntime._display(content, attachments),
+        }
+        live.pending_sends.append(pending)
         if live.stream is not None:
             live.stream.bind_client_message(prompt, client_message_id)
+        return pending
+
+    @staticmethod
+    def _forget_send(live: PiLiveSession, pending: Mapping[str, Any] | None) -> None:
+        """Drop a send Pi will not turn into a user message.
+
+        Left behind, it would hand its attachments to the next message with the
+        same text, such as the same prompt sent again after a failure.
+        """
+
+        for index, send in enumerate(live.pending_sends):
+            if send is pending:
+                del live.pending_sends[index]
+                return
 
     @staticmethod
     def _display(
@@ -2546,18 +2721,30 @@ class PiRuntime(AgentRuntime):
         # Pi records every set_model / set_thinking_level in the session file,
         # and clients resend their selections with each message; only send
         # actual changes.
+        model_value: str | None = None
+        model_level: str | None = None
+        explicit_level: str | None = None
         for key, value in selections.items():
             if value is None:
                 continue
             if key == "model":
-                model_value, level = _split_thinking_selection(value, self._catalog_models)
-                await self._set_model(live, model_value)
-                if level is not None:
-                    await self._set_thinking_level(live, level)
+                model_value, model_level = _split_thinking_selection(value, self._catalog_models)
             elif key in ("thinkingLevel", "effort", "reasoningEffort"):
-                await self._set_thinking_level(live, value)
+                explicit_level = value
             else:
                 logger.debug("ignoring unknown selection key %r", key)
+        # Clients may send back every selection the state echoed with one of
+        # them changed, so a level in the model id and the separate level can
+        # disagree: the one that differs from the current level is the change.
+        level = explicit_level
+        if model_level is not None and (
+            explicit_level is None or model_level != live.thinking_level
+        ):
+            level = model_level
+        if model_value is not None:
+            await self._set_model(live, model_value)
+        if level is not None:
+            await self._set_thinking_level(live, level)
 
     async def _set_model(self, live: PiLiveSession, selection_id: str) -> None:
         if live.model and _model_selection_id(live.model) == selection_id:
@@ -2578,7 +2765,11 @@ class PiRuntime(AgentRuntime):
             live.thinking_level = thinking
 
     async def _set_thinking_level(self, live: PiLiveSession, level: str) -> None:
-        if live.thinking_level == level:
+        process = live.process
+        # A level event still waiting to be handled can rewrite the cached
+        # level after a newer read; only skip when none can. Pi records a level
+        # change only when the level differs, so a repeated set is harmless.
+        if live.thinking_level == level and process is not None and process.events_settled:
             return
         await live.command({"type": "set_thinking_level", "level": level})
         # Pi clamps the level to what the model supports (off without reasoning).
@@ -2665,16 +2856,15 @@ class PiRuntime(AgentRuntime):
         """Tell the user about a failure no request is waiting for any more."""
 
         notice = _failure_notice(live.platform_id, kind, message)
-        live.failure_notice = notice
+        self._failures[live.platform_id] = (notice, live.external_id)
         try:
             await self.host.notice_upsert(notice)
         except Exception:
             logger.exception("failed to publish pi failure notice for %s", live.platform_id)
 
     async def _clear_failure(self, live: PiLiveSession) -> None:
-        if live.failure_notice is None:
+        if self._failures.pop(live.platform_id, None) is None:
             return
-        live.failure_notice = None
         try:
             await self.host.notice_upsert(
                 _failure_notice(live.platform_id, "", "", status="resolved")
@@ -2749,11 +2939,35 @@ class PiRuntime(AgentRuntime):
         return await process.request(payload)
 
 
+def _command_id(name: str) -> str:
+    """A platform command id for a Pi command name (``skill:x`` -> ``skill-x``)."""
+
+    if COMMAND_ID_PATTERN.fullmatch(name):
+        return name
+    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "-", name).strip("-")
+    if not cleaned[:1].isalpha():
+        cleaned = "cmd-" + cleaned
+    return cleaned[:64]
+
+
+def _command_text(raw: str, command_id: str, name: str) -> str:
+    """The prompt Pi runs: the typed text with the platform id put back as Pi's name."""
+
+    text = raw.strip()
+    prefix = "/" + command_id
+    if command_id == name or not text.startswith(prefix):
+        return raw
+    rest = text[len(prefix) :]
+    if rest and not rest[0].isspace():
+        return raw  # another command that merely starts with this id
+    return "/" + name + rest
+
+
 def _command(name: str, description: str | None, *, source: Any) -> RuntimeCommand:
     """Pi commands all take one free-form argument string (``/name args``)."""
 
     return RuntimeCommand(
-        id=name,
+        id=_command_id(name),
         title=name,
         description=description,
         scope="session",

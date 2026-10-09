@@ -58,8 +58,8 @@ class _Quarantine:
     # Not a size refusal: request a new capture after a backoff.
     retryable: bool = False
     attempts: int = 1
-    # The Host reported a source fact other than "available" (for example
-    # archived) while quarantined; a recovery must not override it.
+    # The Host's latest source fact while quarantined is not "available"
+    # (for example archived); a recovery must not override it.
     host_fact: bool = False
 
 
@@ -260,7 +260,8 @@ class SyncRelay:
                         "observedAt": _observed_now(), "observationOrigin": "event"}
         previous = self.quarantined.get(session_id)
         record = _Quarantine(external_id, through_seq, source_state, retryable=not too_large,
-                             attempts=previous.attempts + 1 if previous is not None else 1)
+                             attempts=previous.attempts + 1 if previous is not None else 1,
+                             host_fact=previous is not None and previous.host_fact)
         self.quarantined[session_id] = record
         logger.warning("DSH session history quarantined session_id={} reason={} attempts={} error={}",
                        session_id, reason, record.attempts, error)
@@ -295,8 +296,10 @@ class SyncRelay:
         rejected = self.quarantined.get(session_id)
         if rejected is None:
             return source
-        if source.get("availability") != "available":
-            rejected.host_fact = True
+        # Track the Host's latest fact: available again after archived means
+        # a recovery may restate the capture's source.
+        rejected.host_fact = source.get("availability") != "available"
+        if rejected.host_fact:
             return source
         return {**rejected.source_state, "observedAt": _observed_now()}
 
@@ -311,12 +314,10 @@ class SyncRelay:
             if method in _QUARANTINED_HISTORY:
                 return None
             if method == "session.source.updated":
-                if params.get("availability") == "available":
+                rejected.host_fact = params.get("availability") != "available"
+                if not rejected.host_fact:
                     return None
-                rejected.host_fact = True
             if method == "session.meta.upsert" and isinstance(params.get("sourceState"), dict):
-                if params["sourceState"].get("availability") != "available":
-                    rejected.host_fact = True
                 source = self.source_state_for(params["sessionId"], params["sourceState"])
                 return {**notice, "params": {**params, "sourceState": source}}
         if method == "session.inventory.complete" and isinstance(params.get("sessions"), list):

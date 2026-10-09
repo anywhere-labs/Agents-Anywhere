@@ -503,6 +503,11 @@ def handle_command(command: dict) -> None:
     elif command_type == "steer":
         emit({"id": request_id, "type": "response", "command": "steer", "success": True})
     elif command_type == "abort":
+        if STATE["waitingUi"]:
+            # Like Pi: abort waits for the run to settle, and a run waiting on
+            # a dialog without an abort signal settles once it is answered.
+            STATE["abortPending"] = request_id
+            return
         STATE["isStreaming"] = False
         emit({"id": request_id, "type": "response", "command": "abort", "success": True})
         emit({"type": "agent_settled"})
@@ -608,7 +613,13 @@ def handle_command(command: dict) -> None:
                             "name": "fix-tests",
                             "description": "Fix failing tests",
                             "source": "prompt",
-                        }
+                        },
+                        # Pi names skills "skill:<name>".
+                        {
+                            "name": "skill:aa-skill",
+                            "description": "A skill",
+                            "source": "skill",
+                        },
                     ]
                 },
             }
@@ -646,6 +657,13 @@ def handle_command(command: dict) -> None:
                 "data": {"disposition": "handled"},
             }
         )
+    elif command_type == "extension_ui_response" and STATE.get("abortPending"):
+        STATE["waitingUi"] = False
+        STATE["pendingTool"] = None
+        STATE["isStreaming"] = False
+        aborted = STATE.pop("abortPending")
+        emit({"id": aborted, "type": "response", "command": "abort", "success": True})
+        emit({"type": "agent_settled"})
     elif command_type == "extension_ui_response":
         if STATE["waitingUi"]:
             STATE["waitingUi"] = False

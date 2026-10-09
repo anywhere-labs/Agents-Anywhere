@@ -73,6 +73,13 @@ def test_permission_catalog_filter_and_limit() -> None:
     assert APPROVAL_EXTENSION_PATH.is_file()
 
 
+def test_an_interrupt_dismisses_a_pending_approval() -> None:
+    # Pi's abort waits for the run to settle; an approval dialog without the
+    # turn's signal keeps the run waiting for an answer, so abort hangs.
+    source = APPROVAL_EXTENSION_PATH.read_text(encoding="utf-8")
+    assert "{ signal: ctx.signal }" in source
+
+
 def test_approval_notice_matches_connector_context() -> None:
     approval = parse_approval_request(approval_record())
     assert approval is not None

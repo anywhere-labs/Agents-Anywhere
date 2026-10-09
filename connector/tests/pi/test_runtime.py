@@ -242,7 +242,7 @@ async def test_commands_are_listed(
     await runtime.start()
     try:
         commands = await runtime.list_commands("sess-none")
-        assert [command.id for command in commands] == ["compact", "fix-tests"]
+        assert [command.id for command in commands] == ["compact", "fix-tests", "skill-aa-skill"]
         assert all(command.accepts_args for command in commands)
     finally:
         await runtime.stop()

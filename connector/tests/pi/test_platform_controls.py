@@ -7,7 +7,9 @@ slash commands with arguments, and show the files a user attached.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 import time
 from pathlib import Path
 
@@ -20,6 +22,10 @@ from connector.runtime_protocol import (
 )
 from connector.runtimes.pi import runtime as pi_runtime
 from connector.runtimes.pi.runtime import platform_session_id
+from connector.server.runtime_rpc_payloads import (
+    model_catalog_payload,
+    permission_catalog_payload,
+)
 
 from .conftest import FAKE_PNG_BYTES, FakeHost, wait_for
 from .test_runtime import make_runtime
@@ -372,5 +378,133 @@ async def test_attachment_message_shows_what_the_user_sent(
         item = user_item(snapshot.items)
         assert item.content["text"] == "look at these"
         assert item.content["attachments"] == expected
+    finally:
+        await runtime.stop()
+
+
+async def test_selections_sent_back_whole_keep_the_one_that_changed(
+    fake_pi: Path, tmp_path: Path, fake_host: FakeHost, session_file: Path
+) -> None:
+    runtime = make_runtime(fake_pi, tmp_path, fake_host)
+    await runtime.start()
+    try:
+        await runtime.create_and_start_session("whole", "hi")
+        await wait_for(lambda: bool(fake_host.turn_ends))
+        await runtime.update_session_selections(
+            "whole", None, {"model": "alt:test-model#thinking=high"}
+        )
+
+        async def selections() -> dict:
+            return dict((await runtime.get_session_state("whole")).selections)
+
+        # Android sends every selection the state echoed, with one changed.
+        await runtime.update_session_selections(
+            "whole", None, {**await selections(), "model": "alt:test-model#thinking=low"}
+        )
+        assert (await selections())["thinkingLevel"] == "low"
+        await runtime.update_session_selections(
+            "whole", None, {**await selections(), "thinkingLevel": "medium"}
+        )
+        assert (await selections())["model"] == "alt:test-model#thinking=medium"
+    finally:
+        await runtime.stop()
+
+
+async def test_a_late_level_event_cannot_make_a_level_change_skipped(
+    fake_pi: Path, tmp_path: Path, fake_host: FakeHost, session_file: Path
+) -> None:
+    runtime = make_runtime(fake_pi, tmp_path, fake_host)
+    await runtime.start()
+    try:
+        await runtime.create_and_start_session("late-level", "hi")
+        await wait_for(lambda: bool(fake_host.turn_ends))
+        live = runtime._live["late-level"]
+        # Hold level events behind host I/O; command responses keep flowing.
+        gates: list[asyncio.Event] = []
+        handle = runtime.handle_live_event
+
+        async def held(live, record):
+            if record.get("type") == "thinking_level_changed":
+                gate = asyncio.Event()
+                gates.append(gate)
+                await gate.wait()
+            await handle(live, record)
+
+        runtime.handle_live_event = held  # type: ignore[method-assign]
+        await runtime.update_session_selections("late-level", None, {"thinkingLevel": "high"})
+        await runtime.update_session_selections("late-level", None, {"thinkingLevel": "low"})
+        assert live.thinking_level == "low"
+        # The "high" event lands late and rewrites the cached level.
+        await wait_for(lambda: len(gates) == 1)
+        gates[0].set()
+        await wait_for(lambda: live.thinking_level == "high")
+        await runtime.update_session_selections("late-level", None, {"thinkingLevel": "high"})
+        runtime.handle_live_event = handle  # type: ignore[method-assign]
+        for gate in gates:
+            gate.set()
+        state = pi_runtime.response_data(await live.command({"type": "get_state"}))
+        assert state["thinkingLevel"] == "high"
+    finally:
+        await runtime.stop()
+
+
+def test_thinking_levels_clamp_like_pi() -> None:
+    clamp = pi_runtime.clamp_thinking_level
+    assert clamp("high", BASE_LEVELS) == "high"
+    assert clamp("xhigh", BASE_LEVELS) == "high"
+    assert clamp("minimal", ("off", "low", "medium", "high", "xhigh")) == "low"
+    assert clamp("medium", ("off",)) == "off"
+    assert clamp("medium", ()) is None
+
+
+async def test_catalogs_mark_what_a_new_session_uses(
+    fake_pi: Path, tmp_path: Path, fake_host: FakeHost
+) -> None:
+    runtime = make_runtime(fake_pi, tmp_path, fake_host)
+    await runtime.start()
+    try:
+        catalog = await runtime.list_model_catalog()
+        # New-session forms preselect the defaults; without them they took
+        # the first model and the lowest level ("off").
+        reasoning, plain, mapped = catalog.models
+        assert [model.id for model in catalog.models if model.is_default] == ["test:test-model"]
+        assert [i.id for i in reasoning.reasoning_items if i.is_default] == ["medium"]
+        assert [i.id for i in mapped.reasoning_items if i.is_default] == ["medium"]
+        assert plain.reasoning_items == ()
+        payload = model_catalog_payload(catalog)
+        assert [m["id"] for m in payload["models"] if m["default"]] == ["test:test-model"]
+        permissions = permission_catalog_payload(await runtime.list_permission_catalog())
+        assert [p["id"] for p in permissions["permissions"] if p["default"]] == [
+            runtime.default_permission_mode
+        ]
+    finally:
+        await runtime.stop()
+
+
+async def test_skill_commands_get_ids_the_platform_accepts(
+    fake_pi: Path, tmp_path: Path, fake_host: FakeHost, session_file: Path, monkeypatch
+) -> None:
+    log = tmp_path / "commands.jsonl"
+    monkeypatch.setenv("PI_FAKE_COMMAND_LOG", str(log))
+    runtime = make_runtime(fake_pi, tmp_path, fake_host)
+    await runtime.start()
+    try:
+        await runtime.create_and_start_session("skills", "hi")
+        await wait_for(lambda: bool(fake_host.turn_ends))
+        listed = {command.id: command for command in await runtime.list_commands("skills")}
+        # The Server's command endpoint takes ^[A-Za-z][A-Za-z0-9_-]*$ only.
+        assert all(re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", command_id) for command_id in listed)
+        assert listed["skill-aa-skill"].title == "skill:aa-skill"
+        runtime._command_names.clear()  # as after a Connector restart
+        ended = len(fake_host.turn_ends)
+        await runtime.execute_command(
+            "skills", "skill-aa-skill", raw="/skill-aa-skill check this"
+        )
+        await wait_for(lambda: len(fake_host.turn_ends) > ended)
+        ended = len(fake_host.turn_ends)
+        await runtime.execute_command("skills", "skill-aa-skill", args=("again",))
+        await wait_for(lambda: len(fake_host.turn_ends) > ended)
+        prompts = [c["message"] for c in commands(log) if c["type"] == "prompt"]
+        assert prompts[-2:] == ["/skill:aa-skill check this", "/skill:aa-skill again"]
     finally:
         await runtime.stop()

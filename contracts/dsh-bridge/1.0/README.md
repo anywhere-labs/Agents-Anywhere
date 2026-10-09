@@ -135,8 +135,10 @@ Connector sends `runtime.sync.refresh` for that session after 30 seconds,
 doubling up to 30 minutes, and uploads the new capture even when it is
 unchanged. When a capture is accepted, the Connector restates its source fact
 with the current `observedAt`, since the capture time can be older than an
-unavailable observation reported meanwhile; it does not when the Host reported
-another non-available fact (for example `archived`) during the quarantine.
+unavailable observation reported meanwhile; it does not when the Host's latest
+fact during the quarantine is another non-available one (for example `archived`).
+A later `available` fact from the Host (for example after unarchiving) clears
+that, and a second refusal keeps what the Host last reported.
 Other sessions continue and the runtime still reaches `running`.
 
 Without the negotiated extension, live notifications retain the typed Host

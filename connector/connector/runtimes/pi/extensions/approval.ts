@@ -35,6 +35,9 @@ export default function approvalExtension(pi: ExtensionAPI): void {
         cwd: ctx.cwd,
         mode,
       }),
+      // An interrupt (Pi abort) dismisses the pending approval as denied;
+      // without it, abort waits for an answer nobody gives.
+      { signal: ctx.signal },
     );
     if (!approved) return { block: true, reason: `${event.toolName} was not approved` };
   });

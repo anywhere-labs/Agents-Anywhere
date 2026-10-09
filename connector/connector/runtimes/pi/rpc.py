@@ -78,6 +78,7 @@ class PiRpcProcess:
         self._stderr_task: asyncio.Task[None] | None = None
         self._event_task: asyncio.Task[None] | None = None
         self._events: asyncio.Queue[Mapping[str, Any] | None] = asyncio.Queue()
+        self._handling_event = False
         self._exit_code: int | None = None
         self._exited = asyncio.Event()
         self._closing = False
@@ -93,6 +94,17 @@ class PiRpcProcess:
     @property
     def alive(self) -> bool:
         return self._process is not None and self._process.returncode is None and not self._closing
+
+    @property
+    def events_settled(self) -> bool:
+        """Every event read so far has been handled.
+
+        Responses resolve as soon as they are read while events wait in order
+        behind host I/O, so an event Pi sent before a response may still be
+        applied after it.
+        """
+
+        return self._events.empty() and not self._handling_event
 
     @property
     def returncode(self) -> int | None:
@@ -128,13 +140,27 @@ class PiRpcProcess:
         """Send one command and await its ``response`` record."""
 
         request_id, future = await self.submit(command)
+        return await self.wait_response(
+            request_id, future, str(command.get("type")), timeout=timeout
+        )
+
+    async def wait_response(
+        self,
+        request_id: str,
+        future: asyncio.Future[Mapping[str, Any]],
+        command_type: str,
+        *,
+        timeout: float | None = None,
+    ) -> Mapping[str, Any]:
+        """Await the response to a command ``submit`` sent."""
+
         effective_timeout = self._request_timeout if timeout is None else timeout
         try:
             return await asyncio.wait_for(future, timeout=effective_timeout)
         except TimeoutError as exc:
             self._pending.pop(request_id, None)
             raise PiRpcTimeout(
-                f"Pi did not answer {command.get('type')!r} within {effective_timeout}s"
+                f"Pi did not answer {command_type!r} within {effective_timeout}s"
             ) from exc
         except asyncio.CancelledError:
             self._pending.pop(request_id, None)
@@ -308,7 +334,11 @@ class PiRpcProcess:
             record = await self._events.get()
             if record is None:
                 break
-            await self._safe_event(record)
+            self._handling_event = True
+            try:
+                await self._safe_event(record)
+            finally:
+                self._handling_event = False
         if self._on_exit is not None:
             with contextlib.suppress(Exception):
                 await self._on_exit(self._exit_code)

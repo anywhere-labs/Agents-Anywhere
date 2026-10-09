@@ -29,7 +29,10 @@ def validate_permission_mode(value: Any) -> str:
 
 
 def permission_items(
-    query: str | None = None, limit: int = 100
+    query: str | None = None,
+    limit: int = 100,
+    *,
+    default_mode: str = DEFAULT_PERMISSION_MODE,
 ) -> tuple[RuntimePermissionItem, ...]:
     descriptions = (
         ("自动执行", "允许所有工具调用，不询问确认。"),
@@ -43,7 +46,9 @@ def permission_items(
             selection_id=mode,
             title=title,
             description=description,
-            metadata={"default": mode == DEFAULT_PERMISSION_MODE},
+            metadata={"default": mode == default_mode},
+            # New sessions use the configured mode when a client picks none.
+            is_default=mode == default_mode,
         )
         for mode, (title, description) in zip(PERMISSION_MODES, descriptions, strict=True)
     )

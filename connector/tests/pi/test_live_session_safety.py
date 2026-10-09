@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,7 @@ from connector.runtime_protocol import RuntimeAttachment, RuntimeAttachmentConte
 from connector.runtimes.pi import runtime as pi_runtime
 from connector.runtimes.pi import sessions
 from connector.runtimes.pi.rpc import PiRpcError
-from connector.runtimes.pi.runtime import platform_session_id
+from connector.runtimes.pi.runtime import PiSessionRetired, platform_session_id
 
 from .conftest import FAKE_PNG_BYTES, FakeHost, wait_for
 from .test_runtime import make_runtime
@@ -185,6 +186,14 @@ async def test_a_late_failure_becomes_a_session_notification(
             {"type": "compaction_end", "reason": "threshold", "aborted": False, "errorMessage": "too long"},
         )
         await wait_for(lambda: "too long" in (failures()[-1].message or ""))
+        # Idle reclaim closes the process, not the notification.
+        runtime._idle_timeout = 0.01
+        live.last_activity -= 60
+        await runtime._reclaim_idle_sessions()
+        assert "late" not in runtime._live
+        listed = await runtime.get_session_notices("late")
+        assert [n.notice_id for n in listed] == [failures()[-1].notice_id]
+        runtime._idle_timeout = 0
         # The next message closes it.
         ended = len(fake_host.turn_ends)
         await runtime.start_turn("late", None, "again")
@@ -259,3 +268,128 @@ def test_last_entry_id_survives_cut_lines_and_reports_an_unread_tail(tmp_path: P
     assert sessions.last_entry_id(big) == "e3"
     with pytest.raises(sessions.LastEntryUnknown):
         sessions.last_entry_id(big, limit=10_000)
+
+
+async def test_a_session_being_revived_is_not_reclaimed_under_it(
+    fake_pi: Path, tmp_path: Path, fake_host: FakeHost, session_file: Path, monkeypatch
+) -> None:
+    runtime = make_runtime(fake_pi, tmp_path, fake_host)
+    await runtime.start()
+    try:
+        await runtime.create_and_start_session("idle", "hi")
+        await wait_for(lambda: bool(fake_host.turn_ends))
+        live = runtime._live["idle"]
+        # Hold requests inside their external-writer check.
+        entered, release = threading.Event(), threading.Event()
+        read_tail = pi_runtime.last_entry_id
+
+        def held(path, **kwargs):
+            entered.set()
+            release.wait(5)
+            return read_tail(path, **kwargs)
+
+        monkeypatch.setattr(pi_runtime, "last_entry_id", held)
+
+        async def turn_while_reclaiming(text: str) -> None:
+            entered.clear()
+            release.clear()
+            ended = len(fake_host.turn_ends)
+            turn = asyncio.create_task(runtime.start_turn("idle", None, text))
+            await wait_for(entered.is_set)
+            await runtime._reclaim_idle_sessions()
+            release.set()
+            await turn
+            await wait_for(lambda: len(fake_host.turn_ends) > ended)
+
+        # Idle past the timeout when the request arrives: taking it counts
+        # as activity, so the reclaim pass leaves it alone.
+        runtime._idle_timeout = 30
+        live.last_activity -= 60
+        await turn_while_reclaiming("again")
+        assert runtime._live["idle"] is live and live.alive
+
+        # Reclaimed anyway (the request outlasted the timeout): the request
+        # opens the session again instead of reviving a process nobody tracks.
+        runtime._idle_timeout = 0.01
+        await turn_while_reclaiming("back")
+        assert live.retired and live.process is None
+        assert runtime._live["idle"] is not live and runtime._live["idle"].alive
+        with pytest.raises(PiSessionRetired):
+            await live.ensure_started()
+    finally:
+        await runtime.stop()
+
+
+async def test_a_send_pi_never_took_does_not_lend_its_attachments(
+    fake_pi: Path, tmp_path: Path, fake_host: FakeHost, session_file: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(tmp_path / "attachments"))
+
+    async def download(session_id, file_id):
+        return RuntimeAttachmentContent(file_id, f"{file_id}.png", "image/png", FAKE_PNG_BYTES)
+
+    monkeypatch.setattr(fake_host, "attachment_download", download)
+    runtime = make_runtime(fake_pi, tmp_path, fake_host)
+    await runtime.start()
+    try:
+        await runtime.create_and_start_session("retry", "first")
+        await wait_for(lambda: bool(fake_host.turn_ends))
+        live = runtime._live["retry"]
+
+        def image(file_id: str) -> tuple[RuntimeAttachment, ...]:
+            return (RuntimeAttachment(file_id=file_id, media_type="image/png"),)
+
+        # Fails before Pi takes the prompt (an unknown model).
+        with pytest.raises(PiRpcError):
+            await runtime.start_turn(
+                "retry",
+                None,
+                "look",
+                attachments=image("img-a"),
+                client_message_id="c1",
+                selections={"model": "nope:missing"},
+            )
+        # An extension command consumes the prompt: no user message follows.
+        await runtime.start_turn("retry", None, "/throw-command", client_message_id="c2")
+        assert not live.pending_sends
+        ended = len(fake_host.turn_ends)
+        await runtime.start_turn(
+            "retry", None, "look", attachments=image("img-b"), client_message_id="c3"
+        )
+        await wait_for(lambda: len(fake_host.turn_ends) > ended)
+        shown = [
+            (item.source.get("clientMessageId"), [a["fileId"] for a in item.content["attachments"]])
+            for item in fake_host.timeline_syncs[-1]["items"]
+            if item.role == "user" and item.content.get("attachments")
+        ]
+        assert shown == [("c3", ["img-b"])]
+    finally:
+        await runtime.stop()
+
+
+async def test_an_interrupt_does_not_wait_on_an_open_dialog(
+    fake_pi: Path, tmp_path: Path, fake_host: FakeHost, session_file: Path, monkeypatch
+) -> None:
+    log = tmp_path / "commands.jsonl"
+    monkeypatch.setenv("PI_FAKE_COMMAND_LOG", str(log))
+    monkeypatch.setenv("PI_FAKE_TOOLS", "1")  # the run waits on a tool approval
+    runtime = make_runtime(fake_pi, tmp_path, fake_host)
+    await runtime.start()
+    try:
+        await runtime.create_and_start_session("stop", "hello")
+        await wait_for(lambda: bool(fake_host.notices))
+        assert (await runtime.get_session_state("stop")).status == "waiting_approval"
+        # Pi's abort waits for the run, which waits for the dialog's answer.
+        result = await asyncio.wait_for(runtime.interrupt_session("stop"), 10)
+        assert result.ok
+        await wait_for(lambda: bool(fake_host.turn_ends))
+        assert fake_host.turn_ends[-1]["outcome"] == "interrupted"
+        # Abort first, then the dismissal: the run then ends interrupted
+        # instead of carrying on with the refused tool.
+        sent = [c for c in commands(log) if c["type"] in ("extension_ui_response", "abort")]
+        assert [c["type"] for c in sent] == ["abort", "extension_ui_response"]
+        assert sent[1]["cancelled"] is True
+        assert fake_host.notices[-1].status == "cancelled"
+        assert not await runtime.get_session_notices("stop")
+    finally:
+        await runtime.stop()

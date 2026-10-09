@@ -365,7 +365,7 @@ def test_issue278_rejected_snapshot_is_retried_with_a_fresh_capture():
 
 def test_issue278_recovery_does_not_restate_over_a_newer_host_fact():
     async def run():
-        gateway = RejectingGateway(failures=1)
+        gateway = RejectingGateway(failures=2)
 
         async def request(method, params=None):
             return None
@@ -381,10 +381,41 @@ def test_issue278_recovery_does_not_restate_over_a_newer_host_fact():
                 await relay.operation(notifications({"method": "session.source.updated", "params": {
                     "sessionId": SESSION, "externalSessionId": EXTERNAL,
                     "availability": "archived", "observedAt": "2099-01-01T00:00:00.000Z"}}))
+                # A second refusal keeps the Host's fact.
+                await capture(relay, items)
+                assert relay.quarantined[SESSION].attempts == 2
                 gateway.notes.clear()
                 await capture(relay, items)
                 assert gateway.methods() == ["session.meta.upsert", "timeline.sync"]
                 assert not relay.quarantined
+            finally:
+                await relay.close()
+    asyncio.run(run())
+
+
+def test_issue278_recovery_restates_once_the_host_reports_available_again():
+    async def run():
+        gateway = RejectingGateway(failures=1)
+
+        async def request(method, params=None):
+            return None
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(gateway)) as http:
+            host, _ = stack(http)
+            relay = SyncRelay(SimpleNamespace(request=request), host, rejected_retry_delay=60)
+            items = make_items(2, 1024)
+            try:
+                await capture(relay, items)
+                # Archived, then unarchived while the history is held back.
+                for availability in ("archived", "available"):
+                    await relay.operation(notifications({"method": "session.source.updated", "params": {
+                        "sessionId": SESSION, "externalSessionId": EXTERNAL,
+                        "availability": availability, "observedAt": "2099-01-01T00:00:00.000Z"}}))
+                gateway.notes.clear()
+                await capture(relay, items)
+                assert gateway.methods() == [
+                    "session.meta.upsert", "timeline.sync", "session.source.updated"]
+                assert gateway.notes[-1]["params"]["availability"] == "available"
             finally:
                 await relay.close()
     asyncio.run(run())
