@@ -358,7 +358,9 @@ class DshRuntime(AgentRuntime):
         options = dict(runtime_options or {})
         if set(options) - {"agentPreset"}:
             raise RuntimeInvalidRequestError("Unsupported DSH creation option")
-        preset = options.get("agentPreset", self.config.values.get("defaultAgentPreset"))
+        preset = options.get("agentPreset")
+        if preset is None:
+            preset = self.config.values.get("defaultAgentPreset") or "standard"
         return await self._send_text("session.createAndStart", session_id, None, content, cwd, attachments, client_message_id,
                                      selections=selections, agent_preset=preset)
 
