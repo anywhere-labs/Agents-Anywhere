@@ -204,7 +204,8 @@ server can reject them as too large (HTTP 413). A rejected notification is
 skipped without dropping the rest of its batch, and a transient failure resumes
 at the first unaccepted page. Checkpoints advance only after every page is
 accepted. A DSH session whose complete snapshot the server refuses is isolated
-and reported as unavailable, so the other DSH sessions keep syncing. See
+and reported as unavailable, so the other DSH sessions keep syncing; refusals
+other than 413 are retried with a fresh capture after a backoff. See
 [Pi integration and sync boundaries](../docs/runtime-protocol/pi.md) for
 configuration, migration, verification and licensing details.
 

@@ -31,6 +31,10 @@ from connector.runtime_protocol import (
     CAPABILITY_SESSION_SEND_MESSAGE,
     CAPABILITY_SESSION_STEER,
     AgentRuntime,
+    InputRequestForm,
+    InputRequestOption,
+    InputRequestQuestion,
+    InputRequestValidationError,
     PreparedSessionTimelineSync,
     RuntimeAttachment,
     RuntimeCapability,
@@ -65,9 +69,9 @@ from connector.runtimes.pi.permissions import (
     validate_permission_mode,
 )
 from connector.runtimes.pi.rpc import (
+    PiRpcError,
     PiRpcProcess,
     PiRpcProcessExited,
-    PiRpcRequestFailed,
     response_data,
 )
 from connector.runtimes.pi.sessions import (
@@ -99,6 +103,9 @@ PLATFORM_SESSION_PREFIX = "sess_pi_"
 RECLAIM_INTERVAL_SECONDS = 15.0
 
 DIALOG_METHODS = frozenset({"select", "confirm", "input", "editor"})
+# select / input / editor dialogs are answered through the platform's
+# inputRequest v1 form, as a single question with this id.
+DIALOG_QUESTION_ID = "answer"
 
 # Pi resolves a dialog itself once its timeout passes, without an RPC event.
 # Expire the platform notice shortly after so the session is not left blocked.
@@ -205,6 +212,11 @@ class PendingInteraction:
         timeout = request.get("timeout")
         self.timeout_ms = timeout if isinstance(timeout, int) else None
         self.approval = parse_approval_request(request)
+        # Form option id -> the exact option string Pi expects back.
+        self.choices: dict[str, str] = {}
+        self.form: InputRequestForm | None = None
+        if self.approval is None and self.method in ("select", "input", "editor"):
+            self.form = self._build_form()
         self.external_session_id = external_session_id
         self.turn_id = turn_id
         # Set for dialogs a run opened; that run settling means Pi closed them.
@@ -215,6 +227,39 @@ class PendingInteraction:
         if self.expiry is not None and self.expiry is not asyncio.current_task():
             self.expiry.cancel()
         self.expiry = None
+
+    def _build_form(self) -> InputRequestForm:
+        options: list[InputRequestOption] = []
+        if self.method == "select":
+            for index, option in enumerate(self.options):
+                if not option.strip():
+                    continue
+                option_id = f"o_{index}"
+                self.choices[option_id] = option
+                options.append(InputRequestOption(option_id=option_id, label=option))
+        prompt = (self.message or "").strip() or self.title.strip() or "Pi 需要你的输入"
+        return InputRequestForm(
+            questions=(
+                InputRequestQuestion(
+                    question_id=DIALOG_QUESTION_ID,
+                    prompt=prompt,
+                    options=tuple(options),
+                    # A select without usable options can still be answered.
+                    allow_custom=not options,
+                ),
+            )
+        )
+
+    def _form_value(self, data: Mapping[str, Any]) -> str:
+        assert self.form is not None
+        try:
+            answer = self.form.parse_answers(data)[DIALOG_QUESTION_ID]
+        except InputRequestValidationError as exc:
+            raise RuntimeInvalidRequestError(str(exc)) from exc
+        if answer.option_ids:
+            return self.choices[answer.option_ids[0]]
+        # parse_answers trims; keep editor text exactly as submitted.
+        return str(data["answers"][DIALOG_QUESTION_ID]["customText"])
 
     @property
     def notice_id(self) -> str:
@@ -232,32 +277,25 @@ class PendingInteraction:
                 status=status,
                 action_id=action_id,
             )
-        actions: list[dict[str, Any]] = []
-        context: dict[str, Any] = {"method": self.method}
-        if self.method == "confirm":
-            actions = [
-                {"actionId": "confirm", "label": "确认", "style": "primary"},
-                {"actionId": "cancel", "label": "取消", "style": "secondary"},
-            ]
-        elif self.method == "select":
-            actions = [
-                {"actionId": option, "label": option, "style": "secondary"}
-                for option in self.options
-            ]
-            if actions:
-                actions[0]["style"] = "primary"
-            actions.append({"actionId": "cancel", "label": "取消", "style": "secondary"})
+        # The platform only accepts its own interaction types; the Pi dialog
+        # method stays in the context.
+        context: dict[str, Any] = {"method": self.method, "requestId": self.request_id}
+        cancel = {"actionId": "cancel", "label": "取消", "style": "secondary"}
+        if self.form is None:
+            interaction_type = "confirmation"
+            actions = [{"actionId": "confirm", "label": "确认", "style": "primary"}, cancel]
         else:
-            context["inputKind"] = "text"
-            context["multiline"] = self.method == "editor"
-            if isinstance(self.request_id, str):
-                context["requestId"] = self.request_id
+            interaction_type = "input_request"
+            actions = [self.form.action(label="提交"), cancel]
+            if self.method != "select":
+                context["inputKind"] = "text"
+                context["multiline"] = self.method == "editor"
         return SessionNotice(
             notice_id=self.notice_id,
             session_id=session_id,
             runtime=RUNTIME,
             type="interaction",
-            interaction_type=f"pi.{self.method}",
+            interaction_type=interaction_type,
             title=self.title,
             message=self.message,
             severity="warning",
@@ -298,11 +336,16 @@ class PendingInteraction:
                 "id": self.request_id,
                 "confirmed": action_id in ("confirm", "yes", "allow", "approve"),
             }
-        # select / input / editor all answer with a string value.
+        # select / input / editor all answer with a string value: the form
+        # answer, or a direct value from callers that bypass the form.
         value = data.get("value")
         if not isinstance(value, str):
             value = data.get("text") if isinstance(data.get("text"), str) else None
+        if value is None and "answers" in data and self.form is not None:
+            value = self._form_value(data)
         if value is None and self.method == "select":
+            if action_id not in self.options:
+                raise RuntimeInvalidRequestError("请选择一个选项。")
             value = action_id
         return {
             "type": "extension_ui_response",
@@ -400,15 +443,21 @@ class PiLiveSession:
             await process.start()
             self.process = process
             try:
-                await self.refresh_state()
-            except (PiRpcProcessExited, PiRpcRequestFailed, TimeoutError) as exc:
-                logger.warning(
-                    "pi session %s started but get_state failed: %s",
-                    self.platform_id,
-                    exc,
-                )
-            await self.runtime._reset_stream(self)
-            await self.runtime._persist_permission(self)
+                try:
+                    await self.refresh_state()
+                except PiRpcError as exc:
+                    logger.warning(
+                        "pi session %s started but get_state failed: %s",
+                        self.platform_id,
+                        exc,
+                    )
+                await self.runtime._reset_stream(self)
+                await self.runtime._persist_permission(self)
+            except BaseException:
+                # Never keep a process the next call would take as initialised.
+                self.process = None
+                await process.close()
+                raise
 
     async def refresh_state(self) -> Mapping[str, Any]:
         process = self.process
@@ -525,10 +574,13 @@ class PiRuntime(AgentRuntime):
         # sync, so a read or a failed upload never marks a file as synced.
         self._synced: dict[str, tuple[float, int]] = {}
         self._synced_loaded: set[str] = set()
+        # Oversized session files and the file stamp last reported for each.
+        self._oversized: dict[str, tuple[float, int]] = {}
         # Live-stream item ids per session file that no committed sync has
         # reconciled yet. A final timeline without them must replace history.
         self._stream_ids: dict[str, set[str]] = {}
         self._utility: PiRpcProcess | None = None
+        self._utility_lock = asyncio.Lock()
         self._catalog_revision = 0
         self._stopping = False
         self._reclaim_task: asyncio.Task[None] | None = None
@@ -594,9 +646,10 @@ class PiRuntime(AgentRuntime):
             await live.stop()
         self._live.clear()
         self._live_locks.clear()
-        if self._utility is not None:
-            await self._utility.close()
-            self._utility = None
+        async with self._utility_lock:
+            if self._utility is not None:
+                await self._utility.close()
+                self._utility = None
 
     async def on_backend_reconnect(self) -> None:
         await self.reannounce_session_states(reason="backend-reconnect")
@@ -628,7 +681,7 @@ class PiRuntime(AgentRuntime):
                 )
                 return
             try:
-                summaries = await self.list_complete_session_inventory()
+                summaries = await self.list_complete_session_inventory(report=False)
             except asyncio.CancelledError:
                 raise
             except Exception:  # a failed scan must not break the caller
@@ -683,24 +736,28 @@ class PiRuntime(AgentRuntime):
                 failed,
             )
 
-    def _live_for_meta(self, summary: SessionMeta) -> PiLiveSession | None:
-        """Match an inventory entry to its live session.
+    def _live_for(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+    ) -> PiLiveSession | None:
+        """Find the live session for a platform id or its session file.
 
         Platform-created sessions keep the platform-allocated id as the live
         key while the inventory identifies the same session by a path-derived
         id, so fall back to matching on the session file.
         """
 
-        live = self._live.get(summary.session_id)
-        if live is not None:
+        live = self._live.get(session_id)
+        if live is not None or not external_session_id:
             return live
-        external_id = summary.external_session_id
-        if external_id is None:
-            return None
         for candidate in self._live.values():
-            if candidate.external_id == external_id:
+            if candidate.external_id == external_session_id:
                 return candidate
         return None
+
+    def _live_for_meta(self, summary: SessionMeta) -> PiLiveSession | None:
+        return self._live_for(summary.session_id, summary.external_session_id)
 
     async def _reset_stale_running_states(self) -> None:
         """Re-announce states for sessions left running by a previous process.
@@ -772,11 +829,15 @@ class PiRuntime(AgentRuntime):
         self,
         page_size: int = 100,
         force: bool = False,
+        *,
+        report: bool = True,
     ) -> tuple[SessionMeta, ...]:
+        """``report=False`` reads without consuming the scanner's change flags."""
+
         _ = page_size, force
         summaries = await asyncio.to_thread(self.directory.list_sessions, 0)
         await self._load_synced_stamps(summaries)
-        return tuple(self._session_meta(summary) for summary in summaries)
+        return tuple(self._session_meta(summary, report=report) for summary in summaries)
 
     async def _load_synced_stamps(self, summaries: Sequence[PiSessionSummary]) -> None:
         """Seed committed file stamps from the persisted timeline checkpoints."""
@@ -790,17 +851,30 @@ class PiRuntime(AgentRuntime):
                 self._synced.setdefault(summary.path, stamp)
             self._synced_loaded.add(summary.path)
 
-    def _session_meta(self, summary: PiSessionSummary) -> SessionMeta:
+    def _session_meta(self, summary: PiSessionSummary, *, report: bool = True) -> SessionMeta:
         platform_id = platform_session_id(self.host.session_namespace, summary.path)
         self._known_paths[platform_id] = summary.path
         stamp = (summary.modified_at, summary.size)
-        changed = self._synced.get(summary.path) != stamp
+        source_state = SessionSourceState(
+            availability="available",
+            observed_at=_iso_from_epoch(summary.modified_at),
+            observation_origin="inventory",
+        )
+        if summary.oversized:
+            # Too large to parse: list it as unavailable, never sync history.
+            changed = self._oversized.get(summary.path) != stamp
+            if report:
+                self._oversized[summary.path] = stamp
+            sync = {"changed": changed, "requires_timeline_sync": False}
+            source_state = replace(
+                source_state, availability="unavailable", reason="history_too_large"
+            )
+        else:
+            changed = self._synced.get(summary.path) != stamp
+            sync = {"changed": changed, "requires_timeline_sync": changed}
         metadata: dict[str, Any] = dict(summary.metadata())
-        metadata["sync"] = {
-            "changed": changed,
-            "requires_timeline_sync": changed,
-        }
-        live = self._live.get(platform_id)
+        metadata["sync"] = sync
+        live = self._live_for(platform_id, summary.path)
         if live is not None and live.session_name:
             metadata["sessionName"] = live.session_name
         return SessionMeta(
@@ -811,11 +885,7 @@ class PiRuntime(AgentRuntime):
             title=summary.title,
             cwd=summary.cwd,
             ordering_time=_iso_from_epoch(summary.modified_at),
-            source_state=SessionSourceState(
-                availability="available",
-                observed_at=_iso_from_epoch(summary.modified_at),
-                observation_origin="inventory",
-            ),
+            source_state=source_state,
             metadata=metadata,
         )
 
@@ -926,16 +996,7 @@ class PiRuntime(AgentRuntime):
                 complete=False,
                 metadata={"reason": "session file unreadable"},
             ), None
-        live = self._live.get(session_id)
-        if live is None:
-            live = next(
-                (
-                    candidate
-                    for candidate in self._live.values()
-                    if candidate.external_id == doc.summary.path
-                ),
-                None,
-            )
+        live = self._live_for(session_id, doc.summary.path)
         client_messages = tuple(live.client_messages) if live is not None else ()
         client_messages = _merge_client_message_pairs(
             await self._load_client_bindings(doc.summary.path),
@@ -1032,28 +1093,44 @@ class PiRuntime(AgentRuntime):
         prepared = replace(snapshot, items=delta, complete=replacement) if delta or replacement else None
 
         async def commit() -> None:
-            await self.host.sync_state_write(
-                self._timeline_checkpoint_key(path),
-                {
-                    "version": TIMELINE_CHECKPOINT_VERSION,
-                    "sessionId": session_id,
-                    "stamp": list(stamp),
-                    "items": fingerprints,
-                },
-            )
-            self._synced[path] = stamp
-            self._synced_loaded.add(path)
             pending = self._stream_ids.get(path)
             if pending is not None:
                 pending.difference_update(streamed)
                 if not pending:
                     self._stream_ids.pop(path, None)
+            key = self._timeline_checkpoint_key(path)
+            if path in self._stream_ids:
+                # Items streamed after this read are on the platform but not in
+                # the checkpoint; a restart could not tell, so keep none.
+                await self.host.sync_state_delete(key)
+            else:
+                await self.host.sync_state_write(
+                    key,
+                    {
+                        "version": TIMELINE_CHECKPOINT_VERSION,
+                        "sessionId": session_id,
+                        "stamp": list(stamp),
+                        "items": fingerprints,
+                    },
+                )
+            self._synced[path] = stamp
+            self._synced_loaded.add(path)
 
         return PreparedSessionTimelineSync(snapshot=prepared, commit=commit)
 
     async def _publish_stream_item(self, path: str, item: RuntimeTimelineItem) -> None:
+        first = path not in self._stream_ids
         # Record first: a failed callback may still have reached the platform.
         self._stream_ids.setdefault(path, set()).add(item.id)
+        if first:
+            # Stream ids live in memory only. Drop the checkpoint before the
+            # first one goes out, so a restart replaces the whole timeline
+            # instead of appending to items it does not know were streamed.
+            # A streamed turn ends in a replacement anyway.
+            try:
+                await self.host.sync_state_delete(self._timeline_checkpoint_key(path))
+            except Exception:
+                logger.exception("failed to drop pi timeline checkpoint session=%s", path)
         await self.host.timeline_item_upsert(item)
 
     # -- state / notices ----------------------------------------------------
@@ -1063,7 +1140,9 @@ class PiRuntime(AgentRuntime):
         session_id: str,
         external_session_id: str | None = None,
     ) -> SessionState | None:
-        live = self._live.get(session_id)
+        # The inventory addresses a platform-created session by its file; a
+        # live session found that way must not be reported as idle.
+        live = self._live_for(session_id, external_session_id)
         if live is not None:
             return self._live_state(live)
         path = await self._resolve_session_path(session_id, external_session_id)
@@ -1110,11 +1189,11 @@ class PiRuntime(AgentRuntime):
         session_id: str,
         external_session_id: str | None = None,
     ) -> tuple[SessionNotice, ...]:
-        _ = external_session_id
-        live = self._live.get(session_id)
+        live = self._live_for(session_id, external_session_id)
         if live is None:
             return ()
-        return tuple(pending.as_notice(session_id) for pending in live.pending_ui.values())
+        # Notices carry no external id: use the id the platform knows.
+        return tuple(pending.as_notice(live.platform_id) for pending in live.pending_ui.values())
 
     async def get_runtime_capabilities(self) -> RuntimeCapabilitySet:
         """Runtime-scoped capability facts advertised to the platform.
@@ -2029,9 +2108,26 @@ class PiRuntime(AgentRuntime):
     # -- utility process ----------------------------------------------------
 
     async def _ensure_utility(self) -> PiRpcProcess:
-        if self._utility is not None and self._utility.alive:
-            return self._utility
-        process = PiRpcProcess(
+        async with self._utility_lock:
+            if self._utility is not None and self._utility.alive:
+                return self._utility
+            if self._stopping:
+                raise RuntimeUnavailableError("Pi runtime is stopping")
+            if self._utility is not None:
+                # Exited on its own: release its reader tasks before replacing it.
+                await self._utility.close()
+                self._utility = None
+            process = self._utility_process()
+            try:
+                await process.start()
+            except BaseException:
+                await process.close()
+                raise
+            self._utility = process
+            return process
+
+    def _utility_process(self) -> PiRpcProcess:
+        return PiRpcProcess(
             [
                 *self.command(),
                 "--mode",
@@ -2044,9 +2140,6 @@ class PiRuntime(AgentRuntime):
             env={"PI_AA_PERMISSION_MODE": self.default_permission_mode},
             request_timeout=self.request_timeout,
         )
-        await process.start()
-        self._utility = process
-        return process
 
     async def _utility_command(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         process = await self._ensure_utility()

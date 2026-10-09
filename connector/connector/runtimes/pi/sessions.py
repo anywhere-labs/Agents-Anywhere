@@ -18,6 +18,8 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 MAX_SESSION_FILE_BYTES = 64 * 1024 * 1024
+# An oversized file is still listed; its summary reads only this much.
+OVERSIZED_SUMMARY_BYTES = 1024 * 1024
 TITLE_MAX_LENGTH = 120
 
 
@@ -32,6 +34,8 @@ class PiSessionSummary:
     version: int | None = None
     parent_session: str | None = None
     size: int = 0
+    # Over MAX_SESSION_FILE_BYTES: listed, but its history is not parsed.
+    oversized: bool = False
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -86,20 +90,42 @@ def _truncate_title(text: str) -> str | None:
     return cleaned[: TITLE_MAX_LENGTH - 1] + "…"
 
 
+def _parse_line(raw: bytes) -> Mapping[str, Any] | None:
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    try:
+        record = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    return record if isinstance(record, Mapping) else None
+
+
 def iter_session_lines(path: Path):
     """Yield parsed JSON objects from a session file, skipping bad lines."""
 
     try:
         with path.open("rb") as handle:
             for raw in handle:
-                stripped = raw.strip()
-                if not stripped:
-                    continue
-                try:
-                    record = json.loads(stripped)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(record, Mapping):
+                record = _parse_line(raw)
+                if record is not None:
+                    yield record
+    except OSError as exc:
+        logger.warning("cannot read pi session %s: %s", path, exc)
+
+
+def _iter_prefix_lines(path: Path, budget: int):
+    """Like iter_session_lines, but only complete lines within ``budget`` bytes."""
+
+    try:
+        with path.open("rb") as handle:
+            while budget > 0:
+                raw = handle.readline(budget)
+                if not raw.endswith(b"\n"):
+                    return
+                budget -= len(raw)
+                record = _parse_line(raw)
+                if record is not None:
                     yield record
     except OSError as exc:
         logger.warning("cannot read pi session %s: %s", path, exc)
@@ -112,14 +138,19 @@ def summarize_session(path: Path) -> PiSessionSummary | None:
         stat = path.stat()
     except OSError:
         return None
-    if stat.st_size > MAX_SESSION_FILE_BYTES:
-        logger.warning("skipping oversized pi session file %s", path)
-        return None
+    oversized = stat.st_size > MAX_SESSION_FILE_BYTES
+    if oversized:
+        # Still a session: leaving it out would report it missing. Its title
+        # comes from the start of the file only.
+        logger.warning("pi session file %s exceeds %d bytes", path, MAX_SESSION_FILE_BYTES)
+        records = _iter_prefix_lines(path, OVERSIZED_SUMMARY_BYTES)
+    else:
+        records = iter_session_lines(path)
 
     header: Mapping[str, Any] | None = None
     title: str | None = None
     first_user_text: str | None = None
-    for record in iter_session_lines(path):
+    for record in records:
         if header is None:
             if record.get("type") != "session":
                 return None
@@ -153,6 +184,7 @@ def summarize_session(path: Path) -> PiSessionSummary | None:
         version=version if isinstance(version, int) else None,
         parent_session=parent if isinstance(parent, str) else None,
         size=stat.st_size,
+        oversized=oversized,
     )
 
 
@@ -213,7 +245,7 @@ def load_session_doc(path: Path) -> PiSessionDoc | None:
     """Parse a session file and return the active branch of its entry tree."""
 
     summary = summarize_session(path)
-    if summary is None:
+    if summary is None or summary.oversized:
         return None
     entries: list[Mapping[str, Any]] = []
     header: Mapping[str, Any] | None = None

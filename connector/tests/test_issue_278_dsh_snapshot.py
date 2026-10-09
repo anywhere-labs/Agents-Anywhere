@@ -16,7 +16,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import httpx
-import pytest
 
 from connector.runtime_protocol import (
     RuntimeInstanceHost,
@@ -24,6 +23,7 @@ from connector.runtime_protocol import (
     timeline_content_hash,
 )
 from connector.runtimes.dsh.bridge.sync import SyncRelay
+from connector.runtimes.dsh.runtime import DshRuntime
 from connector.server.ingest import ConnectorIngestClient
 from connector.server.runtime_host import ConnectorRuntimeHost
 
@@ -74,6 +74,26 @@ class Gateway:
         return [note["method"] for note in self.notes]
 
 
+class RejectingGateway(Gateway):
+    """Rejects the first complete snapshots inside an HTTP 200, as the server
+    does when applying a notification raises (a database deadlock, say)."""
+
+    def __init__(self, failures: int):
+        super().__init__()
+        self.failures = failures
+
+    def __call__(self, request):
+        notes = json.loads(request.content)["notifications"]
+        index = next((i for i, note in enumerate(notes) if note["method"] == "timeline.sync"), None)
+        if index is None or not self.failures:
+            return super().__call__(request)
+        self.failures -= 1
+        self.statuses.append(200)
+        return httpx.Response(200, json={"accepted": len(notes) - 1, "rejected": [{
+            "index": index, "method": "timeline.sync", "code": "notification_failed",
+            "message": "deadlock detected", "errorType": "DeadlockDetected"}]})
+
+
 def stack(http, *, legacy=False, budget=8 * MIB):
     async def token(force):
         return "test-token"
@@ -117,11 +137,13 @@ def test_issue278_legacy_complete_snapshot_over_50_mib_receives_413():
             host, health = stack(http, legacy=True)
             relay = SyncRelay(Mock(), host)
             try:
-                with pytest.raises(httpx.HTTPStatusError) as exc:
-                    await capture(relay, make_items(11, 5 * MIB))
-                assert exc.value.response.status_code == 413
-                assert gateway.statuses == [413] and gateway.sizes[0] > 50 * MIB
+                await capture(relay, make_items(11, 5 * MIB))
+                assert gateway.statuses[0] == 413 and gateway.sizes[0] > 50 * MIB
                 assert await host.sync_state_read(CHECKPOINT_KEY) is None
+                # Even through the old single request, the 413 isolates only
+                # this session as too large instead of failing the whole feed.
+                assert relay.quarantined[SESSION].source_state["reason"] == "history_too_large"
+                assert not relay.retry_tasks
                 health.assert_not_awaited()
             finally:
                 await relay.close()
@@ -141,6 +163,8 @@ def test_issue278_oversized_snapshot_quarantines_only_that_session():
                 source = gateway.notes[-1]["params"]
                 assert source["availability"] == "unavailable" and source["reason"] == "history_too_large"
                 health.assert_not_awaited()
+                # The same history cannot fit later: no new capture is requested.
+                assert not relay.retry_tasks
 
                 # No resumable boundary for history the backend never received.
                 await relay.operation({"kind": "checkpoint.save", "externalSessionId": EXTERNAL,
@@ -286,6 +310,87 @@ def test_issue278_oversized_snapshot_is_acked_and_feed_reaches_running():
                 assert [call.args[1] for call in health.await_args_list] == ["starting", "running"]
                 assert await host.sync_state_read(CHECKPOINT_KEY) == previous
                 client.writer.close.assert_not_called()
+            finally:
+                await relay.close()
+    asyncio.run(run())
+
+
+def test_issue278_rejected_snapshot_is_retried_with_a_fresh_capture():
+    async def run():
+        gateway = RejectingGateway(failures=2)
+        refreshes = asyncio.Queue()
+
+        async def request(method, params=None):
+            assert method == "runtime.sync.refresh"
+            refreshes.put_nowait(params)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(gateway)) as http:
+            host, _ = stack(http)
+            relay = SyncRelay(SimpleNamespace(request=request), host, rejected_retry_delay=0.01)
+            items = make_items(3, 1024)
+            try:
+                for attempt in (1, 2):
+                    await capture(relay, items)
+                    assert gateway.notes[-1]["method"] == "session.source.updated"
+                    assert gateway.notes[-1]["params"]["reason"] == "history_rejected"
+                    assert relay.quarantined[SESSION].attempts == attempt
+                    params = await asyncio.wait_for(refreshes.get(), 2)
+                    assert params == {"sessionId": SESSION, "externalSessionId": EXTERNAL}
+
+                # The Host answers with a new capture of the same history; it
+                # is uploaded again, not skipped like an oversized one.
+                gateway.notes.clear()
+                await capture(relay, items)
+                assert gateway.methods() == ["session.meta.upsert", "timeline.sync"]
+                assert gateway.complete_flags == [True]
+                assert not relay.quarantined
+                await relay.operation({"kind": "checkpoint.save", "externalSessionId": EXTERNAL,
+                                       "checkpoint": CHECKPOINT})
+                assert await host.sync_state_read(CHECKPOINT_KEY) == CHECKPOINT
+                await asyncio.sleep(0.05)
+                assert refreshes.empty()
+            finally:
+                await relay.close()
+    asyncio.run(run())
+
+
+def test_issue278_state_reads_and_host_metadata_keep_a_quarantined_session_unavailable(tmp_path):
+    async def run():
+        gateway = Gateway(limit=64 * 1024)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(gateway)) as http:
+            host, _ = stack(http, budget=16 * 1024)
+            relay = SyncRelay(Mock(), host)
+            try:
+                await capture(relay, make_items(4, 30 * 1024))
+                quarantined = gateway.notes[-1]["params"]
+                assert quarantined["reason"] == "history_too_large"
+
+                # Opening the session reads a fresh native source fact. It must
+                # not report the session usable while its history is held back.
+                runtime = DshRuntime(SimpleNamespace(values={"dshHome": str(tmp_path)}), host)
+                runtime._sync = relay
+                runtime._request = AsyncMock(return_value={
+                    "runtime": "dsh", "sessionId": SESSION, "externalSessionId": EXTERNAL,
+                    "status": "idle", "selections": {},
+                    "sourceState": {"availability": "available", "observedAt": "2026-10-10T00:00:00.000Z"}})
+                gateway.notes.clear()
+                await runtime.get_session_state(SESSION, EXTERNAL)
+                (note,) = gateway.notes
+                assert note["method"] == "session.source.updated"
+                assert (note["params"]["availability"], note["params"]["reason"]) == ("unavailable", "history_too_large")
+                assert note["params"]["observedAt"] >= quarantined["observedAt"]
+
+                gateway.notes.clear()
+                await relay.operation(notifications({"method": "session.meta.upsert", "params": {
+                    "sessionId": SESSION, "externalSessionId": EXTERNAL, "title": "synthetic",
+                    "sourceState": {"availability": "available"}}}))
+                assert gateway.notes[0]["params"]["sourceState"]["availability"] == "unavailable"
+
+                # An archived fact is still reported as is.
+                runtime._request.return_value["sourceState"] = {"availability": "archived"}
+                gateway.notes.clear()
+                await runtime.get_session_state(SESSION, EXTERNAL)
+                assert gateway.notes[0]["params"]["availability"] == "archived"
             finally:
                 await relay.close()
     asyncio.run(run())

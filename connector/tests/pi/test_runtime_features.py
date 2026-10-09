@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from connector.runtime_protocol import (
     CAPABILITY_CATALOG_PERMISSION,
@@ -12,7 +13,8 @@ from connector.runtime_protocol import (
     RuntimeInvalidRequestError,
 )
 from connector.runtimes.pi.permissions import APPROVAL_EXTENSION_PATH, PERMISSION_MODES
-from connector.runtimes.pi.runtime import platform_session_id
+from connector.runtimes.pi.runtime import PendingInteraction, platform_session_id
+from connector.server.runtime_rpc_payloads import session_notice_payload
 
 from .conftest import FAKE_PNG_BYTES, FakeHost, wait_for
 from .test_runtime import make_runtime
@@ -20,6 +22,31 @@ from .test_runtime import make_runtime
 
 def commands(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+PROTOCOL_SCHEMA = (
+    Path(__file__).resolve().parents[3]
+    / "contracts" / "protocol" / "1.0" / "schemas" / "session-snapshot-response.schema.json"
+)
+
+
+def contract_notice(notice) -> dict:
+    """The notice.upsert payload, validated as the server's NoticeIn."""
+
+    definitions = json.loads(PROTOCOL_SCHEMA.read_text(encoding="utf-8"))["$defs"]
+    # The server validates source.runtime as any discovered runtime type; the
+    # 1.0 schema still advertises only the original names.
+    definitions["NoticeSource"]["properties"]["runtime"] = {"type": ["string", "null"]}
+    payload = session_notice_payload(notice)
+    Draft202012Validator({"$ref": "#/$defs/NoticeIn", "$defs": definitions}).validate(payload)
+    return payload
+
+
+def form_answer(*, option_ids: list[str] | None = None, text: str | None = None) -> dict:
+    answer: dict = {"optionIds": option_ids or []}
+    if text is not None:
+        answer["customText"] = text
+    return {"answers": {"answer": answer}}
 
 
 async def test_streaming_before_settle_and_final_identity(
@@ -268,23 +295,39 @@ async def test_full_attachments_in_all_send_paths(
 
 
 @pytest.mark.parametrize(
-    "method,action,data",
+    "method,interaction,action,data,expected",
     [
-        ("select", "alpha", None),
-        ("input", "submit", {"text": "answer"}),
-        ("editor", "submit", {"text": "line one\nline two"}),
+        ("confirm", "confirmation", "confirm", None, {"confirmed": True}),
+        ("select", "input_request", "submit", form_answer(option_ids=["o_1"]), {"value": "beta"}),
+        ("input", "input_request", "submit", form_answer(text="answer"), {"value": "answer"}),
+        (
+            "editor",
+            "input_request",
+            "submit",
+            form_answer(text="  line one\nline two"),
+            {"value": "  line one\nline two"},
+        ),
+        # Callers that answer with a direct value keep working.
+        ("input", "input_request", "submit", {"text": "direct"}, {"value": "direct"}),
     ],
 )
-async def test_other_extension_dialogs_unchanged(
+async def test_extension_dialogs_use_platform_interaction_contract(
     fake_pi: Path,
     tmp_path: Path,
     fake_host: FakeHost,
     session_file: Path,
     monkeypatch,
     method: str,
+    interaction: str,
     action: str,
     data: dict | None,
+    expected: dict,
 ) -> None:
+    """The server only stores notices that validate as NoticeIn; a ``pi.*``
+    interaction type was rejected and the dialog could never be answered."""
+
+    log = tmp_path / "commands.jsonl"
+    monkeypatch.setenv("PI_FAKE_COMMAND_LOG", str(log))
     monkeypatch.setenv("PI_FAKE_UI", method)
     runtime = make_runtime(fake_pi, tmp_path, fake_host)
     await runtime.start()
@@ -292,8 +335,45 @@ async def test_other_extension_dialogs_unchanged(
         await runtime.create_and_start_session("dialog", "hello")
         await wait_for(lambda: bool(fake_host.notices))
         notice = fake_host.notices[-1]
-        assert notice.interaction_type == f"pi.{method}"
+        payload = contract_notice(notice)
+        assert payload["interactionType"] == interaction
+        assert payload["context"]["method"] == method
+        if interaction == "input_request":
+            (submit,) = (a for a in payload["actions"] if a["actionId"] == "submit")
+            ui = submit["input"]["uiSchema"]
+            assert ui["component"] == "inputRequest" and ui["version"] == 1
+            (question,) = ui["questions"]
+            labels = [option["label"] for option in question["options"]]
+            assert labels == (["alpha", "beta"] if method == "select" else [])
+            assert question["allowCustom"] is (method != "select")
         assert (await runtime.respond_interaction("dialog", notice.notice_id, action, data)).ok
         await wait_for(lambda: bool(fake_host.turn_ends))
+        (response,) = (c for c in commands(log) if c["type"] == "extension_ui_response")
+        assert {key: response[key] for key in expected} == expected
+        contract_notice(fake_host.notices[-1])
     finally:
         await runtime.stop()
+
+
+def test_dialog_answers_are_validated_against_the_form() -> None:
+    select = PendingInteraction(
+        {"id": "r1", "method": "select", "title": "Pick", "options": ["alpha", " ", "beta"]}
+    )
+    contract_notice(select.as_notice("sess"))
+    assert select.response_payload("submit", form_answer(option_ids=["o_2"]))["value"] == "beta"
+    for invalid in (form_answer(option_ids=["o_1"]), form_answer(text="free text"), {}):
+        with pytest.raises(RuntimeInvalidRequestError):
+            select.response_payload("submit", invalid)
+    assert select.response_payload("cancel", None) == {
+        "type": "extension_ui_response",
+        "id": "r1",
+        "cancelled": True,
+    }
+
+    # A select without usable options still has to be answerable.
+    empty = PendingInteraction({"id": "r2", "method": "select", "title": "Pick", "options": []})
+    assert empty.response_payload("submit", form_answer(text="mine"))["value"] == "mine"
+
+    text = PendingInteraction({"id": "r3", "method": "input", "title": "Name?"})
+    with pytest.raises(RuntimeInvalidRequestError):
+        text.response_payload("submit", form_answer())

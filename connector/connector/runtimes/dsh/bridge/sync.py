@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
+
 from connector.logging import logger
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtime_protocol.models import (
@@ -36,9 +38,13 @@ _DURABLE_NOTIFICATIONS = {
 }
 
 
-# The backend permanently refused this session's history. Retrying the same
-# capture cannot succeed, so it must not hold back the other sessions.
-_SESSION_INGEST_ERRORS = (ConnectorIngestSizeError, ConnectorIngestRejectedError)
+# The backend refused this session's history. It must not hold back the other
+# sessions. A capture over the size limit cannot succeed again; any other refusal
+# (an HTTP 200 rejection also covers server-side failures such as a database
+# error) is retried with a fresh capture after a backoff.
+_SESSION_INGEST_ERRORS = (ConnectorIngestSizeError, ConnectorIngestRejectedError, httpx.HTTPStatusError)
+REJECTED_RETRY_DELAY_SECONDS = 30.0
+REJECTED_RETRY_MAX_DELAY_SECONDS = 30 * 60.0
 # History for a quarantined session would land on a timeline the backend never
 # received a baseline for. Its metadata and state still flow.
 _QUARANTINED_HISTORY = {"timeline.itemUpsert", "session.turnEnded"}
@@ -49,6 +55,9 @@ class _Quarantine:
     external_session_id: str
     through_seq: Any
     source_state: dict[str, Any]
+    # Not a size refusal: request a new capture after a backoff.
+    retryable: bool = False
+    attempts: int = 1
 
 
 def _checkpoint(value: Any) -> dict[str, Any] | None:
@@ -71,11 +80,16 @@ class SyncRelay:
     Transport page ACKs alone never advance the Connector's persisted state.
     """
 
-    def __init__(self, client: BridgeClient, host: RuntimeHostClient, *, retry_delay: float = 1.0) -> None:
+    def __init__(
+        self, client: BridgeClient, host: RuntimeHostClient, *, retry_delay: float = 1.0,
+        rejected_retry_delay: float = REJECTED_RETRY_DELAY_SECONDS,
+    ) -> None:
         self.client, self.host = client, host
         self.queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=2)
         self.stream_id: str | None = None
         self.retry_delay = retry_delay
+        self.rejected_retry_delay = rejected_retry_delay
+        self.retry_tasks: set[asyncio.Task[None]] = set()
         self.task: asyncio.Task[None] | None = None
         self.snapshot: dict[str, Any] | None = None
         self.file = None
@@ -86,7 +100,8 @@ class SyncRelay:
         self.durable_checkpoints = False
         self.loaded_checkpoint: dict[str, Any] | None = None
         # Platform session ID -> rejected capture. Survives resubscription, so
-        # an unchanged capture is not uploaded again; a restart retries it.
+        # an unchanged oversized capture is not uploaded again; a restart
+        # retries it.
         self.quarantined: dict[str, _Quarantine] = {}
 
     def start(self) -> None:
@@ -109,6 +124,10 @@ class SyncRelay:
         if self.task and self.task is not asyncio.current_task():
             self.task.cancel()
             await asyncio.gather(self.task, return_exceptions=True)
+        retries = list(self.retry_tasks)
+        for task in retries:
+            task.cancel()
+        await asyncio.gather(*retries, return_exceptions=True)
         self.clear_snapshot()
 
     def clear_snapshot(self) -> None:
@@ -194,8 +213,8 @@ class SyncRelay:
         meta = snapshot["meta"]
         meta_notice = {"method": "session.meta.upsert", "params": {"sessionId": session_id, **meta}}
         rejected = self.quarantined.get(session_id)
-        if rejected is not None and rejected.through_seq == snapshot["throughSeq"]:
-            # Same capture as the rejected one. Keep the metadata current without
+        if rejected is not None and not rejected.retryable and rejected.through_seq == snapshot["throughSeq"]:
+            # Same capture as the oversized one. Keep the metadata current without
             # uploading the history again or reporting the source as available.
             meta_notice["params"]["sourceState"] = rejected.source_state
             await self.host.publish_runtime_notifications("dsh", [meta_notice])
@@ -218,15 +237,52 @@ class SyncRelay:
 
         The commit is still acknowledged so the feed moves on to the other
         sessions, but no checkpoint is saved and later history for this session
-        is held back until a new capture is accepted.
+        is held back until a new capture is accepted. Unless the capture was
+        too large, a new one is requested after a growing delay.
         """
-        reason = "history_too_large" if isinstance(error, ConnectorIngestSizeError) else "history_rejected"
+        too_large = isinstance(error, ConnectorIngestSizeError) or (
+            isinstance(error, httpx.HTTPStatusError) and error.response.status_code == 413)
+        reason = "history_too_large" if too_large else "history_rejected"
         source_state = {"availability": "unavailable", "reason": reason,
                         "observedAt": _observed_now(), "observationOrigin": "event"}
-        self.quarantined[session_id] = _Quarantine(external_id, through_seq, source_state)
-        logger.warning("DSH session history quarantined session_id={} reason={} error={}", session_id, reason, error)
+        previous = self.quarantined.get(session_id)
+        record = _Quarantine(external_id, through_seq, source_state, retryable=not too_large,
+                             attempts=previous.attempts + 1 if previous is not None else 1)
+        self.quarantined[session_id] = record
+        logger.warning("DSH session history quarantined session_id={} reason={} attempts={} error={}",
+                       session_id, reason, record.attempts, error)
         await self.host.publish_runtime_notifications("dsh", [{"method": "session.source.updated", "params": {
             "sessionId": session_id, "externalSessionId": external_id, **source_state}}])
+        if record.retryable:
+            task = asyncio.create_task(self.retry_capture(session_id, record), name="dsh-sync-retry")
+            self.retry_tasks.add(task)
+            task.add_done_callback(self.retry_tasks.discard)
+
+    async def retry_capture(self, session_id: str, record: _Quarantine) -> None:
+        """Ask the Host for a new complete capture of a refused session."""
+        attempts = record.attempts
+        while True:
+            await asyncio.sleep(min(self.rejected_retry_delay * 2 ** (attempts - 1), REJECTED_RETRY_MAX_DELAY_SECONDS))
+            if self.quarantined.get(session_id) is not record:
+                return  # Released, or a newer refusal owns the retry.
+            try:
+                await self.client.request("runtime.sync.refresh", {
+                    "sessionId": session_id, "externalSessionId": record.external_session_id})
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:  # noqa: BLE001 - keep retrying this session only
+                logger.warning("DSH session history retry failed session_id={} error_type={}",
+                               session_id, type(error).__name__)
+                attempts += 1
+                continue
+            return
+
+    def source_state_for(self, session_id: str, source: dict[str, Any]) -> dict[str, Any]:
+        """The source fact to report for a session, honouring its quarantine."""
+        rejected = self.quarantined.get(session_id)
+        if rejected is None or source.get("availability") != "available":
+            return source
+        return {**rejected.source_state, "observedAt": _observed_now()}
 
     def unquarantined(self, notice: dict[str, Any]) -> dict[str, Any] | None:
         """Drop or rewrite a Host notification that would contradict a quarantine."""
@@ -240,6 +296,9 @@ class SyncRelay:
                 return None
             if method == "session.source.updated" and params.get("availability") == "available":
                 return None
+            if method == "session.meta.upsert" and isinstance(params.get("sourceState"), dict):
+                source = self.source_state_for(params["sessionId"], params["sourceState"])
+                return {**notice, "params": {**params, "sourceState": source}}
         if method == "session.inventory.complete" and isinstance(params.get("sessions"), list):
             sessions = [
                 {**entry, "sourceState": rejected.source_state}

@@ -22,11 +22,13 @@ Issue 截至本轮读取仍为 OPEN，描述的是 DSH 事件流的完整历史�
 - 去掉 8 MiB 的本地原子上限。完整快照和不可拆分条目超过页大小时单独整份
   发送，只有服务端 413 才算超限，9 MiB 快照恢复为一次成功（与旧发送方式一致）。
 - 被拒的通知只跳过它自己；临时失败从第一个未被接受的页继续，不重发已接受的通知。
-- DSH `snapshot.commit` 被服务端永久拒绝（413 或 rejected）时，只隔离该会话：
-  上报 `unavailable` / `history_too_large`，忽略它的 `checkpoint.save`，丢弃它后续的
-  `timeline.itemUpsert` 与 `session.turnEnded`，inventory 中也标为 unavailable。
+- DSH `snapshot.commit` 被服务端拒绝（413、其他 4xx 或 rejected）时，只隔离该会话：
+  上报 `unavailable`（413 为 `history_too_large`，其他为 `history_rejected`），忽略它的
+  `checkpoint.save`，丢弃它后续的 `timeline.itemUpsert` 与 `session.turnEnded`；
+  inventory、Host 元数据和 `session.getState` 的 source 也保持 unavailable。
   commit 仍然 ACK，feed 继续处理其他会话，runtime 进入 `running`，不再无限重新订阅。
-  同一 `throughSeq` 的捕获不再重复上传；之后被接受的新捕获会解除隔离。
+  413 的同一 `throughSeq` 捕获不再重复上传；其他拒绝可能是服务端临时故障，按退避
+  发送 `runtime.sync.refresh` 重传。之后被接受的新捕获会解除隔离。
 - `connector/tests/test_issue_278_dsh_snapshot.py` 已从现状刻画改为验收这些行为。
 
 超过服务端上限的会话历史仍然无法上传。真正修复需要分阶段的完整快照协议

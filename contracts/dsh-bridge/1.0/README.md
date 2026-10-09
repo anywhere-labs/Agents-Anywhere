@@ -120,15 +120,20 @@ the asynchronous notification/coalescing queue. Native changes are still batched
 at the Bridge's bounded cadence. Snapshot page ACK only means page receipt;
 snapshot.commit waits for ingestion of the assembled complete snapshot.
 
-If the backend permanently refuses that snapshot (HTTP 413, or the notification
-is rejected), the Connector still ACKs the commit so the feed moves on, and
-quarantines only that session: it reports the source as `unavailable` with reason
-`history_too_large` or `history_rejected`, ignores `checkpoint.save` for it, and
-drops its later `timeline.itemUpsert` and `session.turnEnded` until a later
-capture is accepted. Inventory entries for it carry the same unavailable state.
-An unchanged capture (same `throughSeq`) is not uploaded again; a Connector
-restart retries it. Other sessions continue and the runtime still reaches
-`running`.
+If the backend refuses that snapshot (HTTP 413, another HTTP 4xx, or the
+notification is rejected), the Connector still ACKs the commit so the feed moves
+on, and quarantines only that session: it reports the source as `unavailable`
+with reason `history_too_large` (413) or `history_rejected`, ignores
+`checkpoint.save` for it, and drops its later `timeline.itemUpsert` and
+`session.turnEnded` until a later capture is accepted. Inventory entries,
+`session.meta.upsert` source facts and `session.getState` source observations
+for it carry the same unavailable state; an `archived` fact is still reported.
+A 413 capture cannot fit later: an unchanged one (same `throughSeq`) is not
+uploaded again, and a Connector restart retries it. Any other refusal may be
+temporary (an HTTP 200 rejection also covers server-side failures), so the
+Connector sends `runtime.sync.refresh` for that session after 30 seconds,
+doubling up to 30 minutes, and uploads the new capture even when it is
+unchanged. Other sessions continue and the runtime still reaches `running`.
 
 Without the negotiated extension, live notifications retain the typed Host
 publishers and their WebSocket/coalescing/HTTP fallback queue. Their ACK does not

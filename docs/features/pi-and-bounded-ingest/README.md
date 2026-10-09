@@ -25,7 +25,8 @@
    送达。所有批次成功才提交检查点，失败不虚假确认。
 3. 413 仅冷却相应轮询会话，其他会话继续；源变化或冷却到期重试。DSH 完整
    快照被拒时只隔离该会话（报告 unavailable、不保存检查点、暂停其增量），
-   commit 仍然 ACK，其他会话继续同步，runtime 照常进入 running。
+   commit 仍然 ACK，其他会话继续同步，runtime 照常进入 running。413 以外的
+   拒绝可能是临时的，按 30 秒起、最长 30 分钟的退避请求新的完整捕获重传。
 4. 默认 registry 的 Codex/Claude/DSH 保持原顺序，追加且只注册一次 Pi。
    标准 CLI 和桌面源码构建均使用同一注册表，无额外安装 hook。
 5. Pi 保留 `ask-writes` 默认值、流式、审批拒绝/断线不执行、附件、原生
@@ -113,3 +114,15 @@
     本轮结束，另有用例覆盖尚未落盘的情况。
   - WSL Python 3.12 完整 Connector 套件：1237 passed、3 skipped；Pi 测试另外
     重复 3 轮均通过。真实 Pi、真实 AA Server、正式桌面包仍未验证。
+- 用户要求由 Pi（`159-copy/gpt-6-astra`，xhigh，只读）复审上述提交，提出的
+  8 个问题经代码核实全部成立，已修复：
+  - Pi 扩展对话框改用平台交互类型（`confirmation` / `input_request` 表单），
+    原 `pi.*` 类型不符合服务端 NoticeIn，通知被拒、对话框无法答复。
+  - 状态/通知查询按文件路径匹配运行中的会话，AA 创建的会话不再被扫描报告为 idle。
+  - 流式发布前删除检查点、未校准时不保存，一轮中途重启后整份替换。
+  - 超过 64 MiB 的会话保留在 inventory 中并报告 unavailable，不再被标为缺失。
+  - utility 进程启动加锁；get_state 超时（`PiRpcTimeout`）不再留下半初始化进程。
+  - DSH：仅 413 视为不可重传，其他拒绝退避后用 `runtime.sync.refresh` 重传；
+    `session.getState` 和 Host 元数据中的 source 也保持隔离状态。
+  - 新增/修改的 18 项测试在修复前全部失败。WSL 完整套件 1250 passed、
+    3 skipped；Pi 与 DSH 相关测试另外重复 3 轮均通过。

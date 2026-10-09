@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from connector.runtime_protocol import RuntimeConfig
-from connector.runtimes.pi import projection
+from connector.runtimes.pi import projection, sessions
 from connector.runtimes.pi.runtime import PiLiveSession, PiRuntime
 
 from .conftest import FakeHost
@@ -279,3 +279,92 @@ async def test_settle_publishes_through_prepare_and_commits_only_after_success(
     assert host.timeline_syncs[-1]["complete"] is False
     assert content_ids(host.timeline_syncs[-1]["items"]) == {item_id(session_path, "message", "u2:user")}
     assert meta.session_id != "sess-live"
+
+
+async def test_restart_after_streaming_before_the_final_sync_replaces_the_timeline(
+    tmp_path: Path, fake_host: FakeHost, session_path: Path
+) -> None:
+    """The reply was streamed, then the connector stopped before the turn's
+    final sync. An incremental sync after restart would append the user
+    message after the reply the platform already holds."""
+
+    runtime = make_runtime(tmp_path, fake_host)
+    meta = await inventory_entry(runtime)
+    await (await runtime.prepare_session_timeline_sync(meta.session_id, meta.external_session_id)).commit()
+
+    append_session(session_path, user("u2", "a1", "again", 3), assistant("a2", "u2", "sure", 4))
+    final = (await runtime.get_session_snapshot(meta.session_id, meta.external_session_id)).items
+    reply = next(i for i in final if i.id == item_id(session_path, "message", "assistant:timestamp:4:1:text:1"))
+    await runtime._publish_stream_item(str(session_path), reply)
+
+    restarted = make_runtime(tmp_path, fake_host)
+    prepared = await restarted.prepare_session_timeline_sync(meta.session_id, meta.external_session_id)
+    assert prepared.snapshot is not None and prepared.snapshot.complete is True
+    await prepared.commit()
+    append_session(session_path, user("u3", "a2", "third", 6))
+    later = await restarted.prepare_session_timeline_sync(meta.session_id, meta.external_session_id)
+    assert later.snapshot is not None and later.snapshot.complete is False
+
+
+async def test_commit_keeps_no_checkpoint_while_streamed_items_are_unreconciled(
+    tmp_path: Path, fake_host: FakeHost, session_path: Path
+) -> None:
+    runtime = make_runtime(tmp_path, fake_host)
+    meta = await inventory_entry(runtime)
+    key = runtime._timeline_checkpoint_key(str(session_path))
+    await (await runtime.prepare_session_timeline_sync(meta.session_id, meta.external_session_id)).commit()
+    assert key in fake_host.sync_state
+
+    append_session(session_path, user("u2", "a1", "again", 3))
+    prepared = await runtime.prepare_session_timeline_sync(meta.session_id, meta.external_session_id)
+    # A new run streams after that read and before its commit.
+    projector = projection.TranscriptProjector(meta.session_id, str(session_path), live_key_anchor="u2")
+    projector.apply_message({"role": "custom", "content": "from an extension"}, entry_id=None)
+    (live_only,) = projector.items()
+    await runtime._publish_stream_item(str(session_path), live_only)
+    await prepared.commit()
+    assert key not in fake_host.sync_state
+
+    restarted = make_runtime(tmp_path, fake_host)
+    again = await restarted.prepare_session_timeline_sync(meta.session_id, meta.external_session_id)
+    assert again.snapshot is not None and again.snapshot.complete is True
+
+
+async def test_oversized_session_stays_listed_as_unavailable(
+    tmp_path: Path, fake_host: FakeHost, session_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Leaving an unparsable file out of the complete inventory made the
+    platform mark the session missing."""
+
+    monkeypatch.setattr(sessions, "MAX_SESSION_FILE_BYTES", 64)
+    runtime = make_runtime(tmp_path, fake_host)
+    # A reconnect re-announce reads the inventory without consuming the change.
+    (preview,) = await runtime.list_complete_session_inventory(report=False)
+    assert preview.metadata["sync"]["changed"] is True
+
+    meta = await inventory_entry(runtime)
+    assert meta.external_session_id == str(session_path)
+    assert meta.title == "hello"
+    assert meta.source_state is not None
+    assert (meta.source_state.availability, meta.source_state.reason) == ("unavailable", "history_too_large")
+    assert meta.metadata["sync"] == {"changed": True, "requires_timeline_sync": False}
+    # Reported once per file version, not on every scan.
+    assert (await inventory_entry(runtime)).metadata["sync"]["changed"] is False
+    append_session(session_path, user("u2", "a1", "again", 3))
+    assert (await inventory_entry(runtime)).metadata["sync"]["changed"] is True
+
+    prepared = await runtime.prepare_session_timeline_sync(meta.session_id, meta.external_session_id)
+    assert prepared.snapshot is None
+
+
+def test_oversized_summary_reads_only_whole_lines_of_its_prefix(
+    tmp_path: Path, session_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sessions, "MAX_SESSION_FILE_BYTES", 64)
+    header = session_path.read_bytes().split(b"\n", 1)[0] + b"\n"
+    monkeypatch.setattr(sessions, "OVERSIZED_SUMMARY_BYTES", len(header) + 10)
+    summary = sessions.summarize_session(session_path)
+    assert summary is not None and summary.oversized
+    # The first user message is cut by the budget, so it is not parsed.
+    assert summary.title is None
+    assert sessions.load_session_doc(session_path) is None

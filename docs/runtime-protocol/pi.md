@@ -57,6 +57,10 @@ Windows 支持 npm `pi.cmd` 解析为 Node + CLI 参数数组；不要把完整 
   下次轮询会重试。一轮结束时的同步交给 Connector 发送队列后即写检查点（与
   Claude 相同），以保持它排在本轮流式条目之后；若该请求之后被服务端永久拒绝，
   要等会话文件再次变化才会重传。检查点持久化，Connector 重启后未变化的会话不再重传。
+- 已流式发布的条目 id 只在内存中。每轮第一个流式条目发出前先删除该会话的
+  检查点，提交时如果还有未校准的流式条目也不保存检查点。这样 Connector 在一轮
+  中途重启后会整份替换，不会把用户消息追加到已流式发布的回复之后。sync state
+  定期落盘，在下一次落盘前崩溃仍可能保留旧检查点。
 - 默认只发送新增或变化的条目（`complete=false`）。以下情况发送整份替换：
   没有有效检查点（首次同步或版本变化）；已发布的条目从当前分支消失
   （`/tree` 切换分支、仅在流式阶段出现的条目）；条目位置变化；新条目排在
@@ -69,12 +73,22 @@ Windows 支持 npm `pi.cmd` 解析为 Node + CLI 参数数组；不要把完整 
 - 轮次结束的 `outcome`：用户中断或 `stopReason=aborted` 为 `interrupted`，
   `stopReason=error` 为 `failed`，其余为 `completed`。Pi 进程在一轮中途退出时
   补发 `failed`（切换权限重启时为 `interrupted`）。
+- 扩展对话框使用平台已有的交互类型：`confirm` 为 `confirmation`（确认/取消）；
+  `select`、`input`、`editor` 为 `input_request`，带 inputRequest v1 表单
+  （单个问题：`select` 只能选给出的选项，`input`/`editor` 填写文本），Pi 的方法名
+  在 `context.method` 中。答复按表单校验，无效答复返回请求错误、对话框保持打开。
 - 一轮中打开、到这一轮结束仍未答复的扩展对话框已被 Pi 取消，通知标记为
   `cancelled`；带 `timeout` 的对话框超时后标记为 `expired`。会话随后回到
   `idle`，可被空闲回收。
 - `externalSessionId` 必须位于 `sessionsDir` 内，否则请求被拒绝，不会传给
   `pi --session`。AA 创建的会话 id 与文件路径的对应关系持久化在
   `pi/session-index/<会话 id>`，重启后无需扫描目录。
+- inventory 用文件路径派生的 id 指代会话；状态和通知查询也按文件路径匹配运行中的
+  会话，所以 AA 创建、正在运行的会话不会被扫描报告为 `idle`。通知始终使用该
+  会话的平台 id。
+- 超过 64 MiB 的会话文件不解析历史，但仍保留在 inventory 中，报告为
+  `unavailable`（`history_too_large`），标题只从文件开头 1 MiB 读取。它不会被
+  标为缺失，也不会同步时间线。
 
 ## 有界历史同步
 

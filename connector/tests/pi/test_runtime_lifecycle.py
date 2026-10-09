@@ -4,14 +4,24 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
-from connector.runtime_protocol import RuntimeInvalidRequestError
+from connector.runtime_protocol import (
+    RuntimeInvalidRequestError,
+    RuntimeUnavailableError,
+)
 from connector.runtimes.pi import runtime as runtime_module
-from connector.runtimes.pi.runtime import PiLiveSession, PiRuntime, platform_session_id
+from connector.runtimes.pi.rpc import PiRpcTimeout
+from connector.runtimes.pi.runtime import (
+    PendingInteraction,
+    PiLiveSession,
+    PiRuntime,
+    platform_session_id,
+)
 from connector.server.capabilities import protocol_capabilities_from_runtime_types
+from connector.server.runtime_sync import ACTIVE_SESSION_SYNC_SKIP_STATUSES
 
 from .conftest import FakeHost, wait_for
 from .test_timeline_sync import make_runtime, user, write_session
@@ -255,3 +265,118 @@ async def test_runtime_capabilities_use_the_runtime_channel_and_discovery_keeps_
     assert by_id[("pi", "session.send_message")]["available"] is True
     assert by_id[("pi", "runtime.attachment")]["available"] is True
 
+
+
+async def test_inventory_id_reports_the_live_state_of_a_platform_created_session(
+    tmp_path: Path, fake_host: FakeHost
+) -> None:
+    """The scanner asks by the path-derived inventory id. Reporting idle would
+    upload mid-run history and clear the platform's active run."""
+
+    path = tmp_path / "sessions" / "--project--" / "created.jsonl"
+    write_session(path, user("u1", None, "hi", 1))
+    runtime = make_runtime(tmp_path, fake_host)
+    live = live_session(runtime, "sess-created", tmp_path, str(path))
+    live.is_streaming = True
+    pending = PendingInteraction({"id": "r1", "method": "input", "title": "Name?"})
+    live.pending_ui[pending.request_id] = pending
+
+    inventory_id = platform_session_id(fake_host.session_namespace, str(path))
+    assert inventory_id != "sess-created"
+    state = await runtime.get_session_state(inventory_id, str(path))
+    assert state is not None and state.status in ACTIVE_SESSION_SYNC_SKIP_STATUSES
+    notices = await runtime.get_session_notices(inventory_id, str(path))
+    # Notices carry no external id, so they must use the id the platform knows.
+    assert [notice.session_id for notice in notices] == ["sess-created"]
+    (meta,) = await runtime.list_complete_session_inventory()
+    assert runtime._live_for_meta(meta) is live
+
+
+class FakeProcess:
+    """Stands in for PiRpcProcess; records its lifecycle."""
+
+    created: ClassVar[list[FakeProcess]] = []
+
+    def __init__(self, *_: Any, **__: Any) -> None:
+        self.alive = False
+        self.closed = False
+        FakeProcess.created.append(self)
+
+    async def start(self) -> None:
+        await asyncio.sleep(0.01)
+        self.alive = True
+
+    async def request(self, payload: Any, timeout: float | None = None) -> Any:
+        raise PiRpcTimeout(f"Pi did not answer {payload.get('type')!r}")
+
+    async def close(self) -> None:
+        self.alive = False
+        self.closed = True
+
+
+@pytest.fixture
+def fake_process(monkeypatch: pytest.MonkeyPatch) -> type[FakeProcess]:
+    FakeProcess.created = []
+    monkeypatch.setattr(runtime_module, "PiRpcProcess", FakeProcess)
+    return FakeProcess
+
+
+async def test_concurrent_catalog_requests_share_one_utility_process(
+    tmp_path: Path, fake_host: FakeHost, fake_process: type[FakeProcess]
+) -> None:
+    runtime = make_runtime(tmp_path, fake_host)
+    first, second = await asyncio.gather(runtime._ensure_utility(), runtime._ensure_utility())
+    assert first is second and fake_process.created == [first]
+
+    # One that exited on its own is closed before it is replaced.
+    first.alive = False
+    replacement = await runtime._ensure_utility()
+    assert replacement is not first and first.closed
+
+    await runtime.stop()
+    assert replacement.closed
+    with pytest.raises(RuntimeUnavailableError):
+        await runtime._ensure_utility()
+    assert fake_process.created == [first, replacement]
+
+
+async def test_get_state_timeout_still_finishes_session_startup(
+    tmp_path: Path, fake_host: FakeHost, fake_process: type[FakeProcess]
+) -> None:
+    """PiRpcTimeout is not a TimeoutError. Escaping here left a live process
+    without a stream that every later call took as initialised."""
+
+    path = tmp_path / "sessions" / "--project--" / "slow.jsonl"
+    write_session(path, user("u1", None, "hi", 1))
+    runtime = make_runtime(tmp_path, fake_host)
+    live = live_session(runtime, "sess-slow", tmp_path, str(path))
+    await live.ensure_started()
+    assert live.alive and live.stream is not None
+    assert runtime._permission_key(str(path)) in fake_host.sync_state
+    await live.stop()
+
+
+async def test_failed_session_startup_does_not_leave_a_half_started_process(
+    tmp_path: Path,
+    fake_host: FakeHost,
+    fake_process: type[FakeProcess],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "sessions" / "--project--" / "broken.jsonl"
+    write_session(path, user("u1", None, "hi", 1))
+    runtime = make_runtime(tmp_path, fake_host)
+    live = live_session(runtime, "sess-broken", tmp_path, str(path))
+
+    async def broken_stream(_: Any) -> None:
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(runtime, "_reset_stream", broken_stream)
+    with pytest.raises(OSError):
+        await live.ensure_started()
+    assert live.process is None and fake_process.created[-1].closed
+
+    monkeypatch.undo()
+    monkeypatch.setattr(runtime_module, "PiRpcProcess", FakeProcess)
+    await live.ensure_started()
+    assert live.alive and live.stream is not None and len(fake_process.created) == 2
+    await live.stop()
