@@ -7,8 +7,9 @@ Codex、Claude、DSH 保持原有顺序和实现，Pi 追加到 registry。
 ## 安装与配置
 
 1. 工作设备另行安装 [Pi](https://github.com/earendil-works/pi)，确保 Connector
-   启动环境能找到 `pi`。已做 Windows Pi 1.1.0、macOS Pi 0.87.1 的离线 smoke；
-   本次使用 Node 22.19+，其他版本应核对其自身的运行要求。
+   启动环境能找到 `pi`。当前 Windows、macOS、Linux 均已升级/保持 Pi 1.1.0
+   并通过真实基础 RPC 验证。Node 要求为 22.19+；本次实际使用的版本分别为
+   24.14.0、22.19.0、24.21.0。Linux 登录 PATH 中的 Node 20 不是 Pi 的专用运行时。
 2. 使用本分支的 Connector，或重新构建包含它的桌面版。在工作设备下添加
    Pi Runtime。仅复制仓库不会修改已安装的官方桌面版。
 3. 使用现有 Pi 模型配置与登录方式。本集成不安装 Pi、不登录模型账户、不
@@ -48,16 +49,45 @@ Windows 支持 npm `pi.cmd` 解析为 Node + CLI 参数数组；不要把完整 
 本分支使用原生注册，不应再叠加旧外部 CLI/hook。旧桌面环境的迁移必须单独
 备份并验证，不能直接删除既有 `.pth` 或运行另一份持有同一设备身份的 Connector。
 
+## 时间线同步与会话状态
+
+- 每个会话文件在 Connector sync state 中保存检查点
+  `pi/timeline-sync/<文件路径>`：文件的 mtime/size 和每个条目的指纹。
+  轮询扫描在 ingest 成功后才写检查点；单纯读取快照、上传失败都不算已同步，
+  下次轮询会重试。一轮结束时的同步交给 Connector 发送队列后即写检查点（与
+  Claude 相同），以保持它排在本轮流式条目之后；若该请求之后被服务端永久拒绝，
+  要等会话文件再次变化才会重传。检查点持久化，Connector 重启后未变化的会话不再重传。
+- 默认只发送新增或变化的条目（`complete=false`）。以下情况发送整份替换：
+  没有有效检查点（首次同步或版本变化）；已发布的条目从当前分支消失
+  （`/tree` 切换分支、仅在流式阶段出现的条目）；条目位置变化；新条目排在
+  已发布条目之前。平台的增量写入不会删除条目，已有条目保持原位，新条目
+  追加在末尾，所以这些情况只有整份替换才正确。实际效果是：外部 Pi 终端
+  推进的会话按增量同步；AA 发起并流式输出的一轮结束时，用户消息排在已流式
+  发布的回复之前，仍然整份替换。
+- 流式阶段 Pi 还没有给消息分配 entry id。自定义消息、`!` 命令、分支摘要
+  在这一阶段使用本轮内唯一的临时 id，结束后由整份替换换成正式 id。
+- 轮次结束的 `outcome`：用户中断或 `stopReason=aborted` 为 `interrupted`，
+  `stopReason=error` 为 `failed`，其余为 `completed`。Pi 进程在一轮中途退出时
+  补发 `failed`（切换权限重启时为 `interrupted`）。
+- 一轮中打开、到这一轮结束仍未答复的扩展对话框已被 Pi 取消，通知标记为
+  `cancelled`；带 `timeout` 的对话框超时后标记为 `expired`。会话随后回到
+  `idle`，可被空闲回收。
+- `externalSessionId` 必须位于 `sessionsDir` 内，否则请求被拒绝，不会传给
+  `pi --session`。AA 创建的会话 id 与文件路径的对应关系持久化在
+  `pi/session-index/<会话 id>`，重启后无需扫描目录。
+
 ## 有界历史同步
 
 `connector/server/ingest_batching.py` 将增量 `timeline.sync` 按实际 UTF-8 JSON
 字节数拆为不超过 8 MiB 的请求。保留 ID、顺序、metadata；所有批次接受后才
-提交同步检查点，部分失败可幂等重放。HTTP 200 中的 rejected 也视为失败。
+提交同步检查点。网络或 5xx 失败后从第一个未被接受的页继续，已接受的页不重发。
+HTTP 200 中的 rejected 也视为失败。
 
-**`complete=true` 是整份替换，不是“最后一页”。** 超限完整替换快照或单个
-不可拆分条目会明确失败；轮询会话进入 30 分钟冷却，源变化或重启可重试。
-不截断、不删除、不虚假确认历史。大完整快照的分阶段原子提交仍需未来协议
-设计，本次没有通过调大服务端上限或改变删除语义规避这个边界。
+**`complete=true` 是整份替换，不是“最后一页”。** 完整替换快照和单个不可拆分
+条目不拆分、不截断，超过页大小时单独整份发送；本地不设上限，只有服务端返回
+413 才算超限，这和拆分前的行为一致。被拒的通知只跳过它自己，同批其他通知
+照常送达；轮询会话进入 30 分钟冷却，源变化或重启可重试。不虚假确认历史。
+超过服务端上限的完整快照仍需要分阶段提交协议才能上传。
 
 ## 验证
 
@@ -82,8 +112,12 @@ POSIX 可执行脚本，完整套件在 Linux/WSL 执行。Git 属性确保其 s
 - Linux Connector 全套：1199 passed、2 个 Darwin 专属路径测试 skipped。
 - macOS 26.5.2 / arm64 全套：1201 passed，无失败、无跳过，包含 Darwin 路径用例。
 - Windows 原生 registry/重连与实际审批 TypeScript：7 passed；新增探针参数兼容用例 2 passed。
-- Windows Pi 1.1.0、macOS Pi 0.87.1 离线 RPC smoke：成功，子进程已回收。
-- macOS wheel 构建与资源清单验证通过，独立临时验证目录已清理。
+- 三端当前 Pi 1.1.0 真实基础 RPC：成功，子进程已回收；Mac/Linux 各重复两轮。
+  历史 0.87.1 记录保留，Linux 旧启动器的目录覆盖/Node 识别限制已更正。
+  详见 [最新版本升级验证](../features/pi-and-bounded-ingest/pi-latest-upgrade-verification.md)。
+- Linux 实机采用既有非 root Pi 运行用户与空目录；默认 registry 四种类型各一次。
+  详见 [Linux 真实 Pi 验证](../features/pi-and-bounded-ingest/linux-real-pi-verification.md)。
+- macOS wheel 构建与资源清单验证通过；Mac/Linux 实机临时验证目录均已清理。
 - 过程中的失败与修复见 [Mac 验证记录](../features/pi-and-bounded-ingest/mac-verification.md)。
 - 真实 UI、模型调用、流式审批/附件端到端及正式桌面安装包未在本分支验收。
   headless 与离线 probe 成功不等于这些用户流程已经验证。

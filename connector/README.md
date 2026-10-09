@@ -197,11 +197,16 @@ separately and configure a Pi runtime with an executable, session directory and
 working directory. `ask-writes` remains the default; tool approval is not an OS
 sandbox. Pointing at an existing session directory uploads its history to AA.
 
-Incremental history ingest is byte-batched (8 MiB by default). Whole replacement
-snapshots are never split or mislabelled as a final page; oversized indivisible
-records fail explicitly without truncation. Checkpoints advance only after every
-page is accepted. See [Pi integration and sync boundaries](../docs/runtime-protocol/pi.md)
-for configuration, migration, verification and licensing details.
+Incremental history ingest is byte-batched (8 MiB pages by default). Whole
+replacement snapshots and other indivisible records are never split, truncated or
+mislabelled as a final page; they travel whole in their own request and only the
+server can reject them as too large (HTTP 413). A rejected notification is
+skipped without dropping the rest of its batch, and a transient failure resumes
+at the first unaccepted page. Checkpoints advance only after every page is
+accepted. A DSH session whose complete snapshot the server refuses is isolated
+and reported as unavailable, so the other DSH sessions keep syncing. See
+[Pi integration and sync boundaries](../docs/runtime-protocol/pi.md) for
+configuration, migration, verification and licensing details.
 
 An offline native smoke probe, which uses an empty agent directory and makes no
 model requests, is available as `uv run python scripts/probe_pi.py`.
