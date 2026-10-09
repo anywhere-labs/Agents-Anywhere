@@ -159,15 +159,19 @@ def test_S5_413_cooldown_is_session_local_and_source_change_retries():
     asyncio.run(run())
 
 
-def test_S5_local_oversize_is_paused_without_sending_or_committing():
+def test_S5_item_over_page_budget_travels_alone_and_commits():
     async def run():
         runtime = Runtime()
-        calls = []
+        timeline_items = []
         def transport(request):
-            calls.append(request.content)
+            for note in json.loads(request.content)["notifications"]:
+                if note["method"] == "timeline.sync":
+                    timeline_items.append([row["id"] for row in note["params"]["items"]])
             return httpx.Response(200, json={"rejected": []})
         async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
             runner = runner_for(runtime, client_for(http, 400))
-            assert await runner.sync_existing_session(runtime, runtime.session("large"), recovering=True) is False
-            assert not runtime.commits
+            assert await runner.sync_existing_session(runtime, runtime.session("large"), recovering=True) is not False
+            # Only the server may reject a request as too large.
+            assert timeline_items == [[f"large-{i}"] for i in range(8)]
+            assert runtime.commits == {"large": 1}
     asyncio.run(run())

@@ -68,10 +68,10 @@ def test_S8_envelope_exact_budget_and_plus_one():
         async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
             await client_for(http, len(encoded)).ingest_notifications([notification])
             assert bodies == [encoded]
-            from connector.server.ingest_batching import ConnectorIngestSizeError
-            with pytest.raises(ConnectorIngestSizeError):
-                await client_for(http, len(encoded) - 1).ingest_notifications([notification])
-            assert len(bodies) == 1
+            # Over the page budget an indivisible notification still travels
+            # whole; only the server decides it is too large.
+            await client_for(http, len(encoded) - 1).ingest_notifications([notification])
+            assert bodies == [encoded, encoded]
     asyncio.run(run())
 
 
@@ -79,17 +79,34 @@ def test_S8_envelope_exact_budget_and_plus_one():
                                            (False, [item(1, "private-test-content" * 1000)])])
 def test_S2_oversized_atomic_data_never_truncated_or_split(complete, rows):
     async def run():
+        bodies = []
+        def transport(request):
+            bodies.append(request.content)
+            return httpx.Response(200, json={"rejected": []})
+        notification = timeline(rows, complete=complete)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+            await client_for(http).ingest_notifications([notification])
+        assert len(bodies) == 1, "P3: an indivisible notification is never split"
+        assert json.loads(bodies[0])["notifications"] == [notification]
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("complete,rows", [(True, [item(i) for i in range(20)]),
+                                           (False, [item(1, "private-test-content" * 1000)])])
+def test_S2_server_413_for_atomic_data_is_typed_and_sanitized(complete, rows):
+    async def run():
         from connector.server.ingest_batching import ConnectorIngestSizeError
         bodies = []
         def transport(request):
             bodies.append(request.content)
-            return httpx.Response(200)
+            return httpx.Response(413)
         async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
             with pytest.raises(ConnectorIngestSizeError) as error:
                 await client_for(http).ingest_notifications([timeline(rows, complete=complete)])
-            assert not bodies, "P3: no fragment of an indivisible notification is sent"
-            assert "private-test-content" not in str(error.value)
-            assert "test-session" not in str(error.value)
+        assert len(bodies) == 1
+        assert error.value.reason == "http_413"
+        assert "private-test-content" not in str(error.value)
+        assert "test-session" not in str(error.value)
     asyncio.run(run())
 
 
@@ -158,6 +175,8 @@ def test_S7_pending_size_rejection_does_not_blame_or_block_direct_session():
     async def run():
         delivered = []
         def transport(request):
+            if len(request.content) > 900:
+                return httpx.Response(413)
             delivered.extend(json.loads(request.content)["notifications"])
             return httpx.Response(200, json={"rejected": []})
         async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
@@ -174,11 +193,11 @@ def test_S9_encoding_runs_in_worker_and_pages_are_lazy(monkeypatch):
     original = ingest_batching._encode_json
     threads = set()
     encoded_items = []
-    def tracked(value, limit, reason):
+    def tracked(value):
         threads.add(threading.get_ident())
         if isinstance(value, dict) and "orderSeq" in value:
             encoded_items.append(value["id"])
-        return original(value, limit, reason)
+        return original(value)
     monkeypatch.setattr(ingest_batching, "_encode_json", tracked)
     async def run():
         main = threading.get_ident()
@@ -211,3 +230,108 @@ def test_S8_history_over_50_MiB_uses_mocked_bounded_requests():
         assert max(sizes) <= budget and len(sizes) > 1
         assert ids == [row["id"] for row in rows]
     asyncio.run(run())
+
+
+def test_S10_default_budget_sends_9_MiB_replacement_whole_like_main():
+    async def run():
+        rows = [item(i, "x" * (1024 * 1024)) for i in range(9)]
+        sizes = []
+        def transport(request):
+            sizes.append(len(request.content))
+            return httpx.Response(200, json={"rejected": []})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+            ingest = ConnectorIngestClient("https://aa.example.invalid", _token, lambda: http, lambda timeout: http)
+            await ingest.ingest_notifications([timeline(rows, complete=True)])
+        assert len(sizes) == 1 and sizes[0] > 9 * 1024 * 1024
+    asyncio.run(run())
+
+
+def test_S11_oversized_notification_rejects_only_itself_in_a_batch():
+    async def run():
+        from connector.server.ingest_batching import ConnectorIngestSizeError
+        before = {"method": "timeline.itemUpsert", "params": {"sessionId": "a", "item": item(0)}}
+        oversized = timeline([item(i) for i in range(20)], complete=True, session="x")
+        after = [{"method": "session.state.updated", "params": {"sessionId": "y", "status": "idle"}},
+                 {"method": "notice.upsert", "params": {"sessionId": "z", "noticeId": "n"}}]
+        delivered = []
+        def transport(request):
+            if len(request.content) > 900:
+                return httpx.Response(413)
+            delivered.extend(json.loads(request.content)["notifications"])
+            return httpx.Response(200, json={"rejected": []})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+            ingest = client_for(http)
+            with pytest.raises(ConnectorIngestSizeError):
+                await ingest.ingest_notifications([before, oversized, *after])
+            assert delivered == [before, *after]
+            # The queued worker drops only the oversized notification as well.
+            delivered.clear()
+            ingest._retry_delay = 0.001
+            for notification in [before, oversized, *after]:
+                await ingest.enqueue(notification["method"], notification["params"])
+            task = asyncio.create_task(ingest.flush_loop())
+            for _ in range(200):
+                if not ingest.has_pending:
+                    break
+                await asyncio.sleep(0.01)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            assert delivered == [before, *after]
+    asyncio.run(run())
+
+
+def test_S12_page_413_below_budget_retries_each_notification_alone():
+    async def run():
+        from connector.server.ingest_batching import ConnectorIngestSizeError
+        small = [{"method": "session.state.updated", "params": {"sessionId": f"s{i}", "value": "v" * 150}}
+                 for i in range(3)]
+        large = {"method": "session.meta.upsert", "params": {"sessionId": "big", "title": "t" * 400}}
+        delivered = []
+        def transport(request):
+            if len(request.content) > 450:
+                return httpx.Response(413)
+            delivered.extend(json.loads(request.content)["notifications"])
+            return httpx.Response(200, json={"rejected": []})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+            with pytest.raises(ConnectorIngestSizeError):
+                await client_for(http).ingest_notifications([small[0], large, *small[1:]])
+        assert delivered == small
+    asyncio.run(run())
+
+
+def test_S13_transient_failure_resumes_at_unaccepted_page_without_replay():
+    async def run():
+        turn_ended = {"method": "session.turnEnded", "params": {"sessionId": "s", "turnId": "t"}}
+        rows = [item(i) for i in range(12)]
+        bodies = []
+        failed = []
+        def transport(request):
+            notifications = json.loads(request.content)["notifications"]
+            if len(bodies) == 1 and not failed:
+                failed.append(True)
+                return httpx.Response(503)
+            bodies.append(notifications)
+            return httpx.Response(200, json={"rejected": []})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+            ingest = client_for(http)
+            ingest._retry_delay = 0.001
+            await ingest.enqueue("session.turnEnded", turn_ended["params"])
+            await ingest.enqueue("timeline.sync", timeline(rows)["params"])
+            task = asyncio.create_task(ingest.flush_loop())
+            for _ in range(200):
+                if not ingest.has_pending:
+                    break
+                await asyncio.sleep(0.01)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        delivered = [n for body in bodies for n in body]
+        assert failed and len(bodies) > 2
+        assert [n for n in delivered if n["method"] == "session.turnEnded"] == [turn_ended]
+        assert [i["id"] for n in delivered if n["method"] == "timeline.sync" for i in n["params"]["items"]] == [
+            row["id"] for row in rows
+        ], "every item arrives exactly once, in order"
+    asyncio.run(run())
+
+
+async def _token(force):
+    return "test-token"
