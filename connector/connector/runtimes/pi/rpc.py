@@ -127,6 +127,29 @@ class PiRpcProcess:
     ) -> Mapping[str, Any]:
         """Send one command and await its ``response`` record."""
 
+        request_id, future = await self.submit(command)
+        effective_timeout = self._request_timeout if timeout is None else timeout
+        try:
+            return await asyncio.wait_for(future, timeout=effective_timeout)
+        except TimeoutError as exc:
+            self._pending.pop(request_id, None)
+            raise PiRpcTimeout(
+                f"Pi did not answer {command.get('type')!r} within {effective_timeout}s"
+            ) from exc
+        except asyncio.CancelledError:
+            self._pending.pop(request_id, None)
+            raise
+
+    async def submit(
+        self,
+        command: Mapping[str, Any],
+    ) -> tuple[str, asyncio.Future[Mapping[str, Any]]]:
+        """Send one command and return its pending response without waiting.
+
+        The future resolves with the ``response`` record, or fails when Pi
+        rejects the command or the process exits. It has no deadline.
+        """
+
         process = self._process
         if process is None or process.stdin is None:
             raise PiRpcProcessExited("Pi RPC process is not running")
@@ -146,18 +169,7 @@ class PiRpcProcess:
         except (BrokenPipeError, ConnectionResetError) as exc:
             self._pending.pop(request_id, None)
             raise PiRpcProcessExited("Pi RPC stdin closed") from exc
-
-        effective_timeout = self._request_timeout if timeout is None else timeout
-        try:
-            return await asyncio.wait_for(future, timeout=effective_timeout)
-        except TimeoutError as exc:
-            self._pending.pop(request_id, None)
-            raise PiRpcTimeout(
-                f"Pi did not answer {payload.get('type')!r} within {effective_timeout}s"
-            ) from exc
-        except asyncio.CancelledError:
-            self._pending.pop(request_id, None)
-            raise
+        return request_id, future
 
     async def notify(self, command: Mapping[str, Any]) -> None:
         """Send a command without waiting for its response.

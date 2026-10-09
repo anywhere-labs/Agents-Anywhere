@@ -189,7 +189,7 @@ async def test_permission_catalog_restart_and_persistence(
         state = await runtime.get_session_state("modes")
         assert state.selections == {
             "permission": "read-only",
-            "model": "test:other-model",
+            "model": "test:other-model#high",
             "thinkingLevel": "high",
         }
         starts = [c for c in commands(log) if c["type"] == "startup"]

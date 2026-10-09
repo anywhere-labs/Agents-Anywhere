@@ -218,7 +218,8 @@ async def test_model_catalog_and_selections(
         assert result.ok is True
         state = await runtime.get_session_state("sess-model")
         assert state is not None
-        assert state.selections["model"] == "test:other-model"
+        # A reasoning model reports its reasoning item, as clients select it.
+        assert state.selections["model"] == "test:other-model#high"
         assert state.selections["thinkingLevel"] == "high"
     finally:
         await runtime.stop()
@@ -234,7 +235,8 @@ async def test_commands_are_listed(
     await runtime.start()
     try:
         commands = await runtime.list_commands("sess-none")
-        assert [command.id for command in commands] == ["fix-tests"]
+        assert [command.id for command in commands] == ["compact", "fix-tests"]
+        assert all(command.accepts_args for command in commands)
     finally:
         await runtime.stop()
 

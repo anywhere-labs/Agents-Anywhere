@@ -35,8 +35,16 @@ async def user_turn(stream: PiStreamAccumulator, text: str = "hello", timestamp:
     return user
 
 
-def projected(*records: dict) -> tuple:
-    return project_session(list(records), session_id="s", external_session_id="/s.jsonl")
+def projected(*records: dict, **kwargs: Any) -> tuple:
+    return project_session(
+        list(records), session_id="s", external_session_id="/s.jsonl", **kwargs
+    )
+
+
+def output(items) -> list:
+    """The run's own items; the user message that started it streams first."""
+
+    return [item for item in items if item.role != "user"]
 
 
 def assert_final_identity(stream: PiStreamAccumulator, final: tuple) -> None:
@@ -57,20 +65,21 @@ async def test_delta_only_text_and_thinking_have_trailing_throttled_flush(fake_h
     await user_turn(stream)
     await stream.handle_event({"type": "message_start", "message": message("assistant", [])})
     await stream.handle_event(update("thinking_delta", 0, delta="Think"))
-    assert len(fake_host.timeline_items) == 1
+    assert len(output(fake_host.timeline_items)) == 1
     await stream.handle_event(update("thinking_delta", 0, delta=" carefully"))
     await stream.handle_event(update("text_delta", 1, delta="Hello"))
     await stream.handle_event(update("text_delta", 1, delta=" world"))
-    assert len(fake_host.timeline_items) == 1
+    assert len(output(fake_host.timeline_items)) == 1
     await asyncio.sleep(0.08)
-    assert len(fake_host.timeline_items) == 3
-    assert [item.content["text"] for item in fake_host.timeline_items] == [
+    published = output(fake_host.timeline_items)
+    assert len(published) == 3
+    assert [item.content["text"] for item in published] == [
         "Think",
         "Think carefully",
         "Hello world",
     ]
-    assert all(item.status == "running" for item in fake_host.timeline_items)
-    first, second = fake_host.timeline_items[:2]
+    assert all(item.status == "running" for item in published)
+    first, second = published[:2]
     assert first.id == second.id
     assert second.revision > first.revision
     await stream.close()
@@ -84,12 +93,12 @@ async def test_message_end_flushes_authoritative_final_content_and_ids(fake_host
     await stream.handle_event({"type": "message_start", "message": message("assistant", [])})
     await stream.handle_event(update("text_delta", 0, delta="Helo"))
     await stream.handle_event(update("text_delta", 0, delta=" wor"))
-    assert len(fake_host.timeline_items) == 1
+    assert len(output(fake_host.timeline_items)) == 1
     await stream.handle_event(update("text_end", 0, content="Hello world"))
     final_message = message("assistant", [{"type": "text", "text": "Hello world!"}])
     await stream.handle_event({"type": "message_end", "message": final_message})
-    assert len(fake_host.timeline_items) == 2
-    first, last = fake_host.timeline_items
+    assert len(output(fake_host.timeline_items)) == 2
+    first, last = output(fake_host.timeline_items)
     assert first.id == last.id
     assert last.content["text"] == "Hello world!"
     assert last.status == "done"
@@ -206,7 +215,7 @@ async def test_resumed_turn_and_timestamp_collisions_are_stable(fake_host, times
     await stream.handle_event({"type": "message_end", "message": assistant})
     final = projected(*seed, entry(user, "new-u"), entry(assistant, "new-a"))
     assert_final_identity(stream, final)
-    live = stream.items()
+    live = output(stream.items())
     assert len(live) == 1
     assert live[0].turn_id == "turn-2"
     assert live[0].order_seq == 7
@@ -292,8 +301,11 @@ async def test_adjacent_content_blocks_share_final_identity(fake_host) -> None:
         ],
     )
     await stream.handle_event({"type": "message_end", "message": assistant})
-    assert len(stream.items()) == 2
-    assert [item.content["text"] for item in stream.items()] == ["first\n\nsecond", "hello world"]
+    assert len(output(stream.items())) == 2
+    assert [item.content["text"] for item in output(stream.items())] == [
+        "first\n\nsecond",
+        "hello world",
+    ]
     assert_final_identity(stream, projected(entry(user, "u"), entry(assistant, "a")))
     await stream.close()
 
@@ -328,7 +340,7 @@ async def test_streamed_messages_without_entry_ids_keep_distinct_identities(
         await stream.handle_event({"type": "message_start", "message": value})
         await stream.handle_event({"type": "message_end", "message": value})
     await stream.handle_event({"type": "agent_settled"})
-    ids = [item.id for item in stream.items()]
+    ids = [item.id for item in output(stream.items())]
     assert len(ids) == 2
     assert len(set(ids)) == 2
     by_id: dict[str, list[Any]] = {}
@@ -336,4 +348,35 @@ async def test_streamed_messages_without_entry_ids_keep_distinct_identities(
         by_id.setdefault(item.id, []).append(item.content)
     # Each identity is published once, with its own content only.
     assert all(len(contents) == 1 for contents in by_id.values())
+    await stream.close()
+
+
+async def test_user_message_streams_first_with_its_final_identity(fake_host) -> None:
+    """The run's output follows the user message, not the client's optimistic copy."""
+
+    stream = PiStreamAccumulator(
+        "s", "/s.jsonl", publish=fake_host.timeline_item_upsert, throttle_seconds=0
+    )
+    display = {"text": "look", "attachments": [{"fileId": "f1", "name": "a.png"}]}
+    # Bound after the stream was seeded, as a send to an idle session does.
+    stream.bind_client_message("look\n[note]", "client-1", display)
+    user = await user_turn(stream, "look\n[note]", 5)
+    await stream.handle_event({"type": "message_start", "message": message("assistant", [], 6)})
+    await stream.handle_event(update("text_delta", 0, delta="seen"))
+    assistant = message("assistant", [{"type": "text", "text": "seen"}], 6)
+    await stream.handle_event({"type": "message_end", "message": assistant})
+    first = fake_host.timeline_items[0]
+    assert first.role == "user"
+    assert first.source["clientMessageId"] == "client-1"
+    assert first.content["text"] == "look"
+    assert first.content["attachments"] == [{"fileId": "f1", "name": "a.png"}]
+    assert first.order_seq < output(fake_host.timeline_items)[0].order_seq
+    # Pi's entry id comes later; the settled history keeps the same identity.
+    final = projected(
+        entry(user, "assigned-later"),
+        entry(assistant, "a"),
+        client_messages=[("look\n[note]", "client-1")],
+        client_displays={"client-1": display},
+    )
+    assert_final_identity(stream, final)
     await stream.close()

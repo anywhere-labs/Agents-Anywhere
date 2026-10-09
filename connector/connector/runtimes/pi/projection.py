@@ -120,6 +120,7 @@ class TranscriptProjector:
         external_session_id: str,
         *,
         client_messages: Sequence[tuple[str, str]] = (),
+        client_displays: Mapping[str, Mapping[str, Any]] | None = None,
         live_key_anchor: str = "",
     ) -> None:
         self.session_id = session_id
@@ -132,6 +133,9 @@ class TranscriptProjector:
         self._turn_counter = 0
         self._current_turn_id: str | None = None
         self._client_messages: list[tuple[str, str]] = list(client_messages)
+        # clientMessageId -> {"text", "attachments"} the user actually sent.
+        self._client_displays: dict[str, Mapping[str, Any]] = dict(client_displays or {})
+        self._user_timestamps: dict[str, int] = {}
         self._assistant_counter = 0
         self._assistant_timestamps: dict[str, int] = {}
 
@@ -154,6 +158,7 @@ class TranscriptProjector:
         projector._items = list(self._items)
         projector._tool_index = dict(self._tool_index)
         projector._assistant_timestamps = dict(self._assistant_timestamps)
+        projector._user_timestamps = dict(self._user_timestamps)
         projector._live_occurrences = dict(self._live_occurrences)
         return projector
 
@@ -203,12 +208,20 @@ class TranscriptProjector:
             self.end_turn(status=self._turn_end_status())
             self.begin_turn()
             text = content_text(message.get("content"))
-            if text:
+            client_message_id = self._client_message_id_for(text) if text else None
+            display = self._client_displays.get(client_message_id or "")
+            attachments = _display_attachments(display)
+            if display is not None and isinstance(display.get("text"), str):
+                # Pi stores attachment notes and image blocks in the prompt;
+                # show the text and files the user sent instead.
+                text = display["text"]
+            if text or attachments:
                 self._add_message(
-                    key=f"{entry_id or 'user'}:user",
+                    key=self._user_key(message, entry_id),
                     role="user",
                     text=text,
-                    client_message_id=self._client_message_id_for(text),
+                    client_message_id=client_message_id,
+                    attachments=attachments,
                 )
         elif role == "assistant":
             self._apply_assistant(message, running=running)
@@ -253,6 +266,31 @@ class TranscriptProjector:
         occurrence = self._live_occurrences.get(kind, 0) + 1
         self._live_occurrences[kind] = occurrence
         return f"live:{self._live_key_anchor}:{kind}:{occurrence}"
+
+    def bind_client_message(
+        self, text: str, client_message_id: str, display: Mapping[str, Any] | None = None
+    ) -> None:
+        """Pair a message sent after this projector was seeded."""
+
+        self._client_messages.append((text, client_message_id))
+        if display is not None:
+            self._client_displays[client_message_id] = display
+
+    def _user_key(self, message: Mapping[str, Any], entry_id: str | None) -> str:
+        """Like assistant keys: the live message and its history entry agree.
+
+        Pi assigns the entry id when it persists the message, but the RPC
+        message already carries the timestamp, so a user message streamed at
+        the start of a run keeps its identity in the settled timeline.
+        """
+
+        timestamp = message.get("timestamp")
+        if isinstance(timestamp, (str, int, float)) and not isinstance(timestamp, bool):
+            stamp = _canonical_json(timestamp)
+            occurrence = self._user_timestamps.get(stamp, 0) + 1
+            self._user_timestamps[stamp] = occurrence
+            return f"user:timestamp:{stamp}:{occurrence}"
+        return f"{self._message_key(entry_id, 'user')}:user"
 
     def _assistant_key(self, message: Mapping[str, Any]) -> str:
         """Use only fields available both on RPC message_start and in history.
@@ -522,13 +560,17 @@ class TranscriptProjector:
         status: str = "done",
         metadata: Mapping[str, Any] | None = None,
         client_message_id: str | None = None,
+        attachments: Sequence[Mapping[str, Any]] = (),
     ) -> RuntimeTimelineItem:
+        content: dict[str, Any] = {"kind": "markdown", "format": "markdown", "text": text}
+        if attachments:
+            content["attachments"] = [dict(attachment) for attachment in attachments]
         return self._append(
             key=key,
             item_type="message",
             role=role,
             status=status,
-            content={"kind": "markdown", "format": "markdown", "text": text},
+            content=content,
             native_type="message",
             metadata=metadata,
             client_message_id=client_message_id,
@@ -687,14 +729,27 @@ def project_session(
     session_id: str,
     external_session_id: str,
     client_messages: Sequence[tuple[str, str]] = (),
+    client_displays: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[RuntimeTimelineItem, ...]:
     """Project the active branch of a parsed Pi session document."""
 
     projector = TranscriptProjector(
-        session_id, external_session_id, client_messages=client_messages
+        session_id,
+        external_session_id,
+        client_messages=client_messages,
+        client_displays=client_displays,
     )
     projector.project_entries(doc_entries)
     return projector.items()
+
+
+def _display_attachments(display: Mapping[str, Any] | None) -> tuple[Mapping[str, Any], ...]:
+    raw = display.get("attachments") if display is not None else None
+    if not isinstance(raw, list):
+        return ()
+    return tuple(
+        item for item in raw if isinstance(item, Mapping) and isinstance(item.get("fileId"), str)
+    )
 
 
 def _entry_id(entry: Mapping[str, Any]) -> str | None:

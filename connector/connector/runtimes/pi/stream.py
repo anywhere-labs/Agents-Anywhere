@@ -51,6 +51,7 @@ class PiStreamAccumulator:
         publish: Callable[[RuntimeTimelineItem], Awaitable[None]],
         entries: Sequence[Mapping[str, Any]] = (),
         client_messages: Sequence[tuple[str, str]] = (),
+        client_displays: Mapping[str, Mapping[str, Any]] | None = None,
         throttle_seconds: float = 0.12,
     ) -> None:
         self.session_id = session_id
@@ -67,12 +68,13 @@ class PiStreamAccumulator:
         self._blocks: dict[int, dict[str, Any]] = {}
         self._arguments: dict[int, str] = {}
         self._other_start: Mapping[str, Any] | None = None
-        self._seed(entries, client_messages)
+        self._seed(entries, client_messages, client_displays)
 
     def _seed(
         self,
         entries: Sequence[Mapping[str, Any]],
         client_messages: Sequence[tuple[str, str]],
+        client_displays: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
         # Messages without entry ids are keyed per run; anchor them to the seed
         # so a later run cannot reuse an earlier run's live identities.
@@ -84,6 +86,7 @@ class PiStreamAccumulator:
             self.session_id,
             self.external_session_id,
             client_messages=client_messages,
+            client_displays=client_displays,
             live_key_anchor=anchor,
         )
         # Leave the last turn open: a subsequent user message closes it in
@@ -99,6 +102,7 @@ class PiStreamAccumulator:
         *,
         entries: Sequence[Mapping[str, Any]] = (),
         client_messages: Sequence[tuple[str, str]] = (),
+        client_displays: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
         """Start a new run from an authoritative branch, discarding old partials."""
 
@@ -111,10 +115,17 @@ class PiStreamAccumulator:
             self._pending.clear()
             self._live_items.clear()
             self._last_flush = float("-inf")
-            self._seed(entries, client_messages)
+            self._seed(entries, client_messages, client_displays)
+
+    def bind_client_message(
+        self, text: str, client_message_id: str, display: Mapping[str, Any] | None = None
+    ) -> None:
+        """Let the user message of the next run carry its client message id."""
+
+        self._projector.bind_client_message(text, client_message_id, display)
 
     def items(self) -> tuple[RuntimeTimelineItem, ...]:
-        """Current live assistant/tool items, including any unflushed changes."""
+        """Current live user/assistant/tool items, including any unflushed changes."""
 
         return tuple(sorted(self._live_items.values(), key=lambda item: item.order_seq))
 
@@ -167,6 +178,13 @@ class PiStreamAccumulator:
                 self._other_start = None
                 self._commit_partial()
                 self._projector.apply_message(message, entry_id=None)
+                if message.get("role") == "user":
+                    # Publish the prompt before the run's output, without
+                    # holding back the first output chunk behind the throttle.
+                    self._capture()
+                    await self.flush()
+                    self._last_flush = float("-inf")
+                    return
                 force = message.get("role") == "toolResult"
         elif event_type == "message_update":
             update = record.get("assistantMessageEvent")
@@ -326,6 +344,10 @@ class PiStreamAccumulator:
 
 
 def _streamable(item: RuntimeTimelineItem) -> bool:
+    # The user message goes out first, so the run's output is listed after it
+    # (and replaces the client's optimistic copy) while the run is going on.
+    if item.type == "message" and item.role == "user":
+        return True
     return item.type == "tool" or (item.role == "assistant" and item.type in {"message", "system"})
 
 

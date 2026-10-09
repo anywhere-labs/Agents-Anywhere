@@ -48,6 +48,7 @@ from connector.runtime_protocol import (
     RuntimeModelItem,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
+    RuntimeReasoningItem,
     RuntimeTimelineItem,
     RuntimeTimelineSnapshot,
     RuntimeUnavailableError,
@@ -72,6 +73,7 @@ from connector.runtimes.pi.rpc import (
     PiRpcError,
     PiRpcProcess,
     PiRpcProcessExited,
+    PiRpcRequestFailed,
     response_data,
 )
 from connector.runtimes.pi.sessions import (
@@ -115,6 +117,29 @@ DIALOG_TIMEOUT_GRACE_SECONDS = 1.0
 # the platform accepted. Bump the version to force one complete resync.
 TIMELINE_CHECKPOINT_VERSION = 1
 TURN_MARKER_TYPES = frozenset({"turn.start", "turn.end"})
+
+# Pi thinking levels, lowest first. A reasoning model's catalog entry offers
+# the ones it supports as reasoning items whose selection id is
+# ``<model selection id>#<level>``, the platform's single model selection.
+THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
+THINKING_LABELS = {
+    "off": "Off",
+    "minimal": "Minimal",
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High",
+    "xhigh": "Extra high",
+    "max": "Max",
+}
+THINKING_SEPARATOR = "#"
+
+# A prompt that runs an extension command is answered only after the command
+# handler finishes, which can wait on a dialog the user answers in AA. Report
+# such a prompt as accepted after this long and keep waiting in the background.
+PROMPT_ACCEPT_SECONDS = 10.0
+
+# Pi's built-in /compact is not in get_commands; AA offers it like Codex does.
+COMPACT_COMMAND = "compact"
 
 
 def _merge_client_message_pairs(
@@ -160,6 +185,52 @@ def _split_model_selection(value: str) -> tuple[str | None, str]:
     if separator and provider and model_id:
         return provider, model_id
     return None, value
+
+
+def supported_thinking_levels(model: Mapping[str, Any]) -> tuple[str, ...]:
+    """The thinking levels Pi accepts for a model (pi-ai getSupportedThinkingLevels).
+
+    A model without reasoning only runs with thinking ``off``, which is no
+    choice, so it has none. A level mapped to null is unsupported; ``xhigh``
+    and ``max`` must be mapped explicitly.
+    """
+
+    if model.get("reasoning") is not True:
+        return ()
+    level_map = model.get("thinkingLevelMap")
+    level_map = level_map if isinstance(level_map, Mapping) else {}
+    levels: list[str] = []
+    for level in THINKING_LEVELS:
+        if level in level_map and level_map[level] is None:
+            continue
+        if level in ("xhigh", "max") and level not in level_map:
+            continue
+        levels.append(level)
+    return tuple(levels)
+
+
+def _thinking_selection_id(model_selection_id: str, level: str) -> str:
+    return f"{model_selection_id}{THINKING_SEPARATOR}{level}"
+
+
+def _session_model_selection(
+    model: Mapping[str, Any] | None, thinking_level: str | None
+) -> str | None:
+    """The catalog selection a session runs with: its reasoning item if any."""
+
+    selection_id = _model_selection_id(model or {})
+    if selection_id and thinking_level in supported_thinking_levels(model or {}):
+        return _thinking_selection_id(selection_id, str(thinking_level))
+    return selection_id
+
+
+def _split_thinking_selection(value: str) -> tuple[str, str | None]:
+    """Split ``provider:model#level`` into the model selection and the level."""
+
+    model_value, separator, level = value.rpartition(THINKING_SEPARATOR)
+    if separator and model_value and level in THINKING_LEVELS:
+        return model_value, level
+    return value, None
 
 
 def _model_display_title(
@@ -209,6 +280,10 @@ class PendingInteraction:
             if isinstance(options, list)
             else []
         )
+        placeholder = request.get("placeholder")
+        self.placeholder = placeholder if isinstance(placeholder, str) else None
+        prefill = request.get("prefill")
+        self.prefill = prefill if isinstance(prefill, str) else None
         timeout = request.get("timeout")
         self.timeout_ms = timeout if isinstance(timeout, int) else None
         self.approval = parse_approval_request(request)
@@ -238,6 +313,12 @@ class PendingInteraction:
                 self.choices[option_id] = option
                 options.append(InputRequestOption(option_id=option_id, label=option))
         prompt = (self.message or "").strip() or self.title.strip() or "Pi 需要你的输入"
+        # The v1 form has no default value: show what Pi offers to edit, so
+        # the answer can start from it. The answer replaces it as a whole.
+        if self.method == "input" and self.placeholder and self.placeholder.strip():
+            prompt += f"\n\n提示：{self.placeholder.strip()}"
+        if self.method == "editor" and self.prefill and self.prefill.strip():
+            prompt += f"\n\n当前内容（提交的文本会整体替换它）：\n{self.prefill}"
         return InputRequestForm(
             questions=(
                 InputRequestQuestion(
@@ -386,6 +467,12 @@ class PiLiveSession:
         self.pending_ui: dict[str, PendingInteraction] = {}
         # (text, clientMessageId) pairs waiting for their projected user message.
         self.client_messages: list[tuple[str, str]] = []
+        # clientMessageId -> what the user sent ({"text", "attachments"}) when
+        # Pi stores a different prompt (attachment notes, image blocks).
+        self.client_displays: dict[str, dict[str, Any]] = {}
+        # Prompts Pi has not answered yet, such as extension commands waiting
+        # on a dialog; the session is not idle while any is in flight.
+        self.pending_prompts: set[asyncio.Future[Mapping[str, Any]]] = set()
         self.last_activity = time.monotonic()
         self._start_lock = asyncio.Lock()
         self.last_state_key: tuple[Any, ...] | None = None
@@ -402,6 +489,14 @@ class PiLiveSession:
     @property
     def alive(self) -> bool:
         return self.process is not None and self.process.alive
+
+    @property
+    def busy(self) -> bool:
+        """Running, compacting, asking, or still handling a prompt."""
+
+        return bool(
+            self.is_streaming or self.is_compacting or self.pending_ui or self.pending_prompts
+        )
 
     @property
     def status(self) -> str:
@@ -512,19 +607,83 @@ class PiLiveSession:
         *,
         streaming_behavior: str | None = None,
         images: Sequence[Mapping[str, Any]] = (),
-    ) -> None:
+    ) -> str:
+        """Send a prompt and return Pi's disposition, or ``pending``.
+
+        ``pending`` means Pi took the prompt but is still running it as an
+        extension command (for example waiting on a dialog answer).
+        """
+
         if streaming_behavior == "steer":
             payload: dict[str, Any] = {"type": "steer", "message": content}
             if images:
                 payload["images"] = list(images)
             await self.command(payload)
-            return
+            return "queued"
         payload = {"type": "prompt", "message": content}
         if images:
             payload["images"] = list(images)
         if streaming_behavior:
             payload["streamingBehavior"] = streaming_behavior
-        await self.command(payload)
+        response = await self.submit_command(payload)
+        if response is None:
+            return "pending"
+        disposition = response_data(response).get("disposition")
+        return disposition if isinstance(disposition, str) else "started"
+
+    async def submit_command(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        accept_seconds: float | None = None,
+    ) -> Mapping[str, Any] | None:
+        """Send a command that may run for long; ``None`` if still running.
+
+        Pi answers quickly when it rejects a command, so one still running
+        after ``accept_seconds`` was accepted. Its later failure is only logged.
+        """
+
+        await self.ensure_started()
+        self.touch()
+        process = self.process
+        if process is None:
+            raise PiRpcProcessExited("Pi RPC process is not running")
+        _request_id, future = await process.submit(payload)
+        try:
+            done, _pending = await asyncio.wait(
+                {future},
+                timeout=PROMPT_ACCEPT_SECONDS if accept_seconds is None else accept_seconds,
+            )
+        except asyncio.CancelledError:
+            self._track_prompt(future, str(payload.get("type")))
+            raise
+        if done:
+            return future.result()
+        self._track_prompt(future, str(payload.get("type")))
+        return None
+
+    def _track_prompt(self, future: asyncio.Future[Mapping[str, Any]], kind: str) -> None:
+        self.pending_prompts.add(future)
+
+        def finished(done: asyncio.Future[Mapping[str, Any]]) -> None:
+            self.pending_prompts.discard(done)
+            self.touch()
+            if done.cancelled():
+                return
+            error = done.exception()
+            if error is not None:
+                logger.warning(
+                    "pi %s failed after it was accepted session_id=%s: %s",
+                    kind,
+                    self.platform_id,
+                    error,
+                )
+                return
+            # An extension command records its result (custom messages) when
+            # its handler returns; no run settles to publish it.
+            self.runtime._schedule_publish(self)
+
+        future.add_done_callback(finished)
 
     async def stop(self) -> None:
         process = self.process
@@ -543,7 +702,7 @@ class PiLiveSession:
     def state_key(self) -> tuple[Any, ...]:
         return (
             self.status,
-            _model_selection_id(self.model or {}),
+            _session_model_selection(self.model, self.thinking_level),
             self.thinking_level,
             self.permission_mode,
         )
@@ -585,7 +744,13 @@ class PiRuntime(AgentRuntime):
         self._stopping = False
         self._reclaim_task: asyncio.Task[None] | None = None
         self._stale_reset_task: asyncio.Task[None] | None = None
+        self._publish_tasks: set[asyncio.Task[None]] = set()
         self._client_bindings: dict[str, tuple[tuple[str, str], ...]] = {}
+        self._client_displays: dict[str, dict[str, dict[str, Any]]] = {}
+        # Model objects from the last catalog read, by model selection id.
+        self._catalog_models: dict[str, Mapping[str, Any]] = {}
+        # Per session file: the file stamp and the selections Pi restores from it.
+        self._file_selections: dict[str, tuple[tuple[float, int], dict[str, str]]] = {}
         self._last_reannounce_at: float | None = None
         self._reannounce_lock = asyncio.Lock()
         self._identity = RuntimeIdentity(
@@ -642,6 +807,9 @@ class PiRuntime(AgentRuntime):
                 pass
         self._reclaim_task = None
         self._stale_reset_task = None
+        for task in list(self._publish_tasks):
+            task.cancel()
+        await asyncio.gather(*self._publish_tasks, return_exceptions=True)
         for live in list(self._live.values()):
             await live.stop()
         self._live.clear()
@@ -792,7 +960,7 @@ class PiRuntime(AgentRuntime):
                 continue
             if now - live.last_activity < self._idle_timeout:
                 continue
-            if live.is_streaming or live.is_compacting or live.pending_ui:
+            if live.busy:
                 continue
             # Serialize with _ensure_live so a reviving turn cannot race the close.
             async with self._live_lock(session_id):
@@ -800,7 +968,7 @@ class PiRuntime(AgentRuntime):
                     continue
                 if now - live.last_activity < self._idle_timeout:
                     continue
-                if live.is_streaming or live.is_compacting or live.pending_ui:
+                if live.busy:
                     continue
                 self._live.pop(session_id, None)
             logger.info(
@@ -914,6 +1082,7 @@ class PiRuntime(AgentRuntime):
                 external_session_id,
             )
             value = None
+        displays: dict[str, dict[str, Any]] = {}
         if isinstance(value, Mapping):
             raw_bindings = value.get("bindings")
             if isinstance(raw_bindings, list):
@@ -925,9 +1094,21 @@ class PiRuntime(AgentRuntime):
                     client_message_id = raw.get("clientMessageId")
                     if isinstance(text, str) and isinstance(client_message_id, str):
                         collected.append((text, client_message_id))
+                        display = raw.get("display")
+                        if isinstance(display, Mapping):
+                            displays[client_message_id] = dict(display)
                 pairs = tuple(collected)
         self._client_bindings[external_session_id] = pairs
+        self._client_displays[external_session_id] = displays
         return pairs
+
+    async def _load_client_displays(
+        self, external_session_id: str | None
+    ) -> dict[str, dict[str, Any]]:
+        if not external_session_id:
+            return {}
+        await self._load_client_bindings(external_session_id)
+        return self._client_displays.get(external_session_id, {})
 
     async def _persist_client_bindings(self, live: PiLiveSession) -> None:
         """Persist the session's optimistic-send pairs for future projections."""
@@ -939,14 +1120,32 @@ class PiRuntime(AgentRuntime):
         merged = _merge_client_message_pairs(stored, tuple(live.client_messages))[
             -MAX_CLIENT_MESSAGE_BINDINGS_PER_SESSION:
         ]
+        kept = {client_message_id for _text, client_message_id in merged}
+        displays = {
+            client_message_id: display
+            for client_message_id, display in {
+                **self._client_displays.get(external_session_id, {}),
+                **live.client_displays,
+            }.items()
+            if client_message_id in kept
+        }
         self._client_bindings[external_session_id] = merged
+        self._client_displays[external_session_id] = displays
         try:
             await self.host.sync_state_write(
                 self._client_bindings_key(external_session_id),
                 {
                     "version": CLIENT_MESSAGE_BINDINGS_VERSION,
                     "bindings": [
-                        {"text": text, "clientMessageId": client_message_id}
+                        {
+                            "text": text,
+                            "clientMessageId": client_message_id,
+                            **(
+                                {"display": displays[client_message_id]}
+                                if client_message_id in displays
+                                else {}
+                            ),
+                        }
                         for text, client_message_id in merged
                     ],
                 },
@@ -1008,11 +1207,16 @@ class PiRuntime(AgentRuntime):
             live is not None,
             len(client_messages),
         )
+        client_displays = {
+            **await self._load_client_displays(doc.summary.path),
+            **(live.client_displays if live is not None else {}),
+        }
         items = projection.project_session(
             doc.entries,
             session_id=session_id,
             external_session_id=doc.summary.path,
             client_messages=client_messages,
+            client_displays=client_displays,
         )
         if live is not None and live.stream is not None:
             if live.is_streaming or live.is_compacting:
@@ -1154,13 +1358,51 @@ class PiRuntime(AgentRuntime):
             runtime=RUNTIME,
             runtime_id=self.config.runtime_id,
             status="idle",
-            selections={"permission": await self._load_permission(str(path))},
+            selections={
+                "permission": await self._load_permission(str(path)),
+                **await self._file_session_selections(path),
+            },
             metadata={"sessionFile": str(path)},
         )
 
+    async def _file_session_selections(self, path: Path) -> dict[str, str]:
+        """The model and thinking level Pi restores when it reopens this file."""
+
+        key = str(path)
+        try:
+            stat = await asyncio.to_thread(path.stat)
+        except OSError:
+            return {}
+        stamp = (stat.st_mtime, stat.st_size)
+        cached = self._file_selections.get(key)
+        if cached is None or cached[0] != stamp:
+            doc = await asyncio.to_thread(load_session_doc, path)
+            settings = _restored_settings(doc.entries) if doc is not None else {}
+            cached = (stamp, settings)
+            self._file_selections[key] = cached
+        settings = cached[1]
+        selections: dict[str, str] = {}
+        model_id = settings.get("model")
+        thinking = settings.get("thinkingLevel")
+        if model_id:
+            if not self._catalog_models:
+                try:
+                    await self.list_model_catalog()
+                except Exception:  # the plain model id is still right
+                    logger.debug("pi model catalog unavailable for session state", exc_info=True)
+            model = self._catalog_models.get(model_id, {})
+            selections["model"] = (
+                _thinking_selection_id(model_id, thinking)
+                if thinking in supported_thinking_levels(model)
+                else model_id
+            )
+        if thinking:
+            selections["thinkingLevel"] = thinking
+        return selections
+
     def _live_state(self, live: PiLiveSession) -> SessionState:
         selections: dict[str, str | None] = {"permission": live.permission_mode}
-        selection_id = _model_selection_id(live.model or {})
+        selection_id = _session_model_selection(live.model, live.thinking_level)
         if selection_id:
             selections["model"] = selection_id
         if live.thinking_level:
@@ -1315,6 +1557,7 @@ class PiRuntime(AgentRuntime):
             provider = provider if isinstance(provider, str) and provider else None
             entries.append((raw, catalog_id, name, provider, model_id))
         directory = [(name, provider, model_id) for _, _, name, provider, model_id in entries]
+        self._catalog_models = {catalog_id: raw for raw, catalog_id, *_ in entries}
         models: list[RuntimeModelItem] = []
         for raw, catalog_id, name, provider, model_id in entries:
             title = _model_display_title(name, provider, model_id, directory)
@@ -1325,8 +1568,18 @@ class PiRuntime(AgentRuntime):
                 RuntimeModelItem(
                     id=catalog_id,
                     title=title,
+                    # Choosing the model alone keeps the session's thinking
+                    # level (Pi clamps it to what the model supports).
                     selection_id=catalog_id,
                     description=provider,
+                    reasoning_items=tuple(
+                        RuntimeReasoningItem(
+                            id=level,
+                            title=THINKING_LABELS[level],
+                            selection_id=_thinking_selection_id(catalog_id, level),
+                        )
+                        for level in supported_thinking_levels(raw)
+                    ),
                     metadata={
                         "provider": raw.get("provider"),
                         "contextWindow": raw.get("contextWindow"),
@@ -1382,29 +1635,31 @@ class PiRuntime(AgentRuntime):
             if live is not None
             else await self._utility_command({"type": "get_commands"})
         )
-        commands: list[RuntimeCommand] = []
+        commands: list[RuntimeCommand] = [
+            _command(
+                COMPACT_COMMAND,
+                "Compact the session context. Text after the command guides the summary.",
+                source="builtin",
+            )
+        ]
         for raw in _as_list(response_data(data).get("commands")):
             if not isinstance(raw, Mapping):
                 continue
             name = raw.get("name")
-            if not isinstance(name, str) or not name:
+            if not isinstance(name, str) or not name or name == COMPACT_COMMAND:
                 continue
-            if query and query.lower() not in name.lower():
-                continue
+            description = raw.get("description")
             commands.append(
-                RuntimeCommand(
-                    id=name,
-                    title=name,
-                    description=raw.get("description")
-                    if isinstance(raw.get("description"), str)
-                    else None,
-                    scope="session",
-                    metadata={"source": raw.get("source")},
+                _command(
+                    name,
+                    description if isinstance(description, str) else None,
+                    source=raw.get("source"),
                 )
             )
-            if len(commands) >= limit:
-                break
-        return tuple(commands)
+        if query:
+            needle = query.lower()
+            commands = [command for command in commands if needle in command.id.lower()]
+        return tuple(commands[: max(0, limit)])
 
     async def execute_command(
         self,
@@ -1417,12 +1672,59 @@ class PiRuntime(AgentRuntime):
         live = await self._ensure_live(session_id, external_session_id, None)
         text = raw if raw else "/" + command + (" " + " ".join(args) if args else "")
         logger.info("pi command execute session_id=%s text=%r", session_id, text)
-        await live.send_prompt(text)
+        if command == COMPACT_COMMAND:
+            return await self._compact(live, session_id, _command_arguments(text, command))
+        disposition = await live.send_prompt(text)
+        # Pi answers an extension command once its handler returns ("handled");
+        # skills and prompt templates start a run. Either way it was accepted.
+        completed = disposition == "handled"
+        if completed:
+            self._schedule_publish(live)
         return RuntimeCommandResult(
             command=command,
             ok=True,
-            message=f"已发送 {text}",
-            result={"sessionId": session_id},
+            message=f"已执行 {text}" if completed else f"已发送 {text}",
+            result={
+                "sessionId": session_id,
+                "executionState": "completed" if completed else "accepted",
+            },
+        )
+
+    async def _compact(
+        self, live: PiLiveSession, session_id: str, instructions: str
+    ) -> RuntimeCommandResult:
+        if live.is_streaming or live.is_compacting:
+            raise RuntimeInvalidRequestError("会话正在运行，请等这一轮结束后再压缩。")
+        payload: dict[str, Any] = {"type": "compact"}
+        if instructions:
+            payload["customInstructions"] = instructions
+        try:
+            response = await live.submit_command(payload)
+        except PiRpcRequestFailed as exc:
+            return RuntimeCommandResult(
+                command=COMPACT_COMMAND,
+                ok=False,
+                code="compact_failed",
+                message=str(exc),
+                result={"sessionId": session_id, "executionState": "completed"},
+            )
+        if response is None:
+            return RuntimeCommandResult(
+                command=COMPACT_COMMAND,
+                ok=True,
+                message="正在压缩会话上下文",
+                result={"sessionId": session_id, "executionState": "accepted"},
+            )
+        data = response_data(response)
+        before, after = data.get("tokensBefore"), data.get("estimatedTokensAfter")
+        message = "已压缩会话上下文"
+        if isinstance(before, int) and isinstance(after, int):
+            message += f"（约 {before} → {after} tokens）"
+        return RuntimeCommandResult(
+            command=COMPACT_COMMAND,
+            ok=True,
+            message=message,
+            result={"sessionId": session_id, "executionState": "completed"},
         )
 
     # -- session operations -------------------------------------------------
@@ -1439,6 +1741,7 @@ class PiRuntime(AgentRuntime):
         runtime_options: Mapping[str, Any] | None = None,
     ) -> RuntimeOperationResult:
         _ = runtime_options
+        sent = content
         images, content = await self._prepare_prompt(session_id, content, attachments)
         workdir = self._resolve_cwd(cwd)
         live = PiLiveSession(self, session_id, cwd=workdir)
@@ -1446,7 +1749,9 @@ class PiRuntime(AgentRuntime):
             live.permission_mode = validate_permission_mode(selections["permission"])
             live._permission_loaded = True
         if client_message_id:
-            live.client_messages.append((_prompt_text(content, images), client_message_id))
+            self._bind_client_message(
+                live, _prompt_text(content, images), client_message_id, sent, attachments
+            )
         self._live[session_id] = live
         await live.ensure_started()
         if is_meaningful_title(title):
@@ -1472,6 +1777,7 @@ class PiRuntime(AgentRuntime):
         client_message_id: str | None = None,
         cwd: str | None = None,
     ) -> RuntimeOperationResult:
+        sent = content
         images, content = await self._prepare_prompt(session_id, content, attachments)
         live = await self._ensure_live(session_id, external_session_id, cwd)
         logger.info(
@@ -1480,7 +1786,9 @@ class PiRuntime(AgentRuntime):
             client_message_id,
         )
         if client_message_id:
-            live.client_messages.append((_prompt_text(content, images), client_message_id))
+            self._bind_client_message(
+                live, _prompt_text(content, images), client_message_id, sent, attachments
+            )
             await self._persist_client_bindings(live)
         if selections:
             await self._apply_selections(live, selections)
@@ -1498,10 +1806,13 @@ class PiRuntime(AgentRuntime):
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
     ) -> RuntimeOperationResult:
+        sent = content
         images, content = await self._prepare_prompt(session_id, content, attachments)
         live = await self._ensure_live(session_id, external_session_id, None)
         if client_message_id:
-            live.client_messages.append((_prompt_text(content, images), client_message_id))
+            self._bind_client_message(
+                live, _prompt_text(content, images), client_message_id, sent, attachments
+            )
             await self._persist_client_bindings(live)
         if live.is_streaming:
             await live.send_prompt(content, streaming_behavior="steer", images=images)
@@ -1619,6 +1930,10 @@ class PiRuntime(AgentRuntime):
         if event_type == "compaction_end":
             live.is_compacting = False
             await self._push_state(live, force=True)
+            if not live.is_streaming:
+                # A manual /compact runs outside a turn; nothing else would
+                # publish its marker until the next scan.
+                await self._publish_timeline(live)
             return
         if event_type == "thinking_level_changed":
             level = record.get("level")
@@ -1924,6 +2239,47 @@ class PiRuntime(AgentRuntime):
         images, note = await prepare_attachments(self.host, session_id, attachments)
         return images, f"{content}\n\n{note}" if note else content
 
+    @staticmethod
+    def _bind_client_message(
+        live: PiLiveSession,
+        prompt: str,
+        client_message_id: str,
+        content: str,
+        attachments: tuple[RuntimeAttachment, ...],
+    ) -> None:
+        """Pair the prompt Pi will store with the client's message."""
+
+        live.client_messages.append((prompt, client_message_id))
+        PiRuntime._remember_display(live, client_message_id, content, attachments)
+        if live.stream is not None:
+            live.stream.bind_client_message(
+                prompt, client_message_id, live.client_displays.get(client_message_id)
+            )
+
+    @staticmethod
+    def _remember_display(
+        live: PiLiveSession,
+        client_message_id: str | None,
+        content: str,
+        attachments: tuple[RuntimeAttachment, ...],
+    ) -> None:
+        """Show what the user sent, not the prompt Pi stores for attachments."""
+
+        if not client_message_id or not attachments:
+            return
+        live.client_displays[client_message_id] = {
+            "text": content,
+            "attachments": [
+                {
+                    "fileId": attachment.file_id,
+                    **({"name": attachment.name} if attachment.name else {}),
+                    **({"mediaType": attachment.media_type} if attachment.media_type else {}),
+                    **({"size": attachment.size} if attachment.size is not None else {}),
+                }
+                for attachment in attachments
+            ],
+        }
+
     async def _reset_stream(self, live: PiLiveSession) -> None:
         if not live.external_id:
             return
@@ -1935,10 +2291,15 @@ class PiRuntime(AgentRuntime):
                 external_session_id=live.external_id,
                 entries=entries,
                 client_messages=tuple(live.client_messages),
+                client_displays=dict(live.client_displays),
                 publish=functools.partial(self._publish_stream_item, live.external_id),
             )
         else:
-            await live.stream.reset(entries=entries, client_messages=tuple(live.client_messages))
+            await live.stream.reset(
+                entries=entries,
+                client_messages=tuple(live.client_messages),
+                client_displays=dict(live.client_displays),
+            )
 
     def _permission_key(self, external_session_id: str) -> str:
         return f"pi/permission/{self.host.connector_id}/{external_session_id}"
@@ -1985,15 +2346,11 @@ class PiRuntime(AgentRuntime):
             await live.ensure_started()
             # Pi normally restores these from the session. Preserve in-memory
             # selections as well, including selections made before the first turn.
-            if model.get("id"):
-                payload = {"type": "set_model", "modelId": model["id"]}
-                if model.get("provider"):
-                    payload["provider"] = model["provider"]
-                await live.command(payload)
-                live.model = model
+            selection_id = _model_selection_id(model)
+            if selection_id:
+                await self._set_model(live, selection_id)
             if thinking:
-                await live.command({"type": "set_thinking_level", "level": thinking})
-                live.thinking_level = thinking
+                await self._set_thinking_level(live, thinking)
         finally:
             live.restarting = False
 
@@ -2013,24 +2370,45 @@ class PiRuntime(AgentRuntime):
     async def _apply_model_selections(
         self, live: PiLiveSession, selections: Mapping[str, str | None]
     ) -> None:
+        # Pi records every set_model / set_thinking_level in the session file,
+        # and clients resend their selections with each message; only send
+        # actual changes.
         for key, value in selections.items():
             if value is None:
                 continue
             if key == "model":
-                provider, model_id = _split_model_selection(value)
-                payload: dict[str, Any] = {"type": "set_model", "modelId": model_id}
-                if provider:
-                    payload["provider"] = provider
-                data = response_data(await live.command(payload))
-                nested = data.get("model")
-                model = nested if isinstance(nested, Mapping) else data
-                if isinstance(model.get("id"), str):
-                    live.model = dict(model)
+                model_value, level = _split_thinking_selection(value)
+                await self._set_model(live, model_value)
+                if level is not None:
+                    await self._set_thinking_level(live, level)
             elif key in ("thinkingLevel", "effort", "reasoningEffort"):
-                await live.command({"type": "set_thinking_level", "level": value})
-                live.thinking_level = value
+                await self._set_thinking_level(live, value)
             else:
                 logger.debug("ignoring unknown selection key %r", key)
+
+    async def _set_model(self, live: PiLiveSession, selection_id: str) -> None:
+        if live.model and _model_selection_id(live.model) == selection_id:
+            return
+        provider, model_id = _split_model_selection(selection_id)
+        payload: dict[str, Any] = {"type": "set_model", "modelId": model_id}
+        if provider:
+            payload["provider"] = provider
+        data = response_data(await live.command(payload))
+        nested = data.get("model")
+        model = nested if isinstance(nested, Mapping) else data
+        if isinstance(model.get("id"), str):
+            live.model = dict(model)
+        # Pi clamps the thinking level to what the new model supports.
+        state = response_data(await live.command({"type": "get_state"}))
+        thinking = state.get("thinkingLevel")
+        if isinstance(thinking, str):
+            live.thinking_level = thinking
+
+    async def _set_thinking_level(self, live: PiLiveSession, level: str) -> None:
+        if live.thinking_level == level:
+            return
+        await live.command({"type": "set_thinking_level", "level": level})
+        live.thinking_level = level
 
     async def _push_state(self, live: PiLiveSession, *, force: bool = False) -> bool:
         key = live.state_key()
@@ -2078,6 +2456,15 @@ class PiRuntime(AgentRuntime):
             )
         except Exception:
             logger.exception("failed to push pi session meta for %s", live.platform_id)
+
+    def _schedule_publish(self, live: PiLiveSession) -> None:
+        """Publish outside a run; a running turn publishes when it settles."""
+
+        if self._stopping or live.is_streaming:
+            return
+        task = asyncio.get_running_loop().create_task(self._publish_timeline(live))
+        self._publish_tasks.add(task)
+        task.add_done_callback(self._publish_tasks.discard)
 
     async def _publish_timeline(self, live: PiLiveSession) -> None:
         """Publish the settled run through the same checkpoint as the scanner.
@@ -2144,6 +2531,55 @@ class PiRuntime(AgentRuntime):
     async def _utility_command(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         process = await self._ensure_utility()
         return await process.request(payload)
+
+
+def _command(name: str, description: str | None, *, source: Any) -> RuntimeCommand:
+    """Pi commands all take one free-form argument string (``/name args``)."""
+
+    return RuntimeCommand(
+        id=name,
+        title=name,
+        description=description,
+        scope="session",
+        accepts_args=True,
+        args_schema={"type": "string"},
+        metadata={"source": source, "ui": {"kind": "execute", "acceptsMultiline": True}},
+    )
+
+
+def _command_arguments(text: str, command: str) -> str:
+    return text.strip().removeprefix("/" + command).strip()
+
+
+def _restored_settings(entries: Sequence[Mapping[str, Any]]) -> dict[str, str]:
+    """Pi's getSessionContextSettings over the active branch.
+
+    The last model change or assistant message names the model, and the last
+    thinking level change the level.
+    """
+
+    settings: dict[str, str] = {}
+    for entry in entries:
+        entry_type = entry.get("type")
+        if entry_type == "thinking_level_change":
+            level = entry.get("thinkingLevel")
+            if isinstance(level, str):
+                settings["thinkingLevel"] = level
+        elif entry_type == "model_change":
+            selection_id = _model_selection_id(
+                {"provider": entry.get("provider"), "id": entry.get("modelId")}
+            )
+            if selection_id:
+                settings["model"] = selection_id
+        elif entry_type == "message":
+            message = entry.get("message")
+            if isinstance(message, Mapping) and message.get("role") == "assistant":
+                selection_id = _model_selection_id(
+                    {"provider": message.get("provider"), "id": message.get("model")}
+                )
+                if selection_id:
+                    settings["model"] = selection_id
+    return settings
 
 
 def _as_list(value: Any) -> list[Any]:

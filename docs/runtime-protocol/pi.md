@@ -65,9 +65,14 @@ Windows 支持 npm `pi.cmd` 解析为 Node + CLI 参数数组；不要把完整 
   没有有效检查点（首次同步或版本变化）；已发布的条目从当前分支消失
   （`/tree` 切换分支、仅在流式阶段出现的条目）；条目位置变化；新条目排在
   已发布条目之前。平台的增量写入不会删除条目，已有条目保持原位，新条目
-  追加在末尾，所以这些情况只有整份替换才正确。实际效果是：外部 Pi 终端
-  推进的会话按增量同步；AA 发起并流式输出的一轮结束时，用户消息排在已流式
-  发布的回复之前，仍然整份替换。
+  追加在末尾，所以这些情况只有整份替换才正确。外部 Pi 终端推进的会话按增量同步。
+- AA 发起的一轮里，用户消息在本轮开始时先流式发布，带上客户端的 clientMessageId
+  （替换客户端的乐观显示），之后才是回复和工具调用，等待审批期间顺序也正确。
+  用户消息和助手消息一样按消息时间戳生成 id，流式阶段与落盘后的历史 id 一致。
+  这次修改改变了用户消息的 id 规则，已同步的会话在文件下次变化时会整份替换一次。
+- 带附件的消息：Pi 收到的是附件说明加图片块，AA 时间线显示用户原文和附件
+  （`content.attachments`，含 fileId、文件名、类型、大小），客户端据此显示缩略图和
+  文件卡片。对应关系随 client message 绑定持久化，Connector 重启后不变。
 - 流式阶段 Pi 还没有给消息分配 entry id。自定义消息、`!` 命令、分支摘要
   在这一阶段使用本轮内唯一的临时 id，结束后由整份替换换成正式 id。
 - 轮次结束的 `outcome`：用户中断或 `stopReason=aborted` 为 `interrupted`，
@@ -77,6 +82,8 @@ Windows 支持 npm `pi.cmd` 解析为 Node + CLI 参数数组；不要把完整 
   `select`、`input`、`editor` 为 `input_request`，带 inputRequest v1 表单
   （单个问题：`select` 只能选给出的选项，`input`/`editor` 填写文本），Pi 的方法名
   在 `context.method` 中。答复按表单校验，无效答复返回请求错误、对话框保持打开。
+  v1 表单没有默认值和多行标记：`input` 的 placeholder 和 `editor` 的预填内容写在
+  问题说明里，提交的文本整体替换预填内容；网页端会把说明显示成一行。
 - 一轮中打开、到这一轮结束仍未答复的扩展对话框已被 Pi 取消，通知标记为
   `cancelled`；带 `timeout` 的对话框超时后标记为 `expired`。会话随后回到
   `idle`，可被空闲回收。
@@ -89,6 +96,28 @@ Windows 支持 npm `pi.cmd` 解析为 Node + CLI 参数数组；不要把完整 
 - 超过 64 MiB 的会话文件不解析历史，但仍保留在 inventory 中，报告为
   `unavailable`（`history_too_large`），标题只从文件开头 1 MiB 读取。它不会被
   标为缺失，也不会同步时间线。
+
+## 在 AA 中调整模型、思考等级与命令
+
+- 模型目录中支持推理的模型带有思考等级（reasoning items），等级按 Pi 的
+  `getSupportedThinkingLevels` 计算（`thinkingLevelMap` 中为 null 的等级不提供，
+  `xhigh`/`max` 需显式映射）。选择 id 为 `<provider>:<model>#<level>`，下发时依次
+  执行 `set_model`、`set_thinking_level`；只选模型（`<provider>:<model>`）时保留会话
+  当前等级，由 Pi 按模型收敛。会话状态的 `selections.model` 回报同样的组合 id，
+  `selections.thinkingLevel` 仍单独给出。
+- Pi 每次 `set_model`/`set_thinking_level` 都会写入会话文件，客户端发消息前也可能
+  重复下发同一选择；没有变化的选择不再发送给 Pi，切换权限重启进程后也只补发
+  真正不同的模型和等级。
+- 没有运行进程的会话（空闲回收或 Connector 重启后），状态中的模型和等级按 Pi
+  恢复会话的规则从文件当前分支读取：最后一次模型切换或助手消息的模型，最后一次
+  等级切换。
+- 会话命令来自 Pi 的 `get_commands`（扩展命令、提示模板、skill），都声明接受一个
+  自由文本参数（`/命令 参数`，允许多行）。另提供内置的 `compact`，对应 Pi 的
+  `compact` RPC，参数作为压缩说明；只能在会话空闲时执行，压缩结束后立即发布
+  时间线中的压缩标记。
+- 扩展命令的处理函数结束后 Pi 才响应这次 prompt，处理函数可能在等用户回答对话框。
+  Connector 最多等 10 秒，之后按"已接受"返回（服务端命令和发消息的超时都是 30 秒），
+  在后台继续等待；期间会话不会被空闲回收。命令结束后立即发布它写入的内容。
 
 ## 有界历史同步
 
@@ -133,8 +162,11 @@ POSIX 可执行脚本，完整套件在 Linux/WSL 执行。Git 属性确保其 s
   详见 [Linux 真实 Pi 验证](../features/pi-and-bounded-ingest/linux-real-pi-verification.md)。
 - macOS wheel 构建与资源清单验证通过；Mac/Linux 实机临时验证目录均已清理。
 - 过程中的失败与修复见 [Mac 验证记录](../features/pi-and-bounded-ingest/mac-verification.md)。
-- 真实 UI、模型调用、流式审批/附件端到端及正式桌面安装包未在本分支验收。
-  headless 与离线 probe 成功不等于这些用户流程已经验证。
+- Windows 本机真实联调：本地 AA Server（SQLite）+ 本分支 Connector + Pi 1.1.0 +
+  真实模型调用 + Web 客户端（无头 Edge），逐项验证模型/等级/权限调整、审批、对话框、
+  命令、附件、流式、中断、插话、压缩、空闲回收、外部会话、Connector 与服务端重启，
+  见 [AA 真实联调记录](../features/pi-and-bounded-ingest/aa-e2e-verification.md)。
+  正式桌面安装包、Android/iOS、PostgreSQL/Redis 部署未验证。
 
 来源与 MIT 声明见
 [`connector/runtimes/pi/UPSTREAM.md`](../../connector/connector/runtimes/pi/UPSTREAM.md)。

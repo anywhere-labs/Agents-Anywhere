@@ -9,6 +9,9 @@ Behaviour is controlled by environment variables:
   extension UI dialog and waits for ``extension_ui_response`` before settling.
 - ``PI_FAKE_SESSIONS``: number of synthetic sessions to report for inventory
   (not used yet; sessions are discovered from files).
+- A ``/hold-dialog`` prompt behaves like an extension command whose handler
+  opens a select dialog: Pi answers the prompt (``handled``) only after the
+  dialog is answered, and records the answer as a custom message.
 """
 
 from __future__ import annotations
@@ -40,6 +43,7 @@ STATE: dict[str, object] = {
     "waitingUi": False,
     "uiIssued": False,
     "pendingTool": None,
+    "heldPrompt": None,
 }
 
 
@@ -315,6 +319,19 @@ def handle_command(command: dict) -> None:
                 "data": state_data(),
             }
         )
+    elif command_type == "prompt" and str(command.get("message", "")).startswith("/hold-dialog"):
+        # An extension command: its handler awaits a dialog before Pi answers.
+        ensure_header()
+        STATE["heldPrompt"] = request_id
+        emit(
+            {
+                "type": "extension_ui_request",
+                "id": "held-dialog",
+                "method": "select",
+                "title": "Held dialog",
+                "options": ["alpha", "beta"],
+            }
+        )
     elif command_type == "prompt":
         emit(
             {
@@ -322,9 +339,36 @@ def handle_command(command: dict) -> None:
                 "type": "response",
                 "command": "prompt",
                 "success": True,
+                "data": {"disposition": "started"},
             }
         )
         handle_prompt(command)
+    elif command_type == "compact":
+        STATE["isCompacting"] = True
+        emit({"type": "compaction_start", "reason": "manual"})
+        ensure_header()
+        append(
+            {
+                "type": "compaction",
+                "id": uuid.uuid4().hex[:8],
+                "parentId": last_entry_id(),
+                "timestamp": "2026-01-01T00:00:03.000Z",
+                "summary": "Compacted: " + str(command.get("customInstructions") or "all"),
+                "firstKeptEntryId": last_entry_id(),
+                "tokensBefore": 1000,
+            }
+        )
+        STATE["isCompacting"] = False
+        emit({"type": "compaction_end", "reason": "manual", "aborted": False})
+        emit(
+            {
+                "id": request_id,
+                "type": "response",
+                "command": "compact",
+                "success": True,
+                "data": {"summary": "Compacted", "tokensBefore": 1000, "estimatedTokensAfter": 200},
+            }
+        )
     elif command_type == "steer":
         emit({"id": request_id, "type": "response", "command": "steer", "success": True})
     elif command_type == "abort":
@@ -415,6 +459,29 @@ def handle_command(command: dict) -> None:
                         }
                     ]
                 },
+            }
+        )
+    elif command_type == "extension_ui_response" and STATE["heldPrompt"] is not None:
+        held = STATE["heldPrompt"]
+        STATE["heldPrompt"] = None
+        append(
+            {
+                "type": "custom_message",
+                "id": uuid.uuid4().hex[:8],
+                "parentId": last_entry_id(),
+                "timestamp": "2026-01-01T00:00:04.000Z",
+                "customType": "held-dialog",
+                "content": "held dialog answered: " + str(command.get("value")),
+                "display": True,
+            }
+        )
+        emit(
+            {
+                "id": held,
+                "type": "response",
+                "command": "prompt",
+                "success": True,
+                "data": {"disposition": "handled"},
             }
         )
     elif command_type == "extension_ui_response":

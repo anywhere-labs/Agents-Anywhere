@@ -104,7 +104,7 @@ async def test_first_sync_replaces_and_only_commit_marks_synced(
     # the first sync is a complete replacement, as Pi always sent before.
     assert prepared.snapshot.complete is True
     assert content_ids(prepared.snapshot.items) == {
-        item_id(session_path, "message", "u1:user"),
+        item_id(session_path, "message", "user:timestamp:1:1"),
         item_id(session_path, "message", "assistant:timestamp:2:1:text:1"),
     }
     # A read alone is not a sync: an RPC snapshot or a failed upload must not
@@ -132,7 +132,7 @@ async def test_appended_history_is_incremental(
     assert prepared.snapshot is not None
     assert prepared.snapshot.complete is False
     assert content_ids(prepared.snapshot.items) == {
-        item_id(session_path, "message", "u2:user"),
+        item_id(session_path, "message", "user:timestamp:3:1"),
         item_id(session_path, "message", "assistant:timestamp:4:1:text:1"),
     }
 
@@ -182,7 +182,7 @@ async def test_branch_switch_replaces_the_timeline(
     assert item_id(session_path, "message", "assistant:timestamp:2:1:text:1") not in content_ids(
         prepared.snapshot.items
     )
-    assert item_id(session_path, "message", "u1:user") in content_ids(prepared.snapshot.items)
+    assert item_id(session_path, "message", "user:timestamp:1:1") in content_ids(prepared.snapshot.items)
 
 
 async def test_invalid_checkpoint_replaces_the_timeline(
@@ -277,7 +277,7 @@ async def test_settle_publishes_through_prepare_and_commits_only_after_success(
     append_session(session_path, user("u2", "a1", "again", 3))
     await runtime._publish_timeline(live)
     assert host.timeline_syncs[-1]["complete"] is False
-    assert content_ids(host.timeline_syncs[-1]["items"]) == {item_id(session_path, "message", "u2:user")}
+    assert content_ids(host.timeline_syncs[-1]["items"]) == {item_id(session_path, "message", "user:timestamp:3:1")}
     assert meta.session_id != "sess-live"
 
 
