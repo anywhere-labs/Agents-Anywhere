@@ -120,6 +120,16 @@ the asynchronous notification/coalescing queue. Native changes are still batched
 at the Bridge's bounded cadence. Snapshot page ACK only means page receipt;
 snapshot.commit waits for ingestion of the assembled complete snapshot.
 
+If the backend permanently refuses that snapshot (HTTP 413, or the notification
+is rejected), the Connector still ACKs the commit so the feed moves on, and
+quarantines only that session: it reports the source as `unavailable` with reason
+`history_too_large` or `history_rejected`, ignores `checkpoint.save` for it, and
+drops its later `timeline.itemUpsert` and `session.turnEnded` until a later
+capture is accepted. Inventory entries for it carry the same unavailable state.
+An unchanged capture (same `throughSeq`) is not uploaded again; a Connector
+restart retries it. Other sessions continue and the runtime still reaches
+`running`.
+
 Without the negotiated extension, live notifications retain the typed Host
 publishers and their WebSocket/coalescing/HTTP fallback queue. Their ACK does not
 mean server persistence. No resumable checkpoint is inferred from legacy ACKs;
