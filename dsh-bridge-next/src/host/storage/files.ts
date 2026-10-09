@@ -33,11 +33,48 @@ export async function writeJson(path: string, value: unknown): Promise<void> {
   }
 }
 
+/**
+ * A lock port is derived from a shared directory, so every process competing for
+ * that directory must derive the same port: the range is part of that contract and
+ * cannot be randomized.
+ *
+ * It must also stay outside the operating system's ephemeral range. Windows hands
+ * 49152-65535 to outbound sockets and lets Hyper-V/WSL reserve blocks inside it, so
+ * a lock that lands there can be refused even while no owning process is visible.
+ * 16384-32767 sits below the Windows and macOS dynamic range and below the Linux
+ * default ephemeral start of 32768.
+ */
+const LOCK_PORT_BASE = 16384
+const LOCK_PORT_SPAN = 16384
+
+/** The loopback port that represents ownership of `directory` across processes on this host. */
+export function managerLockPort(directory: string, platform = process.platform): number {
+  const identity = platform === 'win32' ? directory.toLowerCase() : directory
+  return LOCK_PORT_BASE + createHash('sha256').update(identity).digest().readUInt16BE(0) % LOCK_PORT_SPAN
+}
+
+/**
+ * Windows refuses a bind that conflicts with an `SO_EXCLUSIVEADDRUSE` socket with
+ * WSAEACCES rather than WSAEADDRINUSE, so both codes mean "this port is taken".
+ * Handling only EADDRINUSE let the EACCES case fall through to the generic
+ * permission branch, which blamed data-directory permissions and local-network
+ * policy: neither can cause it. The port travels with the error so diagnostics can
+ * report it without exposing the message.
+ */
+export class ManagerLockPortError extends Error {
+  readonly code = 'LOCK_PORT_UNAVAILABLE'
+  readonly port: number
+
+  constructor(port: number, cause: unknown) {
+    super(`另一个插件实例正在管理本机设备，或本机管理端口 ${port} 已被其他程序或系统保留段占用。请关闭该实例后重试。`, { cause })
+    this.name = 'ManagerLockPortError'
+    this.port = port
+  }
+}
+
 export async function acquireManagerLock(path: string, onCompromised?: () => void): Promise<() => Promise<void>> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-  const directory = await realpath(dirname(path))
-  const identity = process.platform === 'win32' ? directory.toLowerCase() : directory
-  const port = 49152 + createHash('sha256').update(identity).digest().readUInt16BE(0) % 16384
+  const port = managerLockPort(await realpath(dirname(path)))
   // The OS releases this loopback lease even after SIGKILL. File-based stale
   // takeover cannot atomically check ownership before deleting a reused path.
   // This is not an HTTP/RPC endpoint; incoming sockets are immediately closed.
@@ -51,7 +88,7 @@ export async function acquireManagerLock(path: string, onCompromised?: () => voi
       })
     })
   } catch (error) {
-    if (hasCode(error, 'EADDRINUSE')) throw new Error(`另一个插件实例正在管理本机设备，或本机管理端口 ${port} 已被占用。请关闭该实例后重试。`)
+    if (hasCode(error, 'EADDRINUSE') || hasCode(error, 'EACCES')) throw new ManagerLockPortError(port, error)
     throw error
   }
   lease.unref()

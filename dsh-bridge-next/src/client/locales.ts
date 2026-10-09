@@ -9,6 +9,8 @@ const hostMessages = {
   "请退出其他正在运行的 DSH，再点击“尝试重启”。如果只开了一个 DSH，请检查是否重复启用了插件。": "Quit other running DSH instances, then click Try restarting. If only one DSH is open, check whether the plugin is enabled more than once.",
   "本机连接启动失败：访问权限不足。": "The local connection could not start: permission denied.",
   "请检查 DSH 数据目录的读写权限，以及系统是否允许 DSH 使用本机网络，再尝试重启。": "Check read/write access to the DSH data directory and permission to use the local network, then try restarting.",
+  "本机连接启动失败：本机管理端口不可用。": "The local connection could not start: the local management port is unavailable.",
+  "该端口可能被其他 DSH 实例占用，也可能已被系统保留或被其他程序占用。请先退出其他正在运行的 DSH；仍失败时，请在运行日志中展开该条记录查看端口号。": "The port may be held by another DSH instance, reserved by the system, or taken by another program. Quit other running DSH instances first; if it still fails, expand that entry in the runtime logs to see the port number.",
   "本机连接启动失败：无法保存连接信息。": "The local connection could not start: unable to save connection information.",
   "请释放磁盘空间后，再尝试重启。": "Free up disk space, then try restarting.",
   "DSH 数据目录所在磁盘为只读。请恢复写入权限后，再尝试重启。": "The disk containing the DSH data directory is read-only. Restore write access, then try restarting.",
