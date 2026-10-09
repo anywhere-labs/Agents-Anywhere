@@ -44,6 +44,8 @@ STATE: dict[str, object] = {
     "uiIssued": False,
     "pendingTool": None,
     "heldPrompt": None,
+    # Entry ids this process knows: loaded at startup or written by it.
+    "knownIds": set(),
 }
 
 
@@ -80,6 +82,8 @@ def last_entry_id() -> str | None:
 
 
 def append(record: dict) -> None:
+    if isinstance(record.get("id"), str) and record.get("type") != "session":
+        STATE["knownIds"].add(record["id"])  # type: ignore[union-attr]
     path = session_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
@@ -443,6 +447,29 @@ def handle_command(command: dict) -> None:
                 },
             }
         )
+    elif command_type == "get_entries":
+        since = command.get("since")
+        known = STATE["knownIds"]
+        if since is not None and since not in known:  # type: ignore[operator]
+            emit(
+                {
+                    "id": request_id,
+                    "type": "response",
+                    "command": "get_entries",
+                    "success": False,
+                    "error": f"Entry not found: {since}",
+                }
+            )
+        else:
+            emit(
+                {
+                    "id": request_id,
+                    "type": "response",
+                    "command": "get_entries",
+                    "success": True,
+                    "data": {"entries": [], "leafId": last_entry_id()},
+                }
+            )
     elif command_type == "get_commands":
         emit(
             {
@@ -464,6 +491,16 @@ def handle_command(command: dict) -> None:
     elif command_type == "extension_ui_response" and STATE["heldPrompt"] is not None:
         held = STATE["heldPrompt"]
         STATE["heldPrompt"] = None
+        # Like pi.sendMessage outside a run: message events, then the entry.
+        custom = {
+            "role": "custom",
+            "customType": "held-dialog",
+            "content": "held dialog answered: " + str(command.get("value")),
+            "display": True,
+            "timestamp": time.time_ns() // 1_000_000,
+        }
+        emit({"type": "message_start", "message": custom})
+        emit({"type": "message_end", "message": custom})
         append(
             {
                 "type": "custom_message",
@@ -535,6 +572,15 @@ def main() -> int:
                     return 2
                 if flag == "--session":
                     STATE["sessionFile"] = argv[index + 1]
+                    resumed = Path(argv[index + 1])
+                    if resumed.is_file():
+                        for line in resumed.read_text(encoding="utf-8").splitlines():
+                            try:
+                                record = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            if isinstance(record.get("id"), str) and record.get("type") != "session":
+                                STATE["knownIds"].add(record["id"])  # type: ignore[union-attr]
         log_command(
             {
                 "type": "startup",

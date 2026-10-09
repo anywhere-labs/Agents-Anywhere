@@ -198,6 +198,69 @@ async def test_extension_command_waiting_on_a_dialog_is_accepted(
                 for item in sync["items"]
             )
         )
+        # Outside a run it is not streamed under a temporary identity, which
+        # would list it twice.
+        assert not any(
+            "held dialog answered" in str(item.content.get("text"))
+            for item in fake_host.timeline_items
+        )
+    finally:
+        await runtime.stop()
+
+
+def test_last_entry_id_reads_back_across_large_entries(tmp_path: Path) -> None:
+    path = tmp_path / "s.jsonl"
+    big = {"role": "user", "content": "x" * 300_000, "timestamp": 2}
+    path.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "session", "version": 3, "id": "header"}),
+                _entry("e1", None, type="message", message={"role": "user", "content": "a"}),
+                _entry("e2", "e1", type="message", message=big),
+            ]
+        )
+        + "\n{\"type\": \"mess",  # a line still being written
+        encoding="utf-8",
+    )
+    assert pi_runtime.last_entry_id(path) == "e2"
+    header_only = tmp_path / "h.jsonl"
+    header_only.write_text(json.dumps({"type": "session", "id": "header"}) + "\n", encoding="utf-8")
+    assert pi_runtime.last_entry_id(header_only) is None
+
+
+async def test_a_session_another_pi_process_wrote_is_reloaded_before_the_next_turn(
+    fake_pi: Path, tmp_path: Path, fake_host: FakeHost, session_file: Path, monkeypatch
+) -> None:
+    log = tmp_path / "commands.jsonl"
+    monkeypatch.setenv("PI_FAKE_COMMAND_LOG", str(log))
+    runtime = make_runtime(fake_pi, tmp_path, fake_host)
+    await runtime.start()
+    try:
+        await runtime.create_and_start_session("shared", "first")
+        await wait_for(lambda: bool(fake_host.turn_ends))
+
+        def startups() -> int:
+            return sum(1 for c in commands(log) if c["type"] == "startup")
+
+        ended = len(fake_host.turn_ends)
+        await runtime.start_turn("shared", None, "second")
+        await wait_for(lambda: len(fake_host.turn_ends) > ended)
+        # Only this process wrote the file: no reload.
+        assert startups() == 1
+
+        # A Pi terminal continues the same session file.
+        last = pi_runtime.last_entry_id(session_file)
+        user = {"role": "user", "content": "from the terminal", "timestamp": 50}
+        with session_file.open("a", encoding="utf-8") as handle:
+            handle.write(_entry("ext-1", last, type="message", message=user) + "\n")
+        ended = len(fake_host.turn_ends)
+        await runtime.start_turn("shared", None, "third")
+        await wait_for(lambda: len(fake_host.turn_ends) > ended)
+        # The live process reopened the file before the prompt, so it
+        # continues after the terminal's entry instead of branching.
+        assert startups() == 2
+        assert str(session_file) in [c for c in commands(log) if c["type"] == "startup"][-1]["argv"]
+        assert not any(t.get("outcome") == "failed" for t in fake_host.turn_ends)
     finally:
         await runtime.stop()
 

@@ -241,6 +241,39 @@ class SessionDirectory:
         return summary
 
 
+def last_entry_id(path: Path, *, limit: int = 8 * 1024 * 1024) -> str | None:
+    """The id of the last complete entry in a session file, reading from its end.
+
+    One entry can be large (an inlined attachment), so blocks are read back
+    until a whole line is in hand. The header and unparseable lines are skipped.
+    """
+
+    try:
+        handle = path.open("rb")
+    except OSError:
+        return None
+    with handle:
+        handle.seek(0, 2)
+        position = handle.tell()
+        tail = b""
+        while position > 0 and len(tail) <= limit:
+            step = min(64 * 1024, position)
+            position -= step
+            handle.seek(position)
+            tail = handle.read(step) + tail
+            lines = tail.split(b"\n")
+            # Unless the file start was reached, the first piece may be cut.
+            complete = lines if position == 0 else lines[1:]
+            for raw in reversed(complete):
+                record = _parse_line(raw)
+                if record is None or record.get("type") == "session":
+                    continue
+                entry_id = record.get("id")
+                if isinstance(entry_id, str) and entry_id:
+                    return entry_id
+    return None
+
+
 def load_session_doc(path: Path) -> PiSessionDoc | None:
     """Parse a session file and return the active branch of its entry tree."""
 

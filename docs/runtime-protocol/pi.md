@@ -87,6 +87,12 @@ Windows 支持 npm `pi.cmd` 解析为 Node + CLI 参数数组；不要把完整 
 - 一轮中打开、到这一轮结束仍未答复的扩展对话框已被 Pi 取消，通知标记为
   `cancelled`；带 `timeout` 的对话框超时后标记为 `expired`。会话随后回到
   `idle`，可被空闲回收。
+- Pi 没有跨进程写锁。AA 的 Pi 进程仍在运行时，外部 Pi 终端可能续写同一会话文件。
+  每次向空闲的活进程发消息、执行命令或修改选择之前，Connector 用文件最后一条记录的
+  id 调用 `get_entries`（`since`）；进程不认识它就重开进程、从文件重新加载，避免 AA
+  的下一轮从旧位置分叉。Pi 不支持 `get_entries` 时不做此检查。
+- 一轮之外写入的消息（扩展命令的 `sendMessage`）不流式发布，命令结束后从文件发布，
+  只有正式 id，不会短暂出现两次。
 - `externalSessionId` 必须位于 `sessionsDir` 内，否则请求被拒绝，不会传给
   `pi --session`。AA 创建的会话 id 与文件路径的对应关系持久化在
   `pi/session-index/<会话 id>`，重启后无需扫描目录。
@@ -166,6 +172,7 @@ POSIX 可执行脚本，完整套件在 Linux/WSL 执行。Git 属性确保其 s
   真实模型调用 + Web 客户端（无头 Edge），逐项验证模型/等级/权限调整、审批、对话框、
   命令、附件、流式、中断、插话、压缩、空闲回收、外部会话、Connector 与服务端重启，
   见 [AA 真实联调记录](../features/pi-and-bounded-ingest/aa-e2e-verification.md)。
+  macOS 26.5.2 / arm64 上按同样方式补跑，结果在同一记录中。
   正式桌面安装包、Android/iOS、PostgreSQL/Redis 部署未验证。
 
 来源与 MIT 声明见

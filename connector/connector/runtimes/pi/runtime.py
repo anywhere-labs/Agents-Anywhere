@@ -80,6 +80,7 @@ from connector.runtimes.pi.sessions import (
     PiSessionSummary,
     SessionDirectory,
     is_meaningful_title,
+    last_entry_id,
     load_session_doc,
 )
 from connector.runtimes.pi.stream import STREAM_EVENT_TYPES, PiStreamAccumulator
@@ -140,6 +141,9 @@ PROMPT_ACCEPT_SECONDS = 10.0
 
 # Pi's built-in /compact is not in get_commands; AA offers it like Codex does.
 COMPACT_COMMAND = "compact"
+
+# Message events a run streams; outside a run they are not streamed.
+RUN_MESSAGE_EVENTS = frozenset({"message_start", "message_update", "message_end"})
 
 
 def _merge_client_message_pairs(
@@ -629,6 +633,10 @@ class PiLiveSession:
         if response is None:
             return "pending"
         disposition = response_data(response).get("disposition")
+        if disposition == "handled":
+            # An extension command or input handler ran without a run that
+            # would settle and publish what it recorded.
+            self.runtime._schedule_publish(self)
         return disposition if isinstance(disposition, str) else "started"
 
     async def submit_command(
@@ -1678,8 +1686,6 @@ class PiRuntime(AgentRuntime):
         # Pi answers an extension command once its handler returns ("handled");
         # skills and prompt templates start a run. Either way it was accepted.
         completed = disposition == "handled"
-        if completed:
-            self._schedule_publish(live)
         return RuntimeCommandResult(
             command=command,
             ok=True,
@@ -1886,7 +1892,14 @@ class PiRuntime(AgentRuntime):
     async def handle_live_event(self, live: PiLiveSession, record: Mapping[str, Any]) -> None:
         live.touch()
         event_type = record.get("type")
-        if event_type in STREAM_EVENT_TYPES and live.stream is not None:
+        if (
+            event_type in STREAM_EVENT_TYPES
+            and live.stream is not None
+            # A message recorded outside a run (an extension command's
+            # sendMessage) is published from the file once the command ends;
+            # a live identity for it would show it twice.
+            and (live.is_streaming or event_type not in RUN_MESSAGE_EVENTS)
+        ):
             await live.stream.handle_event(record)
         if event_type == "extension_ui_request":
             await self._handle_ui_request(live, record)
@@ -2078,6 +2091,8 @@ class PiRuntime(AgentRuntime):
         cwd: str | None,
     ) -> PiLiveSession:
         live = self._live.get(session_id)
+        if live is not None and live.alive:
+            await self._reload_if_written_elsewhere(live)
         if live is None:
             # Resolve the target first; installation below is synchronous, so two
             # concurrent RPCs for the same session share one live session (and one
@@ -2110,6 +2125,43 @@ class PiRuntime(AgentRuntime):
                     self._live[session_id] = live
         await live.ensure_started()
         return live
+
+    async def _reload_if_written_elsewhere(self, live: PiLiveSession) -> None:
+        """Reopen the session file if another Pi process appended to it.
+
+        Pi has no cross-process writer lock. A live process keeps its own copy
+        of the session tree, so after a Pi terminal continued the session, the
+        next prompt or selection would branch off the stale leaf and drop the
+        terminal's turn from the active branch.
+        """
+
+        path = live.session_file or live.session_path
+        if live.busy or not path:
+            return
+        entry_id = await asyncio.to_thread(last_entry_id, Path(path))
+        if entry_id is None:
+            return
+        try:
+            await live.command({"type": "get_entries", "since": entry_id})
+            return
+        except PiRpcRequestFailed as exc:
+            # Older Pi versions without get_entries cannot tell; keep the process.
+            if not str(exc).startswith("Entry not found"):
+                return
+        async with live._selection_lock:
+            if live.busy or not live.alive:
+                return
+            logger.info(
+                "pi session file was written by another process; reloading session_id=%s",
+                live.platform_id,
+            )
+            live.restarting = True
+            try:
+                await live.stop()
+                await live.ensure_started()
+            finally:
+                live.restarting = False
+        await self._push_state(live, force=True)
 
     def _live_lock(self, session_id: str) -> asyncio.Lock:
         lock = self._live_locks.get(session_id)
