@@ -139,6 +139,10 @@ Windows 支持 npm `pi.cmd` 解析为 Node + CLI 参数数组；不要把完整 
   立即发布它写入的内容；之后才失败的命令或消息、自动压缩失败（`compaction_end`
   的 `errorMessage`）以会话通知（`type=notification`、`severity=error`）告知用户，
   下一次发送时关闭。
+- 扩展命令的处理函数抛错时，Pi 仍把这次 prompt 当作已处理，只发出 `extension_error`
+  事件（Pi 的终端界面会显示它）。Connector 把它同样作为会话通知（"/命令 失败：原因"；
+  其他扩展事件出错显示扩展文件名）。打开的通知也随 `get_session_notices` 返回，
+  之后打开会话的客户端同样能看到。
 
 ## 有界历史同步
 

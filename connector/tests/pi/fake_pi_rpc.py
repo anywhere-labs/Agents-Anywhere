@@ -418,6 +418,26 @@ def handle_command(command: dict) -> None:
                     "data": {"disposition": "handled"},
                 }
             )
+    elif command_type == "prompt" and command.get("message") == "/throw-command":
+        # Pi catches a throwing command handler, reports the error as an
+        # event and still answers the prompt as handled.
+        emit(
+            {
+                "type": "extension_error",
+                "extensionPath": "command:throw-command",
+                "event": "command",
+                "error": "boom",
+            }
+        )
+        emit(
+            {
+                "id": request_id,
+                "type": "response",
+                "command": "prompt",
+                "success": True,
+                "data": {"disposition": "handled"},
+            }
+        )
     elif command_type == "prompt" and command.get("message") == "/switch-model":
         STATE["model"] = dict(MODELS[1])
         STATE["thinkingLevel"] = clamp_level(STATE["model"], str(STATE["thinkingLevel"]))  # type: ignore[arg-type]

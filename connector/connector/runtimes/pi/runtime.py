@@ -485,8 +485,9 @@ class PiLiveSession:
         # Prompts Pi has not answered yet, such as extension commands waiting
         # on a dialog; the session is not idle while any is in flight.
         self.pending_prompts: set[asyncio.Future[Mapping[str, Any]]] = set()
-        # A failure notification is open for this session.
-        self.failure_notice_open = False
+        # The open failure notification, listed with the session's notices
+        # (clients that open the session later read notices from the runtime).
+        self.failure_notice: SessionNotice | None = None
         self.last_activity = time.monotonic()
         self._start_lock = asyncio.Lock()
         self.last_state_key: tuple[Any, ...] | None = None
@@ -1536,7 +1537,8 @@ class PiRuntime(AgentRuntime):
         if live is None:
             return ()
         # Notices carry no external id: use the id the platform knows.
-        return tuple(pending.as_notice(live.platform_id) for pending in live.pending_ui.values())
+        notices = tuple(pending.as_notice(live.platform_id) for pending in live.pending_ui.values())
+        return notices + ((live.failure_notice,) if live.failure_notice is not None else ())
 
     async def get_runtime_capabilities(self) -> RuntimeCapabilitySet:
         """Runtime-scoped capability facts advertised to the platform.
@@ -2084,6 +2086,9 @@ class PiRuntime(AgentRuntime):
                 record.get("extensionPath"),
                 record.get("event"),
             )
+            # Pi answers a command whose handler threw as handled and reports
+            # the error only through this event; its terminal UI shows it.
+            await self._publish_failure(live, *_extension_failure(record))
 
     async def handle_live_exit(self, live: PiLiveSession, code: int | None) -> None:
         logger.info("pi session %s process exited code=%s", live.platform_id, code)
@@ -2659,16 +2664,17 @@ class PiRuntime(AgentRuntime):
     async def _publish_failure(self, live: PiLiveSession, kind: str, message: str) -> None:
         """Tell the user about a failure no request is waiting for any more."""
 
-        live.failure_notice_open = True
+        notice = _failure_notice(live.platform_id, kind, message)
+        live.failure_notice = notice
         try:
-            await self.host.notice_upsert(_failure_notice(live.platform_id, kind, message))
+            await self.host.notice_upsert(notice)
         except Exception:
             logger.exception("failed to publish pi failure notice for %s", live.platform_id)
 
     async def _clear_failure(self, live: PiLiveSession) -> None:
-        if not live.failure_notice_open:
+        if live.failure_notice is None:
             return
-        live.failure_notice_open = False
+        live.failure_notice = None
         try:
             await self.host.notice_upsert(
                 _failure_notice(live.platform_id, "", "", status="resolved")
@@ -2802,10 +2808,25 @@ def _first_text(content: Any) -> str:
     return ""
 
 
+def _extension_failure(record: Mapping[str, Any]) -> tuple[str, str]:
+    error = str(record.get("error") or "未知错误")
+    path = record.get("extensionPath")
+    path = path if isinstance(path, str) else ""
+    if record.get("event") == "command" and path.startswith("command:"):
+        return "extension_command", f"/{path.removeprefix('command:')} 失败：{error}"
+    name = Path(path).name if path else "扩展"
+    return "extension", f"{name}：{error}"
+
+
 def _failure_notice(
     session_id: str, kind: str, message: str, *, status: str = "open"
 ) -> SessionNotice:
-    titles = {"compact": "Pi 压缩上下文失败", "prompt": "Pi 未能处理这条消息"}
+    titles = {
+        "compact": "Pi 压缩上下文失败",
+        "prompt": "Pi 未能处理这条消息",
+        "extension_command": "Pi 扩展命令出错",
+        "extension": "Pi 扩展出错",
+    }
     return SessionNotice(
         notice_id=f"pi-failure-{session_id}",
         session_id=session_id,

@@ -175,6 +175,9 @@ async def test_a_late_failure_becomes_a_session_notification(
         payload = contract_notice(failures()[-1])
         assert (payload["severity"], payload["status"]) == ("error", "open")
         assert "late failure" in payload["message"]
+        # A client opening the session later reads notices from the runtime.
+        listed = await runtime.get_session_notices("late")
+        assert [n.notice_id for n in listed] == [failures()[-1].notice_id]
         # An automatic compaction that fails is reported the same way.
         live = runtime._live["late"]
         await runtime.handle_live_event(
@@ -187,6 +190,25 @@ async def test_a_late_failure_becomes_a_session_notification(
         await runtime.start_turn("late", None, "again")
         await wait_for(lambda: len(fake_host.turn_ends) > ended)
         assert failures()[-1].status == "resolved"
+        assert not await runtime.get_session_notices("late")
+    finally:
+        await runtime.stop()
+
+
+async def test_a_throwing_extension_command_is_reported(
+    fake_pi: Path, tmp_path: Path, fake_host: FakeHost, session_file: Path
+) -> None:
+    runtime = make_runtime(fake_pi, tmp_path, fake_host)
+    await runtime.start()
+    try:
+        await runtime.create_and_start_session("throw", "hi")
+        await wait_for(lambda: bool(fake_host.turn_ends))
+        await runtime.execute_command("throw", "throw-command", raw="/throw-command")
+        await wait_for(lambda: any(n.type == "notification" for n in fake_host.notices))
+        notice = next(n for n in reversed(fake_host.notices) if n.type == "notification")
+        payload = contract_notice(notice)
+        assert payload["title"] == "Pi 扩展命令出错"
+        assert payload["message"] == "/throw-command 失败：boom"
     finally:
         await runtime.stop()
 
