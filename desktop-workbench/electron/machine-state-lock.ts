@@ -4,10 +4,14 @@ import { createServer, type Server } from "node:net";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-/** Candidate lease ports in trial order, shared with Python: contracts/local-machine/2.0. */
+/**
+ * Candidate lease ports in trial order, shared with Python: contracts/local-machine/2.0.
+ * 16384-32767 lies below every default dynamic port range, so ephemeral sockets and
+ * listen(0) servers never land on a lock port.
+ */
 export function machineStateLockPorts(identity: string): number[] {
   const base = createHash("sha256").update(`aa-machine-state-v1\n${identity}`).digest().readUInt16BE(0) % 16384;
-  return Array.from({ length: 16 }, (_, k) => 49152 + (base + 1024 * k) % 16384);
+  return Array.from({ length: 16 }, (_, k) => 16384 + (base + 1024 * k) % 16384);
 }
 
 /** Short file transaction shared with Python: contracts/local-machine/2.0. */

@@ -34,8 +34,8 @@ async function temporaryRecord(t: TestContext): Promise<{ filePath: string; port
 test("Machine-state lock ports follow the shared contract", () => {
   // connector/tests/test_runtime_owner.py pins the same ports.
   assert.deepEqual(machineStateLockPorts("/home/me/.agents-anywhere/connector-runtime.json"), [
-    54028, 55052, 56076, 57100, 58124, 59148, 60172, 61196,
-    62220, 63244, 64268, 65292, 49932, 50956, 51980, 53004,
+    21260, 22284, 23308, 24332, 25356, 26380, 27404, 28428,
+    29452, 30476, 31500, 32524, 17164, 18188, 19212, 20236,
   ]);
 });
 
