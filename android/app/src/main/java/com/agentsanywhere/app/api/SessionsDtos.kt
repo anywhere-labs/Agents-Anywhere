@@ -26,6 +26,8 @@ data class RemoteSession(
     val lastItemOrderSeq: Int?,
     val sortAt: String?,
     val updatedSeq: Int,
+    val sourceAvailability: String? = null,
+    val sourceAvailabilityReason: String? = null,
     val runtimeId: String = runtime,
     val runtimeType: String = runtime,
     val runtimeName: String = runtimeType,

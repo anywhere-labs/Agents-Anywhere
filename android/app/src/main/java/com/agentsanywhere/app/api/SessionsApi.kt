@@ -691,6 +691,8 @@ class SessionsApi(
             lastItemOrderSeq = optNullableInt("lastItemOrderSeq"),
             sortAt = optNullableString("sortAt"),
             updatedSeq = optInt("updatedSeq", 0),
+            sourceAvailability = optNullableString("sourceAvailability"),
+            sourceAvailabilityReason = optNullableString("sourceAvailabilityReason"),
             runtimeId = runtimeId,
             runtimeType = runtimeType,
             runtimeName = runtimeName,

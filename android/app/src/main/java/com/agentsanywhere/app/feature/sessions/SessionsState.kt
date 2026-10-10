@@ -228,7 +228,7 @@ fun SessionsState.replacedByDashboardSnapshot(loaded: SessionsState): SessionsSt
     }.associateBy { it.id }.values
     return loaded.copy(
         sessions = accepted
-            .filterNot { it.archived }
+            .filterNot { it.archived || sessionIsLinkedSubagent(it) }
             .sortedWith(sessionListComparator()),
         archivedSessions = accepted.filter { it.archived }.sortedWith(archivedSessionComparator()),
         sessionRequestGenerations = sessionRequestGenerations,
@@ -251,7 +251,7 @@ fun SessionsState.withAppendedSessionPage(page: SessionPageAppend): SessionsStat
     }
     val all = currentById.values
     return copy(
-        sessions = all.filterNot { it.archived }
+        sessions = all.filterNot { it.archived || sessionIsLinkedSubagent(it) }
             .sortedWith(sessionListComparator()),
         archivedSessions = all.filter { it.archived }.sortedWith(archivedSessionComparator()),
         activeHasMore = if (page.archived) activeHasMore else page.hasMore,

@@ -663,7 +663,7 @@ class SessionsController(
                 session.toAgentSession(devicesById)
             }
         val sessions = allSessions
-            .filterNot { it.archived }.sortedWith(sessionListComparator())
+            .filterNot { it.archived || sessionIsLinkedSubagent(it) }.sortedWith(sessionListComparator())
         val archivedSessions = allSessions.filter { it.archived }.sortedWith(archivedSessionComparator())
         val devices = devicesById.values.sortedBy { it.name.lowercase() }
 

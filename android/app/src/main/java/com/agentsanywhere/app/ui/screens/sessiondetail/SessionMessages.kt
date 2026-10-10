@@ -1982,6 +1982,10 @@ private fun ToolCallPreview(message: TimelineMessage, darkMode: Boolean) {
     val input = message.input.ifBlank { message.detail }
     val output = message.output
     val error = message.toolError
+    // DSH tool results that are authored content (not terminal text) render as
+    // markdown; plain command output keeps the monospace preview.
+    val outputIsMarkdown = message.sourceRuntime == "dsh" &&
+        message.contentKind !in setOf("command", "file_change", "web_search", "mcp")
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (input.isNotBlank()) {
             CommandPreviewSection(
@@ -1992,12 +1996,16 @@ private fun ToolCallPreview(message: TimelineMessage, darkMode: Boolean) {
             )
         }
         if (output.isNotBlank()) {
-            CommandPreviewSection(
-                label = stringResource(R.string.session_output),
-                text = output,
-                languageHint = null,
-                darkMode = darkMode,
-            )
+            if (outputIsMarkdown) {
+                AgentMarkdownText(text = output, darkMode = darkMode, compact = true)
+            } else {
+                CommandPreviewSection(
+                    label = stringResource(R.string.session_output),
+                    text = output,
+                    languageHint = null,
+                    darkMode = darkMode,
+                )
+            }
         }
         if (error.isNotBlank()) {
             CommandPreviewSection(

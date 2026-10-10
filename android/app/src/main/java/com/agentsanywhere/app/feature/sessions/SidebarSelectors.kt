@@ -14,6 +14,15 @@ internal fun timestampMillis(value: String?): Long =
  * status filter so a session never jumps between groups while its status
  * flaps between e.g. running and waiting_approval.
  */
+/**
+ * Sessions the runtime syncs only so their full conversation can be opened
+ * from the parent (DSH teammates and one-shot subagents). They never appear
+ * in the main lists; the parent's timeline links to them directly.
+ */
+fun sessionIsLinkedSubagent(session: AgentSession): Boolean =
+    session.sourceAvailability == "unavailable" &&
+        session.sourceAvailabilityReason == "dsh_subagent"
+
 fun sessionIsWorking(session: AgentSession, now: Long = System.currentTimeMillis()): Boolean =
     session.status in setOf(
         SessionStatus.Running,
