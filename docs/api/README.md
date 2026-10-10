@@ -127,3 +127,7 @@ endpoints when the selector is opened.
 an existing `externalSessionId` and pass selections through `selections`.
 New user tasks must use
 `POST /api/v2/sessions/create-and-start`.
+
+## Connector 快照传输
+
+2.2.0 增加 DSH 完整快照的分块暂存与续传接口；认证仍为 Connector Bearer token。端点、manifest、配额和提交语义见 [connector-snapshot-upload/1.0](../../contracts/connector-snapshot-upload/1.0/README.md)。已有 `/connector/ingest` 接口保留；暂存块只在完整提交后成为客户端可见历史。
