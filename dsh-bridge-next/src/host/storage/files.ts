@@ -33,19 +33,37 @@ export async function writeJson(path: string, value: unknown): Promise<void> {
   }
 }
 
+// 16384-32767 lies below every default dynamic port range (Linux 32768+, Windows and macOS
+// 49152+), so ephemeral client sockets and listen(0) servers never land on a lease port.
+const LEASE_PORTS = 16384
+// Plugins released before the lease ports moved used 49152-65535.
+const LEGACY_LEASE_PORTS = 49152
+
 /** Lease ports in trial order: 16 candidates spread evenly, far apart from the 100-port blocks Windows reserves. */
-export function managerLockPorts(identity: string): number[] {
+export function managerLockPorts(identity: string, first = LEASE_PORTS): number[] {
   const base = createHash('sha256').update(identity).digest().readUInt16BE(0) % 16384
-  return Array.from({ length: 16 }, (_, k) => 49152 + (base + 1024 * k) % 16384)
+  return Array.from({ length: 16 }, (_, k) => first + (base + 1024 * k) % 16384)
 }
 
-export async function acquireManagerLock(path: string, onCompromised?: () => void): Promise<() => Promise<void>> {
+export function acquireManagerLock(path: string, onCompromised?: () => void): Promise<() => Promise<void>> {
+  return acquireLease(path, LEASE_PORTS, onCompromised)
+}
+
+/**
+ * The lease an older plugin takes on `path`. Only for excluding such plugins from paths they
+ * still use (the legacy endpoint and data directory), never for this plugin's own ownership.
+ */
+export function acquireLegacyManagerLock(path: string): Promise<() => Promise<void>> {
+  return acquireLease(path, LEGACY_LEASE_PORTS)
+}
+
+async function acquireLease(path: string, first: number, onCompromised?: () => void): Promise<() => Promise<void>> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   const directory = await realpath(dirname(path))
   // The OS releases this loopback lease even after SIGKILL. File-based stale
   // takeover cannot atomically check ownership before deleting a reused path.
   // This is not an HTTP/RPC endpoint; incoming sockets are immediately closed.
-  const lease = await claimLease(managerLockPorts(process.platform === 'win32' ? directory.toLowerCase() : directory))
+  const lease = await claimLease(managerLockPorts(process.platform === 'win32' ? directory.toLowerCase() : directory, first))
   lease.unref()
   let released = false
   const lost = () => { if (!released) onCompromised?.() }

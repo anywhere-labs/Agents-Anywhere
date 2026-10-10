@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promise
 import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { resolveConfig, stateRoot } from '../../src/host/config.js'
-import { acquireManagerLock, readJson, writeJson } from '../../src/host/storage/files.js'
+import { acquireLegacyManagerLock, readJson, writeJson } from '../../src/host/storage/files.js'
 import { migrateStateRoot } from '../../src/host/storage/migration.js'
 import { OnboardingManager } from '../../src/host/onboarding/manager.js'
 
@@ -81,7 +81,7 @@ test('first launch without legacy data and custom roots do not import later lega
 
 test('running old instance blocks migration and release permits retry', async () => {
   await fixture(async (source, target) => {
-    const release = await acquireManagerLock(join(source, 'manager.lock'))
+    const release = await acquireLegacyManagerLock(join(source, 'manager.lock'))
     try { await assert.rejects(migrateStateRoot(target, source), /另一个插件实例/) }
     finally { await release() }
     assert.equal(await readJson(join(target, '.legacy-state-migrated.json')), null)

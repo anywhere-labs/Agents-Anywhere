@@ -8,7 +8,7 @@ import { Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startupFailure } from '../../src/host/dsh-runtime/startup-status.js'
-import { acquireManagerLock, managerLockPorts, readJson, writeJson } from '../../src/host/storage/files.js'
+import { acquireLegacyManagerLock, acquireManagerLock, managerLockPorts, readJson, writeJson } from '../../src/host/storage/files.js'
 import { desktopRecordPath, detectDesktop } from '../../src/host/desktop/detect.js'
 
 test('private atomic state and singleton ownership are scoped to the configured data directory', async () => {
@@ -51,11 +51,27 @@ async function lockPorts(t: TestContext): Promise<{ lock: string, ports: number[
   return { lock: join(root, 'manager.lock'), ports: managerLockPorts(process.platform === 'win32' ? directory.toLowerCase() : directory) }
 }
 
-test('manager lock ports spread evenly from the directory hash', () => {
+test('manager lock ports spread evenly below the dynamic port range; older plugins used 49152-65535', () => {
   assert.deepEqual(managerLockPorts('/home/me/.agents-anywhere/dsh-bridge-next'), [
+    32601, 17241, 18265, 19289, 20313, 21337, 22361, 23385,
+    24409, 25433, 26457, 27481, 28505, 29529, 30553, 31577,
+  ])
+  assert.deepEqual(managerLockPorts('/home/me/.agents-anywhere/dsh-bridge-next', 49152), [
     65369, 50009, 51033, 52057, 53081, 54105, 55129, 56153,
     57177, 58201, 59225, 60249, 61273, 62297, 63321, 64345,
   ])
+})
+
+test('the lease of an older plugin is separate from this plugin\'s own lease on the same path', async t => {
+  const { lock } = await lockPorts(t)
+  const bound = reservePorts(t, new Set())
+  const own = await acquireManagerLock(lock)
+  const legacy = await acquireLegacyManagerLock(lock)
+  try {
+    assert.ok(bound[0]! >= 16384 && bound[0]! < 32768, `own lease on ${bound[0]}`)
+    assert.ok(bound[1]! >= 49152, `legacy lease on ${bound[1]}`)
+    await assert.rejects(acquireLegacyManagerLock(lock), /另一个插件实例/)
+  } finally { await legacy(); await own() }
 })
 
 test('the manager lock moves past ports the OS reserves but never past a held one', async t => {

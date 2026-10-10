@@ -4,7 +4,7 @@ import { link, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promis
 import { createRequire } from 'node:module'
 import { createServer, type Server, type Socket } from 'node:net'
 import { dirname } from 'node:path'
-import { acquireManagerLock } from '../storage/files.js'
+import { acquireLegacyManagerLock, acquireManagerLock } from '../storage/files.js'
 import { BridgeError, publicError } from './errors.js'
 import { RuntimeRouter, type SessionReader } from './router.js'
 import { record } from './types.js'
@@ -110,8 +110,8 @@ export class RuntimeServer {
     const path = this.legacyEndpointPath
     if (!path || path === this.endpointPath) return
     try {
-      // A plugin before 2.0.3 leases its own endpoint path the same way; leave that path to it.
-      this.releaseLegacyLease = await acquireManagerLock(path)
+      // A plugin before 2.0.3 leases its own endpoint path in the legacy port range; leave that path to it.
+      this.releaseLegacyLease = await acquireLegacyManagerLock(path)
     } catch (error) {
       // Only a held lease means such a plugin is running. Such a plugin only tries the first lease
       // port, so when the OS reserves every candidate it cannot run either: publish without a lease.
