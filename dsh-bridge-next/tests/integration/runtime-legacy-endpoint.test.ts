@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import { RuntimeServer } from '../../src/host/dsh-runtime/server.js'
 import { RuntimeAttachments } from '../../src/host/dsh-runtime/attachments.js'
-import { acquireLegacyManagerLock } from '../../src/host/storage/files.js'
+import { holdOlderPluginLease } from '../helpers/older-plugin-lease.js'
 
 const reader = { query: { listSessions: async () => [], readTitleSnapshots: async () => [], readSession: async () => { throw new Error('unused') } }, status: () => undefined }
 const gone = async (path: string) => { await assert.rejects(stat(path), { code: 'ENOENT' }) }
@@ -44,12 +44,13 @@ test('closing leaves a legacy copy that another owner has since published', asyn
 
 test('a plugin before 2.0.3 that still owns the legacy path keeps it, and startup still succeeds', async t => {
   const { home, endpoint: file, legacy } = await paths('bridge-legacy-owned-')
-  // Stands in for the older plugin's lease on the same directory.
-  const releaseOld = await acquireLegacyManagerLock(legacy)
+  t.after(() => rm(home, { recursive: true, force: true }))
+  const releaseOld = await holdOlderPluginLease(legacy)
+  if (!releaseOld) { t.skip('this machine cannot bind the older plugin\'s lease port'); return }
   const old = JSON.stringify({ version: 1, host: '127.0.0.1', port: 3, token: 'older-plugin', pid: 3 })
   await writeFile(legacy, old)
   const owner = new RuntimeServer(file, reader, undefined, undefined, legacy)
-  t.after(async () => { await owner.close(); await releaseOld(); await rm(home, { recursive: true, force: true }) })
+  t.after(async () => { await owner.close(); await releaseOld() })
   const endpoint = await owner.start()
   assert.equal(JSON.parse(await readFile(file, 'utf8')).token, endpoint.token)
   assert.equal(await readFile(legacy, 'utf8'), old)

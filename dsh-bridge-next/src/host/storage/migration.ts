@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { copyFile, link, lstat, mkdir, open, readdir, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
-import { acquireLegacyManagerLock, hasCode, readJson, writeJson } from './files.js'
+import { acquireCompatibleManagerLock, hasCode, readJson, writeJson } from './files.js'
 
 const receipt = '.legacy-state-migrated.json'
 
@@ -19,8 +19,9 @@ export async function migrateStateRoot(target: string, source?: string): Promise
     sourceExists = false
   }
   if (sourceExists) {
-    // Also exclude a still-running plugin using the old default directory.
-    const release = await acquireLegacyManagerLock(join(source, 'manager.lock'))
+    // Also exclude any plugin still using the old directory: an older plugin, or a newer one
+    // whose stateRoot is configured to it.
+    const release = await acquireCompatibleManagerLock(join(source, 'manager.lock'))
     try { await copyMissing(source, target, source, target) }
     finally { await release() }
   }

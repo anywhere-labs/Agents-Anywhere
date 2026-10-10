@@ -4,11 +4,12 @@ import test, { type TestContext } from 'node:test'
 import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { Server } from 'node:net'
+import { createServer, Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { startupFailure } from '../../src/host/dsh-runtime/startup-status.js'
-import { acquireLegacyManagerLock, acquireManagerLock, managerLockPorts, readJson, writeJson } from '../../src/host/storage/files.js'
+import { acquireCompatibleManagerLock, acquireManagerLock, managerLockPorts, readJson, writeJson } from '../../src/host/storage/files.js'
+import { holdOlderPluginLease } from '../helpers/older-plugin-lease.js'
 import { desktopRecordPath, detectDesktop } from '../../src/host/desktop/detect.js'
 
 test('private atomic state and singleton ownership are scoped to the configured data directory', async () => {
@@ -62,16 +63,29 @@ test('manager lock ports spread evenly below the dynamic port range; older plugi
   ])
 })
 
-test('the lease of an older plugin is separate from this plugin\'s own lease on the same path', async t => {
+test('a path older plugins may use is leased in both ranges', async t => {
   const { lock } = await lockPorts(t)
   const bound = reservePorts(t, new Set())
-  const own = await acquireManagerLock(lock)
-  const legacy = await acquireLegacyManagerLock(lock)
+  const release = await acquireCompatibleManagerLock(lock)
   try {
     assert.ok(bound[0]! >= 16384 && bound[0]! < 32768, `own lease on ${bound[0]}`)
     assert.ok(bound[1]! >= 49152, `legacy lease on ${bound[1]}`)
-    await assert.rejects(acquireLegacyManagerLock(lock), /另一个插件实例/)
-  } finally { await legacy(); await own() }
+    await assert.rejects(acquireManagerLock(lock), /另一个插件实例/)
+    await assert.rejects(acquireCompatibleManagerLock(lock), /另一个插件实例/)
+  } finally { await release() }
+  const again = await acquireCompatibleManagerLock(lock)
+  await again()
+})
+
+test('a path an older plugin holds is refused without keeping the new lease', async t => {
+  const { lock } = await lockPorts(t)
+  const releaseOld = await holdOlderPluginLease(lock)
+  if (!releaseOld) { t.skip('this machine cannot bind the older plugin\'s lease port'); return }
+  try {
+    await assert.rejects(acquireCompatibleManagerLock(lock), /另一个插件实例/)
+    const own = await acquireManagerLock(lock)
+    await own()
+  } finally { await releaseOld() }
 })
 
 test('the manager lock moves past ports the OS reserves but never past a held one', async t => {
@@ -86,6 +100,50 @@ test('the manager lock moves past ports the OS reserves but never past a held on
   const second = await acquireManagerLock(lock)
   await second()
   assert.deepEqual(bound, [bound[0], bound[0]])
+})
+
+test('a lease taken past an unbindable port keeps the lock after that port frees up', async t => {
+  const { lock, ports } = await lockPorts(t)
+  const reserved = new Set([ports[0]!])
+  reservePorts(t, reserved)
+  const first = await acquireManagerLock(lock)
+  try {
+    // For example, the program that bound it exclusively on 0.0.0.0 exits.
+    reserved.delete(ports[0]!)
+    await assert.rejects(acquireManagerLock(lock), /另一个插件实例/)
+  } finally { await first() }
+  const second = await acquireManagerLock(lock)
+  await second()
+})
+
+test('a lease for another path on a later candidate is not mistaken for this one', async t => {
+  const { lock, ports } = await lockPorts(t)
+  const root = await realpath(dirname(lock))
+  let other = ''
+  for (let i = 0; !other; i++) {
+    const candidate = join(root, `other-${i}`)
+    if (managerLockPorts(process.platform === 'win32' ? candidate.toLowerCase() : candidate)[0] === ports[15]) other = candidate
+  }
+  const bound = reservePorts(t, new Set())
+  const releaseOther = await acquireManagerLock(join(other, 'manager.lock'))
+  try {
+    if (bound[0] !== ports[15]) { t.skip('this machine cannot bind the shared port'); return }
+    const release = await acquireManagerLock(lock)
+    await release()
+  } finally { await releaseOther() }
+})
+
+test('a foreign listener on a later candidate is not mistaken for a lease', async t => {
+  const { lock, ports } = await lockPorts(t)
+  // Accepts and keeps connections open without a word, like most services.
+  const sockets: Socket[] = []
+  const foreign = createServer(socket => { sockets.push(socket) })
+  try {
+    await new Promise<void>((resolve, reject) => { foreign.once('error', reject); foreign.listen(ports[15], '127.0.0.1', resolve) })
+  } catch { t.skip('this machine cannot bind the last candidate'); return }
+  t.after(() => { for (const socket of sockets) socket.destroy(); foreign.close() })
+  const release = await acquireManagerLock(lock)
+  await release()
 })
 
 test('the manager lock explains when the OS reserves every port', async t => {
