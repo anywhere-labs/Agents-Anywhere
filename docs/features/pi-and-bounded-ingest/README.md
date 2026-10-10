@@ -114,7 +114,7 @@
     本轮结束，另有用例覆盖尚未落盘的情况。
   - WSL Python 3.12 完整 Connector 套件：1237 passed、3 skipped；Pi 测试另外
     重复 3 轮均通过。真实 Pi、真实 AA Server、正式桌面包仍未验证。
-- 用户要求由 Pi（`159-copy/gpt-6-astra`，xhigh，只读）复审上述提交，提出的
+- 用户要求由 Pi（`gpt-6-astra`，xhigh，只读）复审上述提交，提出的
   8 个问题经代码核实全部成立，已修复：
   - Pi 扩展对话框改用平台交互类型（`confirmation` / `input_request` 表单），
     原 `pi.*` 类型不符合服务端 NoticeIn，通知被拒、对话框无法答复。

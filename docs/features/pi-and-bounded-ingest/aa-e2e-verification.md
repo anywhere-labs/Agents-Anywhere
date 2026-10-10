@@ -192,7 +192,7 @@ iOS 客户端如何使用 Pi 依赖的协议，发现三处 Connector 问题并�
 `abort`，再按取消答复这一轮打开的对话框；审批确认框也带上中断信号。
 
 环境：Windows，本地 Server（SQLite，端口 8000）、本地 Web（端口 5174）、隔离的测试
-Connector、真实 Pi 1.1.0（`159-copy/gpt-6-astra`）。Android 调试包安装在只读模式的
+Connector、真实 Pi 1.1.0（`gpt-6-astra`）。Android 调试包安装在只读模式的
 x86_64 模拟器上，通过网页登录连接本地 Server。"API"表示用与客户端相同的服务端接口
 直接验证，没有操作界面。
 
@@ -243,9 +243,9 @@ Mac 升级到 macOS 27.0.1 后重跑（提交 `ecdbd316`）：完整套件 1285 
 
 本机桌面版切换为开发版（`desktop-workbench`，受管 Connector 运行本分支源码），沿用已安装
 桌面版的服务器与 Connector 配置，连接正式服务器，使用本机真实的 Pi 配置（默认
-`159-copy/gpt-6-astra`、`xhigh`）。
+`gpt-6-astra`、`xhigh`）。
 
-- 新建会话预选 `Extra high · gpt-6-astra（159-copy）`、写入前询问；Pi 会话文件记录的
+- 新建会话预选 `Extra high · gpt-6-astra（<提供方>）`、写入前询问；Pi 会话文件记录的
   模型与等级为 `gpt-6-astra`、`xhigh`。
 - 会话内把等级改为 High，Pi 只记录一次等级变化；切换权限（重启进程）后模型与等级保持。
 - 每次询问下的工具审批（批准）、等待审批时中断、流式中断、图片附件、`/compact` 带参数
