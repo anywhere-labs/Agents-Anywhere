@@ -110,21 +110,18 @@ export class RuntimeServer {
     const path = this.legacyEndpointPath
     if (!path || path === this.endpointPath) return
     try {
-      // A plugin before 2.0.3 leases its own endpoint path, in the legacy port range; another
-      // instance mirroring here leases it in both. Leave the path to whichever holds it.
+      // A plugin before 2.0.3 leases its own endpoint path; another instance mirroring here leases
+      // it the same way. Leave the path to whichever holds it.
       this.releaseLegacyLease = await acquireCompatibleManagerLock(path)
     } catch (error) {
-      // Only a held lease means such a plugin is running. When the OS reserves every candidate, no
-      // plugin can lease the path either: publish without a lease.
-      if (/另一个插件实例正在管理/.test(String(record(error).message))) {
-        this.diagnostics.log('warn', 'bridge.legacy_endpoint_skipped', {}, error)
-        return
-      }
+      // The copy is optional: without the lease it could replace a live plugin's endpoint.
+      this.diagnostics.log('warn', 'bridge.legacy_endpoint_skipped', {}, error)
+      return
     }
     const temporary = `${path}.${endpoint.token}.tmp`
     try {
       await writeFile(temporary, JSON.stringify(endpoint), { flag: 'wx', mode: 0o600 })
-      // Both leases are held, so whatever is at the path is stale and may be replaced.
+      // The path is leased, so whatever is there is stale and may be replaced.
       await rename(temporary, path)
       this.legacyPublished = true
     } catch (error) {
