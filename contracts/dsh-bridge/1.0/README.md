@@ -187,9 +187,11 @@ load this implementation for recovery without closing the RPC connection.
 
 `workspace.list` remains a read-only native query. The plugin does not publish
 workspace inventories or native project names. The relay ignores legacy
-`workspace.inventory` operations without storing or forwarding them. The unchanged
-backend groups sessions by cwd and derives project names from its final segment,
-using the same path as other runtimes.
+`workspace.inventory` operations without storing or forwarding them. The backend
+matches an imported session's cwd to an existing explicit project. Legacy
+automatic projects are ignored for connector imports, so unknown cwds remain
+ungrouped; connector imports do not create projects or derive project names
+from the final path segment.
 
 The official sidebar filter is applied before import and on every read/send path.
 Never-imported hidden sessions produce no history rows. Explicit native archives
