@@ -229,7 +229,8 @@ class SyncRelay:
             meta = session_meta(params)
             await self.host.session_meta_upsert(
                 session_id=meta.session_id, runtime="dsh", external_session_id=meta.external_session_id,
-                title=meta.title, cwd=meta.cwd, ordering_time=meta.ordering_time, metadata=meta.metadata,
+                title=meta.title, cwd=meta.cwd, ordering_time=meta.ordering_time,
+                source_state=meta.source_state, metadata=meta.metadata,
             )
         elif method == "session.state.updated":
             state = session_state(params)

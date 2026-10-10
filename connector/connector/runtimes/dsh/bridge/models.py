@@ -19,7 +19,7 @@ from connector.runtime_protocol import (
     SessionState,
     timeline_content_hash,
 )
-from connector.runtime_protocol.models import RuntimeStatus
+from connector.runtime_protocol.models import RuntimeStatus, SessionSourceState
 
 _STATUSES = {
     "idle",
@@ -153,6 +153,17 @@ def permission_catalog(value: Any) -> RuntimePermissionCatalog:
 
 def session_meta(value: Any, *, session_id: str | None = None) -> SessionMeta:
     data = _mapping(value, "session meta")
+    # Snapshot metas carry the runtime's own source observation; keep it so
+    # hidden sessions (e.g. DSH teammates) stay unavailable on the server.
+    raw_source_state = data.get("sourceState")
+    source_state = None
+    if isinstance(raw_source_state, Mapping):
+        source_state = SessionSourceState(
+            availability=raw_source_state.get("availability"),
+            reason=raw_source_state.get("reason"),
+            observed_at=raw_source_state.get("observedAt"),
+            observation_origin=raw_source_state.get("observationOrigin", "inventory"),
+        )
     return SessionMeta(
         session_id=session_id or _required_string(data.get("sessionId"), "sessionId"),
         external_session_id=_required_string(
@@ -164,6 +175,7 @@ def session_meta(value: Any, *, session_id: str | None = None) -> SessionMeta:
         ordering_time=_optional_string(
             data.get("orderingTime") or data.get("lastActivityAt")
         ),
+        source_state=source_state,
         metadata=_dict(data.get("metadata")),
     )
 

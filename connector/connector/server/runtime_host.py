@@ -16,6 +16,7 @@ from connector.runtime_protocol import (
     RuntimeTimelineItem,
     SessionNotice,
     SessionSourceObservation,
+    SessionSourceState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtime_protocol.timeline import timeline_content_hash
@@ -102,6 +103,7 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         title: str | None = None,
         cwd: str | None = None,
         ordering_time: str | None = None,
+        source_state: SessionSourceState | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
         instance_metadata = dict(metadata or {})
@@ -115,6 +117,13 @@ class ConnectorRuntimeHost(RuntimeHostClient):
             "lastActivityAt": ordering_time,
             "metadata": instance_metadata,
         }
+        if source_state is not None:
+            payload["sourceState"] = {
+                "availability": source_state.availability,
+                "reason": source_state.reason,
+                "observedAt": source_state.observed_at,
+                "observationOrigin": source_state.observation_origin,
+            }
         await self._notify_server("session.meta.upsert", _drop_none(payload))
 
     async def session_state_update(

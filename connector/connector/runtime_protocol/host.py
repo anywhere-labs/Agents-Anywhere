@@ -14,6 +14,7 @@ from connector.runtime_protocol.models import (
     RuntimeTimelineItem,
     SessionNotice,
     SessionSourceObservation,
+    SessionSourceState,
 )
 
 
@@ -53,6 +54,7 @@ class RuntimeHostClient(ABC):
         title: str | None = None,
         cwd: str | None = None,
         ordering_time: str | None = None,
+        source_state: SessionSourceState | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
         raise NotImplementedError

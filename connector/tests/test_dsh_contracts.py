@@ -121,3 +121,28 @@ def test_canonical_item_preserves_turn_and_validates_content_hash() -> None:
     value["contentHash"] = "sha256:incorrect"
     with pytest.raises(ValueError, match="contentHash"):
         timeline_item(value)
+
+
+def test_session_meta_keeps_runtime_source_state() -> None:
+    from connector.runtimes.dsh.bridge.models import session_meta
+
+    meta = session_meta(
+        {
+            "sessionId": "sess_dsh_1",
+            "externalSessionId": "native-1",
+            "lastActivityAt": "2026-01-01T00:00:00Z",
+            "sourceState": {
+                "availability": "unavailable",
+                "reason": "dsh_subagent",
+                "observedAt": "2026-01-01T00:00:00Z",
+            },
+        }
+    )
+    assert meta.source_state is not None
+    assert meta.source_state.availability == "unavailable"
+    assert meta.source_state.reason == "dsh_subagent"
+    assert meta.source_state.observation_origin == "inventory"
+
+    # Metas without a source observation keep the historical behaviour.
+    plain = session_meta({"sessionId": "s", "externalSessionId": "e"})
+    assert plain.source_state is None
