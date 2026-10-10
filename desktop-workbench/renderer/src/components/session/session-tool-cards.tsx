@@ -12,7 +12,7 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { InteractionCard } from "@/components/session/session-approval-card"
 import { useSessionFilePreviewOpener } from "@/components/session/session-file-preview-context"
 import { MonacoCodeView, monacoLanguageForFile } from "@/components/monaco-code-view"
-import { openSessionFilePreview } from "@/components/markdown-text"
+import { openSessionFilePreview, MarkdownRichText } from "@/components/markdown-text"
 import { cn } from "@/lib/utils"
 import { highlightCode } from "@/lib/code-highlight"
 import { dashboardApi } from "@/features/dashboard/api"
@@ -50,6 +50,7 @@ export function ToolCard({
   onOpenChange,
   onRespondInteraction,
   readOnly = false,
+  onOpenSubagent,
 }: {
   item: TimelineItem
   token: string
@@ -61,6 +62,8 @@ export function ToolCard({
   onOpenChange?: (open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
   readOnly?: boolean
+  /** Open the synced teammate conversation linked to this agent_call. */
+  onOpenSubagent?: (sessionId: string) => void
 }) {
   const tSession = useTranslations("dashboard.session")
   const kind = timelineToolKind(item)
@@ -74,6 +77,9 @@ export function ToolCard({
   const changes = recordsOf(item.content.changes)
   const displayOutput = changes.length > 0 ? null : output
   const title = timelineToolTitle(item, session, tSession)
+  const teammateSessionId = isAgentCall && typeof item.content.agentId === "string" && item.content.agentId
+    ? item.content.agentId
+    : null
   const hasDetail = !isAgentCall && Boolean(command || displayOutput || changes.length > 0 || interaction)
   const shouldOpenForInteraction = Boolean(interaction)
   const [localOpen, setLocalOpen] = React.useState(shouldOpenForInteraction)
@@ -92,11 +98,16 @@ export function ToolCard({
 
   if (!hasDetail) {
     return (
-      <ToolMarkerRow
-        kind={kind}
-        status={item.status}
-        title={title}
-      />
+      <div className="flex min-w-0 max-w-full items-center gap-2">
+        <ToolMarkerRow
+          kind={kind}
+          status={item.status}
+          title={title}
+        />
+        {teammateSessionId && onOpenSubagent ? (
+          <AgentCallOpenButton sessionId={teammateSessionId} onOpen={onOpenSubagent} />
+        ) : null}
+      </div>
     )
   }
 
@@ -123,7 +134,13 @@ export function ToolCard({
             output={displayOutput}
             changes={changes}
             readOnly={readOnly}
+            markdownOutput={toolOutputIsMarkdown(item)}
           />
+          {teammateSessionId && onOpenSubagent ? (
+            <div className="mt-1">
+              <AgentCallOpenButton sessionId={teammateSessionId} onOpen={onOpenSubagent} />
+            </div>
+          ) : null}
           {interaction ? (
             <div className="mt-2">
               <InteractionCard
@@ -154,6 +171,23 @@ function ToolMarkerRow({
     <Marker className="w-full">
       <ToolMarkerRowContent kind={kind} status={status} title={title} />
     </Marker>
+  )
+}
+
+/** "View conversation" affordance on DSH agent_call cards linked to a synced teammate session. */
+function AgentCallOpenButton({ sessionId, onOpen }: { sessionId: string; onOpen: (sessionId: string) => void }) {
+  const tSession = useTranslations("dashboard.session")
+  return (
+    <button
+      type="button"
+      className="shrink-0 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+      onClick={(event) => {
+        event.stopPropagation()
+        onOpen(sessionId)
+      }}
+    >
+      {tSession("agentCallOpenConversation")}
+    </button>
   )
 }
 
@@ -247,6 +281,20 @@ function recordOf(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
 }
 
+/**
+ * DSH tool results that are authored content (not terminal text) render as
+ * markdown. The DSH bridge tags command output; everything else it produces is
+ * either a model/tool-authored document or a file diff (handled separately).
+ */
+function toolOutputIsMarkdown(item: TimelineItem): boolean {
+  if (item.type !== "tool") return false
+  const source = recordOf(item.source)
+  if (source?.runtime !== "dsh") return false
+  const commandKinds = new Set(["command", "file_change", "web_search", "mcp"])
+  const kind = typeof item.content.kind === "string" ? item.content.kind : null
+  return !kind || !commandKinds.has(kind)
+}
+
 function timelineToolTarget(item: TimelineItem, session: SessionView): string | null {
   const input = recordOf(item.content.input)
   const rawPath = firstTextOf(
@@ -277,6 +325,7 @@ export function ToolDetailPanel({
   output,
   changes,
   readOnly = false,
+  markdownOutput = false,
 }: {
   token: string
   session: SessionView
@@ -284,6 +333,8 @@ export function ToolDetailPanel({
   output: string | null
   changes: Array<Record<string, unknown>>
   readOnly?: boolean
+  /** Render the output body as markdown instead of terminal text. */
+  markdownOutput?: boolean
 }) {
   const hasContent = Boolean(command || output || changes.length > 0)
   if (!hasContent) return null
@@ -304,8 +355,14 @@ export function ToolDetailPanel({
         </div>
       ) : null}
       {output ? (
-        <div className={cn((command || changes.length > 0) && "border-t")}>
-          <CodePanel label="output" code={output} language="text" flush />
+        <div className={cn("min-w-0 max-w-full", (command || changes.length > 0) && "border-t")}>
+          {markdownOutput ? (
+            <div className="px-3 py-2">
+              <MarkdownRichText text={output} />
+            </div>
+          ) : (
+            <CodePanel label="output" code={output} language="text" flush />
+          )}
         </div>
       ) : null}
     </div>

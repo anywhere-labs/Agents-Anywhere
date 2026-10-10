@@ -1139,7 +1139,19 @@
         "one-shot": "一次性",
         "continuable": "可持续",
         "unknown": "未知"
-      }
+      },
+      "insightsTeamMembers": "团队成员",
+      "insightsTeamShort": "团队 {count}",
+      "insightsTeamLead": "负责",
+      "insightsTeamPhase": {
+        "provisioning": "启动中…",
+        "failed": "启动失败"
+      },
+      "insightsTeamContext": {
+        "fresh": "全新上下文",
+        "fork": "继承上下文"
+      },
+      "agentCallOpenConversation": "查看对话"
     },
     "sessionStatus": {
       "idle": "空闲",

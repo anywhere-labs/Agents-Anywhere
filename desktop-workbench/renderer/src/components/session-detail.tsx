@@ -90,6 +90,8 @@ type SessionDetailProps = {
   onSessionUpdated?: (session: SessionView) => void
   onMemorySnapshotUpdated?: (snapshot: SessionMemorySnapshot | null) => void
   onStreamProgress?: (sessionId: string, nextSeq: number | null) => void
+  /** Open a synced subagent conversation (teammate or one-shot subagent). */
+  onOpenSubagent?: (sessionId: string) => void
 }
 
 export type SessionMemorySnapshot = {
@@ -324,6 +326,7 @@ export function SessionDetail({
   onSessionUpdated,
   onMemorySnapshotUpdated,
   onStreamProgress,
+  onOpenSubagent,
 }: SessionDetailProps) {
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
@@ -1709,6 +1712,7 @@ export function SessionDetail({
                       : (open) => handleTimelineGroupOpenChange(group.key, open)}
                     onItemOpenChange={handleTimelineItemOpenChange}
                     onRespondInteraction={handleRespondInteraction}
+                    onOpenSubagent={onOpenSubagent}
                   />
                   {completedTurnReview && onOpenReview ? (
                     <SessionReviewCard
@@ -2235,6 +2239,7 @@ export function TimelineGroupEntry({
   onGroupOpenChange,
   onItemOpenChange,
   onRespondInteraction,
+  onOpenSubagent,
 }: {
   group: TimelineGroup
   token: string
@@ -2249,6 +2254,7 @@ export function TimelineGroupEntry({
   onGroupOpenChange?: (open: boolean) => void
   onItemOpenChange: (itemId: string, open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
+  onOpenSubagent?: (sessionId: string) => void
 }) {
   if (group.kind === "reconnect") {
     return (
@@ -2275,6 +2281,7 @@ export function TimelineGroupEntry({
         onOpenChange={onGroupOpenChange}
         onItemOpenChange={onItemOpenChange}
         onRespondInteraction={onRespondInteraction}
+        onOpenSubagent={onOpenSubagent}
       />
     )
   }
@@ -2294,6 +2301,7 @@ export function TimelineGroupEntry({
         onOpenChange={onGroupOpenChange}
         onItemOpenChange={onItemOpenChange}
         onRespondInteraction={onRespondInteraction}
+        onOpenSubagent={onOpenSubagent}
       />
     )
   }
@@ -2310,6 +2318,7 @@ export function TimelineGroupEntry({
       attachmentUrl={attachmentUrl}
       onToolOpenChange={(open) => onItemOpenChange(group.item.id, open)}
       onRespondInteraction={onRespondInteraction}
+      onOpenSubagent={onOpenSubagent}
     />
   )
 }
@@ -2376,6 +2385,7 @@ function ToolRunGroup({
   onOpenChange,
   onItemOpenChange,
   onRespondInteraction,
+  onOpenSubagent,
 }: {
   group: TimelineToolRunGroup
   token: string
@@ -2390,6 +2400,7 @@ function ToolRunGroup({
   onOpenChange?: (open: boolean) => void
   onItemOpenChange: (itemId: string, open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
+  onOpenSubagent?: (sessionId: string) => void
 }) {
   const tSession = useTranslations("dashboard.session")
   const summary = toolRunSummary(group.items, tSession)
@@ -2426,6 +2437,7 @@ function ToolRunGroup({
                 attachmentUrl={attachmentUrl}
                 onToolOpenChange={(open) => onItemOpenChange(item.id, open)}
                 onRespondInteraction={onRespondInteraction}
+                onOpenSubagent={onOpenSubagent}
               />
             ))}
           </div>
@@ -2449,6 +2461,7 @@ function AgentCallGroup({
   onOpenChange,
   onItemOpenChange,
   onRespondInteraction,
+  onOpenSubagent,
 }: {
   group: TimelineAgentCallGroup
   token: string
@@ -2463,6 +2476,7 @@ function AgentCallGroup({
   onOpenChange?: (open: boolean) => void
   onItemOpenChange: (itemId: string, open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
+  onOpenSubagent?: (sessionId: string) => void
 }) {
   const tSession = useTranslations("dashboard.session")
   const status = toolRunStatus(group.items)
@@ -2499,6 +2513,7 @@ function AgentCallGroup({
                 attachmentUrl={attachmentUrl}
                 onToolOpenChange={(open) => onItemOpenChange(item.id, open)}
                 onRespondInteraction={onRespondInteraction}
+                onOpenSubagent={onOpenSubagent}
               />
             ))}
           </div>

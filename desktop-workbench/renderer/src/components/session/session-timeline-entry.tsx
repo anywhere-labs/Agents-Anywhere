@@ -42,6 +42,7 @@ export function TimelineEntry({
   attachmentUrl,
   onToolOpenChange,
   onRespondInteraction,
+  onOpenSubagent,
 }: {
   token: string
   session: SessionView
@@ -55,6 +56,7 @@ export function TimelineEntry({
   attachmentUrl?: (fileId: string) => string
   onToolOpenChange?: (open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
+  onOpenSubagent?: (sessionId: string) => void
 }) {
   let entry: React.ReactNode
   if (item.type === "message") {
@@ -75,6 +77,7 @@ export function TimelineEntry({
           onOpenChange={onToolOpenChange}
           onRespondInteraction={onRespondInteraction}
           readOnly={readOnly}
+          onOpenSubagent={onOpenSubagent}
         />
       </div>
     )

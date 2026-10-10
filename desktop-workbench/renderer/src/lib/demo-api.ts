@@ -605,12 +605,26 @@ export type SessionStatusFilter = "all" | "working"
 
 export const defaultFilter: FilterValue = { connectorId: "all", runtime: "all", status: "all" }
 
+/**
+ * Sessions the runtime syncs only so their full conversation can be opened
+ * from the parent (DSH teammates and one-shot subagents). They never appear
+ * in the main sidebar or session lists; the parent's member panel links to
+ * them directly.
+ */
+export function isLinkedSubagentSession(
+  session: Pick<SessionView, "sourceAvailability" | "sourceAvailabilityReason">,
+): boolean {
+  return session.sourceAvailability === "unavailable"
+    && session.sourceAvailabilityReason === "dsh_subagent"
+}
+
 export function filterSessions(
   list: SessionView[],
   filter: FilterValue,
   query: string,
 ): SessionView[] {
   return list.filter((s) => {
+    if (isLinkedSubagentSession(s)) return false
     if (filter.connectorId !== "all" && s.connectorId !== filter.connectorId) return false
     if (filter.runtime !== "all" && s.runtime !== filter.runtime) return false
     if (s.archived) return false

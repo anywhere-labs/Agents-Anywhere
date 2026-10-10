@@ -1139,7 +1139,19 @@
         "one-shot": "One-shot",
         "continuable": "Continuable",
         "unknown": "Unknown"
-      }
+      },
+      "insightsTeamMembers": "Team members",
+      "insightsTeamShort": "Team {count}",
+      "insightsTeamLead": "lead",
+      "insightsTeamPhase": {
+        "provisioning": "Starting…",
+        "failed": "Failed"
+      },
+      "insightsTeamContext": {
+        "fresh": "fresh",
+        "fork": "forked"
+      },
+      "agentCallOpenConversation": "View conversation"
     },
     "sessionStatus": {
       "idle": "Idle",

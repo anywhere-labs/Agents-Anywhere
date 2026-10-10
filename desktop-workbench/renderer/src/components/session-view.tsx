@@ -263,6 +263,7 @@ export function SessionView() {
                   onSessionUpdated={upsertSession}
                   onMemorySnapshotUpdated={handleMemorySnapshotUpdated}
                   onStreamProgress={reportSessionStreamProgress}
+                  onOpenSubagent={openSession}
                 />
               </SessionFilePreviewProvider>
             ) : (

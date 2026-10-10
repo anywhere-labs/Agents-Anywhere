@@ -38,6 +38,54 @@ export function MarkdownText({
   return <MarkdownBody text={text} token={token} session={session} inverted={inverted} />
 }
 
+/**
+ * Markdown for user-facing rich text that lives outside the conversation
+ * timeline: approval/plan cards and tool output bodies. No file-preview
+ * integration and no session context are required, so it renders safely
+ * wherever those providers are absent.
+ */
+export function MarkdownRichText({ text, inverted }: { text: string; inverted?: boolean }) {
+  return (
+    <div
+      className={cn(
+        "markdown-body min-w-0 space-y-2 text-sm leading-relaxed break-words [&_a]:underline [&_blockquote]:border-l [&_blockquote]:pl-3 [&_code]:text-[1em] [&_li]:ml-5 [&_ol]:list-decimal [&_pre]:m-0 [&_ul]:list-disc",
+        inverted ? "[&_pre]:border-primary-foreground/15" : "[&_pre]:border-border",
+      )}
+    >
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath, remarkStandaloneDisplayMath]}
+        rehypePlugins={[rehypeKatex]}
+        components={{
+          pre: MarkdownPre,
+          code({ className, children, ...props }) {
+            return (
+              <code
+                className={cn(
+                  className,
+                  "rounded-md bg-secondary px-1.5 py-0.5 text-secondary-foreground",
+                )}
+                {...props}
+              >
+                {children}
+              </code>
+            )
+          },
+          a({ href, children, ...props }) {
+            return (
+              <a href={href} target="_blank" rel="noreferrer" {...props}>
+                {children}
+              </a>
+            )
+          },
+          table: MarkdownTable,
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
 // Keep the component identity stable while streamed message text changes.
 const MarkdownPre: Components["pre"] = ({ node, children, ...props }) => {
   const block = node?.children[0]

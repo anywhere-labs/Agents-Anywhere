@@ -53,6 +53,18 @@ export type SessionInsightSubagent = {
   label?: string;
 };
 
+/** One Agent Teams member from the Lead session's `agentTeam` projection. */
+export type SessionInsightTeamMember = {
+  id: string;
+  name: string;
+  role: "lead" | "teammate";
+  phase: "provisioning" | "active" | "failed";
+  description?: string;
+  provider?: string;
+  context?: "fresh" | "fork";
+  error?: string;
+};
+
 export type SessionInsights = {
   tokenUsage?: SessionInsightTokenUsage;
   contextPressure?: SessionInsightContextPressure;
@@ -60,6 +72,7 @@ export type SessionInsights = {
   goal?: SessionInsightGoal | null;
   todos?: SessionInsightTodo[] | null;
   subagentCatalog?: SessionInsightSubagent[];
+  teamMembers?: SessionInsightTeamMember[];
 };
 
 /** Exact per-turn token accounting attached to a finished turn. */
