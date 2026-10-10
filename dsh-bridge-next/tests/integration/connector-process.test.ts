@@ -53,6 +53,7 @@ async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CO
   const script = join(root, 'rpc.cjs')
   await writeFile(script, fixtureSource)
   let child: ChildProcessWithoutNullStreams | undefined
+  let childEnv: NodeJS.ProcessEnv | undefined
   const connector = new SourceConnector({
     stateRoot: join(root, 'data'), connectorSourceDir: source, uvPath: mode === 'missing' ? join(root, 'missing-uv') : process.execPath,
     apiBaseUrl: 'https://api.example.test', dshHome: join(root, 'dsh-home'),
@@ -78,13 +79,14 @@ async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CO
     assert.equal(options.env?.UV_INDEX_URL, expectedIndex)
     assert.equal(options.env?.PIP_INDEX_URL, expectedIndex)
     assert.equal(options.env?.UV_HTTP_TIMEOUT, process.env['UV_HTTP_TIMEOUT'] || '60')
+    childEnv = options.env
     child = spawn(command, [script, mode], options)
     child.once('spawn', didSpawn)
     onLaunch?.()
     return child
   }, () => settings, firstRequestTimeoutMs, async command => { pruned.push(command); return prune(command) })
   return {
-    connector, root, pruned, spawned, get child() { return child },
+    connector, root, pruned, spawned, get child() { return child }, get env() { return childEnv },
     async close() { await connector.stop(); await rm(root, { recursive: true, force: true }) },
   }
 }
@@ -105,6 +107,30 @@ test('source Connector uses stdio RPC and a private config, then exits on plugin
     assert.deepEqual(h.pruned, [])
     await assert.rejects(h.connector.assertHealthy())
   } finally { await h.close() }
+})
+
+test('Python Connector receives compatible IPv6 proxy bypasses without changing the host policy', async () => {
+  const savedUpper = process.env['NO_PROXY']
+  const savedLower = process.env['no_proxy']
+  const bypass = 'localhost,127.0.0.1,::1,[::1],example.test,.internal'
+  process.env['NO_PROXY'] = bypass
+  process.env['no_proxy'] = bypass
+  const h = await fixture()
+  try {
+    await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
+    const env = h.env
+    assert.equal(env?.NO_PROXY, 'localhost,127.0.0.1,::1,::1,example.test,.internal')
+    assert.equal(env?.no_proxy, env?.NO_PROXY)
+    assert.ok(env?.HTTP_PROXY === process.env['HTTP_PROXY'])
+    assert.ok(env?.HTTPS_PROXY === process.env['HTTPS_PROXY'])
+    assert.equal(process.env['NO_PROXY'], bypass)
+    assert.equal(process.env['no_proxy'], bypass)
+    await h.connector.assertHealthy()
+  } finally {
+    await h.close()
+    if (savedUpper === undefined) delete process.env['NO_PROXY']; else process.env['NO_PROXY'] = savedUpper
+    if (savedLower === undefined) delete process.env['no_proxy']; else process.env['no_proxy'] = savedLower
+  }
 })
 
 test('locale initialization applies Aliyun before the first source Connector subprocess', async () => {
