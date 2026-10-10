@@ -1,6 +1,6 @@
 import { PROJECTION_VERSION } from './history.js'
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
-import { link, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { link, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { createServer, type Server, type Socket } from 'node:net'
 import { dirname } from 'node:path'
@@ -36,10 +36,18 @@ export class RuntimeServer {
   private startTask: Promise<Endpoint> | undefined
   private closeTask: Promise<void> | undefined
   private releaseLease: (() => Promise<void>) | undefined
+  private releaseLegacyLease: (() => Promise<void>) | undefined
+  private legacyPublished = false
 
+  /**
+   * `legacyEndpointPath` receives a copy of the endpoint for Connectors before 2.0.3, which read
+   * only `<DSH_HOME>/agents-anywhere/bridge/endpoint.json`. The copy is best effort: it is skipped
+   * while a plugin before 2.0.3 still owns that path, and never fails startup.
+   */
   constructor(readonly endpointPath: string, private readonly reader: SessionReader,
     private readonly diagnostics: RuntimeDiagnostics = reader.native?.diagnostics ?? quietDiagnostics,
-    private readonly requestTimeoutMs = 60_000) {}
+    private readonly requestTimeoutMs = 60_000,
+    readonly legacyEndpointPath?: string) {}
 
   start(): Promise<Endpoint> {
     if (!this.startTask) {
@@ -89,11 +97,54 @@ export class RuntimeServer {
       } finally { await unlink(temporary).catch(() => undefined) }
       this.endpoint = endpoint
       this.diagnostics.log('info', 'bridge.listening', { host: endpoint.host, port: endpoint.port, protocolVersion: '1.0', projectionVersion: PROJECTION_VERSION })
+      await this.publishLegacy(endpoint)
       return endpoint
     } catch (error) {
       for (const socket of this.sockets) socket.destroy()
       await new Promise<void>(resolve => this.server!.close(() => resolve()))
       throw error
+    }
+  }
+
+  private async publishLegacy(endpoint: Endpoint): Promise<void> {
+    const path = this.legacyEndpointPath
+    if (!path || path === this.endpointPath) return
+    try {
+      // A plugin before 2.0.3 leases its own endpoint path the same way; leave that path to it.
+      this.releaseLegacyLease = await acquireManagerLock(path)
+    } catch (error) {
+      // Only a held lease means such a plugin is running. A lease port the OS reserves (EACCES on
+      // Windows) could not have been taken by it either, so publish without that lease.
+      if (/另一个插件实例正在管理/.test(String(record(error).message))) {
+        this.diagnostics.log('warn', 'bridge.legacy_endpoint_skipped', {}, error)
+        return
+      }
+    }
+    const temporary = `${path}.${endpoint.token}.tmp`
+    try {
+      await writeFile(temporary, JSON.stringify(endpoint), { flag: 'wx', mode: 0o600 })
+      // Both leases are held, so whatever is at the path is stale and may be replaced.
+      await rename(temporary, path)
+      this.legacyPublished = true
+    } catch (error) {
+      await unlink(temporary).catch(() => undefined)
+      await this.unpublishLegacy(undefined)
+      this.diagnostics.log('warn', 'bridge.legacy_endpoint_failed', {}, error)
+    }
+  }
+
+  private async unpublishLegacy(endpoint: Endpoint | undefined): Promise<void> {
+    const path = this.legacyEndpointPath
+    try {
+      if (path && endpoint && this.legacyPublished) {
+        const current = await endpointAt(path).catch(() => undefined)
+        if (current?.token === endpoint.token && current.pid === endpoint.pid) await unlink(path).catch(() => undefined)
+      }
+    } finally {
+      this.legacyPublished = false
+      const release = this.releaseLegacyLease
+      this.releaseLegacyLease = undefined
+      await release?.().catch(() => undefined)
     }
   }
 
@@ -110,6 +161,7 @@ export class RuntimeServer {
     const endpoint = this.endpoint
     this.endpoint = undefined
     try {
+      await this.unpublishLegacy(endpoint)
       if (endpoint) {
         const current = await endpointAt(this.endpointPath)
         if (current?.token === endpoint.token && current.pid === endpoint.pid) await unlink(this.endpointPath)
