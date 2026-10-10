@@ -119,6 +119,7 @@ class CodexTurnActions:
                 self.host,
                 session_id,
                 attachments,
+                self.notices,
             )
             result = await self.client.start_turn(
                 CodexStartTurnRequest(
@@ -264,6 +265,7 @@ class CodexTurnActions:
             self.host,
             session_id,
             attachments,
+            self.notices,
         )
         effective_content = content_with_codex_attachment_notes(
             content,

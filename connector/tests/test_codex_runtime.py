@@ -3736,6 +3736,126 @@ async def _test_codex_runtime_materializes_attachments_for_turn_start() -> None:
     assert attachment["byteSize"] == 5
 
 
+@pytest.mark.parametrize("operation", ["start", "steer"])
+@pytest.mark.parametrize(
+    "files", [(), ("good",), ("missing",), ("missing", "good", "unnamed")]
+)
+def test_codex_attachment_delivery_notices(
+    tmp_path, monkeypatch, operation, files
+) -> None:
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(tmp_path))
+
+    async def run() -> None:
+        host = FakeHost()
+        client = FakeCodexClient()
+        runtime = CodexRuntime(config=_config(), host=host, client=client)
+        attempted = []
+
+        async def download(session_id, file_id):
+            attempted.append(file_id)
+            if file_id != "good":
+                raise OSError("download unavailable")
+            return RuntimeAttachmentContent(
+                file_id=file_id, name="good.txt", media_type="text/plain", content=b"ok"
+            )
+
+        monkeypatch.setattr(host, "attachment_download", download)
+        if operation == "steer":
+            await runtime.start_turn("sess_1", "thread_1", "hello")
+        attachments = tuple(
+            RuntimeAttachment(
+                file_id=file_id, name=None if file_id == "unnamed" else f"{file_id}.txt"
+            )
+            for file_id in files
+        )
+        send = runtime.start_turn if operation == "start" else runtime.steer_turn
+        result = await send("sess_1", "thread_1", "read this", attachments=attachments)
+
+        assert result.ok is True
+        assert attempted == list(files)
+        params = client.requests[-1][1]
+        if operation == "start":
+            assert [item["name"] for item in params.get("attachments", [])] == (
+                ["good.txt"] if "good" in files else []
+            )
+        else:
+            text = params["input"][0]["text"]
+            assert ("good.txt" in text) == ("good" in files)
+            assert "missing.txt" not in text
+        failed = [file_id for file_id in files if file_id != "good"]
+        if not failed:
+            assert host.notice_upserts == []
+            return
+        assert len(host.notice_upserts) == 1
+        notice = host.notice_upserts[0]
+        assert notice.type == "notification"
+        assert notice.severity == "warning"
+        assert notice.status == "open"
+        assert notice.blocking is None
+        assert notice.response_required is False
+        assert notice.context["failedFileIds"] == failed
+        assert "Please resend" in notice.message
+        assert "missing.txt" in notice.message
+        if "unnamed" in failed:
+            assert "- unnamed" in notice.message
+        assert await runtime.get_session_notices("sess_1") == (notice,)
+        assert await runtime.get_session_notices("other_session") == ()
+
+    asyncio.run(run())
+
+
+def test_codex_attachment_delivery_notice_reuses_id_and_resolves_on_success(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(tmp_path))
+
+    async def run() -> None:
+        host = FakeHost()
+        runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+        attachment = RuntimeAttachment(file_id="file_1", name="note.txt")
+        for _ in range(2):
+            await runtime.start_turn(
+                "sess_1", "thread_1", "read this", attachments=(attachment,)
+            )
+        assert len({notice.notice_id for notice in host.notice_upserts}) == 1
+        assert len(await runtime.get_session_notices("sess_1")) == 1
+        await runtime.start_turn("sess_1", "thread_1", "plain text")
+        assert len(await runtime.get_session_notices("sess_1")) == 1
+        host.attachments["file_1"] = RuntimeAttachmentContent(
+            file_id="file_1", name="note.txt", media_type="text/plain", content=b"ok"
+        )
+        await runtime.start_turn(
+            "sess_1", "thread_1", "retry", attachments=(attachment,)
+        )
+        assert host.notice_upserts[-1].status == "resolved"
+        assert await runtime.get_session_notices("sess_1") == ()
+
+    asyncio.run(run())
+
+
+def test_codex_attachment_download_cancellation_is_not_skipped(monkeypatch) -> None:
+    async def run() -> None:
+        host = FakeHost()
+        client = FakeCodexClient()
+        runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+        async def download(session_id, file_id):
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(host, "attachment_download", download)
+        with pytest.raises(asyncio.CancelledError):
+            await runtime.start_turn(
+                "sess_1",
+                "thread_1",
+                "read this",
+                attachments=(RuntimeAttachment(file_id="file_1"),),
+            )
+        assert not any(method == "turn/start" for method, _ in client.requests)
+        assert host.notice_upserts == []
+
+    asyncio.run(run())
+
+
 def test_codex_runtime_materializes_create_and_start_attachments_from_host(
     tmp_path, monkeypatch
 ) -> None:

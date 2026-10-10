@@ -22,11 +22,17 @@ modules, or the concrete `Store` facade. These rules are enforced by
 
 | State | Owner | Persistence |
 | --- | --- | --- |
-| Users, connectors, sessions, notices/interactions, timeline, catalogs, runtime config | PostgreSQL | Durable, Alembic-versioned |
+| Users, connectors, sessions, timeline, catalogs, runtime config | PostgreSQL | Durable, Alembic-versioned |
+| Current runtime notices and interaction/approval status | Runtime | Read live via Connector RPC and relayed as events; not persisted as current state in Server PostgreSQL |
 | Connector ownership lease, cross-instance RPC routing, invalidation Pub/Sub, distributed locks, short-lived tickets and transfer coordination | Redis | Reconstructible coordination state, finite TTL where retained |
 | Accepted-but-unflushed Timeline upserts and live Timeline sequence head | Redis | Operationally persistent with AOF `everysec`, persistent `/data`, and no eviction; no TTL |
 | Local WebSockets, pending RPC futures, send locks, listener tasks | Server process | Process lifetime only |
 | Attachments and uploaded files | Configured file backend | Durable according to backend policy |
+
+Approval operations can still produce logs. The Codex adapter logs approval
+response attempts, failures, and completion; log retention depends on how the
+Connector is launched. These operational logs and historical Timeline entries
+are distinct from the Runtime's authoritative current approval state.
 
 Connector online status is derived from the live presence port. SQL records
 durable connector metadata such as `last_seen_at` and `device_os`, but it is not
