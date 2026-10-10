@@ -17,6 +17,7 @@ import {
   type InputRequestForm,
   type InputRequestQuestion,
 } from "@/components/session/input-request"
+import { MarkdownRichText } from "@/components/markdown-text"
 import { cn } from "@/lib/utils"
 import type { Notice, NoticeAction } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
@@ -42,6 +43,8 @@ export function InteractionCard({
   const disabled = resolvingNoticeId !== null || notice.status === "response_accepted" || notice.status === "resolving"
   const Icon = notice.severity === "error" ? CircleAlert : ShieldCheck
   const inputRequest = React.useMemo(() => readInputRequestForm(notice), [notice])
+  // DSH plan reviews put the full plan markdown into `notice.message`.
+  const planBody = notice.source?.["component"] === "dsh.plan_review"
   const [inputDrafts, setInputDrafts] = React.useState<InputRequestDrafts>(() => (
     inputRequest ? createInputRequestDrafts(inputRequest) : {}
   ))
@@ -115,7 +118,11 @@ export function InteractionCard({
         {notice.message || notice.status === "failed" ? (
           <div className={cn("min-w-0", !inputRequest && "pl-6")}>
             {notice.message ? (
-              <p className="wrap-break-word text-sm text-muted-foreground">{notice.message}</p>
+              planBody ? (
+                <MarkdownRichText text={notice.message} />
+              ) : (
+                <p className="wrap-break-word text-sm text-muted-foreground">{notice.message}</p>
+              )
             ) : null}
             {notice.status === "failed" ? (
               <p className="mt-1 text-xs text-destructive">{interactionErrorMessage(notice)}</p>

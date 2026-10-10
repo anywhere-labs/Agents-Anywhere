@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Bot, CircleCheck, CircleDashed, ListChecks, Loader2, Target } from "lucide-react"
+import { Bot, CircleCheck, CircleDashed, ListChecks, Loader2, Target, Users } from "lucide-react"
 import { useTranslations } from "next-intl"
 
 import { Badge } from "@/components/ui/badge"
@@ -14,6 +14,7 @@ import {
   readSessionInsights,
   type SessionInsightGoal,
   type SessionInsightSubagent,
+  type SessionInsightTeamMember,
   type SessionInsightTodo,
 } from "@/features/dashboard/session-insights"
 import type { SessionRuntimeState } from "@/features/dashboard/types"
@@ -41,10 +42,11 @@ export function SessionInsightsPanel({
   const goal = insights.goal
   const todos = insights.todos ?? []
   const subagents = insights.subagentCatalog ?? []
+  const teamMembers = insights.teamMembers ?? []
   const agentPreset = runtimeState?.metadata?.agentPreset
   const presetLabel = typeof agentPreset === "string" && agentPreset.trim() ? agentPreset : null
 
-  if (!goal && todos.length === 0 && subagents.length === 0 && !presetLabel) return null
+  if (!goal && todos.length === 0 && subagents.length === 0 && teamMembers.length === 0 && !presetLabel) return null
 
   const activeTodos = todos.filter((todo) => todo.status !== "completed").length
   const summaryParts: string[] = []
@@ -52,6 +54,7 @@ export function SessionInsightsPanel({
   if (goal) summaryParts.push(t("insightsGoalShort"))
   if (todos.length > 0) summaryParts.push(t("insightsTodosShort", { count: activeTodos, total: todos.length }))
   if (subagents.length > 0) summaryParts.push(t("insightsSubagentsShort", { count: subagents.length }))
+  if (teamMembers.length > 1) summaryParts.push(t("insightsTeamShort", { count: teamMembers.length - 1 }))
 
   return (
     <DropdownMenu>
@@ -76,6 +79,7 @@ export function SessionInsightsPanel({
           ) : null}
           {goal ? <GoalSection goal={goal} /> : null}
           {todos.length > 0 ? <TodosSection todos={todos} /> : null}
+          {teamMembers.length > 0 ? <TeamMembersSection members={teamMembers} onOpenMember={onOpenSubagent} /> : null}
           {subagents.length > 0 ? <SubagentsSection subagents={subagents} onOpenSubagent={onOpenSubagent} /> : null}
         </div>
       </DropdownMenuContent>
@@ -139,6 +143,66 @@ function TodosSection({ todos }: { todos: SessionInsightTodo[] }) {
             </span>
           </li>
         ))}
+      </ul>
+    </section>
+  )
+}
+
+function TeamMembersSection({
+  members,
+  onOpenMember,
+}: {
+  members: SessionInsightTeamMember[]
+  onOpenMember?: (sessionId: string) => void
+}) {
+  const t = useTranslations("dashboard.session")
+  return (
+    <section>
+      <h3 className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <Users className="size-3" />
+        {t("insightsTeamMembers")}
+      </h3>
+      <ul className="mt-1.5 space-y-1.5">
+        {members.map((member) => {
+          const openable = member.role === "teammate" && Boolean(onOpenMember)
+          return (
+            <li key={member.id}>
+              <button
+                type="button"
+                disabled={!openable}
+                onClick={() => member.role === "teammate" && onOpenMember?.(member.id)}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left text-sm leading-snug",
+                  openable && "hover:bg-accent hover:text-accent-foreground",
+                  !openable && "cursor-default",
+                )}
+              >
+                <span
+                  className={cn(
+                    "size-1.5 shrink-0 rounded-full",
+                    member.phase === "active" && "bg-emerald-500",
+                    member.phase === "provisioning" && "animate-pulse bg-amber-500",
+                    member.phase === "failed" && "bg-destructive",
+                  )}
+                />
+                <span className="min-w-0 truncate">
+                  {member.name}
+                  {member.role === "lead" ? ` · ${t("insightsTeamLead")}` : ""}
+                </span>
+                <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                  {member.phase === "failed"
+                    ? t("insightsTeamPhase.failed")
+                    : member.phase === "provisioning"
+                      ? t("insightsTeamPhase.provisioning")
+                      : t(`insightsTeamContext.${member.context ?? "fresh"}`)}
+                </span>
+              </button>
+              {member.error ? (
+                <p className="mt-0.5 truncate px-1 text-xs text-destructive" title={member.error}>{member.error}</p>
+              ) : null}
+            </li>
+          )
+        })}
       </ul>
     </section>
   )
