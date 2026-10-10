@@ -42,12 +42,21 @@ export async function withMachineStateLock<T>(
       continue;
     }
     const { lease, port, refused } = claim;
-    if (refused.length) warn?.(`Local Connector record lock ports ${refused.join(", ")} refused binding (EACCES); locked port ${port} instead.`);
     try {
+      if (refused.length) reportRefused(warn, `Local Connector record lock ports ${refused.join(", ")} refused binding (EACCES); locked port ${port} instead.`);
       return await update();
     } finally {
       await new Promise<void>((resolve, reject) => lease.close(error => error ? reject(error) : resolve()));
     }
+  }
+}
+
+/** Diagnostics are best effort: a failing logger neither fails the write nor keeps the lease. */
+function reportRefused(warn: MachineStateLockOptions["warn"], message: string): void {
+  try {
+    warn?.(message);
+  } catch {
+    // The write is locked either way; losing one diagnostic line is harmless.
   }
 }
 

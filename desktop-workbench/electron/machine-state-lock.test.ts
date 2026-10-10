@@ -83,6 +83,14 @@ test("Machine-state lock moves past ports the OS reserves but waits on a held on
   assert.deepEqual(bound, [bound[0], bound[0]]);
 });
 
+test("a throwing warn neither fails the write nor keeps the lease", async t => {
+  const { filePath, ports } = await temporaryRecord(t);
+  reservePorts(t, new Set([ports[0]]));
+  const failingWarn = () => { throw new Error("log write failed"); };
+  assert.equal(await withMachineStateLock(filePath, () => "written", { warn: failingWarn }), "written");
+  assert.equal(await withMachineStateLock(filePath, () => "again", { timeoutMs: 200 }), "again");
+});
+
 test("Machine-state lock fails, without writing unlocked, when the OS refuses every port", async t => {
   const { filePath, ports } = await temporaryRecord(t);
   reservePorts(t, new Set(ports));
