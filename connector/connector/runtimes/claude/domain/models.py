@@ -198,9 +198,20 @@ def _selection_candidates(
 
 
 _FAMILIES = {"fable": "Fable", "opus": "Opus", "sonnet": "Sonnet", "haiku": "Haiku"}
-# claude-opus-5-5[1m], claude-sonnet-5[1m], claude-haiku-4-5-20251001; a date is not a minor version.
+# Anthropic ids, optionally behind a Bedrock prefix ("anthropic.", "us.anthropic.", "global.anthropic.").
+_PROVIDER_PREFIX = r"^(?:(?:[a-z]{2,6}\.)?anthropic\.)?"
+# What may follow the version: end, [1m], a Vertex "@date", a dated id ("-20251001"), or a
+# Bedrock revision ("-v1:0"). A date is not a minor version.
+_VERSION_END = r"(?=$|\[|@|-\d{8}|-v\d)"
+# claude-opus-5-5[1m], claude-haiku-4-5-20251001, us.anthropic.claude-opus-4-1-20250805-v1:0,
+# claude-opus-4-1@20250805.
 _RESOLVED_MODEL = re.compile(
-    r"^claude-(fable|opus|sonnet|haiku)-(\d{1,2})(?:-(\d{1,2}))?(?=$|\[|-\d{8})",
+    _PROVIDER_PREFIX + r"claude-(fable|opus|sonnet|haiku)-(\d{1,2})(?:-(\d{1,2}))?" + _VERSION_END,
+    re.IGNORECASE,
+)
+# Older ids put the version first: claude-3-5-sonnet-20241022, anthropic.claude-3-haiku-20240307-v1:0.
+_RESOLVED_LEGACY_MODEL = re.compile(
+    _PROVIDER_PREFIX + r"claude-(\d)(?:-(\d))?-(opus|sonnet|haiku)" + r"(?=$|\[|@|-\d{8}|-v\d|-latest)",
     re.IGNORECASE,
 )
 # "Opus 5.5 · ...", "Opus 5.5 for long sessions", "Use the default model (currently Opus 5.5)".
@@ -214,8 +225,9 @@ def _cli_model_title(item: Mapping[str, Any], name: str) -> str:
     """Title in Claude Code's status-line form: version and context window, e.g. "Opus 5.5 (1M context)".
 
     Claude Code labels aliases by family only ("Opus", "Opus (1M context)") and carries the
-    version in `resolvedModel` and `description`. Entries without a recognizable Claude version,
-    such as gateway or custom models, keep the label Claude Code reported.
+    version in `resolvedModel`; `description` is read only when `resolvedModel` is absent.
+    Entries without a recognizable Claude version, such as gateway or custom models, keep the
+    label Claude Code reported.
     """
 
     version = _cli_model_version(item)
@@ -232,11 +244,18 @@ def _cli_model_title(item: Mapping[str, Any], name: str) -> str:
 
 def _cli_model_version(item: Mapping[str, Any]) -> str | None:
     resolved = item.get("resolvedModel")
-    if isinstance(resolved, str):
+    if isinstance(resolved, str) and resolved:
+        # When Claude Code names the model, trust only that name: a gateway model such as
+        # "deepseek-v4" may well carry a description starting with "Opus 5.5".
         match = _RESOLVED_MODEL.match(resolved)
         if match:
             family, major, minor = match.groups()
             return f"{_FAMILIES[family.casefold()]} {major}{f'.{minor}' if minor else ''}"
+        match = _RESOLVED_LEGACY_MODEL.match(resolved)
+        if match:
+            major, minor, family = match.groups()
+            return f"{_FAMILIES[family.casefold()]} {major}{f'.{minor}' if minor else ''}"
+        return None
     description = item.get("description")
     if isinstance(description, str):
         match = _DESCRIBED_MODEL.search(description)
