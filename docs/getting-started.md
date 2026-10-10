@@ -73,6 +73,16 @@ curl -i https://web.agents-anywhere.com/api/v2/health
 
 排查连接问题时保留用户数据目录，其中包含账号绑定和 Connector 数据。
 
+### 桌面端提示“暂时无法检查 Connector 状态”
+
+桌面端启动时会先检查本机 Connector，弹窗中显示的是检查失败的具体错误。点击“复制错误信息”可以复制这段内容，点击“打开日志文件夹”可以查看完整日志。日志目录：
+
+- macOS：`~/Library/Application Support/Agents Anywhere/logs`
+- Windows：`%APPDATA%\Agents Anywhere\logs`
+- Linux：`~/.config/Agents Anywhere/logs`
+
+如果错误中有 `timed out`，且最后的输出是 `Downloading …`，说明 Connector 仍在下载运行依赖，稍等后点击“重新检查”。反馈问题时，请附上错误信息和日志。
+
 ### 设备在线，但某个操作不可用
 
 设备在线表示 Connector 已连接。继续检查所选 Runtime 的状态和错误信息，确认它已配置并可用，再查看当前会话是否支持该操作。需要进一步定位时，查看 Connector 日志。旧版 ACP provider 不在当前默认支持范围内。

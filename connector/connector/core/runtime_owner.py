@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 import psutil
 
 from connector.core.json_rpc import JsonRpcError
+from connector.logging import logger
 
 if TYPE_CHECKING:
     from connector.core.config import ConnectorConfig
@@ -48,12 +49,25 @@ def state_lock_port(path: str | Path) -> int:
     return 49152 + int.from_bytes(digest[:2], "big") % 16384
 
 
-def _claim_state_lock(port: int, deadline: float) -> socket.socket:
+def _port_listening(port: int) -> bool:
+    """Whether a writer actually holds the lease, as opposed to the OS refusing the port."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+            return True
+    except OSError:
+        return False
+
+
+def _claim_state_lock(port: int, deadline: float) -> socket.socket | None:
     """Binding alone claims the port, so a failed attempt must never reuse its socket.
 
     SO_REUSEADDR is deliberately not set on POSIX: Linux then lets a second process bind
     the same port while the owner sits between bind() and listen(), which both breaks the
     exclusion and makes the next bind() fail with EINVAL.
+
+    Returns None when the OS itself refuses the port and nobody listens on it, e.g. a
+    Windows excluded port range (WSAEACCES): no writer can hold that lease, so waiting
+    for it would only turn a few milliseconds of exclusion into a failed startup.
     """
     while True:
         lease = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -65,8 +79,9 @@ def _claim_state_lock(port: int, deadline: float) -> socket.socket:
             return lease
         except OSError as exc:
             lease.close()
-            if exc.errno not in {errno.EADDRINUSE, errno.EACCES}:
-                raise
+            if exc.errno != errno.EADDRINUSE and not _port_listening(port):
+                logger.warning("local Connector record lock port {} is unavailable ({}); writing without the lock", port, exc)
+                return None
             if time.monotonic() >= deadline:
                 raise RuntimeError("The local Connector record is busy. Please retry.") from exc
             time.sleep(0.02)
@@ -79,7 +94,8 @@ def state_lock(path: Path, timeout: float = 5) -> Iterator[None]:
     try:
         yield
     finally:
-        lease.close()
+        if lease is not None:
+            lease.close()
 
 
 def _json(path: Path) -> dict[str, Any] | None:
@@ -148,12 +164,15 @@ def state_transaction(path: str | Path) -> Iterator[dict[str, Any]]:
     file = Path(path)
     with state_lock(file):
         state = read_state(file)
-        if state.get("legacyMachineMigrated") is True:
+        legacy = file.parent.parent / ".agentsanywhere" / "machine.json"
+        installation = legacy.parent / "desktop" / "install.json"
+        # Only a record with legacy files left to fold in needs the second lock;
+        # locking a path that does not exist would also create its directory.
+        if state.get("legacyMachineMigrated") is True or not (legacy.exists() or installation.exists()):
+            state["legacyMachineMigrated"] = True
             yield state
             _write(file, state)
             return
-        legacy = file.parent.parent / ".agentsanywhere" / "machine.json"
-        installation = legacy.parent / "desktop" / "install.json"
         with state_lock(legacy):
             machine, desktop = _json(legacy), _json(installation)
             if machine and machine.get("version") != 1:

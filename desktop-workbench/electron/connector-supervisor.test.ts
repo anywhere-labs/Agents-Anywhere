@@ -11,6 +11,7 @@ import { bundledPythonExecutable } from "./connector-python";
 import { ConnectorLogStore } from "./log-store";
 import { ConnectorRpcError } from "./connector-rpc-error";
 import type { OwnershipState } from "./local-runtime";
+import type { ConnectorLogEntry } from "./connector-types";
 
 // Exercise real stdio provisioning without downloading Python or running an AA server.
 const runtime = `
@@ -131,6 +132,53 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     assert.equal(ownership.at(-1)?.status, "owned");
     assert.equal((await supervisor.start()).running, true);
     assert.equal(launches, 1, "A failed acquisition keeps its RPC channel available for retry");
+  } finally { await supervisor.shutdown(); }
+});
+
+test("an RPC process that exits before answering reports its exit code and last output", { timeout: 15_000 }, async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-rpc-exit-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "pyproject.toml"), "");
+  const script = path.join(root, "runtime.cjs");
+  // uv writes one message in several chunks, and its last lines explain the exit.
+  fs.writeFileSync(script, `
+process.stderr.write('Downloading claude-agent-sdk', () => setTimeout(() => {
+  process.stderr.write(' (92.9MiB)\\nerror: Failed to fetch: https://pypi.example/simple/claude-agent-sdk/\\n', () => process.exit(2));
+}, 50));
+`);
+  const settings = new DesktopSettingsStore(path.join(root, "settings.json"), ["en-US"]);
+  settings.save({ uvPath: process.execPath });
+  const spawn = childProcess.spawn;
+  t.mock.method(childProcess, "spawn", (command: string, args: readonly string[], options: childProcess.SpawnOptions) => {
+    // Windows process-tree termination is not a Connector launch.
+    if (command === "taskkill.exe") return spawn(command, args, options);
+    return spawn(process.execPath, [script], options);
+  });
+  const ownership: OwnershipState[] = [];
+  const logs: ConnectorLogEntry[] = [];
+  const supervisor = new ConnectorSupervisor({
+    configPath: path.join(root, "connector.json"), dataPath: root, connectorDir: root, resourcesPath: root,
+    uvBundleDir: path.join(root, "build", "uv"),
+    pythonBundleDir: path.join(root, "build", "python"),
+    packaged: false, homePath: root, shellEnvironment: {}, settings,
+    binding: new DesktopBindingStore(path.join(root, "binding.json")),
+    logs: new ConnectorLogStore(path.join(root, "logs"), () => settings.get()),
+    onOwnership: state => ownership.push(state), onState: () => {}, onLog: entry => logs.push(entry),
+  });
+  try {
+    const reason = [
+      "Connector RPC exited with code 2",
+      "Last output:",
+      "Downloading claude-agent-sdk (92.9MiB)",
+      "error: Failed to fetch: https://pypi.example/simple/claude-agent-sdk/",
+    ].join("\n");
+    await assert.rejects(supervisor.acquireOwnership(), { message: reason });
+    assert.deepEqual(ownership.at(-1), { status: "error", message: reason }, "the gate quotes the same reason");
+    const messages = logs.map(entry => entry.message);
+    assert.ok(messages.includes("Downloading claude-agent-sdk (92.9MiB)"), "a line split across chunks is logged whole");
+    assert.equal(messages.includes("(92.9MiB)"), false);
+    assert.ok(logs.some(entry => entry.level === "ERROR"
+      && entry.message.startsWith("Could not acquire Connector ownership: Connector RPC exited with code 2")));
   } finally { await supervisor.shutdown(); }
 });
 

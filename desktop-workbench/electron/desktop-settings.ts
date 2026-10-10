@@ -49,6 +49,11 @@ export class DesktopSettingsStore {
   }
 }
 
+/** Read-only view for Main, which must not initialize the backend's settings file. */
+export function readDesktopSettings(filePath: string): DesktopSettings {
+  return normalizeSettings(readJsonFile<Partial<DesktopSettings>>(filePath, {}));
+}
+
 function normalizeSettings(value: Partial<DesktopSettings>): DesktopSettings {
   return {
     openAtLogin: booleanValue(value.openAtLogin, DEFAULT_SETTINGS.openAtLogin),

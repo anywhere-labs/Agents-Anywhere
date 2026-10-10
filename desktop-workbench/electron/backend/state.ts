@@ -48,7 +48,7 @@ export class BackendState {
   private readonly machineState: MachineStateStore;
   private readonly connector: ConnectorSupervisor;
   private readonly devices: DesktopDeviceService;
-  private ownership: OwnershipState = { status: "error", message: "正在检查本机 Connector…" };
+  private ownership: OwnershipState = { status: "checking" };
   /** The server this backend talks to. Main pushes changes after a sign-in. */
   private server: { serverUrl: string; apiNamespace: string };
   private readonly logBatcher = new LogBatcher((batch) => this.emit("logs", batch));
@@ -57,7 +57,7 @@ export class BackendState {
 
   constructor(private readonly init: BackendInit, fetcher: BackendFetcher) {
     this.server = { serverUrl: init.defaultServerUrl, apiNamespace: init.apiNamespace };
-    this.machineState = new MachineStateStore();
+    this.machineState = new MachineStateStore(undefined, (message) => this.appendLog({ level: "WARNING", message }));
     this.settings = new DesktopSettingsStore(init.settingsPath, init.preferredLanguages);
     this.logs = new ConnectorLogStore(init.logsPath, () => this.settings.get());
     this.binding = new DesktopBindingStore(init.bindingPath);
@@ -111,12 +111,8 @@ export class BackendState {
     const shellEnvironment = await readShellEnvironment().catch(() => ({} as NodeJS.ProcessEnv));
     if (this.closed) return;
     this.connector.setShellEnvironment(shellEnvironment);
-    // A failed probe reaches the renderer only as `error`; the reason itself
-    // exists nowhere else, so keep it in the log instead of discarding it.
-    await this.acquireOwnership().catch((error) => this.appendLog({
-      level: "ERROR",
-      message: `Could not acquire Connector ownership: ${errorMessage(error)}`,
-    }));
+    // The supervisor logs a failed probe and reports it as the `error` state.
+    await this.acquireOwnership().catch(() => undefined);
     await this.recordInstallation().catch((error) => this.appendLog({
       level: "ERROR",
       message: `Could not record Desktop installation: ${errorMessage(error)}`,
