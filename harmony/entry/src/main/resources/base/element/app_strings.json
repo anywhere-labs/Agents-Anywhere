@@ -1,0 +1,3060 @@
+{
+  "string": [
+    {
+      "name": "home_project_options",
+      "value": "Project actions"
+    },
+    {
+      "name": "home_project_filter_sessions",
+      "value": "Filter project sessions"
+    },
+    {
+      "name": "home_project_session_status",
+      "value": "Session status"
+    },
+    {
+      "name": "home_project_filter_active",
+      "value": "Active sessions"
+    },
+    {
+      "name": "home_project_filter_archived",
+      "value": "Archived"
+    },
+    {
+      "name": "home_project_filter_all",
+      "value": "All"
+    },
+    {
+      "name": "home_project_load_retry",
+      "value": "Could not load sessions. Tap to retry."
+    },
+    {
+      "name": "common_back",
+      "value": "Back"
+    },
+    {
+      "name": "common_cancel",
+      "value": "Cancel"
+    },
+    {
+      "name": "common_checking",
+      "value": "Checking..."
+    },
+    {
+      "name": "common_close",
+      "value": "Close"
+    },
+    {
+      "name": "common_continue",
+      "value": "Continue"
+    },
+    {
+      "name": "common_copied",
+      "value": "Copied"
+    },
+    {
+      "name": "common_copy",
+      "value": "Copy"
+    },
+    {
+      "name": "common_creating",
+      "value": "Creating..."
+    },
+    {
+      "name": "common_done",
+      "value": "Done"
+    },
+    {
+      "name": "common_all",
+      "value": "All"
+    },
+    {
+      "name": "common_files",
+      "value": "Files"
+    },
+    {
+      "name": "common_now",
+      "value": "now"
+    },
+    {
+      "name": "common_ok",
+      "value": "OK"
+    },
+    {
+      "name": "common_password",
+      "value": "Password"
+    },
+    {
+      "name": "common_select",
+      "value": "Select"
+    },
+    {
+      "name": "common_save",
+      "value": "Save"
+    },
+    {
+      "name": "common_saving",
+      "value": "Saving..."
+    },
+    {
+      "name": "common_server_url",
+      "value": "Server URL"
+    },
+    {
+      "name": "common_terminal",
+      "value": "Terminal"
+    },
+    {
+      "name": "common_user_id",
+      "value": "User ID"
+    },
+    {
+      "name": "common_working",
+      "value": "Working..."
+    },
+    {
+      "name": "common_wait",
+      "value": "Wait"
+    },
+    {
+      "name": "common_claim",
+      "value": "Claim"
+    },
+    {
+      "name": "common_delete",
+      "value": "Delete"
+    },
+    {
+      "name": "common_setup",
+      "value": "Setup"
+    },
+    {
+      "name": "common_revoke",
+      "value": "Revoke"
+    },
+    {
+      "name": "common_enable",
+      "value": "Enable"
+    },
+    {
+      "name": "common_disable",
+      "value": "Disable"
+    },
+    {
+      "name": "common_send",
+      "value": "Send"
+    },
+    {
+      "name": "auth_continue_to",
+      "value": "Continue to"
+    },
+    {
+      "name": "auth_choose_login",
+      "value": "Choose how you want to login."
+    },
+    {
+      "name": "auth_enter_server",
+      "value": "Enter Server"
+    },
+    {
+      "name": "auth_password_login",
+      "value": "Account Password Login"
+    },
+    {
+      "name": "auth_continue_qr",
+      "value": "Scan to Login"
+    },
+    {
+      "name": "auth_host_choice_title",
+      "value": "Choose a login service"
+    },
+    {
+      "name": "auth_official_service",
+      "value": "Sign in to Agents Anywhere Cloud"
+    },
+    {
+      "name": "auth_official_service_description",
+      "value": "Use the Agents Anywhere online service"
+    },
+    {
+      "name": "auth_self_host_service",
+      "value": "Connect to your own server instance"
+    },
+    {
+      "name": "auth_or",
+      "value": "OR"
+    },
+    {
+      "name": "auth_connect_server",
+      "value": "Connect to server"
+    },
+    {
+      "name": "auth_self_host_service_description",
+      "value": "Connect to a server you deployed"
+    },
+    {
+      "name": "auth_coming_soon",
+      "value": "Coming soon"
+    },
+    {
+      "name": "auth_host_choice_hint",
+      "value": "If you do not have a privately deployed backend, sign in to Cloud."
+    },
+    {
+      "name": "auth_self_host_login_title",
+      "value": "Self-host Login"
+    },
+    {
+      "name": "auth_web_login_subtitle",
+      "value": "Enter your backend address. We will check the connection and open the sign-in page."
+    },
+    {
+      "name": "auth_backend_url",
+      "value": "Backend address"
+    },
+    {
+      "name": "auth_continue_in_web",
+      "value": "Continue in Web Login"
+    },
+    {
+      "name": "auth_opening_web_login",
+      "value": "Opening web login..."
+    },
+    {
+      "name": "auth_web_login_help",
+      "value": "Use password login or any OAuth provider configured on this server."
+    },
+    {
+      "name": "auth_passwords_do_not_match",
+      "value": "Passwords do not match."
+    },
+    {
+      "name": "qr_camera_permission_required",
+      "value": "Camera permission is required to scan QR codes."
+    },
+    {
+      "name": "qr_start_failed",
+      "value": "Could not start QR sign-in."
+    },
+    {
+      "name": "qr_help_title",
+      "value": "How do I generate a mobile sign-in QR?"
+    },
+    {
+      "name": "qr_help_body",
+      "value": "Open Agents Anywhere on desktop or the web, go to Settings - Phone Connection - Start Connecting, then scan the QR code shown."
+    },
+    {
+      "name": "qr_scan_first",
+      "value": "Scan a QR code first."
+    },
+    {
+      "name": "qr_status_failed",
+      "value": "Could not check QR sign-in status."
+    },
+    {
+      "name": "qr_complete_failed",
+      "value": "Could not complete QR sign-in."
+    },
+    {
+      "name": "qr_camera_access_needed",
+      "value": "Camera access is needed to scan."
+    },
+    {
+      "name": "qr_completing",
+      "value": "Completing sign-in..."
+    },
+    {
+      "name": "qr_rejected",
+      "value": "Sign-in rejected."
+    },
+    {
+      "name": "qr_expired",
+      "value": "QR code expired."
+    },
+    {
+      "name": "qr_consumed",
+      "value": "QR code already used."
+    },
+    {
+      "name": "qr_waiting",
+      "value": "Waiting for web confirmation..."
+    },
+    {
+      "name": "home_search_coming_soon",
+      "value": "Search is coming soon."
+    },
+    {
+      "name": "home_session_pinned",
+      "value": "Session pinned."
+    },
+    {
+      "name": "home_session_unpinned",
+      "value": "Session unpinned."
+    },
+    {
+      "name": "home_pin_update_failed",
+      "value": "Could not update pin state."
+    },
+    {
+      "name": "home_session_archived",
+      "value": "Session archived."
+    },
+    {
+      "name": "home_session_restored",
+      "value": "Session restored."
+    },
+    {
+      "name": "home_archive_failed",
+      "value": "Could not archive session."
+    },
+    {
+      "name": "home_restore_failed",
+      "value": "Could not restore session."
+    },
+    {
+      "name": "home_session_renamed",
+      "value": "Session renamed."
+    },
+    {
+      "name": "home_rename_failed",
+      "value": "Could not rename session."
+    },
+    {
+      "name": "home_title_required",
+      "value": "Title cannot be empty."
+    },
+    {
+      "name": "home_rename",
+      "value": "Rename"
+    },
+    {
+      "name": "home_unarchive",
+      "value": "Unarchive"
+    },
+    {
+      "name": "home_archive",
+      "value": "Archive"
+    },
+    {
+      "name": "home_unpin",
+      "value": "Unpin"
+    },
+    {
+      "name": "home_pin",
+      "value": "Pin"
+    },
+    {
+      "name": "home_rename_session",
+      "value": "Rename session"
+    },
+    {
+      "name": "home_tab_active",
+      "value": "Active"
+    },
+    {
+      "name": "home_tab_archived",
+      "value": "Archived"
+    },
+    {
+      "name": "home_tab_devices",
+      "value": "Devices"
+    },
+    {
+      "name": "home_devices_empty",
+      "value": "No devices yet. Pair one to start connecting agents."
+    },
+    {
+      "name": "home_pair_device_first",
+      "value": "Pair a device first, then you can start sessions there."
+    },
+    {
+      "name": "home_pair_new_device",
+      "value": "Pair a new device"
+    },
+    {
+      "name": "home_create_new_session",
+      "value": "Create a new session"
+    },
+    {
+      "name": "home_no_active_sessions_create",
+      "value": "No active sessions yet. Create one when you're ready."
+    },
+    {
+      "name": "home_no_active_projects_create",
+      "value": "No active projects yet. Create one when you're ready."
+    },
+    {
+      "name": "home_no_archived_projects_yet",
+      "value": "No projects with archived sessions yet."
+    },
+    {
+      "name": "home_no_projects_create",
+      "value": "No projects yet. Create one when you're ready."
+    },
+    {
+      "name": "home_no_archived_sessions_yet",
+      "value": "No archived sessions yet."
+    },
+    {
+      "name": "home_no_active_sessions",
+      "value": "No active sessions."
+    },
+    {
+      "name": "home_no_archived_sessions",
+      "value": "No archived sessions."
+    },
+    {
+      "name": "home_no_sessions_yet",
+      "value": "No sessions yet."
+    },
+    {
+      "name": "home_pinned",
+      "value": "Pinned"
+    },
+    {
+      "name": "home_no_pinned_sessions",
+      "value": "No pinned sessions."
+    },
+    {
+      "name": "home_recents",
+      "value": "Recents"
+    },
+    {
+      "name": "home_no_recent_sessions",
+      "value": "No recent sessions."
+    },
+    {
+      "name": "home_online",
+      "value": "Online"
+    },
+    {
+      "name": "home_offline",
+      "value": "Offline"
+    },
+    {
+      "name": "home_new_session",
+      "value": "New session"
+    },
+    {
+      "name": "home_projects",
+      "value": "Projects"
+    },
+    {
+      "name": "home_no_projects",
+      "value": "No projects yet."
+    },
+    {
+      "name": "home_project_no_sessions",
+      "value": "No sessions yet."
+    },
+    {
+      "name": "home_new_session_in_project",
+      "value": "New session in %s"
+    },
+    {
+      "name": "home_project_edit",
+      "value": "Edit"
+    },
+    {
+      "name": "home_project_pin",
+      "value": "Pin project"
+    },
+    {
+      "name": "home_project_unpin",
+      "value": "Unpin project"
+    },
+    {
+      "name": "home_project_archive",
+      "value": "Archive project"
+    },
+    {
+      "name": "home_project_edit_title",
+      "value": "Edit project"
+    },
+    {
+      "name": "home_project_name",
+      "value": "Project name"
+    },
+    {
+      "name": "home_project_device",
+      "value": "Device"
+    },
+    {
+      "name": "home_project_path",
+      "value": "Path"
+    },
+    {
+      "name": "home_project_path_immutable",
+      "value": "The device and path cannot be changed after the project is created."
+    },
+    {
+      "name": "home_project_archive_title",
+      "value": "Archive project sessions?"
+    },
+    {
+      "name": "home_project_archive_description",
+      "value": "All active sessions in “%s” will be archived. The project itself will remain."
+    },
+    {
+      "name": "home_project_pinned",
+      "value": "Project pinned."
+    },
+    {
+      "name": "home_project_unpinned",
+      "value": "Project unpinned."
+    },
+    {
+      "name": "home_project_updated",
+      "value": "Project updated."
+    },
+    {
+      "name": "home_project_update_failed",
+      "value": "Could not update project."
+    },
+    {
+      "name": "home_project_archived",
+      "value": "Project sessions archived."
+    },
+    {
+      "name": "home_project_archive_failed",
+      "value": "Could not archive project sessions."
+    },
+    {
+      "name": "home_session_status_waiting_approval",
+      "value": "Waiting approval"
+    },
+    {
+      "name": "home_session_status_running",
+      "value": "Session running"
+    },
+    {
+      "name": "home_session_status_unread",
+      "value": "Unread session"
+    },
+    {
+      "name": "home_session_status_error",
+      "value": "Session error"
+    },
+    {
+      "name": "devices_title",
+      "value": "Devices"
+    },
+    {
+      "name": "devices_empty",
+      "value": "No devices yet. Add one to start pairing."
+    },
+    {
+      "name": "devices_add_new",
+      "value": "Add a new device"
+    },
+    {
+      "name": "devices_online",
+      "value": "Online"
+    },
+    {
+      "name": "devices_offline",
+      "value": "Offline"
+    },
+    {
+      "name": "devices_no_online",
+      "value": "No online devices"
+    },
+    {
+      "name": "devices_agent_status_loading",
+      "value": "Loading agent status..."
+    },
+    {
+      "name": "devices_agent_status_unavailable",
+      "value": "Agent status unavailable"
+    },
+    {
+      "name": "common_retry",
+      "value": "Retry"
+    },
+    {
+      "name": "configure_agent_title",
+      "value": "Configure agent"
+    },
+    {
+      "name": "configure_agent_action",
+      "value": "Configure"
+    },
+    {
+      "name": "configure_agent_description",
+      "value": "Configure %s"
+    },
+    {
+      "name": "configure_agent_configure_and_start",
+      "value": "Configure and start"
+    },
+    {
+      "name": "configure_agent_configuring",
+      "value": "Configuring..."
+    },
+    {
+      "name": "configure_agent_save_failed",
+      "value": "Could not configure this agent. Please try again."
+    },
+    {
+      "name": "configure_agent_start_failed",
+      "value": "Agent configured, but it could not be started. You can retry from the switch."
+    },
+    {
+      "name": "configure_agent_no_fields",
+      "value": "This agent needs no additional configuration. Continue to configure and start it."
+    },
+    {
+      "name": "runtime_config_executable_path",
+      "value": "Executable path"
+    },
+    {
+      "name": "runtime_config_executable_path_description",
+      "value": "Optional path to the runtime executable. Leave blank to use discovery."
+    },
+    {
+      "name": "runtime_config_executable_path_placeholder",
+      "value": "/path/to/executable"
+    },
+    {
+      "name": "runtime_config_environment",
+      "value": "Environment variables"
+    },
+    {
+      "name": "runtime_config_environment_description",
+      "value": "Override inherited values with strings, or explicitly remove an inherited value."
+    },
+    {
+      "name": "runtime_config_environment_name",
+      "value": "VARIABLE_NAME"
+    },
+    {
+      "name": "runtime_config_environment_value",
+      "value": "Value"
+    },
+    {
+      "name": "runtime_config_environment_unset",
+      "value": "Remove inherited value"
+    },
+    {
+      "name": "runtime_config_add_variable",
+      "value": "Add environment variable"
+    },
+    {
+      "name": "runtime_config_environment_blank_name",
+      "value": "Environment variable names cannot be empty."
+    },
+    {
+      "name": "runtime_config_environment_invalid_name",
+      "value": "Environment variable names cannot contain “=” or null characters."
+    },
+    {
+      "name": "runtime_config_environment_duplicate_name",
+      "value": "Environment variable names must be unique."
+    },
+    {
+      "name": "device_runtime_load_failed",
+      "value": "Could not load runtimes."
+    },
+    {
+      "name": "device_runtime_update_failed",
+      "value": "Could not update runtime state."
+    },
+    {
+      "name": "device_runtime_delete_failed",
+      "value": "Could not delete runtime configuration."
+    },
+    {
+      "name": "device_runtime_loading",
+      "value": "Loading runtimes..."
+    },
+    {
+      "name": "device_runtime_no_configured",
+      "value": "No configured agents"
+    },
+    {
+      "name": "device_runtime_desktop_configuration_hint",
+      "value": "To configure or add other agents, use the desktop app."
+    },
+    {
+      "name": "device_runtime_not_present",
+      "value": "Not present on this connector"
+    },
+    {
+      "name": "device_runtime_not_configured",
+      "value": "Configuration required"
+    },
+    {
+      "name": "device_runtime_stopped",
+      "value": "Stopped"
+    },
+    {
+      "name": "device_runtime_discovering",
+      "value": "Discovering"
+    },
+    {
+      "name": "device_runtime_available",
+      "value": "Available"
+    },
+    {
+      "name": "device_runtime_unavailable",
+      "value": "Unavailable"
+    },
+    {
+      "name": "device_runtime_validating",
+      "value": "Validating configuration"
+    },
+    {
+      "name": "device_runtime_starting",
+      "value": "Starting"
+    },
+    {
+      "name": "device_runtime_running",
+      "value": "Running"
+    },
+    {
+      "name": "device_runtime_stopping",
+      "value": "Stopping"
+    },
+    {
+      "name": "device_runtime_error",
+      "value": "Runtime error"
+    },
+    {
+      "name": "device_runtime_unknown",
+      "value": "Unknown state"
+    },
+    {
+      "name": "device_detail_prepare_setup_failed",
+      "value": "Could not prepare device setup."
+    },
+    {
+      "name": "device_detail_delete_failed",
+      "value": "Could not delete device."
+    },
+    {
+      "name": "device_detail_revoke_failed",
+      "value": "Could not revoke device token."
+    },
+    {
+      "name": "device_detail_update_sessions_failed",
+      "value": "Could not update sessions."
+    },
+    {
+      "name": "device_detail_sessions_not_found",
+      "value": "%d sessions no longer exist. Refresh to reconcile the list."
+    },
+    {
+      "name": "device_detail_archived_sessions_toast",
+      "value": "Archived %d sessions."
+    },
+    {
+      "name": "device_detail_unarchived_sessions_toast",
+      "value": "Unarchived %d sessions."
+    },
+    {
+      "name": "device_detail_not_found",
+      "value": "Device not found"
+    },
+    {
+      "name": "device_detail_refresh_try_again",
+      "value": "Refresh devices and try again."
+    },
+    {
+      "name": "device_detail_device_actions",
+      "value": "Device actions"
+    },
+    {
+      "name": "device_detail_agents_section",
+      "value": "AGENTS"
+    },
+    {
+      "name": "device_detail_sessions_section",
+      "value": "SESSIONS"
+    },
+    {
+      "name": "device_detail_remove_agent",
+      "value": "Delete runtime configuration"
+    },
+    {
+      "name": "device_detail_archive_all",
+      "value": "Archive all"
+    },
+    {
+      "name": "device_detail_unarchive_all",
+      "value": "Unarchive all"
+    },
+    {
+      "name": "device_detail_no_active_sessions",
+      "value": "No active sessions on this device."
+    },
+    {
+      "name": "device_detail_no_archived_sessions",
+      "value": "No archived sessions on this device."
+    },
+    {
+      "name": "device_detail_no_sessions",
+      "value": "No sessions on this device."
+    },
+    {
+      "name": "device_detail_selected_count",
+      "value": "%d selected"
+    },
+    {
+      "name": "device_detail_archive_selected",
+      "value": "Archive selected"
+    },
+    {
+      "name": "device_detail_unarchive_selected",
+      "value": "Unarchive selected"
+    },
+    {
+      "name": "device_detail_all_active_sessions",
+      "value": "all active sessions"
+    },
+    {
+      "name": "device_detail_all_archived_sessions",
+      "value": "all archived sessions"
+    },
+    {
+      "name": "device_detail_all_sessions",
+      "value": "all sessions"
+    },
+    {
+      "name": "device_setup_pair_new_title",
+      "value": "Pair a new device"
+    },
+    {
+      "name": "device_setup_page_title",
+      "value": "Add a new device"
+    },
+    {
+      "name": "device_setup_name_title",
+      "value": "Name your device"
+    },
+    {
+      "name": "device_setup_name_description",
+      "value": "Give this device a name so you can identify it later."
+    },
+    {
+      "name": "device_setup_name_placeholder",
+      "value": "e.g. amber-finch"
+    },
+    {
+      "name": "device_setup_create_device",
+      "value": "Create device"
+    },
+    {
+      "name": "device_setup_save_name",
+      "value": "Save name"
+    },
+    {
+      "name": "device_setup_saving_name",
+      "value": "Saving..."
+    },
+    {
+      "name": "device_setup_os_title",
+      "value": "Choose operating system"
+    },
+    {
+      "name": "device_setup_os_description",
+      "value": "Which operating system does %s use?"
+    },
+    {
+      "name": "device_setup_os_desktop",
+      "value": "Win / Mac"
+    },
+    {
+      "name": "device_setup_os_desktop_description",
+      "value": "Download and use the desktop connector app to pair this device."
+    },
+    {
+      "name": "device_setup_os_linux",
+      "value": "Linux"
+    },
+    {
+      "name": "device_setup_os_linux_description",
+      "value": "Copy a command into the target device terminal. Requires uv/uvx command-line usage."
+    },
+    {
+      "name": "device_setup_desktop_title",
+      "value": "Download Desktop App"
+    },
+    {
+      "name": "device_setup_desktop_description",
+      "value": "Download the Desktop App to the target device from the address below."
+    },
+    {
+      "name": "device_setup_download_label",
+      "value": "Download link"
+    },
+    {
+      "name": "device_setup_command_title",
+      "value": "Start with command"
+    },
+    {
+      "name": "device_setup_command_description",
+      "value": "Run this command in the terminal on %s. The device will come online automatically."
+    },
+    {
+      "name": "device_setup_linux_session_warning",
+      "value": "Keep this terminal session alive. If you close the terminal, the anywhere-cli process will exit and the Linux device will go offline. The simplest way to keep it running is to run the pairing command inside screen:"
+    },
+    {
+      "name": "device_setup_linux_detach_hint",
+      "value": "After the Connector comes online, press Ctrl-A, then D to leave without closing the session. To return to this session later, run:"
+    },
+    {
+      "name": "device_setup_copy_value",
+      "value": "Copy"
+    },
+    {
+      "name": "device_setup_pair_title",
+      "value": "Prepare pairing"
+    },
+    {
+      "name": "device_setup_pair_description",
+      "value": "Choose an operating system to see its connection instructions."
+    },
+    {
+      "name": "device_setup_finish_title",
+      "value": "Finish pairing"
+    },
+    {
+      "name": "device_setup_finish_description",
+      "value": "Complete the previous steps to finish pairing this device."
+    },
+    {
+      "name": "device_setup_desktop_login_title",
+      "value": "Sign in with the Desktop App"
+    },
+    {
+      "name": "device_setup_desktop_login_description",
+      "value": "Sign in with the Desktop App. The device will come online automatically."
+    },
+    {
+      "name": "device_setup_linux_finish_description",
+      "value": "Keep the command running. When the device comes online, you can return to the device list and start using it."
+    },
+    {
+      "name": "device_setup_success_title",
+      "value": "Device paired"
+    },
+    {
+      "name": "device_setup_success_description",
+      "value": "%s is now online and ready to run sessions."
+    },
+    {
+      "name": "device_setup_reconnect_title",
+      "value": "Reconnect %s"
+    },
+    {
+      "name": "device_setup_device_fallback",
+      "value": "device"
+    },
+    {
+      "name": "device_setup_this_device_fallback",
+      "value": "this device"
+    },
+    {
+      "name": "device_setup_claim_failed",
+      "value": "Failed to claim pairing code."
+    },
+    {
+      "name": "device_setup_generate_failed",
+      "value": "Failed to generate connector token."
+    },
+    {
+      "name": "device_setup_name_then_generate",
+      "value": "Name this device, then generate a one-time connector token."
+    },
+    {
+      "name": "device_setup_generating",
+      "value": "Generating..."
+    },
+    {
+      "name": "device_setup_generate_token",
+      "value": "Generate token"
+    },
+    {
+      "name": "device_setup_preparing_credentials",
+      "value": "Preparing setup credentials for %s."
+    },
+    {
+      "name": "device_setup_preparing",
+      "value": "Preparing setup"
+    },
+    {
+      "name": "device_setup_credentials_ready",
+      "value": "Credentials are ready for %s. Pick one path to connect this device."
+    },
+    {
+      "name": "device_setup_use_token",
+      "value": "Use token"
+    },
+    {
+      "name": "device_setup_use_token_description",
+      "value": "Start the connector directly with this id and token."
+    },
+    {
+      "name": "device_setup_pair_code",
+      "value": "Pair code"
+    },
+    {
+      "name": "device_setup_pair_code_description",
+      "value": "Run pair on the target machine and claim its code here."
+    },
+    {
+      "name": "device_setup_connected",
+      "value": "Connected"
+    },
+    {
+      "name": "device_setup_waiting_connection",
+      "value": "Waiting for device to come online..."
+    },
+    {
+      "name": "device_setup_run_start_command",
+      "value": "Run this command on the machine that should connect to this server."
+    },
+    {
+      "name": "device_setup_start_connector",
+      "value": "start connector"
+    },
+    {
+      "name": "device_setup_run_pair_command",
+      "value": "Run the pairing command on the device, then paste the code shown by the connector CLI."
+    },
+    {
+      "name": "device_setup_pair_command",
+      "value": "pair command"
+    },
+    {
+      "name": "device_setup_claiming",
+      "value": "Claiming..."
+    },
+    {
+      "name": "device_setup_waiting_device",
+      "value": "Waiting for device"
+    },
+    {
+      "name": "device_setup_close_content_description",
+      "value": "Close setup"
+    },
+    {
+      "name": "device_setup_device_name",
+      "value": "Device name"
+    },
+    {
+      "name": "device_setup_pair_code_placeholder",
+      "value": "PAIR CODE"
+    },
+    {
+      "name": "device_actions_rename_failed",
+      "value": "Could not rename device."
+    },
+    {
+      "name": "device_actions_rename_device",
+      "value": "Rename device"
+    },
+    {
+      "name": "device_actions_rename",
+      "value": "Rename"
+    },
+    {
+      "name": "device_actions_setup",
+      "value": "Reconnect"
+    },
+    {
+      "name": "device_confirm_delete_device_title",
+      "value": "Delete this device?"
+    },
+    {
+      "name": "device_confirm_delete_device_body",
+      "value": "This removes the device and deletes all server records tied to it, including its sessions, workspaces, runtime configurations, and connector token. To bring it back you'll need to pair it again."
+    },
+    {
+      "name": "device_confirm_deleting",
+      "value": "Deleting..."
+    },
+    {
+      "name": "device_confirm_retry_delete",
+      "value": "Retry delete"
+    },
+    {
+      "name": "device_confirm_revoke_title",
+      "value": "Revoke this device token?"
+    },
+    {
+      "name": "device_confirm_revoke_body",
+      "value": "The current connector token for %s will stop working and the device will be disconnected until you run the new setup command."
+    },
+    {
+      "name": "device_confirm_revoking",
+      "value": "Revoking..."
+    },
+    {
+      "name": "device_confirm_delete_runtime_config_title",
+      "value": "Delete %s configuration?"
+    },
+    {
+      "name": "device_confirm_delete_runtime_config_body",
+      "value": "This removes the saved %s configuration from the server. The local runtime installation and existing sessions are not deleted."
+    },
+    {
+      "name": "device_confirm_delete_active_runtime_config_body",
+      "value": "%s is running. The server will stop it before deleting its saved configuration. The local installation and existing sessions are not deleted."
+    },
+    {
+      "name": "device_confirm_delete_runtime_config",
+      "value": "Delete configuration"
+    },
+    {
+      "name": "device_confirm_archive_all_title",
+      "value": "Archive %s on this device?"
+    },
+    {
+      "name": "device_confirm_unarchive_all_title",
+      "value": "Unarchive %s on this device?"
+    },
+    {
+      "name": "device_confirm_archive_all_body",
+      "value": "These sessions on %s will move to Archived. You can unarchive them later."
+    },
+    {
+      "name": "device_confirm_unarchive_all_body",
+      "value": "Every archived session on %s will move back to Active."
+    },
+    {
+      "name": "device_confirm_archive_all_confirm",
+      "value": "Archive all"
+    },
+    {
+      "name": "device_confirm_unarchive_all_confirm",
+      "value": "Unarchive all"
+    },
+    {
+      "name": "terminal_pair_first",
+      "value": "Pair a device first to open a terminal."
+    },
+    {
+      "name": "terminal_all_devices_offline",
+      "value": "All devices are offline. Bring one online to open a terminal."
+    },
+    {
+      "name": "files_pair_first",
+      "value": "Pair a device first to browse files."
+    },
+    {
+      "name": "files_all_devices_offline",
+      "value": "All devices are offline. Bring one online to browse files."
+    },
+    {
+      "name": "new_session_title",
+      "value": "New Session"
+    },
+    {
+      "name": "new_session_checking_devices",
+      "value": "Checking devices"
+    },
+    {
+      "name": "new_session_checking_devices_description",
+      "value": "Getting the connection status of your devices."
+    },
+    {
+      "name": "new_session_devices_unavailable",
+      "value": "Unable to load devices"
+    },
+    {
+      "name": "new_session_devices_unavailable_description",
+      "value": "Unable to check device status. Please try again."
+    },
+    {
+      "name": "new_session_connect_device_title",
+      "value": "Connect a device first"
+    },
+    {
+      "name": "new_session_connect_device_description",
+      "value": "Sessions run on your computer. Connect a device, then choose an Agent to start chatting."
+    },
+    {
+      "name": "new_session_devices_offline_title",
+      "value": "Your device is offline"
+    },
+    {
+      "name": "new_session_devices_offline_description",
+      "value": "Make sure Agents Anywhere on your computer is connected and has network access, then check again."
+    },
+    {
+      "name": "new_session_checking_agents",
+      "value": "Checking available Agents"
+    },
+    {
+      "name": "new_session_checking_agents_description",
+      "value": "Looking for Agents that are configured and running."
+    },
+    {
+      "name": "new_session_agents_unavailable",
+      "value": "Unable to load Agents"
+    },
+    {
+      "name": "new_session_agents_unavailable_description",
+      "value": "Unable to check Agent status. Please try again."
+    },
+    {
+      "name": "new_session_setup_agent_title",
+      "value": "Set up an Agent first"
+    },
+    {
+      "name": "new_session_setup_agent_description",
+      "value": "No Agent is available yet. Set one up in the desktop app to get started."
+    },
+    {
+      "name": "new_session_start_agent_title",
+      "value": "Start an Agent to chat"
+    },
+    {
+      "name": "new_session_start_agent_description",
+      "value": "Start a configured Agent to begin chatting."
+    },
+    {
+      "name": "new_session_agent_starting_title",
+      "value": "Agent is starting"
+    },
+    {
+      "name": "new_session_agent_starting_description",
+      "value": "Your Agent is starting and will be ready to chat soon."
+    },
+    {
+      "name": "new_session_configure_agent_action",
+      "value": "Set up Agent"
+    },
+    {
+      "name": "new_session_no_available_agents",
+      "value": "No available online Agent found.\nCheck your device and Agent settings."
+    },
+    {
+      "name": "new_session_start_agent_action",
+      "value": "Start Agent"
+    },
+    {
+      "name": "new_session_view_agent_action",
+      "value": "View Agent"
+    },
+    {
+      "name": "new_session_connect_device_action",
+      "value": "Connect device"
+    },
+    {
+      "name": "new_session_manage_agents",
+      "value": "Manage Agents"
+    },
+    {
+      "name": "new_session_view_devices",
+      "value": "View devices"
+    },
+    {
+      "name": "new_session_check_again",
+      "value": "Check again"
+    },
+    {
+      "name": "new_session_checking_again",
+      "value": "Checking…"
+    },
+    {
+      "name": "new_session_load_directory_failed",
+      "value": "Could not load this directory."
+    },
+    {
+      "name": "new_session_create_failed",
+      "value": "Could not create session."
+    },
+    {
+      "name": "new_session_device",
+      "value": "Device"
+    },
+    {
+      "name": "new_session_agent",
+      "value": "Agent"
+    },
+    {
+      "name": "new_session_no_device",
+      "value": "No device"
+    },
+    {
+      "name": "new_session_no_agent",
+      "value": "No agent"
+    },
+    {
+      "name": "new_session_no_online_agent",
+      "value": "No online device with an attached agent."
+    },
+    {
+      "name": "new_session_starting",
+      "value": "Starting..."
+    },
+    {
+      "name": "new_session_start_chat",
+      "value": "Start chat"
+    },
+    {
+      "name": "new_session_workspace",
+      "value": "Working directory"
+    },
+    {
+      "name": "new_session_choose_path",
+      "value": "Choose path"
+    },
+    {
+      "name": "new_session_expand_directory",
+      "value": "Expand directory list"
+    },
+    {
+      "name": "new_session_collapse_directory",
+      "value": "Collapse directory list"
+    },
+    {
+      "name": "new_session_create_project",
+      "value": "New project"
+    },
+    {
+      "name": "new_session_choose_project",
+      "value": "Choose a project"
+    },
+    {
+      "name": "new_session_no_project",
+      "value": "Create or choose a project to continue."
+    },
+    {
+      "name": "new_session_no_projects",
+      "value": "No projects yet. Create one to start a session."
+    },
+    {
+      "name": "new_session_project_name",
+      "value": "Project name"
+    },
+    {
+      "name": "new_session_project_name_placeholder",
+      "value": "Enter a project name"
+    },
+    {
+      "name": "new_session_project_directory",
+      "value": "Project directory"
+    },
+    {
+      "name": "new_session_choose_directory",
+      "value": "Choose a directory"
+    },
+    {
+      "name": "new_session_project_creating",
+      "value": "Creating..."
+    },
+    {
+      "name": "new_session_project_create_failed",
+      "value": "Could not create project."
+    },
+    {
+      "name": "new_session_loading_directory",
+      "value": "Loading directory..."
+    },
+    {
+      "name": "new_session_empty_directory",
+      "value": "This directory is empty."
+    },
+    {
+      "name": "new_session_choose_device",
+      "value": "Choose device"
+    },
+    {
+      "name": "new_session_choose_agent",
+      "value": "Choose agent"
+    },
+    {
+      "name": "new_session_no_online_agents",
+      "value": "No online devices with available runtimes."
+    },
+    {
+      "name": "new_session_no_attached_agents",
+      "value": "No configured and running agent on this device."
+    },
+    {
+      "name": "new_session_home_directory",
+      "value": "Home directory"
+    },
+    {
+      "name": "new_session_model",
+      "value": "Model"
+    },
+    {
+      "name": "new_session_reasoning",
+      "value": "Reasoning"
+    },
+    {
+      "name": "new_session_permission",
+      "value": "Permission"
+    },
+    {
+      "name": "new_session_choose_model",
+      "value": "Choose model"
+    },
+    {
+      "name": "new_session_choose_reasoning",
+      "value": "Choose reasoning"
+    },
+    {
+      "name": "new_session_choose_permission",
+      "value": "Choose permission"
+    },
+    {
+      "name": "new_session_catalog_loading",
+      "value": "Loading live options..."
+    },
+    {
+      "name": "new_session_catalog_unavailable",
+      "value": "Not available"
+    },
+    {
+      "name": "new_session_model_catalog_unavailable",
+      "value": "This runtime does not expose a model catalog."
+    },
+    {
+      "name": "new_session_permission_catalog_unavailable",
+      "value": "This runtime does not expose a permission catalog."
+    },
+    {
+      "name": "new_session_catalog_stale",
+      "value": "The displayed options are stale. Retry before starting."
+    },
+    {
+      "name": "new_session_capabilities_failed",
+      "value": "Could not load runtime capabilities."
+    },
+    {
+      "name": "new_session_model_catalog_failed",
+      "value": "Could not load the model catalog."
+    },
+    {
+      "name": "new_session_permission_catalog_failed",
+      "value": "Could not load the permission catalog."
+    },
+    {
+      "name": "new_session_runtime_load_failed",
+      "value": "Could not load runtimes for this device."
+    },
+    {
+      "name": "new_session_runtime_inactive",
+      "value": "Runtime is not active"
+    },
+    {
+      "name": "new_session_message_placeholder",
+      "value": "Describe the first task…"
+    },
+    {
+      "name": "new_session_attach_files",
+      "value": "Attach files"
+    },
+    {
+      "name": "new_session_attachment_limit",
+      "value": "You can attach up to %d files."
+    },
+    {
+      "name": "new_session_attachment_too_large",
+      "value": "%s is too large."
+    },
+    {
+      "name": "new_session_attachment_empty",
+      "value": "%s is empty."
+    },
+    {
+      "name": "new_session_attachment_read_failed",
+      "value": "Could not read an attachment."
+    },
+    {
+      "name": "new_session_attachment_picker_failed",
+      "value": "Could not open the file picker."
+    },
+    {
+      "name": "new_session_runtime_changed",
+      "value": "Runtime options changed while preparing the request. Refresh and try again."
+    },
+    {
+      "name": "new_session_create_interrupted",
+      "value": "The previous create request may still be running. Return to Sessions and refresh before trying again."
+    },
+    {
+      "name": "session_attachment_read_failed",
+      "value": "Could not read attachment."
+    },
+    {
+      "name": "session_attachment_upload_empty",
+      "value": "Upload returned no file."
+    },
+    {
+      "name": "session_attachment_upload_failed",
+      "value": "Could not upload attachment."
+    },
+    {
+      "name": "session_attachment_download_failed",
+      "value": "Could not download attachment."
+    },
+    {
+      "name": "session_attachment_save",
+      "value": "Save image"
+    },
+    {
+      "name": "session_attachment_saved",
+      "value": "Image saved."
+    },
+    {
+      "name": "session_attachment_save_failed",
+      "value": "Could not save image."
+    },
+    {
+      "name": "session_attachment_save_permission_required",
+      "value": "Storage permission is required to save images on this Android version."
+    },
+    {
+      "name": "session_attachment_open_failed",
+      "value": "No app can open this attachment."
+    },
+    {
+      "name": "session_attachment_base64_invalid",
+      "value": "The downloaded attachment is corrupted."
+    },
+    {
+      "name": "session_attachment_upload_incomplete",
+      "value": "The server returned an incomplete attachment upload."
+    },
+    {
+      "name": "session_attachment_size_mismatch",
+      "value": "The size check failed for %s."
+    },
+    {
+      "name": "session_attachment_sha_mismatch",
+      "value": "The SHA-256 check failed for %s."
+    },
+    {
+      "name": "session_attachment_media_type_invalid",
+      "value": "%s has an invalid media type."
+    },
+    {
+      "name": "session_attachment_limit",
+      "value": "You can attach up to %d files per message."
+    },
+    {
+      "name": "session_attachment_file_too_large",
+      "value": "%s exceeds 25 MB."
+    },
+    {
+      "name": "session_attachment_read_one_failed",
+      "value": "Could not read that attachment."
+    },
+    {
+      "name": "session_camera_permission_required",
+      "value": "Camera permission is required to take a photo."
+    },
+    {
+      "name": "session_photo_access_required",
+      "value": "Please allow photo access to choose images."
+    },
+    {
+      "name": "session_file_picker_failed",
+      "value": "Could not open file picker."
+    },
+    {
+      "name": "session_load_messages_failed",
+      "value": "Could not load messages."
+    },
+    {
+      "name": "session_wait_uploads",
+      "value": "Wait for attachments to finish uploading."
+    },
+    {
+      "name": "session_send_failed",
+      "value": "Failed to send message."
+    },
+    {
+      "name": "session_takeover_update_failed",
+      "value": "Could not update takeover."
+    },
+    {
+      "name": "session_runtime_state_unknown",
+      "value": "Runtime state is unavailable. Refresh to try again."
+    },
+    {
+      "name": "session_runtime_state_error",
+      "value": "The session encountered an error. Please try again."
+    },
+    {
+      "name": "session_send_unavailable",
+      "value": "Sending is unavailable for the current runtime state."
+    },
+    {
+      "name": "session_steer_unavailable",
+      "value": "The runtime cannot accept another instruction right now."
+    },
+    {
+      "name": "session_runtime_catalog_loading",
+      "value": "Loading the live runtime catalog…"
+    },
+    {
+      "name": "session_runtime_catalog_stale",
+      "value": "Showing the last successful catalog."
+    },
+    {
+      "name": "session_runtime_catalog_empty",
+      "value": "No available options were returned."
+    },
+    {
+      "name": "session_runtime_model_catalog_failed",
+      "value": "Could not load the live model catalog."
+    },
+    {
+      "name": "session_runtime_permission_catalog_failed",
+      "value": "Could not load the live permission catalog."
+    },
+    {
+      "name": "session_selection_update_failed",
+      "value": "Could not update the runtime selection."
+    },
+    {
+      "name": "session_commands_loading",
+      "value": "Loading runtime commands…"
+    },
+    {
+      "name": "session_commands_empty",
+      "value": "No matching runtime commands."
+    },
+    {
+      "name": "session_commands_load_failed",
+      "value": "Could not load runtime commands."
+    },
+    {
+      "name": "session_command_failed",
+      "value": "The runtime command failed."
+    },
+    {
+      "name": "session_command_unknown",
+      "value": "Choose a valid runtime command. The slash input was kept."
+    },
+    {
+      "name": "session_notice_submit",
+      "value": "Submit response"
+    },
+    {
+      "name": "session_notice_response_failed",
+      "value": "Could not send the runtime response."
+    },
+    {
+      "name": "session_interrupt_failed",
+      "value": "Could not interrupt this session."
+    },
+    {
+      "name": "session_approval_resolve_failed",
+      "value": "Could not resolve approval."
+    },
+    {
+      "name": "session_agent_working",
+      "value": "%s is working"
+    },
+    {
+      "name": "session_agent_interrupting",
+      "value": "Interrupting %s"
+    },
+    {
+      "name": "session_agent_fallback",
+      "value": "Agent"
+    },
+    {
+      "name": "session_device_offline_placeholder",
+      "value": "Device is offline. You can't chat right now."
+    },
+    {
+      "name": "session_reply_to",
+      "value": "Reply to %s"
+    },
+    {
+      "name": "session_read_only_placeholder",
+      "value": "Read-only mode - turn on takeover to send messages"
+    },
+    {
+      "name": "session_runtime_model_loading",
+      "value": "Loading model…"
+    },
+    {
+      "name": "session_runtime_permission_loading",
+      "value": "Loading permission…"
+    },
+    {
+      "name": "session_runtime_model_unavailable",
+      "value": "Model unavailable"
+    },
+    {
+      "name": "session_runtime_permission_unavailable",
+      "value": "Permission unavailable"
+    },
+    {
+      "name": "session_open_from_list",
+      "value": "Open a session from the list."
+    },
+    {
+      "name": "session_title_fallback",
+      "value": "Session"
+    },
+    {
+      "name": "session_device_offline_title",
+      "value": "Device is offline"
+    },
+    {
+      "name": "session_device_offline_body",
+      "value": "This session can't receive messages until its device reconnects."
+    },
+    {
+      "name": "session_enable_takeover_title",
+      "value": "Turn on takeover?"
+    },
+    {
+      "name": "session_disable_takeover_title",
+      "value": "Turn off takeover?"
+    },
+    {
+      "name": "session_enable_takeover_body",
+      "value": "• Once enabled, you can take over this session from Agents Anywhere on the web.\n• Messages may not show up in the %s client right away. Restarting them usually refreshes the sync.\n• If you work in both Agents Anywhere and the %s client at the same time, the session may behave unexpectedly."
+    },
+    {
+      "name": "session_disable_takeover_body",
+      "value": "• After takeover is turned off, this session goes back to read-only mode and you can no longer send messages.\n• The history created here may not show up in the %s client right away. Restarting them usually refreshes the sync."
+    },
+    {
+      "name": "session_send_anyway_title",
+      "value": "Send anyway?"
+    },
+    {
+      "name": "session_send_anyway_body",
+      "value": "This session is in an error state. Sending will try to start a new turn."
+    },
+    {
+      "name": "session_approval_fallback",
+      "value": "Allow this %s request?"
+    },
+    {
+      "name": "session_approval_deny",
+      "value": "Deny"
+    },
+    {
+      "name": "session_approval_approve",
+      "value": "Approve"
+    },
+    {
+      "name": "session_approval_approve_session",
+      "value": "Approve session"
+    },
+    {
+      "name": "session_approval_always_allow",
+      "value": "Always allow"
+    },
+    {
+      "name": "session_approval_allow",
+      "value": "Allow"
+    },
+    {
+      "name": "session_input_request_other",
+      "value": "Other"
+    },
+    {
+      "name": "session_input_request_submit",
+      "value": "Submit"
+    },
+    {
+      "name": "session_upload_file_read_failed",
+      "value": "Could not read %s."
+    },
+    {
+      "name": "session_upload_file_empty",
+      "value": "%s is empty."
+    },
+    {
+      "name": "session_welcome_1",
+      "value": "What should we build next?"
+    },
+    {
+      "name": "session_welcome_2",
+      "value": "Where should the agent start?"
+    },
+    {
+      "name": "session_welcome_3",
+      "value": "What should we work on?"
+    },
+    {
+      "name": "session_welcome_4",
+      "value": "Give the agent a task."
+    },
+    {
+      "name": "session_welcome_5",
+      "value": "Start from a workspace."
+    },
+    {
+      "name": "session_welcome_6",
+      "value": "What needs attention?"
+    },
+    {
+      "name": "session_welcome_7",
+      "value": "What should happen here?"
+    },
+    {
+      "name": "session_welcome_8",
+      "value": "Send work to the right device."
+    },
+    {
+      "name": "session_welcome_9",
+      "value": "Pick a workspace and begin."
+    },
+    {
+      "name": "session_welcome_10",
+      "value": "Describe the next change."
+    },
+    {
+      "name": "session_welcome_11",
+      "value": "What should be investigated?"
+    },
+    {
+      "name": "session_welcome_12",
+      "value": "Start a focused session."
+    },
+    {
+      "name": "session_welcome_13",
+      "value": "What should the agent inspect?"
+    },
+    {
+      "name": "session_welcome_14",
+      "value": "Turn an idea into a session."
+    },
+    {
+      "name": "session_welcome_15",
+      "value": "Choose a target and run."
+    },
+    {
+      "name": "session_welcome_16",
+      "value": "What are we changing today?"
+    },
+    {
+      "name": "session_status_failed",
+      "value": "Failed"
+    },
+    {
+      "name": "session_show_less",
+      "value": "Show less"
+    },
+    {
+      "name": "session_read_more",
+      "value": "Read more"
+    },
+    {
+      "name": "session_copy_reply",
+      "value": "Copy reply"
+    },
+    {
+      "name": "session_share",
+      "value": "Share"
+    },
+    {
+      "name": "session_share_dialog_title",
+      "value": "Share content"
+    },
+    {
+      "name": "session_share_dialog_body",
+      "value": "Sharing creates a public link. Anyone on the internet who has the link can view its contents."
+    },
+    {
+      "name": "session_share_reply",
+      "value": "Current reply"
+    },
+    {
+      "name": "session_share_reply_description",
+      "value": "Share only the agent reply from this turn."
+    },
+    {
+      "name": "session_share_entire_session",
+      "value": "Entire session"
+    },
+    {
+      "name": "session_share_entire_session_description",
+      "value": "Share a snapshot of the complete session as it is now."
+    },
+    {
+      "name": "session_share_create",
+      "value": "Create link"
+    },
+    {
+      "name": "session_share_creating",
+      "value": "Creating…"
+    },
+    {
+      "name": "session_share_chooser_title",
+      "value": "Share link"
+    },
+    {
+      "name": "session_share_failed",
+      "value": "Could not create the share link."
+    },
+    {
+      "name": "session_share_open_failed",
+      "value": "Could not open the system share sheet."
+    },
+    {
+      "name": "session_reasoning",
+      "value": "Reasoning"
+    },
+    {
+      "name": "session_reasoning_single_summary",
+      "value": "Reasoned · %s"
+    },
+    {
+      "name": "session_reasoning_summary",
+      "value": "Reasoning · %d notes"
+    },
+    {
+      "name": "session_command",
+      "value": "Command"
+    },
+    {
+      "name": "session_command_fallback",
+      "value": "command"
+    },
+    {
+      "name": "session_output",
+      "value": "Output"
+    },
+    {
+      "name": "session_input",
+      "value": "Input"
+    },
+    {
+      "name": "session_error",
+      "value": "Error"
+    },
+    {
+      "name": "session_diff",
+      "value": "Diff"
+    },
+    {
+      "name": "session_no_output",
+      "value": "No output"
+    },
+    {
+      "name": "session_no_preview",
+      "value": "No preview"
+    },
+    {
+      "name": "session_tool_summary_commands",
+      "value": "Ran %d commands"
+    },
+    {
+      "name": "session_tool_summary_reasoning",
+      "value": "Reasoned %d times"
+    },
+    {
+      "name": "session_tool_summary_changed_files",
+      "value": "Changed %d files"
+    },
+    {
+      "name": "session_tool_summary_created_files",
+      "value": "Created %d files"
+    },
+    {
+      "name": "session_tool_summary_items",
+      "value": "%d activities"
+    },
+    {
+      "name": "session_tool_ran",
+      "value": "Ran %s"
+    },
+    {
+      "name": "session_tool_changed_file",
+      "value": "Changed %s"
+    },
+    {
+      "name": "session_tool_changed_files",
+      "value": "Changed files"
+    },
+    {
+      "name": "session_tool_created_file",
+      "value": "Created %s"
+    },
+    {
+      "name": "session_tool_created_files",
+      "value": "Created files"
+    },
+    {
+      "name": "session_tool_searched",
+      "value": "Searched %s"
+    },
+    {
+      "name": "session_tool_web_fallback",
+      "value": "web"
+    },
+    {
+      "name": "session_tool_agent_invoke",
+      "value": "Called agent"
+    },
+    {
+      "name": "session_tool_agent_spawn",
+      "value": "Spawned agent"
+    },
+    {
+      "name": "session_tool_agent_send_input",
+      "value": "Sent input to agent"
+    },
+    {
+      "name": "session_tool_agent_resume",
+      "value": "Resumed agent"
+    },
+    {
+      "name": "session_tool_agent_wait",
+      "value": "Waited for agent"
+    },
+    {
+      "name": "session_tool_agent_close",
+      "value": "Closed agent"
+    },
+    {
+      "name": "session_tool_agent_unknown",
+      "value": "Agent call"
+    },
+    {
+      "name": "session_tool_agent_with_description",
+      "value": "%s: %s"
+    },
+    {
+      "name": "session_agent_call_group_summary",
+      "value": "Called %d sub-agents"
+    },
+    {
+      "name": "session_file_change_added",
+      "value": "Added"
+    },
+    {
+      "name": "session_file_change_deleted",
+      "value": "Deleted"
+    },
+    {
+      "name": "session_file_change_renamed",
+      "value": "Renamed"
+    },
+    {
+      "name": "session_file_change_modified",
+      "value": "Modified"
+    },
+    {
+      "name": "session_file_change_changed",
+      "value": "Changed"
+    },
+    {
+      "name": "session_reconnect_summary",
+      "value": "Reconnecting: %s"
+    },
+    {
+      "name": "session_timeline_unknown_item",
+      "value": "Unknown timeline item: %s"
+    },
+    {
+      "name": "session_conversation_compacting",
+      "value": "Compacting context"
+    },
+    {
+      "name": "session_conversation_compacted",
+      "value": "Conversation compacted"
+    },
+    {
+      "name": "session_conversation_compaction_failed",
+      "value": "Conversation compaction failed"
+    },
+    {
+      "name": "session_agent_pending",
+      "value": "Waiting for %s to accept the task…"
+    },
+    {
+      "name": "session_waiting_approval_placeholder",
+      "value": "Waiting for your response below…"
+    },
+    {
+      "name": "session_pending_placeholder",
+      "value": "Waiting for the runtime to accept the task…"
+    },
+    {
+      "name": "session_busy_placeholder",
+      "value": "Send an interrupt or wait for the current turn to finish"
+    },
+    {
+      "name": "session_error_placeholder",
+      "value": "This session has an error; sending will retry"
+    },
+    {
+      "name": "session_takeover",
+      "value": "Takeover"
+    },
+    {
+      "name": "session_attachment_camera",
+      "value": "Camera"
+    },
+    {
+      "name": "session_attachment_photos",
+      "value": "Photos"
+    },
+    {
+      "name": "session_attachment_file",
+      "value": "File"
+    },
+    {
+      "name": "session_attachment_name_fallback",
+      "value": "attachment"
+    },
+    {
+      "name": "session_runtime_select_model",
+      "value": "Select model"
+    },
+    {
+      "name": "session_runtime_settings_title",
+      "value": "Model settings"
+    },
+    {
+      "name": "session_runtime_mode_effort",
+      "value": "Mode & effort"
+    },
+    {
+      "name": "session_runtime_effort_default",
+      "value": "Default"
+    },
+    {
+      "name": "session_runtime_no_settings",
+      "value": "No settings available"
+    },
+    {
+      "name": "session_dsh_concurrent_writer",
+      "value": "Stop the other process using this DSH session, wait for it to exit, then refresh."
+    },
+    {
+      "name": "session_runtime_permission_mode",
+      "value": "Permission mode"
+    },
+    {
+      "name": "session_runtime_effort_for",
+      "value": "Effort for %s"
+    },
+    {
+      "name": "runtime_permission_accept_edits",
+      "value": "Accept edits"
+    },
+    {
+      "name": "runtime_permission_read_only",
+      "value": "Read only"
+    },
+    {
+      "name": "runtime_permission_dsh_read_only",
+      "value": "read-only"
+    },
+    {
+      "name": "runtime_permission_dsh_workspace_write",
+      "value": "workspace-write"
+    },
+    {
+      "name": "runtime_permission_dsh_full_access",
+      "value": "danger-full-access"
+    },
+    {
+      "name": "runtime_permission_request_approval",
+      "value": "Request approval"
+    },
+    {
+      "name": "runtime_permission_auto_review",
+      "value": "Auto review"
+    },
+    {
+      "name": "runtime_permission_full_access",
+      "value": "Full access"
+    },
+    {
+      "name": "runtime_permission_desc_request_approval",
+      "value": "Always ask before editing files outside the workspace or using the internet."
+    },
+    {
+      "name": "runtime_permission_desc_auto_review",
+      "value": "Only ask for approval when Codex detects a risky operation."
+    },
+    {
+      "name": "runtime_permission_desc_ask",
+      "value": "Always ask to edit external files and use the internet"
+    },
+    {
+      "name": "runtime_permission_desc_auto",
+      "value": "Only ask for actions detected as potentially unsafe"
+    },
+    {
+      "name": "runtime_permission_desc_full_access",
+      "value": "Allow unrestricted internet access and access to any file on this computer."
+    },
+    {
+      "name": "runtime_permission_claude_default",
+      "value": "Ask permissions"
+    },
+    {
+      "name": "runtime_permission_desc_claude_default",
+      "value": "Use Claude Code's default prompts for risky tools."
+    },
+    {
+      "name": "runtime_permission_claude_accept_edits",
+      "value": "Accept edits"
+    },
+    {
+      "name": "runtime_permission_desc_claude_accept_edits",
+      "value": "Automatically accept file edits; still ask for other risky tools."
+    },
+    {
+      "name": "runtime_permission_claude_plan",
+      "value": "Plan mode"
+    },
+    {
+      "name": "runtime_permission_desc_claude_plan",
+      "value": "Allow planning without executing writes or commands."
+    },
+    {
+      "name": "runtime_permission_claude_auto",
+      "value": "Auto mode"
+    },
+    {
+      "name": "runtime_permission_desc_claude_auto",
+      "value": "Use Claude Code's automatic classifier for risky actions."
+    },
+    {
+      "name": "runtime_permission_claude_dont_ask",
+      "value": "Don't ask"
+    },
+    {
+      "name": "runtime_permission_desc_claude_dont_ask",
+      "value": "Deny unapproved tools instead of asking for permission."
+    },
+    {
+      "name": "runtime_permission_claude_bypass_permissions",
+      "value": "Bypass permissions"
+    },
+    {
+      "name": "runtime_permission_desc_claude_bypass_permissions",
+      "value": "Skip permission prompts and allow unrestricted tool use."
+    },
+    {
+      "name": "runtime_effort_low",
+      "value": "Low"
+    },
+    {
+      "name": "runtime_effort_medium",
+      "value": "Medium"
+    },
+    {
+      "name": "runtime_effort_high",
+      "value": "High"
+    },
+    {
+      "name": "runtime_effort_xhigh",
+      "value": "Extra high"
+    },
+    {
+      "name": "runtime_effort_max",
+      "value": "Max"
+    },
+    {
+      "name": "runtime_desc_opus_default",
+      "value": "Default. Large refactors, complex debugging."
+    },
+    {
+      "name": "runtime_desc_opus_context",
+      "value": "Opus 4.7 with 1M context window."
+    },
+    {
+      "name": "runtime_desc_sonnet_workhorse",
+      "value": "Day-to-day workhorse."
+    },
+    {
+      "name": "runtime_desc_haiku_fast",
+      "value": "Simple / fast."
+    },
+    {
+      "name": "runtime_desc_legacy",
+      "value": "Legacy Opus, kept for compatibility."
+    },
+    {
+      "name": "files_session_no_workspace",
+      "value": "This session has no workspace."
+    },
+    {
+      "name": "files_load_failed",
+      "value": "Could not load files."
+    },
+    {
+      "name": "files_open_failed",
+      "value": "Could not open file."
+    },
+    {
+      "name": "files_device_offline",
+      "value": "This device is offline."
+    },
+    {
+      "name": "files_select_device",
+      "value": "Select a device."
+    },
+    {
+      "name": "files_windows_drives",
+      "value": "This PC"
+    },
+    {
+      "name": "files_terminal_connecting",
+      "value": "Connecting..."
+    },
+    {
+      "name": "files_terminal_disconnected",
+      "value": "Disconnected. Tap to reconnect."
+    },
+    {
+      "name": "files_terminal_exited",
+      "value": "Exited. Tap to reconnect."
+    },
+    {
+      "name": "files_terminal_error",
+      "value": "Connection disconnected. Tap to reconnect."
+    },
+    {
+      "name": "files_terminal_clear",
+      "value": "Clear terminal"
+    },
+    {
+      "name": "files_loading",
+      "value": "Loading files..."
+    },
+    {
+      "name": "files_empty_directory",
+      "value": "This directory is empty."
+    },
+    {
+      "name": "files_loading_file",
+      "value": "Loading file..."
+    },
+    {
+      "name": "files_binary_preview_unavailable",
+      "value": "This file cannot be previewed."
+    },
+    {
+      "name": "files_open_file_to_preview",
+      "value": "Open a file to preview it."
+    },
+    {
+      "name": "files_search_in_file",
+      "value": "Search in file"
+    },
+    {
+      "name": "files_copied_code",
+      "value": "Copied code"
+    },
+    {
+      "name": "files_copy_code",
+      "value": "Copy code"
+    },
+    {
+      "name": "files_search",
+      "value": "Search"
+    },
+    {
+      "name": "files_copied_path",
+      "value": "Copied path"
+    },
+    {
+      "name": "files_copy_path",
+      "value": "Copy path"
+    },
+    {
+      "name": "profile_settings",
+      "value": "Settings"
+    },
+    {
+      "name": "profile_account",
+      "value": "Account"
+    },
+    {
+      "name": "profile_language",
+      "value": "Language"
+    },
+    {
+      "name": "profile_sidebar_display",
+      "value": "Sidebar display"
+    },
+    {
+      "name": "profile_project_view",
+      "value": "Project view"
+    },
+    {
+      "name": "profile_session_view",
+      "value": "Session view"
+    },
+    {
+      "name": "profile_archived_sessions",
+      "value": "Archived sessions"
+    },
+    {
+      "name": "profile_updates",
+      "value": "Updates"
+    },
+    {
+      "name": "profile_appearance",
+      "value": "Appearance"
+    },
+    {
+      "name": "profile_version",
+      "value": "Version"
+    },
+    {
+      "name": "profile_check_updates",
+      "value": "Check for updates"
+    },
+    {
+      "name": "profile_follow_system",
+      "value": "Follow system"
+    },
+    {
+      "name": "profile_language_follow_system",
+      "value": "Follow system"
+    },
+    {
+      "name": "profile_system",
+      "value": "System"
+    },
+    {
+      "name": "profile_light",
+      "value": "Light"
+    },
+    {
+      "name": "profile_dark",
+      "value": "Dark"
+    },
+    {
+      "name": "profile_english",
+      "value": "English"
+    },
+    {
+      "name": "profile_simplified_chinese",
+      "value": "简体中文"
+    },
+    {
+      "name": "profile_language_system_description",
+      "value": "Use the device language."
+    },
+    {
+      "name": "profile_language_english_description",
+      "value": "Always show English."
+    },
+    {
+      "name": "profile_language_chinese_description",
+      "value": "Always show Simplified Chinese."
+    },
+    {
+      "name": "update_available_title",
+      "value": "New version available"
+    },
+    {
+      "name": "update_new_version_badge",
+      "value": "New version"
+    },
+    {
+      "name": "update_available_message",
+      "value": "Version v%s is available. Update to stay compatible with the service. Some features may stop working on older versions."
+    },
+    {
+      "name": "update_ignore_version",
+      "value": "Ignore this version"
+    },
+    {
+      "name": "update_ignore_failed",
+      "value": "Unable to save your preference. Please try again."
+    },
+    {
+      "name": "update_download_unavailable",
+      "value": "The update download is not available yet. Please try again later."
+    },
+    {
+      "name": "update_now",
+      "value": "Update now"
+    },
+    {
+      "name": "update_retry",
+      "value": "Try again"
+    },
+    {
+      "name": "update_downloading_title",
+      "value": "Downloading update"
+    },
+    {
+      "name": "update_downloading_version",
+      "value": "Downloading version v%s"
+    },
+    {
+      "name": "update_download_progress",
+      "value": "%d% · %s / %s"
+    },
+    {
+      "name": "update_download_progress_unknown",
+      "value": "%s downloaded"
+    },
+    {
+      "name": "update_cancel_download",
+      "value": "Cancel download"
+    },
+    {
+      "name": "update_preparing_install",
+      "value": "Preparing installation…"
+    },
+    {
+      "name": "update_download_failed",
+      "value": "The update could not be downloaded. Please try again."
+    },
+    {
+      "name": "update_up_to_date",
+      "value": "You are using the latest version."
+    },
+    {
+      "name": "update_check_failed",
+      "value": "Could not check for updates."
+    },
+    {
+      "name": "profile_official_service",
+      "value": "Official Service"
+    },
+    {
+      "name": "profile_self_hosted",
+      "value": "Self-host Service"
+    },
+    {
+      "name": "profile_sign_out",
+      "value": "Sign out"
+    },
+    {
+      "name": "profile_account_fallback",
+      "value": "Account"
+    },
+    {
+      "name": "profile_avatar_updating",
+      "value": "Updating avatar"
+    },
+    {
+      "name": "profile_avatar_change",
+      "value": "Tap to change avatar"
+    },
+    {
+      "name": "profile_account_id",
+      "value": "Account ID"
+    },
+    {
+      "name": "profile_role",
+      "value": "Role"
+    },
+    {
+      "name": "profile_role_admin",
+      "value": "Admin"
+    },
+    {
+      "name": "profile_role_member",
+      "value": "Member"
+    },
+    {
+      "name": "profile_change_password",
+      "value": "Change password"
+    },
+    {
+      "name": "profile_new_password",
+      "value": "New password"
+    },
+    {
+      "name": "profile_confirm_password",
+      "value": "Confirm password"
+    },
+    {
+      "name": "profile_password_min_length",
+      "value": "Use at least 8 characters."
+    },
+    {
+      "name": "profile_password_updated",
+      "value": "Password updated."
+    },
+    {
+      "name": "profile_password_update_failed",
+      "value": "Could not update password."
+    },
+    {
+      "name": "profile_avatar_updated",
+      "value": "Avatar updated."
+    },
+    {
+      "name": "profile_avatar_update_failed",
+      "value": "Could not update avatar."
+    },
+    {
+      "name": "profile_avatar_read_failed",
+      "value": "Could not read that image."
+    },
+    {
+      "name": "profile_account_load_failed",
+      "value": "Could not load account."
+    },
+    {
+      "name": "profile_sign_out_title",
+      "value": "Sign out?"
+    },
+    {
+      "name": "profile_sign_out_body",
+      "value": "You will need to sign in again to use this server."
+    },
+    {
+      "name": "profile_nickname",
+      "value": "Nickname"
+    },
+    {
+      "name": "profile_email",
+      "value": "Email"
+    },
+    {
+      "name": "profile_email_unbound",
+      "value": "Not linked"
+    },
+    {
+      "name": "profile_updated",
+      "value": "Account updated."
+    },
+    {
+      "name": "profile_update_failed",
+      "value": "Could not update account."
+    },
+    {
+      "name": "profile_edit_nickname",
+      "value": "Edit nickname"
+    },
+    {
+      "name": "profile_bind_email",
+      "value": "Link or change email"
+    },
+    {
+      "name": "profile_loading_email_policy",
+      "value": "Loading email settings…"
+    },
+    {
+      "name": "profile_retry",
+      "value": "Retry"
+    },
+    {
+      "name": "profile_email_code",
+      "value": "Email verification code"
+    },
+    {
+      "name": "profile_send_code",
+      "value": "Send verification code"
+    },
+    {
+      "name": "profile_resend_in",
+      "value": "Resend in %d s"
+    },
+    {
+      "name": "profile_code_sent",
+      "value": "Code sent. Check your inbox."
+    },
+    {
+      "name": "profile_email_verification_disabled",
+      "value": "This service accepts email without a verification code."
+    },
+    {
+      "name": "profile_email_status",
+      "value": "Email status"
+    },
+    {
+      "name": "profile_email_verified",
+      "value": "Verified"
+    },
+    {
+      "name": "profile_email_unverified",
+      "value": "Not verified"
+    },
+    {
+      "name": "home_sessions_title",
+      "value": "Sessions"
+    },
+    {
+      "name": "home_mark_all_read",
+      "value": "Mark all as read"
+    },
+    {
+      "name": "workspace_home",
+      "value": "Home directory"
+    },
+    {
+      "name": "workspace_resolving_home",
+      "value": "Resolving home directory…"
+    },
+    {
+      "name": "workspace_resolve_failed",
+      "value": "Could not resolve this directory. Try again."
+    },
+    {
+      "name": "workspace_browse",
+      "value": "Browse filesystem"
+    },
+    {
+      "name": "workspace_selected",
+      "value": "Selected"
+    },
+    {
+      "name": "project_name_adjusted",
+      "value": "This name was just taken. An available name is ready; confirm it and submit again."
+    },
+    {
+      "name": "project_workspace_conflict_title",
+      "value": "This directory already belongs to a project"
+    },
+    {
+      "name": "project_workspace_conflict_message",
+      "value": "This directory belongs to “%s”. Continuing will rename it to “%s” and preserve its sessions and settings."
+    },
+    {
+      "name": "project_rename_existing",
+      "value": "Continue and rename"
+    },
+    {
+      "name": "archived_all_projects",
+      "value": "All projects"
+    },
+    {
+      "name": "archived_unknown_project",
+      "value": "Unknown project"
+    },
+    {
+      "name": "archived_empty",
+      "value": "No archived sessions"
+    },
+    {
+      "name": "archived_retry",
+      "value": "Retry"
+    },
+    {
+      "name": "archived_refresh",
+      "value": "Refresh"
+    },
+    {
+      "name": "archived_restore",
+      "value": "Restore"
+    },
+    {
+      "name": "archived_restore_project",
+      "value": "Restore all"
+    },
+    {
+      "name": "archived_restoring",
+      "value": "Restoring…"
+    },
+    {
+      "name": "archived_restored",
+      "value": "Sessions restored"
+    },
+    {
+      "name": "archived_restore_failed",
+      "value": "Could not restore sessions. Try again."
+    },
+    {
+      "name": "archived_view_now",
+      "value": "View now"
+    },
+    {
+      "name": "archived_load_more",
+      "value": "Load more"
+    },
+    {
+      "name": "archived_loading_more",
+      "value": "Loading…"
+    },
+    {
+      "name": "archived_time_unavailable",
+      "value": "Time unavailable"
+    },
+    {
+      "name": "archived_loaded_count",
+      "value": "%d sessions loaded"
+    },
+    {
+      "name": "archive_page_hint",
+      "value": "Archived sessions stay here. Restore one to continue the conversation."
+    },
+    {
+      "name": "archive_filter_label",
+      "value": "Filter by project"
+    },
+    {
+      "name": "archive_filter_expanded",
+      "value": "Project filter expanded"
+    },
+    {
+      "name": "archive_filter_collapsed",
+      "value": "Project filter collapsed"
+    },
+    {
+      "name": "archive_archived_at",
+      "value": "Archived %s"
+    },
+    {
+      "name": "archive_loading",
+      "value": "Loading archived sessions…"
+    },
+    {
+      "name": "archive_load_failed",
+      "value": "Could not load archived sessions"
+    },
+    {
+      "name": "archive_retry_hint",
+      "value": "Check your connection and try again."
+    },
+    {
+      "name": "archive_empty_hint",
+      "value": "Sessions you archive will appear here, ready to restore whenever you need them."
+    },
+    {
+      "name": "archive_project_empty",
+      "value": "No archived sessions in this project"
+    },
+    {
+      "name": "archive_project_empty_hint",
+      "value": "Choose another project to find archived conversations."
+    },
+    {
+      "name": "archive_show_all_projects",
+      "value": "View all projects"
+    },
+    {
+      "name": "archive_page_empty",
+      "value": "No sessions to display on this page"
+    },
+    {
+      "name": "archive_more_hint",
+      "value": "Load more to see earlier archived sessions."
+    },
+    {
+      "name": "archive_more_failed",
+      "value": "Could not load more sessions"
+    },
+    {
+      "name": "archive_restore_session_description",
+      "value": "Restore session: %s"
+    },
+    {
+      "name": "archive_restore_project_description",
+      "value": "Restore all archived sessions in %s"
+    },
+    {
+      "name": "device_pairing_connection_title",
+      "value": "Connect your device"
+    },
+    {
+      "name": "device_pairing_connection_description",
+      "value": "Connect your device using the desktop app or CLI."
+    },
+    {
+      "name": "device_pairing_desktop_title",
+      "value": "Connect using the desktop app"
+    },
+    {
+      "name": "device_pairing_desktop_description",
+      "value": "For the best experience on Windows or macOS, connect using the desktop app."
+    },
+    {
+      "name": "device_pairing_cli_title",
+      "value": "Connect using the command line"
+    },
+    {
+      "name": "device_pairing_cli_description",
+      "value": "Connect your device with a single command. Suggested for Linux."
+    },
+    {
+      "name": "device_pairing_desktop_install_title",
+      "value": "Connect using the desktop app"
+    },
+    {
+      "name": "device_pairing_desktop_install_description",
+      "value": "Download the Agents Anywhere desktop app from the official download page, then follow the steps below to connect."
+    },
+    {
+      "name": "device_pairing_desktop_download_title",
+      "value": "Download and install"
+    },
+    {
+      "name": "device_pairing_desktop_install_step_download",
+      "value": "Choose the Windows or macOS installer for your device on the official download page, then download and install it."
+    },
+    {
+      "name": "device_pairing_desktop_login_title",
+      "value": "Open the app and sign in"
+    },
+    {
+      "name": "device_pairing_desktop_install_step_login",
+      "value": "Open the desktop app, connect to the service you are using here, and sign in with the same account."
+    },
+    {
+      "name": "device_pairing_desktop_online_title",
+      "value": "Wait for your device to connect"
+    },
+    {
+      "name": "device_pairing_desktop_install_step_online",
+      "value": "After sign-in, the desktop app connects this device automatically. Return to this app to find and use it in the Devices list."
+    },
+    {
+      "name": "device_pairing_command_warning_title",
+      "value": "Use the command line?"
+    },
+    {
+      "name": "device_pairing_command_warning_description",
+      "value": "This method requires some technical experience. You should be comfortable using the terminal and uv / uvx command-line tools."
+    },
+    {
+      "name": "device_pairing_command_warning_fallback",
+      "value": "On Windows or macOS, we recommend the desktop app for easier setup and everyday use."
+    },
+    {
+      "name": "device_pairing_command_warning_desktop",
+      "value": "Use the desktop app"
+    },
+    {
+      "name": "device_pairing_command_warning_confirm",
+      "value": "Continue with the command line"
+    },
+    {
+      "name": "device_pairing_name_title",
+      "value": "Name your device"
+    },
+    {
+      "name": "device_pairing_name_description",
+      "value": "Give your device a recognizable name, then choose a pairing method."
+    },
+    {
+      "name": "device_pairing_name_label",
+      "value": "Device name"
+    },
+    {
+      "name": "device_pairing_name_placeholder",
+      "value": "e.g. amber-finch"
+    },
+    {
+      "name": "device_pairing_method_title",
+      "value": "Choose pairing method"
+    },
+    {
+      "name": "device_pairing_method_description",
+      "value": "Choose how to connect %s to your account."
+    },
+    {
+      "name": "device_pairing_pair_code_title",
+      "value": "Use pair code"
+    },
+    {
+      "name": "device_pairing_pair_code_description",
+      "value": "Run a command on your device, then enter the generated 6-digit pairing code here."
+    },
+    {
+      "name": "device_pairing_token_title",
+      "value": "Use a token"
+    },
+    {
+      "name": "device_pairing_token_description",
+      "value": "Run a command containing a token on your device to connect directly."
+    },
+    {
+      "name": "device_pairing_command_step_title",
+      "value": "Connect using a token"
+    },
+    {
+      "name": "device_pairing_command_step_description",
+      "value": "Run this command in the terminal on %s to connect it to your account automatically."
+    },
+    {
+      "name": "device_pairing_linux_session_warning",
+      "value": "Keep the terminal running. Closing it takes your device offline. On Linux, you can use screen to keep the session running in the background:"
+    },
+    {
+      "name": "device_pairing_linux_detach_hint",
+      "value": "Once your device is online, press Ctrl-A then D in screen to detach while keeping it running. To return to the session, run:"
+    },
+    {
+      "name": "device_pairing_waiting_online",
+      "value": "Waiting for device to come online..."
+    },
+    {
+      "name": "device_pairing_code_step_title",
+      "value": "Pair with code"
+    },
+    {
+      "name": "device_pairing_code_step_description",
+      "value": "Enter the pairing code from %s below to finish connecting."
+    },
+    {
+      "name": "device_pairing_pair_command",
+      "value": "Run on your device"
+    },
+    {
+      "name": "device_pairing_pair_command_hint",
+      "value": "Run the command, then enter the 6-digit pairing code shown in the terminal below."
+    },
+    {
+      "name": "device_pairing_code_label",
+      "value": "Pair code from device"
+    },
+    {
+      "name": "device_pairing_confirming",
+      "value": "Confirming pairing, waiting for device..."
+    },
+    {
+      "name": "device_pairing_claim",
+      "value": "Claim"
+    },
+    {
+      "name": "device_pairing_exit_title",
+      "value": "Device already created"
+    },
+    {
+      "name": "device_pairing_exit_description",
+      "value": "The device %s has been created but is not yet paired. If you no longer need it, please delete it manually from the Devices list."
+    },
+    {
+      "name": "device_pairing_continue_pairing",
+      "value": "Continue pairing"
+    },
+    {
+      "name": "device_pairing_close_anyway",
+      "value": "Close anyway"
+    },
+    {
+      "name": "device_pairing_copy_command",
+      "value": "Copy command"
+    },
+    {
+      "name": "device_pairing_errors_create_failed",
+      "value": "Failed to create connector."
+    },
+    {
+      "name": "device_pairing_errors_claim_failed",
+      "value": "Failed to claim pairing."
+    },
+    {
+      "name": "device_pairing_errors_copy_failed",
+      "value": "Copy failed. Please select the command and copy it manually."
+    },
+    {
+      "name": "device_pairing_download",
+      "value": "Open download page"
+    },
+    {
+      "name": "device_pairing_exit_waiting_description",
+      "value": "Pairing will keep waiting for %s to come online after you leave this page and update the Devices list. If you no longer need this device, delete it from the Devices list."
+    },
+    {
+      "name": "device_pairing_open_download_failed",
+      "value": "Could not open the download page. Please try again."
+    }
+  ]
+}

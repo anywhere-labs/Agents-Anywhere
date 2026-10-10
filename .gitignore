@@ -11,6 +11,10 @@ web-next/out/
 .env.local
 .env.*.local
 
+# hvigor's build cache/logs, created at the repository root when a HarmonyOS
+# build runs with the root as its working directory.
+.hvigor/
+
 # Dependency lockfiles are intentionally not committed in this repo.
 # Cross-platform package managers rewrite them frequently, creating noise.
 uv.lock

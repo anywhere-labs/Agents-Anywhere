@@ -1,0 +1,102 @@
+{
+  "module": {
+    "name": "entry",
+    "type": "entry",
+    "description": "$string:module_desc",
+    "mainElement": "EntryAbility",
+    "deviceTypes": [
+      "phone",
+      "tablet",
+      "2in1"
+    ],
+    "deliveryWithInstall": true,
+    "installationFree": false,
+    "pages": "$profile:main_pages",
+    /*
+     * INTERNET covers every HTTP/WebSocket call. GET_NETWORK_INFO backs the
+     * connectivity monitoring that triggers an immediate realtime reconnect,
+     * mirroring the Android ConnectivityManager callback.
+     *
+     * CAMERA is declared for the same reason as Android's
+     * `android.permission.CAMERA`: the QR sign-in screen renders its own
+     * viewfinder through ScanKit `customScan`. It is user_grant, so the reason
+     * text below is what the system dialog shows; the wording is the existing
+     * `qr_camera_access_needed` copy Android already displays in the same
+     * screen, not a new sentence.
+     */
+    "requestPermissions": [
+      {
+        "name": "ohos.permission.INTERNET"
+      },
+      {
+        "name": "ohos.permission.GET_NETWORK_INFO"
+      },
+      {
+        "name": "ohos.permission.CAMERA",
+        "reason": "$string:qr_camera_access_needed",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      }
+    ],
+    "abilities": [
+      {
+        "name": "EntryAbility",
+        "srcEntry": "./ets/entryability/EntryAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindowIcon": "$media:startIcon",
+        "startWindowBackground": "$color:start_window_background",
+        "exported": true,
+        "skills": [
+          {
+            "entities": [
+              "entity.system.home"
+            ],
+            "actions": [
+              "action.system.home"
+            ]
+          },
+          {
+            /*
+             * OAuth PKCE redirect target. Kept byte-identical to the Android
+             * intent-filter and the iOS/desktop registered redirect so the
+             * server-side client registration keeps working unchanged.
+             */
+            "entities": [
+              "entity.system.browsable"
+            ],
+            "actions": [
+              "ohos.want.action.viewData"
+            ],
+            "uris": [
+              {
+                "scheme": "agents-anywhere",
+                "host": "oauth",
+                "pathStartWith": "callback"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "extensionAbilities": [
+      {
+        "name": "EntryBackupAbility",
+        "srcEntry": "./ets/entrybackupability/EntryBackupAbility.ets",
+        "type": "backup",
+        "exported": false,
+        "metadata": [
+          {
+            "name": "ohos.extension.backup",
+            "resource": "$profile:backup_config"
+          }
+        ]
+      }
+    ]
+  }
+}

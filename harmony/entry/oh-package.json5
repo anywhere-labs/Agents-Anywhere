@@ -1,0 +1,9 @@
+{
+  "name": "entry",
+  "version": "2.0.0",
+  "description": "Agents Anywhere HarmonyOS entry module.",
+  "main": "",
+  "author": "Agents Anywhere",
+  "license": "MIT",
+  "dependencies": {}
+}
