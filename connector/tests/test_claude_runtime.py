@@ -2153,7 +2153,9 @@ async def _test_claude_runtime_lists_models_reported_by_claude_code() -> None:
     ]
     assert catalog.revision == 1004
     default = catalog.models[0]
-    assert default.title == "Default (recommended)"
+    assert default.title == "Default (Opus 5.5, 1M context)"
+    assert default.metadata["cliDisplayName"] == "Default (recommended)"
+    assert catalog.models[1].title == "Opus 5.5 (1M context)"
     assert default.description == "Opus 5.5 with 1M context"
     assert default.metadata["source"] == "claude-code.initialize"
     assert default.metadata["resolvedModel"] == "claude-opus-5-5[1m]"
@@ -2220,7 +2222,8 @@ async def _test_claude_runtime_resolves_cli_selection_before_first_catalog_read(
             ClaudeSDKClient=_DiscoveryClientType(server_info={"models": _CLI_MODELS})
         )
     ).list_model_catalog(query="opus")
-    selection_id = listed.models[0].selection_id
+    # The default entry is titled with its Opus version and matches the query too.
+    selection_id = next(model for model in listed.models if model.id == "opus[1m]").selection_id
 
     client = _FakeClaudeClient(
         messages=[SimpleNamespace(type="result", session_id="claude_restart")]

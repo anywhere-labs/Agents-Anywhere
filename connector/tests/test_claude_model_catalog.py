@@ -18,7 +18,10 @@ from test_claude_runtime import (
 )
 
 from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
-from connector.runtimes.claude.domain.models import model_selection_from_selection_id
+from connector.runtimes.claude.domain.models import (
+    claude_model_catalog,
+    model_selection_from_selection_id,
+)
 from connector.runtimes.claude.runtime import ClaudeRuntime
 from connector.server.protocol import protocol_selection_id
 
@@ -293,3 +296,56 @@ def test_unknown_cli_selection_refreshes_after_discovery_ttl(initial_failure) ->
             await runtime.stop()
 
     asyncio.run(run())
+
+
+def test_cli_model_titles_show_version_and_context_like_claude_code() -> None:
+    # Shapes Claude Code 2.1 reports at initialize: aliases are labelled by family only.
+    cli_models = [
+        {"value": "default", "displayName": "Default (recommended)", "resolvedModel": "claude-opus-5-5",
+         "description": "Use the default model (currently Opus 5.5) · $4/$20 per Mtok"},
+        {"value": "opus[1m]", "displayName": "Opus (1M context)", "resolvedModel": "claude-opus-5-5[1m]",
+         "description": "Opus 5.5 for long sessions · $4/$20 per Mtok"},
+        {"value": "fable", "displayName": "Fable", "resolvedModel": "claude-fable-5-1",
+         "description": "Fable 5.1 · Most capable for your hardest and longest-running tasks"},
+        {"value": "claude-sonnet-5[1m]", "displayName": "Sonnet 5", "resolvedModel": "claude-sonnet-5[1m]",
+         "description": "Newer version available · select Sonnet for Sonnet 5.5"},
+        {"value": "haiku", "displayName": "Haiku", "resolvedModel": "claude-haiku-4-5-20251001"},
+        {"value": "sonnet", "displayName": "Sonnet", "description": "Sonnet 5.5 · Efficient for routine tasks"},
+        # A gateway model whose description happens to name a Claude version stays unlabelled.
+        {"value": "opus", "displayName": "Opus", "resolvedModel": "deepseek-v4",
+         "description": "Opus 5.5 · routed through the team gateway"},
+        {"value": "claude-next", "displayName": "Next", "description": "Newer version available · select Sonnet for Sonnet 5.5"},
+        {"value": "local-model"},
+        # Bedrock and Vertex ids, current and version-first naming.
+        {"value": "bedrock-opus", "displayName": "Opus", "resolvedModel": "us.anthropic.claude-opus-4-1-20250805-v1:0"},
+        {"value": "bedrock-sonnet", "displayName": "Sonnet", "resolvedModel": "global.anthropic.claude-sonnet-4-5-20250929-v1:0"},
+        {"value": "vertex-opus", "displayName": "Opus", "resolvedModel": "claude-opus-4-1@20250805"},
+        {"value": "vertex-opus-4", "displayName": "Opus", "resolvedModel": "claude-opus-4@20250514"},
+        {"value": "legacy-sonnet", "displayName": "Sonnet", "resolvedModel": "claude-3-5-sonnet-20241022"},
+        {"value": "bedrock-haiku", "displayName": "Haiku", "resolvedModel": "anthropic.claude-3-haiku-20240307-v1:0"},
+    ]
+
+    models = claude_model_catalog(revision=1, cli_models=cli_models).models
+
+    assert [model.title for model in models] == [
+        "Default (Opus 5.5)",
+        "Opus 5.5 (1M context)",
+        "Fable 5.1",
+        "Sonnet 5 (1M context)",
+        "Haiku 4.5",
+        "Sonnet 5.5",
+        "Opus",
+        "Next",
+        "local-model",
+        "Opus 4.1",
+        "Sonnet 4.5",
+        "Opus 4.1",
+        "Opus 4",
+        "Sonnet 3.5",
+        "Haiku 3",
+    ]
+    assert models[1].metadata["cliDisplayName"] == "Opus (1M context)"
+    assert models[1].description == "Opus 5.5 for long sessions · $4/$20 per Mtok"
+    assert "cliDisplayName" not in models[6].metadata
+    # Titles are display only: selections still carry Claude Code's model values.
+    assert model_selection_from_selection_id(models[1].selection_id, cli_models=cli_models).model_id == "opus[1m]"
