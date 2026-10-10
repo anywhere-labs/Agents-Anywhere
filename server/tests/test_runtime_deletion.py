@@ -490,7 +490,10 @@ def test_deleted_single_instance_can_be_reconfigured_without_connector_restart(
 
 
 def test_single_runtime_limit_only_rejects_start_and_releases_after_stop(connector_api):
-    client, _, headers, device, first_id, supervisor = connector_api
+    client, rpc, headers, device, first_id, supervisor = connector_api
+    # Server allows two saved configurations; the Connector provider still runs one.
+    rpc.discovery = _v2_discovery(instance_policy="multiple", max_instances=2)
+    _discover_types(client, device, headers)
     first_url = f"/connectors/{device}/runtimes/{first_id}"
     first = client.put(f"{first_url}/active", headers=headers, json={"active": True})
     assert first.status_code == 200, first.text

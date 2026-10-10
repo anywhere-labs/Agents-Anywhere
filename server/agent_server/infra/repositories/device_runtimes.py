@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import case, delete, insert, or_, select, update
+from sqlalchemy import case, delete, func, insert, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from agent_server.core.device_runtime import RuntimeTypeDescriptor
@@ -237,10 +237,27 @@ class DeviceRuntimeRepositoryMixin:
         now = utc_now()
         try:
             async with self._engine.begin() as conn:
+                # This no-op write serializes policy checks on SQLite and locks
+                # the type row on PostgreSQL before counting existing instances.
+                locked = await conn.execute(
+                    update(runtime_types_t)
+                    .where(
+                        runtime_types_t.c.connector_id == connector_id,
+                        runtime_types_t.c.runtime_type == runtime_type,
+                    )
+                    .values(updated_at=runtime_types_t.c.updated_at)
+                )
+                if locked.rowcount == 0:
+                    raise KeyError(runtime_type)
+
                 type_row = (
                     (
                         await conn.execute(
-                            select(runtime_types_t.c.present)
+                            select(
+                                runtime_types_t.c.present,
+                                runtime_types_t.c.instance_policy,
+                                runtime_types_t.c.max_instances,
+                            )
                             .join(
                                 connectors_t,
                                 connectors_t.c.id == runtime_types_t.c.connector_id,
@@ -262,8 +279,24 @@ class DeviceRuntimeRepositoryMixin:
                         "runtime type is not currently present on the connector"
                     )
 
-                # The Connector enforces provider limits when starting native
-                # runtimes; saved configurations do not consume running slots.
+                current_count = (
+                    await conn.execute(
+                        select(func.count())
+                        .select_from(device_runtimes_t)
+                        .where(
+                            device_runtimes_t.c.connector_id == connector_id,
+                            device_runtimes_t.c.runtime_type == runtime_type,
+                        )
+                    )
+                ).scalar_one()
+                max_instances = (
+                    1
+                    if type_row["instance_policy"] == "single"
+                    else type_row["max_instances"]
+                )
+                if max_instances is not None and current_count >= max_instances:
+                    raise ValueError("runtime instance limit reached")
+
                 await conn.execute(
                     insert(device_runtimes_t).values(
                         connector_id=connector_id,

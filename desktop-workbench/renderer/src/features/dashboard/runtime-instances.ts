@@ -88,10 +88,13 @@ export function mergeRuntimeTypes(
 
 export function runtimeTypeCanCreateInstance(
   runtimeType: RuntimeTypeView,
-  _runtimes: readonly DeviceRuntimeView[],
+  runtimes: readonly DeviceRuntimeView[],
 ): boolean {
-  // Provider limits apply when starting a runtime, not when saving its config.
-  return runtimeType.present && runtimeType.schema !== null
+  if (!runtimeType.present || runtimeType.schema === null) return false
+  if (reconfigurableRuntimeInstance(runtimeType, runtimes)) return true
+  const current = runtimes.filter((runtime) => runtime.runtimeType === runtimeType.runtimeType).length
+  if (runtimeType.instancePolicy === "single" && current >= 1) return false
+  return runtimeType.maxInstances === null || current < runtimeType.maxInstances
 }
 
 export function configuredRuntimeInstances(
@@ -118,22 +121,6 @@ export function addableRuntimeTypes(
   runtimes: readonly DeviceRuntimeView[],
 ): RuntimeTypeView[] {
   return runtimeTypes.filter((runtimeType) => runtimeTypeCanCreateInstance(runtimeType, runtimes))
-}
-
-/**
- * Runtime types offered by quick setup (onboarding and the post-pairing dialog).
- * Those surfaces list configured instances alongside addable types, and their
- * quick add reuses an existing configured instance instead of creating another.
- * A type that already has a configured instance is therefore shown only once, as
- * that instance. Additional named instances are created from the device page.
- */
-export function setupAddableRuntimeTypes(
-  runtimeTypes: readonly RuntimeTypeView[],
-  runtimes: readonly DeviceRuntimeView[],
-): RuntimeTypeView[] {
-  const configuredTypes = new Set(configuredRuntimeInstances(runtimes).map((runtime) => runtime.runtimeType))
-  return addableRuntimeTypes(runtimeTypes, runtimes)
-    .filter((runtimeType) => !configuredTypes.has(runtimeType.runtimeType))
 }
 
 export function reconfigurableRuntimeInstance(
