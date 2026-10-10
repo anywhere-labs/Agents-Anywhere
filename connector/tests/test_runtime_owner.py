@@ -174,8 +174,8 @@ def test_state_lock_excludes_a_socket_that_has_not_started_listening(tmp_path):
 def test_lock_ports_follow_the_shared_contract():
     # desktop-workbench/electron/machine-state-lock.test.ts pins the same ports.
     assert runtime_owner._lock_ports("aa-machine-state-v1\n/home/me/.agents-anywhere/connector-runtime.json") == [
-        54028, 55052, 56076, 57100, 58124, 59148, 60172, 61196,
-        62220, 63244, 64268, 65292, 49932, 50956, 51980, 53004,
+        21260, 22284, 23308, 24332, 25356, 26380, 27404, 28428,
+        29452, 30476, 31500, 32524, 17164, 18188, 19212, 20236,
     ]
 
 

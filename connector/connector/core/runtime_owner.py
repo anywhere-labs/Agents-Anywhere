@@ -48,10 +48,12 @@ def state_lock_ports(path: str | Path) -> list[int]:
 
 
 def _lock_ports(key: str) -> list[int]:
-    # 16 candidates spread evenly over the range, far apart from the 100-port blocks Windows reserves.
+    # 16384-32767 lies below every default dynamic port range (Linux 32768+, Windows and macOS
+    # 49152+), so ephemeral client sockets and listen(0) servers never land on a lock port.
+    # The 16 candidates are spread evenly, far apart from the 100-port blocks Windows reserves.
     digest = hashlib.sha256(key.encode()).digest()
     base = int.from_bytes(digest[:2], "big") % 16384
-    return [49152 + (base + 1024 * k) % 16384 for k in range(16)]
+    return [16384 + (base + 1024 * k) % 16384 for k in range(16)]
 
 
 def _claim_state_lock(ports: list[int], deadline: float) -> socket.socket:
