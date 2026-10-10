@@ -38,7 +38,7 @@ class IngestTransport(httpx.AsyncBaseTransport):
 
     async def ingest(self, request):
         assert request.url.path == "/api/v2/connector/ingest"
-        notices = json.loads(request.content)["notifications"]
+        notices = json.loads(await request.aread())["notifications"]
         response = await self.inner.handle_async_request(request)
         await response.aread()
         assert response.status_code == 200, response.text
