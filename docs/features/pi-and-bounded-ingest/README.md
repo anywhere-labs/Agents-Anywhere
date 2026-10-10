@@ -151,4 +151,5 @@
   审批时中断挂起 4 项 Connector 问题。WSL 完整套件 1282 passed、3 skipped。
 - 补测 Linux（WSL）与 macOS 27 的真实联调、Android 流式中断、Desktop 开发版（连接正式
   服务器、本机真实 Pi）；Desktop 联调中修复 Codex 运行时探测阻塞事件循环导致 Connector
-  离线的问题。iOS 待 Mac 安装 Xcode 后联调，见 [联调记录](aa-e2e-verification.md)。
+  离线的问题。iOS 在 Xcode 27 的模拟器上联调通过（客户端自身的中断后状态刷新问题另记），
+  见 [联调记录](aa-e2e-verification.md)。
