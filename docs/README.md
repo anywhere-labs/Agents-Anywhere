@@ -15,7 +15,8 @@
 | Android 构建 | [Android](../android/README.md) |
 | 架构和 API | [Server 架构](server-architecture.md)、[API](api/README.md) |
 | Runtime 和本机协议 | [Runtime protocol](runtime-protocol/README.md)、[本机协议](../contracts/local-machine/2.0/README.md) |
+| DSH 慢速历史上传 | [实现与验证](dsh-slow-upload.md)、[2.1.0 配套说明（未发布）](releases/2.1.0.md) |
 
-当前产品版本为 2.0，开发主线为 `main`。API 路径使用 `/api/v2`，数据库修订号独立管理，版本号含义见[版本号规则](versioning.md)。已发布安装包的功能范围见发布说明。
+当前开发版本为 2.1，开发主线为 `main`。API 路径使用 `/api/v2`，数据库修订号独立管理，版本号含义见[版本号规则](versioning.md)。已发布安装包的功能范围见发布说明。
 
 `docs/migrations/main-to-v2/` 保留早期迁移设计与历史基线。其旧版本号、移动端完成度和 Redis 策略不能替代当前升级指南。带 proposal、plan、target、gap 的文档描述设计或特定时间点的差距，使用前应与源码和契约核对。

@@ -17,7 +17,7 @@ from connector.runtime_protocol import (
     SessionNotice,
     SessionSourceObservation,
 )
-from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtime_protocol.host import RuntimeHostClient, UploadProgress
 from connector.server.runtime_rpc_payloads import (
     DeferredServerPayload,
     capability_set_payload,
@@ -43,7 +43,7 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         notifier: BackendNotifier,
         attachment_downloader: AttachmentDownloader,
         sync_state_store: SyncStateStore | None = None,
-        ingest_notifications: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
+        ingest_notifications: Callable[..., Awaitable[None]] | None = None,
         *,
         defer_payload_projection: bool = False,
     ) -> None:
@@ -74,7 +74,8 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         return self._runtime_storage.flush() if self._runtime_storage is not None else False
 
     async def publish_runtime_notifications(
-        self, runtime: str, notifications: list[dict[str, Any]], *, runtime_id: str | None = None
+        self, runtime: str, notifications: list[dict[str, Any]], *, runtime_id: str | None = None,
+        on_progress: UploadProgress | None = None,
     ) -> None:
         if self._ingest_notifications is None:
             raise RuntimeError("Synchronous notification ingestion is unavailable")
@@ -87,7 +88,8 @@ class ConnectorRuntimeHost(RuntimeHostClient):
                 raise ValueError("Invalid runtime notification")
             params = {**notice["params"], "runtime": runtime, "runtimeId": runtime_id or runtime}
             bound.append({"method": notice["method"], "params": server_payload_without_turn_data(params)})
-        await self._ingest_notifications(bound)
+        kwargs = {"on_progress": on_progress} if on_progress is not None else {}
+        await self._ingest_notifications(bound, **kwargs)
 
     @property
     def connector_id(self) -> str:

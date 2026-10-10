@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
-from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtime_protocol.host import RuntimeHostClient, UploadProgress
 from connector.runtime_protocol.instance_models import (
     RuntimeInstanceSpec,
     RuntimeSourceKey,
@@ -194,10 +194,12 @@ class RuntimeInstanceHost(RuntimeHostClient):
         return f"{self.connector_id}:{self.instance.runtime_type}:{namespace}"
 
     async def publish_runtime_notifications(
-        self, runtime: str, notifications: list[dict[str, Any]], *, runtime_id: str | None = None
+        self, runtime: str, notifications: list[dict[str, Any]], *, runtime_id: str | None = None,
+        on_progress: UploadProgress | None = None,
     ) -> None:
         self._validate_native_runtime(runtime)
-        await self.base.publish_runtime_notifications(runtime, notifications, runtime_id=self.instance.runtime_id)
+        kwargs = {"on_progress": on_progress} if on_progress is not None else {}
+        await self.base.publish_runtime_notifications(runtime, notifications, runtime_id=self.instance.runtime_id, **kwargs)
 
     async def session_meta_upsert(
         self,

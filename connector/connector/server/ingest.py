@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
 
 from connector.logging import logger
+from connector.runtime_protocol.host import UploadProgress
 from connector.server.auth import ConnectorAuthenticationError
 from connector.server.errors import ConnectorNetworkError
 from connector.server.urls import api_v2_url
@@ -18,6 +20,7 @@ from connector.server.urls import api_v2_url
 # over the connector WebSocket.
 FLUSH_WINDOW_SECONDS = 0.02
 FLUSH_MAX = 64
+UPLOAD_CHUNK_BYTES = 64 * 1024
 
 AccessTokenProvider = Callable[[bool], Awaitable[str]]
 HttpClientGetter = Callable[[], httpx.AsyncClient | None]
@@ -68,11 +71,11 @@ class ConnectorIngestClient:
             self.close(self._closed)
             raise self._closed
 
-    async def ingest_notifications(self, notifications: list[dict[str, Any]]) -> None:
+    async def ingest_notifications(self, notifications: list[dict[str, Any]], *, on_progress: UploadProgress | None = None) -> None:
         """Send a batch synchronously, bypassing the flush queue."""
         if not notifications:
             return
-        await self.post_batch(list(notifications))
+        await self.post_batch(list(notifications), on_progress=on_progress)
 
     async def flush_loop(self) -> None:
         """Keep a failed batch at the head; cancellation leaves it recoverable.
@@ -118,7 +121,7 @@ class ConnectorIngestClient:
         while len(self._inflight) < FLUSH_MAX and not self._notify_queue.empty():
             self._inflight.append(self._notify_queue.get_nowait())
 
-    async def post_batch(self, notifications: list[dict[str, Any]]) -> None:
+    async def post_batch(self, notifications: list[dict[str, Any]], *, on_progress: UploadProgress | None = None) -> None:
         async with self._post_lock:
             self._posting = True
             try:
@@ -128,16 +131,16 @@ class ConnectorIngestClient:
                 remaining = len(self._inflight) + self._notify_queue.qsize()
                 while remaining:
                     self._collect_pending()
-                    await self._post_batch(self._inflight)
+                    await self._post_batch(self._inflight, on_progress=on_progress)
                     remaining = max(0, remaining - len(self._inflight))
                     self._inflight = []
-                await self._post_batch(notifications)
+                await self._post_batch(notifications, on_progress=on_progress)
             finally:
                 self._posting = False
                 if not self.has_pending:
                     self._available.clear()
 
-    async def _post_batch(self, notifications: list[dict[str, Any]]) -> None:
+    async def _post_batch(self, notifications: list[dict[str, Any]], *, on_progress: UploadProgress | None = None) -> None:
         if not notifications:
             return
         notifications = coalesce_timeline_item_upserts(notifications)
@@ -151,7 +154,7 @@ class ConnectorIngestClient:
         try:
             try:
                 response = await self._post_ingest_batch(
-                    client, access_token, notifications
+                    client, access_token, notifications, on_progress=on_progress
                 )
             except httpx.RequestError as exc:
                 raise ConnectorNetworkError(
@@ -164,7 +167,7 @@ class ConnectorIngestClient:
                 access_token = await self._access_token_provider(True)
                 try:
                     response = await self._post_ingest_batch(
-                        client, access_token, notifications
+                        client, access_token, notifications, on_progress=on_progress
                     )
                 except httpx.RequestError as exc:
                     raise ConnectorNetworkError(
@@ -188,7 +191,25 @@ class ConnectorIngestClient:
         client: httpx.AsyncClient,
         access_token: str,
         notifications: list[dict[str, Any]],
+        *, on_progress: UploadProgress | None = None,
     ) -> httpx.Response:
+        if on_progress is not None:
+            encoded = json.dumps({"notifications": notifications}, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+            async def body():
+                for offset in range(0, len(encoded), UPLOAD_CHUNK_BYTES):
+                    chunk = encoded[offset:offset + UPLOAD_CHUNK_BYTES]
+                    yield chunk
+                    # Resumption means the transport accepted the previous write.
+                    # This is liveness only; cloud acceptance still gates ACK/save.
+                    await on_progress(len(chunk))
+
+            return await client.post(
+                api_v2_url(self._server_url, "/connector/ingest"),
+                headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json", "Content-Length": str(len(encoded))},
+                content=body(),
+                timeout=60,
+            )
         return await client.post(
             api_v2_url(self._server_url, "/connector/ingest"),
             headers={"Authorization": f"Bearer {access_token}"},
