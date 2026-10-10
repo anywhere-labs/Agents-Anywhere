@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 import psutil
 
 from connector.core.json_rpc import JsonRpcError
+from connector.logging import logger
 
 if TYPE_CHECKING:
     from connector.core.config import ConnectorConfig
@@ -63,11 +64,14 @@ def _claim_state_lock(ports: list[int], deadline: float) -> socket.socket:
     the same port while the owner sits between bind() and listen(), which both breaks the
     exclusion and makes the next bind() fail with EINVAL.
 
-    EACCES means no writer can bind the port (a Windows excluded port range, or another
-    program's exclusive bind on 0.0.0.0), so every writer moves on to the same next candidate.
-    EADDRINUSE means another writer holds the lock there; later candidates must not be tried then.
+    EADDRINUSE cannot tell another writer from an unrelated program, so it is waited on and a
+    later candidate is never tried. EACCES comes from a reserved port or another program's
+    exclusive bind on 0.0.0.0; it refuses every writer alike, so all move on to the same next
+    candidate. A lock that cannot be taken fails the transaction: without it, two Connectors
+    starting together could both pass the ownership check.
     """
     while True:
+        refused = []
         for port in ports:
             lease = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             try:
@@ -75,20 +79,23 @@ def _claim_state_lock(ports: list[int], deadline: float) -> socket.socket:
                     lease.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
                 lease.bind(("127.0.0.1", port))
                 lease.listen()
-                return lease
             except OSError as exc:
                 lease.close()
                 if exc.errno == errno.EACCES:
+                    refused.append(port)
                     continue
                 if exc.errno != errno.EADDRINUSE:
                     raise
                 if time.monotonic() >= deadline:
                     raise RuntimeError("The local Connector record is busy. Please retry.") from exc
                 break
+            if refused:
+                logger.info("local Connector record lock ports {} refused binding (EACCES); locked port {} instead", refused, port)
+            return lease
         else:
+            hint = " On Windows, check `netsh int ipv4 show excludedportrange protocol=tcp`." if sys.platform == "win32" else ""
             raise RuntimeError(
-                "The operating system reserves every lock port of the local Connector record. "
-                "On Windows, check `netsh int ipv4 show excludedportrange protocol=tcp`."
+                f"Every lock port of the local Connector record refused binding (EACCES): {', '.join(map(str, ports))}.{hint}"
             )
         time.sleep(0.02)
 
@@ -169,12 +176,15 @@ def state_transaction(path: str | Path) -> Iterator[dict[str, Any]]:
     file = Path(path)
     with state_lock(file):
         state = read_state(file)
-        if state.get("legacyMachineMigrated") is True:
+        legacy = file.parent.parent / ".agentsanywhere" / "machine.json"
+        installation = legacy.parent / "desktop" / "install.json"
+        # Only a record with legacy files left to fold in needs the second lock;
+        # locking a path that does not exist would also create its directory.
+        if state.get("legacyMachineMigrated") is True or not (legacy.exists() or installation.exists()):
+            state["legacyMachineMigrated"] = True
             yield state
             _write(file, state)
             return
-        legacy = file.parent.parent / ".agentsanywhere" / "machine.json"
-        installation = legacy.parent / "desktop" / "install.json"
         with state_lock(legacy):
             machine, desktop = _json(legacy), _json(installation)
             if machine and machine.get("version") != 1:

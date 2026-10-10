@@ -38,6 +38,13 @@ const FIRST_RUN_TIMEOUT_MS = 15 * 60_000;
 const DEFAULT_RPC_TIMEOUT_MS = 30_000;
 const PYTHON_BUILDS_GITHUB = "https://github.com/astral-sh/python-build-standalone/releases/download";
 const UV_HTTP_TIMEOUT_SECONDS = "60";
+/** `exit` can arrive before stderr delivers the lines that explain it. */
+const OUTPUT_DRAIN_MS = 250;
+/** How much stderr a failed request quotes; uv and Python explain a failed launch there. */
+const RECENT_OUTPUT_LINES = 12;
+const RECENT_OUTPUT_LINE_LENGTH = 500;
+
+type RpcOutput = { lines: string[]; closed: Promise<void> };
 
 type ConnectorSupervisorOptions = {
   onOwnership?: (state: OwnershipState) => void;
@@ -68,6 +75,8 @@ type ConnectorLauncher = {
 export class ConnectorSupervisor {
   private rpcProcess: ChildProcessWithoutNullStreams | null = null;
   private rpcReader: readline.Interface | null = null;
+  /** The current RPC process's recent stderr, quoted when a request fails. */
+  private rpcOutput: RpcOutput | null = null;
   private processGroupId: number | null = null;
   private nextRequestId = 1;
   private readonly pending = new Map<number, PendingRequest>();
@@ -166,14 +175,18 @@ export class ConnectorSupervisor {
   }
 
   async acquireOwnership(): Promise<void> {
-    const timeoutMs = this.announceFirstRun();
     try {
+      const timeoutMs = this.announceFirstRun();
       await this.request("connector.acquireOwnership", undefined, { requiresConfig: false, timeoutMs });
       this.options.onOwnership?.({ status: "owned" });
     } catch (error) {
-      if (!(error instanceof ConnectorRpcError && error.ownershipConflict)) {
-        this.options.onOwnership?.({ status: "error", message: errorMessage(error) });
-      }
+      const conflict = error instanceof ConnectorRpcError && error.ownershipConflict;
+      // Every caller gets here, so rechecks and later acquisitions are logged too.
+      this.log({
+        level: conflict ? "WARNING" : "ERROR",
+        message: `Could not acquire Connector ownership: ${errorMessage(error)}`,
+      });
+      if (!conflict) this.options.onOwnership?.({ status: "error", message: errorMessage(error) });
       throw error;
     }
   }
@@ -326,15 +339,19 @@ export class ConnectorSupervisor {
     this.ensureRpcProcess(options.requiresConfig !== false);
     const child = this.rpcProcess;
     if (!child?.stdin.writable) throw new Error("Connector RPC is not available.");
+    const output = this.rpcOutput;
     const id = this.nextRequestId++;
     const payload = params === undefined
       ? { jsonrpc: "2.0", id, method }
       : { jsonrpc: "2.0", id, method, params };
+    const timeoutMs = options.timeoutMs ?? DEFAULT_RPC_TIMEOUT_MS;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`Connector RPC request timed out: ${method}`));
-      }, options.timeoutMs ?? 30_000);
+        // A launch still installing dependencies says so in its last output.
+        const message = `Connector RPC request timed out after ${Math.round(timeoutMs / 1_000)}s: ${method}`;
+        reject(new Error(withRecentOutput(message, output?.lines)));
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       child.stdin.write(`${JSON.stringify(payload)}\n`, "utf8", (error) => {
         if (!error) return;
@@ -367,23 +384,19 @@ export class ConnectorSupervisor {
     this.log(`Starting Connector RPC with ${launcher.description}`);
     this.rpcReader = readline.createInterface({ input: child.stdout });
     this.rpcReader.on("line", (line) => this.handleRpcLine(line));
-    child.stderr.on("data", (chunk: Buffer) => this.handleStderr(chunk));
+    // Whole lines only: uv writes one message in several chunks.
+    const lines: string[] = [];
+    const stderr = readline.createInterface({ input: child.stderr });
+    stderr.on("line", (line) => this.handleStderrLine(line, lines));
+    this.rpcOutput = { lines, closed: new Promise((resolve) => stderr.once("close", () => resolve())) };
     child.once("error", (error) => {
-      this.finalizeRpcProcess(child, error, `Connector RPC failed to start: ${error.message}`);
+      this.finalizeRpcProcess(child, `Connector RPC failed to start: ${error.message}`);
     });
     child.once("exit", (code, signal) => {
-      this.finalizeRpcProcess(
-        child,
-        new Error("Connector RPC exited."),
-        `Connector RPC exited${signal ? ` by ${signal}` : ""} with code ${code ?? "null"}`,
-      );
+      this.finalizeRpcProcess(child, `Connector RPC exited${signal ? ` by ${signal}` : ""} with code ${code ?? "null"}`);
     });
     child.once("close", (code, signal) => {
-      this.finalizeRpcProcess(
-        child,
-        new Error("Connector RPC closed."),
-        `Connector RPC closed${signal ? ` by ${signal}` : ""} with code ${code ?? "null"}`,
-      );
+      this.finalizeRpcProcess(child, `Connector RPC closed${signal ? ` by ${signal}` : ""} with code ${code ?? "null"}`);
     });
   }
 
@@ -424,29 +437,26 @@ export class ConnectorSupervisor {
     }
   }
 
-  private handleStderr(chunk: Buffer): void {
-    const text = chunk.toString("utf8").trimEnd();
-    for (const line of text.split(/\r?\n/)) {
-      if (!line) continue;
-      const plain = line.replace(/\u001b\[[0-9;]*m/g, "").trim();
-      const match = plain.match(/\|\s*(TRACE|DEBUG|INFO|SUCCESS|WARNING|ERROR|CRITICAL)\s*\|/);
-      const uvMessage = /^(Using CPython|Creating virtual environment|Removed virtual environment|Building |Built |Downloading |Downloaded |Installed |Uninstalled |Resolved |Prepared |Audited )/.test(plain);
-      this.log({ level: match?.[1] ?? (uvMessage ? "INFO" : "ERROR"), message: plain });
-    }
+  private handleStderrLine(line: string, recent: string[]): void {
+    const plain = line.replace(/\u001b\[[0-9;]*m/g, "").trim();
+    if (!plain) return;
+    recent.push(plain.length > RECENT_OUTPUT_LINE_LENGTH ? `${plain.slice(0, RECENT_OUTPUT_LINE_LENGTH)}…` : plain);
+    if (recent.length > RECENT_OUTPUT_LINES) recent.shift();
+    const match = plain.match(/\|\s*(TRACE|DEBUG|INFO|SUCCESS|WARNING|ERROR|CRITICAL)\s*\|/);
+    const uvMessage = /^(Using CPython|Creating virtual environment|Removed virtual environment|Building |Built |Downloading |Downloaded |Installed |Uninstalled |Resolved |Prepared |Audited )/.test(plain);
+    this.log({ level: match?.[1] ?? (uvMessage ? "INFO" : "ERROR"), message: plain });
   }
 
-  private finalizeRpcProcess(
-    child: ChildProcessWithoutNullStreams,
-    error: Error,
-    message: string,
-  ): void {
+  private finalizeRpcProcess(child: ChildProcessWithoutNullStreams, message: string): void {
     if (this.rpcProcess !== child) return;
     this.log(message);
     this.rpcReader?.close();
     this.rpcReader = null;
+    const output = this.rpcOutput;
+    this.rpcOutput = null;
     this.rpcProcess = null;
     this.processGroupId = null;
-    this.rejectPending(error);
+    this.rejectPending(message, output);
     this.mergeRuntimeState({ running: false, status: "stopped" });
     this.emitState();
     if (
@@ -534,7 +544,7 @@ export class ConnectorSupervisor {
       await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 1_000))]);
     }
     if (this.rpcProcess === child) {
-      this.finalizeRpcProcess(child, new Error("Connector RPC was terminated."), "Connector RPC was terminated.");
+      this.finalizeRpcProcess(child, "Connector RPC was terminated.");
     }
     this.suppressProcessRestart = previousSuppression;
   }
@@ -837,12 +847,21 @@ export class ConnectorSupervisor {
     this.log({ level: "ERROR", message: errorMessage(error) });
   }
 
-  private rejectPending(error: Error): void {
-    for (const request of this.pending.values()) {
-      clearTimeout(request.timer);
-      request.reject(error);
-    }
+  /**
+   * Fails the unanswered requests with the reason and the last stderr lines,
+   * which usually say why uv or Python stopped. Those lines can still be in
+   * flight when `exit` fires, so stderr gets a moment to close first.
+   */
+  private rejectPending(message: string, output: RpcOutput | null): void {
+    const requests = [...this.pending.values()];
     this.pending.clear();
+    for (const request of requests) clearTimeout(request.timer);
+    if (requests.length === 0) return;
+    const drained = new Promise<void>((resolve) => setTimeout(resolve, OUTPUT_DRAIN_MS));
+    void Promise.race([output?.closed ?? Promise.resolve(), drained]).then(() => {
+      const error = new Error(withRecentOutput(message, output?.lines));
+      for (const request of requests) request.reject(error);
+    });
   }
 
   private clearRestartTimer(): void {
@@ -885,4 +904,8 @@ function positiveNumber(value: number, name: string): number {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function withRecentOutput(message: string, lines: readonly string[] = []): string {
+  return lines.length > 0 ? `${message}\nLast output:\n${lines.join("\n")}` : message;
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { Server } from "node:net";
+import net, { Server } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
@@ -31,6 +31,23 @@ async function temporaryRecord(t: TestContext): Promise<{ filePath: string; port
   return { filePath: path.join(home, "connector-runtime.json"), ports };
 }
 
+/** Holds the candidate a writer would take, like another writer mid-transaction. */
+async function holdLease(ports: number[]): Promise<net.Server> {
+  for (const port of ports) {
+    const holder = net.createServer(socket => socket.destroy());
+    try {
+      await new Promise<void>((resolve, reject) => {
+        holder.once("error", reject);
+        holder.listen({ host: "127.0.0.1", port }, () => resolve());
+      });
+      return holder;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EACCES") throw error;
+    }
+  }
+  throw new Error("This machine refuses every candidate");
+}
+
 test("Machine-state lock ports follow the shared contract", () => {
   // connector/tests/test_runtime_owner.py pins the same ports.
   assert.deepEqual(machineStateLockPorts("/home/me/.agents-anywhere/connector-runtime.json"), [
@@ -39,23 +56,37 @@ test("Machine-state lock ports follow the shared contract", () => {
   ]);
 });
 
+test("a lease another writer holds is waited for, then reported as busy", async t => {
+  const { filePath, ports } = await temporaryRecord(t);
+  const holder = await holdLease(ports);
+  try {
+    await assert.rejects(() => withMachineStateLock(filePath, () => assert.fail("Wrote while another writer holds the lease"), { timeoutMs: 200 }), /busy/);
+  } finally {
+    await new Promise(resolve => holder.close(resolve));
+  }
+  assert.equal(await withMachineStateLock(filePath, () => "written"), "written");
+});
+
 test("Machine-state lock moves past ports the OS reserves but waits on a held one", async t => {
   const { filePath, ports } = await temporaryRecord(t);
   const bound = reservePorts(t, new Set(ports.slice(0, 2)));
+  const warnings: string[] = [];
   await withMachineStateLock(filePath, async () => {
     // Usually ports[2]; later when this machine really reserves that one as well.
     assert.equal(bound.length, 1);
     assert.ok(ports.indexOf(bound[0]) >= 2);
-    await assert.rejects(withMachineStateLock(filePath, () => assert.fail("Claimed a later port while the lock is held"), 100), /busy/);
-  });
+    await assert.rejects(withMachineStateLock(filePath, () => assert.fail("Claimed a later port while the lock is held"), { timeoutMs: 100 }), /busy/);
+  }, { warn: message => warnings.push(message) });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], new RegExp(`${ports[0]}, ${ports[1]}.*locked port ${bound[0]}`));
   await withMachineStateLock(filePath, () => undefined);
   assert.deepEqual(bound, [bound[0], bound[0]]);
 });
 
-test("Machine-state lock reports when the OS reserves every port", async t => {
+test("Machine-state lock fails, without writing unlocked, when the OS refuses every port", async t => {
   const { filePath, ports } = await temporaryRecord(t);
   reservePorts(t, new Set(ports));
   const started = Date.now();
-  await assert.rejects(withMachineStateLock(filePath, () => assert.fail("Claimed a reserved port")), /reserves every lock port/);
+  await assert.rejects(withMachineStateLock(filePath, () => assert.fail("Wrote without the lock")), /refused binding \(EACCES\)/);
   assert.ok(Date.now() - started < 1_000, "Waiting cannot free a reserved port");
 });

@@ -83,16 +83,16 @@ Desktop 每次主进程启动校验自身真实应用位置和可执行文件权
 
 ## 短期文件事务与兼容
 
-Python 和 Desktop 各自写入的字段位于同一文件，因此读取、合并和原子替换仍使用共同的短期文件事务。这只防止并发写入丢失，不承担 Connector 生命周期互斥；插件没有共享文件写锁。
+Python 和 Desktop 各自写入的字段位于同一文件，因此读取、合并和原子替换仍使用共同的短期文件事务。事务锁只在一次读取、合并和替换期间持有，不是 Connector 生命周期锁；但 Python 启动时的检查占用和发布运行记录在同一个事务中完成，依赖它保证原子性，所以拿不到锁时不能不加锁写入。插件没有共享文件写锁。
 
 路径按 `realpath(dirname(filePath)) + basename(filePath)` 规范化，Windows 转小写。令 `h = sha256("aa-machine-state-v1\n" + canonicalPath).readUInt16BE(0) % 16384`，事务端口有 16 个候选：第 `k` 个为 `16384 + (h + 1024 * k) % 16384`（`k = 0…15`）。写入者独占绑定 `127.0.0.1` 上的候选端口，不提供业务服务：
 
 - 每次尝试都从 `k = 0` 开始，绑定成功即持有事务。
-- `EADDRINUSE` 表示另一写入者正持有事务。本次尝试到此为止，不再尝试后面的候选；每 20ms 重试，5 秒超时报错。
-- `EACCES`（Windows 为 `WSAEACCES` / 10013）表示任何写入者都无法绑定该端口：通常是操作系统保留了它（Windows 上 Hyper-V、WinNAT、WSL2 和 Docker 会保留端口段，可用 `netsh int ipv4 show excludedportrange protocol=tcp` 查看），也可能是其他程序以独占方式绑定了 `0.0.0.0` 上的同一端口。写入者之间的占用只会返回 `EADDRINUSE`，因此立即改试下一个候选。16 个候选都无法绑定时立即报错，不等到超时。
-- 其他绑定错误直接报告。
+- `EADDRINUSE` 表示端口已被占用。写入者无法区分另一写入者和无关程序，一律当作事务被持有：本次尝试到此为止，不再尝试后面的候选；每 20ms 重试，5 秒超时报错。
+- `EACCES`（Windows 为 `WSAEACCES` / 10013）通常来自操作系统保留的端口（Windows 上 Hyper-V、WinNAT、WSL2 和 Docker 会保留端口段，可用 `netsh int ipv4 show excludedportrange protocol=tcp` 查看），也可能是其他程序以独占方式绑定了 `0.0.0.0` 上的同一端口。本协议的写入者是同一用户的 Python Connector 和 Desktop，看到的拒绝条件相同，它们之间的占用只会返回 `EADDRINUSE`，因此遇到 `EACCES` 立即改试下一个候选。16 个候选都无法绑定时立即报错并列出这些端口，不等到超时，也不在无锁状态下写入。
+- 其他绑定错误直接报告，同样不写入。
 
-同一台机器上的进程看到相同的保留范围，因此会选中同一个候选。持有期间前面的候选恢复可绑定（例如重启 WinNAT 或 WSL，或独占绑定它的程序退出）时，两个写入者可能选中不同候选；事务只覆盖一次读取、合并和替换，这一风险限于这段时间。
+同一台机器上的写入者看到相同的拒绝条件，因此会选中同一个候选。持有期间前面的候选恢复可绑定（例如重启 WinNAT 或 WSL，或独占绑定它的程序退出）时，两个写入者可能选中不同候选、同时进入事务；如果此时两个 Connector 正在启动，它们可能都通过占用检查。触发窗口限于一次事务，但由此造成的双启动会持续到其中一个退出。
 
 16384–32767 低于各系统默认的动态端口范围（Linux 从 32768 起，Windows 和 macOS 从 49152 起）。动态范围里的端口随时会被临时占用：Linux 和 macOS 上回环连接的临时端口和 TIME_WAIT，以及各系统上监听随机端口（`listen(0)`）的服务，都会让绑定返回 `EADDRINUSE`，被误当成另一写入者持有。事务端口避开这一范围后，剩下的冲突只来自监听固定端口的程序。管理员把动态端口范围改到 16384–32767 以内时，这一保证不再成立。
 
@@ -100,6 +100,6 @@ Python 和 Desktop 各自写入的字段位于同一文件，因此读取、合�
 
 临时文件在同一目录，以 `0600` 写入并 `fsync`，原子替换后释放端口。
 
-Python 首次成功写入时迁移旧 `.agentsanywhere/machine.json`、`.agentsanywhere/desktop/install.json` 及旧版扁平 PID 记录，保留有序历史、Desktop 发布的安装信息和未知字段，完成后标记 `legacyMachineMigrated`。Host 在迁移前仅提供兼容的内存读取视图。自定义配置目录中的旧运行记录也会检查；旧记录中的活跃 Connector 子进程仍阻止并发启动。所有入口应一起升级，避免旧入口继续按 v1 协议写入。
+Python 首次成功写入时迁移旧 `.agentsanywhere/machine.json`、`.agentsanywhere/desktop/install.json` 及旧版扁平 PID 记录，保留有序历史、Desktop 发布的安装信息和未知字段，完成后标记 `legacyMachineMigrated`。两个旧文件都不存在时直接标记完成，不锁定也不创建 `.agentsanywhere` 目录。Host 在迁移前仅提供兼容的内存读取视图。自定义配置目录中的旧运行记录也会检查；旧记录中的活跃 Connector 子进程仍阻止并发启动。所有入口应一起升级，避免旧入口继续按 v1 协议写入。
 
 自动化测试在临时用户目录运行真实 Python CLI/RPC，覆盖三种启动来源竞争、RPC 重试、进程异常退出、无关 PID、ID 去重、Desktop 并发写安装信息和跨端设备复用。测试不启动真实后端、Electron 或 DSH GUI。

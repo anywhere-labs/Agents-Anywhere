@@ -1,5 +1,9 @@
-/** `preparing` means the first Connector environment install is still running. */
-export type LocalOwnershipState = { status: "owned" | "conflict" | "preparing" | "error"; message?: string }
+/**
+ * `checking` is the value before the first probe answers; `preparing` means the
+ * first Connector environment install is still running. An `error` carries the
+ * underlying failure in `message`.
+ */
+export type LocalOwnershipState = { status: "owned" | "conflict" | "preparing" | "checking" | "error"; message?: string }
 import type { DesktopUpdateState } from "../../../../shared/desktop-updates"
 export type { DesktopUpdateState } from "../../../../shared/desktop-updates"
 

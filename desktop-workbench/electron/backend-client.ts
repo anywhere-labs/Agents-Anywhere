@@ -1,5 +1,6 @@
 import { fork, type ChildProcess } from "node:child_process";
 import path from "node:path";
+import readline from "node:readline";
 import type { DesktopSettings } from "./connector-types";
 import type { OwnershipState } from "./local-runtime";
 import {
@@ -13,12 +14,16 @@ import {
 
 const SHUTDOWN_GRACE_MS = 5_000;
 const STREAM_RETRY_MS = 1_000;
+/** `exit` can arrive before stderr delivers the lines that explain it. */
+const OUTPUT_DRAIN_MS = 250;
+const RECENT_OUTPUT_LINES = 12;
 
 export type BackendClientOptions = {
   /** Chromium network stack, so outbound requests honour the system proxy. */
   fetcher: (input: string, init?: RequestInit) => Promise<Response>;
   onEvent?: (event: BackendEvent) => void;
-  onExit?: (reason: string) => void;
+  /** Describes an unexpected exit, quoting the backend's last error and output. */
+  onExit?: (message: string) => void;
   entryPath?: string;
 };
 
@@ -38,8 +43,12 @@ export class DesktopBackendClient {
   private closing = false;
   private started = false;
   private exitPromise: Promise<void> | null = null;
-  private ownership: OwnershipState = { status: "error", message: "正在检查本机 Connector…" };
+  private ownership: OwnershipState = { status: "checking" };
   private settings: DesktopSettings | null = null;
+  /** What the backend said last, quoted when it exits without a clear reason. */
+  private lastError = "";
+  private readonly recentOutput: string[] = [];
+  private outputClosed: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: BackendClientOptions) {}
 
@@ -58,6 +67,11 @@ export class DesktopBackendClient {
    */
   get token(): string {
     return this.authToken;
+  }
+
+  /** A ready, live backend owns the Connector log; otherwise Main writes it. */
+  get running(): boolean {
+    return this.child !== null && this.port !== 0;
   }
 
   getOwnership(): OwnershipState {
@@ -84,20 +98,32 @@ export class DesktopBackendClient {
     // fails once its own request timeout expires.
     child.on("message", (message: BackendControlMessage) => {
       if (message.type === "netFetch") void this.handleNetFetch(message);
+      // A crash after `ready` reports itself here just before the process exits.
+      else if (message.type === "error") this.lastError = message.message;
     });
     this.exitPromise = new Promise<void>((resolve) => {
       child.once("exit", (code, signal) => {
-        const reason = signal ? `signal ${signal}` : `code ${code ?? "null"}`;
         this.child = null;
         this.stream?.abort();
         this.stream = null;
-        if (!this.closing) this.options.onExit?.(reason);
+        // Before `ready`, the startup handshake reports the exit instead.
+        if (!this.closing && this.port !== 0) {
+          const summary = `Desktop backend stopped unexpectedly (${exitReason(code, signal)}).`;
+          void this.drainOutput().then(() => this.options.onExit?.(this.describe(summary)));
+        }
         resolve();
       });
     });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      console.error(`[desktop-backend] ${chunk.toString("utf8").trimEnd()}`);
-    });
+    if (child.stderr) {
+      const output = readline.createInterface({ input: child.stderr });
+      output.on("line", (line) => {
+        console.error(`[desktop-backend] ${line}`);
+        if (!line.trim()) return;
+        this.recentOutput.push(line.trim());
+        if (this.recentOutput.length > RECENT_OUTPUT_LINES) this.recentOutput.shift();
+      });
+      this.outputClosed = new Promise((resolve) => output.once("close", () => resolve()));
+    }
     await this.waitForReady(child);
     void this.consumeEvents();
   }
@@ -161,7 +187,7 @@ export class DesktopBackendClient {
       const timer = setTimeout(() => {
         cleanup();
         child.kill("SIGKILL");
-        reject(new Error("Desktop backend did not become ready in time."));
+        reject(new Error(this.describe("Desktop backend did not become ready in time.")));
       }, BACKEND_READY_TIMEOUT_MS);
       const onMessage = (message: BackendControlMessage) => {
         if (message.type === "ready") {
@@ -176,9 +202,10 @@ export class DesktopBackendClient {
           reject(new Error(message.message));
         }
       };
-      const onExit = () => {
+      const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
         cleanup();
-        reject(new Error("Desktop backend exited before it became ready."));
+        const summary = `Desktop backend exited before it became ready (${exitReason(code, signal)}).`;
+        void this.drainOutput().then(() => reject(new Error(this.describe(summary))));
       };
       const cleanup = () => {
         clearTimeout(timer);
@@ -188,6 +215,17 @@ export class DesktopBackendClient {
       child.on("message", onMessage);
       child.once("exit", onExit);
     });
+  }
+
+  private drainOutput(): Promise<void> {
+    return Promise.race([this.outputClosed, delay(OUTPUT_DRAIN_MS)]);
+  }
+
+  private describe(summary: string): string {
+    const lines = [summary];
+    if (this.lastError) lines.push(this.lastError);
+    if (this.recentOutput.length > 0) lines.push("Last output:", ...this.recentOutput);
+    return lines.join("\n");
   }
 
   private async handleNetFetch(message: Extract<BackendControlMessage, { type: "netFetch" }>): Promise<void> {
@@ -294,6 +332,10 @@ export class DesktopBackendClient {
     }
     return payload as T;
   }
+}
+
+function exitReason(code: number | null, signal: NodeJS.Signals | null): string {
+  return signal ? `signal ${signal}` : `code ${code ?? "null"}`;
 }
 
 function delay(ms: number): Promise<void> {

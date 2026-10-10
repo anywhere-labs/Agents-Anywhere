@@ -193,13 +193,14 @@ def test_state_lock_moves_past_ports_the_os_reserves(tmp_path, monkeypatch):
         assert bound == [bound[0], bound[0]]
 
 
-def test_state_lock_reports_when_the_os_reserves_every_port(tmp_path, monkeypatch):
+def test_state_lock_fails_without_writing_when_the_os_refuses_every_port(tmp_path, monkeypatch):
     path = tmp_path / "connector-runtime.json"
     reserve_lock_ports(monkeypatch, set(runtime_owner.state_lock_ports(path)))
     started = time.monotonic()
-    with pytest.raises(RuntimeError, match="reserves every lock port"), runtime_owner.state_lock(path):
-        pytest.fail("Claimed a reserved port")
+    with pytest.raises(RuntimeError, match="refused binding"), state_transaction(path) as state:
+        state["connectorIds"] = ["written-without-lock"]
     assert time.monotonic() - started < 1, "Waiting cannot free a reserved port"
+    assert not path.exists(), "A transaction must never run without the lock"
 
 
 def test_ownership_works_when_the_os_reserves_the_first_lock_port(monkeypatch):
@@ -212,6 +213,14 @@ def test_ownership_works_when_the_os_reserves_the_first_lock_port(monkeypatch):
     second.claim(config("conn_2"))
     second.release()
     assert read_state(first.path)["connectorIds"] == ["conn_1", "conn_2"]
+
+
+def test_fresh_record_neither_creates_nor_locks_the_legacy_directory():
+    lease = RuntimeLease()
+    lease.claim(config())
+    lease.release()
+    assert read_state(lease.path)["legacyMachineMigrated"] is True
+    assert not (runtime_owner.system_home() / ".agentsanywhere").exists()
 
 
 def test_live_unrelated_process_does_not_block_connector_start():

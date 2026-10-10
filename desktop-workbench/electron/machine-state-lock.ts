@@ -4,6 +4,12 @@ import { createServer, type Server } from "node:net";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
+export type MachineStateLockOptions = {
+  timeoutMs?: number;
+  /** Receives one line when the lease had to skip refused candidates; the write is still locked. */
+  warn?: (message: string) => void;
+};
+
 /**
  * Candidate lease ports in trial order, shared with Python: contracts/local-machine/2.0.
  * 16384-32767 lies below every default dynamic port range, so ephemeral sockets and
@@ -18,7 +24,7 @@ export function machineStateLockPorts(identity: string): number[] {
 export async function withMachineStateLock<T>(
   filePath: string,
   update: () => T | Promise<T>,
-  timeoutMs = 5_000,
+  { timeoutMs = 5_000, warn }: MachineStateLockOptions = {},
 ): Promise<T> {
   await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
   const directory = await realpath(path.dirname(filePath));
@@ -29,12 +35,14 @@ export async function withMachineStateLock<T>(
   for (;;) {
     // A short OS lease serializes the complete read/merge/publish operation.
     // The OS releases it on crashes; there is no stale file lock to steal.
-    const lease = await claimLease(ports);
-    if (!lease) {
+    const claim = await claimLease(ports);
+    if (!claim) {
       if (Date.now() >= deadline) throw new Error("The local machine record is busy. Please retry.");
       await delay(20);
       continue;
     }
+    const { lease, port, refused } = claim;
+    if (refused.length) warn?.(`Local Connector record lock ports ${refused.join(", ")} refused binding (EACCES); locked port ${port} instead.`);
     try {
       return await update();
     } finally {
@@ -44,12 +52,15 @@ export async function withMachineStateLock<T>(
 }
 
 /**
- * Binds the first candidate the OS allows, or returns undefined while another writer holds it.
- * EACCES means no writer can bind the port (a Windows excluded port range, or another program's
- * exclusive bind on 0.0.0.0), so every writer moves on to the same next candidate; a held
- * candidate is never skipped.
+ * Binds the first candidate the OS allows, or returns undefined while the port is in use.
+ * EADDRINUSE cannot tell another writer from an unrelated program, so it is waited on and
+ * a later candidate is never tried. EACCES comes from a reserved port or another program's
+ * exclusive bind on 0.0.0.0; it refuses every writer alike, so all move on to the same next
+ * candidate. A lock that cannot be taken fails the write: without it, two Connectors starting
+ * together could both pass the ownership check.
  */
-async function claimLease(ports: number[]): Promise<Server | undefined> {
+async function claimLease(ports: number[]): Promise<{ lease: Server; port: number; refused: number[] } | undefined> {
+  const refused: number[] = [];
   for (const port of ports) {
     const lease = createServer(socket => socket.destroy());
     try {
@@ -60,14 +71,14 @@ async function claimLease(ports: number[]): Promise<Server | undefined> {
           resolve();
         });
       });
-      return lease;
+      return { lease, port, refused };
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code === "EACCES") continue;
+      if (code === "EACCES") { refused.push(port); continue; }
       if (code === "EADDRINUSE") return undefined;
       throw error;
     }
   }
-  throw new Error("The operating system reserves every lock port of the local machine record. "
-    + "On Windows, check `netsh int ipv4 show excludedportrange protocol=tcp`.");
+  const hint = process.platform === "win32" ? " Check `netsh int ipv4 show excludedportrange protocol=tcp`." : "";
+  throw new Error(`Every lock port of the local machine record refused binding (EACCES): ${ports.join(", ")}.${hint}`);
 }

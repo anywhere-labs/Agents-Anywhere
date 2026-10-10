@@ -23,7 +23,7 @@ const SETTINGS: DesktopSettings = {
 /** Minimal stand-in: this test covers the transport, not the services. */
 class FakeState {
   readonly listeners = new Map<string, Set<(data: unknown) => void>>();
-  ownership: OwnershipState = { status: "error", message: "正在检查本机 Connector…" };
+  ownership: OwnershipState = { status: "checking" };
   appended: Array<Record<string, unknown>> = [];
   cleared = 0;
 
@@ -179,18 +179,20 @@ test("the event stream sends the current snapshot and then batched log events", 
     };
 
     await readFrame();
-    // The placeholder ownership value is withheld until the first real probe.
-    assert.deepEqual(frames.map((frame) => frame.event), ["settings"]);
+    await readFrame();
+    // Before the first probe answers, a subscriber learns that it is still checking.
+    assert.deepEqual(frames.map((frame) => frame.event), ["ownership", "settings"]);
+    assert.deepEqual(frames[0]?.data, { status: "checking" });
 
     state.emit("ownership", { status: "owned" });
     await readFrame();
-    assert.equal(frames[1]?.event, "ownership");
-    assert.deepEqual(frames[1]?.data, { status: "owned" });
+    assert.equal(frames[2]?.event, "ownership");
+    assert.deepEqual(frames[2]?.data, { status: "owned" });
 
     state.emit("logs", [{ seq: 1, level: "INFO", message: "one", time: "2026-01-01T00:00:00.000Z" }]);
     await readFrame();
-    assert.equal(frames[2]?.event, "logs");
-    assert.deepEqual(frames[2]?.data, [{ seq: 1, level: "INFO", message: "one", time: "2026-01-01T00:00:00.000Z" }]);
+    assert.equal(frames[3]?.event, "logs");
+    assert.deepEqual(frames[3]?.data, [{ seq: 1, level: "INFO", message: "one", time: "2026-01-01T00:00:00.000Z" }]);
 
     controller.abort();
   });
