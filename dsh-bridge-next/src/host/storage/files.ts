@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, realpath, rename, rm } from 'node:fs/promises'
-import { createServer } from 'node:net'
+import { createServer, type Server } from 'node:net'
 import { dirname } from 'node:path'
 
 export function hasCode(error: unknown, code: string): boolean {
@@ -33,27 +33,19 @@ export async function writeJson(path: string, value: unknown): Promise<void> {
   }
 }
 
+/** Lease ports in trial order: 16 candidates spread evenly, far apart from the 100-port blocks Windows reserves. */
+export function managerLockPorts(identity: string): number[] {
+  const base = createHash('sha256').update(identity).digest().readUInt16BE(0) % 16384
+  return Array.from({ length: 16 }, (_, k) => 49152 + (base + 1024 * k) % 16384)
+}
+
 export async function acquireManagerLock(path: string, onCompromised?: () => void): Promise<() => Promise<void>> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   const directory = await realpath(dirname(path))
-  const identity = process.platform === 'win32' ? directory.toLowerCase() : directory
-  const port = 49152 + createHash('sha256').update(identity).digest().readUInt16BE(0) % 16384
   // The OS releases this loopback lease even after SIGKILL. File-based stale
   // takeover cannot atomically check ownership before deleting a reused path.
   // This is not an HTTP/RPC endpoint; incoming sockets are immediately closed.
-  const lease = createServer(socket => socket.destroy())
-  try {
-    await new Promise<void>((resolve, reject) => {
-      lease.once('error', reject)
-      lease.listen({ host: '127.0.0.1', port, exclusive: true }, () => {
-        lease.off('error', reject)
-        resolve()
-      })
-    })
-  } catch (error) {
-    if (hasCode(error, 'EADDRINUSE')) throw new Error(`另一个插件实例正在管理本机设备，或本机管理端口 ${port} 已被占用。请关闭该实例后重试。`)
-    throw error
-  }
+  const lease = await claimLease(managerLockPorts(process.platform === 'win32' ? directory.toLowerCase() : directory))
   lease.unref()
   let released = false
   const lost = () => { if (!released) onCompromised?.() }
@@ -64,4 +56,33 @@ export async function acquireManagerLock(path: string, onCompromised?: () => voi
     released = true
     await new Promise<void>((resolve, reject) => lease.close(error => error ? reject(error) : resolve()))
   }
+}
+
+export const RESERVED_LEASE_PORTS = '系统保留了插件的全部本机管理端口'
+
+/**
+ * Binds the first candidate the OS allows. EACCES means no instance can bind the port (a Windows
+ * excluded port range, or another program's exclusive bind on 0.0.0.0), so every instance moves
+ * on to the same next port; a held port is never skipped.
+ */
+async function claimLease(ports: number[]): Promise<Server> {
+  let reserved: unknown
+  for (const port of ports) {
+    const lease = createServer(socket => socket.destroy())
+    try {
+      await new Promise<void>((resolve, reject) => {
+        lease.once('error', reject)
+        lease.listen({ host: '127.0.0.1', port, exclusive: true }, () => {
+          lease.off('error', reject)
+          resolve()
+        })
+      })
+      return lease
+    } catch (error) {
+      if (hasCode(error, 'EACCES')) { reserved = error; continue }
+      if (hasCode(error, 'EADDRINUSE')) throw new Error(`另一个插件实例正在管理本机设备，或本机管理端口 ${port} 已被占用。请关闭该实例后重试。`)
+      throw error
+    }
+  }
+  throw new Error(`${RESERVED_LEASE_PORTS}，无法确认只有一个插件实例在运行。`, { cause: reserved })
 }

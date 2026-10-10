@@ -113,8 +113,8 @@ export class RuntimeServer {
       // A plugin before 2.0.3 leases its own endpoint path the same way; leave that path to it.
       this.releaseLegacyLease = await acquireManagerLock(path)
     } catch (error) {
-      // Only a held lease means such a plugin is running. A lease port the OS reserves (EACCES on
-      // Windows) could not have been taken by it either, so publish without that lease.
+      // Only a held lease means such a plugin is running. Such a plugin only tries the first lease
+      // port, so when the OS reserves every candidate it cannot run either: publish without a lease.
       if (/另一个插件实例正在管理/.test(String(record(error).message))) {
         this.diagnostics.log('warn', 'bridge.legacy_endpoint_skipped', {}, error)
         return

@@ -1,12 +1,14 @@
 import { machineStatePath } from '../../src/host/desktop/machine-state.js'
 import assert from 'node:assert/strict'
-import test from 'node:test'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import test, { type TestContext } from 'node:test'
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { acquireManagerLock, readJson, writeJson } from '../../src/host/storage/files.js'
+import { startupFailure } from '../../src/host/dsh-runtime/startup-status.js'
+import { acquireManagerLock, managerLockPorts, readJson, writeJson } from '../../src/host/storage/files.js'
 import { desktopRecordPath, detectDesktop } from '../../src/host/desktop/detect.js'
 
 test('private atomic state and singleton ownership are scoped to the configured data directory', async () => {
@@ -23,6 +25,59 @@ test('private atomic state and singleton ownership are scoped to the configured 
     await second()
     assert.equal(await readJson(lock), null)
   } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+/** Fails listen() on `reserved` the way Windows excluded port ranges do; returns the ports bound. */
+function reservePorts(t: TestContext, reserved: Set<number>): number[] {
+  const bound: number[] = []
+  const listen = Server.prototype.listen as (this: Server, ...args: unknown[]) => Server
+  t.mock.method(Server.prototype, 'listen', function (this: Server, ...args: unknown[]) {
+    const port = (args[0] as { port?: number } | undefined)?.port
+    if (port !== undefined && reserved.has(port)) {
+      const error = Object.assign(new Error(`listen EACCES: permission denied 127.0.0.1:${port}`), { code: 'EACCES' })
+      process.nextTick(() => this.emit('error', error))
+      return this
+    }
+    if (port !== undefined) this.once('listening', () => bound.push(port))
+    return listen.apply(this, args)
+  })
+  return bound
+}
+
+async function lockPorts(t: TestContext): Promise<{ lock: string, ports: number[] }> {
+  const root = await mkdtemp(join(tmpdir(), 'aa-reserved-lock-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const directory = await realpath(root)
+  return { lock: join(root, 'manager.lock'), ports: managerLockPorts(process.platform === 'win32' ? directory.toLowerCase() : directory) }
+}
+
+test('manager lock ports spread evenly from the directory hash', () => {
+  assert.deepEqual(managerLockPorts('/home/me/.agents-anywhere/dsh-bridge-next'), [
+    65369, 50009, 51033, 52057, 53081, 54105, 55129, 56153,
+    57177, 58201, 59225, 60249, 61273, 62297, 63321, 64345,
+  ])
+})
+
+test('the manager lock moves past ports the OS reserves but never past a held one', async t => {
+  const { lock, ports } = await lockPorts(t)
+  const bound = reservePorts(t, new Set(ports.slice(0, 2)))
+  const release = await acquireManagerLock(lock)
+  // Usually ports[2]; later when this machine really reserves that one as well.
+  assert.equal(bound.length, 1)
+  assert.ok(ports.indexOf(bound[0]!) >= 2)
+  await assert.rejects(acquireManagerLock(lock), /另一个插件实例/)
+  await release()
+  const second = await acquireManagerLock(lock)
+  await second()
+  assert.deepEqual(bound, [bound[0], bound[0]])
+})
+
+test('the manager lock explains when the OS reserves every port', async t => {
+  const { lock, ports } = await lockPorts(t)
+  reservePorts(t, new Set(ports))
+  const failure = await acquireManagerLock(lock).then(() => assert.fail('Claimed a reserved port'), (error: unknown) => error)
+  assert.match(String(failure), /系统保留/)
+  assert.equal(startupFailure(failure).code, 'BRIDGE_PORTS_RESERVED')
 })
 
 test('only one manager wins simultaneous acquisition attempts', async () => {

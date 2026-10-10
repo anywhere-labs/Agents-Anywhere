@@ -1,4 +1,5 @@
 import type { BridgeStatus } from '../../contracts/bridge-status.js'
+import { RESERVED_LEASE_PORTS } from '../storage/files.js'
 import { record } from './types.js'
 
 /** Public guidance never includes raw exceptions, paths or endpoint credentials. */
@@ -11,6 +12,11 @@ export function startupFailure(error: unknown): BridgeStatus {
     state: 'failed', code: 'BRIDGE_IN_USE', canRetry: true,
     message: '本机连接被占用，无法启动。',
     hint: '请退出其他正在运行的 DSH，再点击“尝试重启”。如果只开了一个 DSH，请检查是否重复启用了插件。',
+  }
+  if (message.includes(RESERVED_LEASE_PORTS)) return {
+    state: 'failed', code: 'BRIDGE_PORTS_RESERVED', canRetry: true,
+    message: '本机连接启动失败：系统保留了插件需要的本机端口。',
+    hint: 'Windows 上的 Hyper-V、WSL 或 Docker 会保留端口段，可运行 netsh int ipv4 show excludedportrange protocol=tcp 查看。请重启电脑或停止这些服务后，再尝试重启。',
   }
   if (code === 'EACCES' || code === 'EPERM') return {
     state: 'failed', code, canRetry: true, message: '本机连接启动失败：访问权限不足。',
