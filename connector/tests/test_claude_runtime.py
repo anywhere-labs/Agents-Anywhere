@@ -815,6 +815,56 @@ async def _test_claude_runtime_lists_sessions_from_sdk_history() -> None:
     assert sdk.list_calls == [{"limit": 10, "offset": 0}]
 
 
+def test_claude_runtime_caps_prompt_derived_session_titles() -> None:
+    asyncio.run(_test_claude_runtime_caps_prompt_derived_session_titles())
+
+
+async def _test_claude_runtime_caps_prompt_derived_session_titles() -> None:
+    pasted_prompt = "帮我总结会议 并提取任务\n\n  第一阶段是分支数据定义" + "，就是各种质量分析" * 400
+    long_custom_title = "Custom " + "title " * 20
+    sdk = _HistorySdk(
+        sessions=[
+            SimpleNamespace(
+                session_id="claude_long_prompt",
+                summary=pasted_prompt,
+                custom_title=None,
+                first_prompt=pasted_prompt,
+                last_modified=1_789_000_000_000,
+                file_size=123,
+            ),
+            SimpleNamespace(
+                session_id="claude_custom_title",
+                summary=pasted_prompt,
+                custom_title=long_custom_title,
+                first_prompt=pasted_prompt,
+                last_modified=1_789_000_000_000,
+                file_size=123,
+            ),
+            SimpleNamespace(
+                session_id="claude_blank_prompt",
+                summary=None,
+                custom_title=None,
+                first_prompt=" \n\t ",
+                last_modified=1_789_000_000_000,
+                file_size=123,
+            ),
+        ]
+    )
+    runtime = _runtime(host=_RecordingHost(), sdk=sdk)
+
+    sessions = {s.external_session_id: s for s in await runtime.list_sessions(limit=10)}
+
+    capped = sessions["claude_long_prompt"].title
+    assert capped is not None
+    assert capped.startswith("帮我总结会议 并提取任务 第一阶段是分支数据定义")
+    assert capped.endswith("...")
+    assert len(capped) <= 48 + len("...")
+    assert "\n" not in capped
+    # Explicit (user or Claude AI) titles are never rewritten.
+    assert sessions["claude_custom_title"].title == long_custom_title
+    assert sessions["claude_blank_prompt"].title is None
+
+
 def test_claude_runtime_session_sync_marker_skips_unchanged_history() -> None:
     asyncio.run(_test_claude_runtime_session_sync_marker_skips_unchanged_history())
 
