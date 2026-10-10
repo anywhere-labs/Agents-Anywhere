@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -196,6 +197,54 @@ def _selection_candidates(
     return tuple(candidates)
 
 
+_FAMILIES = {"fable": "Fable", "opus": "Opus", "sonnet": "Sonnet", "haiku": "Haiku"}
+# claude-opus-5-5[1m], claude-sonnet-5[1m], claude-haiku-4-5-20251001; a date is not a minor version.
+_RESOLVED_MODEL = re.compile(
+    r"^claude-(fable|opus|sonnet|haiku)-(\d{1,2})(?:-(\d{1,2}))?(?=$|\[|-\d{8})",
+    re.IGNORECASE,
+)
+# "Opus 5.5 · ...", "Opus 5.5 for long sessions", "Use the default model (currently Opus 5.5)".
+_DESCRIBED_MODEL = re.compile(
+    r"(?:^|\(currently )(Fable|Opus|Sonnet|Haiku) (\d{1,2}(?:\.\d{1,2})?)(?![\d.])"
+)
+_ONE_MILLION = "1M context"
+
+
+def _cli_model_title(item: Mapping[str, Any], name: str) -> str:
+    """Title in Claude Code's status-line form: version and context window, e.g. "Opus 5.5 (1M context)".
+
+    Claude Code labels aliases by family only ("Opus", "Opus (1M context)") and carries the
+    version in `resolvedModel` and `description`. Entries without a recognizable Claude version,
+    such as gateway or custom models, keep the label Claude Code reported.
+    """
+
+    version = _cli_model_version(item)
+    if version is None:
+        return name
+    identifiers = (item.get("value"), item.get("resolvedModel"))
+    one_million = _ONE_MILLION in name or any(
+        isinstance(value, str) and "[1m]" in value.casefold() for value in identifiers
+    )
+    if item.get("value") == CLAUDE_DEFAULT_MODEL_ID:
+        return f"Default ({version}, {_ONE_MILLION})" if one_million else f"Default ({version})"
+    return f"{version} ({_ONE_MILLION})" if one_million else version
+
+
+def _cli_model_version(item: Mapping[str, Any]) -> str | None:
+    resolved = item.get("resolvedModel")
+    if isinstance(resolved, str):
+        match = _RESOLVED_MODEL.match(resolved)
+        if match:
+            family, major, minor = match.groups()
+            return f"{_FAMILIES[family.casefold()]} {major}{f'.{minor}' if minor else ''}"
+    description = item.get("description")
+    if isinstance(description, str):
+        match = _DESCRIBED_MODEL.search(description)
+        if match:
+            return f"{match.group(1)} {match.group(2)}"
+    return None
+
+
 def _cli_model_item(item: Mapping[str, Any]) -> RuntimeModelItem:
     model_id = str(item["value"])
     display_name = item.get("displayName")
@@ -207,11 +256,13 @@ def _cli_model_item(item: Mapping[str, Any]) -> RuntimeModelItem:
     for key in ("supportsFastMode", "supportsAutoMode", "supportsAdaptiveThinking"):
         if isinstance(item.get(key), bool):
             metadata[key] = item[key]
+    name = display_name if isinstance(display_name, str) and display_name else model_id
+    title = _cli_model_title(item, name)
+    if title != name:
+        metadata["cliDisplayName"] = name
     return RuntimeModelItem(
         id=model_id,
-        title=display_name
-        if isinstance(display_name, str) and display_name
-        else model_id,
+        title=title,
         selection_id=protocol_selection_id(
             "claude",
             "model",
