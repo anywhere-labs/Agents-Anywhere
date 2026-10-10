@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import socket
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -134,12 +136,32 @@ def test_process_check_recognizes_connector_entry_points_only(executable, argume
     assert runtime_owner._connector_command(executable, arguments) is expected
 
 
+def reserve_lock_ports(monkeypatch, reserved):
+    """Fail bind() on ``reserved`` the way Windows excluded port ranges do; return the bound ports."""
+    bound = []
+
+    class ReservingSocket(socket.socket):
+        def bind(self, address):
+            if address[1] in reserved:
+                raise PermissionError(errno.EACCES, "Forbidden by its access permissions")
+            super().bind(address)
+            bound.append(address[1])
+
+    monkeypatch.setattr(socket, "socket", ReservingSocket)
+    return bound
+
+
 def test_state_lock_excludes_a_socket_that_has_not_started_listening(tmp_path):
     """A racing owner must block the lock even between its bind() and listen()."""
     path = tmp_path / "connector-runtime.json"
-    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    holder.bind(("127.0.0.1", runtime_owner.state_lock_port(path)))
+    for port in runtime_owner.state_lock_ports(path):
+        holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            holder.bind(("127.0.0.1", port))
+            break
+        except PermissionError:  # This machine reserves the port, so the lock moves on as well.
+            holder.close()
     try:
         with pytest.raises(RuntimeError, match="busy"), runtime_owner.state_lock(path, timeout=0.2):
             pytest.fail("Claimed a port that another socket already holds")
@@ -147,6 +169,49 @@ def test_state_lock_excludes_a_socket_that_has_not_started_listening(tmp_path):
         holder.close()
     with runtime_owner.state_lock(path, timeout=0.2):
         pass
+
+
+def test_lock_ports_follow_the_shared_contract():
+    # desktop-workbench/electron/machine-state-lock.test.ts pins the same ports.
+    assert runtime_owner._lock_ports("aa-machine-state-v1\n/home/me/.agents-anywhere/connector-runtime.json") == [
+        54028, 55052, 56076, 57100, 58124, 59148, 60172, 61196,
+        62220, 63244, 64268, 65292, 49932, 50956, 51980, 53004,
+    ]
+
+
+def test_state_lock_moves_past_ports_the_os_reserves(tmp_path, monkeypatch):
+    path = tmp_path / "connector-runtime.json"
+    ports = runtime_owner.state_lock_ports(path)
+    bound = reserve_lock_ports(monkeypatch, set(ports[:2]))
+    with runtime_owner.state_lock(path, timeout=0.2):
+        # Usually ports[2]; later when this machine really reserves that one as well.
+        assert len(bound) == 1 and ports.index(bound[0]) >= 2
+        # Another writer waits on the held candidate instead of moving past it.
+        with pytest.raises(RuntimeError, match="busy"), runtime_owner.state_lock(path, timeout=0.2):
+            pytest.fail("Claimed a later port while another writer holds the lock")
+    with runtime_owner.state_lock(path, timeout=0.2):
+        assert bound == [bound[0], bound[0]]
+
+
+def test_state_lock_reports_when_the_os_reserves_every_port(tmp_path, monkeypatch):
+    path = tmp_path / "connector-runtime.json"
+    reserve_lock_ports(monkeypatch, set(runtime_owner.state_lock_ports(path)))
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="reserves every lock port"), runtime_owner.state_lock(path):
+        pytest.fail("Claimed a reserved port")
+    assert time.monotonic() - started < 1, "Waiting cannot free a reserved port"
+
+
+def test_ownership_works_when_the_os_reserves_the_first_lock_port(monkeypatch):
+    reserve_lock_ports(monkeypatch, {runtime_owner.state_lock_ports(runtime_path())[0]})
+    first, second = RuntimeLease(kind="cli"), RuntimeLease(kind="desktop-workbench")
+    first.claim(config())
+    with pytest.raises(ConnectorAlreadyRunningError):
+        second.claim(config("conn_2"))
+    first.release()
+    second.claim(config("conn_2"))
+    second.release()
+    assert read_state(first.path)["connectorIds"] == ["conn_1", "conn_2"]
 
 
 def test_live_unrelated_process_does_not_block_connector_start():

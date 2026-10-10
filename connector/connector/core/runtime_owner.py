@@ -38,44 +38,63 @@ def runtime_path(config_path: str | Path | None = None) -> Path:
     return system_home() / ".agents-anywhere" / "connector-runtime.json"
 
 
-def state_lock_port(path: str | Path) -> int:
-    """The per-user TCP port that represents this record's cross-process mutex."""
+def state_lock_ports(path: str | Path) -> list[int]:
+    """The per-user TCP ports that represent this record's cross-process mutex, in trial order."""
     file = Path(path)
     identity = str(file.parent.resolve() / file.name)
     if sys.platform == "win32":
         identity = identity.lower()
-    digest = hashlib.sha256(f"aa-machine-state-v1\n{identity}".encode()).digest()
-    return 49152 + int.from_bytes(digest[:2], "big") % 16384
+    return _lock_ports(f"aa-machine-state-v1\n{identity}")
 
 
-def _claim_state_lock(port: int, deadline: float) -> socket.socket:
+def _lock_ports(key: str) -> list[int]:
+    # 16 candidates spread evenly over the range, far apart from the 100-port blocks Windows reserves.
+    digest = hashlib.sha256(key.encode()).digest()
+    base = int.from_bytes(digest[:2], "big") % 16384
+    return [49152 + (base + 1024 * k) % 16384 for k in range(16)]
+
+
+def _claim_state_lock(ports: list[int], deadline: float) -> socket.socket:
     """Binding alone claims the port, so a failed attempt must never reuse its socket.
 
     SO_REUSEADDR is deliberately not set on POSIX: Linux then lets a second process bind
     the same port while the owner sits between bind() and listen(), which both breaks the
     exclusion and makes the next bind() fail with EINVAL.
+
+    EACCES means no writer can bind the port (a Windows excluded port range, or another
+    program's exclusive bind on 0.0.0.0), so every writer moves on to the same next candidate.
+    EADDRINUSE means another writer holds the lock there; later candidates must not be tried then.
     """
     while True:
-        lease = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            if sys.platform == "win32":
-                lease.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-            lease.bind(("127.0.0.1", port))
-            lease.listen()
-            return lease
-        except OSError as exc:
-            lease.close()
-            if exc.errno not in {errno.EADDRINUSE, errno.EACCES}:
-                raise
-            if time.monotonic() >= deadline:
-                raise RuntimeError("The local Connector record is busy. Please retry.") from exc
-            time.sleep(0.02)
+        for port in ports:
+            lease = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                if sys.platform == "win32":
+                    lease.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                lease.bind(("127.0.0.1", port))
+                lease.listen()
+                return lease
+            except OSError as exc:
+                lease.close()
+                if exc.errno == errno.EACCES:
+                    continue
+                if exc.errno != errno.EADDRINUSE:
+                    raise
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("The local Connector record is busy. Please retry.") from exc
+                break
+        else:
+            raise RuntimeError(
+                "The operating system reserves every lock port of the local Connector record. "
+                "On Windows, check `netsh int ipv4 show excludedportrange protocol=tcp`."
+            )
+        time.sleep(0.02)
 
 
 @contextmanager
 def state_lock(path: Path, timeout: float = 5) -> Iterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    lease = _claim_state_lock(state_lock_port(path), time.monotonic() + timeout)
+    lease = _claim_state_lock(state_lock_ports(path), time.monotonic() + timeout)
     try:
         yield
     finally:
