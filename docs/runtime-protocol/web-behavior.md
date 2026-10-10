@@ -37,6 +37,11 @@ Runtime types and runtime instances carry different facts; Web must not mix them
   Connector checks capacity when starting, and Server returns HTTP 409 with
   `runtime_conflict` when the limit is reached. Stopping an instance releases
   its running slot without deleting its configuration.
+- Quick setup (onboarding and the post-pairing dialog) lists configured
+  instances and addable types together, and its quick add reuses an existing
+  configured instance. It therefore omits types that already have a configured
+  instance, so each type appears once. Additional named instances are created
+  from the device page, which keeps the rule above.
 
 ## New session
 

@@ -5,7 +5,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session-query'
 import { join } from 'node:path'
-import { bridgeDirectory, Config, stateRoot } from '../config.js'
+import { bridgeDirectory, Config, legacyBridgeDirectory, stateRoot } from '../config.js'
 import { RuntimeServer } from './server.js'
 import { NativeRuntime } from './native.js'
 import { RuntimeDiagnostics } from './diagnostics.js'
@@ -30,8 +30,10 @@ export class DshRuntimeService extends Service {
   constructor(ctx: Context, config: Config) {
     super(ctx, 'agentsAnywhereRuntime')
     const bridge = bridgeDirectory()
+    const legacy = legacyBridgeDirectory(config)
     this.diagnostics = new RuntimeDiagnostics(ctx.logger('agents-anywhere-runtime'), join(stateRoot(config), 'logs'))
-    this.native = new NativeRuntime(ctx, join(bridge, 'create-intents'), this.diagnostics)
+    this.native = new NativeRuntime(ctx, join(bridge, 'create-intents'), this.diagnostics,
+      legacy && join(legacy, 'attachments', 'staging'))
     this.makeServer = () => new RuntimeServer(join(bridge, 'endpoint.json'), {
       native: this.native,
       query: { listSessions: signal => this.native.inventory(signal), readSession: id => this.native.read(id),
@@ -49,7 +51,7 @@ export class DshRuntimeService extends Service {
           return results
         } },
       status: id => this.native.status(id),
-    }, this.diagnostics)
+    }, this.diagnostics, undefined, legacy && join(legacy, 'endpoint.json'))
     this.server = this.makeServer()
     ctx.effect(() => async () => {
       this.disposed = true

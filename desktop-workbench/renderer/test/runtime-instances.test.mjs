@@ -25,6 +25,7 @@ import {
   sessionRuntimeName,
   sessionRuntimeRequestIdentity,
   sessionRuntimeType,
+  setupAddableRuntimeTypes,
 } from "../src/features/dashboard/runtime-instances.ts"
 
 test("manual deletion replaces the retired ID without duplicating a refreshed successor", () => {
@@ -103,6 +104,23 @@ test("configured instances do not hide addable runtime types", () => {
   assert.deepEqual(configuredRuntimeInstances([configured]), [configured])
   assert.equal(runtimeTypeCanCreateInstance(runtimeType, [configured]), true)
   assert.deepEqual(addableRuntimeTypes([runtimeType], [configured]), [runtimeType])
+})
+
+test("quick setup lists a configured runtime type once, as its instance", () => {
+  const configured = { ...legacyRuntime, configured: true, config: {} }
+  const unconfiguredClaude = { ...legacyRuntime, runtimeId: "claude", runtimeType: "claude" }
+  const runtimes = [configured, unconfiguredClaude]
+  const types = mergeRuntimeTypes([], runtimes)
+  const dshType = types.find((type) => type.runtimeType === "dsh")
+  const claudeType = types.find((type) => type.runtimeType === "claude")
+
+  // The device page still offers another DSH configuration...
+  assert.deepEqual(addableRuntimeTypes([dshType, claudeType], runtimes), [dshType, claudeType])
+  // ...but onboarding already shows the configured DSH row, and its quick add
+  // would reuse that instance, so only the unconfigured type stays addable.
+  assert.deepEqual(configuredRuntimeInstances(runtimes), [configured])
+  assert.deepEqual(setupAddableRuntimeTypes([dshType, claudeType], runtimes), [claudeType])
+  assert.deepEqual(setupAddableRuntimeTypes([dshType, claudeType], []), [dshType, claudeType])
 })
 
 test("running instance limits do not prevent saving another configuration", () => {

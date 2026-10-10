@@ -120,6 +120,22 @@ export function addableRuntimeTypes(
   return runtimeTypes.filter((runtimeType) => runtimeTypeCanCreateInstance(runtimeType, runtimes))
 }
 
+/**
+ * Runtime types offered by quick setup (onboarding and the post-pairing dialog).
+ * Those surfaces list configured instances alongside addable types, and their
+ * quick add reuses an existing configured instance instead of creating another.
+ * A type that already has a configured instance is therefore shown only once, as
+ * that instance. Additional named instances are created from the device page.
+ */
+export function setupAddableRuntimeTypes(
+  runtimeTypes: readonly RuntimeTypeView[],
+  runtimes: readonly DeviceRuntimeView[],
+): RuntimeTypeView[] {
+  const configuredTypes = new Set(configuredRuntimeInstances(runtimes).map((runtime) => runtime.runtimeType))
+  return addableRuntimeTypes(runtimeTypes, runtimes)
+    .filter((runtimeType) => !configuredTypes.has(runtimeType.runtimeType))
+}
+
 export function reconfigurableRuntimeInstance(
   runtimeType: Pick<RuntimeTypeView, "runtimeType">,
   runtimes: readonly DeviceRuntimeView[],

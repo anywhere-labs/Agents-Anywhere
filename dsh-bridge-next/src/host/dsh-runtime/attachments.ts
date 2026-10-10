@@ -14,6 +14,12 @@ import { BridgeError } from './errors.js'
 import { record } from './types.js'
 
 export const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const
+
+/** lstat, so a symbolic link counts as present and is then refused by the staging checks. */
+async function exists(path: string): Promise<boolean> {
+  try { await lstat(path); return true }
+  catch (error) { if (record(error).code === 'ENOENT') return false; throw error }
+}
 export interface AttachmentReference {
   fileId: string
   name: string
@@ -70,9 +76,22 @@ export function receiptKey(event: SessionEvent): string | undefined {
 /** AA file references survive Host restarts; DSH owns the actual attachment objects. */
 export class RuntimeAttachments {
   readonly staging: string
-  constructor(private readonly root: string) { this.staging = join(root, 'staging') }
+  /**
+   * `legacyStaging` is where Connectors before 2.0.3 stage uploads: next to the legacy endpoint
+   * under DSH_HOME. It is only searched for upload IDs that are not in `staging`.
+   */
+  constructor(private readonly root: string, private readonly legacyStaging?: string) { this.staging = join(root, 'staging') }
 
   async initialize(): Promise<void> { await mkdir(this.staging, { recursive: true, mode: 0o700 }) }
+
+  /** The resolved staging directory holding `uploadId`; the primary one unless only the legacy one has it. */
+  private async stagingRoot(primary: string, uploadId: string): Promise<string> {
+    if (!this.legacyStaging || await exists(join(primary, uploadId))) return primary
+    let legacy: string
+    try { legacy = await realpath(this.legacyStaging) }
+    catch (error) { if (record(error).code === 'ENOENT') return primary; throw error }
+    return await exists(join(legacy, uploadId)) ? legacy : primary
+  }
 
   async readReceipts(id: string): Promise<Record<string, AttachmentReceipt>> {
     return await readJson<Record<string, AttachmentReceipt>>(join(this.root, 'receipts', `${digest(id)}.json`)) ?? {}
@@ -95,10 +114,11 @@ export class RuntimeAttachments {
         imageFiles.reduce((total, image) => total + image.size, 0) > limits.maxMessageImageBytes) {
       throw new BridgeError('INVALID_PARAMS', 'Images exceed the DSH attachment size or count limits.')
     }
-    const root = await realpath(this.staging)
+    const primary = await realpath(this.staging)
     const parts: PromptContentPart[] = []
     for (const image of images) {
       signal.throwIfAborted()
+      const root = await this.stagingRoot(primary, image.uploadId)
       const path = join(root, image.uploadId)
       if ((await lstat(path)).isSymbolicLink()) throw new BridgeError('INVALID_PARAMS', 'Attachment staging cannot use symbolic links.')
       // Resolve the parent as well as refusing a symlink at the file itself.
