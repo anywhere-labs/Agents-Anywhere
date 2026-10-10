@@ -46,6 +46,14 @@ class AgentRuntime(ABC):
     async def stop(self) -> None:
         pass
 
+    async def on_backend_reconnect(self) -> None:
+        """Optionally re-publish live state after a backend connection is restored.
+
+        This is independent of event-stream resynchronization and must not start
+        a new model turn or restart native session processes. Polling runtimes
+        may implement it; existing runtimes retain the default no-op behavior.
+        """
+
     async def get_config(self) -> RuntimeConfig:
         raise RuntimeUnsupportedError("get_config")
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 from connector.runtime_protocol.host import runtime_kv_store
 
+import asyncio
 import sys
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -85,12 +86,10 @@ class CodexProvider(RuntimeProvider):
 
         sdk = self._sdk_checker()
         self._discovered_sdk = sdk
-        runtime_environment, shell_path = codex_runtime_environment(None)
-        binary_selection = select_codex_runtime_binary(
-            "prefer_system",
-            runtime_environment,
-            shell_path,
-        )
+        # Reading the login shell PATH and running `codex --version` block on
+        # subprocesses; on the event loop they stall every runtime, and a probe
+        # that hung kept the whole Connector offline.
+        binary_selection = await asyncio.to_thread(_probe_system_codex)
         return RuntimeTypeDescriptor(
             runtime_type=self.runtime_type,
             display_name=self.display_name,
@@ -259,3 +258,8 @@ class CodexProvider(RuntimeProvider):
             kind="codex_home",
             key=filesystem_resource_key(str(config.values["codexHome"])),
         )
+
+
+def _probe_system_codex():
+    runtime_environment, shell_path = codex_runtime_environment(None)
+    return select_codex_runtime_binary("prefer_system", runtime_environment, shell_path)

@@ -33,6 +33,7 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
+    "pytest-asyncio>=0.24",
     "ruff>=0.15.13",
 ]
 
@@ -42,9 +43,14 @@ default = true
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+asyncio_mode = "auto"
 
 [tool.hatch.build.targets.wheel]
 packages = ["connector"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"connector/runtimes/pi/extensions/approval.ts" = "connector/runtimes/pi/extensions/approval.ts"
+"connector/runtimes/pi/LICENSE" = "connector/runtimes/pi/LICENSE"
 
 [tool.uv]
 package = true

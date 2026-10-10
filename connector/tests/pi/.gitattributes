@@ -1,0 +1,2 @@
+# The fake Pi is a POSIX executable, including when tests run through WSL.
+fake_pi_rpc.py text eol=lf

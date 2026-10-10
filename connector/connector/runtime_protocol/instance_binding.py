@@ -440,6 +440,9 @@ class RuntimeInstance(AgentRuntime):
     async def resynchronize(self, session_id: str | None = None, external_session_id: str | None = None) -> None:
         await self.native_runtime.resynchronize(session_id, external_session_id)
 
+    async def on_backend_reconnect(self) -> None:
+        await self.native_runtime.on_backend_reconnect()
+
     def __post_init__(self) -> None:
         if self.native_runtime.identity.runtime != self.instance.runtime_type:
             raise ValueError(
