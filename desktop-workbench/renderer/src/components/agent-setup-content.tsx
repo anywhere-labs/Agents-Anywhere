@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { dashboardApi } from '@/features/dashboard/api'
 import { quickAddRuntime } from '@/features/dashboard/quick-add-runtime'
 import { discoverConnectorRuntimeOverview, type ConnectorRuntimeOverview } from '@/features/dashboard/runtime-discovery'
-import { configuredRuntimeInstances, runtimeInstanceName, setupAddableRuntimeTypes } from '@/features/dashboard/runtime-instances'
+import { addableRuntimeTypes, configuredRuntimeInstances, runtimeInstanceName } from '@/features/dashboard/runtime-instances'
 import { runtimeErrorReason } from '@/features/dashboard/runtime-status-presentation'
 import type { DeviceRuntimeView, RuntimeTypeView } from '@/features/dashboard/types'
 import { isApiError } from '@/lib/api/errors'
@@ -102,7 +102,7 @@ export function AgentSetupContent({ connector, onContinue, onSkip, onChanged, co
     return runAction(runtime.runtimeType, () => dashboardApi.setConnectorRuntimeActive(session.accessToken, connector.id, runtime.runtimeId, true))
   }
   const configured = configuredRuntimeInstances(overview.runtimes)
-  const addable = setupAddableRuntimeTypes(overview.runtimeTypes, overview.runtimes)
+  const addable = addableRuntimeTypes(overview.runtimeTypes, overview.runtimes)
   const busy = addingType !== null
   const inline = presentation === 'onboarding'
   const rowClassName = inline ? 'flex min-h-20 items-center gap-3 border-b border-border/60 py-5 last:border-b-0' : 'flex items-center gap-3 rounded-lg border p-4'

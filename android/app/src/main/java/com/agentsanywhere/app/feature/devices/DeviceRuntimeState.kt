@@ -104,6 +104,22 @@ data class DeviceRuntimeManagementState(
         )
     }
 
+    /**
+     * Deletion removes the instance; the response is its final state under the
+     * same ID. A server that still returns an unconfigured successor under a new
+     * ID keeps that successor in the list.
+     */
+    fun afterDeletion(deletedId: String, response: DeviceRuntime): DeviceRuntimeManagementState {
+        if (response.id != deletedId) {
+            return copy(runtimes = runtimes.filterNot { it.id == deletedId }).replace(response)
+        }
+        return copy(
+            runtimes = runtimes.filterNot { it.id == deletedId },
+            errorMessage = null,
+            errorFromDiscovery = false,
+        )
+    }
+
     fun discoveryFailed(message: String): DeviceRuntimeManagementState {
         return copy(
             discovering = false,

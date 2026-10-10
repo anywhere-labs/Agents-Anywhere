@@ -393,7 +393,7 @@ class DeviceRuntimeRepository(
         runtime_id: str,
         *,
         cleanup_files: bool = True,
-        replacement_runtime_id: str | None = None,
+        retire: bool = False,
     ) -> list[str]: ...
 
     async def create_device_runtime(

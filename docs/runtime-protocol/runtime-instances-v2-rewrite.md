@@ -189,13 +189,15 @@ reuse the old branch's `v2_11` migration.
 7. Rewrite DSH filters and dashboard facts to use runtime type, not a concrete
    runtime ID string.
 8. `DELETE .../config` is the manual runtime deletion action: stop/deactivate,
-   remove its sessions and configuration, and permanently retire its ID. It
-   returns an unconfigured successor with a fresh `rti_*` ID and the same name
-   and type, so configure-then-start clients can add it again. Clients must
-   replace the old list entry with that returned successor. Requests to the old
-   ID return 404; retrying an old deletion cannot delete its successor. Schema
-   `v2_36` persists retired IDs to reject late ingestion after reconnects. Normal
-   disconnects, reconnects, start/stop, rename and config updates retain identity.
+   remove its sessions and configuration, delete the instance row and
+   permanently retire its ID. The deleted runtime no longer exists: it holds no
+   configured-instance slot and no name, and a new instance of the same type is
+   added through create. The response is the instance's final, unconfigured state
+   under the deleted ID; clients remove that entry from their list. Requests to
+   the old ID return 404. Schema `v2_36` persists retired IDs to reject late
+   ingestion after reconnects, and `v2_42` drops the unconfigured successors
+   that earlier deletions left behind. Normal disconnects, reconnects,
+   start/stop, rename and config updates retain identity.
 9. Add create and rename APIs without removing existing list/config/active
    behavior.
 10. Correct unversioned-database detection so `v2_10` through `v2_14` are

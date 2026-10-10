@@ -1125,9 +1125,67 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_41() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_41"
-    assert CURRENT_SCHEMA_VERSION == "2.41"
+def test_current_schema_version_is_v2_42() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_42"
+    assert CURRENT_SCHEMA_VERSION == "2.42"
+
+
+def _insert_required(connection, table: str, values: dict) -> None:
+    """Insert a row, filling other NOT NULL columns without defaults."""
+    row = {
+        column[1]: 0 if "INT" in column[2].upper() else "x"
+        for column in connection.execute(text(f"PRAGMA table_info({table})"))
+        if column[3] and column[4] is None
+    }
+    row.update(values)
+    names = ", ".join(row)
+    params = ", ".join(f":{name}" for name in row)
+    connection.execute(text(f"INSERT INTO {table} ({names}) VALUES ({params})"), row)
+
+
+def test_v2_42_drops_unconfigured_runtime_placeholders(tmp_path) -> None:
+    path = tmp_path / "runtime-placeholders.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_41")
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            _insert_required(connection, "connectors", {"id": "conn", "revoked": 0})
+            _insert_required(connection, "connector_runtime_types", {
+                "connector_id": "conn", "runtime_type": "codex",
+            })
+            for runtime_id, config in (
+                ("rti_placeholder", None),
+                ("rti_configured", "{}"),
+                ("rti_with_session", None),
+            ):
+                _insert_required(connection, "device_runtimes", {
+                    "connector_id": "conn",
+                    "runtime_id": runtime_id,
+                    "runtime_type": "codex",
+                    "name": runtime_id,
+                    "name_key": runtime_id,
+                    "config_json": config,
+                    "error_json": None,
+                })
+            _insert_required(connection, "sessions", {
+                "id": "sess", "connector_id": "conn", "runtime": "codex",
+                "runtime_id": "rti_with_session",
+            })
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url)
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.connect() as connection:
+            remaining = set(connection.execute(
+                text("SELECT runtime_id FROM device_runtimes")
+            ).scalars())
+        assert remaining == {"rti_configured", "rti_with_session"}
+    finally:
+        engine.dispose()
 
 
 def test_v2_41_drops_the_sidebar_order_table(tmp_path) -> None:
