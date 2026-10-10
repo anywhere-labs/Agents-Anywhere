@@ -85,7 +85,16 @@ Desktop 每次主进程启动校验自身真实应用位置和可执行文件权
 
 Python 和 Desktop 各自写入的字段位于同一文件，因此读取、合并和原子替换仍使用共同的短期文件事务。这只防止并发写入丢失，不承担 Connector 生命周期互斥；插件没有共享文件写锁。
 
-事务端口为 `49152 + sha256("aa-machine-state-v1\n" + canonicalPath).readUInt16BE(0) % 16384`。路径按 `realpath(dirname(filePath)) + basename(filePath)` 规范化，Windows 转小写。写入者独占绑定 `127.0.0.1` 端口，每 20ms 重试，5 秒超时报错；不提供业务服务。临时文件在同一目录，以 `0600` 写入并 `fsync`，原子替换后释放端口。
+路径按 `realpath(dirname(filePath)) + basename(filePath)` 规范化，Windows 转小写。令 `h = sha256("aa-machine-state-v1\n" + canonicalPath).readUInt16BE(0) % 16384`，事务端口有 16 个候选：第 `k` 个为 `49152 + (h + 1024 * k) % 16384`（`k = 0…15`），其中 `k = 0` 就是此前唯一的事务端口。写入者独占绑定 `127.0.0.1` 上的候选端口，不提供业务服务：
+
+- 每次尝试都从 `k = 0` 开始，绑定成功即持有事务。
+- `EADDRINUSE` 表示另一写入者正持有事务。本次尝试到此为止，不再尝试后面的候选；每 20ms 重试，5 秒超时报错。
+- `EACCES`（Windows 为 `WSAEACCES` / 10013）表示任何写入者都无法绑定该端口：通常是操作系统保留了它，也可能是其他程序以独占方式绑定了 `0.0.0.0` 上的同一端口。写入者之间的占用只会返回 `EADDRINUSE`，因此立即改试下一个候选。Windows 上 Hyper-V、WinNAT、WSL2 和 Docker 会在 49152–65535 内保留端口段，可用 `netsh int ipv4 show excludedportrange protocol=tcp` 查看。16 个候选都无法绑定时立即报错，不等到超时。
+- 其他绑定错误直接报告。
+
+同一台机器上的进程看到相同的保留范围，因此会选中同一个候选。只认 `k = 0` 的旧实现无法绑定被保留的端口，在新实现改用后续候选时也就不可能持有事务，新旧版本混用仍然互斥。持有期间保留范围发生变化（例如重启 WinNAT 或 WSL）时，两个写入者可能选中不同候选；事务只覆盖一次读取、合并和替换，这一风险限于这段时间。
+
+临时文件在同一目录，以 `0600` 写入并 `fsync`，原子替换后释放端口。
 
 Python 首次成功写入时迁移旧 `.agentsanywhere/machine.json`、`.agentsanywhere/desktop/install.json` 及旧版扁平 PID 记录，保留有序历史、Desktop 发布的安装信息和未知字段，完成后标记 `legacyMachineMigrated`。Host 在迁移前仅提供兼容的内存读取视图。自定义配置目录中的旧运行记录也会检查；旧记录中的活跃 Connector 子进程仍阻止并发启动。所有入口应一起升级，避免旧入口继续按 v1 协议写入。
 
