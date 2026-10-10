@@ -217,18 +217,58 @@ x86_64 模拟器上，通过网页登录连接本地 Server。"API"表示用与�
 - 移动端登录确认页在 Android 上显示 "Agents Anywhere for iOS"。
 - skill 命令在时间线中显示 Pi 展开后的 skill 全文（含本机路径），不是用户输入的命令。
 
-没有验证：Desktop（开发版与已安装的桌面版共用用户数据目录和 Connector 租约，需要
-先退出桌面版；其界面代码与 Web 基本相同）、iOS（Mac 上没有安装 Xcode）、Android
-上的插话和流式中断（模型回复太快，没有在运行中按到停止）。
+补测：Android 上流式中断通过（换成更长的回复，运行中按停止，回复标为 `cancelled`）。
+Android、Desktop、iOS 都没有插话入口，无法从这些客户端插话。
+
+## Linux（WSL）联调
+
+环境：WSL Ubuntu 24.04，Linux 版 Node 22 与 Pi 1.1.0，Server、Connector、Pi 都在 Linux
+中运行（提交 `ecdbd316`），沿用 macOS 联调的脚本。全部通过：注册运行时与目录、创建会话、
+切换模型与等级、四种权限的审批、流式、中断、插话、对话框（答复、取消、过期）、图片与
+文本附件、修改运行时配置与空闲回收、外部 Pi 终端续写与新建会话（AA 接管后继续）、
+AA 进程仍在时外部续写后重开、大上下文与压缩、真实回执、扩展切换模型、迟到的失败通知，
+以及本轮新增的目录默认项、skill 命令、整份回传选择、等待审批时中断，Connector 被
+`kill -9` 后重启、Server 重启后继续对话。
+
+测试脚本的一个注意点：通过 `wsl` 调用 `pi -p` 时标准输入不会关闭，Pi 会一直等管道输入，
+需要从 `/dev/null` 读入。这是 Pi 命令行的行为，与 AA 无关。
+
+## macOS 第三轮复跑
+
+Mac 升级到 macOS 27.0.1 后重跑（提交 `ecdbd316`）：完整套件 1285 passed；真实联调中本轮新增
+的各项、流式中断与插话、压缩、回执、扩展切换模型、迟到的失败通知、Connector 被 `kill -9`
+后重启、Server 重启均通过。
+
+## Desktop 开发版联调
+
+本机桌面版切换为开发版（`desktop-workbench`，受管 Connector 运行本分支源码），沿用已安装
+桌面版的服务器与 Connector 配置，连接正式服务器，使用本机真实的 Pi 配置（默认
+`159-copy/gpt-6-astra`、`xhigh`）。
+
+- 新建会话预选 `Extra high · gpt-6-astra（159-copy）`、写入前询问；Pi 会话文件记录的
+  模型与等级为 `gpt-6-astra`、`xhigh`。
+- 会话内把等级改为 High，Pi 只记录一次等级变化；切换权限（重启进程）后模型与等级保持。
+- 每次询问下的工具审批（批准）、等待审批时中断、流式中断、图片附件、`/compact` 带参数
+  （会话太小，返回 Pi 的"Nothing to compact"）均通过。
+- skill 命令没有在 Desktop 上执行，以免运行本机真实的 skill；逻辑与其他端相同，已在
+  Web、Android、Linux、macOS 上验证。
+
+联调中发现并修复一个 Connector 问题：列出运行时类型时，Codex 运行时在事件循环里同步执行
+`codex --version`（以及读取登录 shell 的 PATH）。平时每次会让所有运行时停顿最多 5 秒；
+这次探测卡死，整个 Connector 失去响应、心跳停止，服务端显示离线，创建会话失败。现在
+探测在线程中执行（`main` 上已有的问题，Desktop 每次打开设备页或运行时菜单都会触发）。
+Codex 配置校验和运行时启动时的同类探测只在修改配置或启动时发生，留作后续处理。
+
+Desktop 客户端的问题（不在本 PR 处理）：新建会话框每次回到上次或第一台设备的运行时，
+多设备时容易选错；会话输入框在连接异常后曾显示另一台设备的 Pi 选择，刷新后正确。
 
 ## 遗留与未验证
 
 - inputRequest v1 表单没有默认值和多行输入：编辑器预填内容只能显示在说明里，
   网页端把说明显示为一行；输入框表单的选项标为"其他"。改善需要扩展跨端表单契约。
 - 本次修改了用户消息 id 规则，已同步会话在文件下次变化时会整份替换一次。
-- Server 使用 SQLite、单 worker，没有验证 PostgreSQL/Redis 部署；没有验证正式桌面
-  安装包和 iOS；Android 只在模拟器上的调试包中验证；Linux 只有自动化测试（WSL），
-  没有做真实联调。第三轮修复和多端联调只在 Windows 上做，没有回到 Mac 重跑。
+- 本地联调的 Server 使用 SQLite、单 worker，没有验证 PostgreSQL/Redis 部署（Desktop
+  联调连接的是正式服务器）；没有验证正式桌面安装包；Android 只在模拟器上的调试包中验证。
 - Windows 真实联调基于提交 `e284d95b`；之后 Mac 上新增的两项修复在 Mac 真实环境和
   Linux/macOS 自动化测试中验证。第二轮审阅的修复在 Windows 上真实复核了附件回执，
   并在 Mac 复跑中整体复核（见上一节）。

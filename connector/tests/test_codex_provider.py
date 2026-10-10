@@ -57,6 +57,39 @@ async def _test_codex_provider_requires_sdk_for_runnable_surface() -> None:
     assert "appServer" not in item.metadata
 
 
+def test_codex_discovery_does_not_block_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time
+
+    from connector.runtimes.codex import provider as provider_module
+
+    real_select = provider_module.select_codex_runtime_binary
+
+    def slow_select(*args, **kwargs):
+        time.sleep(0.5)  # a slow `codex --version`
+        return real_select(*args, **kwargs)
+
+    monkeypatch.setattr(provider_module, "select_codex_runtime_binary", slow_select)
+
+    async def run() -> int:
+        ticks = 0
+
+        async def tick() -> None:
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.05)
+                ticks += 1
+
+        ticker = asyncio.create_task(tick())
+        await CodexProvider(sdk_checker=_missing_sdk).discover()
+        ticker.cancel()
+        return ticks
+
+    # Other runtimes (and heartbeats) keep running while Codex is probed.
+    assert asyncio.run(run()) >= 5
+
+
 def test_codex_provider_treats_sdk_as_only_active_surface() -> None:
     asyncio.run(_test_codex_provider_treats_sdk_as_only_active_surface())
 

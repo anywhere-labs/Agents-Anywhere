@@ -148,5 +148,7 @@
 - Pi 第三轮审阅（3 个 P1、5 个 P2）核实后修复 5 项，其余写入已知局限。按"多端都能
   连接 Pi、正确传参并调度"验收，在 Windows 上用 Web 和 Android 模拟器真实联调，修复
   Android 整份回传选择覆盖等级、新建会话不预选 Pi 默认值、skill 命令执行 422、等待
-  审批时中断挂起 4 项 Connector 问题。WSL 完整套件 1282 passed、3 skipped。Desktop、
-  iOS 未联调，见 [联调记录](aa-e2e-verification.md)。
+  审批时中断挂起 4 项 Connector 问题。WSL 完整套件 1282 passed、3 skipped。
+- 补测 Linux（WSL）与 macOS 27 的真实联调、Android 流式中断、Desktop 开发版（连接正式
+  服务器、本机真实 Pi）；Desktop 联调中修复 Codex 运行时探测阻塞事件循环导致 Connector
+  离线的问题。iOS 待 Mac 安装 Xcode 后联调，见 [联调记录](aa-e2e-verification.md)。
