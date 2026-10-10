@@ -87,6 +87,8 @@ Python 和 Desktop 各自写入的字段位于同一文件，因此读取、合�
 
 事务端口为 `49152 + sha256("aa-machine-state-v1\n" + canonicalPath).readUInt16BE(0) % 16384`。路径按 `realpath(dirname(filePath)) + basename(filePath)` 规范化，Windows 转小写。写入者独占绑定 `127.0.0.1` 端口，每 20ms 重试，5 秒超时报错；不提供业务服务。临时文件在同一目录，以 `0600` 写入并 `fsync`，原子替换后释放端口。
 
-Python 首次成功写入时迁移旧 `.agentsanywhere/machine.json`、`.agentsanywhere/desktop/install.json` 及旧版扁平 PID 记录，保留有序历史、Desktop 发布的安装信息和未知字段，完成后标记 `legacyMachineMigrated`。Host 在迁移前仅提供兼容的内存读取视图。自定义配置目录中的旧运行记录也会检查；旧记录中的活跃 Connector 子进程仍阻止并发启动。所有入口应一起升级，避免旧入口继续按 v1 协议写入。
+绑定失败只有 `EADDRINUSE` 表示其他写入者正持有事务，需要等待。其他绑定错误（例如 Windows 保留端口段返回的 `EACCES` / WinError 10013）先探测该端口是否有进程监听：有则同样等待；没有则说明操作系统本身拒绝了该端口，任何写入者都无法持有它，写入者记录一条警告后不加锁直接写入，不因此中断启动。这种情况下两个写入者在同一瞬间启动可能互相覆盖；Connector 仍按记录中的 PID 判断占用，Desktop 的安装信息会在下次启动补写。
+
+Python 首次成功写入时迁移旧 `.agentsanywhere/machine.json`、`.agentsanywhere/desktop/install.json` 及旧版扁平 PID 记录，保留有序历史、Desktop 发布的安装信息和未知字段，完成后标记 `legacyMachineMigrated`。两个旧文件都不存在时直接标记完成，不锁定也不创建 `.agentsanywhere` 目录。Host 在迁移前仅提供兼容的内存读取视图。自定义配置目录中的旧运行记录也会检查；旧记录中的活跃 Connector 子进程仍阻止并发启动。所有入口应一起升级，避免旧入口继续按 v1 协议写入。
 
 自动化测试在临时用户目录运行真实 Python CLI/RPC，覆盖三种启动来源竞争、RPC 重试、进程异常退出、无关 PID、ID 去重、Desktop 并发写安装信息和跨端设备复用。测试不启动真实后端、Electron 或 DSH GUI。

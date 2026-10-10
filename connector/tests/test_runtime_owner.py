@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import socket
@@ -147,6 +148,42 @@ def test_state_lock_excludes_a_socket_that_has_not_started_listening(tmp_path):
         holder.close()
     with runtime_owner.state_lock(path, timeout=0.2):
         pass
+
+
+def test_state_lock_is_skipped_when_the_os_refuses_the_port(tmp_path, monkeypatch):
+    """A port the OS reserves, such as a Windows excluded range, must not block every write."""
+    path = tmp_path / "connector-runtime.json"
+    port = runtime_owner.state_lock_port(path)
+    original_bind = socket.socket.bind
+
+    def refuse_lock_port(self, address):
+        if address[1] == port:
+            raise OSError(errno.EACCES, "An attempt was made to access a socket in a way forbidden by its access permissions")
+        return original_bind(self, address)
+
+    monkeypatch.setattr(socket.socket, "bind", refuse_lock_port)
+    with runtime_owner.state_lock(path, timeout=0.2):
+        pass
+    with state_transaction(path) as state:
+        state["connectorIds"] = ["written-without-lock"]
+    assert read_state(path)["connectorIds"] == ["written-without-lock"]
+    # A listener on that port is a real writer, so the same refusal keeps waiting.
+    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    original_bind(holder, ("127.0.0.1", port))
+    holder.listen()
+    try:
+        with pytest.raises(RuntimeError, match="busy"), runtime_owner.state_lock(path, timeout=0.2):
+            pytest.fail("Skipped a lock that another writer holds")
+    finally:
+        holder.close()
+
+
+def test_fresh_record_neither_creates_nor_locks_the_legacy_directory():
+    lease = RuntimeLease()
+    lease.claim(config())
+    lease.release()
+    assert read_state(lease.path)["legacyMachineMigrated"] is True
+    assert not (runtime_owner.system_home() / ".agentsanywhere").exists()
 
 
 def test_live_unrelated_process_does_not_block_connector_start():
