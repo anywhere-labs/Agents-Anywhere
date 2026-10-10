@@ -677,35 +677,25 @@ def test_v2_lifecycle_sends_instance_identity_and_manual_delete_retires_it(
         )
     ]
     cleared_runtime = cleared.json()
-    replacement_id = cleared_runtime["runtimeId"]
-    assert replacement_id != runtime_id
-    assert replacement_id.startswith("rti_")
+    assert cleared_runtime["runtimeId"] == runtime_id
     assert cleared_runtime["name"] == "Renamed Codex"
     assert cleared_runtime["configured"] is False
     assert cleared_runtime["config"] is None
     assert cleared_runtime["active"] is False
     assert cleared_runtime["status"] == "stopped"
     assert cleared_runtime["error"] is None
-    assert cleared_runtime["createdAt"] >= runtime["createdAt"]
 
-    still_present = client.get(
-        f"/connectors/{connector_id}/runtimes/{replacement_id}",
+    gone = client.get(
+        f"/connectors/{connector_id}/runtimes/{runtime_id}",
         headers=headers,
     )
-    assert still_present.status_code == 200, still_present.text
-    assert still_present.json()["name"] == "Renamed Codex"
+    assert gone.status_code == 404, gone.text
+    listed = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
+    assert listed.status_code == 200
+    assert listed.json()["runtimes"] == []
 
     rpc.discovery = {"runtimeTypes": []}
     _discover_types(client, connector_id, headers)
-    listed_after_type_disappears = client.get(
-        f"/connectors/{connector_id}/runtimes",
-        headers=headers,
-    )
-    assert listed_after_type_disappears.status_code == 200
-    assert [
-        item["runtimeId"] for item in listed_after_type_disappears.json()["runtimes"]
-    ] == [replacement_id]
-    assert listed_after_type_disappears.json()["runtimes"][0]["present"] is False
     rejected = client.post(
         f"/connectors/{connector_id}/runtimes",
         headers=headers,

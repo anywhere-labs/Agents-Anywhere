@@ -226,7 +226,8 @@ fun DeviceDetailScreen(
                 is DeviceConfirmAction.DeleteRuntimeConfig -> {
                     onDeleteDeviceRuntimeConfig(device.id, action.runtime.id)
                         .onSuccess { updated ->
-                            runtimeState = runtimeState.replace(updated).copy(pendingRuntimeId = null)
+                            runtimeState = runtimeState.afterDeletion(action.runtime.id, updated)
+                                .copy(pendingRuntimeId = null)
                             confirmAction = null
                             actionError = null
                         }

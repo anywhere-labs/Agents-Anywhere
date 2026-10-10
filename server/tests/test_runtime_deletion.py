@@ -218,8 +218,10 @@ def test_runtime_deletion_removes_only_its_sessions_and_related_data(api):
             == 404
         )
         assert client.get(f"/public/shares/{session.id}").status_code == 404
-    assert response.json()["runtimeId"] != runtime
+    assert response.json()["runtimeId"] == runtime
     assert client.get(f"{runtime_url}", headers=headers).status_code == 404
+    listed = client.get(f"/connectors/{device}/runtimes", headers=headers).json()["runtimes"]
+    assert runtime not in {item["runtimeId"] for item in listed}
     assert (
         client.get(
             f"/connectors/{device}/runtimes/{other_runtime}", headers=headers
@@ -315,7 +317,7 @@ def test_stopped_runtime_can_be_deleted_while_connector_is_offline(api):
     asyncio.run(assert_session_data(client.app, set()))
 
 
-def test_only_manual_delete_changes_identity_and_stale_retries_cannot_delete_successor(api):
+def test_only_manual_delete_retires_identity_and_stale_retries_cannot_touch_new_instance(api):
     client, rpc, headers, device, runtime = api
     url = f"/connectors/{device}/runtimes/{runtime}"
     for active in (True, False, True, False):
@@ -332,12 +334,11 @@ def test_only_manual_delete_changes_identity_and_stale_retries_cannot_delete_suc
     rpc.online = True
     removed = client.delete(f"{url}/config", headers=headers)
     assert removed.status_code == 200, removed.text
-    replacement = removed.json()["runtimeId"]
+    assert removed.json()["runtimeId"] == runtime
+    assert client.get(url, headers=headers).status_code == 404
+    replacement = create_runtime(client, headers, device, "Work")
     assert replacement != runtime
     replacement_url = f"/connectors/{device}/runtimes/{replacement}"
-    configured = client.put(f"{replacement_url}/config", headers=headers, json={"config": config})
-    assert configured.status_code == 200, configured.text
-    assert configured.json()["runtimeId"] == replacement
     assert client.delete(f"{url}/config", headers=headers).status_code == 404
     assert client.put(f"{url}/config", headers=headers, json={"config": config}).status_code == 404
     assert client.get(replacement_url, headers=headers).json()["configured"] is True
@@ -462,7 +463,7 @@ def connector_api(api, monkeypatch):
 
 
 @pytest.mark.parametrize("state", ["running", "stopped", "offline"])
-def test_deleted_single_instance_can_be_reconfigured_without_connector_restart(
+def test_deleted_single_instance_can_be_added_again_without_connector_restart(
     connector_api, state
 ):
     client, rpc, headers, device, runtime_id, supervisor = connector_api
@@ -474,18 +475,14 @@ def test_deleted_single_instance_can_be_reconfigured_without_connector_restart(
         rpc.online = state != "offline"
         removed = client.delete(f"{url}/config", headers=headers)
         assert removed.status_code == 200, removed.text
-        replacement = removed.json()["runtimeId"]
-        assert replacement != runtime_id
+        assert removed.json()["runtimeId"] == runtime_id
+        assert removed.json()["configured"] is False
         rpc.online = True
-        configured = client.put(
-            f"/connectors/{device}/runtimes/{replacement}/config",
-            headers=headers,
-            json={"config": {"home": "/runtime/Work"}},
-        )
-        assert configured.status_code == 200, configured.text
-        assert supervisor.entry(runtime_id).runtime is None
-        assert supervisor.entry(replacement).status == "stopped"
         assert client.get(url, headers=headers).status_code == 404
+        # The deleted instance no longer holds the single slot or its name.
+        replacement = create_runtime(client, headers, device, "Work")
+        assert replacement != runtime_id
+        assert supervisor.entry(runtime_id).runtime is None
         runtime_id = replacement
 
 

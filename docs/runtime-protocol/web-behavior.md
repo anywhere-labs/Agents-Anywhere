@@ -35,7 +35,8 @@ Runtime types and runtime instances carry different facts; Web must not mix them
 - `instancePolicy` and `maxInstances` limit configured instances on Server and
   running instances on Connector. A type at its configured limit is not offered
   as addable; it is shown only as its configured instance, so each type appears
-  once. Deleting a configuration releases its slot. The Connector's running
+  once. Deleting a runtime removes it entirely, so it releases its slot and
+  name and disappears from the list. The Connector's running
   limit returns HTTP 409 `runtime_conflict` on start.
 
 ## New session

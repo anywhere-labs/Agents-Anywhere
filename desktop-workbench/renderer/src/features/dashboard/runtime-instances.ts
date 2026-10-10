@@ -105,15 +105,20 @@ export function configuredRuntimeInstances(
     .sort((left, right) => runtimeInstanceName(left).localeCompare(runtimeInstanceName(right)))
 }
 
+/**
+ * Deletion removes the instance; the response is its final state under the same
+ * ID. A server that still returns an unconfigured successor under a new ID keeps
+ * that successor in the list.
+ */
 export function runtimeInstancesAfterDeletion(
   runtimes: readonly DeviceRuntimeView[],
   deletedId: string,
-  successor: DeviceRuntimeView,
+  response: DeviceRuntimeView,
 ): DeviceRuntimeView[] {
-  return [
-    ...runtimes.filter((runtime) => runtime.runtimeId !== deletedId && runtime.runtimeId !== successor.runtimeId),
-    successor,
-  ]
+  const remaining = runtimes.filter((runtime) => (
+    runtime.runtimeId !== deletedId && runtime.runtimeId !== response.runtimeId
+  ))
+  return response.runtimeId === deletedId ? remaining : [...remaining, response]
 }
 
 export function addableRuntimeTypes(

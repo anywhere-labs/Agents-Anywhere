@@ -478,9 +478,13 @@ class DeviceRuntimeRepositoryMixin:
         runtime_id: str,
         *,
         cleanup_files: bool = True,
-        replacement_runtime_id: str | None = None,
+        retire: bool = False,
     ) -> list[str]:
-        """Clear an instance and physically delete its sessions; return their IDs."""
+        """Clear an instance and physically delete its sessions; return their IDs.
+
+        With ``retire`` the instance is deleted outright and its ID is retired,
+        so the runtime no longer exists and does not hold a configuration slot.
+        """
         session_query = select(sessions_t.c.id).where(
             sessions_t.c.connector_id == connector_id,
             sessions_t.c.runtime_id == runtime_id,
@@ -521,9 +525,9 @@ class DeviceRuntimeRepositoryMixin:
             # attachment cleanup fails before the transaction commits.
             if cleanup_files:
                 await self.delete_runtime_session_files(session_ids)
-            if replacement_runtime_id is not None:
-                # Only manual deletion retires identity. Keep an unconfigured
-                # successor for existing clients' configure-then-start flow.
+            if retire:
+                # Manual deletion removes the instance entirely. The retired ID
+                # rejects late ingestion from a Connector that still knows it.
                 await conn.execute(insert(retired_runtimes_t).values(
                     connector_id=connector_id, runtime_id=runtime_id, retired_at=utc_now(),
                 ))
@@ -531,10 +535,10 @@ class DeviceRuntimeRepositoryMixin:
                     catalogs_t.c.connector_id == connector_id,
                     catalogs_t.c.runtime_id == runtime_id,
                 ))
-                await conn.execute(update(device_runtimes_t).where(
+                await conn.execute(delete(device_runtimes_t).where(
                     device_runtimes_t.c.connector_id == connector_id,
                     device_runtimes_t.c.runtime_id == runtime_id,
-                ).values(runtime_id=replacement_runtime_id, created_at=utc_now()))
+                ))
         return session_ids
 
     async def _update_device_runtime(
