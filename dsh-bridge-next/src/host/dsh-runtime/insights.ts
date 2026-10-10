@@ -64,6 +64,18 @@ export interface InsightSubagent {
   label?: string
 }
 
+/** One Agent Teams member from the Lead session's `agentTeam` projection. */
+export interface InsightTeamMember {
+  id: string
+  name: string
+  role: 'lead' | 'teammate'
+  phase: 'provisioning' | 'active' | 'failed'
+  description?: string
+  provider?: string
+  context?: 'fresh' | 'fork'
+  error?: string
+}
+
 /** Whole-session insights published in `session.state.updated` metadata. */
 export interface SessionInsights {
   tokenUsage?: InsightTokenUsage
@@ -72,6 +84,7 @@ export interface SessionInsights {
   goal?: InsightGoal | null
   todos?: InsightTodo[] | null
   subagentCatalog?: InsightSubagent[]
+  teamMembers?: InsightTeamMember[]
 }
 
 /** Exact per-turn token accounting attached to `session.turnEnded`. */
@@ -88,7 +101,7 @@ export interface TurnUsage {
 // (dsh-token-meter, dsh-session-stats, dsh-goal, dsh-tool-todo, dsh-subagent)
 // that a deployment may not mount, and not all of them are installed at
 // typecheck time. The registry keys are plain strings on the wire.
-const INSIGHT_KEYS: readonly string[] = ['tokenUsage', 'contextPressure', 'sessionStats', 'goal', 'todos', 'subagentCatalog']
+const INSIGHT_KEYS: readonly string[] = ['tokenUsage', 'contextPressure', 'sessionStats', 'goal', 'todos', 'subagentCatalog', 'agentTeam']
 
 export class RuntimeInsights {
   constructor(private ctx: Context) {}
@@ -124,6 +137,10 @@ export class RuntimeInsights {
       if ('subagentCatalog' in values) {
         const catalog = sanitizeSubagents(values.subagentCatalog)
         if (catalog) result.subagentCatalog = catalog
+      }
+      if ('agentTeam' in values) {
+        const members = sanitizeTeamMembers(values.agentTeam)
+        if (members) result.teamMembers = members
       }
       return result
     } catch {
@@ -218,6 +235,7 @@ const INSIGHT_EVENT_TYPES = new Set([
   'subagent/catalog', 'subagent/descriptor',
   'agent-preset/selected', 'model/selection',
   'compaction/start', 'compaction/end',
+  'team/member', 'team/task', 'team/message/queued', 'team/message/delivered',
 ])
 
 function sanitizeGoal(value: unknown): InsightGoal | null {
@@ -264,6 +282,28 @@ function sanitizeSubagents(value: unknown): InsightSubagent[] | undefined {
       createdAt: Number(entry.createdAt) || 0,
       mode: mode === 'one-shot' || mode === 'continuable' ? mode : 'unknown' as const,
       ...(typeof entry.label === 'string' ? { label: entry.label } : {}),
+    }]
+  })
+}
+
+function sanitizeTeamMembers(value: unknown): InsightTeamMember[] | undefined {
+  const projection = record(value)
+  const members = projection.members
+  if (!Array.isArray(members) || !members.length) return undefined
+  return members.flatMap(item => {
+    const entry = record(item)
+    if (typeof entry.id !== 'string' || typeof entry.name !== 'string') return []
+    const role = entry.role
+    const phase = entry.phase
+    return [{
+      id: entry.id,
+      name: entry.name,
+      role: role === 'teammate' ? 'teammate' as const : 'lead' as const,
+      phase: phase === 'provisioning' || phase === 'failed' ? phase : 'active' as const,
+      ...(typeof entry.description === 'string' && entry.description ? { description: entry.description } : {}),
+      ...(typeof entry.provider === 'string' && entry.provider ? { provider: entry.provider } : {}),
+      ...(entry.context === 'fork' ? { context: 'fork' as const } : entry.context === 'fresh' ? { context: 'fresh' as const } : {}),
+      ...(typeof entry.error === 'string' && entry.error ? { error: entry.error } : {}),
     }]
   })
 }

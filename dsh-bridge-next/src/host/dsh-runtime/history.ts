@@ -4,7 +4,7 @@ import type { ContentBlock, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { receiptKey, type AttachmentSnapshot, type AttachmentReceipt } from './attachments.js'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { canonicalJson, clientMessageId, contentHash, itemId } from './identity.js'
-import { enrichToolResult, parentToolItem, resultContent, toolContent } from './tools.js'
+import { enrichAgentCallResult, enrichToolResult, parentToolItem, resultContent, toolContent } from './tools.js'
 import { json, record, type Data, type ItemStatus, type ItemType, type TimelineItem } from './types.js'
 
 // Bump when replay semantics change so old checkpoints rebuild their timeline.
@@ -92,9 +92,12 @@ export function createProjection(externalId: string, platformId: string, fingerp
 
   function result(callId: string, blocks: unknown, failed: boolean, event: ProjectionEvent, meta?: unknown, error?: unknown) {
     const previous = items.get(itemId(externalId, 'tool', callId))
+    const blocksJson = json(blocks)
     put('tool', callId, event, 'tool', failed ? 'failed' : 'done', 'assistant',
-      enrichToolResult({ ...(previous?.content ?? toolContent('tool', {})), callId, isError: failed,
-        ...(error !== undefined ? { error: json(error) } : {}), ...resultContent(blocks) }, meta))
+      enrichAgentCallResult(
+        enrichToolResult({ ...(previous?.content ?? toolContent('tool', {})), callId, isError: failed,
+          ...(error !== undefined ? { error: json(error) } : {}), ...resultContent(blocks) }, meta),
+        blocksJson))
   }
 
   function block(block: ContentBlock | LegacyToolResultBlock, key: string, index: number, event: ProjectionEvent,

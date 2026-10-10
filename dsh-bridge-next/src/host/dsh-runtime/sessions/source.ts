@@ -4,7 +4,7 @@ import type {} from '@deepseek-ai/dsh-session-persistence'
 import type { SessionObservation, SessionLogSnapshot } from '@deepseek-ai/dsh-session-query'
 import type { SessionRecord } from '@deepseek-ai/dsh-session-query'
 import { BridgeError } from '../errors.js'
-import { isUserMessage, sessionVisible } from '../visibility.js'
+import { isUserMessage, sessionHiddenReason, sessionVisible } from '../visibility.js'
 import { quietDiagnostics, type RuntimeDiagnostics } from '../diagnostics.js'
 
 export interface SourceState {
@@ -152,7 +152,10 @@ export class NativeSessionSource {
   async visible(id: string): Promise<boolean> {
     const live = this.ctx.sessions.get(id as SessionId)
     const header = live?.header ?? this.records.get(id)?.header
-    if (!header || header.origin === 'subagent' || this.archived.has(id)) return false
+    if (!header || this.archived.has(id)) return false
+    // Subagent sessions stay in the main list's place: never user-visible, but
+    // still synced (see syncable) so AA can open the full conversation.
+    if (sessionHiddenReason(header.origin)) return false
     if (this.failedReads.has(id)) return false
     if (!this.withUserMessages.has(id)) {
       if (!live && this.records.get(id)?.persisted === false) return false
@@ -180,12 +183,55 @@ export class NativeSessionSource {
     return sessionVisible({ id, ...(header.origin ? { origin: header.origin } : {}), hasUserMessage: this.withUserMessages.has(id) }, this.archived)
   }
 
+  /**
+   * Sessions the sync feed imports even though they are not user-visible.
+   * Subagent conversations ride the same projection pipeline so their
+   * history and live events reach AA; source state keeps them out of the
+   * main list and send paths reject them.
+   */
+  async syncable(id: string): Promise<boolean> {
+    const live = this.ctx.sessions.get(id as SessionId)
+    const header = live?.header ?? this.records.get(id)?.header
+    if (!header || this.archived.has(id)) return false
+    if (!sessionHiddenReason(header.origin)) return false
+    if (this.failedReads.has(id)) return false
+    if (!this.withUserMessages.has(id)) {
+      if (!live && this.records.get(id)?.persisted === false) return false
+      const revision = await this.freshRevisionOf(id)
+      if (revision === undefined || this.emptyLogs.get(id) !== revision) {
+        let events: readonly SessionEvent[]
+        try {
+          events = live?.snapshotEvents() ?? (await this.diagnostics.measure('session.visibility_read', { sessionId: id }, () => this.readLog(id as SessionId))).events
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') throw error
+          this.markReadFailed(id)
+          return false
+        }
+        if (events.some(isUserMessage)) {
+          this.withUserMessages.add(id)
+          this.emptyLogs.delete(id)
+        } else if (revision !== undefined) {
+          this.emptyLogs.set(id, revision)
+        }
+      }
+    }
+    return this.withUserMessages.has(id)
+  }
+
   async state(id: string): Promise<SourceState> {
     const observedAt = new Date().toISOString()
     // Only the authoritative archive set establishes an archived fact.
     if (this.archived.has(id)) return { availability: 'archived', reason: 'archived_in_dsh', observedAt }
-    if (!this.records.has(id) && !this.ctx.sessions.get(id as SessionId)) {
+    const live = this.ctx.sessions.get(id as SessionId)
+    const header = live?.header ?? this.records.get(id)?.header
+    if (!this.records.has(id) && !live) {
       return { availability: 'missing', reason: 'not_found_in_dsh', observedAt }
+    }
+    const hiddenReason = sessionHiddenReason(header?.origin)
+    if (hiddenReason) {
+      return await this.syncable(id)
+        ? { availability: 'unavailable', reason: hiddenReason, observedAt }
+        : { availability: 'missing', reason: hiddenReason, observedAt }
     }
     return await this.visible(id) ? { availability: 'available', reason: null, observedAt }
       : { availability: 'unavailable', reason: this.failedReads.has(id) ? 'read_failed' : 'not_visible_in_dsh', observedAt }
@@ -195,6 +241,7 @@ export class NativeSessionSource {
     const state = await this.state(id)
     if (state.availability === 'archived') throw new BridgeError('SESSION_ARCHIVED', '该会话已在 DeepSeek Harness 客户端中归档，请取消归档后继续。')
     if (state.reason === 'read_failed') throw new BridgeError('PERSISTENCE_ERROR', 'DSH could not read this session. Check the Bridge logs page and retry after repairing its native history.', true)
+    if (state.reason === 'dsh_subagent') throw new BridgeError('SESSION_NOT_FOUND', 'Subagent conversations are read-only in Agents Anywhere.')
     if (state.availability !== 'available') throw new BridgeError('SESSION_NOT_FOUND', 'The session is not visible in DSH.')
   }
 }

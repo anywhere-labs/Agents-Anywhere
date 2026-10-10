@@ -158,19 +158,23 @@ export class SyncFeed {
       const size = jsonBytes(item)
       if (size > MAX_BYTES) throw new Error('A DSH Timeline item exceeds the transport limit')
       if (page.length && (bytes + size > MAX_BYTES || page.length >= 250)) {
-        if (!await this.native.visible(id)) return
+        if (!await this.publishable(id)) return
         await sendPage()
         page = []; bytes = 0
       }
       page.push(item); bytes += size
     }
-    if (page.length && await this.native.visible(id)) await sendPage()
+    if (page.length && await this.publishable(id)) await sendPage()
+  }
+  /** Sessions this feed may publish: user-visible ones, plus synced subagent conversations. */
+  private async publishable(id: string): Promise<boolean> {
+    return await this.native.visible(id) || await this.native.source.syncable(id)
   }
   private async baseline(id: string, restore = false): Promise<void> {
     await this.sessionOperation(id, 'snapshot', () => this.publishBaseline(id, restore))
   }
   private async publishBaseline(id: string, restore: boolean): Promise<void> {
-    if (!await this.native.visible(id)) { await this.unavailable(id); return }
+    if (!await this.publishable(id)) { await this.unavailable(id); return }
     const start = performance.now()
     let log: Awaited<ReturnType<NativeRuntime['read']>>
     try { log = await this.native.read(id as SessionId) }
@@ -197,10 +201,11 @@ export class SyncFeed {
     const title = log.events.findLast(event => event.type === 'session/title')
     const meta = { externalSessionId: id, title: title?.type === 'session/title' ? title.data.title : null,
       sourceState: await this.native.source.state(id), cwd: log.session.cwd ?? null,
+      parentSession: log.session.parentSession ?? null,
       lastActivityAt: new Date(log.events.at(-1)?.time ?? log.session.createdAt).toISOString() }
     if (resumed) {
       const delta = projection.drain()
-      if (!delta.removed.length && await this.native.visible(id)) {
+      if (!delta.removed.length && await this.publishable(id)) {
         this.projections.set(id, projection)
         this.published.set(id, platformId)
         this.sourceAvailability.set(id, 'available')
@@ -214,7 +219,7 @@ export class SyncFeed {
       }
     }
     const snapshotId = randomUUID()
-    if (!await this.native.visible(id)) return
+    if (!await this.publishable(id)) return
     this.native.diagnostics.log('debug', 'snapshot.started', { streamId: this.id, sessionId: id })
     this.capture = { id, snapshotId }
     await this.send([{ kind: 'snapshot.begin', sessionId: platformId, snapshotId,
@@ -222,7 +227,7 @@ export class SyncFeed {
       throughSeq: projection.throughSeq }])
     const snapshotItems = contentItems(projection.snapshot())
     await this.items('snapshot.items', id, snapshotItems, snapshotId)
-    if (!await this.native.visible(id)) {
+    if (!await this.publishable(id)) {
       await this.send([{ kind: 'snapshot.abort', sessionId: platformId, snapshotId }]); this.capture = undefined; return
     }
     await this.send([{ kind: 'snapshot.commit', sessionId: platformId, snapshotId,
@@ -233,7 +238,7 @@ export class SyncFeed {
     this.projections.set(id, projection)
     this.checkpointDirty.add(id)
     this.published.set(id, platformId)
-    this.sourceAvailability.set(id, 'available')
+    this.sourceAvailability.set(id, (await this.native.source.state(id)).availability)
     await this.notices(id)
     await this.state(id, log)
     this.native.diagnostics.log('info', 'snapshot.completed', { streamId: this.id, sessionId: id, items: snapshotItems.length, elapsedMs: Math.round(performance.now() - start) })
@@ -242,7 +247,7 @@ export class SyncFeed {
     for (const notice of [...this.native.questions.notices(this.namespace, id), ...this.native.approvals.notices(this.namespace, id)]) await this.notification('notice.upsert', notice)
   }
   private async state(id: string, snapshot?: SessionLogSnapshot): Promise<void> {
-    if (!this.published.has(id) || !await this.native.visible(id)) return
+    if (!this.published.has(id) || !await this.publishable(id)) return
     const log = this.native.ctx.sessions.get(id as SessionId)
     const pending = new Set<string>()
     for (const e of log?.snapshotEvents() ?? []) {
@@ -265,7 +270,7 @@ export class SyncFeed {
   }
   private async reconcile(): Promise<void> {
     for (const id of this.native.candidates()) await this.sessionOperation(id, 'visibility', async () => {
-      if (!await this.native.visible(id)) await this.unavailable(id)
+      if (!await this.publishable(id)) await this.unavailable(id)
     })
     // Recheck source availability; selecting a draft never makes it eligible for import.
     for (const id of this.native.candidates()) if (!this.published.has(id)) await this.baseline(id)
@@ -333,7 +338,7 @@ export class SyncFeed {
       if (change.type === 'visibility') { reconcile = true; continue }
       const { id } = change
       await this.sessionOperation(id, change.type, async () => {
-        if (!await this.native.visible(id)) {
+        if (!await this.publishable(id)) {
           if (this.published.has(id)) reconcile = true
           return
         }
@@ -377,14 +382,14 @@ export class SyncFeed {
     }
     for (const id of touched) await this.sessionOperation(id, 'timeline', async () => {
       const delta = this.projections.get(id)?.drain()
-      if (!delta || !await this.native.visible(id)) return
+      if (!delta || !await this.publishable(id)) return
       // Existing ingest has no item-delete notification. Reconcile that session
       // with its complete snapshot when native finalization discards a draft.
       if (delta.removed.length) await this.baseline(id)
       else await this.items('timeline.upsert', id, delta.items)
     })
     for (const [id, params] of ended) await this.sessionOperation(id, 'turnEnded', async () => {
-      if (this.published.has(id) && await this.native.visible(id)) await this.notification('session.turnEnded', params)
+      if (this.published.has(id) && await this.publishable(id)) await this.notification('session.turnEnded', params)
     })
     for (const id of statuses) await this.sessionOperation(id, 'state', () => this.state(id))
     for (const id of capabilities) await this.sessionOperation(id, 'capabilities', async () => {

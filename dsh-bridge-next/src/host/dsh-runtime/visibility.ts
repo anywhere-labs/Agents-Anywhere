@@ -5,10 +5,19 @@ export function isUserMessage(event: SessionEvent): boolean {
   return event.type === 'user/message' && event.data.source.kind === 'user'
 }
 
+/**
+ * Coarse product classification for availability reasons. Subagent sessions are
+ * synced so AA can open their full conversation from the parent, but they are
+ * hidden from the main list and never accept remote prompts.
+ */
+export function sessionHiddenReason(origin: string | undefined): 'dsh_subagent' | null {
+  return origin === 'subagent' ? 'dsh_subagent' : null
+}
+
 /** AA imports conversations after the first human message, independent of UI selection. */
 export function sessionVisible(session: { id: string, origin?: string, hasUserMessage: boolean },
   archived: ReadonlySet<string>): boolean {
-  return session.origin !== 'subagent' && !archived.has(session.id)
+  return !sessionHiddenReason(session.origin) && !archived.has(session.id)
     && session.hasUserMessage
 }
 

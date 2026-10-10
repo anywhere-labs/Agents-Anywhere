@@ -262,7 +262,9 @@ export class RuntimeRouter {
   private async snapshot(params: Record<string, unknown>, signal: AbortSignal) {
     let offset = 0
     if (params.cursor != null) {
-      if (this.reader.native && this.history && !await this.reader.native.visible(this.history.externalId)) {
+      if (this.reader.native && this.history
+        && !await this.reader.native.visible(this.history.externalId)
+        && !await this.reader.native.source.syncable(this.history.externalId)) {
         this.history = undefined
         throw new BridgeError('SESSION_NOT_FOUND', 'The session is no longer visible in DSH.')
       }
@@ -272,7 +274,9 @@ export class RuntimeRouter {
         throw new BridgeError('INVALID_PARAMS', 'The cursor belongs to a different session.')
       }
     } else {
-      const id = await this.resolve(params, signal)
+      // Synced subagent conversations are read-only imports with unavailable
+      // source state; history reads must reach them, writes stay rejected.
+      const id = await this.resolve(params, signal, true)
       const log = this.reader.native ? await this.reader.native.read(id) : await this.reader.query.readSession(id)
       signal.throwIfAborted()
       const platformId = sessionId(this.namespace, id)

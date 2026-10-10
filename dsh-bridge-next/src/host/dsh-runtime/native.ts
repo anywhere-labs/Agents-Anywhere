@@ -168,7 +168,8 @@ export class NativeRuntime {
     // Capture this inventory once so pagination cannot repeat reinserted records.
     for (const entry of [...this.source.records.values()]) {
       signal?.throwIfAborted()
-      if (await this.visible(entry.header.id)) {
+      // Synced subagent conversations are imported through the same inventory walk.
+      if (await this.visible(entry.header.id) || await this.source.syncable(entry.header.id)) {
         result.push(entry)
         await visit?.(entry)
       }
@@ -177,6 +178,8 @@ export class NativeRuntime {
     return result
   }
   visible(id: string): Promise<boolean> { return this.source.visible(id) }
+  /** Synced-but-hidden sessions (subagent conversations) ride the same pipeline. */
+  syncable(id: string): Promise<boolean> { return this.source.syncable(id) }
   /** Resolve the startup inventory once; native events maintain it afterwards. */
   async ensureKnown(id: string, signal?: AbortSignal): Promise<void> {
     if (this.source.records.has(id) || this.ctx.sessions.get(id as SessionId) !== undefined) return

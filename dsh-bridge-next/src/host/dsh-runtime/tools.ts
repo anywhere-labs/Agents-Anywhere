@@ -25,11 +25,16 @@ export function toolContent(name: string, rawArguments: unknown): Data {
     const action: Record<string, string> = {
       subagent: 'invoke', subagent_fork: 'spawn', send_message: 'send_input',
       wait_agent: 'wait', interrupt_agent: 'close', list_agents: 'unknown',
+      // Agent Teams profile tools surface as the same agent_call cards.
+      spawn_teammate: 'spawn', team_task_create: 'unknown', team_task_list: 'unknown',
+      team_task_get: 'unknown', team_task_update: 'unknown', team_task_delete: 'unknown',
     }
     if (action[name]) {
       content.kind = 'agent_call'
       content.action = action[name]!
       if (typeof args.target === 'string') content.targetIds = [args.target]
+      // Team spawns carry the teammate name; the result later adds its session id.
+      if (name === 'spawn_teammate' && typeof args.name === 'string') content.teammateName = args.name
     }
   }
   return content
@@ -43,6 +48,23 @@ export function resultContent(blocks: unknown): { output: string, result: Json }
     return typeof value.text === 'string' ? value.text : ''
   }).filter(Boolean).join('\n')
   return { output, result: json(values) }
+}
+
+/**
+ * Attach Team identity facts from a spawn result so the AA client can link
+ * the agent_call card to the teammate's synced conversation. Accepts both the
+ * raw tool output object and its JSON content blocks.
+ */
+export function enrichAgentCallResult(content: Data, result: Json): Data {
+  if (content.kind !== 'agent_call') return content
+  const value = record(Array.isArray(result) ? result.find(block => record(block).member) : result)
+  const member = record(value.member)
+  if (typeof member.id !== 'string' || !member.id) return content
+  const next: Data = { ...content, agentId: member.id }
+  if (typeof member.name === 'string') next.title = member.name
+  if (typeof member.description === 'string') next.description = member.description
+  if (typeof member.model === 'string') next.model = member.model
+  return next
 }
 
 export function enrichToolResult(content: Data, meta: unknown): Data {
