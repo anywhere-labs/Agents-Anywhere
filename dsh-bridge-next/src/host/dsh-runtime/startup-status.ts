@@ -7,6 +7,15 @@ export function startupFailure(error: unknown): BridgeStatus {
   const cause = record(value.cause)
   const code = typeof value.code === 'string' ? value.code : typeof cause.code === 'string' ? cause.code : undefined
   const message = error instanceof Error ? error.message : ''
+  // A port conflict keeps the public BRIDGE_IN_USE code; only the internal
+  // LOCK_PORT_UNAVAILABLE code separates it from a filesystem permission failure,
+  // which is what the EACCES branch below is actually about. The hint keeps the
+  // /退出其他/ wording clients and tests already look for.
+  if (code === 'LOCK_PORT_UNAVAILABLE') return {
+    state: 'failed', code: 'BRIDGE_IN_USE', canRetry: true,
+    message: '本机连接启动失败：本机管理端口不可用。',
+    hint: '该端口可能被其他 DSH 实例占用，也可能已被系统保留或被其他程序占用。请先退出其他正在运行的 DSH；仍失败时，请在运行日志中展开该条记录查看端口号。',
+  }
   if (code === 'EADDRINUSE' || /Another DSH bridge owns|另一个插件实例正在管理/.test(message)) return {
     state: 'failed', code: 'BRIDGE_IN_USE', canRetry: true,
     message: '本机连接被占用，无法启动。',

@@ -19,9 +19,13 @@ export function errorDetails(error: unknown, depth = 0): Record<string, unknown>
     .filter(line => /^\s+at .+:\d+:\d+\)?$/.test(line)).slice(0, 12).map(line => line.trim()) : undefined
   // Extract only numeric context from the official persistence validator.
   const gap = error instanceof Error ? error.message.match(/^corrupt session log: seq gap in committed region at line (\d+) \(expected (\d+), got (\d+)\)$/) : null
+  // A refused listen is only diagnosable with its port; platform errors expose it
+  // as a number, so nothing from the message is needed.
+  const port = typeof value.port === 'number' && Number.isInteger(value.port) && value.port > 0 && value.port < 65536 ? value.port : undefined
   return {
     errorType: error instanceof Error ? error.name : typeof error,
     ...(code ? { errorCode: code } : {}),
+    ...(port ? { port } : {}),
     ...(error instanceof BridgeError ? { bridgeCode: error.code, retryable: error.retryable } : {}),
     ...(stack?.length ? { stack } : {}),
     ...(gap ? { reason: 'sequence_gap', line: Number(gap[1]), expectedSeq: Number(gap[2]), actualSeq: Number(gap[3]) } : {}),
