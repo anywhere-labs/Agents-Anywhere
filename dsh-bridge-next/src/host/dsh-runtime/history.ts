@@ -5,7 +5,7 @@ import { receiptKey, type AttachmentSnapshot, type AttachmentReceipt } from './a
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { canonicalJson, clientMessageId, contentHash, itemId } from './identity.js'
 import { enrichToolResult, parentToolItem, resultContent, toolContent } from './tools.js'
-import { json, record, type Data, type ItemStatus, type ItemType, type TimelineItem } from './types.js'
+import { json, record, wellFormedJson, type Data, type ItemStatus, type ItemType, type TimelineItem } from './types.js'
 
 // Bump when replay semantics change so old checkpoints rebuild their timeline.
 export const PROJECTION_VERSION = 3
@@ -57,7 +57,11 @@ export function createProjection(externalId: string, platformId: string, fingerp
   function flushHashes(): void {
     for (const id of needsHash) {
       const item = items.get(id)
-      if (item) item.contentHash = contentHash(item)
+      if (item) {
+        // Python's UTF-8 hash/ingest rejects lone surrogates accepted by JS JSON.
+        item.content = wellFormedJson(item.content) as Data
+        item.contentHash = contentHash(item)
+      }
     }
     needsHash.clear()
   }
