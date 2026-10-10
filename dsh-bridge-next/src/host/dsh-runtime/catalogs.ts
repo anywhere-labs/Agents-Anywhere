@@ -123,10 +123,10 @@ export function labelModels(models: ModelItem[]): void {
   for (const item of models) {
     const { provider, providerName, model, modelName } = item.metadata
     const sameName = models.filter(candidate => candidate.metadata.modelName === modelName)
-    const multipleProviders = sameName.some(candidate => candidate.metadata.provider !== provider)
     const duplicateProviderName = sameName.some(candidate => candidate.metadata.provider !== provider && candidate.metadata.providerName === providerName)
     const duplicateModelName = sameName.some(candidate => candidate.metadata.provider === provider && candidate.metadata.model !== model)
     const routeLabel = duplicateProviderName ? `${providerName} / ${provider}` : providerName
-    item.title = `${modelName}${multipleProviders ? `（${routeLabel}）` : ''}${duplicateModelName ? ` [${model}]` : ''}`
+    // The AA picker is a flat list, so keep the provider visible for every model.
+    item.title = `${modelName}（${routeLabel}）${duplicateModelName ? ` [${model}]` : ''}`
   }
 }
