@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ArrowUp, Check, ChevronDown, Loader2, Square, X } from "lucide-react"
+import { ArrowUp, Check, ChevronDown, Loader2, MessageSquarePlus, Square, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -76,6 +76,7 @@ export function SessionComposer({
   pendingInteractionCount,
   creatingSession = false,
   sending,
+  steering = false,
   interrupting,
   takeoverBusy,
   value,
@@ -89,6 +90,7 @@ export function SessionComposer({
   onValueChange,
   onSelectionChange,
   onSend,
+  onSteer,
   onInterrupt,
   onCommand,
   onToggleTakeover,
@@ -99,6 +101,7 @@ export function SessionComposer({
   pendingInteractionCount: number
   creatingSession?: boolean
   sending: boolean
+  steering?: boolean
   interrupting: boolean
   takeoverBusy: boolean
   value: string
@@ -112,6 +115,12 @@ export function SessionComposer({
   onValueChange: (value: string) => void
   onSelectionChange: (selections: { model?: string; permission?: string }) => Promise<boolean>
   onSend: (
+    content: string,
+    attachments: AttachedFile[],
+    selections: { model?: string; permission?: string },
+  ) => Promise<boolean>
+  /** Optional: splice the draft into the turn that is currently running. */
+  onSteer?: (
     content: string,
     attachments: AttachedFile[],
     selections: { model?: string; permission?: string },
@@ -182,6 +191,8 @@ export function SessionComposer({
   const canUseSendMessage = capabilityIsUsable(effectiveCapabilities, CAPABILITY.sendMessage, runtimeScope)
   const canUseCommands = capabilityIsUsable(effectiveCapabilities, CAPABILITY.commands, runtimeScope)
   const canUseInterrupt = capabilityIsUsable(effectiveCapabilities, CAPABILITY.interrupt, runtimeScope)
+  const canUseSteer = capabilityIsUsable(effectiveCapabilities, CAPABILITY.steer, runtimeScope)
+  const canUseQueue = capabilityIsUsable(effectiveCapabilities, CAPABILITY.queue, runtimeScope)
   const interruptCapability = findCapability(effectiveCapabilities, CAPABILITY.interrupt, runtimeScope)
   const canUseModelCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.modelCatalog, runtimeScope)
   const canUsePermissionCatalog = capabilityIsUsable(
@@ -208,13 +219,21 @@ export function SessionComposer({
     onDragOver,
     onDrop,
   } = useAttachments({ sessionId: creatingSession ? undefined : session.id, token, enabled: canUseAttachments, allowedMimeTypes })
+  const sessionWritable = Boolean(session.takeover && !sourceUnavailable && !creatingSession && connectorOnline && !isDisconnected)
+  // While a turn is running the message action means QUEUE, but only runtimes
+  // that declare `session.queue` accept it: everything else is still rejected
+  // by the server with "session is running".
+  const canQueueSend = Boolean(
+    canUseSendMessage && canUseQueue && isRunning && sessionWritable,
+  )
   const canSend =
     canUseSendMessage &&
     !creatingSession &&
     !sending &&
+    !steering &&
     !commandPending &&
     !interrupting &&
-    acceptsUserInput
+    (acceptsUserInput || canQueueSend)
   const hasInput = value.trim().length > 0 || attachments.length > 0
   const attachmentsReady = attachmentsAllowed && (attachments.length === 0 || (allUploaded && !uploadsPending && !uploadFailed))
   const activeSessionCanInterrupt = Boolean(
@@ -360,7 +379,9 @@ export function SessionComposer({
         : isWaiting
           ? tSession("pendingPlaceholder")
           : isStopping || isRunning
-            ? tSession("busyPlaceholder")
+            ? canQueueSend
+              ? tSession("queuePlaceholder")
+              : tSession("busyPlaceholder")
             : isWaitingApproval || isBlocked
               ? tSession("waitingApprovalPlaceholder")
               : isError
@@ -399,11 +420,24 @@ export function SessionComposer({
     ? commandSuggestions[Math.min(activeCommandIndex, commandSuggestions.length - 1)]
     : null
   React.useEffect(() => { setActiveCommandIndex(0) }, [commandQuery])
-  const showInterruptAction = showInterrupt && mode.kind === "message" && !showCommandMenu
+  // A running turn keeps the message action (QUEUE) and offers Steer beside it;
+  // the standalone Interrupt action stays the primary action for the other
+  // busy/blocked statuses where no new message may be queued.
+  const showInterruptAction = showInterrupt && mode.kind === "message" && !showCommandMenu && !isRunning
+  const showRunningInterrupt = showInterrupt && isRunning && mode.kind === "message" && !showCommandMenu
+  const showSteerAction = Boolean(
+    onSteer &&
+    canUseSteer &&
+    isRunning &&
+    sessionWritable &&
+    mode.kind === "message" &&
+    !showCommandMenu,
+  )
+  const queueSendLabel = canQueueSend && mode.kind === "message"
   React.useEffect(() => {
     onCommandQueryChange(commandQuery)
   }, [commandQuery, onCommandQueryChange])
-  const commandBusy = sending || interrupting || commandPending
+  const commandBusy = sending || steering || interrupting || commandPending
   const blockOf = (command: RuntimeCommand): CommandBlock | null => commandBusy ? "busy" : commandBlock(command, runtimeStatus, {
     capability: canUseCommands,
     writable: session.takeover && !sourceUnavailable && !creatingSession,
@@ -422,6 +456,20 @@ export function SessionComposer({
     hasInput &&
     attachmentsReady &&
     (attachments.length === 0 || canUseAttachments) && mode.kind === "message"
+  const canSubmitSteer =
+    showSteerAction &&
+    hasInput &&
+    attachmentsReady &&
+    (attachments.length === 0 || canUseAttachments) &&
+    !sending &&
+    !steering &&
+    !interrupting &&
+    !commandPending
+  const primaryActionLabel = showInterruptAction
+    ? tSession("interrupt")
+    : queueSendLabel
+      ? tSession("queueSend")
+      : tSession("send")
   const concurrentWriter = runtimeState?.error?.code === "DSH_CONCURRENT_WRITER_DETECTED"
   const updateValue = React.useCallback((nextValue: string) => {
     valueRef.current = nextValue
@@ -501,7 +549,7 @@ export function SessionComposer({
     }
   }
 
-  const submit = async () => {
+  const submit = async (action: "send" | "steer" = "send") => {
     if (!hasInput) return
     if (mode.kind === "pending") {
       setCommandInputError(tSession(commandsError ? "commandCatalogError" : "commandLoading"))
@@ -512,15 +560,18 @@ export function SessionComposer({
       await runCommand(mode.command, value)
       return
     }
-    if (!canSubmitMessage) return
+    if (action === "steer" ? !canSubmitSteer : !canSubmitMessage) return
     const text = value
     const files = attachments
     updateValue("")
     clear({ revokePreviews: false })
-    const sent = await onSend(text, files, {
+    const selections = {
       ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
       ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
-    })
+    }
+    const sent = action === "steer" && onSteer
+      ? await onSteer(text, files, selections)
+      : await onSend(text, files, selections)
     if (!sent && valueRef.current === "") {
       updateValue(text)
     }
@@ -633,6 +684,7 @@ export function SessionComposer({
             <AttachmentPreviewList attachments={attachments} onRemove={remove} />
             {attachmentError ? <p role="alert" className="text-xs text-destructive">{attachmentError}</p> : null}
             {commandInputError ? <p role="alert" className="text-xs text-destructive">{commandInputError}</p> : null}
+            {queueSendLabel ? <p className="text-xs text-muted-foreground">{tSession("queueHint")}</p> : null}
             <Textarea
               ref={textareaRef}
               value={value}
@@ -881,12 +933,42 @@ export function SessionComposer({
               {tSession("takeover")}
             </div>
             <span className="mx-1 h-5 w-px shrink-0 bg-border" />
+            {showRunningInterrupt ? (
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                aria-label={tSession("interrupt")}
+                title={tSession("interrupt")}
+                className="size-8 shrink-0 rounded-full text-destructive hover:bg-destructive/10 hover:text-destructive"
+                disabled={interrupting}
+                onClick={onInterrupt}
+              >
+                {interrupting ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-4" />}
+              </Button>
+            ) : null}
+            {showSteerAction ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                aria-label={tSession("steer")}
+                title={tSession("steer")}
+                className="h-8 shrink-0 gap-1.5 rounded-full px-3"
+                disabled={!canSubmitSteer}
+                onClick={() => void submit("steer")}
+              >
+                {steering ? <Loader2 className="size-4 animate-spin" /> : <MessageSquarePlus className="size-4" />}
+                <span>{tSession("steer")}</span>
+              </Button>
+            ) : null}
             <Button
               type="button"
               size="icon"
-              aria-label={showInterruptAction ? tSession("interrupt") : tSession("send")}
+              aria-label={primaryActionLabel}
+              title={primaryActionLabel}
               className={cn("size-8 rounded-full", showInterruptAction && "bg-destructive text-destructive-foreground hover:bg-destructive/90")}
-              disabled={showInterruptAction ? interrupting : !(canSubmitCommand || canSubmitMessage)}
+              disabled={showInterruptAction ? interrupting : !(canSubmitCommand || canSubmitMessage || canSubmitSteer)}
               onClick={primaryAction}
             >
               {sending || interrupting || commandPending ? (

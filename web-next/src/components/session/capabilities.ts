@@ -4,6 +4,7 @@ export const CAPABILITY = {
   sendMessage: "session.send_message",
   commands: "session.commands",
   interrupt: "session.interrupt",
+  queue: "session.queue",
   steer: "session.steer",
   approveInteraction: "session.interaction.approval",
   attachment: "runtime.attachment",

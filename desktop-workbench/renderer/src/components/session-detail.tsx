@@ -349,6 +349,7 @@ export function SessionDetail({
   const [loading, setLoading] = React.useState(() => !initialOptimisticState)
   const [error, setError] = React.useState<string | null>(null)
   const [sending, setSending] = React.useState(false)
+  const [steering, setSteering] = React.useState(false)
   const [interrupting, setInterrupting] = React.useState(false)
   const [takeoverBusy, setTakeoverBusy] = React.useState(false)
   const [resolvingNoticeId, setResolvingNoticeId] = React.useState<string | null>(null)
@@ -1181,7 +1182,11 @@ export function SessionDetail({
     token,
   ])
 
-  const handleSend = async (
+  // Shared by the queued send and the steer action: both append the same
+  // optimistic user message, but steer joins the running turn instead of
+  // resetting the runtime to "waiting".
+  const submitComposerMessage = async (
+    mode: "queue" | "steer",
     content: string,
     attachments: AttachedFile[],
     selections: { model?: string; permission?: string },
@@ -1212,11 +1217,14 @@ export function SessionDetail({
       if (!current) return current
       return {
         ...current,
-        state: nextOptimisticRuntimeState(current.state, current.session, "waiting"),
+        state: mode === "steer"
+          ? current.state
+          : nextOptimisticRuntimeState(current.state, current.session, "waiting"),
         items: mergeTimelineItems(current.items, [optimisticMessage]),
       }
     })
-    setSending(true)
+    const setBusy = mode === "steer" ? setSteering : setSending
+    setBusy(true)
     try {
       const selectionPatch = selectionPatchFromComposerSelections(runtimeState?.selections ?? {}, selections)
       if (Object.keys(selectionPatch).length > 0) {
@@ -1235,18 +1243,24 @@ export function SessionDetail({
             : current,
         )
       }
-      await dashboardApi.sendSessionMessage(token, session.id, messageText, {
+      const messageOptions = {
         attachments: uploadedAttachments.map((attachment) => ({ fileId: attachment.fileId })),
         clientMessageId,
-      })
+      }
+      if (mode === "steer") {
+        await dashboardApi.steerSessionMessage(token, session.id, messageText, messageOptions)
+      } else {
+        await dashboardApi.sendSessionMessage(token, session.id, messageText, messageOptions)
+      }
       return true
     } catch (err) {
+      const failedKey = mode === "steer" ? "steerFailed" : "sendFailed"
       const nextSourceErrorCode = sessionSourceErrorCode(err)
       const message = nextSourceErrorCode
         ? sourceErrorMessage(nextSourceErrorCode, tSession, runtimeLabel(sessionRuntimeType(session)))
         : err instanceof Error
           ? err.message
-          : tSession("sendFailed")
+          : tSession(failedKey)
       markOptimisticMessageFailed(clientMessageId, message)
       setState((current) => {
         if (!current) return current
@@ -1276,13 +1290,25 @@ export function SessionDetail({
         onSessionUpdated?.(nextSession)
         setSourceErrorCode(nextSourceErrorCode)
       } else {
-        toast.error(err instanceof Error ? err.message : tSession("sendFailed"))
+        toast.error(err instanceof Error ? err.message : tSession(failedKey))
       }
       return false
     } finally {
-      setSending(false)
+      setBusy(false)
     }
   }
+
+  const handleSend = (
+    content: string,
+    attachments: AttachedFile[],
+    selections: { model?: string; permission?: string },
+  ): Promise<boolean> => submitComposerMessage("queue", content, attachments, selections)
+
+  const handleSteer = (
+    content: string,
+    attachments: AttachedFile[],
+    selections: { model?: string; permission?: string },
+  ): Promise<boolean> => submitComposerMessage("steer", content, attachments, selections)
 
   const handleDismissTakeover = () => {
     setPendingTakeover(null)
@@ -1809,6 +1835,7 @@ export function SessionDetail({
             pendingInteractionCount={blockingInteractionCount}
             creatingSession={isLocalOptimisticSession}
             sending={sending}
+            steering={steering}
             interrupting={interrupting}
             takeoverBusy={takeoverBusy}
             value={composerDraft}
@@ -1822,6 +1849,7 @@ export function SessionDetail({
             onValueChange={setComposerDraft}
             onSelectionChange={handleSelectionChange}
             onSend={handleSend}
+            onSteer={handleSteer}
             onInterrupt={handleInterrupt}
             onCommand={handleSessionCommand}
             onToggleTakeover={() => setPendingTakeover(!session.takeover)}

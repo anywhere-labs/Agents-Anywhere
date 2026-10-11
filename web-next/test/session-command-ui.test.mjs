@@ -24,7 +24,7 @@ toast.success=(title,options)=>{toasts.push(`${title}\n${options?.description??'
 const toastText=()=>toasts.join('\n')
 const messages = JSON.parse(readFileSync(new URL('../messages/en.json',import.meta.url),'utf8'))
 const session = {id:'s1',runtime:'codex',runtimeId:'codex',connectorStatus:'online',status:'idle',archived:false,takeover:true}
-const capability = {revision:1,capabilities:[{capabilityId:'session.commands',scope:'session',runtime:'codex',runtimeId:'codex',sessionId:'s1',supported:true,available:true,allowed:true},{capabilityId:'session.interrupt',scope:'session',runtime:'codex',runtimeId:'codex',sessionId:'s1',supported:true,available:true,allowed:true},{capabilityId:'session.send_message',scope:'session',runtime:'codex',runtimeId:'codex',sessionId:'s1',supported:true,available:true,allowed:true}]}
+const capability = {revision:1,capabilities:[{capabilityId:'session.commands',scope:'session',runtime:'codex',runtimeId:'codex',sessionId:'s1',supported:true,available:true,allowed:true},{capabilityId:'session.interrupt',scope:'session',runtime:'codex',runtimeId:'codex',sessionId:'s1',supported:true,available:true,allowed:true},{capabilityId:'session.send_message',scope:'session',runtime:'codex',runtimeId:'codex',sessionId:'s1',supported:true,available:true,allowed:true},{capabilityId:'session.queue',scope:'session',runtime:'codex',runtimeId:'codex',sessionId:'s1',supported:true,available:true,allowed:true}]}
 const descriptor = (id, acceptsArgs, statuses=['idle']) => ({id,title:id,description:'native',aliases:[],scope:'session',enabled:true,disabledReason:null,acceptsArgs,argsSchema:{type:'string'},metadata:{ui:{kind:'execute',acceptsMultiline:true,allowedStatuses:statuses}}})
 
 async function mount(t, child) {
@@ -379,4 +379,57 @@ test('legacy runtime commands still execute without metadata.ui',async t=>{
   assert.deepEqual(calls,[{id:'compact',payload:{args:[],raw:'/compact'}}])
   assert.equal(input.value,'')
 })
+const steerCapability={revision:1,capabilities:[...capability.capabilities,{capabilityId:'session.steer',scope:'session',runtime:'codex',runtimeId:'codex',sessionId:'s1',supported:true,available:true,allowed:true}]}
+
+test('a running turn queues from Send and steers from the secondary Steer action',async t=>{
+  const calls=[]
+  function Host(){const [value,setValue]=useState('ship it');return h(SessionComposer,{token:'test',session,runtimeState:{status:'running',metadata:{},selections:{}},pendingInteractionCount:0,sending:false,steering:false,interrupting:false,takeoverBusy:false,value,effectiveCapabilities:steerCapability,modelCatalog:null,permissionCatalog:null,runtimeCommands:[],onCommandQueryChange(){},onValueChange:setValue,onSelectionChange:async()=>true,onSend:async(content)=>{calls.push({action:'queue',content});return true},onSteer:async(content)=>{calls.push({action:'steer',content});return true},onInterrupt(){calls.push({action:'interrupt'})},onToggleTakeover(){},onCommand:async()=>assert.fail('no commands')})}
+  const host=await mount(t,h(Host))
+  const send=host.querySelector('button[aria-label="Queue message"]')
+  assert.ok(send,'Send while running means queue')
+  assert.ok(host.querySelector('button[aria-label="Interrupt"]'),'Interrupt stays available beside the queue action')
+  const steer=host.querySelector('button[aria-label="Steer"]')
+  assert.ok(steer,'Steer is offered beside Send')
+  assert.match(host.textContent,/will be queued/)
+  await act(async()=>steer.click())
+  assert.deepEqual(calls,[{action:'steer',content:'ship it'}],'Steer never falls back to the queued message endpoint')
+  assert.equal(host.querySelector('textarea').value,'')
+  await type(host.querySelector('textarea'),'next turn')
+  await act(async()=>host.querySelector('button[aria-label="Queue message"]').click())
+  assert.deepEqual(calls,[{action:'steer',content:'ship it'},{action:'queue',content:'next turn'}])
+})
+
+test('a running turn without the queue capability cannot queue at all',async t=>{
+  const sendOnly={revision:1,capabilities:capability.capabilities.filter(c=>c.capabilityId!=='session.queue')}
+  let sent=0
+  function Host(){const [value,setValue]=useState('hello');return h(SessionComposer,{token:'test',session,runtimeState:{status:'running',metadata:{},selections:{}},pendingInteractionCount:0,sending:false,interrupting:false,takeoverBusy:false,value,effectiveCapabilities:sendOnly,modelCatalog:null,permissionCatalog:null,runtimeCommands:[],onCommandQueryChange(){},onValueChange:setValue,onSelectionChange:async()=>true,onSend:async()=>{sent++;return true},onInterrupt(){},onToggleTakeover(){},onCommand:async()=>assert.fail('no commands')})}
+  const host=await mount(t,h(Host))
+  // The server answers `session is running` for runtimes that do not declare
+  // session.queue, so the composer must not offer the queue action either.
+  assert.equal(host.querySelector('button[aria-label="Queue message"]'),null)
+  assert.equal(host.querySelector('button[aria-label="Steer"]'),null)
+  const send=host.querySelector('button[aria-label="Send"]')
+  if(send){await act(async()=>send.click());assert.equal(sent,0,'a disabled send never reaches the endpoint')}
+})
+
+test('a running turn without the steer capability still queues and shows no Steer action',async t=>{
+  let sent=0
+  function Host(){const [value,setValue]=useState('hello');return h(SessionComposer,{token:'test',session,runtimeState:{status:'running',metadata:{},selections:{}},pendingInteractionCount:0,sending:false,interrupting:false,takeoverBusy:false,value,effectiveCapabilities:capability,modelCatalog:null,permissionCatalog:null,runtimeCommands:[],onCommandQueryChange(){},onValueChange:setValue,onSelectionChange:async()=>true,onSend:async()=>{sent++;return true},onInterrupt(){},onToggleTakeover(){},onCommand:async()=>assert.fail('no commands')})}
+  const host=await mount(t,h(Host))
+  assert.equal(host.querySelector('button[aria-label="Steer"]'),null)
+  const send=host.querySelector('button[aria-label="Queue message"]')
+  assert.ok(send)
+  await act(async()=>send.click())
+  assert.equal(sent,1)
+})
+
+test('an idle composer keeps the single plain Send action',async t=>{
+  function Host(){const [value,setValue]=useState('hello');return h(SessionComposer,{token:'test',session,runtimeState:{status:'idle',metadata:{},selections:{}},pendingInteractionCount:0,sending:false,interrupting:false,takeoverBusy:false,value,effectiveCapabilities:steerCapability,modelCatalog:null,permissionCatalog:null,runtimeCommands:[],onCommandQueryChange(){},onValueChange:setValue,onSelectionChange:async()=>true,onSend:async()=>true,onSteer:async()=>assert.fail('idle sends are queued through the message endpoint'),onInterrupt(){},onToggleTakeover(){},onCommand:async()=>assert.fail('no commands')})}
+  const host=await mount(t,h(Host))
+  assert.ok(host.querySelector('button[aria-label="Send"]'))
+  assert.equal(host.querySelector('button[aria-label="Queue message"]'),null)
+  assert.equal(host.querySelector('button[aria-label="Steer"]'),null)
+  assert.equal(host.querySelector('button[aria-label="Interrupt"]'),null)
+})
+
 test.after(()=>dom.window.close())

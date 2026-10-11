@@ -776,6 +776,24 @@ export class DashboardApi {
     );
   }
 
+  steerSessionMessage(
+    token: string,
+    sessionId: string,
+    content: string,
+    options: MessageSendOptions = {},
+  ): Promise<RpcResponse<unknown>> {
+    const { attachments, clientMessageId } = options;
+    return this.client.post<RpcResponse<unknown>>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/steer`,
+      {
+        content,
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        ...(clientMessageId ? { clientMessageId } : {}),
+      },
+      { token },
+    );
+  }
+
   getSessionRuntimeState(
     token: string,
     sessionId: string,
