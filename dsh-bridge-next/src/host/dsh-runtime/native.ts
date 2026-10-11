@@ -226,9 +226,15 @@ export class NativeRuntime {
     return snapshot
   }
 
+  /**
+   * Admit one user message. `mode` follows the DSH prompt contract: `queue`
+   * lands the message in the next turn's inbox, `steer` splices it into the
+   * running turn so the Agent sees it at the next step.
+   */
   async send(id: SessionId, text: string, requestId: string, cwd?: string, create = false,
     selections: Selections = {}, agentPreset?: string, signal = new AbortController().signal,
-    images: readonly StagedAttachment[] = [], platformId?: string): Promise<void> {
+    images: readonly StagedAttachment[] = [], platformId?: string,
+    mode: 'queue' | 'steer' = 'queue'): Promise<void> {
     if ((!text.trim() && !images.length) || text.length > 1_000_000 || !requestId || requestId.length > 512) {
       throw new BridgeError('INVALID_PARAMS', 'A text message and stable client message ID are required.')
     }
@@ -292,7 +298,7 @@ export class NativeRuntime {
         platformId: platformId!, fingerprint: attachmentFingerprint(text, images), attachments: attachmentReferences(images),
       })
       await this.configuration.controller().prompt({ sessionId: id, requestId: messageId as SessionPromptRequest['requestId'],
-        mode: 'queue', content: [...(text ? [{ type: 'text' as const, text }] : []), ...imageParts] }, signal)
+        mode, content: [...(text ? [{ type: 'text' as const, text }] : []), ...imageParts] }, signal)
       await this.ctx.sessions.flush(agent.session)
     })
   }

@@ -74,16 +74,20 @@ export class RuntimeRouter {
         return { accepted: true }
       }
       case 'session.createAndStart':
-      case 'session.startTurn': {
+      case 'session.startTurn':
+      case 'session.steer': {
         const native = this.reader.native
         if (!native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Text messaging is unavailable.')
         const attachments = parseAttachments(params.attachments)
         if (typeof params.sessionId !== 'string' || !params.sessionId || typeof params.content !== 'string' || typeof params.clientMessageId !== 'string') throw new BridgeError('INVALID_PARAMS', 'Session ID, text and clientMessageId are required.')
         const create = method === 'session.createAndStart'
+        // Steer splices the message into the running turn; it never creates a
+        // session and never resets configuration.
+        const mode = method === 'session.steer' ? 'steer' : 'queue'
         const id = create ? nativeSessionId(this.namespace, params.sessionId) as SessionId : await this.resolve(params, signal, true)
         try {
           await native.send(id, params.content, params.clientMessageId, typeof params.cwd === 'string' ? params.cwd : undefined, create,
-            parseSelections(params.selections), typeof params.agentPreset === 'string' ? params.agentPreset : undefined, signal, attachments, params.sessionId)
+            parseSelections(params.selections), typeof params.agentPreset === 'string' ? params.agentPreset : undefined, signal, attachments, params.sessionId, mode)
         } catch (error) {
           const failure = publicError(error)
           const sourceState = await native.source.state(id)
