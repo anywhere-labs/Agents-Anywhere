@@ -37,7 +37,7 @@ export class SyncFeed {
   private sourceAvailability = new Map<string, string>()
   private failedSessions = new Map<string, SourceState>()
   private capture: { id: string, snapshotId: string } | undefined
-  private waitAck: { seq: number, resolve: () => void, reject: (error: Error) => void } | undefined
+  private waitAck: { seq: number, bytesSent: number, progress: () => void, resolve: () => void, reject: (error: Error) => void } | undefined
   private wake: (() => void) | undefined
   private closed = false
   private unwatch: () => void
@@ -50,7 +50,7 @@ export class SyncFeed {
 
   constructor(private native: NativeRuntime, private namespace: string,
     private notify: (batch: SyncBatch) => void, private failed: (error: unknown) => void,
-    private ackTimeoutMs = 60_000, private durableCheckpoints = false) {
+    private ackTimeoutMs = 60_000, private durableCheckpoints = false, private uploadProgress = false) {
     this.unwatch = native.watch(change => {
       if (this.closed) return
       try { this.queuedBytes += jsonBytes(change) }
@@ -79,6 +79,16 @@ export class SyncFeed {
       this.native.diagnostics.log('debug', 'sync.ack', { streamId: this.id, batchSeq: seq, elapsedMs: Math.round(performance.now() - this.lastSentAt) })
       const pending = this.waitAck; this.waitAck = undefined; pending.resolve()
     }
+  }
+  progress(seq: number, bytesSent: number): void {
+    const pending = this.waitAck
+    if (!this.uploadProgress || !pending || pending.seq !== seq || !Number.isSafeInteger(seq)
+      || !Number.isSafeInteger(bytesSent) || bytesSent < 1) {
+      throw new BridgeError('INVALID_PARAMS', 'Invalid upload progress.')
+    }
+    if (bytesSent <= pending.bytesSent) return
+    pending.bytesSent = bytesSent
+    pending.progress()
   }
   close(): void {
     if (this.closed) return
@@ -124,12 +134,14 @@ export class SyncFeed {
     const batch: SyncBatch = { streamId: this.id, batchSeq: ++this.batchSeq, projectionVersion: PROJECTION_VERSION, operations }
     if (jsonBytes(batch) > 7 * 1024 * 1024) throw new Error('DSH sync batch exceeds frame size')
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const expire = () => {
         this.waitAck = undefined
         reject(new SyncTransportError('DSH event acknowledgement timed out'))
-      }, this.ackTimeoutMs)
+      }
+      let timer = setTimeout(expire, this.ackTimeoutMs)
       timer.unref()
-      this.waitAck = { seq: batch.batchSeq,
+      this.waitAck = { seq: batch.batchSeq, bytesSent: 0,
+        progress: () => { clearTimeout(timer); timer = setTimeout(expire, this.ackTimeoutMs); timer.unref() },
         resolve: () => { clearTimeout(timer); resolve() },
         reject: error => { clearTimeout(timer); reject(error) } }
       this.lastSentAt = performance.now()

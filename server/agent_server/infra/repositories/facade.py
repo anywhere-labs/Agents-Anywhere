@@ -19,6 +19,9 @@ from agent_server.infra.repositories.protocol_catalogs import (
 )
 from agent_server.infra.repositories.sessions import SessionRepositoryMixin
 from agent_server.infra.repositories.shares import SessionShareRepositoryMixin
+from agent_server.infra.repositories.snapshot_uploads import (
+    SnapshotUploadRepositoryMixin,
+)
 from agent_server.infra.repositories.store_support import *
 from agent_server.infra.repositories.timeline import TimelineRepositoryMixin
 from agent_server.infra.repositories.users import UserRepositoryMixin
@@ -40,6 +43,7 @@ class Store(
     AttachmentRepositoryMixin,
     ActiveRunRepositoryMixin,
     TimelineRepositoryMixin,
+    SnapshotUploadRepositoryMixin,
 ):
     def __init__(
         self,

@@ -276,65 +276,79 @@ class TimelineRepositoryMixin:
         mark_read_on_change: bool = False,
     ) -> TimelineBatchWriteResult:
         """Replace a timeline from a complete Runtime-owned snapshot."""
+        async with self._timeline_lock(session_id), self._engine.begin() as conn:
+            return await self._replace_timeline_snapshot(
+                conn, session_id=session_id, items=items,
+                source_observed_at=source_observed_at,
+                mark_read_on_change=mark_read_on_change,
+            )
 
+    async def _replace_timeline_snapshot(
+        self,
+        conn: AsyncConnection,
+        *,
+        session_id: str,
+        items: list[TimelineItemIn],
+        source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
+    ) -> TimelineBatchWriteResult:
         incoming_by_id = latest_timeline_items_by_id(items)
-        async with self._timeline_lock(session_id):
-            current_items = await self.timeline.read(session_id)
-            current_by_id = {item.id: item for item in current_items}
-            if timeline_snapshot_is_unchanged(current_by_id, incoming_by_id):
-                await self._update_source_observed_at(
-                    session_id=session_id,
-                    source_observed_at=source_observed_at,
-                )
-                return TimelineBatchWriteResult(
-                    items=tuple(current_items),
-                    changed=False,
-                )
+        current_items = await self.timeline.read_in_transaction(conn, session_id)
+        current_by_id = {item.id: item for item in current_items}
+        if timeline_snapshot_is_unchanged(current_by_id, incoming_by_id):
+            await update_source_observed_at(
+                conn,
+                session_id=session_id,
+                source_observed_at=source_observed_at,
+            )
+            return TimelineBatchWriteResult(
+                items=tuple(current_items),
+                changed=False,
+            )
 
-            now = utc_now()
-            async with self._engine.begin() as conn:
-                await update_source_observed_at(
-                    conn,
-                    session_id=session_id,
-                    source_observed_at=source_observed_at,
-                )
-                updated_seq = await self._bump_session(
-                    conn,
-                    session_id,
-                    mark_read=mark_read_on_change,
-                )
-                await conn.execute(
-                    update(sessions_t)
-                    .where(sessions_t.c.id == session_id)
-                    .values(timeline_reset_seq=updated_seq)
-                )
-                normalized = [
-                    timeline_item_from_snapshot(
-                        item=item,
-                        existing=current_by_id.get(item.id),
-                        updated_seq=updated_seq,
-                        now=now,
-                    )
-                    for item in incoming_by_id.values()
-                ]
-                # ``timeline_item_from_snapshot`` returns the stored row itself
-                # for unchanged items, so only rebuilt rows need a write.
-                # Rewriting the whole session (delete-all + insert-all) turned
-                # every reconnect into a full table rewrite and left the table
-                # heavily bloated.
-                await self.timeline.upsert_many(
-                    conn,
-                    [
-                        item
-                        for item in normalized
-                        if current_by_id.get(item.id) is not item
-                    ],
-                )
-                await self.timeline.delete_items(
-                    conn,
-                    session_id,
-                    set(current_by_id) - set(incoming_by_id),
-                )
+        now = utc_now()
+        await update_source_observed_at(
+            conn,
+            session_id=session_id,
+            source_observed_at=source_observed_at,
+        )
+        updated_seq = await self._bump_session(
+            conn,
+            session_id,
+            mark_read=mark_read_on_change,
+        )
+        await conn.execute(
+            update(sessions_t)
+            .where(sessions_t.c.id == session_id)
+            .values(timeline_reset_seq=updated_seq)
+        )
+        normalized = [
+            timeline_item_from_snapshot(
+                item=item,
+                existing=current_by_id.get(item.id),
+                updated_seq=updated_seq,
+                now=now,
+            )
+            for item in incoming_by_id.values()
+        ]
+        # ``timeline_item_from_snapshot`` returns the stored row itself
+        # for unchanged items, so only rebuilt rows need a write.
+        # Rewriting the whole session (delete-all + insert-all) turned
+        # every reconnect into a full table rewrite and left the table
+        # heavily bloated.
+        await self.timeline.upsert_many(
+            conn,
+            [
+                item
+                for item in normalized
+                if current_by_id.get(item.id) is not item
+            ],
+        )
+        await self.timeline.delete_items(
+            conn,
+            session_id,
+            set(current_by_id) - set(incoming_by_id),
+        )
         return TimelineBatchWriteResult(
             items=tuple(normalized),
             changed=True,

@@ -26,7 +26,14 @@ def item(item_id="one", session_id="session"):
 
 
 def host():
-    return SimpleNamespace(publish_runtime_notifications=AsyncMock(), sync_state_write=AsyncMock(), runtime_health_update=AsyncMock())
+    receiver = SimpleNamespace(publish_runtime_notifications=AsyncMock(), sync_state_write=AsyncMock(), runtime_health_update=AsyncMock())
+    async def snapshot(runtime, session_id, meta, items, through_seq, **kwargs):
+        await receiver.publish_runtime_notifications(runtime, [
+            {"method": "session.meta.upsert", "params": {"sessionId": session_id, **meta}},
+            {"method": "timeline.sync", "params": {"sessionId": session_id, "externalSessionId": meta["externalSessionId"], "items": list(items), "complete": True}},
+        ], **kwargs)
+    receiver.publish_runtime_snapshot = snapshot
+    return receiver
 
 
 def operation(kind, **values):
@@ -240,12 +247,12 @@ def test_snapshot_buffer_reuses_small_objects_and_spills_large_captures_without_
             small = item()
             await relay.store_items([small])
             assert relay.file is None
-            assert (await relay.load_items())[0] is small
+            assert list(relay.iter_items())[0] is small
             large = {"payload": "x" * (9 * 1024 * 1024)}
             await relay.store_items([large])
             assert relay.file is not None
             assert relay.items == []
-            assert await relay.load_items() == [small, large]
+            assert list(relay.iter_items()) == [small, large]
             relay.clear_snapshot()
             assert relay.file is None
             assert relay.items == []

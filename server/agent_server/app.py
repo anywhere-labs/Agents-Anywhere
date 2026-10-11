@@ -70,6 +70,7 @@ from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 from agent_server.services.workspace import WorkspaceServiceError
 
 CONNECTOR_PRESENCE_SWEEP_SECONDS = 5
+SNAPSHOT_UPLOAD_SWEEP_SECONDS = 3600
 
 
 async def _connector_presence_watchdog(app: FastAPI) -> None:
@@ -103,6 +104,15 @@ async def _connector_presence_watchdog(app: FastAPI) -> None:
             )
 
 
+async def _snapshot_upload_cleanup(app: FastAPI) -> None:
+    while True:
+        try:
+            await app.state.store.purge_expired_snapshot_uploads()
+        except Exception:  # noqa: BLE001 - retry database failures on the next sweep
+            logger.exception("failed to clean expired snapshot uploads")
+        await asyncio.sleep(SNAPSHOT_UPLOAD_SWEEP_SECONDS)
+
+
 def create_app(
     db_path: str | Path | None = None,
     *,
@@ -119,6 +129,7 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         presence_task: asyncio.Task[None] | None = None
         deletion_task: asyncio.Task[None] | None = None
+        upload_cleanup_task: asyncio.Task[None] | None = None
         try:
             logger.info(
                 "server concurrency pid={} workers={} event_workers={}",
@@ -136,11 +147,15 @@ def create_app(
             await app.state.rpc.start()
             presence_task = asyncio.create_task(_connector_presence_watchdog(app))
             deletion_task = asyncio.create_task(app.state.connector_deletion_recovery.run())
+            upload_cleanup_task = asyncio.create_task(_snapshot_upload_cleanup(app))
             # Generate the bootstrap token early so operators see it in logs.
             if await app.state.store.count_users() == 0:
                 await SetupTokenService(app.state.setup_token, app.state.redis).snapshot()
             yield
         finally:
+            if upload_cleanup_task is not None:
+                upload_cleanup_task.cancel()
+                await asyncio.gather(upload_cleanup_task, return_exceptions=True)
             if deletion_task is not None:
                 deletion_task.cancel()
                 await asyncio.gather(deletion_task, return_exceptions=True)
@@ -170,7 +185,7 @@ def create_app(
                                 finally:
                                     await app.state.store.close()
 
-    app = FastAPI(title="Agent Server", version="2.0.3", lifespan=lifespan)
+    app = FastAPI(title="Agent Server", version="2.2.0", lifespan=lifespan)
     app.add_exception_handler(
         ConnectorServiceError,
         error_handlers.connector_service_error_handler,

@@ -57,14 +57,21 @@ export class RuntimeRouter {
           if (this.feed !== feed) return
           this.feed = undefined
           this.failed?.(error, feed.id)
-        }, 60_000, params.checkpointVersion === 1)
+        }, 60_000, params.checkpointVersion === 1, params.uploadProgressVersion === 1)
         this.feed = feed
         setTimeout(() => { if (this.feed === feed) feed.start() }, 0)
-        return { streamId: feed.id, projectionVersion: PROJECTION_VERSION, ...(params.checkpointVersion === 1 ? { checkpointVersion: 1 } : {}) }
+        return { streamId: feed.id, projectionVersion: PROJECTION_VERSION,
+          ...(params.checkpointVersion === 1 ? { checkpointVersion: 1 } : {}),
+          ...(params.uploadProgressVersion === 1 ? { uploadProgressVersion: 1 } : {}) }
       }
       case 'runtime.sync.ack':
         if (!this.feed || params.streamId !== this.feed.id || typeof params.batchSeq !== 'number') throw new BridgeError('INVALID_PARAMS', 'Unknown event stream.')
         this.feed.ack(params.batchSeq, params.checkpoint); return { ok: true }
+      case 'runtime.sync.progress':
+        if (!this.feed || params.streamId !== this.feed.id || typeof params.batchSeq !== 'number' || typeof params.bytesSent !== 'number') {
+          throw new BridgeError('INVALID_PARAMS', 'Invalid upload progress.')
+        }
+        this.feed.progress(params.batchSeq, params.bytesSent); return { ok: true }
       case 'runtime.sync.unsubscribe': this.close(); return { ok: true }
       case 'runtime.sync.refresh': {
         // Unreadable sessions must remain addressable for an explicit retry.

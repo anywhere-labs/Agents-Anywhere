@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     PrimaryKeyConstraint,
     Table,
@@ -601,4 +602,40 @@ pairing_codes = Table(
     Column("created_at", Text, nullable=False),
     Column("claimed_at", Text),
     Column("consumed_at", Text),
+)
+
+
+connector_snapshot_watermarks = Table(
+    "connector_snapshot_watermarks", metadata,
+    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
+    Column("runtime_id", Text, nullable=False),
+    Column("session_id", Text, nullable=False),
+    Column("through_seq", BigInteger, nullable=False),
+    PrimaryKeyConstraint("connector_id", "runtime_id", "session_id"),
+)
+
+connector_uploads = Table(
+    "connector_uploads", metadata,
+    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
+    Column("upload_id", Text, nullable=False),
+    Column("session_id", Text, nullable=False),
+    Column("runtime_id", Text, nullable=False),
+    Column("through_seq", BigInteger, nullable=False),
+    Column("total_bytes", BigInteger, nullable=False),
+    Column("status", Text, nullable=False),
+    Column("expires_at", Text, nullable=False),
+    PrimaryKeyConstraint("connector_id", "upload_id"),
+    Index("ix_connector_uploads_scope", "connector_id", "runtime_id", "session_id"),
+    Index("ix_connector_uploads_expiry", "expires_at"),
+)
+
+connector_upload_chunks = Table(
+    "connector_upload_chunks", metadata,
+    Column("connector_id", Text, nullable=False),
+    Column("upload_id", Text, nullable=False),
+    Column("chunk_index", Integer, nullable=False),
+    Column("body", LargeBinary, nullable=False),
+    PrimaryKeyConstraint("connector_id", "upload_id", "chunk_index"),
+    ForeignKeyConstraint(["connector_id", "upload_id"],
+                         ["connector_uploads.connector_id", "connector_uploads.upload_id"], ondelete="CASCADE"),
 )

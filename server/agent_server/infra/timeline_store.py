@@ -24,17 +24,20 @@ class SqlTimelineStore:
 
     async def read(self, session_id: str) -> list[TimelineItem]:
         async with self._engine.connect() as conn:
-            rows = (
-                await conn.execute(
-                    timeline_items.select()
-                    .where(timeline_items.c.session_id == session_id)
-                    .order_by(
-                        timeline_items.c.order_seq,
-                        timeline_items.c.updated_seq,
-                        timeline_items.c.id,
-                    )
+            return await self.read_in_transaction(conn, session_id)
+
+    async def read_in_transaction(self, conn: AsyncConnection, session_id: str) -> list[TimelineItem]:
+        rows = (
+            await conn.execute(
+                timeline_items.select()
+                .where(timeline_items.c.session_id == session_id)
+                .order_by(
+                    timeline_items.c.order_seq,
+                    timeline_items.c.updated_seq,
+                    timeline_items.c.id,
                 )
-            ).mappings().all()
+            )
+        ).mappings().all()
         return [TimelineItem.model_validate_json(row["payload_json"]) for row in rows]
 
     async def recovery_items(

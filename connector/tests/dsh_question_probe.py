@@ -49,7 +49,7 @@ async def main(home: Path) -> None:
             async def download(*_args):
                 raise AssertionError("Questions must not download files")
 
-            host = ConnectorRuntimeHost(connector.id, notify, download, ingest_notifications=ingest.ingest_notifications)
+            host = ConnectorRuntimeHost(connector.id, notify, download, ingest_notifications=ingest.ingest_notifications, ingest_snapshot=ingest.ingest_snapshot)
             runtime = CheckedRuntime(await DshProvider().validate_config({"dshHome": str(home)}), host)
             original_rpc = app.state.rpc
 

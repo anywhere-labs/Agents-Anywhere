@@ -190,3 +190,7 @@ Provides adapter-owned local sync state. Keys must be runtime-namespaced, for ex
 codex/history/cursor/{thread_id}
 claude/history/cursor/{session_id}
 ```
+
+## DSH 完整快照提交（2.2.0）
+
+实际 Host API 提供 `publish_runtime_snapshot(runtime, session_id, meta, items, through_seq, runtime_id=None, on_progress=None)`。`items` 是惰性迭代器，在 await 返回前消费；调用方必须保留页面 spool 至成功或失败结束。RuntimeInstanceHost 绑定本机实例 ID，Connector 负责字段过滤、临时文件编码和分块传输；Runtime 不实现后端暂存细节。只有最终完整提交成功才返回，页面暂存和分块 receipt 不能推进 checkpoint。详见 [DSH 快照上传](../dsh-snapshot-uploads.md)。

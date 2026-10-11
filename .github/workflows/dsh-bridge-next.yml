@@ -207,7 +207,8 @@ jobs:
           tests/test_device_data_storage.py
           tests/test_device_runtime_repository.py
           tests/test_effective_capabilities.py
-          tests/test_database_migrations.py -q
+          tests/test_database_migrations.py
+          tests/test_snapshot_uploads.py -q
       - name: Test live session capability admission and recovery
         working-directory: server
         run: >-
