@@ -6,6 +6,8 @@ import com.agentsanywhere.app.api.RemoteRuntimePermissionCatalog
 import com.agentsanywhere.app.api.RemoteSessionCommand
 
 const val SESSION_SEND_MESSAGE_CAPABILITY = "session.send_message"
+const val SESSION_QUEUE_CAPABILITY = "session.queue"
+const val SESSION_STEER_CAPABILITY = "session.steer"
 const val SESSION_INTERRUPT_CAPABILITY = "session.interrupt"
 const val SESSION_NOTICE_RESPONSE_CAPABILITY = "session.interaction.approval"
 const val SESSION_COMMANDS_CAPABILITY = "session.commands"
@@ -494,7 +496,25 @@ internal fun sessionComposerEnabled(
     capabilityFactsFresh: Boolean,
     canSendMessage: Boolean,
     canUseCommands: Boolean,
-): Boolean = takeoverEnabled && capabilityFactsFresh && (canSendMessage || canUseCommands)
+    canSteer: Boolean = false,
+    canQueueMessage: Boolean = false,
+): Boolean = takeoverEnabled && capabilityFactsFresh &&
+    (canSendMessage || canUseCommands || canSteer || canQueueMessage)
+
+/** Runtime statuses where a turn is in flight (or queued behind one). */
+internal val WORKING_RUNTIME_STATUSES = setOf(
+    SessionRuntimeStatus.Waiting,
+    SessionRuntimeStatus.Pending,
+    SessionRuntimeStatus.Running,
+    SessionRuntimeStatus.Stopping,
+    SessionRuntimeStatus.WaitingApproval,
+    SessionRuntimeStatus.Blocked,
+)
+
+internal fun SessionRuntimeStatus.isWorking(): Boolean = this in WORKING_RUNTIME_STATUSES
+
+/** Steering splices a message into the turn already running, so it needs an active turn. */
+internal fun SessionRuntimeStatus.acceptsSteer(): Boolean = this == SessionRuntimeStatus.Running
 
 internal fun runtimeSelectionEnabled(takeoverEnabled: Boolean, capabilityUsable: Boolean): Boolean =
     takeoverEnabled && capabilityUsable

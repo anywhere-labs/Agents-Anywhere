@@ -49,6 +49,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -97,6 +99,10 @@ internal fun MessageComposer(
     sending: Boolean,
     showInterrupt: Boolean,
     interrupting: Boolean,
+    busy: Boolean,
+    canSteer: Boolean,
+    steerEnabled: Boolean,
+    steering: Boolean,
     placeholder: String,
     attachments: List<PendingAttachment>,
     onToggleTakeover: () -> Unit,
@@ -108,6 +114,7 @@ internal fun MessageComposer(
     onPreviewAttachment: (PendingAttachment) -> Unit,
     onReadOnlyClick: () -> Unit,
     onSend: () -> Unit,
+    onSteer: () -> Unit,
     onInterrupt: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -202,9 +209,14 @@ internal fun MessageComposer(
                 sending = sending,
                 showInterrupt = showInterrupt,
                 interrupting = interrupting,
+                busy = busy,
+                canSteer = canSteer,
+                steerEnabled = steerEnabled,
+                steering = steering,
                 onToggleTakeover = onToggleTakeover,
                 onOpenAttachMenu = { if (attachmentsEnabled) showAttachMenu = true },
                 onSend = onSend,
+                onSteer = onSteer,
                 onInterrupt = onInterrupt,
             )
         }
@@ -480,9 +492,14 @@ private fun ComposerActions(
     sending: Boolean,
     showInterrupt: Boolean,
     interrupting: Boolean,
+    busy: Boolean,
+    canSteer: Boolean,
+    steerEnabled: Boolean,
+    steering: Boolean,
     onToggleTakeover: () -> Unit,
     onOpenAttachMenu: () -> Unit,
     onSend: () -> Unit,
+    onSteer: () -> Unit,
     onInterrupt: () -> Unit,
 ) {
     val surface = if (darkMode) LocalAAColors.current.raisedSurface else Color.White
@@ -494,22 +511,22 @@ private fun ComposerActions(
         darkMode -> Color(0xFFA1A1AA)
         else -> Color(0xFF3A3935)
     }
-    val primaryActionEnabled = if (showInterrupt) !interrupting else canSend
-    val primaryActionBusy = sending || interrupting
     val primaryActionSurface = when {
-        showInterrupt -> Color(0xFFEF4444)
         canSend && darkMode -> Color(0xFFFAFAFA)
         canSend -> Color(0xFF2B2B2B)
         darkMode -> Color(0xFF3F3F46)
         else -> Color(0xFFE2E0DC)
     }
     val primaryActionIcon = when {
-        showInterrupt -> Color.White
         canSend && darkMode -> Color(0xFF09090B)
         canSend -> Color.White
         darkMode -> Color(0xFF71717A)
         else -> Color(0xFFA7A5A0)
     }
+    val sendActionLabel = stringResource(if (busy) R.string.session_queue_message else R.string.session_send)
+    val steerActionLabel = stringResource(R.string.session_steer_message)
+    val interruptActionLabel = stringResource(R.string.session_interrupt)
+    val mutedLabel = if (darkMode) Color(0xFF71717A) else Color(0xFFA7A5A0)
 
     val plusModifier = if (darkMode) {
         Modifier.size(30.dp)
@@ -529,6 +546,18 @@ private fun ComposerActions(
             .background(surface)
             .border(1.dp, border, CircleShape)
             .padding(start = 4.dp, end = 9.dp)
+    }
+    val steerModifier = if (darkMode) {
+        Modifier
+            .height(28.dp)
+            .padding(horizontal = 2.dp)
+    } else {
+        Modifier
+            .height(28.dp)
+            .clip(CircleShape)
+            .background(surface)
+            .border(1.dp, border, CircleShape)
+            .padding(start = 9.dp, end = 11.dp)
     }
 
     Row(
@@ -567,35 +596,80 @@ private fun ComposerActions(
                 )
             }
         }
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(CircleShape)
-                .background(primaryActionSurface)
-                .then(
-                    if (primaryActionEnabled) {
-                        Modifier.noRippleClickable(
-                            onClick = if (showInterrupt) onInterrupt else onSend,
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // While a turn is running the send button queues for the next turn, so
+            // steering the running turn is offered as a separate sibling action.
+            if (busy && canSteer) {
+                Row(
+                    modifier = steerModifier
+                        .then(if (steerEnabled) Modifier.noRippleClickable(onClick = onSteer) else Modifier)
+                        .semantics { contentDescription = steerActionLabel },
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (steering) {
+                        CircularProgressIndicator(
+                            color = icon,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(13.dp),
+                        )
+                    }
+                    Text(
+                        text = steerActionLabel,
+                        color = if (steerEnabled) label else mutedLabel,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .semantics { contentDescription = sendActionLabel }
+                    .clip(CircleShape)
+                    .background(primaryActionSurface)
+                    .then(if (canSend) Modifier.noRippleClickable(onClick = onSend) else Modifier),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (sending) {
+                    CircularProgressIndicator(
+                        color = primaryActionIcon,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(17.dp),
+                    )
+                } else {
+                    ArrowUpGlyph(primaryActionIcon)
+                }
+            }
+            if (showInterrupt) {
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .semantics { contentDescription = interruptActionLabel }
+                        .clip(CircleShape)
+                        .background(Color(0xFFEF4444))
+                        .then(if (!interrupting) Modifier.noRippleClickable(onClick = onInterrupt) else Modifier),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (interrupting) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(17.dp),
                         )
                     } else {
-                        Modifier
-                    },
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            when {
-                primaryActionBusy -> CircularProgressIndicator(
-                    color = primaryActionIcon,
-                    strokeWidth = 2.dp,
-                    modifier = Modifier.size(17.dp),
-                )
-                showInterrupt -> Box(
-                    modifier = Modifier
-                        .size(10.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(primaryActionIcon),
-                )
-                else -> ArrowUpGlyph(primaryActionIcon)
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(Color.White),
+                        )
+                    }
+                }
             }
         }
     }

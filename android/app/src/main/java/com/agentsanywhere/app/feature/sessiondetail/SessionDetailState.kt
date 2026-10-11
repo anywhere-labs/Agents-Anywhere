@@ -16,6 +16,7 @@ data class SessionDetailState(
     val actionError: String? = null,
     val takeoverInFlight: Boolean = false,
     val sending: Boolean = false,
+    val steering: Boolean = false,
     val interrupting: Boolean = false,
     val selectionUpdating: Boolean = false,
     val commandExecuting: Boolean = false,

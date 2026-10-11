@@ -124,7 +124,11 @@ import com.agentsanywhere.app.feature.sessiondetail.SESSION_INTERRUPT_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_MODEL_CATALOG_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_NOTICE_RESPONSE_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_PERMISSION_CATALOG_CAPABILITY
+import com.agentsanywhere.app.feature.sessiondetail.SESSION_QUEUE_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_SEND_MESSAGE_CAPABILITY
+import com.agentsanywhere.app.feature.sessiondetail.SESSION_STEER_CAPABILITY
+import com.agentsanywhere.app.feature.sessiondetail.acceptsSteer
+import com.agentsanywhere.app.feature.sessiondetail.isWorking
 import com.agentsanywhere.app.feature.sessiondetail.selectionOptions
 import com.agentsanywhere.app.feature.sessiondetail.sessionComposerEnabled
 import com.agentsanywhere.app.feature.sessiondetail.validatedSelection
@@ -813,7 +817,11 @@ fun SessionDetailScreen(
         val id = sessionId ?: return
         val runtimeId = state.session?.runtimeId ?: state.runtime.runtimeId
         val runtimeType = state.session?.runtimeType ?: state.runtime.runtimeType
-        if (!state.capabilities.isUsable(SESSION_SEND_MESSAGE_CAPABILITY, runtimeId, runtimeType)) {
+        val sendCapability = state.capabilities.find(SESSION_SEND_MESSAGE_CAPABILITY, runtimeId, runtimeType)
+        val queueAccepted = state.effectiveRuntimeStatus().isWorking() &&
+            sendCapability?.supported == true &&
+            sendCapability.allowed
+        if (!state.capabilities.isUsable(SESSION_SEND_MESSAGE_CAPABILITY, runtimeId, runtimeType) && !queueAccepted) {
             showError(context.getString(R.string.session_send_unavailable))
             return
         }
@@ -1305,6 +1313,7 @@ fun SessionDetailScreen(
         } ?: stringResource(R.string.new_session_catalog_unavailable)
     } else null
     val canUseSendMessage = state.capabilities.isUsable(SESSION_SEND_MESSAGE_CAPABILITY, runtimeId, runtimeType)
+    val canUseSteer = state.capabilities.isUsable(SESSION_STEER_CAPABILITY, runtimeId, runtimeType)
     val canUseInterrupt = state.capabilities.isUsable(SESSION_INTERRUPT_CAPABILITY, runtimeId, runtimeType)
     val canRespondToNotice = state.capabilities.isUsable(
         SESSION_NOTICE_RESPONSE_CAPABILITY,
@@ -1329,15 +1338,22 @@ fun SessionDetailScreen(
         val id = sessionId.orEmpty()
         openInteractions.filter { it.blocksSession(id) }
     }
-    val runtimeBlocksSubmission = runtimeStatus in setOf(
-        SessionRuntimeStatus.Waiting,
-        SessionRuntimeStatus.Pending,
-        SessionRuntimeStatus.Running,
-        SessionRuntimeStatus.Stopping,
-        SessionRuntimeStatus.WaitingApproval,
-        SessionRuntimeStatus.Blocked,
-        SessionRuntimeStatus.Disconnected,
-    )
+    val runtimeWorking = !isPreparedSession && runtimeStatus.isWorking()
+    val sendCapability = state.capabilities.find(SESSION_SEND_MESSAGE_CAPABILITY, runtimeId, runtimeType)
+    // Queueing into a running turn is a runtime capability: only runtimes that
+    // declare `session.queue` accept a message while a turn is in flight, and
+    // the server rejects the rest with "session is running".
+    val canQueueWhileWorking = runtimeWorking &&
+        connectorOnline &&
+        state.session?.archived != true &&
+        state.capabilities.isUsable(SESSION_QUEUE_CAPABILITY, runtimeId, runtimeType) &&
+        sendCapability?.supported == true &&
+        sendCapability.allowed
+    val canSteerNow = !isPreparedSession &&
+        connectorOnline &&
+        state.session?.archived != true &&
+        canUseSteer &&
+        runtimeStatus.acceptsSteer()
     val inputEnabled = if (isPreparedSession) {
         true
     } else {
@@ -1346,24 +1362,34 @@ fun SessionDetailScreen(
             capabilityFactsFresh = capabilityFactsFresh,
             canSendMessage = canUseSendMessage,
             canUseCommands = canUseCommands,
+            canSteer = canSteerNow,
+            canQueueMessage = canQueueWhileWorking,
         )
     }
     val attachmentsReady = attachments.all { it.uploadState == AttachmentUploadState.Uploaded }
     // Only drafts naming a catalog command run as commands; paths and prose stay messages.
+    // While a turn is running every draft is a message (queue or steer).
     val slashIntent = if (isPreparedSession) null else SlashIntent.parse(draft)?.takeIf { it.isCommandLike }
-    val exactCommand = slashIntent
+    val exactCommand = if (runtimeWorking) null else slashIntent
         ?.takeIf { it.command.isNotEmpty() }
         ?.let { state.commands.commands.exact(it) }
-    val commandLookupPending = slashIntent != null && slashIntent.command.isNotEmpty() && canUseCommands &&
-        exactCommand == null && state.commands.isLoading
-    val commandMode = takeoverEnabled && inputEnabled && slashIntent != null && attachments.isEmpty()
-    val messageSendable = !runtimeBlocksSubmission &&
-        blockingNotices.isEmpty() &&
-        attachmentsReady &&
-        (attachments.isEmpty() || canUseAttachments) &&
-        (isPreparedSession || canUseSendMessage)
+    val commandLookupPending = !runtimeWorking && slashIntent != null && slashIntent.command.isNotEmpty() &&
+        canUseCommands && exactCommand == null && state.commands.isLoading
+    val commandMode = !runtimeWorking && takeoverEnabled && inputEnabled && slashIntent != null && attachments.isEmpty()
+    val messageSendable = when {
+        canQueueWhileWorking -> blockingNotices.isEmpty() &&
+            attachmentsReady &&
+            (attachments.isEmpty() || canUseAttachments)
+        else -> !runtimeWorking &&
+            runtimeStatus != SessionRuntimeStatus.Disconnected &&
+            blockingNotices.isEmpty() &&
+            attachmentsReady &&
+            (attachments.isEmpty() || canUseAttachments) &&
+            (isPreparedSession || canUseSendMessage)
+    }
     val canSend = inputEnabled &&
         !state.sending &&
+        !state.steering &&
         !preparedSessionCreating &&
         !state.commandExecuting &&
         (draft.isNotBlank() || attachments.isNotEmpty()) &&
@@ -1373,6 +1399,15 @@ fun SessionDetailScreen(
             commandLookupPending -> false
             else -> messageSendable
         }
+    val canSteerDraft = canSteerNow &&
+        inputEnabled &&
+        !state.sending &&
+        !state.steering &&
+        !preparedSessionCreating &&
+        !state.commandExecuting &&
+        attachmentsReady &&
+        (attachments.isEmpty() || canUseAttachments) &&
+        (draft.isNotBlank() || attachments.isNotEmpty())
     val modelOptions = if (isPreparedSession) preparedModelOptions else remember(state.catalogs.model) {
         state.catalogs.model?.selectionOptions().orEmpty()
     }
@@ -1532,7 +1567,8 @@ fun SessionDetailScreen(
         val text = raw.trim()
         if (text.isEmpty() && attachments.isEmpty()) return
         val id = sessionId
-        val intent = if (isPreparedSession) null else SlashIntent.parse(raw)
+        // A running turn has no command surface: the draft is a queued message.
+        val intent = if (isPreparedSession || runtimeWorking) null else SlashIntent.parse(raw)
             ?.takeIf { it.isCommandLike && it.command.isNotEmpty() }
         if (id == null || intent == null || !canUseCommands) {
             sendText(text)
@@ -1551,6 +1587,56 @@ fun SessionDetailScreen(
             val command = controller.loadCommands(id).getOrNull()?.exact(intent)
             if (draft != raw) return@launch
             if (command != null) runCommand(command, raw.trimEnd(), clearing = raw) else sendText(text)
+        }
+    }
+
+    /**
+     * Splices the draft into the turn that is currently running. Unlike [sendDraft]
+     * nothing is queued and no optimistic timeline item is created: the runtime
+     * echoes the steering message through its own timeline stream.
+     */
+    fun steerDraft() {
+        val id = sessionId ?: return
+        val raw = draft
+        val text = raw.trim()
+        if (text.isEmpty() && attachments.isEmpty()) return
+        if (state.steering || state.sending) return
+        val runtimeId = state.session?.runtimeId ?: state.runtime.runtimeId
+        val runtimeType = state.session?.runtimeType ?: state.runtime.runtimeType
+        if (!state.effectiveRuntimeStatus().acceptsSteer() ||
+            !state.capabilities.isUsable(SESSION_STEER_CAPABILITY, runtimeId, runtimeType)
+        ) {
+            showError(context.getString(R.string.session_steer_unavailable))
+            return
+        }
+        val pendingAttachments = attachments
+        if (pendingAttachments.any { it.uploadState != AttachmentUploadState.Uploaded || it.remote == null }) {
+            showError(context.getString(R.string.session_wait_uploads))
+            return
+        }
+        val uploadedAttachments = pendingAttachments.mapNotNull { it.remote }
+        val clientMessageId = "opt_${UUID.randomUUID()}"
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        state = state.copy(steering = true, actionError = null)
+        scope.launch {
+            controller.steerMessage(
+                sessionId = id,
+                content = text,
+                clientMessageId = clientMessageId,
+                uploadedAttachments = uploadedAttachments,
+            )
+                .onSuccess {
+                    state = state.copy(steering = false)
+                    if (draft == raw) clearComposerDraft()
+                    showToast(context.getString(R.string.session_steered))
+                }
+                .onFailure { error ->
+                    val message = error.message
+                        ?.takeUnless(::isInternalRuntimeError)
+                        ?: context.getString(R.string.session_steer_failed)
+                    state = state.copy(steering = false, actionError = message)
+                    showError(message)
+                }
         }
     }
     LaunchedEffect(
@@ -1618,6 +1704,9 @@ fun SessionDetailScreen(
     LaunchedEffect(state.interrupting, canUseInterrupt) {
         if (state.interrupting && !canUseInterrupt) state = state.copy(interrupting = false)
     }
+    LaunchedEffect(state.steering, canSteerNow) {
+        if (state.steering && !canSteerNow) state = state.copy(steering = false)
+    }
     val agentLabel = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
         ?: context.getString(R.string.session_agent_fallback)
     val turnInProgress = state.sending ||
@@ -1672,9 +1761,14 @@ fun SessionDetailScreen(
             stringResource(R.string.session_dsh_concurrent_writer)
         runtimeStatus == SessionRuntimeStatus.Unknown -> stringResource(R.string.session_runtime_state_unknown)
         runtimeStatus in setOf(SessionRuntimeStatus.Waiting, SessionRuntimeStatus.Pending) ->
-            stringResource(R.string.session_pending_placeholder)
-        runtimeStatus in setOf(SessionRuntimeStatus.Running, SessionRuntimeStatus.Stopping) ->
-            stringResource(R.string.session_busy_placeholder)
+            if (canQueueWhileWorking) stringResource(R.string.session_queue_placeholder)
+            else stringResource(R.string.session_pending_placeholder)
+        runtimeStatus in setOf(SessionRuntimeStatus.Running, SessionRuntimeStatus.Stopping) -> when {
+            // The send button queues while the agent works; steering is a sibling action.
+            canSteerNow -> stringResource(R.string.session_busy_steer_placeholder)
+            canQueueWhileWorking -> stringResource(R.string.session_queue_placeholder)
+            else -> stringResource(R.string.session_busy_placeholder)
+        }
         runtimeStatus in setOf(SessionRuntimeStatus.WaitingApproval, SessionRuntimeStatus.Blocked) ->
             stringResource(R.string.session_waiting_approval_placeholder)
         runtimeStatus == SessionRuntimeStatus.Error -> stringResource(R.string.session_error_placeholder)
@@ -1808,6 +1902,10 @@ fun SessionDetailScreen(
                                     sending = state.sending,
                                     showInterrupt = showInterrupt,
                                     interrupting = state.interrupting,
+                                    busy = runtimeWorking,
+                                    canSteer = canSteerNow,
+                                    steerEnabled = canSteerDraft,
+                                    steering = state.steering,
                                     placeholder = placeholder,
                                     attachments = if (takeoverEnabled) attachments else emptyList(),
                                     onToggleTakeover = {
@@ -1823,6 +1921,7 @@ fun SessionDetailScreen(
                                     onPreviewAttachment = { previewImage = AttachmentPreview.Local(it) },
                                     onReadOnlyClick = ::handleReadOnlyComposerClick,
                                     onSend = ::sendDraft,
+                                    onSteer = ::steerDraft,
                                     onInterrupt = ::interrupt,
                                 )
                                 SessionStatsBar(

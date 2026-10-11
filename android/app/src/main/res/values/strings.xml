@@ -399,6 +399,7 @@
     <string name="session_runtime_state_unknown">Runtime state is unavailable. Refresh to try again.</string>
     <string name="session_runtime_state_error">The session encountered an error. Please try again.</string>
     <string name="session_send_unavailable">Sending is unavailable for the current runtime state.</string>
+    <string name="session_steer_unavailable">Steering is unavailable for the current runtime state.</string>
     <string name="session_runtime_catalog_loading">Loading the live runtime catalog…</string>
     <string name="session_runtime_catalog_stale">Showing the last successful catalog.</string>
     <string name="session_runtime_catalog_empty">No available options were returned.</string>
@@ -429,6 +430,8 @@
     <string name="session_notice_expand">Expand</string>
     <string name="session_notice_response_failed">Could not send the runtime response.</string>
     <string name="session_interrupt_failed">Could not interrupt this session.</string>
+    <string name="session_steer_failed">Could not steer the current task.</string>
+    <string name="session_steered">Sent into the current task</string>
     <string name="session_approval_resolve_failed">Could not resolve approval.</string>
     <string name="session_agent_working">%1$s is working</string>
     <string name="session_agent_interrupting">Interrupting %1$s</string>
@@ -551,8 +554,14 @@
     <string name="session_waiting_approval_placeholder">Waiting for your response below…</string>
     <string name="session_pending_placeholder">Waiting for the runtime to accept the task…</string>
     <string name="session_busy_placeholder">Send an interrupt or wait for the current turn to finish</string>
+    <string name="session_queue_placeholder">Send to queue for the next turn</string>
+    <string name="session_busy_steer_placeholder">Send to queue the next turn, or steer the current task</string>
     <string name="session_error_placeholder">This session has an error; sending will retry</string>
     <string name="session_takeover">Takeover</string>
+    <string name="session_send">Send</string>
+    <string name="session_queue_message">Queue</string>
+    <string name="session_steer_message">Steer</string>
+    <string name="session_interrupt">Interrupt</string>
     <string name="session_attachment_camera">Camera</string>
     <string name="session_attachment_photos">Photos</string>
     <string name="session_attachment_file">File</string>

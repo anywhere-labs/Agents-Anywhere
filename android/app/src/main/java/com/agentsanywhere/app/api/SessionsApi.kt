@@ -496,6 +496,31 @@ class SessionsApi(
         ).toRemoteRpcResponse()
     }
 
+    fun steerSessionMessage(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+        content: String,
+        clientMessageId: String,
+        attachments: List<RemoteAttachmentRef> = emptyList(),
+    ): RemoteRpcResponse {
+        val body = JSONObject()
+            .put("content", content)
+            .put("clientMessageId", clientMessageId)
+        if (attachments.isNotEmpty()) {
+            body.put(
+                "attachments",
+                JSONArray(attachments.map { JSONObject().put("fileId", it.fileId) }),
+            )
+        }
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/runtime/steer",
+            body = body,
+            authorizationToken = authorizationToken,
+        ).toRemoteRpcResponse()
+    }
+
     fun uploadSessionAttachments(
         serverUrl: String,
         authorizationToken: String,

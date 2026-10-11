@@ -453,6 +453,31 @@ class SessionDetailController(
         }
     }
 
+    suspend fun steerMessage(
+        sessionId: String,
+        content: String,
+        clientMessageId: String,
+        uploadedAttachments: List<TimelineAttachment> = emptyList(),
+    ): Result<SendMessageResult> {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val auth = authSession()
+                val response = sessionsApi.steerSessionMessage(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    sessionId = sessionId,
+                    content = content,
+                    clientMessageId = clientMessageId,
+                    attachments = uploadedAttachments.map { it.toRemoteAttachmentRef() },
+                )
+                if (!response.ok) {
+                    throw IllegalStateException(response.failureMessage("Runtime rejected the steer."))
+                }
+                SendMessageResult(attachments = uploadedAttachments)
+            }
+        }
+    }
+
     suspend fun uploadAttachments(
         sessionId: String,
         attachments: List<UploadFilePart>,

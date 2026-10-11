@@ -398,6 +398,7 @@
     <string name="session_runtime_state_unknown">运行时状态不可用，请刷新后重试。</string>
     <string name="session_runtime_state_error">会话运行出错，请稍后重试。</string>
     <string name="session_send_unavailable">当前运行时状态下不可发送消息。</string>
+    <string name="session_steer_unavailable">当前运行时状态下不可插话。</string>
     <string name="session_runtime_catalog_loading">正在加载实时运行时目录…</string>
     <string name="session_runtime_catalog_stale">正在显示上次成功加载的目录。</string>
     <string name="session_runtime_catalog_empty">服务端未返回可用选项。</string>
@@ -428,6 +429,8 @@
     <string name="session_notice_expand">展开</string>
     <string name="session_notice_response_failed">无法发送运行时响应。</string>
     <string name="session_interrupt_failed">无法中断这个会话。</string>
+    <string name="session_steer_failed">无法插话到当前任务。</string>
+    <string name="session_steered">已插话到当前任务</string>
     <string name="session_approval_resolve_failed">无法处理审批。</string>
     <string name="session_agent_working">%1$s 正在处理</string>
     <string name="session_agent_interrupting">正在中断 %1$s</string>
@@ -549,8 +552,14 @@
     <string name="session_waiting_approval_placeholder">等待你在下方处理交互…</string>
     <string name="session_pending_placeholder">等待运行时接收任务…</string>
     <string name="session_busy_placeholder">发送中断，或等待当前回合结束</string>
+    <string name="session_queue_placeholder">发送后将排入下一回合</string>
+    <string name="session_busy_steer_placeholder">发送后排入下一回合，或插话当前任务</string>
     <string name="session_error_placeholder">这个会话有错误，发送后会重试</string>
     <string name="session_takeover">接管</string>
+    <string name="session_send">发送</string>
+    <string name="session_queue_message">排队</string>
+    <string name="session_steer_message">插话</string>
+    <string name="session_interrupt">中断</string>
     <string name="session_attachment_camera">相机</string>
     <string name="session_attachment_photos">照片</string>
     <string name="session_attachment_file">文件</string>
