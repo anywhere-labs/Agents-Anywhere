@@ -371,6 +371,17 @@ class DshRuntime(AgentRuntime):
         return await self._send_text("session.startTurn", session_id, external_session_id, content, cwd, attachments, client_message_id,
                                      selections=selections)
 
+    async def steer_turn(
+        self, session_id: str, external_session_id: str | None, content: str,
+        attachments: tuple[RuntimeAttachment, ...] = (), client_message_id: str | None = None,
+    ) -> RuntimeOperationResult:
+        """Splice one message into the running turn instead of queueing it.
+
+        Selections are intentionally absent: steering never resets model or
+        permission configuration for the turn already in flight.
+        """
+        return await self._send_text("session.steer", session_id, external_session_id, content, None, attachments, client_message_id)
+
     async def _send_text(
         self, method: str, session_id: str, external_id: str | None, content: str,
         cwd: str | None, attachments: tuple[RuntimeAttachment, ...], client_message_id: str | None,
