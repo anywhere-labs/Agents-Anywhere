@@ -1348,6 +1348,8 @@ class FakeLocalRpc:
         self.terminal_relay_messages: list[dict[str, Any]] = []
         self.fail = False
         self.timeout_session_methods: set[str] = set()
+        # Sessions whose runtime can queue a message into the running turn.
+        self.queue_session_ids: set[str] = set()
 
     async def is_online(self, connector_id: str) -> bool:
         return True
@@ -1541,6 +1543,8 @@ class FakeLocalRpc:
             if runtime_state is not None:
                 runtime_status = runtime_state.get("status") or "idle"
             session_is_running = runtime_status == "running"
+            queues_turn = session_id in self.queue_session_ids
+            send_message_available = queues_turn or not session_is_running
             return {
                 "capabilitySet": {
                     "revision": 11,
@@ -1566,15 +1570,27 @@ class FakeLocalRpc:
                             "runtime": params["runtime"],
                             "sessionId": session_id,
                             "supported": True,
-                            "available": not session_is_running,
+                            "available": send_message_available,
                             "allowed": True,
                             "unavailableReason": (
                                 "runtime_turn_running"
-                                if session_is_running
+                                if session_is_running and not queues_turn
                                 else None
                             ),
                             "parameters": {},
                         },
+                        *([{
+                            "capabilityId": "session.queue",
+                            "version": "1",
+                            "scope": "session",
+                            "runtime": params["runtime"],
+                            "sessionId": session_id,
+                            "supported": True,
+                            "available": True,
+                            "allowed": True,
+                            "unavailableReason": None,
+                            "parameters": {},
+                        }] if queues_turn else []),
                         {
                             "capabilityId": "session.interrupt",
                             "version": "1",
@@ -5295,6 +5311,139 @@ def test_send_message_rejects_running_state(tmp_path):
     assert response.status_code == 409, response.text
     assert response.json()["detail"] == "session is running"
     assert not any(method == "session.send_message" for _, method, _, _ in fake_rpc.requests)
+
+
+def test_send_message_queues_into_running_session_when_queue_capability_is_usable(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.queue_session_ids.add(session_id)
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "externalSessionId": f"thr_{connector_id}_demo",
+        "status": "running",
+        "selections": {},
+        "metadata": {"source": "test.turn.running"},
+    }
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    asyncio.run(
+        client.app.state.store.start_active_run(
+            session_id=session_id,
+            runtime="codex",
+            runtime_id="codex",
+            external_session_id=f"thr_{connector_id}_demo",
+            params={"content": "in-flight"},
+        )
+    )
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "also do this", "clientMessageId": "queued_1"},
+    )
+
+    assert response.status_code == 200, response.text
+    params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
+    assert params["content"] == "also do this"
+    assert params["clientMessageId"] == "queued_1"
+    active = asyncio.run(client.app.state.store.get_active_run(session_id))
+    assert active is not None
+    assert active["params"] == {"content": "in-flight"}
+
+
+def test_send_message_queued_into_running_session_records_active_run_when_absent(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.queue_session_ids.add(session_id)
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "externalSessionId": f"thr_{connector_id}_demo",
+        "status": "running",
+        "selections": {},
+        "metadata": {"source": "test.turn.running"},
+    }
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "queued without a record", "clientMessageId": "queued_2"},
+    )
+
+    assert response.status_code == 200, response.text
+    active = asyncio.run(client.app.state.store.get_active_run(session_id))
+    assert active is not None
+    assert active["params"]["content"] == "queued without a record"
+
+
+def test_send_message_queue_failure_keeps_running_active_run(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    class QueueRejectedRpc(FakeLocalRpc):
+        async def request(
+            self,
+            connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> Any:
+            if method != "session.send_message":
+                return await super().request(
+                    connector_id,
+                    method,
+                    params,
+                    timeout=timeout,
+                )
+            self.requests.append((connector_id, method, params, timeout))
+            return {"ok": False, "code": "queue_rejected", "message": "queue rejected"}
+
+    fake_rpc = QueueRejectedRpc()
+    fake_rpc.queue_session_ids.add(session_id)
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "externalSessionId": f"thr_{connector_id}_demo",
+        "status": "running",
+        "selections": {},
+        "metadata": {"source": "test.turn.running"},
+    }
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    asyncio.run(
+        client.app.state.store.start_active_run(
+            session_id=session_id,
+            runtime="codex",
+            runtime_id="codex",
+            external_session_id=f"thr_{connector_id}_demo",
+            params={"content": "in-flight"},
+        )
+    )
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "queued but rejected"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "queue_rejected"
+    active = asyncio.run(client.app.state.store.get_active_run(session_id))
+    assert active is not None
+    assert active["params"] == {"content": "in-flight"}
 
 
 @pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")

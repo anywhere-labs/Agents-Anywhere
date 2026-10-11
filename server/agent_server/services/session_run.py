@@ -13,8 +13,10 @@ from agent_server.core.capabilities import (
     CATALOG_PERMISSION,
     RUNTIME_ATTACHMENT,
     SESSION_INTERRUPT,
+    SESSION_QUEUE,
     SESSION_SEND_MESSAGE,
     SESSION_STEER,
+    capability_is_usable,
 )
 from agent_server.core.models import (
     InlineAttachmentRef,
@@ -399,8 +401,17 @@ class SessionRunService:
             raise SessionRunConflictError("connector is offline")
         await self._ensure_session_runtime_running(session, user_id=user_id)
         runtime_status = await self._read_runtime_status(session)
+        queue_into_running_turn = False
         if runtime_status not in {"idle", "error"}:
-            raise SessionRunConflictError(f"session is {runtime_status}")
+            # Only a runtime that declares a usable session.queue may accept a
+            # message while the current turn is still running.
+            queue_usable = (
+                runtime_status == "running"
+                and await self._session_capability_is_usable(session, SESSION_QUEUE)
+            )
+            if not queue_usable:
+                raise SessionRunConflictError(f"session is {runtime_status}")
+            queue_into_running_turn = True
         await self._require_session_capability(
             session,
             SESSION_SEND_MESSAGE,
@@ -433,13 +444,20 @@ class SessionRunService:
             params["attachments"] = attachment_payloads
             params["timelineAttachments"] = [_timeline_attachment_payload(item) for item in attachment_payloads]
 
-        await self._store.start_active_run(
-            session_id=session_id,
-            runtime=session.runtime,
-            runtime_id=_session_runtime_id(session),
-            external_session_id=session.externalSessionId,
-            params=params,
+        # A message queued into an in-flight turn must not replace the active-run
+        # record that drives interrupt/recovery for that turn.
+        preserve_active_run = (
+            queue_into_running_turn
+            and await self._store.get_active_run(session_id) is not None
         )
+        if not preserve_active_run:
+            await self._store.start_active_run(
+                session_id=session_id,
+                runtime=session.runtime,
+                runtime_id=_session_runtime_id(session),
+                external_session_id=session.externalSessionId,
+                params=params,
+            )
         try:
             result = await self._manager.request(
                 session.connectorId,
@@ -447,13 +465,16 @@ class SessionRunService:
                 params,
             )
         except ConnectorOfflineError as exc:
-            await self._store.clear_active_run(session_id)
+            if not preserve_active_run:
+                await self._store.clear_active_run(session_id)
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
-            await self._store.clear_active_run(session_id)
+            if not preserve_active_run:
+                await self._store.clear_active_run(session_id)
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         if isinstance(result, dict) and result.get("ok") is False:
-            await self._store.clear_active_run(session_id)
+            if not preserve_active_run:
+                await self._store.clear_active_run(session_id)
             await self._persist_operation_source_state(session, result)
             code = result.get("code")
             message = result.get("message")
@@ -768,6 +789,26 @@ class SessionRunService:
 
         if attachment_media_types:
             _validate_attachment_mime_types(_capability_metadata(capability), attachment_media_types)
+
+    async def _session_capability_is_usable(
+        self,
+        session: SessionView,
+        capability_id: str,
+    ) -> bool:
+        try:
+            capability_set = await read_session_capability_facts(
+                self._manager, session, runtime_id=_session_runtime_id(session),
+            )
+        except (ConnectorOfflineError, TimeoutError, ConnectorRpcError, ValueError):
+            # An unreadable capability set cannot admit the action; callers keep
+            # their existing conflict for the current runtime status.
+            return False
+        online_session = session.model_copy(update={"connectorStatus": "online"})
+        effective = derive_session_effective_capabilities(
+            session=online_session,
+            runtime_capabilities=capability_set,
+        )
+        return capability_is_usable(effective, capability_id)
 
     async def _require_runtime_instance(
         self,
