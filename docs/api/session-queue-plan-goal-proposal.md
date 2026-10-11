@@ -234,43 +234,50 @@ Codex 0.128 起的 Goal mode（CLI `/goal`、桌面 App、IDE 插件都有）：
 - app-server 接口：`thread/goal/set {threadId, objective?, status: "active" | "paused"}`、`thread/goal/get`、`thread/goal/clear`；通知 `thread/goal/updated {threadId, goal}`、`thread/goal/cleared`。IPC 的 `conversationState` 直接带 `threadGoal`、`completedThreadGoal`、`threadGoalResumeConfirmation`，我们跟随桌面持有的线程时可以直接读到。
 - 桌面 App 的呈现：输入框上方一行"进度行"——状态（如 "Paused goal"）、截断的目标文本、已运行时长（"10h 9m"）、token 用量 `{used} / {budget}`，按钮：暂停 / 恢复 / 编辑 / 清除；goal 运行中仍可发后续消息补充上下文。
 
-### 3.2 我们的模型
+### 3.2 原则：只呈现 Agent 自己的 goal，不自己造
+
+goal 不是 AA 的功能，是 Runtime 的功能：Runtime 有原生 goal 就接进来，没有就不显示，Server 不做任何续跑。现在只有 Codex（≥ 0.128，`features.goals = true`）有；Claude Code、DSH 没有，这两种会话里不会出现任何 goal 相关 UI。能力 `session.goal` 由 Connector 按 Runtime 实际版本声明，客户端只认能力。
+
+### 3.3 模型（直接对齐 Codex 的 goal 对象）
 
 ```jsonc
 // SessionGoal
 {
-  "goalId": "goal_…",
   "objective": "把 Server 测试全部切到 PostgreSQL 并让 CI 通过",
-  "status": "active",            // active | paused | complete | blocked | budget_limited | usage_limited   （开放枚举）
-  "statusReason": null,          // 可空：暂停 / 阻塞的原因（"用户中断"、"等待审批"）
-  "setBy": "user",               // user | agent
-  "budget": { "tokensUsed": 120000, "tokenBudget": 2000000 },   // 可空；Runtime 不提供就不显示
-  "progress": "已切换 conftest，剩迁移测试",                   // 可空，Agent 维护的一句话
+  "status": "active",            // active | paused | complete | blocked | budget_limited | usage_limited   （开放枚举，随 Runtime）
+  "needsResume": false,          // paused / blocked / budget_limited / usage_limited 时为 true：要用户恢复才会继续
+  "resumeConfirmationPending": false,   // Codex 的 threadGoalResumeConfirmation：用户停下后再发消息，要先确认是否恢复 goal
+  "budget": { "tokensUsed": 120000, "tokenBudget": 2000000 },   // 可空
   "createdAt": "…", "updatedAt": "…", "completedAt": null,
-  "source": { "runtime": "codex", "native": true }
+  "source": { "runtime": "codex" }
 }
 ```
 
-接口：`PUT /sessions/{id}/runtime/goal {objective}`（设置或替换）、`POST …/goal/pause`、`POST …/goal/resume`、`DELETE …/goal`；快照和 `SessionView` 带 `goal`，事件 `runtime.goal.updated { sessionId, goal | null }` 整体替换。能力 `session.goal`。
+字段只做最小归一化（`budgetLimited` → `budget_limited` 这种命名统一），Runtime 多给的字段放 `metadata`，不丢。
 
-### 3.3 两种实现路径
+### 3.4 接口与 Connector 映射
 
-**Codex：直接用原生 Goal mode。** Connector 的 Codex Runtime 把 `thread/goal/*` 映射到上面的接口，`thread/goal/updated` / `cleared` 映射到事件；通过 IPC 跟随桌面线程时，从 `conversationState.threadGoal` 投影。续跑、完成判定、预算全部由 Codex 自己做，我们只是把状态同步到四端并转发控制。前提：系统 Codex ≥ 0.128、`config.toml` 开了 `[features] goals = true`、ChatGPT 登录态。
+| AA 接口 | Connector RPC | Codex app-server | 说明 |
+| --- | --- | --- | --- |
+| `PUT /sessions/{id}/runtime/goal {objective}` | `session.goal.set` | `thread/goal/set {threadId, objective, status: "active"}` | 设置或替换目标。Codex 的语义是目标文本同时作为第一条 prompt 发出，所以这个调用会**开始一个回合** |
+| `POST …/goal/pause` | `session.goal.set {status: "paused"}` | `thread/goal/set {status: "paused"}` | |
+| `POST …/goal/resume` | `session.goal.set {status: "active"}` | `thread/goal/set {status: "active"}` | 若 `resumeConfirmationPending`，这个调用同时确认恢复 |
+| `DELETE …/goal` | `session.goal.clear` | `thread/goal/clear` | |
+| 快照 `goal` / 事件 `runtime.goal.updated` | `session.goal.upsert`（Runtime → Server） | `thread/goal/updated` / `thread/goal/cleared`，加载时 `thread/goal/get` | 整体替换 |
 
-**Claude / DSH：Server 侧续跑（AA goal loop）。** 这两个 Runtime 没有原生 goal。Server 按 Codex 的规则做一个通用续跑器：
-1. goal `active` 且会话回到 `idle`、队列为空、没有待处理 Notice 时，Server 发一条续跑 prompt（固定模板：复述目标 + 要求先核对证据再决定继续或宣布完成，宣布完成需用固定标记）。
-2. 续跑回合如果没有任何工具调用，跳过下一次自动续跑；用户中断 → `paused`；审批待处理 → `blocked`；连续 N 次无进展 → `paused` 并写明原因。
-3. 预算：按续跑次数和（Runtime 提供时）token 计数，到顶置 `budget_limited`。
-4. 完成判定：模型输出带完成标记，或用户手动清除。
+会话命令 `/goal <目标>` 保留为 Runtime 命令（Codex 的 `session.commands` 里出现 `goal`），执行等价于 `PUT …/goal`；不支持的 Runtime 不列出这个命令。
 
-这条路径质量不如 Codex 原生（续跑 prompt 会出现在对话历史里，模型"自审"的可靠度取决于 Runtime），所以 **P3 先做 Codex 原生，Server 续跑器作为 P3 的第二步**，并默认关闭，由用户在 goal 面板里显式开启"自动续跑"。
+**通过 IPC 跟随桌面持有的线程时**：`conversationState.threadGoal` / `completedThreadGoal` / `threadGoalResumeConfirmation` 直接投影成 `goal`，呈现没有差别；但暂停 / 恢复 / 清除需要 owner 执行，目前没有看到对应的 `thread-follower-*` 方法，所以这种情况下 `session.goal` 声明为 `allowed: false, unavailableReason: "goal_controlled_by_window"`，进度行只读，按钮灰掉并提示"请在 Codex App 里操作"。
 
-### 3.4 呈现（四端一致）
+**Runtime 自己的行为，我们不干预也不复制**：中断会让 Codex 把 goal 置为 `paused`；续跑、完成判定、预算全在 Codex；goal 运行中用户发的消息按 1.2 的队列 / 打断规则走，Codex 会把它当作对 goal 的补充上下文。
 
-- 输入框上方一行"目标进度行"：状态点 + 状态文字（进行中 / 已暂停 / 已完成 / 已阻塞 / 预算用尽）、目标文本（截断，点开全文）、已运行时长、token 用量（有则显示）；按钮：暂停 / 恢复、编辑、清除。手机端默认折叠成一个 pill，展开后同样内容。
-- 设置 goal 的入口：会话命令 `/goal <目标>`（所有 Runtime 统一由 Server 处理，不再是 Runtime 命令），以及进度行上的"编辑"。
-- goal 运行中输入框照常可用：发消息走 1.2 的队列 / 打断规则；Codex 原生路径下，发出的消息会被 Codex 当作对 goal 的补充上下文。
-- 状态变化（设置、暂停、完成、清除）写一条 `marker` 条目 `content.kind: "goal"`，和 plan 的 marker 同款，历史里可追溯。
+### 3.5 呈现与交互（四端一致）
+
+- **进度行**：`session.goal` 可用且 `goal != null` 时，在输入框上方显示一行：状态点 + 状态文字（进行中 / 已暂停 / 已完成 / 已阻塞 / 预算用尽 / 用量受限）、目标文本（单行截断，点开看全文）、已运行时长（从 `createdAt` 起算）、token 用量（有则显示）。按钮：暂停 / 恢复（二选一）、编辑、清除。手机端默认折叠成一个 pill，展开后内容相同。
+- **恢复确认**：`resumeConfirmationPending` 为 true 时，用户在输入框发消息前先弹一条内联提示"目标已暂停，是否恢复？"，选"恢复并发送"或"只发送"。这对应 Codex App 停下之后的行为。
+- **完成 / 阻塞**：`status` 变为 `complete`、`blocked`、`budget_limited`、`usage_limited` 时推一条会话通知（和审批通知同一通道），手机上能收到；进度行同步变色。完成后进度行保留显示"已完成"，用户清除后消失。
+- **设置入口**：输入框的 `/goal` 命令菜单（只在能力可用时出现），以及进度行的"编辑"。没有 goal 时没有进度行，不占位。
+- **历史**：设置、暂停、恢复、完成、清除各写一条 `marker` 条目 `content.kind: "goal"`，和 plan 的 marker 同款。
 
 ## 4. 契约、能力与版本
 
@@ -292,11 +299,11 @@ Codex 0.128 起的 Goal mode（CLI `/goal`、桌面 App、IDE 插件都有）：
 
 1. **2.2.0-P1 队列 + 打断并发送 + 删除原生 steer**（Server + 四端，Connector 只做删除）。
 2. **2.2.0-P2 计划**：`mode` catalog（Claude 先）、`SessionPlan`（Claude TodoWrite / ExitPlanMode、DSH plan review）、`plan_review` 通知、四端面板。Codex 的 plan 解析随后。
-3. **2.2.0-P3 目标**：先接 Codex 原生 Goal mode（app-server `thread/goal/*` + IPC 投影）和四端进度行；再做 Server 续跑器给 Claude / DSH，默认关闭。
+3. **2.2.0-P3 目标**：接 Codex 原生 Goal mode（app-server `thread/goal/*` + IPC 投影）和四端进度行。没有原生 goal 的 Runtime 不做任何事。
 
 ## 6. 还没想清楚、需要拍板的点
 
 - `approve_auto` 在 Claude 上是切到 `auto` 权限模式还是 `acceptEdits`，要和 Claude 的实际 mode 列表对一次。
-- Codex 原生 goal 需要 Codex ≥ 0.128 且 `features.goals = true`；Connector 要在能力声明里按实际 app-server 版本决定 `session.goal` 是否可用。
-- Server 续跑器的 prompt 模板和"无进展"判定需要在 Claude 上实测几轮再定。
+- Codex 原生 goal 需要 Codex ≥ 0.128 且 `features.goals = true`；Connector 要在能力声明里按实际 app-server 版本决定 `session.goal` 是否可用，这个探测方式（`thread/goal/get` 报 method not found？）要实测。
+- IPC 跟随模式下是否有 `thread-follower-*` 的 goal 控制方法，要抓一次桌面 App 的真实流量确认；没有的话进度行只读。
 - 计划 markdown 在手机端的渲染库（Android 现无 markdown 组件？需确认）。
