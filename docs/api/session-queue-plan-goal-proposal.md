@@ -225,9 +225,9 @@ Runtime 映射：
 
 ## 3. 目标（goal）
 
-### 3.1 原则：只呈现 Agent 自己的 goal，不自己造
+### 3.1 原则：只呈现 Agent 自己的 goal，不提供设置指令
 
-goal 不是 AA 的功能，是 Runtime 的功能：Runtime 有原生 goal 就接进来，没有就不显示，Server 不做任何续跑或评估。**三个 Runtime 现在都有原生 goal**，但形态不同；AA 做的是统一的数据模型、统一的进度行，以及按 Runtime 能力显示不同的按钮。
+goal 不是 AA 的功能，是 Runtime 的功能：Runtime 有原生 goal 就接进来，没有就不显示，Server 不做任何续跑或评估。**AA 不提供 `/goal` 指令或"设置目标"按钮**：goal 由模型自己决定何时建立（Codex 的模型可以自行发起 goal），或由用户在原生客户端里设置；用户在 AA 里想要一个长期目标，用自然语言说即可，要不要建 goal 是模型的事。AA 负责的是把已经存在的 goal 显示出来，并提供 Runtime 允许的控制（暂停 / 恢复 / 清除）。三个 Runtime 都有原生 goal，形态不同；AA 做统一的数据模型、统一的进度行，按能力显示不同的按钮。
 
 ### 3.2 三个 Runtime 的原生 goal
 
@@ -235,7 +235,8 @@ goal 不是 AA 的功能，是 Runtime 的功能：Runtime 有原生 goal 就接
 | --- | --- | --- | --- |
 | 本质 | 线程级持久状态 + 空闲时续跑；完成由模型基于证据判定；有 token 预算 | 会话级 prompt 型 Stop hook：每回合结束由一个评估模型判定 met / not met / impossible | 会话级 goal 对象 + "goal round" 续跑；`maxGoalRounds` 轮数上限 |
 | 状态 | `active / paused / complete / budgetLimited / blocked / usageLimited` | 只有"有 / 无"；结束时写 achieved 或 failed 转录项；错误与限额会自动暂停 | `phase: active / paused / blocked / complete`，`blockedReason {code, message}`，`activation: armed / disarmed` |
-| 控制 | set（objective + status）、pause、resume、clear | set（替换）、clear；**没有 pause / resume**，自动暂停后靠下一条消息继续 | create、edit、pause、resume、complete、clear、get |
+| 控制（原生） | set（objective + status）、pause、resume、clear | set（替换）、clear；**没有 pause / resume**，自动暂停后靠下一条消息继续 | create、edit、pause、resume、complete、clear、get |
+| 谁能建立 | 用户（`/goal`）或模型（goal 工具） | 只有用户（终端 `/goal`）；模型不能 | 用户（DSH UI / 远程 API）；模型能否建立待确认 |
 | 进度信息 | token 用量 / 预算、已运行时长 | 已评估回合数、token 花费、评估器最近一次的理由 | `roundsStarted / maxGoalRounds` |
 | 接口 | app-server `thread/goal/set\|get\|clear`，通知 `thread/goal/updated\|cleared`；IPC `conversationState.threadGoal` 可读 | 内置命令 `/goal`；Agent SDK 没有 goal API，`/goal` 作为 prompt 中的内置命令发出（待验证 `slash_commands` 是否列出） | 远程 API `goals.create / edit / pause / resume / complete / clear / get`；会话事件 `goal/change`，远程事件 `goal/activation-changed` |
 | 停止规则 | 空闲才续跑；无工具调用跳过下次；中断即 paused | 连续多回合无工具调用停止；错误重试 3 次后暂停；限额暂停 | 轮数到顶即 blocked / complete |
@@ -287,13 +288,13 @@ provider 映射也是现成的：Codex 的 `usageLimited / budgetLimited` 归一
 
 | AA 接口 | Connector RPC | ACP 对应 | Codex | Claude | DSH |
 | --- | --- | --- | --- | --- | --- |
-| 能力 `session.goal`，`metadata = {version, actions}` | 能力声明 | `initialize._meta.goal` | actions 四个 | `set, clear` | `set, pause, resume, clear`（DSH 还有 `complete` 和 `edit`，作为 `_`-前缀扩展动作：`_complete`） |
-| `POST /sessions/{id}/runtime/goal {action, objective?}` | `session.goal.control {action, objective?}` | `_session/goal` | `thread/goal/set\|clear`（会开始一个回合） | 发 prompt `/goal <objective>` 或 `/goal clear` | `goals.create\|edit\|pause\|resume\|clear` |
+| 能力 `session.goal`，`metadata = {version, actions}`；AA 的 `actions` 只会出现 `pause / resume / clear`（以及 `_` 前缀的扩展动作，如 DSH 的 `_complete`），**不含 `set`** | 能力声明 | `initialize._meta.goal` | `pause, resume, clear` | `clear` | `pause, resume, clear, _complete` |
+| `POST /sessions/{id}/runtime/goal {action}` | `session.goal.control {action}` | `_session/goal`（去掉 `set`） | `thread/goal/set {status}`、`thread/goal/clear` | 发 prompt `/goal clear` | `goals.pause\|resume\|complete\|clear` |
 | 快照 `goal` / 事件 `runtime.goal.updated { goal \| null }` | `session.goal.upsert`（Runtime → Server） | `session_info_update._meta…goal` | `thread/goal/updated\|cleared`；IPC 跟随时投影 `threadGoal` | 转录里的 `active_goal` 消息 + 发命令时先发最小快照 | 会话事件 `goal/change` |
 
 状态归一：DSH `phase` 四个值直接对应，`activation: disarmed` → `paused`，`roundsStarted` → `iterations`，`blockedReason.message` → `lastReason`；Claude 的 achieved → `complete`，failed → `blocked` + `lastReason`。
 
-**一个接口，一个控制方法，一个快照**。四端只认 `actions` 决定显示哪些按钮；以后 ACP 把它收进核心协议，我们只改 Connector 的映射。
+**一个接口，一个控制方法，一个快照**。四端只认 `actions` 决定显示哪些按钮；以后 ACP 把它收进核心协议，我们只改 Connector 的映射。`set` 在 ACP 扩展里存在，我们有意不暴露：契约里把它标为保留动作，Connector 不实现，客户端不显示。
 
 **Codex 通过 IPC 跟随桌面持有的线程时**：快照通过 `conversationState.threadGoal / completedThreadGoal / threadGoalResumeConfirmation` 实时可读；但当前桌面 App（155.0.8059.40）和 VS Code 插件（26.1007）的 17 个 `thread-follower-*` 方法里没有 goal 控制，桌面自己的 goal 操作也先 `assertThreadFollowerOwner`。这种情况能力声明 `actions: []`，进度行只读，按钮换成"在 Codex App 中操作"（`codex://threads/<id>` deeplink）。Codex 以后加了 follower 方法，只需把 `actions` 填上。
 
@@ -301,19 +302,19 @@ provider 映射也是现成的：Codex 的 `usageLimited / budgetLimited` 归一
 
 ### 3.5 呈现与交互（四端一致）
 
-- **进度行**：`session.goal` 可用且 `goal != null` 时，在输入框上方显示一行：状态点 + 状态文字（进行中 / 已暂停 / 已阻塞 / 已受限 / 已完成）、目标文本（单行截断，点开看全文）、已运行时长（`timeUsedSeconds` 或从 `createdAt` 起算）；快照里有什么显示什么：`iterations` 显示"第 3 轮"、`tokensUsed / tokenBudget` 显示 `120k / 2M`、`lastReason` 作为副标题。按钮按能力里的 `actions` 显示：暂停 / 恢复（二选一）、编辑（= 带新 objective 的 `set`）、清除；Claude 只有编辑和清除。"正在工作"用会话状态的转圈表示，和目标状态分开，这是 ACP 文档特别强调的一点。手机端默认折叠成一个 pill，展开后内容相同。
+- **进度行**：`goal != null` 时，在输入框上方显示一行：状态点 + 状态文字（进行中 / 已暂停 / 已阻塞 / 已受限 / 已完成）、目标文本（单行截断，点开看全文）、已运行时长（`timeUsedSeconds` 或从 `createdAt` 起算）；快照里有什么显示什么：`iterations` 显示"第 3 轮"、`tokensUsed / tokenBudget` 显示 `120k / 2M`、`lastReason` 作为副标题。按钮按能力里的 `actions` 显示：暂停 / 恢复（二选一）、清除；Claude 只有清除。没有"编辑"：想改目标就直接跟模型说。"正在工作"用会话状态的转圈表示，和目标状态分开，这是 ACP 文档特别强调的一点。手机端默认折叠成一个 pill，展开后内容相同。
 - **恢复确认**：Codex 的 `resumeConfirmation` 放在 `metadata` 里；为 true 时发消息前先内联问"目标已暂停，是否恢复？"，选"恢复并发送"或"只发送"。
 - **完成 / 阻塞 / 受限**：状态变为 `complete`、`blocked`、`limited` 时推一条会话通知（和审批通知同一通道，手机能收到）；进度行同步变色。完成后进度行保留显示直到用户清除。
-- **设置入口**：输入框的 `/goal` 命令菜单（能力可用时出现），以及进度行的"编辑"。没有 goal 时没有进度行，不占位。
+- **没有设置入口**：命令菜单里没有 `/goal`，进度行没有"新建"或"编辑"。没有 goal 时没有进度行，不占位。
 - **历史**：设置、暂停、恢复、完成、清除各写一条 `marker` 条目 `content.kind: "goal"`，和 plan 的 marker 同款。
 
 ### 3.6 不变量：只要有 goal，AA 就必须能看到并能操作
 
-goal 可以从很多地方冒出来：用户在 AA 输入框敲 `/goal …`；用户在 Codex App / CLI / VS Code、DSH Desktop 里设置；Claude 的 `/goal` 走 Stop hook；Codex 的模型自己发起 goal；DSH 的 goal round 把状态改成 blocked。不管来源是谁，都不允许出现"goal 已经存在，但 AA 这边既看不见也动不了"。为此定四条规则：
+goal 可以从很多地方冒出来：Codex 的模型自己发起 goal；用户在 Codex App / CLI / VS Code、DSH Desktop 里设置；Claude 用户在终端敲 `/goal`；DSH 的 goal round 把状态改成 blocked；用户在 AA 里敲了 `/goal …` 并被 Runtime 当成指令执行了。不管来源是谁，都不允许出现"goal 已经存在，但 AA 这边既看不见也动不了"。为此定四条规则：
 
 1. **显示跟着数据走，按钮跟着能力走。** 只要快照（`goal != null`）到了，进度行就显示，不看 `session.goal` 能力有没有声明、`actions` 是不是空；能力只决定哪些按钮可点。能力探测失败（比如 Codex 版本判断错了）最多少几个按钮，不会少显示。
-2. **状态来源是 Runtime 的真相，不是我们自己的调用记录。** 每种 Runtime 都要有"加载时拉一次 + 之后订阅变化"两条路：Codex 加载时 `thread/goal/get`，之后 `thread/goal/updated | cleared`，IPC 跟随时投影 `conversationState.threadGoal`；DSH 加载时 `goals.get`，之后会话事件 `goal/change`；Claude 订阅 `active_goal` 消息，并且像 `claude-agent-acp` 一样在发出 `/goal <objective>` 时先发一份最小快照（某些版本不发第一条 `active_goal`），命令失败再回滚。Connector 重启、Server 重连、客户端重新打开会话时，快照都走同一条"拉一次"的路恢复。
-3. **`/goal` 在 AA 里永远不会被当成普通文本发给模型。** 输入框把 `/goal …` 识别为 goal 控制（等价于 `action: set`，`/goal clear` 等价于 `clear`），直接走 `session.goal.control`。Runtime 不支持 goal 时，命令菜单里没有 `/goal`，硬敲回车会得到明确的错误"此 Runtime 不支持目标"，而不是把文本原样发出去让模型自由发挥。
+2. **状态来源是 Runtime 的真相，不是我们自己的调用记录。** 每种 Runtime 都要有"加载时拉一次 + 之后订阅变化"两条路：Codex 加载时 `thread/goal/get`，之后 `thread/goal/updated | cleared`，IPC 跟随时投影 `conversationState.threadGoal`；DSH 加载时 `goals.get`，之后会话事件 `goal/change`；Claude 订阅 `active_goal` 消息（某些版本不发第一条，所以用户消息里出现 `/goal <condition>` 时 Connector 先发一份最小快照，`claude-agent-acp` 也是这么做的）。Connector 重启、Server 重连、客户端重新打开会话时，快照都走同一条"拉一次"的路恢复。
+3. **AA 不拦截、不改写用户的文本。** 用户在 AA 里敲 `/goal …` 就是一条普通消息：Claude 的 SDK 会把它当内置命令执行，Codex 的模型会看到这段文字并自行决定要不要调 goal 工具，DSH 同理。无论 Runtime 怎么处理，只要结果是出现了一个 goal，规则 2 保证它会被拉到 AA 里显示。AA 自己不提供任何建立 goal 的指令或按钮。
 4. **没有控制权时给出路，不给死路。** 按钮不可用的每一种情况都要有对应的替代动作或说明：IPC 跟随桌面线程 → "在 Codex App 中操作"走 deeplink；Claude 没有 pause / resume → 只显示编辑和清除，并提示"Claude 的目标会在出错或限额时自动暂停，发一条消息即可继续"；Runtime 暂时不可达 → 按钮灰掉并显示原因，状态照常显示。
 
 这四条也是验收标准：每个 Runtime 至少要有一条"在原生客户端里设置 goal，AA 实时出现进度行并能执行该 Runtime 支持的全部动作"的真机验证记录，再算接完。
@@ -344,6 +345,7 @@ goal 可以从很多地方冒出来：用户在 AA 输入框敲 `/goal …`；�
 
 - `approve_auto` 在 Claude 上是切到 `auto` 权限模式还是 `acceptEdits`，要和 Claude 的实际 mode 列表对一次。
 - Codex 原生 goal 需要 Codex ≥ 0.128 且 `features.goals = true`；Connector 要在能力声明里按实际 app-server 版本决定 `session.goal` 是否可用，探测方式（`thread/goal/get` 报 method not found？）要实测。
-- Claude：SDK 会话里 `/goal` 的可用性和运行中状态的可见性（3.4）。
+- Claude：SDK 会话里 `/goal`（含 `/goal clear`）是否出现在 `slash_commands`，运行中状态能从消息流里拿到多少（3.4）。
+- DSH：模型能否自行建立 goal；若只能由用户在 DSH UI 建立，AA 里的 DSH 会话只有在那边设置过时才会出现进度行。
 - DSH：goal 服务的 cordis 键名与事件接入点（3.4）。
 - 计划 markdown 在手机端的渲染库（Android 现无 markdown 组件？需确认）。
