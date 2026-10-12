@@ -307,6 +307,17 @@ provider 映射也是现成的：Codex 的 `usageLimited / budgetLimited` 归一
 - **设置入口**：输入框的 `/goal` 命令菜单（能力可用时出现），以及进度行的"编辑"。没有 goal 时没有进度行，不占位。
 - **历史**：设置、暂停、恢复、完成、清除各写一条 `marker` 条目 `content.kind: "goal"`，和 plan 的 marker 同款。
 
+### 3.6 不变量：只要有 goal，AA 就必须能看到并能操作
+
+goal 可以从很多地方冒出来：用户在 AA 输入框敲 `/goal …`；用户在 Codex App / CLI / VS Code、DSH Desktop 里设置；Claude 的 `/goal` 走 Stop hook；Codex 的模型自己发起 goal；DSH 的 goal round 把状态改成 blocked。不管来源是谁，都不允许出现"goal 已经存在，但 AA 这边既看不见也动不了"。为此定四条规则：
+
+1. **显示跟着数据走，按钮跟着能力走。** 只要快照（`goal != null`）到了，进度行就显示，不看 `session.goal` 能力有没有声明、`actions` 是不是空；能力只决定哪些按钮可点。能力探测失败（比如 Codex 版本判断错了）最多少几个按钮，不会少显示。
+2. **状态来源是 Runtime 的真相，不是我们自己的调用记录。** 每种 Runtime 都要有"加载时拉一次 + 之后订阅变化"两条路：Codex 加载时 `thread/goal/get`，之后 `thread/goal/updated | cleared`，IPC 跟随时投影 `conversationState.threadGoal`；DSH 加载时 `goals.get`，之后会话事件 `goal/change`；Claude 订阅 `active_goal` 消息，并且像 `claude-agent-acp` 一样在发出 `/goal <objective>` 时先发一份最小快照（某些版本不发第一条 `active_goal`），命令失败再回滚。Connector 重启、Server 重连、客户端重新打开会话时，快照都走同一条"拉一次"的路恢复。
+3. **`/goal` 在 AA 里永远不会被当成普通文本发给模型。** 输入框把 `/goal …` 识别为 goal 控制（等价于 `action: set`，`/goal clear` 等价于 `clear`），直接走 `session.goal.control`。Runtime 不支持 goal 时，命令菜单里没有 `/goal`，硬敲回车会得到明确的错误"此 Runtime 不支持目标"，而不是把文本原样发出去让模型自由发挥。
+4. **没有控制权时给出路，不给死路。** 按钮不可用的每一种情况都要有对应的替代动作或说明：IPC 跟随桌面线程 → "在 Codex App 中操作"走 deeplink；Claude 没有 pause / resume → 只显示编辑和清除，并提示"Claude 的目标会在出错或限额时自动暂停，发一条消息即可继续"；Runtime 暂时不可达 → 按钮灰掉并显示原因，状态照常显示。
+
+这四条也是验收标准：每个 Runtime 至少要有一条"在原生客户端里设置 goal，AA 实时出现进度行并能执行该 Runtime 支持的全部动作"的真机验证记录，再算接完。
+
 ## 4. 契约、能力与版本
 
 | 变更 | 文件 |
