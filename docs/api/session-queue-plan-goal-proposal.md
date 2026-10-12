@@ -296,6 +296,8 @@ provider 映射也是现成的：Codex 的 `usageLimited / budgetLimited` 归一
 
 **一个接口，一个控制方法，一个快照**。四端只认 `actions` 决定显示哪些按钮；以后 ACP 把它收进核心协议，我们只改 Connector 的映射。`set` 在 ACP 扩展里存在，我们有意不暴露：契约里把它标为保留动作，Connector 不实现，客户端不显示。
 
+**goal 是 Runtime 配置里的可选功能。** 和 Codex 的 `ipcEnabled` 一样，每个支持 goal 的 Runtime 配置 schema 加一个布尔项 `goalEnabled`（默认开，i18n key `dashboard.device.runtimeConfigFields.goalEnabled.*`）。关掉后 Connector 不声明 `session.goal`、不拉取也不订阅 goal 状态、不转发任何控制；AA 里完全看不到 goal 相关 UI，Runtime 自己的 goal 行为不受影响（这是显示层开关，不是 Runtime 开关）。这样想完全不碰 goal 的用户、以及 Runtime 版本探测不稳定的环境都有退路。
+
 **Codex 通过 IPC 跟随桌面持有的线程时**：快照通过 `conversationState.threadGoal / completedThreadGoal / threadGoalResumeConfirmation` 实时可读；但当前桌面 App（155.0.8059.40）和 VS Code 插件（26.1007）的 17 个 `thread-follower-*` 方法里没有 goal 控制，桌面自己的 goal 操作也先 `assertThreadFollowerOwner`。这种情况能力声明 `actions: []`，进度行只读，按钮换成"在 Codex App 中操作"（`codex://threads/<id>` deeplink）。Codex 以后加了 follower 方法，只需把 `actions` 填上。
 
 **Runtime 自己的行为我们不干预**：续跑、评估、完成判定、预算 / 轮数全在 Runtime；goal 运行中用户发的消息按 1.2 的队列 / 打断规则走。
@@ -327,6 +329,7 @@ goal 可以从很多地方冒出来：Codex 的模型自己发起 goal；用户�
 | Connector 协议：`session.goal.control {action, objective?}` RPC、`session.goal.upsert` 通知（Runtime → Server）；能力 metadata `{version, actions}` | `connector/connector/runtime_protocol/*`、`docs/api/realtime.md` |
 | Notice：`interactionType` 加 `plan_review`，`actions[].kind` | `contracts/protocol/1.0/schemas/notice.schema.json`、`contracts/dsh-bridge/1.0/schemas/notice.schema.json` |
 | 能力：新增 `session.queue`、`session.plan`、`session.goal`、`catalog.mode`；**删除 `session.steer`**；同时把 `docs/api/capabilities.md` 里早就和代码不一致的 id 列表改成真实值 | `server/agent_server/core/capabilities.py`、`connector/runtime_protocol/models.py`、各端常量 |
+| Runtime 配置：Codex / Claude / DSH 的 schema 各加 `goalEnabled`（默认开），schema revision 递增，Web / Desktop / iOS 补文案 | `connector/connector/runtimes/*/provider_config.py`、各端 messages |
 | 删除 `POST /sessions/{id}/runtime/steer` 与 Connector RPC `session.steer` | `server/agent_server/api/sessions.py`、`connector/connector/server/runtime_rpc.py` 等 |
 | 实时事件：`runtime.queue.updated`、`runtime.plan.updated`、`runtime.goal.updated` | `docs/api/realtime.md`（顺便把 `turn.start / turn.steer` 改成真实的 `session.send_message / session.steer`） |
 | 409 的 `detail` 从纯文本改为 `{code, message}` | 所有会话操作接口 |
