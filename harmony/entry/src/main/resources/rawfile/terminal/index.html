@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Agents Anywhere Terminal</title>
+<link rel="stylesheet" href="./xterm.css">
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+    background: #FEFDFB;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+  /* The page is already inset by the ArkUI layout, so the terminal fills it. */
+  #terminal {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+  }
+  /* xterm paints the viewport background itself; let the theme own it instead. */
+  .xterm .xterm-viewport {
+    background-color: transparent !important;
+  }
+  .xterm-viewport::-webkit-scrollbar {
+    width: 6px;
+  }
+  .xterm-viewport::-webkit-scrollbar-thumb {
+    background: rgba(128, 128, 128, 0.35);
+    border-radius: 3px;
+  }
+</style>
+</head>
+<body>
+<div id="terminal"></div>
+<script src="./xterm.js"></script>
+<script src="./addon-fit.js"></script>
+<script src="./addon-serialize.js"></script>
+<script>
+/*
+ * Terminal renderer for the HarmonyOS client.
+ *
+ * The Android client parses the terminal stream with Termux's `TerminalEmulator`
+ * and paints it with a `RemoteTerminalView`. Neither has a HarmonyOS equivalent,
+ * so this page runs xterm.js and the ArkTS side drives it over a JS bridge:
+ *
+ *   ArkTS  -> page : __aaWrite / __aaReset / __aaClear / __aaSetTheme /
+ *                    __aaFit / __aaFocus / __aaSnapshot / __aaRestore
+ *   page   -> ArkTS: aaBridge.onData / onResize / onModes / onKeyboard / onReady
+ *
+ * The 16 ANSI colours below are Termux's `TerminalColorScheme` defaults verbatim
+ * (v0.118.3), and the foreground/background/cursor are exactly what
+ * `applyTerminalColors` in the Android client overwrites them with, so a command
+ * that paints by index lands on the same colour as on Android. xterm generates
+ * the 216-colour cube and the grey ramp the same way Termux does.
+ *
+ * `aaBridge` is injected by the ArkWeb `javaScriptProxy`; when the page is opened
+ * outside the app the bridge is absent and every call becomes a no-op.
+ */
+(function () {
+  'use strict';
+
+  var bridge = null;
+
+  /*
+   * Resolved on every call rather than once at load: the ArkWeb proxy is
+   * injected by the host and this page must keep working when it is opened
+   * outside the app, where `aaBridge` never appears.
+   */
+  function currentBridge() {
+    if (typeof window.aaBridge !== 'undefined' && window.aaBridge !== null) {
+      bridge = window.aaBridge;
+    }
+    return bridge;
+  }
+
+  var ANSI = {
+    black: '#000000',
+    red: '#cd0000',
+    green: '#00cd00',
+    yellow: '#cdcd00',
+    blue: '#6495ed',
+    magenta: '#cd00cd',
+    cyan: '#00cdcd',
+    white: '#e5e5e5',
+    brightBlack: '#7f7f7f',
+    brightRed: '#ff0000',
+    brightGreen: '#00ff00',
+    brightYellow: '#ffff00',
+    brightBlue: '#5c5cff',
+    brightMagenta: '#ff00ff',
+    brightCyan: '#00ffff',
+    brightWhite: '#ffffff'
+  };
+
+  function themeWith(background, foreground) {
+    var theme = {};
+    for (var key in ANSI) {
+      if (Object.prototype.hasOwnProperty.call(ANSI, key)) {
+        theme[key] = ANSI[key];
+      }
+    }
+    theme.background = background;
+    theme.foreground = foreground;
+    theme.cursor = foreground;
+    // Termux draws a solid block cursor with the cell's colours inverted; xterm
+    // splits that into a block colour and the glyph colour drawn inside it.
+    theme.cursorAccent = background;
+    theme.selectionBackground = background === '#09090B' ? '#3F3F46' : '#D6D3CE';
+    return theme;
+  }
+
+  // `applyTerminalColors`: 0xFF09090B / 0xFFFAFAFA when dark,
+  // 0xFFFEFDFB / 0xFF20211E when light.
+  var DARK_THEME = themeWith('#09090B', '#FAFAFA');
+  var LIGHT_THEME = themeWith('#FEFDFB', '#20211E');
+
+  var dark = false;
+  var container = document.getElementById('terminal');
+
+  var term = new Terminal({
+    cols: 80,
+    rows: 24,
+    // Android: `setTextSize(12sp)` with `Typeface.MONOSPACE`.
+    fontSize: 12,
+    fontFamily: 'monospace',
+    fontWeight: 'normal',
+    fontWeightBold: 'bold',
+    letterSpacing: 0,
+    lineHeight: 1,
+    cursorBlink: false,
+    cursorStyle: 'block',
+    // Termux builds its emulator with 5000 transcript rows.
+    scrollback: 5000,
+    allowProposedApi: true,
+    allowTransparency: false,
+    convertEol: false,
+    theme: LIGHT_THEME
+  });
+
+  var fitAddon = new FitAddon.FitAddon();
+  var serializeAddon = new SerializeAddon.SerializeAddon();
+  term.loadAddon(fitAddon);
+  term.loadAddon(serializeAddon);
+  term.open(container);
+
+  function notify(name, first, second) {
+    var target = currentBridge();
+    if (target === null) {
+      return;
+    }
+    var fn = target[name];
+    if (typeof fn !== 'function') {
+      return;
+    }
+    try {
+      if (arguments.length === 1) {
+        fn();
+      } else if (arguments.length === 2) {
+        fn(first);
+      } else {
+        fn(first, second);
+      }
+    } catch (error) {
+      // A missing or detached proxy must never break the renderer.
+    }
+  }
+
+  /*
+   * The application-cursor and application-keypad modes are what the shortcut
+   * deck needs in order to encode an arrow key the way the running program
+   * expects, and only xterm knows them. They change as a side effect of parsing
+   * output, so they are re-read after every parse.
+   */
+  var lastModes = '';
+  function reportModes() {
+    var modes = term.modes || {};
+    var cursor = modes.applicationCursorKeysMode === true;
+    var keypad = modes.applicationKeypadMode === true;
+    var signature = (cursor ? '1' : '0') + (keypad ? '1' : '0');
+    if (signature === lastModes) {
+      return;
+    }
+    lastModes = signature;
+    notify('onModes', cursor, keypad);
+  }
+
+  // xterm hands over finished bytes: a keystroke, a paste, or a reply the
+  // terminal itself owes the program (a device-attributes answer, say). The
+  // ArkTS side filters those replies for Windows devices, exactly like Android.
+  term.onData(function (data) {
+    notify('onData', data);
+  });
+
+  term.onResize(function (size) {
+    notify('onResize', size.cols, size.rows);
+    reportModes();
+  });
+
+  term.onWriteParsed(function () {
+    reportModes();
+  });
+
+  var textareaWatched = false;
+  function watchKeyboard() {
+    if (textareaWatched || !term.textarea) {
+      return;
+    }
+    textareaWatched = true;
+    term.textarea.addEventListener('focus', function () {
+      notify('onKeyboard', true);
+    });
+    term.textarea.addEventListener('blur', function () {
+      notify('onKeyboard', false);
+    });
+  }
+  watchKeyboard();
+
+  function fit() {
+    try {
+      fitAddon.fit();
+    } catch (error) {
+      // The element can be unmeasurable while the page is being attached.
+    }
+    reportModes();
+  }
+
+  function base64ToBytes(text) {
+    var binary = atob(text);
+    var bytes = new Uint8Array(binary.length);
+    for (var index = 0; index < binary.length; index++) {
+      bytes[index] = binary.charCodeAt(index) & 0xFF;
+    }
+    return bytes;
+  }
+
+  function setTheme(nextDark) {
+    dark = nextDark === true;
+    var theme = dark ? DARK_THEME : LIGHT_THEME;
+    term.options.theme = theme;
+    document.body.style.background = theme.background;
+  }
+
+  /** Appends output; `reset` first when the Server is replaying the screen. */
+  window.__aaWrite = function (base64, reset) {
+    if (reset === true) {
+      term.reset();
+    }
+    if (typeof base64 === 'string' && base64.length > 0) {
+      term.write(base64ToBytes(base64));
+    }
+  };
+
+  /** Forgets the screen without touching the terminal modes. */
+  window.__aaReset = function () {
+    term.reset();
+  };
+
+  /** Home, erase screen, erase scrollback: Android's local-clear sequence. */
+  window.__aaClear = function () {
+    term.write('\u001b[H\u001b[2J\u001b[3J');
+  };
+
+  window.__aaSetTheme = function (nextDark) {
+    setTheme(nextDark);
+  };
+
+  window.__aaFit = function () {
+    fit();
+  };
+
+  window.__aaFocus = function () {
+    try {
+      term.focus();
+    } catch (error) {
+      // Focusing before the page is attached is harmless.
+    }
+  };
+
+  window.__aaSnapshot = function () {
+    try {
+      return serializeAddon.serialize();
+    } catch (error) {
+      return '';
+    }
+  };
+
+  /** Restores a snapshot taken by `__aaSnapshot` before the page was torn down. */
+  window.__aaRestore = function (text) {
+    if (typeof text === 'string' && text.length > 0) {
+      term.write(text);
+    }
+  };
+
+  function fitAndReport() {
+    fit();
+  }
+
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(function () {
+      fitAndReport();
+    }).observe(container);
+  }
+  window.addEventListener('resize', fitAndReport);
+  window.addEventListener('orientationchange', fitAndReport);
+
+  setTheme(false);
+  fitAndReport();
+  // ArkWeb reports the real metrics one frame after the element is attached.
+  setTimeout(fitAndReport, 0);
+  setTimeout(fitAndReport, 120);
+  setTimeout(function () {
+    notify('onReady');
+  }, 0);
+}());
+</script>
+</body>
+</html>

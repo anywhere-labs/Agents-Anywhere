@@ -1,0 +1,376 @@
+{
+  "string": [
+    {
+      "name": "qr_scan_frame_hint",
+      "value": "扫描 Agents Anywhere 二维码"
+    },
+    {
+      "name": "qr_scan_caption",
+      "value": "将摄像头对准 Web 上的二维码"
+    },
+    {
+      "name": "settings_section_app",
+      "value": "应用"
+    },
+    {
+      "name": "home_ungrouped_sessions",
+      "value": "未分组会话"
+    },
+    {
+      "name": "sidebar_toggle",
+      "value": "切换侧栏"
+    },
+    {
+      "name": "device_agent_runtimes",
+      "value": "Agent Runtime"
+    },
+    {
+      "name": "device_agent_rediscover",
+      "value": "刷新"
+    },
+    {
+      "name": "device_agent_rediscovering",
+      "value": "正在发现…"
+    },
+    {
+      "name": "device_content",
+      "value": "设备内容"
+    },
+    {
+      "name": "device_content_sessions",
+      "value": "会话"
+    },
+    {
+      "name": "device_connection_offline",
+      "value": "设备离线"
+    },
+    {
+      "name": "device_projects_count",
+      "value": "%d 个项目"
+    },
+    {
+      "name": "device_project_sessions_count",
+      "value": "%d 个会话"
+    },
+    {
+      "name": "device_project_rename",
+      "value": "重命名项目"
+    },
+    {
+      "name": "device_session_actions",
+      "value": "会话选项"
+    },
+    {
+      "name": "device_sessions_select_all",
+      "value": "全选"
+    },
+    {
+      "name": "device_sessions_filter",
+      "value": "会话筛选"
+    },
+    {
+      "name": "device_add_more_agents",
+      "value": "添加更多 Agent"
+    },
+    {
+      "name": "device_add_agent_title",
+      "value": "添加 Agent"
+    },
+    {
+      "name": "device_add_agent_offline",
+      "value": "设备或网络已离线，连接恢复后可继续。"
+    },
+    {
+      "name": "device_add_agent_none_discovered",
+      "value": "没有发现其他 Runtime。"
+    },
+    {
+      "name": "device_add_agent_none_addable",
+      "value": "这个设备暂时没有可继续添加的 Runtime 类型。"
+    },
+    {
+      "name": "device_add_agent_failed",
+      "value": "无法创建 Runtime 实例。"
+    },
+    {
+      "name": "device_add_agent_unavailable",
+      "value": "这个 Agent 已不可用，请刷新设备。"
+    },
+    {
+      "name": "device_add_agent_limit",
+      "value": "这个 Runtime 类型暂时不能再创建实例。"
+    },
+    {
+      "name": "device_add_agent_quick_add",
+      "value": "快速添加"
+    },
+    {
+      "name": "device_agent_recommended",
+      "value": "推荐"
+    },
+    {
+      "name": "device_agent_configure",
+      "value": "配置"
+    },
+    {
+      "name": "device_agent_configuration_offline",
+      "value": "设备已断开连接。重新连接前，你的修改会保留。"
+    },
+    {
+      "name": "runtime_config_title",
+      "value": "配置 %s"
+    },
+    {
+      "name": "runtime_config_instance_name",
+      "value": "实例名称"
+    },
+    {
+      "name": "runtime_config_instance_name_placeholder",
+      "value": "Runtime 实例名称"
+    },
+    {
+      "name": "runtime_config_reset_defaults",
+      "value": "全部恢复默认值"
+    },
+    {
+      "name": "runtime_config_choose_option",
+      "value": "选择一个选项"
+    },
+    {
+      "name": "runtime_config_show_secret",
+      "value": "显示密钥"
+    },
+    {
+      "name": "runtime_config_hide_secret",
+      "value": "隐藏密钥"
+    },
+    {
+      "name": "runtime_config_add_action",
+      "value": "添加"
+    },
+    {
+      "name": "runtime_config_review_fields",
+      "value": "请检查标出的配置项。"
+    },
+    {
+      "name": "runtime_config_required_field",
+      "value": "此项为必填项。"
+    },
+    {
+      "name": "runtime_config_invalid_number",
+      "value": "请输入有效的数字。"
+    },
+    {
+      "name": "runtime_config_invalid_json",
+      "value": "请输入有效的 JSON。"
+    },
+    {
+      "name": "runtime_config_value_too_long",
+      "value": "内容过长。"
+    },
+    {
+      "name": "runtime_config_invalid_format",
+      "value": "请按要求的格式填写。"
+    },
+    {
+      "name": "runtime_config_out_of_range",
+      "value": "数字超出了允许范围。"
+    },
+    {
+      "name": "runtime_config_invalid_list_length",
+      "value": "列表项数量不符合要求。"
+    },
+    {
+      "name": "runtime_config_duplicate_items",
+      "value": "列表项不能重复。"
+    },
+    {
+      "name": "runtime_config_incomplete_group",
+      "value": "请填写此组中的所有必填项。"
+    },
+    {
+      "name": "runtime_config_unsupported_field",
+      "value": "配置包含不受支持的字段。"
+    },
+    {
+      "name": "runtime_config_unsupported_type",
+      "value": "值的类型或格式不受支持。"
+    },
+    {
+      "name": "runtime_config_choose_from_options",
+      "value": "请从可用选项中选择。"
+    },
+    {
+      "name": "runtime_config_duplicate_variable",
+      "value": "环境变量名称不能重复。"
+    },
+    {
+      "name": "runtime_config_duplicate_model",
+      "value": "模型 ID 不能重复。"
+    },
+    {
+      "name": "runtime_config_duplicate_effort",
+      "value": "同一模型内的推理强度 ID 不能重复。"
+    },
+    {
+      "name": "runtime_config_key_value_label",
+      "value": "环境变量（可选）"
+    },
+    {
+      "name": "runtime_config_key_value_description",
+      "value": "启动这个 Runtime 时追加或覆盖的环境变量。"
+    },
+    {
+      "name": "runtime_config_key_value_empty",
+      "value": "没有环境变量覆盖。"
+    },
+    {
+      "name": "runtime_config_key_value_add",
+      "value": "添加变量"
+    },
+    {
+      "name": "runtime_config_key_value_variable_name",
+      "value": "变量名"
+    },
+    {
+      "name": "runtime_config_key_value_variable_value",
+      "value": "值"
+    },
+    {
+      "name": "runtime_config_key_value_remove_inherited",
+      "value": "移除继承的变量"
+    },
+    {
+      "name": "runtime_config_key_value_remove",
+      "value": "删除环境变量"
+    },
+    {
+      "name": "runtime_config_model_gateway_label",
+      "value": "模型 Gateway（可选）"
+    },
+    {
+      "name": "runtime_config_model_gateway_description",
+      "value": "让这个 Runtime 通过兼容的自定义 Gateway 发送模型请求。两个字段都留空时，继续使用 Runtime 默认的模型地址和认证。"
+    },
+    {
+      "name": "runtime_config_model_gateway_required_label",
+      "value": "模型 Gateway"
+    },
+    {
+      "name": "runtime_config_model_gateway_required_description",
+      "value": "新 Codex 实例必须使用模型 Gateway，请填写 Gateway 地址和 API Key。"
+    },
+    {
+      "name": "runtime_config_model_gateway_url_label",
+      "value": "Gateway 地址"
+    },
+    {
+      "name": "runtime_config_model_gateway_url_description",
+      "value": "模型 Gateway 对外提供的 HTTP 或 HTTPS 基础地址。"
+    },
+    {
+      "name": "runtime_config_model_gateway_key_label",
+      "value": "Gateway API Key"
+    },
+    {
+      "name": "runtime_config_model_gateway_key_description",
+      "value": "发送给这个 Gateway 的 API Key。它会作为 Runtime 配置的一部分被存储并返回。"
+    },
+    {
+      "name": "runtime_config_model_gateway_show_key",
+      "value": "显示 Gateway API Key"
+    },
+    {
+      "name": "runtime_config_model_gateway_hide_key",
+      "value": "隐藏 Gateway API Key"
+    },
+    {
+      "name": "runtime_config_custom_models_label",
+      "value": "自定义模型（可选）"
+    },
+    {
+      "name": "runtime_config_custom_models_description",
+      "value": "手动添加要显示在模型选择器里的模型，以及每个模型可用的推理强度。"
+    },
+    {
+      "name": "runtime_config_custom_models_empty",
+      "value": "还没有自定义模型。"
+    },
+    {
+      "name": "runtime_config_custom_models_add",
+      "value": "添加自定义模型"
+    },
+    {
+      "name": "runtime_config_custom_model",
+      "value": "模型"
+    },
+    {
+      "name": "runtime_config_custom_model_remove",
+      "value": "删除自定义模型"
+    },
+    {
+      "name": "runtime_config_model_id",
+      "value": "模型 ID"
+    },
+    {
+      "name": "runtime_config_model_display_name",
+      "value": "展示名称"
+    },
+    {
+      "name": "runtime_config_efforts",
+      "value": "推理强度"
+    },
+    {
+      "name": "runtime_config_effort_add",
+      "value": "添加强度"
+    },
+    {
+      "name": "runtime_config_efforts_empty",
+      "value": "未设置推理强度。"
+    },
+    {
+      "name": "runtime_config_effort_id",
+      "value": "强度 ID"
+    },
+    {
+      "name": "runtime_config_effort_name",
+      "value": "强度名称"
+    },
+    {
+      "name": "runtime_config_effort_remove",
+      "value": "删除推理强度"
+    },
+    {
+      "name": "runtime_config_use_system_codex_label",
+      "value": "使用系统 Codex"
+    },
+    {
+      "name": "runtime_config_use_system_codex_description",
+      "value": "优先使用登录 Shell PATH 中的 Codex；如果找不到，则自动使用捆绑的 Codex。关闭后将始终只使用捆绑的 Codex。"
+    },
+    {
+      "name": "runtime_config_codex_executable_path_label",
+      "value": "Codex 可执行文件路径（可选）"
+    },
+    {
+      "name": "runtime_config_codex_executable_path_description",
+      "value": "可选。填写后将始终使用该程序，并忽略“使用系统 Codex”设置。留空则使用自动选择策略。"
+    },
+    {
+      "name": "runtime_config_codex_home_label",
+      "value": "Codex 数据目录"
+    },
+    {
+      "name": "runtime_config_codex_home_description",
+      "value": "保存此 Codex 实例的配置、登录信息和会话历史。正在运行的 Codex 实例不能使用同一个目录。"
+    },
+    {
+      "name": "runtime_config_claude_executable_path_label",
+      "value": "Claude 可执行文件路径（可选）"
+    },
+    {
+      "name": "runtime_config_claude_executable_path_description",
+      "value": "可选。只有 Claude Code 不在默认 PATH 时才需要填写。"
+    }
+  ]
+}
