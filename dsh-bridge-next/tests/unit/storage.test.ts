@@ -1,12 +1,13 @@
 import { machineStatePath } from '../../src/host/desktop/machine-state.js'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { acquireManagerLock, readJson, writeJson } from '../../src/host/storage/files.js'
+import { acquireManagerLock, managerLockPort, readJson, writeJson } from '../../src/host/storage/files.js'
 import { desktopRecordPath, detectDesktop } from '../../src/host/desktop/detect.js'
 
 test('private atomic state and singleton ownership are scoped to the configured data directory', async () => {
@@ -73,4 +74,40 @@ test('Desktop discovery checks on every call and never rewrites the shared recor
     assert.equal((await detectDesktop(home)).status, 'error')
     assert.equal(await readFile(path, 'utf8'), '{broken')
   } finally { await rm(home, { recursive: true, force: true }) }
+})
+
+test('manager lock ports stay clear of the operating system ephemeral range', () => {
+  // Windows hands 49152-65535 to outbound sockets and lets Hyper-V/WSL reserve
+  // blocks inside it; Linux starts its default ephemeral range at 32768.
+  for (const directory of ['C:\\Users\\test\\.agents-anywhere\\dsh-bridge-next', '/home/test/.agents-anywhere/dsh-bridge-next', 'C:\\数据 目录\\bridge']) {
+    const port = managerLockPort(directory)
+    assert.ok(port >= 16384 && port <= 32767, `${directory} derived ${port}`)
+    assert.equal(port, managerLockPort(directory))
+  }
+  assert.equal(managerLockPort('C:\\Users\\Test\\Root', 'win32'), managerLockPort('c:\\users\\test\\root', 'win32'))
+  assert.notEqual(managerLockPort('C:\\Users\\Test\\Root', 'win32'), managerLockPort('C:\\Users\\Test\\Other', 'win32'))
+})
+
+test('a port held by another program reports the lock port instead of a permission failure', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'aa-lock-port-'))
+  const port = managerLockPort(await realpath(root))
+  // Windows refuses this bind with WSAEACCES rather than WSAEADDRINUSE whenever the
+  // holder uses SO_EXCLUSIVEADDRUSE, which is how both the lock and the reporting
+  // issues (#144, #164) surfaced.
+  const squatter = createServer(socket => socket.destroy())
+  try {
+    await new Promise<void>((resolve, reject) => {
+      squatter.once('error', reject)
+      squatter.listen({ host: '127.0.0.1', port, exclusive: true }, () => { squatter.off('error', reject); resolve() })
+    })
+    await assert.rejects(acquireManagerLock(join(root, 'manager.lock')), (error: unknown) => {
+      assert.match((error as Error).message, /另一个插件实例/)
+      assert.equal((error as { code?: string }).code, 'LOCK_PORT_UNAVAILABLE')
+      assert.equal((error as { port?: number }).port, port)
+      return true
+    })
+  } finally {
+    await new Promise<void>(resolve => squatter.close(() => resolve()))
+    await rm(root, { recursive: true, force: true })
+  }
 })

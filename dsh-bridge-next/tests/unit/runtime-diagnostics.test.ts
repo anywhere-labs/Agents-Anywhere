@@ -33,6 +33,22 @@ test('bridge diagnostics preserve the failing read and stack without native cont
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
+test('a failed listen records its port as numeric context and still hides messages', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'aa-lock-log-'))
+  try {
+    const log = new RuntimeDiagnostics(undefined, root)
+    log.log('error', 'onboarding.start_failed', {}, Object.assign(new Error('PRIVATE_MESSAGE'), { code: 'LOCK_PORT_UNAVAILABLE', port: 49209 }))
+    log.log('warn', 'bridge.start_failed', {}, Object.assign(new Error('PRIVATE_MESSAGE'), { port: 70000 }))
+    await log.flush()
+    const entries = (await readBridgeLogs(root)).entries
+    const failed = JSON.parse(entries[0]!.details)
+    assert.equal(failed.errorCode, 'LOCK_PORT_UNAVAILABLE')
+    assert.equal(failed.port, 49209)
+    assert.equal(JSON.parse(entries[1]!.details).port, undefined)
+    assert.doesNotMatch(entries[0]!.details, /PRIVATE_MESSAGE/)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
 test('bridge log rotation and bounded reads retain recent entries and tolerate partial appends', async () => {
   const root = await mkdtemp(join(tmpdir(), 'aa-bridge-logs-'))
   try {
