@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 import time
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from typing import Any
@@ -26,6 +27,7 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.server.errors import ConnectorNetworkError
+from connector.server.ingest_batching import ConnectorIngestSizeError
 from connector.server.runtime_host import _drop_none, _timeline_item_payload
 from connector.server.runtime_rpc_payloads import session_notice_payload
 
@@ -66,6 +68,12 @@ class RuntimeSyncRunner:
         self._last_active_session_updates: dict[
             str, tuple[SessionMeta, SessionState]
         ] = {}
+        # A permanent upload-size rejection must not reread a huge history on
+        # every poll. Keep this bounded, session-local and separate from the
+        # committed sync cursor. Process restart also permits an explicit retry.
+        self._ingest_pauses: OrderedDict[tuple[str, str], tuple[Any, float]] = OrderedDict()
+        self._ingest_retry_seconds = 30 * 60
+        self._ingest_clock = time.monotonic
 
     async def sync_existing_loop(self) -> None:
         if not self.config.sync_existing_on_connect:
@@ -89,7 +97,8 @@ class RuntimeSyncRunner:
                 runtime = self.supervisor.resolve_runtime(runtime_id)
                 if runtime.sync_mode == "events":
                     await runtime.resynchronize()
-            except Exception:
+                await runtime.on_backend_reconnect()
+            except Exception:  # noqa: BLE001 - recover other runtimes independently
                 logger.exception("runtime event recovery deferred runtime={}", runtime_id)
 
     async def sync_existing_once(self) -> None:
@@ -155,9 +164,14 @@ class RuntimeSyncRunner:
                         recovery_key = (runtime_id, session.session_id)
                         recover_session = recover and recovery_key not in self._recovered_sessions
                         if recover_session:
+                            original_sync = session.metadata.get("sync")
                             session = replace(session, metadata={
                                 **dict(session.metadata),
-                                "sync": {"changed": True, "requires_timeline_sync": True},
+                                "sync": {
+                                    **(original_sync if isinstance(original_sync, dict) else {}),
+                                    "changed": True,
+                                    "requires_timeline_sync": True,
+                                },
                             })
                         completed = await self.sync_existing_session(
                             runtime, session, source_in_inventory=inventory_scan_token is not None,
@@ -241,6 +255,42 @@ class RuntimeSyncRunner:
                 logger.exception("history scanner sync state flush failed")
 
     async def sync_existing_session(
+        self,
+        runtime: AgentRuntime,
+        session: SessionMeta,
+        *,
+        source_in_inventory: bool = False,
+        recovering: bool = False,
+    ) -> bool | None:
+        key = (session.runtime_id or session.runtime, session.session_id)
+        sync = session.metadata.get("sync")
+        marker = (sync.get("marker") if isinstance(sync, dict) else None, session.ordering_time)
+        paused = self._ingest_pauses.get(key)
+        if paused is not None and paused[0] == marker and self._ingest_clock() < paused[1]:
+            # Keep inventory/meta truthful while avoiding expensive timeline work.
+            # This is NOT a successful sync and cannot commit a checkpoint.
+            try:
+                await self._ingest_scanner_notifications([_session_meta_notification(session)])
+            except ConnectorIngestSizeError:
+                pass
+            return False
+        self._ingest_pauses.pop(key, None)
+        try:
+            return await self._sync_existing_session(
+                runtime, session, source_in_inventory=source_in_inventory,
+                recovering=recovering,
+            )
+        except ConnectorIngestSizeError as exc:
+            self._ingest_pauses[key] = (marker, self._ingest_clock() + self._ingest_retry_seconds)
+            while len(self._ingest_pauses) > 256:
+                self._ingest_pauses.popitem(last=False)
+            logger.warning(
+                "history ingest paused reason={} observed_bytes={} limit_bytes={} retry_after_seconds={}",
+                exc.reason, exc.size_bytes, exc.limit_bytes, self._ingest_retry_seconds,
+            )
+            return False
+
+    async def _sync_existing_session(
         self,
         runtime: AgentRuntime,
         session: SessionMeta,

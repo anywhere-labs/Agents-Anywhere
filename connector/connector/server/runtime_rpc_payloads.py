@@ -274,14 +274,14 @@ def model_catalog_payload(catalog: RuntimeModelCatalog) -> dict[str, Any]:
                 "displayName": model.title,
                 "selectionId": model.selection_id,
                 "description": model.description,
-                "default": False,
+                "default": model.is_default,
                 "reasoningItems": [
                     {
                         "id": reasoning.id,
                         "displayName": reasoning.title,
                         "selectionId": reasoning.selection_id,
                         "description": reasoning.description,
-                        "default": False,
+                        "default": reasoning.is_default,
                         "metadata": {
                             **dict(reasoning.metadata),
                             "enabled": reasoning.enabled,
@@ -320,7 +320,7 @@ def permission_catalog_payload(catalog: RuntimePermissionCatalog) -> dict[str, A
                 "displayName": permission.title,
                 "selectionId": permission.selection_id,
                 "description": permission.description,
-                "default": False,
+                "default": permission.is_default,
                 "metadata": {
                     **dict(permission.metadata),
                     "enabled": permission.enabled,

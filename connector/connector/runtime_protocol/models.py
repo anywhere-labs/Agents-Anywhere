@@ -95,6 +95,8 @@ class RuntimeReasoningItem:
     enabled: bool = True
     disabled_reason: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    # What the runtime uses when a client selects nothing (at most one).
+    is_default: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +109,7 @@ class RuntimeModelItem:
     enabled: bool = True
     disabled_reason: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    is_default: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +121,7 @@ class RuntimePermissionItem:
     enabled: bool = True
     disabled_reason: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    is_default: bool = False
 
 
 @dataclass(frozen=True, slots=True)

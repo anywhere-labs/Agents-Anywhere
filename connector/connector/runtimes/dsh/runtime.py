@@ -304,6 +304,9 @@ class DshRuntime(AgentRuntime):
                 external_session_id and payload.get("externalSessionId") != external_session_id
             ):
                 raise RuntimeUpstreamError("DSH source observation returned a different session")
+            if self._sync is not None:
+                # A session whose history the backend refused stays unavailable.
+                source = self._sync.source_state_for(session_id, source)
             # Wait for ingestion before returning session.state. The server's
             # detail snapshot then reads the fresh source fact from its database.
             await self.host.publish_runtime_notifications("dsh", [{
