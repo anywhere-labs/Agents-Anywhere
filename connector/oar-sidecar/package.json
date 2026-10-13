@@ -1,0 +1,9 @@
+{
+  "name": "agents-anywhere-oar-sidecar",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "dependencies": {
+    "@botiverse/oar": "0.38.0"
+  }
+}
