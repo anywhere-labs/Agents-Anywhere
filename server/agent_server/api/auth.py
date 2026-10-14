@@ -31,6 +31,7 @@ from agent_server.core.models import (
     MobileLoginExchangeRequest,
     MobileLoginExchangeResponse,
     MobileLoginQrCreateResponse,
+    MobileLoginRefreshRequest,
     MobileLoginRequestRequest,
     MobileLoginStatusRequest,
     MobileLoginStatusResponse,
@@ -508,6 +509,26 @@ async def exchange_mobile_login(
         expiresAt=_iso_from_epoch(int(time.time()) + MOBILE_REFRESH_EXPIRES_IN),
         serverTime=utc_now(),
     )
+
+
+@router.post("/auth/mobile-login/refresh", response_model=AuthResponse)
+async def refresh_mobile_login(
+    payload: MobileLoginRefreshRequest,
+    db: Store = Depends(get_store),
+) -> AuthResponse:
+    token_payload = verify_signed_token(MOBILE_REFRESH_TOKEN_KIND, payload.refreshToken)
+    if token_payload is None or token_payload.get("aud") != "agents-anywhere-mobile":
+        raise HTTPException(status_code=401, detail="invalid or expired mobile refresh token")
+    subject = token_payload.get("sub")
+    if not isinstance(subject, str) or not subject:
+        raise HTTPException(status_code=401, detail="invalid or expired mobile refresh token")
+    try:
+        user = await db.get_user(subject)
+    except KeyError:
+        raise HTTPException(status_code=401, detail="user no longer exists") from None
+    if user.disabled:
+        raise HTTPException(status_code=403, detail="account disabled")
+    return _auth_response(user)
 
 
 @router.post("/auth/mobile-login/request", response_model=MobileLoginStatusResponse)

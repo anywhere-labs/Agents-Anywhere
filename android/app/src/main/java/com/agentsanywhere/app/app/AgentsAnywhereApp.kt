@@ -33,6 +33,7 @@ import com.agentsanywhere.app.api.TerminalApi
 import com.agentsanywhere.app.config.AppConfig
 import com.agentsanywhere.app.feature.auth.AuthController
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
+import com.agentsanywhere.app.feature.auth.MobileAuthSessionRefresher
 import com.agentsanywhere.app.feature.auth.WebLoginState
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
 import com.agentsanywhere.app.feature.update.AppUpdateViewModel
@@ -119,10 +120,12 @@ fun AgentsAnywhereApp(
     var deviceSetupReturnDestinationName by rememberSaveable { mutableStateOf(AppDestination.Devices.name) }
     var selectedHomeTabName by rememberSaveable { mutableStateOf(HomeTab.Active.name) }
     val unauthorizedTokens = remember { Channel<String>(capacity = Channel.UNLIMITED) }
-    val apiClient = remember(unauthorizedTokens) {
-        ApiClient(onUnauthorized = { accessToken ->
-            unauthorizedTokens.trySend(accessToken)
-        })
+    val sessionRefresher = remember(sessionStore) { MobileAuthSessionRefresher(sessionStore) }
+    val apiClient = remember(unauthorizedTokens, sessionRefresher) {
+        ApiClient(
+            onUnauthorized = { accessToken -> unauthorizedTokens.trySend(accessToken) },
+            refreshAccessToken = sessionRefresher::refreshAccessToken,
+        )
     }
     val realtimeApi = remember(apiClient) { RealtimeApi(client = apiClient) }
     val announcementsApi = remember(apiClient) { AnnouncementsApi(apiClient) }
@@ -163,6 +166,7 @@ fun AgentsAnywhereApp(
         TerminalController(
             terminalApi = TerminalApi(apiClient),
             sessionStore = sessionStore,
+            authApi = AuthApi(apiClient),
         )
     }
     val remoteTerminalPool = remember(terminalController) {

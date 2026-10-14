@@ -679,6 +679,10 @@ class MobileLoginExchangeRequest(BaseModel):
     loginToken: str
 
 
+class MobileLoginRefreshRequest(BaseModel):
+    refreshToken: str
+
+
 class MobileLoginExchangeResponse(BaseModel):
     auth: AuthResponse
     refreshToken: str
