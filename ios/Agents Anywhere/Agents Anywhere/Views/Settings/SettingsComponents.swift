@@ -62,21 +62,117 @@ struct SettingsLanguageView: View {
 
 struct SettingsServerView: View {
     @Environment(AppState.self) private var appState
+    @State private var isAdding = false
+    @State private var isReordering = false
     var body: some View {
         List {
-            Section(String(localized: "Connection")) {
-                LabeledContent(String(localized: "Status"), value: appState.isServerConnected ? String(localized: "Connected") : String(localized: "Offline"))
-                if let url = appState.serverURL {
-                    Text(url.absoluteString).font(.callout.monospaced()).textSelection(.enabled)
-                    Button(String(localized: "Copy server address"), appSymbol: "doc.on.doc") {
-                        UIPasteboard.general.string = url.absoluteString
+            Section {
+                ForEach(appState.serverAddresses) { address in
+                    ServerAddressRow(
+                        address: address,
+                        isActive: address.url == appState.serverURL,
+                        probe: appState.addressProbes[address.id]
+                    )
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) { appState.removeServerAddress(id: address.id) } label: {
+                            Text(String(localized: "Delete"))
+                        }
                     }
                 }
+                .onMove { indices, destination in
+                    appState.moveServerAddresses(from: indices, to: destination)
+                }
+                Button(String(localized: "Add server address"), appSymbol: "plus") { isAdding = true }
+            } header: {
+                Text(String(localized: "Addresses"))
+            } footer: {
+                Text(String(localized: "The app prefers the first reachable address and switches back automatically. Reorder to change priority; tap an address to test it once."))
             }
             if let error = appState.restoreConnectionError {
                 Section { Text(error).foregroundStyle(.secondary) }
             }
-        }.settingsPage(String(localized: "Server"))
+        }
+        .environment(\.editMode, .constant(isReordering ? EditMode.active : EditMode.inactive))
+        .settingsPage(String(localized: "Server"))
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(isReordering ? String(localized: "Done") : String(localized: "Reorder")) {
+                    isReordering.toggle()
+                }
+            }
+        }
+        .sheet(isPresented: $isAdding) { AddServerAddressSheet() }
+    }
+}
+
+private struct ServerAddressRow: View {
+    let address: ServerAddress
+    let isActive: Bool
+    let probe: ServerAddressProbe?
+    @Environment(AppState.self) private var appState
+    @State private var isProbing = false
+
+    var body: some View {
+        Button {
+            guard !isProbing else { return }
+            isProbing = true
+            Task {
+                await appState.probeServerAddress(id: address.id)
+                isProbing = false
+            }
+        } label: {
+            HStack(spacing: 10) {
+                ServerAddressDot(tone: tone)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(address.url.absoluteString)
+                        .font(.callout)
+                        .multilineTextAlignment(.leading)
+                    HStack(spacing: 8) {
+                        if isActive {
+                            Text(String(localized: "In use")).font(.caption).foregroundStyle(.tint)
+                        }
+                        if let probe {
+                            Text(probeText(probe)).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Spacer(minLength: 4)
+                if isProbing { ProgressView().controlSize(.small) }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var tone: ServerAddressDot.Tone {
+        guard let probe else { return .unknown }
+        guard probe.reachable else { return .bad }
+        guard let latency = probe.latencyMS else { return .ok }
+        if latency < 200 { return .ok }
+        if latency <= 800 { return .slow }
+        return .bad
+    }
+
+    private func probeText(_ probe: ServerAddressProbe) -> String {
+        guard probe.reachable else { return String(localized: "Unreachable") }
+        return "\(probe.latencyMS ?? 0) ms"
+    }
+}
+
+private struct ServerAddressDot: View {
+    enum Tone { case ok, slow, bad, unknown }
+    let tone: Tone
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 8, height: 8)
+    }
+    private var color: Color {
+        switch tone {
+        case .ok: return .green
+        case .slow: return .yellow
+        case .bad: return .red
+        case .unknown: return Color(.systemGray3)
+        }
     }
 }
 

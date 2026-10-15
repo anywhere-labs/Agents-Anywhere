@@ -14,6 +14,10 @@ final class AppState {
 
     private(set) var route: Route = .loading
     private(set) var serverURL: URL?
+    /// Ordered server addresses for the signed-in instance; index 0 is the
+    /// highest priority. The active server is always one of these entries.
+    private(set) var serverAddresses: [ServerAddress] = []
+    private(set) var addressProbes: [UUID: ServerAddressProbe] = [:]
     private(set) var me: AuthMe? {
         didSet {
             guard me != oldValue else { return }
@@ -49,6 +53,8 @@ final class AppState {
     @ObservationIgnored private var accountSyncID = UUID()
     @ObservationIgnored private var authenticationEpoch = UUID()
     @ObservationIgnored private let serverDefaultsKey = "agentsAnywhere.serverURL"
+    @ObservationIgnored private let addressStore = ServerAddressStore()
+    @ObservationIgnored private var priorityRestoreTask: Task<Void, Never>?
     @ObservationIgnored private let tokenAccount = "accessToken"
     @ObservationIgnored private let dashboardClientId = "ios-dashboard-\(UUID().uuidString)"
     @ObservationIgnored private var lastDashboardRefreshAt: Date?
@@ -81,11 +87,21 @@ final class AppState {
 
     func restoreSession() async {
         let epoch = authenticationEpoch
+        addressStore.load()
+        addressStore.seedLegacyServerIfNeeded(serverValue: UserDefaults.standard.string(forKey: serverDefaultsKey))
+        serverAddresses = addressStore.addresses
         guard let serverValue = UserDefaults.standard.string(forKey: serverDefaultsKey),
               let url = URL(string: serverValue), let token = accessToken(), !token.isEmpty else {
             route = .signedOut; return
         }
         serverURL = url
+        if !addressStore.contains(url) {
+            // Defensive: a saved server that is not in the list (state written
+            // by an older build) still becomes a usable address entry.
+            addressStore.add(url)
+            serverAddresses = addressStore.addresses
+        }
+        startPriorityRestore()
         if let profile = restoration.profile(server: url, token: token) {
             me = profile
             chatSelection = restoration.selection(in: .init(serverURL: url, accountID: profile.userId))
@@ -139,9 +155,134 @@ final class AppState {
                     }
                     restoreConnectionError = error.localizedDescription
                     // A transport failure retains the profile, route and cache.
-                    // Backoff performs reads only; pending sends are never replayed.
+                    // After two consecutive failures, fall forward to the next
+                    // address in the priority list before continuing backoff.
+                    if attempt >= 1, await failoverToNextAddress(excluding: serverURL) { return }
                     do { try await Task.sleep(for: .seconds(min(5 * (1 << min(attempt, 3)), 30))) } catch { return }
                     attempt += 1
+                }
+            }
+        }
+    }
+
+    // MARK: - Server address list
+
+    /// Appends a verified same-instance address to the end of the list.
+    func addServerAddress(_ url: URL) {
+        addressStore.add(url)
+        serverAddresses = addressStore.addresses
+    }
+
+    func removeServerAddress(id: UUID) {
+        guard let removed = addressStore.remove(id: id) else { return }
+        serverAddresses = addressStore.addresses
+        addressProbes[id] = nil
+        if removed.url == serverURL {
+            // The active address left the list: fall to the most preferred one.
+            if let next = addressStore.addresses.first { switchServerAddress(to: next) }
+        }
+    }
+
+    func moveServerAddresses(from source: IndexSet, to destination: Int) {
+        addressStore.move(from: source, to: destination)
+        serverAddresses = addressStore.addresses
+        startPriorityRestore()
+    }
+
+    /// Manual switch from the settings list. No toast and no session teardown:
+    /// the account and token are shared, only the transport endpoint changes.
+    func useServerAddress(id: UUID) {
+        guard let address = addressStore.addresses.first(where: { $0.id == id }) else { return }
+        switchServerAddress(to: address)
+    }
+
+    /// One user-initiated reachability + latency probe for settings display.
+    func probeServerAddress(id: UUID) async {
+        guard let address = addressStore.addresses.first(where: { $0.id == id }) else { return }
+        let started = Date()
+        if await isAddressReachable(address.url) {
+            let latency = max(0, Int(Date().timeIntervalSince(started) * 1000))
+            addressProbes[id] = ServerAddressProbe(reachable: true, latencyMS: latency)
+        } else {
+            addressProbes[id] = ServerAddressProbe(reachable: false, latencyMS: nil)
+        }
+    }
+
+    private func switchServerAddress(to address: ServerAddress) {
+        guard serverURL != address.url else { return }
+        serverURL = address.url
+        UserDefaults.standard.set(address.url.absoluteString, forKey: serverDefaultsKey)
+        restoreConnectionError = nil
+        // Re-bind the durable profile to the new endpoint so the next launch
+        // restores cached content without waiting for the first /auth/me.
+        if let me, let token = accessToken() { restoration.save(profile: me, server: address.url, token: token) }
+        if me != nil, route == .signedIn {
+            // Rebuild the client scope first: this cancels the previous
+            // address's dashboard task so startDashboardUpdates can re-arm it.
+            _ = makeV2Services()
+            startDashboardUpdates()
+            beginAccountSynchronization(force: true)
+        }
+        startPriorityRestore()
+    }
+
+    private func isAddressReachable(_ url: URL) async -> Bool {
+        do {
+            try await LocalNetworkAccess.prepare(for: url)
+            _ = try await APIClient(serverURL: url).health()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Transport failure on the active address: try the addresses below it in
+    /// priority order (they are lower priority, so they were not already
+    /// rejected by the current failover pass) and switch to the first that
+    /// answers /health. Returns whether the active address changed.
+    private func failoverToNextAddress(excluding failed: URL) async -> Bool {
+        guard addressStore.addresses.count > 1 else { return false }
+        let candidates: [ServerAddress]
+        if let index = addressStore.addresses.firstIndex(where: { $0.url == failed.normalizedV2ServerURL() }) {
+            candidates = Array(addressStore.addresses.dropFirst(index + 1))
+        } else {
+            candidates = addressStore.addresses
+        }
+        for candidate in candidates {
+            if Task.isCancelled { return false }
+            if await isAddressReachable(candidate.url) {
+                switchServerAddress(to: candidate)
+                return true
+            }
+        }
+        return false
+    }
+
+    /// While a lower-priority address is active, probe the higher-priority ones
+    /// with widening backoff (2s → 60s cap) and switch back as soon as one
+    /// answers. Stops when the active address is the top of the list.
+    private func startPriorityRestore() {
+        priorityRestoreTask?.cancel()
+        priorityRestoreTask = nil
+        guard route == .signedIn, !isInBackground, let serverURL else { return }
+        let addresses = addressStore.addresses
+        let activeIndex = addresses.firstIndex(where: { $0.url == serverURL.normalizedV2ServerURL() }) ?? -1
+        guard activeIndex > 0 else { return }
+        let higherPriority = Array(addresses.prefix(activeIndex))
+        let epoch = authenticationEpoch
+        priorityRestoreTask = Task { [weak self] in
+            guard let self else { return }
+            let backoff: [UInt64] = [2, 5, 10, 20, 40, 60]
+            var step = 0
+            while !Task.isCancelled, authenticationEpoch == epoch, !isInBackground, route == .signedIn {
+                do { try await Task.sleep(for: .seconds(backoff[min(step, backoff.count - 1)])) } catch { return }
+                step += 1
+                for address in higherPriority {
+                    if Task.isCancelled { return }
+                    if await isAddressReachable(address.url) {
+                        switchServerAddress(to: address)
+                        return
+                    }
                 }
             }
         }
@@ -661,6 +802,8 @@ final class AppState {
     func signOutAndDeleteCredentials(showSignedOutRoute: Bool = true) throws {
         dashboardUpdatesTask?.cancel()
         dashboardUpdatesTask = nil
+        priorityRestoreTask?.cancel()
+        priorityRestoreTask = nil
         try keychain.delete(account: tokenAccount)
         cachedToken = nil
         authenticationEpoch = UUID(); accountSyncID = UUID()
@@ -759,6 +902,7 @@ final class AppState {
         cachedServices?.agentSetup.setActive(!background)
         if background {
             accountSyncID = UUID(); accountSyncTask?.cancel(); accountSyncTask = nil; isRetryingServerConnection = false
+            priorityRestoreTask?.cancel(); priorityRestoreTask = nil
             if let services = cachedServices { Task { await services.flushCache() } }
             dashboardUpdatesTask?.cancel()
             dashboardUpdatesTask = nil
@@ -845,6 +989,11 @@ final class AppState {
         accountSyncTask?.cancel(); accountSyncTask = nil; isRetryingServerConnection = false
         restoreConnectionError = nil
         UserDefaults.standard.set(serverURL.absoluteString, forKey: serverDefaultsKey)
+        // Keep the address list aligned with the signed-in instance: an existing
+        // entry stays as-is, a login outside the list is a different instance
+        // and replaces the previous list.
+        if !addressStore.contains(serverURL) { addressStore.reset(to: serverURL) }
+        serverAddresses = addressStore.addresses
     }
 
     private func currentDeviceName() -> String {

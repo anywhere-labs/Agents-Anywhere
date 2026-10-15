@@ -123,6 +123,23 @@
         }
       }
     },
+    "%lld ms": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld ms"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 毫秒"
+          }
+        }
+      }
+    },
     "%lld projects": {
       "extractionState": "manual",
       "localizations": {
@@ -588,6 +605,40 @@
         }
       }
     },
+    "Add Server Address": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add Server Address"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加服务器地址"
+          }
+        }
+      }
+    },
+    "Add server address": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add server address"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加服务器地址"
+          }
+        }
+      }
+    },
     "Add custom model": {
       "comment": "Shared with Web: dashboard.device.addCustomModel. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -638,6 +689,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "添加变量"
+          }
+        }
+      }
+    },
+    "Addresses": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Addresses"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "地址"
           }
         }
       }
@@ -2897,6 +2965,23 @@
         }
       }
     },
+    "In use": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In use"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用中"
+          }
+        }
+      }
+    },
     "Input": {
       "extractionState": "manual",
       "localizations": {
@@ -4703,6 +4788,23 @@
         }
       }
     },
+    "Server address": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Server address"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "服务器地址"
+          }
+        }
+      }
+    },
     "Session ID": {
       "comment": "Shared with Web: dashboard.session.sessionId. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -4947,6 +5049,23 @@
         }
       }
     },
+    "Sign out and in again, then retry.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign out and in again, then retry."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先退出并重新登录后再重试。"
+          }
+        }
+      }
+    },
     "Sign out?": {
       "comment": "Shared with Web: common.signOut.title. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -5064,6 +5183,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "跟随系统"
+          }
+        }
+      }
+    },
+    "The address must point to the same server instance you are signed in to. You will be asked to sign in once to verify it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The address must point to the same server instance you are signed in to. You will be asked to sign in once to verify it."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "该地址必须指向你当前登录的同一服务器实例。添加时需要登录一次以进行验证。"
+          }
+        }
+      }
+    },
+    "The app prefers the first reachable address and switches back automatically. Reorder to change priority; tap an address to test it once.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The app prefers the first reachable address and switches back automatically. Reorder to change priority; tap an address to test it once."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用优先使用列表中第一个可达地址，并在其恢复后自动切回。拖动可调整优先级；点击地址可测试一次连通性。"
           }
         }
       }
@@ -5766,6 +5919,40 @@
         }
       }
     },
+    "This address belongs to a different server instance. Addresses in one list must point to the same instance.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This address belongs to a different server instance. Addresses in one list must point to the same instance."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "该地址属于另一个服务器实例。同一列表中的地址必须指向同一实例。"
+          }
+        }
+      }
+    },
+    "This address is already in the list.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This address is already in the list."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "该地址已在列表中。"
+          }
+        }
+      }
+    },
     "This applies to all sessions in the selected scope, including those not loaded yet.": {
       "extractionState": "manual",
       "localizations": {
@@ -5938,6 +6125,23 @@
         }
       }
     },
+    "This server does not allow adding its address: OAuth sign-in is not enabled.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This server does not allow adding its address: OAuth sign-in is not enabled."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "该服务器未启用 OAuth 登录，无法添加其地址。"
+          }
+        }
+      }
+    },
     "This token is shown only now. Store it in the Connector configuration and do not share it.": {
       "extractionState": "manual",
       "localizations": {
@@ -6038,6 +6242,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "未知"
+          }
+        }
+      }
+    },
+    "Unreachable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unreachable"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不可达"
           }
         }
       }
@@ -6214,6 +6435,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "已验证"
+          }
+        }
+      }
+    },
+    "Verifying…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verifying…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在验证…"
           }
         }
       }
