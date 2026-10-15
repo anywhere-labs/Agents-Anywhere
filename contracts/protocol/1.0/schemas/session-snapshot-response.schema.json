@@ -159,7 +159,8 @@
             "claude",
             "opencode",
             "acp",
-            "dsh"
+            "dsh",
+            "antigravity"
           ],
           "title": "Runtime",
           "type": "string"
@@ -484,7 +485,8 @@
                 "claude",
                 "opencode",
                 "acp",
-                "dsh"
+                "dsh",
+                "antigravity"
               ],
               "type": "string"
             },
@@ -544,7 +546,8 @@
                 "claude",
                 "opencode",
                 "acp",
-                "dsh"
+                "dsh",
+                "antigravity"
               ],
               "type": "string"
             },
@@ -706,7 +709,8 @@
             "claude",
             "opencode",
             "acp",
-            "dsh"
+            "dsh",
+            "antigravity"
           ],
           "title": "Runtime",
           "type": "string"
@@ -944,7 +948,8 @@
             "claude",
             "opencode",
             "acp",
-            "dsh"
+            "dsh",
+            "antigravity"
           ],
           "title": "Runtime",
           "type": "string"
@@ -1265,7 +1270,8 @@
                 "claude",
                 "opencode",
                 "acp",
-                "dsh"
+                "dsh",
+                "antigravity"
               ],
               "type": "string"
             },
