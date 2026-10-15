@@ -101,7 +101,6 @@ final class AppState {
             addressStore.add(url)
             serverAddresses = addressStore.addresses
         }
-        startPriorityRestore()
         if let profile = restoration.profile(server: url, token: token) {
             me = profile
             chatSelection = restoration.selection(in: .init(serverURL: url, accountID: profile.userId))
@@ -113,6 +112,7 @@ final class AppState {
         route = .signedIn
         startDashboardUpdates()
         beginAccountSynchronization()
+        startPriorityRestore()
     }
 
     func retryServerConnection() async {
@@ -272,7 +272,7 @@ final class AppState {
         let epoch = authenticationEpoch
         priorityRestoreTask = Task { [weak self] in
             guard let self else { return }
-            let backoff: [UInt64] = [2, 5, 10, 20, 40, 60]
+            let backoff: [Double] = [2, 5, 10, 20, 40, 60]
             var step = 0
             while !Task.isCancelled, authenticationEpoch == epoch, !isInBackground, route == .signedIn {
                 do { try await Task.sleep(for: .seconds(backoff[min(step, backoff.count - 1)])) } catch { return }

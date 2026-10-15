@@ -4334,6 +4334,23 @@
         }
       }
     },
+    "Reorder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reorder"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新排序"
+          }
+        }
+      }
+    },
     "Request failed": {
       "extractionState": "manual",
       "localizations": {
