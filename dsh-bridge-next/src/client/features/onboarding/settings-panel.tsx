@@ -20,6 +20,10 @@ function Choice({ label, value, options, disabled, onChange }: {
     </Button>} />
 }
 
+function serverHostOf(apiBaseUrl: string): string | null {
+  try { return new URL(apiBaseUrl).host } catch { return null }
+}
+
 export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
   t: Translate; host: OnboardingHostApi; state: OnboardingState; snapshot: OnboardingSnapshot; onConnection: () => void
 }) {
@@ -35,6 +39,7 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
   const connecting = ['authorizing', 'pairing', 'starting'].includes(snapshot.stage)
   const busy = state.busy || connecting || Boolean(state.readError)
   const status = connectorStatus(snapshot, state.readError, t)
+  const serverHost = serverHostOf(snapshot.settings.apiBaseUrl)
   const dirty = JSON.stringify(draft) !== signature
   const mirror = PYPI_MIRRORS.find(mirror => mirror.url === draft.uvPypiIndexUrl)?.id ?? 'default'
   const update = <K extends keyof typeof draft>(key: K, value: (typeof draft)[K]) => {
@@ -55,7 +60,7 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
     <div className={css.section}>
       <div className={css.row}>
         <h3>{management.deviceName || t('此设备')}</h3>
-        <span className={css.status}><StateDot state={status.state} />{status.label}</span>
+        <span className={css.status}>{serverHost ? <>{serverHost} · </> : null}<StateDot state={status.state} />{status.label}</span>
       </div>
       <dl className={css.details}>
         <dt>Connector ID</dt><dd>{snapshot.connectorId ?? t('尚未连接')}</dd>
