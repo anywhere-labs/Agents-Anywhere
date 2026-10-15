@@ -1,0 +1,48 @@
+name: iOS
+
+# Compile-only check for the iOS app. The project targets a current iOS SDK and
+# is built unsigned for a generic device, so no simulator runtime, signing
+# identity, or archive step is involved. Kept as a separate workflow so the
+# path-filtered headless CI jobs stay untouched.
+
+on:
+  pull_request:
+    paths:
+      - ios/**
+      - .github/workflows/ios.yml
+  push:
+    branches:
+      - main
+      - v2
+    paths:
+      - ios/**
+      - .github/workflows/ios.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Compile app (no signing)
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Build for iOS (unsigned)
+        run: |
+          xcodebuild -version
+          xcodebuild \
+            -project 'ios/Agents Anywhere/Agents Anywhere.xcodeproj' \
+            -scheme 'Agents Anywhere' \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/derived" \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -jobs 4 \
+            CODE_SIGNING_ALLOWED=NO \
+            build
