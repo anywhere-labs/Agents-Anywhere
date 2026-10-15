@@ -363,11 +363,11 @@ CodexRuntime
 - 附件：IPC 路径与 SDK 路径一致，先经 host 下载到本机附件目录，图片以 `{type:"localImage", path}` 放进 `input`，其它文件在正文末尾追加 `[Attached file: …]` 引用；owner 侧收到窗口的 `localImage` 也会转成 SDK 附件。owner 的 app-server 与我们同机，读本地路径没有问题。
 - 推给 owner 的 `threadSettings` 只能带 `sandboxPolicy` + `activePermissionProfile`，**不能**再带 profile 字段 `permissions`，否则 app-server 报 `permissions cannot be combined with sandboxPolicy`（真机踩过）。
 - **接管竞态**：窗口刚打开线程时会先广播 `following`，稍后 resume 成功才登记 ownership；这时如果 AA 立刻发消息，discovery 还找不到 owner，原来会退回自家 app-server resume 并撞上写锁（真机报“该 Codex 会话正由其他进程持有写入权限”）。现在：(1) 对窗口广播过的线程，discovery 失败后 3 s 重试，最多 3 次；(2) 有写锁文件的线程 20 s 重探一次（无锁文件的仍是 5 min）；(3) `start_turn` / `steer_turn` / 选择更新在走 SDK 路径前，若该线程存在写锁文件，先做一次 3 s 上限的 owner 发现，找到就改走 IPC。
-- **Deeplink 交接（2026-10-11）**：桌面 App 注册了 `codex://` scheme，`codex://threads/<thread-id>` 会让正在运行的 App 跳到该线程并 resume（真机 `open -g` 后约 0.1 s 出现 `maybe_resume_started`，随即登记 ownership、应答 discovery）。用途：写锁被桌面 app-server 持有、但没有任何窗口应答 discovery 的线程（上面竞态里“AA 尚未接管”的情形），`_ipc_attach_for_write` 在 3 s 探测失败后，如果检测到桌面 App 进程在运行（macOS 看 `ChatGPT.app/Contents/MacOS/ChatGPT` 或 `Codex.app/Contents/MacOS/Codex` 主进程），就打开 deeplink，再用 5 s 上限做一次 discovery，成功即改走 IPC；App 没在运行或平台无法判断时不触发，避免把 App 拉起来。实现见 `ipc/deeplink.py` 与 `CodexRuntime._ipc_handoff_to_desktop`，可用 `ipc_deeplink_handoff=False` 关闭。同一能力也作为会话命令 `/open-in-codex-app`（别名 `open-in-codex`、`codex-app`）暴露，任何状态下可用，返回 `{deeplink, attached, ownerClientId}`；App 未运行时返回 `codex_app_not_running`。其它已见过的 deeplink 形式：`codex://threads/<id>?ephemeral`、`?artifact`、`codex://shared-thread/<id>`、`codex://review?pr=`、`codex://settings/connections`、`codex://plugins/`。注意 deeplink 走的是 `open`，平台差异：macOS `open -g`（不抢焦点）、Linux `xdg-open`、Windows `os.startfile`；Windows 的 IPC 本身还没实现。
+- **Deeplink 交接（2026-10-11）**：桌面 App 注册了 `codex://` scheme，`codex://threads/<thread-id>` 会让正在运行的 App 跳到该线程并 resume（真机 `open -g` 后约 0.1 s 出现 `maybe_resume_started`，随即登记 ownership、应答 discovery）。用途：写锁被桌面 app-server 持有、但没有任何窗口应答 discovery 的线程（上面竞态里“AA 尚未接管”的情形），`_ipc_attach_for_write` 在 3 s 探测失败后，如果检测到桌面 App 进程在运行（macOS 看 `ChatGPT.app/Contents/MacOS/ChatGPT` 或 `Codex.app/Contents/MacOS/Codex` 主进程），就打开 deeplink，再用 5 s 上限做一次 discovery，成功即改走 IPC；App 没在运行或平台无法判断时不触发，避免把 App 拉起来。实现见 `ipc/deeplink.py` 与 `CodexRuntime._ipc_handoff_to_desktop`，可用 `ipc_deeplink_handoff=False` 关闭。同一能力也作为会话命令 `/open-in-codex-app`（别名 `open-in-codex`、`codex-app`）暴露，任何状态下可用，返回 `{deeplink, attached, ownerClientId}`；App 未运行时返回 `codex_app_not_running`。其它已见过的 deeplink 形式：`codex://threads/<id>?ephemeral`、`?artifact`、`codex://shared-thread/<id>`、`codex://review?pr=`、`codex://settings/connections`、`codex://plugins/`。注意 deeplink 走的是 `open`，平台差异：macOS `open -g`（不抢焦点）、Linux `xdg-open`、Windows `os.startfile`。
 - 权限对象必须和桌面自己生成的一模一样（webview `app-shared` 里的 `aM` / `iM` / `rvt`），否则桌面线程页会被 React error boundary 打崩（真机报 `TypeError: e is not iterable`，刷新后恢复）：profile id 只有 `:read-only`、`:workspace`、`:danger-full-access`；read-only 的 `sandboxPolicy` 是 `{type:"readOnly", networkAccess:false}`；workspace-write 必须带 `writableRoots`（= `runtimeWorkspaceRoots`，缺了就是上面那个崩溃）、`excludeSlashTmp`、`excludeTmpdirEnvVar`、`networkAccess`，并同时给 `runtimeWorkspaceRoots`；full access 是 `{type:"dangerFullAccess"}` + `approvalPolicy: never`。实现见 `ipc/control.py::permission_block`，owner 侧共用。
 - `requests` 里的用户输入（`item/tool/requestUserInput`）尚无真机样本，投影只处理审批类请求；回复路径已实现。
 - 桌面 / VS Code 只对自己持有的线程应答 discovery，其余线程统一报 `no-client-found`（约 10 s），扫描间隔 30 s、失败重试 5 min；新窗口 following 广播会触发即时跟进。
-- Windows 命名管道未实现，`CodexIpcClient.start()` 在 win32 直接跳过。
+- Windows 已支持（2026-10-12），见下文「Windows 适配与真机修复」。
 
 #### 配置开关、kill-chatgpt 与扫描策略（2026-10-11）
 
@@ -375,6 +375,35 @@ CodexRuntime
 - **`/kill-chatgpt` 命令**（别名 `kill-codex-app`、`quit-chatgpt`）：找到桌面 App 主进程（macOS 为 `ChatGPT.app/Contents/MacOS/ChatGPT` 或 `Codex.app/Contents/MacOS/Codex`），先 SIGTERM，5 s 后仍存活则 SIGKILL；App 退出后它持有的所有写锁随之释放，当前线程若正被跟随会立即 unfollow，下一条消息直接走自家 app-server。这个命令不依赖 IPC 开关，目的是在 IPC 关闭或 App 不可达时也能把线程"抢"回来。实现见 `ipc/desktop_app.py`，结果里带 `terminated` / `killed` / `survivors` 三组 pid。
 - **写锁判定改用 flock**：Codex 的 `thread-writer-locks/<id>.lock` 文件在持有者退出后并不会删除，所以"文件存在"不等于"被持有"。`CodexIpcService.thread_is_held` 现在对文件做一次非阻塞 `flock(LOCK_EX|LOCK_NB)`：拿不到就是真的被持有，拿到了立即释放并视为空闲。这样 kill 掉 App 后不会再为残留的锁文件白做 3 s 探测。
 - **不再定期扫描**：`CodexIpcService` 默认 `scan_interval=None`，只在启动（IPC 连上）时扫描一次写锁目录与最近会话；之后只由事件触发重探：窗口广播 `thread-stream-following-changed`、新客户端 `client-status-changed: connected`、announce 重试（3 s × 3），以及写前 `_ipc_attach_for_write` 的按需探测。需要周期扫描时可显式传 `scan_interval`。
+
+#### Windows 适配与真机修复（2026-10-12）
+
+依据：Windows 11、Codex App 26.1007.2314.0（内置 codex-cli 0.162.0-alpha.17.2）真机，AA Web 用 Playwright 操作，App 侧用 `codex://threads/<id>?prompt=` 预填后按回车。
+
+Windows 适配：
+
+- 路由是命名管道 `\\.\pipe\codex-ipc`。`pathlib` 会把它改写成 `\pipe\codex-ipc`，所以连接时直接用字符串常量 `WINDOWS_PIPE_PATH`，不经过 `Path`。
+- Windows 上 Connector **不当 router**：`IpcRouter` 只有 Unix socket 实现，命名管道服务端还没写、也没验证，所以等 App 或 VS Code 来当 router。选举本身是可行的：libuv 和 CPython asyncio 创建第一个管道实例时都带 `FILE_FLAG_FIRST_PIPE_INSTANCE`，第二个监听者会像 socket 的 `EADDRINUSE` 一样失败，不会出现两个 router。另外 Windows 上能不能启用 IPC 取决于事件循环而不是平台：`create_pipe_connection` 只有 `ProactorEventLoop` 才有（Windows 默认），`CodexIpcClient.start()` 据此判断，不满足就记日志并禁用。
+- 没有 uid 和 IPC 目录，`ensure_ipc_directory` 在 win32 直接返回（原实现调用 `os.getuid()` 会抛错）。
+- App 进程识别：主进程是 `...\WindowsApps\OpenAI.Codex_<version>_x64__<publisher>\app\ChatGPT.exe`，按包名 `OpenAI.Codex_` 匹配，不会误认同名的 ChatGPT 桌面版；Windows 没有 `ps`，改用 psutil。
+- 写锁判定用 `msvcrt.locking` 非阻塞字节锁代替 `flock`。实测 Windows 上 Codex 释放写锁时会删除锁文件。
+
+真机验收中发现并修复的问题：
+
+- **App 往 Connector 持有的线程发消息被吞、一直转圈**：窗口作为 follower 发消息时不会请求 `thread-follower-start-turn`，而是把整个排队交给 owner（`thread-follower-set-queued-follow-ups-state`，`state[conversationId]` 是消息列表），由 owner 在空闲时取出执行（App 自身的 owner 实现是 `turnCoordinator.acceptFromFollower`）。原实现对这个请求只回 `{"ok": true}`。现在 owner 保存排队、广播 `thread-queued-followups-changed`（`{conversationId, hostId, messages}`），线程空闲时取第一条用 `clientUserMessageId = message.id` 开始一轮，回合结束后继续下一条；`remove-queued-message` / `clear-queued-messages` 按 App 的返回格式处理。附件目前只取文字。
+- **Connector 重启后往 AA 创建的会话发消息报 502** `connector returned sessionId that does not match the session binding`：投影在缓存里没有绑定时用派生 id（`stable_session_id`）发布状态，Server 读状态时按 externalSessionId 命中派生 id。现在投影优先用缓存里 Server 绑定的 id；读状态时若缓存是派生 id、调用方给的是绑定 id，就把缓存重新绑定。
+- **App 回 `thread-follower-start-turn-timeout` 时会话被标成 error**：App 自己的 turn start 超过约 5 s 时会回这个错误，但回合照样开始。现在 `-timeout` 结尾或无响应按结果未知处理，在 owner 状态流里等新回合（最多 20 s），等到即成功，等不到返回 `codex_ipc_start_turn_outcome_unknown`，不重发也不标 error。
+- **启动后 App 新建的线程只能靠轮询看到，重启 Connector 才实时跟随**：启动扫描之后，`thread-stream-following-status-requested` 只给已跟随的线程重发 following。现在收到这条广播且线程未跟随时立即探测（实测 0.5 s 内开始跟随）。
+- **AA 改权限后显示被旧值盖回**：`currentPermissions` 要等下一轮才更新，映射时改为 `latestThreadSettings` 优先，`currentPermissions` 只补缺。
+- **切回 workspace-write 时 `writableRoots` 为空**：沿用 App 现有设置里的 `writableRoots`（App 自身的做法），没有时才用 `runtimeWorkspaceRoots` / cwd。
+- **AA 新建的会话要重启 App 才出现在侧边栏**：App 的会话列表只在启动时完整加载一次（`refreshRecentConversations({mode:'catalog'})`），之后只增量加入自己产生的会话。现在 owner 对 AA 自己新建的线程（会话状态来源出现过 `codex.thread/start`）广播 `thread-unarchived {hostId, conversationId}`：第一轮开始时一次（rollout 已落盘，App 读得到），第一轮结束时再一次（带上标题），之后不再发。App 的 `handleThreadUnarchived` 会 `readThread` 并 `upsertConversationFromThread`，会话立即出现在 Recents，不用重启。AA 只是 resume 的旧线程不发，避免把用户在 App 里归档的会话重新显示出来。广播失败只记警告。
+  - 已知副作用：发过广播的会话只进 Recents，**不会归到 App 的项目分组**，App 重启后才归组。对比实测：未广播的「6666」被 App 自己的目录同步（共享状态库增量同步，定时器最长约 1 h）归进了 AA 项目；广播过的「77777」一直只在 Recents。推断是广播让 App 提前认识了该会话，之后的目录同步不再为它分组。已排除：给线程写 app-server `projectId`（`thread/metadata/update`）后再广播无效，这版 App 分组不看该字段；`codex://threads/<id>` 打开也不会归组。外部无法触发 App 的完整重载（只在启动或 App 与自家 app-server 重连时发生）。
+
+已知未解决：
+
+- 一次 Connector 卡死：主线程停在 `threading.Thread.start()`（anyio 开工作线程，调用方 `reader._read_native_activity`），心跳超时 `keepalive ping timeout` 后不再重连；之后连续运行 2 小时以上未复现。再出现时用 `py-spy dump --native` 看本机层调用栈。
+- 本文的 IPC 测试（socket fake）在 win32 上整体跳过；Windows 相关的修复由 `tests/test_codex_ipc_windows_fixes.py` 覆盖，这个文件不跳过。
+- 从 Connector 经 IPC 让 App 开始一轮，App 端需要 3–6 s；App 内直接发送约 1.3 s，慢在 App 内部。
 
 ### 4.4 对现有行为的影响与跨端
 
@@ -388,7 +417,7 @@ CodexRuntime
 - 持有者释放写锁的时延（关闭标签 / 线程空闲卸载）与我们 `thread/unsubscribe` 后卸载的时延未测量。
 - 旧桌面实例 IPC client 挂死的根因未定位；实现侧按“discovery 超时 = 持有者不可达”防御即可。
 - 没有对 daemon 做任何写操作（`thread/resume`、`turn/start`、审批）；写路径的行为依据是上游源码与 Ember/codexctl 的实测记录。
-- Windows 命名管道与 108 字节 AF_UNIX 路径限制未测试。
+- 108 字节 AF_UNIX 路径限制未测试。
 - 上游明确 daemon 是实验特性，接口可能变化；复刻实现应把方法名、版本表、socket 路径集中在一处配置，便于随 Codex 升级调整。
 
 ## 6. 参考

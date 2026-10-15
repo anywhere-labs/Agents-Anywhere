@@ -8,6 +8,8 @@ verified live (see ``docs/codex-ipc-takeover.md`` §3.5).
 
 from __future__ import annotations
 
+import asyncio
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -53,11 +55,25 @@ from connector.runtimes.codex.ipc.follower import (
     FollowedThread,
     ThreadFollower,
 )
-from connector.runtimes.codex.ipc.timeline import active_turn_id
+from connector.runtimes.codex.ipc.timeline import (
+    active_turn_id,
+    turn_entities_in_order,
+)
 from connector.runtimes.codex.sdk.runtime_client import CodexTurnInputAttachment
 from connector.runtimes.codex.turns.attachments import materialize_codex_attachments
 
 DEFAULT_REQUEST_TIMEOUT_MS = 30_000
+# The App answers thread-follower-start-turn with "...-timeout" when its own
+# turn start takes longer than ~5 s, although the turn does start; its state
+# stream then shows the new turn.
+START_TURN_CONFIRM_TIMEOUT = 20.0
+UNKNOWN_OUTCOME_ERRORS = frozenset(
+    {"timeout", "request-timeout", "client-disconnected", "server-closed", "connection-closed"}
+)
+UNKNOWN_OUTCOME_MESSAGE = (
+    "Codex App 没有在时限内确认这次发送，消息可能已经开始执行。"
+    "AA 不会自动重发；请在会话里确认结果后再决定是否重试。"
+)
 IPC_SOURCE = "codex.ipc"
 
 _APPROVAL_METHODS: dict[str, str] = {
@@ -212,8 +228,27 @@ class CodexIpcTurnController:
                 "context": {"inheritThreadSettings": True},
             },
         }
+        known_turns = {key for key, _ in turn_entities_in_order(thread.state or {})}
         response = await self._send(thread, "thread-follower-start-turn", params)
-        if response is None or not response.ok:
+        if response is not None and response.ok:
+            turn = _turn_from_result(response.result)
+            turn_id = turn.get("id") if isinstance(turn, Mapping) else None
+        elif _outcome_unknown(response):
+            turn, turn_id = {}, await self._new_turn(thread.thread_id, known_turns)
+            logger.info(
+                "codex ipc start-turn outcome thread={} error={} confirmed={}",
+                thread.thread_id,
+                response.error if response is not None else "no-response",
+                turn_id is not None,
+            )
+            if turn_id is None:
+                return RuntimeOperationResult(
+                    ok=False,
+                    code="codex_ipc_start_turn_outcome_unknown",
+                    message=UNKNOWN_OUTCOME_MESSAGE,
+                    result={"externalSessionId": thread.thread_id, "transport": "ipc"},
+                )
+        else:
             return await self._failed(
                 session_id,
                 thread,
@@ -221,8 +256,6 @@ class CodexIpcTurnController:
                 response,
                 result={"externalSessionId": thread.thread_id},
             )
-        turn = _turn_from_result(response.result)
-        turn_id = turn.get("id") if isinstance(turn, Mapping) else None
         if isinstance(turn_id, str) and turn_id:
             self.active_turn_ids[session_id] = turn_id
         await self.session_states.update(
@@ -534,6 +567,21 @@ class CodexIpcTurnController:
 
     # -- helpers -------------------------------------------------------------
 
+    async def _new_turn(self, thread_id: str, known_turns: set[str]) -> str | None:
+        """Wait until the owner's state shows a turn started after ``known_turns``."""
+
+        deadline = time.monotonic() + START_TURN_CONFIRM_TIMEOUT
+        while time.monotonic() < deadline:
+            followed = self.follower.get(thread_id)
+            for key, entity in turn_entities_in_order(
+                (followed.state if followed is not None else None) or {}
+            ):
+                turn_id = entity.get("turnId")
+                if key not in known_turns and isinstance(turn_id, str) and turn_id:
+                    return turn_id
+            await asyncio.sleep(0.2)
+        return None
+
     async def _send(
         self,
         thread: FollowedThread,
@@ -746,10 +794,15 @@ def thread_settings_with_overrides(
                     "settings": {**inner, "reasoning_effort": effort},
                 }
     if sandbox is not None:
+        # Switching back to workspace write keeps the App's own writable roots,
+        # as the App does, instead of deriving them from the cwd.
+        existing = _writable_roots(settings.get("sandboxPolicy")) or _writable_roots(
+            permissions.get("sandboxPolicy")
+        )
         settings.update(
             permission_block(
                 sandbox,
-                workspace_roots(state),
+                existing if existing is not None else workspace_roots(state),
                 approval_policy=approval_policy,
                 approvals_reviewer=approvals_reviewer,
             )
@@ -776,6 +829,24 @@ def _turn_from_result(result: Any) -> Mapping[str, Any] | None:
     if isinstance(result.get("turn"), Mapping):
         return result["turn"]
     return None
+
+
+def _writable_roots(policy: Any) -> list[str] | None:
+    if not isinstance(policy, Mapping) or policy.get("type") != "workspaceWrite":
+        return None
+    roots = policy.get("writableRoots")
+    if isinstance(roots, list) and all(isinstance(root, str) for root in roots):
+        return list(roots)
+    return None
+
+
+def _outcome_unknown(response: IpcResponse | None) -> bool:
+    """Whether the owner may have run the request although no success came back."""
+
+    if response is None:
+        return True
+    error = response.error or ""
+    return error in UNKNOWN_OUTCOME_ERRORS or error.endswith("-timeout")
 
 
 def _error_code(response: IpcResponse | None) -> str:

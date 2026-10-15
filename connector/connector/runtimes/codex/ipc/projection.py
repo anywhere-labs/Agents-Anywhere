@@ -86,6 +86,11 @@ class CodexIpcSessionProjector:
         return getattr(self.host, "session_namespace", self.host.connector_id)
 
     def session_id_for(self, thread_id: str) -> str:
+        # A session AA created has a server-assigned id; only threads AA has
+        # never bound fall back to the derived id the server aliases.
+        cached = self.session_states.get_by_external_session_id(thread_id)
+        if cached is not None:
+            return cached.session_id
         return codex_sessions.stable_session_id(self.namespace, thread_id)
 
     async def handle(self, event: FollowerEvent) -> None:
@@ -336,21 +341,24 @@ def ipc_settings_state(state: Mapping[str, Any]) -> dict[str, Any]:
     collaboration_settings = (
         collaboration_settings if isinstance(collaboration_settings, Mapping) else {}
     )
+    # latestThreadSettings is what the next turn uses, including a change a
+    # follower just applied; latestModel / currentPermissions lag until that
+    # turn runs, so they only fill keys the settings lack.
     flat: dict[str, Any] = {}
-    model = state.get("latestModel") or settings.get("model") or collaboration_settings.get("model")
+    model = settings.get("model") or state.get("latestModel") or collaboration_settings.get("model")
     if isinstance(model, str) and model:
         flat["model"] = model
     effort = (
-        state.get("latestReasoningEffort")
-        or settings.get("effort")
+        settings.get("effort")
+        or state.get("latestReasoningEffort")
         or collaboration_settings.get("reasoning_effort")
     )
     if isinstance(effort, str) and effort:
         flat["reasoningEffort"] = effort
     for key in ("approvalPolicy", "approvalsReviewer", "sandboxPolicy"):
-        value = permissions.get(key)
+        value = settings.get(key)
         if value is None:
-            value = settings.get(key)
+            value = permissions.get(key)
         if value is not None:
             flat[key] = value
     return flat

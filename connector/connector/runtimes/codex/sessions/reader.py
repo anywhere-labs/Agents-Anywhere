@@ -404,6 +404,25 @@ class CodexSessionReader:
             cached = self.session_states.get_by_external_session_id(
                 external_session_id
             )
+            if cached is not None and cached.session_id != session_id and (
+                cached.session_id
+                == codex_sessions.stable_session_id(
+                    getattr(self.host, "session_namespace", self.host.connector_id),
+                    external_session_id,
+                )
+            ):
+                # A publisher without the server binding (the IPC projector after
+                # a Connector restart) cached this thread under its derived id,
+                # while the caller names the bound session; rebind so the reply
+                # and every later publication use the bound id.
+                cached = await self.session_states.update(
+                    session_id=session_id,
+                    external_session_id=external_session_id,
+                    status=cached.status,
+                    selections=cached.selections,
+                    error=cached.error,
+                    metadata=cached.metadata,
+                )
         native_activity = await self._read_native_activity(external_session_id)
         reconciled = reconcile_native_activity(
             session_id=session_id,

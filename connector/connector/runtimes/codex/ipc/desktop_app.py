@@ -45,7 +45,7 @@ class DesktopAppShutdown:
 
 
 def supported(platform: str = sys.platform) -> bool:
-    return platform in DESKTOP_PROCESS_MARKERS
+    return platform == "win32" or platform in DESKTOP_PROCESS_MARKERS
 
 
 def desktop_process_listed(listing: str, markers: Sequence[str]) -> bool:
@@ -91,6 +91,8 @@ async def _process_listing(timeout: float) -> str | None:
 async def desktop_app_pids(*, timeout: float = PROBE_TIMEOUT) -> tuple[int, ...] | None:
     """Return the main-process pids of running desktop apps; None when unknown."""
 
+    if sys.platform == "win32":
+        return await asyncio.to_thread(_windows_codex_app_pids)
     markers = DESKTOP_PROCESS_MARKERS.get(sys.platform)
     if not markers:
         return None
@@ -105,6 +107,27 @@ async def desktop_app_running(*, timeout: float = PROBE_TIMEOUT) -> bool | None:
 
     pids = await desktop_app_pids(timeout=timeout)
     return None if pids is None else bool(pids)
+
+
+def _windows_codex_app_pids() -> tuple[int, ...]:
+    """Main ChatGPT.exe processes of the Codex package (OpenAI.Codex_* in WindowsApps)."""
+
+    import psutil
+
+    pids: list[int] = []
+    for process in psutil.process_iter(["pid", "name", "exe", "ppid"]):
+        exe = process.info.get("exe") or ""
+        if r"\windowsapps\openai.codex_" not in exe.lower():
+            continue
+        if (process.info.get("name") or "").lower() != "chatgpt.exe":
+            continue
+        try:
+            parent = psutil.Process(process.info["ppid"]).name().lower()
+        except (psutil.Error, KeyError):
+            parent = ""
+        if parent != "chatgpt.exe":
+            pids.append(process.info["pid"])
+    return tuple(pids)
 
 
 def _alive(pid: int) -> bool:

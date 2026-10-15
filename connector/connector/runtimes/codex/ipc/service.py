@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import sys
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -206,6 +207,9 @@ class CodexIpcService:
         self.request_scan()
 
     async def _on_any_broadcast(self, broadcast: IpcBroadcast) -> None:
+        if broadcast.method == "thread-stream-following-status-requested":
+            await self._on_owner_announced(broadcast)
+            return
         if broadcast.method != "client-status-changed":
             return
         params = broadcast.params if isinstance(broadcast.params, Mapping) else {}
@@ -217,6 +221,27 @@ class CodexIpcService:
             self.request_scan()
 
 
+    async def _on_owner_announced(self, broadcast: IpcBroadcast) -> None:
+        # A window that starts owning a thread without followers (a thread just
+        # created or opened in the App) asks followers to announce. The startup
+        # scan never saw such a thread, so follow it now instead of waiting for
+        # the next Connector restart.
+        params = broadcast.params if isinstance(broadcast.params, Mapping) else {}
+        thread_id = params.get("conversationId")
+        if not isinstance(thread_id, str) or broadcast.source_client_id == self.client.client_id:
+            return
+        current = self.follower.get(thread_id)
+        if current is not None and current.status == "following":
+            return
+        logger.info(
+            "codex ipc owner announced new thread thread={} owner={}",
+            thread_id,
+            broadcast.source_client_id,
+        )
+        self._extra_candidates.add(thread_id)
+        self.request_scan()
+
+
 def writer_lock_held(path: Path) -> bool:
     """Probe a Codex writer-lock file with a non-blocking exclusive flock.
 
@@ -226,9 +251,11 @@ def writer_lock_held(path: Path) -> bool:
     existence.
     """
 
+    if sys.platform == "win32":
+        return _windows_lock_held(path)
     try:
         import fcntl
-    except ImportError:  # pragma: no cover - win32
+    except ImportError:  # pragma: no cover
         return path.exists()
     try:
         fd = os.open(path, os.O_RDONLY)
@@ -242,6 +269,28 @@ def writer_lock_held(path: Path) -> bool:
         except OSError:
             return path.exists()
         fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
+
+
+def _windows_lock_held(path: Path) -> bool:
+    """Codex locks the file with LockFileEx; a held lock refuses our byte lock."""
+
+    import msvcrt
+
+    try:
+        fd = os.open(path, os.O_RDWR)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    try:
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return True
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
         return False
     finally:
         os.close(fd)

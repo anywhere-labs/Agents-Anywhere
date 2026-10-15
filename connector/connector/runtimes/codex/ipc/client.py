@@ -11,6 +11,7 @@ higher layers can re-announce the threads they follow.
 from __future__ import annotations
 
 import asyncio
+import sys
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -23,10 +24,7 @@ from connector.runtimes.codex.ipc.framing import (
     IpcFrameError,
     encode_frame,
 )
-from connector.runtimes.codex.ipc.paths import (
-    ensure_ipc_directory,
-    is_supported_platform,
-)
+from connector.runtimes.codex.ipc.paths import ensure_ipc_directory
 from connector.runtimes.codex.ipc.router import IpcRouter
 from connector.runtimes.codex.ipc.versions import accepts_version, version_for
 
@@ -160,8 +158,12 @@ class CodexIpcClient:
 
         if self._task is not None:
             return
-        if not is_supported_platform():
-            logger.info("codex ipc client disabled: unsupported platform")
+        if sys.platform == "win32" and not hasattr(
+            asyncio.get_running_loop(), "create_pipe_connection"
+        ):
+            # Named pipes need the proactor loop (the default on Windows);
+            # a selector loop has no create_pipe_connection.
+            logger.info("codex ipc client disabled: windows named pipes need ProactorEventLoop")
             return
         self._stopped = False
         self._task = asyncio.create_task(self._run(), name="codex-ipc-client")
@@ -306,7 +308,7 @@ class CodexIpcClient:
 
     async def _connect_once(self) -> None:
         path = await self._resolve_endpoint()
-        reader, writer = await asyncio.open_unix_connection(str(path))
+        reader, writer = await open_ipc_connection(path)
         self._writer = writer
         decoder = FrameDecoder()
         try:
@@ -336,7 +338,13 @@ class CodexIpcClient:
             ensure_ipc_directory(self.codex_home)
         if await _can_connect(path):
             return path
-        if not self.allow_router:
+        if not self.allow_router or sys.platform == "win32":
+            # IpcRouter only implements the Unix socket; a named-pipe server is
+            # not written or verified yet, so on Windows we wait for the App or
+            # VS Code to become the router. The election itself would work:
+            # libuv and asyncio both create the first instance with
+            # FILE_FLAG_FIRST_PIPE_INSTANCE, so a second listener fails like
+            # EADDRINUSE does for the socket.
             raise IpcNotConnectedError(f"no ipc router at {path}")
         if self._router is None or not self._router.listening:
             router = IpcRouter()
@@ -577,9 +585,29 @@ def _parse_request(message: Mapping[str, Any]) -> IpcRequest:
     )
 
 
+async def open_ipc_connection(
+    path: Path,
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    """Connect to the router: a named pipe on Windows, a Unix socket elsewhere."""
+
+    if sys.platform != "win32":
+        return await asyncio.open_unix_connection(str(path))
+    # pathlib rewrites "\\.\pipe\codex-ipc" to "\pipe\codex-ipc", so the pipe
+    # name is used as a plain string.
+    from connector.runtimes.codex.ipc.paths import WINDOWS_PIPE_PATH
+
+    loop = asyncio.get_running_loop()
+    reader = asyncio.StreamReader()
+    protocol = asyncio.StreamReaderProtocol(reader)
+    transport, _ = await loop.create_pipe_connection(  # type: ignore[attr-defined]
+        lambda: protocol, WINDOWS_PIPE_PATH
+    )
+    return reader, asyncio.StreamWriter(transport, protocol, reader, loop)
+
+
 async def _can_connect(path: Path) -> bool:
     try:
-        _, writer = await asyncio.open_unix_connection(str(path))
+        _, writer = await open_ipc_connection(path)
     except (OSError, ValueError):
         return False
     writer.close()
