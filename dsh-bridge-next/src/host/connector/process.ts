@@ -156,6 +156,9 @@ export class SourceConnector implements ConnectorProcess {
       env: {
         ...process.env,
         AA_CONNECTOR_OWNER_KIND: 'dsh-plugin',
+        // DSH adds [::1] for Node; Python httpx requires the bare IPv6 literal.
+        NO_PROXY: (process.env['NO_PROXY'] ?? process.env['no_proxy'] ?? '').replace(/\[::1\]/g, '::1'),
+        no_proxy: (process.env['no_proxy'] ?? process.env['NO_PROXY'] ?? '').replace(/\[::1\]/g, '::1'),
         ...(this.config.dshHome ? { DSH_HOME: this.config.dshHome } : {}),
         AGENT_CONNECTOR_DATA_DIR: dataDir,
         UV_PROJECT_ENVIRONMENT: join(this.config.stateRoot, 'connector-venv'),
