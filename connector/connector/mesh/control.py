@@ -21,7 +21,7 @@ from meshcall import (
 )
 from pydantic import BaseModel
 
-from connector.control import ConnectorController
+from connector.control import ConnectorBusyError, ConnectorController
 from connector.mesh.events import EventHub, Sequenced, stream_items
 from connector.mesh.hub import CONTROL_SERVICE, run_on_loop
 
@@ -107,6 +107,8 @@ def _settings(config: ConnectorSettings | None) -> dict[str, Any] | None:
 
 @service(CONTROL_SERVICE, description="Configure, start and stop this Connector, and follow its state.")
 class ControlService:
+    # Control commands are never implicitly replayed: even a repeated stop or
+    # config save could undo a newer user command after a connection failure.
     def __init__(
         self,
         controller: ConnectorController,
@@ -124,6 +126,8 @@ class ControlService:
                 return await result if isinstance(result, Awaitable) else result
             except MeshCallError:
                 raise
+            except ConnectorBusyError as exc:
+                raise MeshCallError("connector_busy", str(exc), retryable=False) from exc
             except ValueError as exc:
                 raise InvalidArgumentError(str(exc)) from exc
             except Exception as exc:
@@ -141,7 +145,7 @@ class ControlService:
         """Where this Connector keeps its configuration and the machine runtime record."""
         return ConnectorPaths.model_validate(await self._run(self._controller.get_paths))
 
-    @mutates(idempotent=True)
+    @mutates
     async def acquireOwnership(self) -> ConnectorState:
         """Reserve the machine for this Connector; fails with connector_already_running."""
         return ConnectorState.model_validate(await self._run(self._controller.acquire_ownership))
@@ -151,31 +155,31 @@ class ControlService:
         """The saved configuration, or the defaults when none is saved."""
         return ConnectorSettings.model_validate(await self._run(self._controller.get_config))
 
-    @mutates(idempotent=True)
+    @mutates
     async def saveConfig(self, config: ConnectorSettings) -> ConnectorSettings:
         """Validate and save the configuration; claims the machine first."""
         payload = config.model_dump()
         return ConnectorSettings.model_validate(await self._run(lambda: self._controller.save_config(payload)))
 
-    @mutates(idempotent=True)
+    @mutates
     async def start(self, config: ConnectorSettings | None = None) -> ConnectorState:
         """Start the runtime with the given or the saved configuration."""
         payload = _settings(config)
         return ConnectorState.model_validate(await self._run(lambda: self._controller.start(payload)))
 
-    @mutates(idempotent=True)
+    @mutates
     async def stop(self) -> ConnectorState:
         """Stop the runtime; the machine stays reserved for this process."""
         return ConnectorState.model_validate(await self._run(self._controller.stop))
 
-    @mutates(idempotent=True)
+    @mutates
     async def restart(self, config: ConnectorSettings | None = None) -> ConnectorState:
         """Stop, then start with the given or the saved configuration."""
         payload = _settings(config)
         return ConnectorState.model_validate(await self._run(lambda: self._controller.restart(payload)))
 
-    # A repeat cancels the previous pairing and starts one again: still one pairing.
-    @mutates(idempotent=True)
+    # Repeating this command replaces the pairing, so it must not be retried.
+    @mutates
     async def startPairing(
         self,
         server: str | None = None,
@@ -192,7 +196,7 @@ class ControlService:
         }
         return PairingStatus.model_validate(await self._run(lambda: self._controller.start_pairing(params)))
 
-    @mutates(idempotent=True)
+    @mutates
     async def cancelPairing(self) -> PairingStatus:
         """Cancel the pairing in progress, if any."""
         return PairingStatus.model_validate(await self._run(self._controller.cancel_pairing))

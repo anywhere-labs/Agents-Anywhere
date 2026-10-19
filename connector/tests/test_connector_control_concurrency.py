@@ -3,26 +3,30 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from meshcall import MeshCallError, UnavailableError, get_service_contract
 
-from connector.control import ConnectorController
+from connector.control import ConnectorBusyError, ConnectorController
 from connector.core.config import ConnectorConfig
-from tests.mesh_support import control_channel
+from connector.mesh.control import ControlService
+from connector.mesh.hub import CONTROL_SERVICE
+from tests.mesh_support import Anything, Params, control_channel
 
 
-def test_concurrent_rpc_restarts_keep_one_backend_and_queries_remain_available(tmp_path):
+def test_concurrent_rpc_restart_is_rejected_without_a_second_restart(tmp_path):
     async def exercise():
         active = set()
         started = asyncio.Event()
         stopping = asyncio.Event()
         release = asyncio.Event()
-        both_restarts = asyncio.Event()
-        restarts = 0
+        starts = 0
 
         class Backend:
             def __init__(self, config):
                 pass
 
             async def run_forever(self):
+                nonlocal starts
+                starts += 1
                 task = asyncio.current_task()
                 active.add(task)
                 started.set()
@@ -35,15 +39,7 @@ def test_concurrent_rpc_restarts_keep_one_backend_and_queries_remain_available(t
                     finally:
                         active.discard(task)
 
-        class Controller(ConnectorController):
-            async def restart(self, params=None):
-                nonlocal restarts
-                restarts += 1
-                if restarts == 2:
-                    both_restarts.set()
-                return await super().restart(params)
-
-        controller = Controller(config_path=tmp_path / "connector.json", client_factory=Backend)
+        controller = ConnectorController(config_path=tmp_path / "connector.json", client_factory=Backend)
         ConnectorConfig("https://example.test", "connector", "fixture").save(controller.config_path)
         requests = []
         try:
@@ -52,14 +48,20 @@ def test_concurrent_rpc_restarts_keep_one_backend_and_queries_remain_available(t
                 await asyncio.wait_for(started.wait(), 2)
                 requests.append(asyncio.create_task(call("restart")))
                 await asyncio.wait_for(stopping.wait(), 2)
-                requests.append(asyncio.create_task(call("restart")))
-                await asyncio.wait_for(both_restarts.wait(), 2)
+                with pytest.raises(MeshCallError) as busy:
+                    await asyncio.wait_for(call("restart"), 2)
+                assert busy.value.code == "connector_busy"
+                assert not busy.value.retryable
                 await asyncio.wait_for(call("getState"), 2)
                 await asyncio.wait_for(call("getConfig"), 2)
                 release.set()
                 await asyncio.wait_for(asyncio.gather(*requests), 3)
                 await asyncio.sleep(0)
+                assert starts == 2, "one accepted restart must start exactly one replacement backend"
                 assert len(active) == 1, "concurrent restarts must not orphan a second backend"
+                await call("restart")
+                await asyncio.sleep(0)
+                assert starts == 3, "a later explicit restart is a new operation"
                 await controller.shutdown()
                 assert not active, "shutdown must stop every backend"
         finally:
@@ -70,6 +72,61 @@ def test_concurrent_rpc_restarts_keep_one_backend_and_queries_remain_available(t
             for task in leftovers:
                 task.cancel()
             await asyncio.gather(*leftovers, return_exceptions=True)
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("method", ["restart", "startPairing"])
+def test_control_actions_are_not_replayed_after_a_retryable_failure(tmp_path, monkeypatch, method):
+    async def exercise():
+        calls = 0
+
+        class Backend:
+            def __init__(self, config):
+                pass
+
+            async def run_forever(self):
+                await asyncio.Event().wait()
+
+        class Controller(ConnectorController):
+            async def restart(self, params=None):
+                nonlocal calls
+                calls += 1
+                await super().restart(params)
+                raise UnavailableError("Simulated failure after the action was accepted", retryable=True)
+
+            async def start_pairing(self, params):
+                nonlocal calls
+                calls += 1
+                await super().start_pairing(params)
+                raise UnavailableError("Simulated failure after the action was accepted", retryable=True)
+
+        async def resolve(*args, **kwargs):
+            return "https://example.test"
+
+        async def pair(*args, **kwargs):
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr("connector.control.resolve_pair_server_url", resolve)
+        monkeypatch.setattr(ConnectorController, "_run_pairing", pair)
+        controller = Controller(config_path=tmp_path / "connector.json", client_factory=Backend)
+        ConnectorConfig("https://example.test", "connector", "fixture").save(controller.config_path)
+        contract = get_service_contract(ControlService)
+        # Generated clients use these annotations to select the SDK retry policy.
+        actions = {item.name: item for item in contract.methods if not item.annotations.read_only}
+        assert all(not item.annotations.idempotent for item in actions.values())
+        try:
+            async with control_channel(controller) as call:
+                with pytest.raises(UnavailableError):
+                    await call.mesh.call_unary(
+                        CONTROL_SERVICE, method, Params(), Anything, timeout=2,
+                        idempotent=actions[method].annotations.idempotent,
+                    )
+                state = await call("getState")
+                assert state["running" if method == "restart" else "pairing"]
+            assert calls == 1, "a failed acknowledgement must not replay a lifecycle action"
+        finally:
+            await controller.shutdown()
 
     asyncio.run(exercise())
 
@@ -150,11 +207,11 @@ def test_cancelled_stop_does_not_interrupt_backend_cleanup(tmp_path):
             with pytest.raises(asyncio.CancelledError):
                 await pending
             assert not stopped.is_set()
-            restarting = asyncio.create_task(controller.start())
-            await asyncio.sleep(0)
-            assert not restarting.done(), "a new start must await the cancelled stop's cleanup"
+            with pytest.raises(ConnectorBusyError):
+                await controller.start()
             release.set()
-            await asyncio.wait_for(restarting, 1)
+            await asyncio.wait_for(stopped.wait(), 1)
+            await controller.start()
             await asyncio.sleep(0)
             assert starts == 2
             await asyncio.wait_for(controller.stop(), 1)
@@ -167,7 +224,7 @@ def test_cancelled_stop_does_not_interrupt_backend_cleanup(tmp_path):
     asyncio.run(exercise())
 
 
-def test_shutdown_rejects_lifecycle_mutations_queued_behind_stop(tmp_path):
+def test_busy_lifecycle_commands_are_rejected_instead_of_queued(tmp_path):
     async def exercise():
         started, stopping, release = (asyncio.Event() for _ in range(3))
 
@@ -193,20 +250,26 @@ def test_shutdown_rejects_lifecycle_mutations_queued_behind_stop(tmp_path):
             await started.wait()
             requests.append(asyncio.create_task(controller.stop()))
             await stopping.wait()
-            requests.extend([
-                asyncio.create_task(controller.start()),
-                asyncio.create_task(controller.save_config({
-                    "serverUrl": "https://other.test", "connectorId": "other", "connectorToken": "other-fixture",
-                })),
-            ])
-            await asyncio.sleep(0)
-            assert not any(task.done() for task in requests)
+            async with control_channel(controller) as call:
+                for method, params in [
+                    ("start", {}), ("stop", {}), ("restart", {}),
+                    ("saveConfig", {"config": {
+                        "serverUrl": "https://other.test", "connectorId": "other", "connectorToken": "other-fixture",
+                    }}),
+                ]:
+                    with pytest.raises(MeshCallError) as busy:
+                        await asyncio.wait_for(call(method, **params), 1)
+                    assert busy.value.code == "connector_busy"
+                    assert not busy.value.retryable
+                assert (await call("getState"))["running"]
             assert controller.get_config()["connectorId"] == "connector"
             closing = asyncio.create_task(controller.shutdown())
             await asyncio.sleep(0)
+            for operation in [controller.start(), controller.stop(), controller.restart(), controller.save_config({})]:
+                with pytest.raises(RuntimeError, match="shutting down"):
+                    await operation
             release.set()
-            results = await asyncio.gather(*requests, return_exceptions=True)
-            assert all(isinstance(result, RuntimeError) for result in results[1:])
+            await asyncio.gather(*requests)
             await asyncio.wait_for(closing, 1)
             assert not controller.get_state()["running"]
             assert controller.get_config()["connectorId"] == "connector"

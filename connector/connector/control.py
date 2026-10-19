@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,10 @@ from connector.server.pairing import (
 )
 
 ControlNotifier = Callable[[str, Any], Awaitable[None]]
+
+
+class ConnectorBusyError(RuntimeError):
+    """A lifecycle command cannot be accepted while another change is in flight."""
 
 
 class ConnectorController:
@@ -94,8 +99,7 @@ class ConnectorController:
         return config_to_payload(ConnectorConfig.load(self.config_path))
 
     async def save_config(self, params: Any) -> dict[str, Any]:
-        async with self._lifecycle_lock:
-            self._ensure_open()
+        async with self._lifecycle_change():
             self.lease.claim()
             config = config_from_params(params)
             saved_path = config.save(self.config_path)
@@ -106,9 +110,19 @@ class ConnectorController:
             return config_to_payload(config)
 
     async def start(self, params: Any = None) -> dict[str, Any]:
-        async with self._lifecycle_lock:
-            self._ensure_open()
+        async with self._lifecycle_change():
             return await self._start_runtime(params)
+
+    @asynccontextmanager
+    async def _lifecycle_change(self) -> AsyncIterator[None]:
+        self._ensure_open()
+        task = self._runtime_task
+        if self._lifecycle_lock.locked() or (task is not None and not task.done() and task.cancelling()):
+            raise ConnectorBusyError("The Connector is changing state; check its state before issuing another command")
+        # All controller work runs on one event loop. There is no suspension
+        # between the busy check and acquiring the uncontended lock.
+        async with self._lifecycle_lock:
+            yield
 
     async def _start_runtime(self, params: Any = None) -> dict[str, Any]:
         """Start while holding the lifecycle lock; also used by restart and pairing."""
@@ -137,7 +151,7 @@ class ConnectorController:
         return self.get_state()
 
     async def stop(self, _params: Any = None) -> dict[str, Any]:
-        async with self._lifecycle_lock:
+        async with self._lifecycle_change():
             return await self._stop_runtime()
 
     async def _stop_runtime(self) -> dict[str, Any]:
@@ -158,8 +172,7 @@ class ConnectorController:
         return self.get_state()
 
     async def restart(self, params: Any = None) -> dict[str, Any]:
-        async with self._lifecycle_lock:
-            self._ensure_open()
+        async with self._lifecycle_change():
             await self._stop_runtime()
             self._ensure_open()
             return await self._start_runtime(params)

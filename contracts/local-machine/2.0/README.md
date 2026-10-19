@@ -61,6 +61,10 @@ Python Connector 统一维护启动互斥、运行记录和本机 Connector ID �
 
 查询与订阅可以并发；`start`、`stop`、`restart` 与 `saveConfig` 在 Controller 内共用生命周期锁，`restart` 的停止与启动不可交错。配对的地址解析和网络轮询不占用该锁；`cancelPairing` 覆盖地址解析阶段，并使旧配对结果失效。配对成功后的凭据保存和自动启动也受生命周期锁保护，取消后尚未提交的配对不得再保存凭据或启动后端。进程退出时拒绝新的启动和配置保存，等待已有任务清理后再释放机器所有权。
 
+控制变更方法均不声明幂等，不由 SDK 自动重试。尤其 `restart` 是一次重启动作，`startPairing` 会替换配对，两者都不能因回复丢失而重放。变更调用失败后，宿主先查询当前状态，再由用户明确决定是否重新发起。
+
+生命周期变更进行中（包括已取消调用留下的后端清理）时，新的 `start`、`stop`、`restart` 和 `saveConfig` 立即返回 `connector_busy`，`retryable:false`，不排队、不合并，也不自动补执行。查询与 `cancelPairing` 仍可用；内部的配对提交和进程关闭可以等待生命周期锁。先后完成的两次显式 `restart` 表示两次用户操作，仍分别执行。
+
 ## 启动互斥冲突
 
 `acquireOwnership` 用于无配置时的启动预检；`saveConfig`、配对和启动也由 Python 检查占用。Host 不自行检查 PID 或写入运行记录。冲突是应用错误码 `connector_already_running`：

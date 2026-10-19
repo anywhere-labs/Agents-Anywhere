@@ -686,7 +686,7 @@ export class ControlServiceClient {
       "aa.local.v2.Control",
       "acquireOwnership",
       {},
-      { idempotent: true, ...options, responseSchema: ConnectorStateSchema },
+      { ...options, responseSchema: ConnectorStateSchema },
     );
   }
 
@@ -717,7 +717,7 @@ export class ControlServiceClient {
       {
         config: config,
       },
-      { idempotent: true, ...options, responseSchema: ConnectorSettingsSchema },
+      { ...options, responseSchema: ConnectorSettingsSchema },
     );
   }
 
@@ -734,7 +734,7 @@ export class ControlServiceClient {
       {
         config: config,
       },
-      { idempotent: true, ...options, responseSchema: ConnectorStateSchema },
+      { ...options, responseSchema: ConnectorStateSchema },
     );
   }
 
@@ -748,7 +748,7 @@ export class ControlServiceClient {
       "aa.local.v2.Control",
       "stop",
       {},
-      { idempotent: true, ...options, responseSchema: ConnectorStateSchema },
+      { ...options, responseSchema: ConnectorStateSchema },
     );
   }
 
@@ -765,7 +765,7 @@ export class ControlServiceClient {
       {
         config: config,
       },
-      { idempotent: true, ...options, responseSchema: ConnectorStateSchema },
+      { ...options, responseSchema: ConnectorStateSchema },
     );
   }
 
@@ -788,7 +788,7 @@ export class ControlServiceClient {
         timeout: timeout,
         pollInterval: pollInterval,
       },
-      { idempotent: true, ...options, responseSchema: PairingStatusSchema },
+      { ...options, responseSchema: PairingStatusSchema },
     );
   }
 
@@ -802,7 +802,7 @@ export class ControlServiceClient {
       "aa.local.v2.Control",
       "cancelPairing",
       {},
-      { idempotent: true, ...options, responseSchema: PairingStatusSchema },
+      { ...options, responseSchema: PairingStatusSchema },
     );
   }
 
