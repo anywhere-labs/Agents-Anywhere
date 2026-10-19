@@ -3,6 +3,9 @@ import { watch, type FSWatcher } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
 import { Mesh, Router, type RunningServer } from 'meshcall'
+import { LogsServiceClient, type LogPage } from '../generated/connector-logs.js'
+import { RuntimeRpcLogger } from './diagnostics.js'
+import { RpcLogOutput } from './log-output.js'
 import { SyncServiceClient, type CheckpointResult, type SnapshotPage, type SnapshotRequest, type SnapshotResult, type SyncBatch as WireBatch } from '../generated/dsh-sync.js'
 import { acquireManagerLock } from '../storage/files.js'
 import { BridgeService } from './bridge-service.js'
@@ -62,7 +65,7 @@ export class ConnectorSync implements SyncTransport {
   }
 }
 
-interface Link { rendezvous: Rendezvous, mesh: Mesh, server: RunningServer, sync: SyncServiceClient }
+interface Link { rendezvous: Rendezvous, mesh: Mesh, server: RunningServer, sync: SyncServiceClient, logs: LogsServiceClient }
 
 /**
  * Serves `aa.dsh.v2.Bridge` on the Router of whichever Connector currently
@@ -85,13 +88,18 @@ export class BridgeConnection {
 
   constructor(readonly rendezvousPath: string, reader: SessionReader,
     private readonly diagnostics: RuntimeDiagnostics = reader.native?.diagnostics ?? quietDiagnostics,
-    private readonly pollMs = 1000) {
+    private readonly pollMs = 1000, private readonly logOutput?: RpcLogOutput) {
     this.service = new BridgeService({ reader, diagnostics,
       transportFor: subscriptionId => new ConnectorSync(this.requireLink().sync, subscriptionId) })
   }
 
   /** The Connector this plugin serves right now, if any. */
   get connectorInstance(): string | undefined { return this.link?.rendezvous.instanceId }
+
+  async readLogs(source: 'bridge' | 'connector', before?: number, after?: number): Promise<LogPage> {
+    await this.logOutput?.flush()
+    return this.requireLink().logs.read(source, before ?? null, after ?? null, 200, { timeoutMs: 3000 })
+  }
 
   start(): Promise<void> {
     if (!this.startTask) {
@@ -142,14 +150,18 @@ export class BridgeConnection {
     try { rendezvous = parseRendezvous(await readFile(this.rendezvousPath, 'utf8')) }
     catch (error) { if (record(error).code !== 'ENOENT') this.failed('bridge.rendezvous_unreadable', error) }
     const current = this.link?.rendezvous
-    if (current && rendezvous && current.instanceId === rendezvous.instanceId && current.key === rendezvous.key) return
+    if (current && rendezvous && current.instanceId === rendezvous.instanceId && current.key === rendezvous.key) {
+      await this.logOutput?.flush()
+      return
+    }
     if (this.link) await this.disconnect()
     if (!rendezvous || this.closed) return
     const router = new Router('unixPath' in rendezvous.endpoint ? { unixPath: rendezvous.endpoint.unixPath } : { pipe: rendezvous.endpoint.pipe })
-    const mesh = new Mesh(router, { token: rendezvous.key, peerId: `dsh-bridge-${randomUUID()}` })
+    const rpcLogger = new RuntimeRpcLogger(this.diagnostics)
+    const mesh = new Mesh(router, { token: rendezvous.key, peerId: `dsh-bridge-${randomUUID()}`, logger: rpcLogger })
     mesh.mount(this.service, { instanceId: `dsh-bridge-${randomUUID()}` })
     let server: RunningServer
-    try { server = await mesh.startServing({ logLevel: 'debug' }) }
+    try { server = await mesh.startServing({ logLevel: 'debug', logger: rpcLogger }) }
     catch (error) {
       // A Connector that died without unpublishing; the next one replaces the file.
       await mesh.close().catch(() => undefined)
@@ -157,9 +169,11 @@ export class BridgeConnection {
       return
     }
     if (this.closed) { await mesh.close(); return }
-    this.link = { rendezvous, mesh, server, sync: new SyncServiceClient(mesh) }
+    this.link = { rendezvous, mesh, server, sync: new SyncServiceClient(mesh), logs: new LogsServiceClient(mesh) }
+    this.logOutput?.connect(this.link.logs)
     this.lastFailure = undefined
     this.diagnostics.log('info', 'bridge.connected', { connector: rendezvous.instanceId, connectorPid: rendezvous.pid })
+    await this.logOutput?.flush()
   }
 
   private failed(event: string, error: unknown, details: Record<string, string> = {}): void {
@@ -171,10 +185,12 @@ export class BridgeConnection {
 
   private async disconnect(): Promise<void> {
     const link = this.link
-    this.link = undefined
     if (!link) return
     this.service.close()
     this.diagnostics.log('info', 'bridge.disconnected', { connector: link.rendezvous.instanceId })
+    await this.logOutput?.flush()
+    this.logOutput?.connect(undefined)
+    this.link = undefined
     // Streams end with the router shutdown above; the timeout is a last resort.
     await link.server.close({ drain: true, drainTimeoutMs: 1_000 }).catch(() => undefined)
     await link.mesh.close().catch(() => undefined)

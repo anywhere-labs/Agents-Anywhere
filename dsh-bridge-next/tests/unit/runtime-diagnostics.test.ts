@@ -1,74 +1,72 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { RuntimeDiagnostics } from '../../src/host/dsh-runtime/diagnostics.js'
+import { RuntimeDiagnostics, RuntimeRpcLogger, type DiagnosticEntry } from '../../src/host/dsh-runtime/diagnostics.js'
+import { RpcLogOutput } from '../../src/host/dsh-runtime/log-output.js'
 import { readBridgeLogs } from '../../src/host/dsh-runtime/log-reader.js'
+import type { LogsServiceClient, LogWrite } from '../../src/host/generated/connector-logs.js'
 
-test('bridge diagnostics preserve the failing read and stack without native content, and expose only bridge files', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'aa-bridge-logs-'))
-  try {
-    const log = new RuntimeDiagnostics(undefined, root)
-    const cause = Object.assign(new Error('PRIVATE_PROMPT PRIVATE_TOKEN', {
-      cause: new Error('corrupt session log: seq gap in committed region at line 730 (expected 9044, got 9041)'),
-    }), { code: 'SESSION_UNKNOWN_EVENT' })
-    const error = new Error('PRIVATE_SESSION_JSON', { cause })
-    await assert.rejects(log.measure('session.visibility_read', { sessionId: 'session-1' }, async () => { throw error }))
-    await log.flush()
-    await writeFile(join(root, 'connector.jsonl'), 'PRIVATE_CONNECTOR_LOG')
-    await writeFile(join(root, 'host.log'), 'PRIVATE_HOST_LOG')
-    const result = await readBridgeLogs(root)
-    assert.equal(result.entries.length, 2)
-    const failed = result.entries[1]!
-    assert.equal(failed.event, 'session.visibility_read.failed')
-    assert.equal(failed.level, 'error')
-    assert.match(failed.details, /session-1/)
-    assert.match(failed.details, /runtime-diagnostics.test.ts/)
-    assert.match(failed.details, /SESSION_UNKNOWN_EVENT/)
-    assert.equal(JSON.parse(failed.details).cause.cause.expectedSeq, 9044)
-    assert.equal(JSON.parse(failed.details).cause.cause.actualSeq, 9041)
-    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_/)
-    if (process.platform !== 'win32') assert.equal((await stat(join(root, 'dsh-runtime.jsonl'))).mode & 0o777, 0o600)
-  } finally { await rm(root, { recursive: true, force: true }) }
+function collector() {
+  const entries: DiagnosticEntry[] = []
+  const logger = new RuntimeDiagnostics({ write: entry => entries.push(entry), async flush() {} })
+  return { logger, entries }
+}
+
+test('injected diagnostics preserve safe error context without native content', async () => {
+  const { logger, entries } = collector()
+  const cause = Object.assign(new Error('PRIVATE_PROMPT PRIVATE_TOKEN', {
+    cause: new Error('corrupt session log: seq gap in committed region at line 730 (expected 9044, got 9041)'),
+  }), { code: 'SESSION_UNKNOWN_EVENT' })
+  await assert.rejects(logger.measure('session.visibility_read', { sessionId: 'session-1' }, async () => {
+    throw new Error('PRIVATE_SESSION_JSON', { cause })
+  }))
+  assert.equal(entries.length, 2)
+  assert.equal(entries[1]!.message, 'session.visibility_read.failed')
+  const details = JSON.parse(entries[1]!.details)
+  assert.match(entries[1]!.details, /runtime-diagnostics.test.ts/)
+  assert.equal(details.cause.cause.expectedSeq, 9044)
+  assert.doesNotMatch(JSON.stringify(entries), /PRIVATE_/)
 })
 
-test('bridge log rotation and bounded reads retain recent entries and tolerate partial appends', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'aa-bridge-logs-'))
-  try {
-    assert.deepEqual((await readBridgeLogs(root)).entries, [])
-    const path = join(root, 'dsh-runtime.jsonl')
-    const previous = `${'x'.repeat(2 * 1024 * 1024)}\n`
-    await writeFile(path, previous)
-    const log = new RuntimeDiagnostics(undefined, root)
-    log.log('info', 'bridge.listening', { port: 1234 })
-    await log.flush()
-    assert.equal(await readFile(join(root, 'dsh-runtime.previous.jsonl'), 'utf8'), previous)
-    assert.equal((await readBridgeLogs(root)).entries[0]?.event, 'bridge.listening')
-    const entries = Array.from({ length: 210 }, (_, seq) => JSON.stringify({ time: new Date().toISOString(), level: 'debug', event: 'sync.batch', seq }))
-    await writeFile(path, entries.join('\n') + '\n{"incomplete"')
-    const result = await readBridgeLogs(root)
-    assert.equal(result.entries.length, 200)
-    assert.equal(JSON.parse(result.entries[0]!.details).seq, 10)
-    assert.equal(JSON.parse(result.entries.at(-1)!.details).seq, 209)
-  } finally { await rm(root, { recursive: true, force: true }) }
+test('RPC output retries stable event IDs after lost acknowledgements and bounds offline memory', async () => {
+  const output = new RpcLogOutput(3)
+  const logger = new RuntimeDiagnostics(output)
+  for (let i = 0; i < 5; i++) logger.log('info', `event-${i}`)
+  const deliveries: LogWrite[][] = []
+  let lostReply = true
+  output.connect({ write: async (batch: LogWrite[]) => {
+    deliveries.push(batch)
+    if (lostReply) { lostReply = false; throw new Error('reply lost') }
+    return { accepted: batch.length }
+  } } as LogsServiceClient)
+  await logger.flush()
+  await logger.flush()
+  assert.deepEqual(deliveries[0], deliveries[1])
+  assert.equal(deliveries[0]!.length, 3)
+  await logger.flush()
+  const dropped = deliveries.at(-1)![0]!
+  assert.equal(dropped.message, 'diagnostics.dropped')
+  assert.equal(JSON.parse(dropped.details!).droppedLogEntries, 2)
 })
 
-test('log summaries expose the RPC method and distinguish rejection from completion', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'aa-log-summary-'))
-  try {
-    const log = new RuntimeDiagnostics(undefined, root)
-    log.log('debug', 'rpc.completed', { method: 'getSessionState' })
-    log.log('warn', 'rpc.rejected', { method: 'session.send' })
-    log.log('debug', 'session.read.started')
-    await log.flush()
-    const first = await readBridgeLogs(root)
-    assert.deepEqual(first.entries.map(entry => [entry.method, entry.outcome]), [
-      ['getSessionState', 'success'], ['session.send', 'failure'], ['session.read', 'pending'],
-    ])
-    log.log('info', 'bridge.listening')
-    await log.flush()
-    const second = await readBridgeLogs(root)
-    assert.deepEqual(second.entries.slice(0, 3).map(entry => entry.id), first.entries.map(entry => entry.id))
-  } finally { await rm(root, { recursive: true, force: true }) }
+test('framework logger retains bound call context and excludes log-service feedback', () => {
+  const { logger, entries } = collector()
+  const rpc = new RuntimeRpcLogger(logger)
+  rpc.bind({ service: 'aa.dsh.v2.Bridge', method: 'sync', call_id: 'call-1' }).warning('sync failed: %s', new Error('PRIVATE_PAYLOAD'))
+  rpc.bind({ service: 'aa.local.v2.Logs' }).debug('write completed')
+  assert.equal(entries.length, 1)
+  assert.equal(JSON.parse(entries[0]!.details).call_id, 'call-1')
+  assert.doesNotMatch(JSON.stringify(entries), /PRIVATE_PAYLOAD/)
+})
+
+test('log UI adapter preserves central sequence IDs and method/outcome summaries', () => {
+  const { logger, entries } = collector()
+  logger.log('debug', 'rpc.completed', { method: 'getSessionState' })
+  logger.log('warn', 'rpc.rejected', { method: 'session.send' })
+  logger.log('debug', 'session.read.started')
+  const result = readBridgeLogs({ items: entries.map((e, i) => ({ ...e, seq: i + 41 })),
+    firstSeq: 41, lastSeq: 43, total: 3, hasMoreBefore: false, hasMoreAfter: false })
+  assert.deepEqual(result.entries.map(e => [e.method, e.outcome]), [
+    ['getSessionState', 'success'], ['session.send', 'failure'], ['session.read', 'pending'],
+  ])
+  assert.equal(result.entries[0]!.id, '41')
 })

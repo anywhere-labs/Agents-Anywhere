@@ -1,5 +1,6 @@
 import type { BridgeStatus } from '../../contracts/bridge-status.js'
-import { RuntimeDiagnostics } from '../dsh-runtime/diagnostics.js'
+import { onboardingDiagnostics } from '../onboarding/diagnostics.js'
+import type { RuntimeDiagnostics } from '../dsh-runtime/diagnostics.js'
 import { startupFailure, unavailableBridge } from '../dsh-runtime/startup-status.js'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
@@ -11,7 +12,6 @@ import type { ConnectorAction, ConnectorFolder, ConnectorSettings } from '../../
 import type { MobileLoginSnapshot } from '../../contracts/mobile.js'
 import { join } from 'node:path'
 import { stateRoot } from '../config.js'
-import { readBridgeLogs } from '../dsh-runtime/log-reader.js'
 import { readConnectorLogs } from '../connector/logs.js'
 import type { ConnectorLogPage, ConnectorLogQuery, BridgeLogSnapshot } from '../../contracts/logs.js'
 
@@ -35,7 +35,7 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
     this.logsDirectory = join(stateRoot(config), 'logs')
     this.makeManager = () => new OnboardingManager(resolveConfig(config))
     this.manager = this.makeManager()
-    this.diagnostics = new RuntimeDiagnostics(ctx.logger('agents-anywhere-onboarding'), this.logsDirectory)
+    this.diagnostics = onboardingDiagnostics(ctx.logger('agents-anywhere-onboarding'), this.logsDirectory)
     ctx.effect(() => async () => {
       this.disposed = true
       await this.recovery
@@ -79,9 +79,12 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   @Remote('openDesktop')
   openDesktop(): Promise<DesktopLaunch> { return this.manager.openDesktop() }
   @Remote('readBridgeLogs')
-  readBridgeLogs(): Promise<BridgeLogSnapshot> { return readBridgeLogs(this.logsDirectory) }
+  readBridgeLogs(): Promise<BridgeLogSnapshot> { return this.ctx.get('agentsAnywhereRuntime')?.readBridgeLogs() ?? Promise.resolve({ entries: [], updatedAt: new Date().toISOString() }) }
   @Remote('readConnectorLogs')
-  readConnectorLogs(query?: ConnectorLogQuery): Promise<ConnectorLogPage> { return readConnectorLogs(this.logsDirectory, query) }
+  readConnectorLogs(query?: ConnectorLogQuery): Promise<ConnectorLogPage> {
+    const runtime = this.ctx.get('agentsAnywhereRuntime')
+    return runtime?.hasLogConnection() ? runtime.readConnectorLogs(query) : readConnectorLogs(this.logsDirectory, query)
+  }
   @Remote('begin')
   begin(input?: LoginRequest): Promise<{ url: string }> { return this.manager.begin(input) }
   @Remote('cancel')

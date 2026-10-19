@@ -15,6 +15,8 @@ import type { ConnectorLogStore } from "./log-store";
 import type {
   ConnectorConfigPatch,
   ConnectorLogEntry,
+  ConnectorLogQuery,
+  ConnectorLogPage,
   ConnectorPrivateConfig,
   ConnectorPublicConfig,
   ConnectorState,
@@ -24,7 +26,7 @@ import {
   ControlServiceClient,
   type ConnectorSettings as ControlSettings,
 } from "./generated/connector-control";
-import { LogsServiceClient } from "./generated/connector-logs";
+import { LogsServiceClient, type LogEntry, type LogPage } from "./generated/connector-logs";
 
 /**
  * A `uv run` without a matching project environment builds one first,
@@ -59,7 +61,9 @@ export interface ConnectorChannel {
     events(since: number | null, options?: { signal?: AbortSignal }): AsyncIterable<{ seq: number; kind: string; state?: unknown }>;
   };
   logs: {
-    tail(since: number | null, options?: { signal?: AbortSignal }): AsyncIterable<{ seq: number; level?: string; message: string }>;
+    tail(since: number | null, source?: "connector" | "bridge" | null, options?: { signal?: AbortSignal }): AsyncIterable<LogEntry>;
+    read(source?: "connector" | "bridge" | null, beforeSeq?: number | null, afterSeq?: number | null, limit?: number): Promise<LogPage>;
+    clear(): Promise<LogPage>;
   };
   close?(): Promise<void>;
 }
@@ -82,6 +86,8 @@ type ConnectorSupervisorOptions = {
   logs: ConnectorLogStore;
   onState: (state: ConnectorState) => void;
   onLog: (entry: ConnectorLogEntry) => void;
+  onRuntimeLog?: (entry: ConnectorLogEntry) => void;
+  onRuntimeLogsReady?: () => void;
   /** Test seam; production connects a Mesh to the Connector's Router. */
   connectControl?: (rendezvous: Rendezvous) => Promise<ConnectorChannel>;
 };
@@ -168,6 +174,51 @@ export class ConnectorSupervisor {
   publicState(): ConnectorState {
     this.refreshBindingState();
     return { ...this.state };
+  }
+
+  hasRuntimeLogs(): boolean { return this.channel !== null }
+
+  async readLogs(query: ConnectorLogQuery = {}): Promise<ConnectorLogPage> {
+    if (!this.channel) return this.options.logs.read(query);
+    const page = await this.channel.logs.read(null, query.beforeSeq ?? null, query.afterSeq ?? null,
+      Math.max(1, Math.min(1000, query.pageSize ?? 200)));
+    return { ...page, items: page.items.map(entry => ({ ...entry })) };
+  }
+
+  async clearLogs(): Promise<ConnectorLogPage> {
+    if (!this.channel) return this.options.logs.clear();
+    const page = await this.channel.logs.clear();
+    return { ...page, items: page.items.map(entry => ({ ...entry })) };
+  }
+
+  async exportLogs(filePath: string): Promise<number> {
+    const channel = this.channel;
+    if (!channel) return this.options.logs.exportTo(filePath);
+    const temporary = `${filePath}.${process.pid}.tmp`;
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const file = await fs.promises.open(temporary, "wx", 0o600);
+    let count = 0;
+    try {
+      let cursor = 0;
+      let upper: number | null = null;
+      for (;;) {
+        const page = await channel.logs.read(null, null, cursor, 1000);
+        if (upper === null) upper = page.lastSeq ?? 0;
+        const entries = page.items.filter(entry => entry.seq <= upper!);
+        if (!entries.length) break;
+        await file.write(entries.map(entry => JSON.stringify(entry)).join("\n") + "\n");
+        count += entries.length;
+        cursor = entries.at(-1)!.seq;
+        if (cursor >= upper || !page.hasMoreAfter) break;
+      }
+      await file.close();
+      await fs.promises.rename(temporary, filePath);
+      return count;
+    } catch (error) {
+      await file.close().catch(() => undefined);
+      await fs.promises.unlink(temporary).catch(() => undefined);
+      throw error;
+    }
   }
 
   async getState(): Promise<ConnectorState> {
@@ -511,6 +562,7 @@ export class ConnectorSupervisor {
   private watchStreams(channel: ConnectorChannel): void {
     const controller = new AbortController();
     this.streams = controller;
+    this.options.onRuntimeLogsReady?.();
     const follow = async <T>(name: string, open: (since: number | null, signal: AbortSignal) => AsyncIterable<T>) => {
       let since: number | null = null;
       let backoff = 500;
@@ -531,7 +583,7 @@ export class ConnectorSupervisor {
       }
     };
     void follow("Connector state", (since, signal) => channel.control.events(since, { signal }));
-    void follow("Connector log", (since, signal) => channel.logs.tail(since, { signal }));
+    void follow("Connector log", (since, signal) => channel.logs.tail(since, null, { signal }));
   }
 
   private handleEvent(event: unknown): void {
@@ -543,14 +595,9 @@ export class ConnectorSupervisor {
       return;
     }
     if (typeof value.message === "string") {
-      // Keep the Connector's timestamp, module and traceback; the store redacts secrets.
-      this.log({
-        level: value.level ?? "INFO",
-        message: value.message,
-        ...(value.time ? { time: value.time } : {}),
-        ...(value.name ? { name: value.name } : {}),
-        ...(value.exception ? { exception: value.exception } : {}),
-      });
+      // Runtime records keep Connector's sequence and are never written by Desktop.
+      const entry = event as LogEntry;
+      this.options.onRuntimeLog?.({ ...entry, level: entry.level ?? "INFO" });
     }
   }
 

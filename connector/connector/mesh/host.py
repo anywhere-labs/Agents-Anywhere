@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from connector.control import ConnectorController
+from connector.core import runtime_owner
 from connector.logging import install_rpc_log_sink
 from connector.mesh.control import ControlEvents, ControlService
 from connector.mesh.hub import HOST_ROLE, LocalHub, set_local_hub
@@ -62,7 +63,7 @@ async def serve_host(
 ) -> None:
     loop = asyncio.get_running_loop()
     events = ControlEvents()
-    logs = LogHub()
+    logs = LogHub(runtime_owner.system_home() / ".agents-anywhere" / "logs")
     controller = ConnectorController(config_path=config_path, notifier=events.notify)
     log_sink = install_rpc_log_sink(logs.notify, level="DEBUG" if debug else "INFO", remove_default_sink=True)
     hub = LocalHub()
@@ -83,3 +84,4 @@ async def serve_host(
                 await hub.stop()
             finally:
                 await log_sink.close()
+                logs.close()

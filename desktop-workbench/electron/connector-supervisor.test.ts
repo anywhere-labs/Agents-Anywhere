@@ -38,7 +38,9 @@ function fakeChannel(behavior: { conflict?: () => boolean } = {}): ConnectorChan
       restart: async () => state(true),
       events: stayOpen,
     },
-    logs: { tail: stayOpen },
+    logs: { tail: (_since, _source, options) => stayOpen(null, options),
+      read: async () => ({ items: [], firstSeq: null, lastSeq: null, total: 0, hasMoreBefore: false, hasMoreAfter: false }),
+      clear: async () => ({ items: [], firstSeq: null, lastSeq: null, total: 0, hasMoreBefore: false, hasMoreAfter: false }) },
     close: async () => {},
   };
 }

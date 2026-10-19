@@ -209,9 +209,28 @@ async def _run_cli_connector(
 ) -> None:
     lease = lease or RuntimeLease(legacy_paths=[Path(config_path).with_name("connector-runtime.json")] if config_path else [])
     lease.claim(config)
-    print(SHELL_LIFETIME_WARNING)
     try:
-        await BackendRpcClient(config).run_forever()
+        from connector.core import runtime_owner
+        from connector.logging import install_rpc_log_sink
+        from connector.mesh.hub import LocalHub, set_local_hub
+        from connector.mesh.logs import LogHub, LogsService
+
+        logs = LogHub(runtime_owner.system_home() / ".agents-anywhere" / "logs")
+        sink = install_rpc_log_sink(logs.notify)
+        hub = LocalHub()
+        set_local_hub(hub)
+        print(SHELL_LIFETIME_WARNING)
+        try:
+            await hub.start()
+            await hub.mount(LogsService(logs))
+            await BackendRpcClient(config).run_forever()
+        finally:
+            try:
+                await hub.stop()
+            finally:
+                set_local_hub(None)
+                await sink.close()
+                logs.close()
     finally:
         lease.release()
 

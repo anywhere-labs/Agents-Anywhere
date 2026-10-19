@@ -7,12 +7,11 @@ import os
 from pathlib import Path
 
 import pytest
-from meshcall import Mesh, MeshCallError, Router
-from pydantic import BaseModel, ConfigDict
-
 from connector.mesh.host import serve_host
 from connector.mesh.hub import DSH_SYNC_SERVICE, LocalHub
 from connector.mesh.logs import LogEntry
+from meshcall import Mesh, MeshCallError, Router
+from pydantic import BaseModel, ConfigDict
 
 
 class Params(BaseModel):
@@ -72,3 +71,39 @@ def test_hub_keys_are_random_per_process_and_scoped_by_role() -> None:
     assert entries["host"]["roles"] == ["client"]
     assert entries["dsh-bridge"]["register"] == ["aa.dsh.v2.Bridge"]
     assert all(first.key(role) not in json.dumps(entries) for role in entries)
+
+
+def test_bridge_log_rpc_persists_deduplicates_and_enforces_role_permissions(tmp_path) -> None:
+    from connector.logging import install_rpc_log_sink
+    from connector.mesh.logs import LogHub, LogPage, LogsService
+
+    async def exercise():
+        hub = LocalHub()
+        logs = LogHub(tmp_path / 'logs')
+        sink = install_rpc_log_sink(logs.notify, level='DEBUG')
+        try:
+            await hub.start()
+            await hub.mount(LogsService(logs))
+            async with Mesh(hub.router, token=hub.key('dsh-bridge')) as bridge:
+                payload = {'time': 'now', 'level': 'info', 'name': 'bridge', 'message': 'rpc persisted', 'producer': 'instance', 'eventId': '1'}
+                for _ in range(2):
+                    await bridge.call_unary('aa.local.v2.Logs', 'write', Params(entries=[payload]), Params, timeout=5)
+                for _ in range(3):
+                    page = await bridge.call_unary('aa.local.v2.Logs', 'read', Params(source='bridge'), LogPage, timeout=5)
+                    assert len(page.items) == 1
+                with pytest.raises(MeshCallError) as denied:
+                    await bridge.call_unary('aa.local.v2.Logs', 'clear', Params(), Params, timeout=5)
+                assert denied.value.code == 'permission_denied'
+                with pytest.raises(MeshCallError) as invalid:
+                    await bridge.call_unary('aa.local.v2.Logs', 'write', Params(entries=[payload] * 65), Params, timeout=5)
+                assert invalid.value.code == 'invalid_argument'
+            # Logs' access logs never enter the store, including validation failures.
+            assert not any('RPC call aa.local.v2.Logs.' in item.message for item in logs.read().items)
+        finally:
+            await hub.stop()
+            await sink.close()
+            logs.close()
+        restored = LogHub(tmp_path / 'logs')
+        assert restored.read(source='bridge').items[0].message == 'rpc persisted'
+        restored.close()
+    asyncio.run(exercise())

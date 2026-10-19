@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import sys
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from loguru import logger as logger
+from loguru import logger
 
 # Loguru calls sinks from whichever thread logged, so a synchronous, thread-safe
 # notifier is preferred; a coroutine notifier needs a running loop there.
@@ -39,7 +40,9 @@ class RpcLogSink:
     ) -> RpcLogSink:
         if remove_default_sink:
             logger.remove()
-        self._sink_id = logger.add(self._write, level=level, format="{message}")
+        self._sink_id = logger.add(self._write, level=level, format="{message}",
+                                   filter=lambda record: record["extra"].get("meshcall_service") != "aa.local.v2.Logs"
+                                   and not record["message"].startswith("RPC call aa.local.v2.Logs."))
         return self
 
     async def close(self) -> None:
@@ -57,6 +60,10 @@ class RpcLogSink:
             "name": record["name"],
             "message": record["message"],
         }
+        extra = {key.removeprefix("meshcall_"): value for key, value in record["extra"].items()
+                 if key in {"meshcall_service", "meshcall_method", "meshcall_call_id"}}
+        if extra:
+            payload["details"] = json.dumps(extra, default=str)
         exception = record.get("exception")
         if exception is not None:
             payload["exception"] = str(exception)

@@ -95,7 +95,7 @@ export class BackendServer {
     }
   }
 
-  private route(method: string, url: URL, body: Record<string, unknown>): unknown {
+  private async route(method: string, url: URL, body: Record<string, unknown>): Promise<unknown> {
     const path = url.pathname;
     if (method === "GET") {
       if (path === "/state") return this.state.getConnectorState();
@@ -128,7 +128,7 @@ export class BackendServer {
         });
         return { appended: true };
       }
-      if (path === "/logs/export") return { count: this.state.exportLogs(String(body.filePath ?? "")) };
+      if (path === "/logs/export") return { count: await this.state.exportLogs(String(body.filePath ?? "")) };
       if (path === "/device/create") return this.state.createAndConnect(body as never);
       if (path === "/device/reconnect") return this.state.reconnectAndConnect(body as never);
       if (path === "/device/disconnect") return this.state.disconnectLocal(body as never);

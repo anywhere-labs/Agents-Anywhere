@@ -81,11 +81,15 @@ uv run meshcall generate connector.mesh.control:ControlService --language typesc
   --output ../desktop-workbench/electron/generated/connector-control.ts
 uv run meshcall generate connector.mesh.logs:LogsService --language typescript --single-file \
   --output ../desktop-workbench/electron/generated/connector-logs.ts
+uv run meshcall generate connector.mesh.logs:LogsService --language typescript --single-file \
+  --output ../dsh-bridge-next/src/host/generated/connector-logs.ts
 ```
 
 Desktop 主进程是 CommonJS，生成文件的 `import type ... from "meshcall"` 需要带
 `with { "resolution-mode": "import" }`（重新生成后手工补上，或按同一步骤的脚本处理）。
 `aa.dsh.v2.Bridge` 的 Python 客户端由插件的 TS 服务导出契约后生成，生成命令见插件 `TECHNICAL.md`。
+
+日志读写、权限及持久化语义见 [Connector 运行日志服务](logs.md)。
 
 ## 兼容
 

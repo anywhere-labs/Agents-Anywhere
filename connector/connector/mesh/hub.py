@@ -56,7 +56,7 @@ ROLE_PERMISSIONS: dict[str, dict[str, list[str]]] = {
     },
     DSH_BRIDGE_ROLE: {
         "register": [DSH_BRIDGE_SERVICE],
-        "call": [f"{DSH_SYNC_SERVICE}/*"],
+        "call": [f"{DSH_SYNC_SERVICE}/*", *[f"{LOGS_SERVICE}/{method}" for method in ("write", "read", "tail")]],
     },
 }
 

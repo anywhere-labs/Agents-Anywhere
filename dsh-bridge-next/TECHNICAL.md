@@ -37,9 +37,9 @@ DSH 左侧边栏「设置」上方 → 远程控制 → 云端登录或连接自
 - **桥接日志**：只读取 Anywhere Bridge 的运行日志，显示最近 200 条，每 2 秒刷新，可暂停或手动刷新。即使 CLI 正占用 Connector、尚未登录、安装检测失败或 AA Desktop 已安装，也可以查看。记录连接、RPC、会话读取、快照、同步批次和 ACK；错误带会话标识、阶段、错误码和调用栈位置，不记录请求正文、原生事件内容、令牌或原始异常消息。
 - **维护**：并排提供打开数据目录、打开日志目录和恢复出厂设置三个按钮，不展示数据与日志路径；headless 环境禁用打开目录。日志仅记录经过筛选的生命周期事件，滚动保留约两份 512 KiB 文件，不记录原始进程输出和凭据。恢复出厂设置先撤销当前设备凭据，再清理本插件的账号、绑定、同步缓存、日志及设置；服务端撤销失败时先保留本地状态，用户可另行确认仅清理本地。DSH 会话、运行时端点、共享 `connector-runtime.json` 和下载好的 Python 环境保留。
 
-桥接日志另存于插件数据目录的 `logs/dsh-runtime.jsonl`，滚动保留当前和上一份约 2 MiB 文件；同时输出到 DSH 的 `agents-anywhere-runtime` 日志分类。默认位置为 `~/.agents-anywhere/dsh-bridge-next/logs/`，自定义 `stateRoot` 时跟随该目录。已有 Connector 生命周期日志继续单独保留。
+Bridge 与 Connector 运行日志统一由 Connector 保存到操作系统用户目录的 `~/.agents-anywhere/logs/`，使用分段 JSONL 文件；Connector 决定轮转、保留和持久确认。插件通过 `aa.local.v2.Logs.write/read/tail` 上报及读取，不再写 `dsh-runtime.jsonl` 或向 Cordis 重复输出运行日志。业务 logger 在入口注入；RPC 请求使用 MeshCall 的 dependency/meta 注入 namespace 和带调用上下文的 logger。断线时缓存最多 512 条未确认日志，重连带稳定事件 ID 重发；插件离线退出会丢失未确认部分，溢出会记录丢弃计数。安装引导日志仍本地保存到 `<stateRoot>/logs/onboarding.jsonl`。详细契约见 [日志服务](../contracts/dsh-bridge/2.0/logs.md)。
 
-AA Desktop 正在运行时，连接功能显示桌面端引导；仅安装而未运行时，插件仍可管理连接。桥接日志始终可用。手机连接复用已有 `/auth/mobile-login/qr`、`status`、`confirm` 接口；二维码包含手机扫描协议要求的临时登录凭据，使用当前账号的后端地址，不使用 DSH 地址或 OAuth Web 开发端口。无需新增 AA Server 接口。
+AA Desktop 正在运行时，连接功能显示桌面端引导；仅安装而未运行时，插件仍可管理连接。桥接运行日志需 Connector 日志服务可用；无连接时不读取旧插件日志文件。手机连接复用已有 `/auth/mobile-login/qr`、`status`、`confirm` 接口；二维码包含手机扫描协议要求的临时登录凭据，使用当前账号的后端地址，不使用 DSH 地址或 OAuth Web 开发端口。无需新增 AA Server 接口。
 
 插件基于 DSH `0.2.0-rc.2` 开发和测试，peer 声明支持 `>=0.2.0-rc.1 <0.3.0-0`，支持附件和模型/effort/权限、Agent 模式配置。Runtime 提供 DSH 一键配置、官方侧栏过滤、原生会话和历史读取、首次完整校准、归档同步、实时事件、文本、图片和普通文件新建/续聊、中断、`ask_user_question` 以及受限操作的单次批准或拒绝。新建使用 AA 显式传入的模型和权限选择；已有会话可切换配置。AA 发来的 PNG/JPEG/WebP/GIF 使用图片接口，普通文件通过本机暂存文件和官方 `fileUploads.uploadStream` 上传，RPC 只传文件元数据。平台发出的附件保留 AA 文件引用；不回传 DSH 本地产生的附件。首次会话清单成功提交到平台之前，runtime 保持初始化状态；同步中断时自动重试。
 
@@ -166,7 +166,7 @@ Host 配置位于 DSH 的插件配置行。常用项如下：
 
 Python 下载镜像独立于 PyPI 镜像，提供官方源与 npmmirror。首次初始化缺少该设置时，中文系统默认使用 npmmirror，其他语言使用官方源；已有的手动选择保持不变，恢复出厂设置重新应用语言默认值。选择通过 `UV_PYTHON_INSTALL_MIRROR` 传给 uv，仅影响解释器下载。`@dataiku/uv` 的平台可选依赖由包管理器安装，Host 直接执行其中的原生二进制，不要求 postinstall 脚本运行。
 
-日志页可以切换 Bridge 和 Connector。Connector 日志记录 uv/Python 的 stderr 与进程状态，按时间从上往下显示，首次及每次分页读取 200 行，滚到顶部加载更早记录。日志最多保留 10,000 行，写入前移除终端控制字符并脱敏凭据；stdout 只用于 `anywhere-cli rpc` 启动时的一行就绪信息，控制调用走本机 MeshCall Router。日志在 `<stateRoot>/logs/connector-output.json` 中持久化，通过 Host RPC `readConnectorLogs` 分页读取。
+日志页可以切换 Bridge 和 Connector。运行日志通过生成的 Logs 客户端从 Connector 读取，保留全局 seq，支持来源过滤和分页。Connector 不可用时，Connector 页仍可显示本地启动诊断（uv/Python stderr 与进程状态，`<stateRoot>/logs/connector-output.json`）；该日志仅用于启动排错，不复制已接收的运行日志。stdout 只用于 `anywhere-cli rpc` 启动时的一行就绪信息。
 
 受限权限请求通过 DSH 官方 `approval/request` 转成 AA 交互通知，显示工具名与申请原因，提供“允许一次”和“拒绝”。结果通过官方待处理请求返回 DSH，不修改会话权限模式或批准策略。原生客户端作答或请求取消后，远端通知同步关闭；重连恢复同一个待处理请求，重复提交不会重复批准。计划审批 `plan-review` 复用问答卡片，展示完整计划正文和 DSH 提供的选项，也可填写修改意见。批准选项按 DSH 声明的标签匹配，不按位置推断；原生客户端作答、取消和重连沿用同一待处理请求。
 
