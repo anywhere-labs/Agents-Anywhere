@@ -141,3 +141,61 @@ test("a backend that exits before ready rejects startup with its exit code and o
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("shutdown tolerates a backend that already closed its IPC channel", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-backend-client-shutdown-race-"));
+  const entryPath = path.join(root, "fixture-backend.js");
+  fs.writeFileSync(entryPath, `
+process.send({ type: "ready", port: 1, token: "fixture-token" });
+process.disconnect();
+setTimeout(() => process.exit(0), 200);
+`, "utf8");
+  const client = new DesktopBackendClient({
+    entryPath,
+    fetcher: async () => new Response("", { status: 200 }),
+  });
+  try {
+    await client.start(initFor(root));
+    await client.shutdown();
+    assert.equal(client.running, false, "shutdown waits for the disconnected backend to exit");
+  } finally {
+    await client.shutdown();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a netFetch reply is dropped when the backend closes its channel mid-request", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-backend-client-fetch-race-"));
+  const entryPath = path.join(root, "fixture-backend.js");
+  fs.writeFileSync(entryPath, `
+process.send({ type: "ready", port: 1, token: "fixture-token" });
+process.send({
+  type: "netFetch", id: 9, url: "https://server.example/api/v2/connectors",
+  method: "GET", headers: {},
+});
+process.disconnect();
+setTimeout(() => process.exit(0), 500);
+`, "utf8");
+  let fetchStarted = false;
+  const client = new DesktopBackendClient({
+    entryPath,
+    fetcher: async (url) => {
+      if (url.endsWith("/events")) return new Response("", { status: 200 });
+      fetchStarted = true;
+      // The backend disconnects while this request is in flight, so the reply
+      // below targets a closed IPC channel.
+      await delay(100);
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  try {
+    await client.start(initFor(root));
+    await waitFor(() => fetchStarted, "The backend never proxied its netFetch request.");
+    await delay(250);
+    await client.shutdown();
+    assert.equal(client.running, false, "shutdown survives the dropped reply");
+  } finally {
+    await client.shutdown();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

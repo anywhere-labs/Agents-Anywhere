@@ -92,6 +92,12 @@ export class DesktopBackendClient {
       stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     this.child = child;
+    // The IPC channel can close before `exit` is delivered. Without a listener
+    // the resulting `error` event would crash the Electron main process.
+    child.on("error", (error) => {
+      this.lastError = `Desktop backend process error: ${error.message}`;
+      console.error(`[desktop-backend] ${error.message}`);
+    });
     // The bridge must outlive startup: device registration and reconnect keep
     // issuing netFetch long after the backend reports ready. A listener removed
     // with the startup handshake silently drops them, and the backend only
@@ -167,11 +173,7 @@ export class DesktopBackendClient {
     this.stream = null;
     const child = this.child;
     if (!child) return;
-    try {
-      child.send({ type: "shutdown" } satisfies BackendControlMessage);
-    } catch {
-      // The channel is already gone; the exit race below handles it.
-    }
+    this.sendToChild({ type: "shutdown" } satisfies BackendControlMessage);
     const exited = await Promise.race([
       this.exitPromise?.then(() => true) ?? Promise.resolve(true),
       delay(SHUTDOWN_GRACE_MS).then(() => false),
@@ -238,7 +240,7 @@ export class DesktopBackendClient {
       const headers: Record<string, string> = {};
       response.headers.forEach((value, key) => { headers[key] = value; });
       const body = await response.text();
-      this.child?.send({
+      this.sendToChild({
         type: "netFetchResult",
         id: message.id,
         ok: response.ok,
@@ -247,11 +249,32 @@ export class DesktopBackendClient {
         body,
       } satisfies BackendControlMessage);
     } catch (error) {
-      this.child?.send({
+      this.sendToChild({
         type: "netFetchError",
         id: message.id,
         message: error instanceof Error ? error.message : String(error),
       } satisfies BackendControlMessage);
+    }
+  }
+
+  /**
+   * The IPC channel can close before the `exit` event arrives. A bare
+   * `send()` then fails asynchronously (through an `error` event) or throws,
+   * neither of which the caller can reliably catch. Guard the channel and keep
+   * channel-closed failures out of the process-level error path.
+   */
+  private sendToChild(message: BackendControlMessage): void {
+    const child = this.child;
+    if (!child?.connected) return;
+    try {
+      child.send(message, (error) => {
+        if (!error || isClosedChannelError(error)) return;
+        console.error(`[desktop-backend] failed to send ${message.type}: ${error.message}`);
+      });
+    } catch (error) {
+      if (error instanceof Error && !isClosedChannelError(error)) {
+        console.error(`[desktop-backend] failed to send ${message.type}: ${error.message}`);
+      }
     }
   }
 
@@ -336,6 +359,11 @@ export class DesktopBackendClient {
 
 function exitReason(code: number | null, signal: NodeJS.Signals | null): string {
   return signal ? `signal ${signal}` : `code ${code ?? "null"}`;
+}
+
+function isClosedChannelError(error: Error): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ERR_IPC_CHANNEL_CLOSED" || code === "EPIPE";
 }
 
 function delay(ms: number): Promise<void> {
