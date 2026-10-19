@@ -61,6 +61,15 @@ data class NewSessionDraft(
     }
 }
 
+/**
+ * The title to send when creating a session. The title field starts out showing the localized
+ * placeholder ("New Session"); sending it unchanged would pin every session to that placeholder
+ * and stop the runtime (e.g. Claude Code) from naming the session itself. Only a title the user
+ * actually typed is sent, matching iOS which sends no create-time title.
+ */
+internal fun explicitSessionTitle(input: String, placeholder: String): String? =
+    input.trim().takeIf { it.isNotBlank() && it != placeholder.trim() }
+
 internal fun NewSessionDraft.firstMessageRequest(
     content: String,
     selections: NewSessionSelections,

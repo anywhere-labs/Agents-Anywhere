@@ -56,6 +56,7 @@ import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.feature.sessions.availableProjectName
 import com.agentsanywhere.app.feature.sessions.activeNewSessionRuntimes
+import com.agentsanywhere.app.feature.sessions.explicitSessionTitle
 import com.agentsanywhere.app.feature.sessions.workspaceProject
 import com.agentsanywhere.app.feature.sessions.workspaceProjectName
 import com.agentsanywhere.app.feature.sessions.workspacePathKey
@@ -664,7 +665,7 @@ fun NewSessionScreen(
                 connectorId = device.id,
                 projectId = project?.id.orEmpty(),
                 runtime = runtime.type,
-                title = title.trim().takeIf(String::isNotBlank),
+                title = explicitSessionTitle(title, defaultTitle),
                 cwd = effectiveWorkspacePath.trim().takeIf(String::isNotBlank),
                 deviceName = device.name,
                 runtimeLabel = runtime.labels.primary,
