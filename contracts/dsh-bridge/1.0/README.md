@@ -1,5 +1,7 @@
 # DSH Bridge Protocol 1.0
 
+> **Superseded by [2.0](../2.0/README.md).** 1.0 describes the hand-written JSON-RPC transport used up to Agents Anywhere 2.1.x; the schemas and fixtures stay for reference and for old-Connector session identities.
+
 These schemas and fixtures define the line-level JSON-RPC contract shared by the
 Agents Anywhere Connector and `@agents-anywhere/dsh-bridge-next` (and the legacy bridge). Transport tests own
 UTF-8 framing, newline handling, and the 8 MiB frame limit.

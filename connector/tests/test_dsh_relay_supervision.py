@@ -4,58 +4,179 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import pytest
+
+from connector.runtimes.dsh.bridge.host import SubscriptionRegistry
 from connector.runtimes.dsh.bridge.sync import SyncRelay
+from tests.dsh_sync_helpers import ingest
 
 
-def _batch(stream_id: str, seq: int, projection_version: int = 3) -> dict:
-    op = {"kind": "notifications", "notifications": [{"method": "session.state.updated", "params": {"sessionId": "session", "status": "idle"}}]}
-    return {"streamId": stream_id, "batchSeq": seq, "projectionVersion": projection_version, "operations": [op]}
+def test_close_cancels_blocked_ingest_before_waiting_for_subscription_cleanup():
+    async def exercise():
+        entered = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def publish(*args):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        client = FakeBridgeClient()
+        host = SimpleNamespace(publish_runtime_notifications=publish, runtime_health_update=AsyncMock())
+        relay = SyncRelay(client, host)
+        relay.start()
+        pending = None
+        closing = None
+        try:
+            await _ready(client, relay, 1)
+            pending = asyncio.create_task(ingest(relay, {"kind": "notifications", "notifications": [
+                {"method": "session.inventory.begin", "params": {"scanToken": "scan"}},
+            ]}))
+            await asyncio.wait_for(entered.wait(), 1)
+            closing = asyncio.create_task(relay.close())
+            await asyncio.wait_for(asyncio.shield(closing), 1)
+            assert cancelled.is_set()
+            assert pending.cancelled()
+            assert relay.task.done()
+            assert not relay.ingest_lock.locked()
+            assert not relay._ingest_tasks
+            with pytest.raises(RuntimeError, match="closing"):
+                await ingest(relay, _notification_op())
+            with pytest.raises(RuntimeError, match="closing"):
+                await relay.serialized(lambda: host.runtime_health_update("running"))
+            await relay.close()
+        finally:
+            if pending is not None:
+                pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
+            if closing is not None:
+                await asyncio.gather(closing, return_exceptions=True)
+            await relay.close()
+
+    asyncio.run(exercise())
 
 
-def _client(subscriptions: list[str], acks: list[int], acknowledged: asyncio.Event):
-    async def request(method, params=None):
-        if method == "runtime.sync.subscribe":
-            subscriptions.append(f"stream-{len(subscriptions) + 1}")
-            return {"streamId": subscriptions[-1], "projectionVersion": 3}
-        if method == "runtime.sync.ack":
-            acks.append(params["batchSeq"])
-            acknowledged.set()
+def test_close_does_not_cancel_upload_cleanup_a_second_time():
+    async def exercise():
+        entered, cleaning, release, cleaned = (asyncio.Event() for _ in range(4))
+
+        async def upload():
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cleaning.set()
+                await release.wait()
+                cleaned.set()
+                raise
+
+        relay = SyncRelay(FakeBridgeClient(), SimpleNamespace(runtime_health_update=AsyncMock()))
+        pending = asyncio.create_task(relay.serialized(upload))
+        closing = None
+        try:
+            await entered.wait()
+            pending.cancel()
+            await cleaning.wait()
+            closing = asyncio.create_task(relay.close())
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            assert not pending.done(), "shutdown must let existing upload cleanup finish"
+            release.set()
+            await asyncio.wait_for(closing, 1)
+            assert cleaned.is_set()
+            assert not relay.ingest_lock.locked()
+        finally:
+            release.set()
+            await asyncio.gather(pending, return_exceptions=True)
+            if closing is not None:
+                await closing
+            await relay.close()
+
+    asyncio.run(exercise())
+
+
+def _notification_op() -> dict:
+    return {"kind": "notifications", "notifications": [
+        {"method": "session.state.updated", "params": {"sessionId": "session", "status": "idle"}},
+    ]}
+
+
+class _Stream:
+    """One ``sync`` server stream: confirms the subscription, then waits to be broken."""
+
+    def __init__(self, subscription_id: str) -> None:
+        self.subscription_id = subscription_id
+        self.failures: asyncio.Queue[BaseException] = asyncio.Queue()
+
+    async def events(self):
+        yield {"kind": "subscribed", "projectionVersion": 3, "checkpointVersion": 1}
+        raise await self.failures.get()
+
+    def fail(self, error: BaseException) -> None:
+        self.failures.put_nowait(error)
+
+
+class FakeBridgeClient:
+    """The plugin side of the Router: streams stay open until the test breaks them."""
+
+    def __init__(self) -> None:
+        self.registry = SubscriptionRegistry()
+        self.host = SimpleNamespace(registry=self.registry)
+        self.connected = True
+        self.streams: list[_Stream] = []
+        self.requests: list[tuple[str, dict | None]] = []
+
+    def stream(self, method, params):
+        assert method == "sync"
+        stream = _Stream(params["subscriptionId"])
+        self.streams.append(stream)
+        return stream.events()
+
+    async def request(self, method, params=None):
+        self.requests.append((method, params))
         return {"ok": True}
 
-    return SimpleNamespace(request=request, writer=Mock(), connected=True)
+
+async def _wait_for(predicate, attempts: int = 300) -> None:
+    for _ in range(attempts):
+        if predicate():
+            return
+        await asyncio.sleep(0.005)
+    raise AssertionError("condition was not met")
+
+
+async def _ready(client: FakeBridgeClient, relay: SyncRelay, count: int) -> None:
+    """Wait until ``count`` subscriptions were opened and the latest one is confirmed."""
+    await _wait_for(lambda: len(client.streams) >= count)
+    stream = client.streams[count - 1]
+    await _wait_for(lambda: relay.subscription_id == stream.subscription_id and relay.confirmed.is_set())
 
 
 def test_health_reports_that_fail_never_stop_the_relay():
     # The backend socket may be down while the bridge is healthy: reporting
     # "syncing" / "interrupted" / "running" must not kill the sync loop (#293).
     async def exercise():
-        subscriptions, acks, acknowledged = [], [], asyncio.Event()
-        client = _client(subscriptions, acks, acknowledged)
+        client = FakeBridgeClient()
         host = SimpleNamespace(
             session_state_update=AsyncMock(),
+            publish_runtime_notifications=AsyncMock(),
             runtime_health_update=AsyncMock(side_effect=RuntimeError("backend websocket is not connected")),
         )
         relay = SyncRelay(client, host, retry_delay=0.01)
         relay.start()
         try:
-            await asyncio.sleep(0)
-            relay.accept(_batch("stream-1", 1))
-            await asyncio.wait_for(acknowledged.wait(), 1)
-            assert acks == [1]
+            await _ready(client, relay, 1)
+            await ingest(relay, _notification_op())
             assert relay.failures == 0
-            # A broken batch interrupts the feed; the relay resubscribes instead of dying.
-            relay.accept(_batch("stream-1", 2, projection_version=2))
-            for _ in range(200):
-                if len(subscriptions) >= 2:
-                    break
-                await asyncio.sleep(0.01)
-            assert len(subscriptions) >= 2
-            assert relay.failures == 1
+            # A broken stream interrupts the feed; the relay resubscribes instead of dying.
+            client.streams[0].fail(RuntimeError("stream broke"))
+            await _wait_for(lambda: relay.failures == 1)
             assert not relay.task.done()
-            acknowledged.clear()
-            relay.accept(_batch("stream-2", 1))
-            await asyncio.wait_for(acknowledged.wait(), 1)
-            assert acks == [1, 1]
+            await _ready(client, relay, 2)
+            await ingest(relay, _notification_op())
             assert relay.failures == 0
         finally:
             await relay.close()
@@ -64,22 +185,20 @@ def test_health_reports_that_fail_never_stop_the_relay():
 
 def test_consecutive_failures_back_off_and_a_delivered_batch_resets_the_counter():
     async def exercise():
-        subscriptions, acks, acknowledged = [], [], asyncio.Event()
-        client = _client(subscriptions, acks, acknowledged)
-        host = SimpleNamespace(session_state_update=AsyncMock(), runtime_health_update=AsyncMock())
+        client = FakeBridgeClient()
+        host = SimpleNamespace(
+            session_state_update=AsyncMock(), publish_runtime_notifications=AsyncMock(), runtime_health_update=AsyncMock(),
+        )
         relay = SyncRelay(client, host, retry_delay=0.01)
         relay.start()
         try:
-            await asyncio.sleep(0)
             for attempt in range(1, 4):
-                relay.accept(_batch(f"stream-{attempt}", 1, projection_version=2))
-                for _ in range(300):
-                    if len(subscriptions) > attempt:
-                        break
-                    await asyncio.sleep(0.005)
-                assert relay.failures == attempt
-            relay.accept(_batch(f"stream-{len(subscriptions)}", 1))
-            await asyncio.wait_for(acknowledged.wait(), 1)
+                await _ready(client, relay, attempt)
+                client.streams[attempt - 1].fail(RuntimeError(f"stream {attempt} broke"))
+                await _wait_for(lambda expected=attempt: relay.failures == expected)
+            await _ready(client, relay, 4)
+            assert relay.failures == 3
+            await ingest(relay, _notification_op())
             assert relay.failures == 0
         finally:
             await relay.close()
@@ -124,8 +243,7 @@ def test_runtime_rebuilds_a_relay_that_died_from_a_bug(monkeypatch):
     async def exercise():
         host = SimpleNamespace(connector_id="test", runtime_health_update=AsyncMock())
         runtime = DshRuntime(RuntimeConfig("dsh", 2), host)
-        subscriptions, acks, acknowledged = [], [], asyncio.Event()
-        client = _client(subscriptions, acks, acknowledged)
+        client = FakeBridgeClient()
         runtime._client = client
         dead = SyncRelay(client, host, on_exit=runtime._relay_exited)
         runtime._sync = dead
@@ -142,11 +260,8 @@ def test_runtime_rebuilds_a_relay_that_died_from_a_bug(monkeypatch):
         replacement = runtime._sync
         try:
             assert replacement is not None and replacement is not dead
-            for _ in range(100):
-                if subscriptions:
-                    break
-                await asyncio.sleep(0.01)
-            assert subscriptions == ["stream-1"], "the replacement relay subscribes on its own"
+            await _ready(client, replacement, 1)
+            assert len(client.streams) == 1, "the replacement relay subscribes on its own"
             host.runtime_health_update.assert_awaited()
 
             # A relay that was closed on purpose, or a runtime that is stopping, is left alone.

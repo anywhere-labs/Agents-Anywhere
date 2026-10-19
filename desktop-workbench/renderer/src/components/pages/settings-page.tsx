@@ -775,8 +775,10 @@ function LogsTab() {
   const [logs, setLogs] = React.useState<DesktopConnectorLog[]>([])
   const [logsLoading, setLogsLoading] = React.useState(false)
   const [olderLogsLoading, setOlderLogsLoading] = React.useState(false)
-  const [firstLogSeq, setFirstLogSeq] = React.useState<number | null>(null)
-  const [hasMoreLogs, setHasMoreLogs] = React.useState(false)
+  const firstLogSeq = typeof logs[0]?.seq === "number" ? logs[0].seq : null
+  const logsEpoch = React.useRef(0)
+  const [oldestLogSeq, setOldestLogSeq] = React.useState<number | null>(null)
+  const hasMoreLogs = firstLogSeq != null && oldestLogSeq != null && firstLogSeq > oldestLogSeq
   const [clearingLogs, setClearingLogs] = React.useState(false)
   const [exportingLogs, setExportingLogs] = React.useState(false)
   const [logSettings, setLogSettings] = React.useState({
@@ -796,12 +798,14 @@ function LogsTab() {
   const loadLogs = React.useCallback(async () => {
     const bridge = getDesktopWorkbenchBridge()
     if (!bridge?.connector) return
+    const epoch = logsEpoch.current
     setLogsLoading(true)
     try {
       const page = await bridge.connector.getLogs({ pageSize: 200 })
-      setLogs(page.items)
-      setFirstLogSeq(typeof page.items[0]?.seq === "number" ? page.items[0].seq : null)
-      setHasMoreLogs(page.hasMoreBefore)
+      if (epoch !== logsEpoch.current) return
+      setLogs((current) => [...page.items, ...current.filter((entry) =>
+        typeof entry.seq === "number" && page.lastSeq != null && entry.seq > page.lastSeq)].slice(-200))
+      setOldestLogSeq(page.firstSeq)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("desktopLogsLoadFailed"))
     } finally {
@@ -815,9 +819,18 @@ function LogsTab() {
     void loadLogs()
     const unsubscribeLog = bridge.connector.onLog((entries) => {
       if (entries.length === 0) return
-      setLogs((current) => [...current, ...entries].slice(-200))
+      setOldestLogSeq((current) => current ?? (typeof entries[0]?.seq === "number" ? entries[0].seq : null))
+      setLogs((current) => {
+        const existing = new Set(current.map((entry) => entry.seq ?? entry.id))
+        return [...current, ...entries.filter((entry) => !existing.has(entry.seq ?? entry.id))].slice(-200)
+      })
     })
-    const unsubscribeCleared = bridge.connector.onLogsCleared(() => setLogs([]))
+    const unsubscribeCleared = bridge.connector.onLogsCleared(() => {
+      logsEpoch.current++
+      setLogs([])
+      setOldestLogSeq(null)
+      void loadLogs()
+    })
     return () => {
       if (typeof unsubscribeLog === "function") unsubscribeLog()
       if (typeof unsubscribeCleared === "function") unsubscribeCleared()
@@ -827,15 +840,16 @@ function LogsTab() {
   const loadOlderLogs = async () => {
     const bridge = getDesktopWorkbenchBridge()
     if (!bridge?.connector || olderLogsLoading || firstLogSeq === null || !hasMoreLogs) return
+    const epoch = logsEpoch.current
     setOlderLogsLoading(true)
     try {
       const page = await bridge.connector.getLogs({ pageSize: 200, beforeSeq: firstLogSeq })
+      if (epoch !== logsEpoch.current) return
       setLogs((current) => {
         const existing = new Set(current.map((entry) => entry.seq ?? entry.id))
         return [...page.items.filter((entry) => !existing.has(entry.seq ?? entry.id)), ...current]
       })
-      setFirstLogSeq(typeof page.items[0]?.seq === "number" ? page.items[0].seq : firstLogSeq)
-      setHasMoreLogs(page.hasMoreBefore)
+      setOldestLogSeq(page.firstSeq)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("desktopLogsLoadFailed"))
     } finally {
@@ -850,8 +864,7 @@ function LogsTab() {
     try {
       await bridge.connector.clearLogs()
       setLogs([])
-      setFirstLogSeq(null)
-      setHasMoreLogs(false)
+      setOldestLogSeq(null)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("desktopLogsClearFailed"))
     } finally {

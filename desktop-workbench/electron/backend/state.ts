@@ -79,7 +79,9 @@ export class BackendState {
       binding: this.binding,
       logs: this.logs,
       onState: (state) => this.emit("state", state),
-      onLog: (entry) => this.bufferLog(entry),
+      onLog: (entry) => { if (!this.connector.hasRuntimeLogs()) this.bufferLog(entry); },
+      onRuntimeLog: (entry) => this.bufferLog(entry),
+      onLogSourceChanged: () => { this.logBatcher.flush(); this.emit("logsCleared", undefined); },
     });
     this.devices = new DesktopDeviceService({
       requireOwnership: () => this.requireOwnership(),
@@ -221,22 +223,23 @@ export class BackendState {
     return this.connector.restart();
   }
 
-  readLogs(query: ConnectorLogQuery): ConnectorLogPage {
-    return this.logs.read(query ?? {});
+  readLogs(query: ConnectorLogQuery): Promise<ConnectorLogPage> {
+    return this.connector.readLogs(query ?? {});
   }
 
-  clearLogs(): ConnectorLogPage {
-    const page = this.logs.clear();
+  async clearLogs(): Promise<ConnectorLogPage> {
+    const page = await this.connector.clearLogs();
     this.emit("logsCleared", undefined);
     return page;
   }
 
-  exportLogs(filePath: string): number {
-    return this.logs.exportTo(filePath);
+  exportLogs(filePath: string): Promise<number> {
+    return this.connector.exportLogs(filePath);
   }
 
   appendLog(entry: string | Partial<ConnectorLogEntry>): void {
-    this.bufferLog(this.logs.append(entry));
+    const stored = this.logs.append(entry);
+    if (!this.connector?.hasRuntimeLogs()) this.bufferLog(stored);
   }
 
   getLocalBinding(): PublicLocalDesktopBinding | null {

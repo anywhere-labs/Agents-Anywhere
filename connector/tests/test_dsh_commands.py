@@ -1,18 +1,22 @@
+"""DSH command adapter against a fake BridgeClient.
+
+The adapter's contract is method calls and error mapping, not JSON-RPC
+framing, so a recorder replaces the removed TCP transport. Native DSH
+semantics themselves are tested in the plugin.
+"""
+
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from connector.runtime_protocol import RuntimeConfig, RuntimeUnsupportedError
-from connector.runtimes.dsh.bridge.client import BridgeClient
-from connector.runtimes.dsh.discovery import BridgeEndpoint
+from connector.runtimes.dsh.bridge.client import BridgeRpcError, BridgeUnavailableError
 from connector.runtimes.dsh.provider_config import dsh_capabilities
 from connector.runtimes.dsh.runtime import DshRuntime
 
@@ -55,102 +59,125 @@ MALFORMED_ACKS: dict[str, Any] = {
 }
 
 
+class FakeBridgeClient:
+    """The BridgeClient surface the adapter uses: ``request`` and ``connected``."""
+
+    def __init__(self, *, supported: bool = True, mode: str = "success") -> None:
+        self.supported = supported
+        self.mode = mode
+        self.connected = True
+        self.requests: list[dict[str, Any]] = []
+        self.executed = asyncio.Event()
+        # Never set: a call that stays in flight until its task is cancelled.
+        self.in_flight = asyncio.Event()
+
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        params = dict(params or {})
+        self.requests.append({"method": method, "params": params})
+        if method == "getSessionCapabilities":
+            return self._capabilities()
+        if method == "listCommands":
+            assert params == {"sessionId": "session", "externalSessionId": "native", "query": "compact", "limit": 1}
+            return self._commands()
+        if method == "executeCommand":
+            self.executed.set()
+            return await self._execute(params)
+        raise AssertionError(f"unexpected request {method}")
+
+    def _capabilities(self) -> dict[str, Any]:
+        capabilities = [{
+            "capabilityId": "session.commands",
+            "supported": self.supported,
+            "available": self.supported,
+            "allowed": self.supported,
+            "unavailableReason": None if self.supported else "This DSH capability is not available.",
+            "metadata": {"catalogRevision": "host:2"} if self.supported else {},
+        }]
+        if self.mode == "old-empty":
+            capabilities = []
+        elif self.mode == "partial-capability":
+            capabilities = [{"capabilityId": "session.commands"}]
+        elif self.mode == "unavailable":
+            capabilities[0].update({
+                "available": False,
+                "allowed": False,
+                "unavailableReason": "DSH session is archived.",
+            })
+        return {"runtime": "dsh", "sessionId": "session", "revision": 7, "capabilities": capabilities}
+
+    def _commands(self) -> dict[str, Any]:
+        commands = [{
+            "id": "compact",
+            "title": "compact",
+            "description": "native compact",
+            "acceptsArgs": True,
+            "metadata": {
+                "definitionId": "compact-plugin",
+                "input": {"hint": "text", "attachments": True},
+                "attachmentsAvailable": False,
+                "ui": {"kind": "execute", "acceptsMultiline": True, "allowedStatuses": ["idle", "running"]},
+            },
+        }]
+        if self.mode == "wide-catalog":
+            commands.extend({"id": name, "title": name} for name in ["export", "goal", "permission"])
+        return {"commands": commands}
+
+    async def _execute(self, params: dict[str, Any]) -> dict[str, Any]:
+        if self.mode == "pending":
+            await self.in_flight.wait()
+        if self.mode == "timeout":
+            # The transport's own deadline surfaces as TimeoutError from request().
+            raise TimeoutError("deadline exceeded")
+        if self.mode == "rpc-timeout":
+            raise BridgeRpcError("REQUEST_TIMEOUT", "cancelled", retryable=True)
+        if self.mode == "disconnect":
+            raise BridgeUnavailableError("DSH bridge left the local router")
+        command = params["command"]
+        result: dict[str, Any] = {
+            "command": command,
+            "ok": self.mode != "error",
+            "message": "native acknowledgement",
+            "result": {
+                "commandId": "native-command-7",
+                "kind": "error" if self.mode == "error" else "success",
+                "text": "native acknowledgement",
+                "executionState": "completed" if self.mode == "error" else "accepted",
+            },
+        }
+        if self.mode == "error":
+            result["code"] = "command_error"
+        else:
+            result["result"]["sourceEventSeq"] = 12
+        if self.mode == "wrong-command":
+            result["command"] = "another"
+        elif self.mode == "error-kind":
+            result["result"]["kind"] = "error"
+        elif self.mode in MALFORMED_ACKS:
+            result = MALFORMED_ACKS[self.mode]
+        elif self.mode == "validation-failed":
+            result = {"command": command, "ok": False, "code": "invalid_command", "message": "raw mismatch", "result": {}}
+        return result
+
+    async def close(self) -> None:
+        self.connected = False
+
+
 @asynccontextmanager
-async def bridge(tmp_path: Path, *, supported: bool = True, mode: str = "success") -> AsyncIterator[tuple[DshRuntime, list[dict[str, Any]], asyncio.Event]]:
-    """Real JSON-RPC client/transport around the public adapter; native semantics are tested in TS."""
-    requests: list[dict[str, Any]] = []
-    cancelled = asyncio.Event()
-    entered = asyncio.Event()
-    writers: list[asyncio.StreamWriter] = []
-
-    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        writers.append(writer)
-        try:
-            while line := await reader.readline():
-                request = json.loads(line)
-                requests.append(request)
-                method, params = request["method"], request.get("params", {})
-                if method == "$/cancelRequest":
-                    cancelled.set()
-                    continue
-                if method == "initialize":
-                    result = {"identity": {"runtime": "dsh", "runtimeVersion": "test", "protocolVersion": "1.0"}}
-                elif method == "session.getCapabilities":
-                    result = {"runtime": "dsh", "sessionId": "session", "revision": 7, "capabilities": [{
-                        "capabilityId": "session.commands", "supported": supported, "available": supported, "allowed": supported,
-                        "unavailableReason": None if supported else "This DSH capability is not available.",
-                        "metadata": {"catalogRevision": "host:2"} if supported else {},
-                    }]}
-                    if mode == "old-empty":
-                        result["capabilities"] = []
-                    elif mode == "partial-capability":
-                        result["capabilities"] = [{"capabilityId": "session.commands"}]
-                    elif mode == "unavailable":
-                        result["capabilities"][0].update({"available": False, "allowed": False, "unavailableReason": "DSH session is archived."})
-                elif method == "session.listCommands":
-                    assert params == {"sessionId": "session", "externalSessionId": "native", "query": "compact", "limit": 1}
-                    result = {"commands": [{"id": "compact", "title": "compact", "description": "native compact", "acceptsArgs": True,
-                        "metadata": {"definitionId": "compact-plugin", "input": {"hint": "text", "attachments": True}, "attachmentsAvailable": False,
-                            "ui": {"kind": "execute", "acceptsMultiline": True, "allowedStatuses": ["idle", "running"]}}}]}
-                    if mode == "wide-catalog":
-                        result["commands"].extend({"id": name, "title": name} for name in ["export", "goal", "permission"])
-                elif method == "session.executeCommand":
-                    entered.set()
-                    if mode == "timeout":
-                        continue
-                    if mode == "disconnect":
-                        writer.close()
-                        return
-                    if mode == "rpc-timeout":
-                        writer.write(json.dumps({"jsonrpc": "2.0", "id": request["id"], "error": {"code": -32006, "message": "cancelled", "data": {"code": "REQUEST_TIMEOUT", "retryable": True}}}).encode() + b"\n")
-                        await writer.drain()
-                        continue
-                    result = {"command": params["command"], "ok": mode != "error", "message": "native acknowledgement",
-                        **({"code": "command_error"} if mode == "error" else {}),
-                        "result": {"commandId": "native-command-7", "kind": "error" if mode == "error" else "success", "text": "native acknowledgement",
-                            **({} if mode == "error" else {"sourceEventSeq": 12}), "executionState": "completed" if mode == "error" else "accepted"}}
-                    if mode == "wrong-command":
-                        result["command"] = "another"
-                    elif mode == "error-kind":
-                        result["result"]["kind"] = "error"
-                    elif mode in MALFORMED_ACKS:
-                        result = MALFORMED_ACKS[mode]
-                    elif mode == "validation-failed":
-                        result = {"command": params["command"], "ok": False, "code": "invalid_command", "message": "raw mismatch", "result": {}}
-                else:
-                    raise AssertionError(f"unexpected request {method}")
-                writer.write(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}).encode() + b"\n")
-                await writer.drain()
-        finally:
-            writer.close()
-            await writer.wait_closed()
-
-    async def ignore(*_args: Any) -> None:
-        return None
-
-    server = await asyncio.start_server(handler, "127.0.0.1", 0)
-    client = BridgeClient(endpoint=BridgeEndpoint("127.0.0.1", server.sockets[0].getsockname()[1], "token", 1, tmp_path / "endpoint.json"),
-        connector_id="test", client_version="test", startup_timeout=1, request_timeout=0.05,
-        notification_handler=ignore, exit_handler=ignore)
+async def bridge(
+    *, supported: bool = True, mode: str = "success",
+) -> AsyncIterator[tuple[DshRuntime, list[dict[str, Any]], asyncio.Event]]:
+    client = FakeBridgeClient(supported=supported, mode=mode)
     runtime = DshRuntime(RuntimeConfig("dsh", 2), SimpleNamespace(connector_id="test"))
-    await client.start()
     runtime._client = client
     try:
-        yield runtime, requests, entered
-        if mode == "timeout":
-            await asyncio.wait_for(cancelled.wait(), 1)
+        yield runtime, client.requests, client.executed
     finally:
         await client.close()
-        server.close()
-        await server.wait_closed()
-        for writer in writers:
-            writer.close()
-            await writer.wait_closed()
 
 
-def test_public_catalog_execution_preserves_native_descriptor_and_raw_correlations(tmp_path: Path) -> None:
+def test_public_catalog_execution_preserves_native_descriptor_and_raw_correlations() -> None:
     async def run() -> None:
-        async with bridge(tmp_path) as (runtime, requests, _):
+        async with bridge() as (runtime, requests, _):
             catalog = await runtime.list_commands("session", "native", query="compact", limit=1)
             assert len(catalog) == 1
             assert catalog[0].id == "compact" and catalog[0].accepts_args
@@ -161,47 +188,47 @@ def test_public_catalog_execution_preserves_native_descriptor_and_raw_correlatio
             result = await runtime.execute_command("session", "compact", "native", raw=raw, args=("ignored",))
             assert result.ok and result.message == "native acknowledgement"
             assert result.result == {"commandId": "native-command-7", "kind": "success", "text": "native acknowledgement", "sourceEventSeq": 12, "executionState": "accepted"}
-            execution = [r for r in requests if r["method"] == "session.executeCommand"]
+            execution = [request for request in requests if request["method"] == "executeCommand"]
             assert len(execution) == 1
             assert execution[0]["params"] == {"sessionId": "session", "externalSessionId": "native", "command": "compact", "raw": raw, "args": ["ignored"]}
     asyncio.run(run())
 
 
 @pytest.mark.parametrize("command", ["goal", "plan", "export", "feedback", "permission", "model", "file", "compact-thread"])
-def test_non_compact_commands_never_reach_the_bridge(tmp_path: Path, command: str) -> None:
+def test_non_compact_commands_never_reach_the_bridge(command: str) -> None:
     async def run() -> None:
-        async with bridge(tmp_path) as (runtime, requests, _):
+        async with bridge() as (runtime, requests, _):
             result = await runtime.execute_command("session", command, "native", raw=f"/{command}")
             assert not result.ok and result.code == "unknown_command"
-            assert not any(r["method"] == "session.executeCommand" for r in requests)
+            assert not any(request["method"] == "executeCommand" for request in requests)
     asyncio.run(run())
 
 
-def test_catalog_filters_non_compact_commands_from_an_older_bridge(tmp_path: Path) -> None:
+def test_catalog_filters_non_compact_commands_from_an_older_bridge() -> None:
     async def run() -> None:
-        async with bridge(tmp_path, mode="wide-catalog") as (runtime, _, _):
+        async with bridge(mode="wide-catalog") as (runtime, _, _):
             catalog = await runtime.list_commands("session", "native", query="compact", limit=1)
             assert [command.id for command in catalog] == ["compact"]
     asyncio.run(run())
 
 
-def test_old_bridge_remains_unavailable_with_upgrade_reason_and_no_command_rpc(tmp_path: Path) -> None:
+def test_old_bridge_remains_unavailable_with_upgrade_reason_and_no_command_rpc() -> None:
     async def run() -> None:
-        async with bridge(tmp_path, supported=False) as (runtime, requests, _):
+        async with bridge(supported=False) as (runtime, requests, _):
             capability = (await runtime.get_session_capabilities("session", "native")).capabilities[0]
             assert not capability.available
             assert "upgrade" in (capability.unavailable_reason or "").lower()
             result = await runtime.execute_command("session", "compact", "native", raw="/compact hi")
             assert not result.ok and result.code == "bridge_upgrade_required"
-            assert not any(r["method"] == "session.executeCommand" for r in requests)
+            assert not any(request["method"] == "executeCommand" for request in requests)
     asyncio.run(run())
     assert not dsh_capabilities({"capabilities": []})["commands"]
     assert dsh_capabilities({"capabilities": [{"capabilityId": "session.commands", "supported": True, "available": True, "allowed": True}]})["commands"]
 
 
-def test_public_native_error_is_not_success(tmp_path: Path) -> None:
+def test_public_native_error_is_not_success() -> None:
     async def run() -> None:
-        async with bridge(tmp_path, mode="error") as (runtime, _, _):
+        async with bridge(mode="error") as (runtime, _, _):
             result = await runtime.execute_command("session", "compact", "native", raw="/compact invalid")
             assert not result.ok
             assert result.result["kind"] == "error"
@@ -211,45 +238,45 @@ def test_public_native_error_is_not_success(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("mode", ["timeout", "rpc-timeout", "disconnect"])
-def test_ambiguous_execution_never_retries_and_exposes_unknown_state(tmp_path: Path, mode: str) -> None:
+def test_ambiguous_execution_never_retries_and_exposes_unknown_state(mode: str) -> None:
     async def run() -> None:
-        async with bridge(tmp_path, mode=mode) as (runtime, requests, _):
+        async with bridge(mode=mode) as (runtime, requests, _):
             result = await runtime.execute_command("session", "compact", "native", raw="/compact once")
             assert not result.ok and result.code == "command_outcome_unknown"
             assert result.result == {"executionState": "unknown", "retryable": False}
-            assert len([r for r in requests if r["method"] == "session.executeCommand"]) == 1
+            assert len([request for request in requests if request["method"] == "executeCommand"]) == 1
     asyncio.run(run())
 
 
-def test_python_cancellation_propagates_and_sends_transport_cancel(tmp_path: Path) -> None:
+def test_python_cancellation_propagates_to_the_bridge_call() -> None:
     async def run() -> None:
-        async with bridge(tmp_path, mode="timeout") as (runtime, requests, entered):
+        async with bridge(mode="pending") as (runtime, requests, entered):
             task = asyncio.create_task(runtime.execute_command("session", "compact", "native", raw="/compact once"))
             await asyncio.wait_for(entered.wait(), 1)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
-            assert len([r for r in requests if r["method"] == "session.executeCommand"]) == 1
+            assert len([request for request in requests if request["method"] == "executeCommand"]) == 1
     asyncio.run(run())
 
 
 @pytest.mark.parametrize("mode", ["old-empty", "partial-capability", "unavailable"])
-def test_missing_partial_or_session_unavailable_capability_never_dispatches(tmp_path: Path, mode: str) -> None:
+def test_missing_partial_or_session_unavailable_capability_never_dispatches(mode: str) -> None:
     async def run() -> None:
-        async with bridge(tmp_path, mode=mode) as (runtime, requests, _):
+        async with bridge(mode=mode) as (runtime, requests, _):
             with pytest.raises(RuntimeUnsupportedError):
                 await runtime.list_commands("session", "native", query="compact", limit=1)
             result = await runtime.execute_command("session", "compact", "native", raw="/compact hi")
             assert not result.ok
             assert result.code == ("commands_unavailable" if mode == "unavailable" else "bridge_upgrade_required")
-            assert not any(r["method"] in {"session.executeCommand", "session.listCommands"} for r in requests)
+            assert not any(request["method"] in {"executeCommand", "listCommands"} for request in requests)
     asyncio.run(run())
 
 
 @pytest.mark.parametrize("mode", ["wrong-command", "error-kind"])
-def test_result_identity_or_error_kind_cannot_be_reported_as_success(tmp_path: Path, mode: str) -> None:
+def test_result_identity_or_error_kind_cannot_be_reported_as_success(mode: str) -> None:
     async def run() -> None:
-        async with bridge(tmp_path, mode=mode) as (runtime, _, _):
+        async with bridge(mode=mode) as (runtime, _, _):
             result = await runtime.execute_command("session", "compact", "native", raw="/compact hi")
             assert not result.ok
             assert result.command == "compact"
@@ -258,22 +285,22 @@ def test_result_identity_or_error_kind_cannot_be_reported_as_success(tmp_path: P
 
 
 @pytest.mark.parametrize("mode", MALFORMED_ACKS)
-def test_authenticated_public_execution_rejects_incomplete_or_malformed_ack_without_retry(tmp_path: Path, mode: str) -> None:
+def test_authenticated_public_execution_rejects_incomplete_or_malformed_ack_without_retry(mode: str) -> None:
     async def run() -> None:
-        async with bridge(tmp_path, mode=mode) as (runtime, requests, _):
+        async with bridge(mode=mode) as (runtime, requests, _):
             result = await runtime.execute_command("session", "compact", "native", raw="/compact once")
             assert result.command == "compact"
             assert result.ok is False and result.code == "command_outcome_unknown"
             assert result.result == {"executionState": "unknown", "retryable": False}
-            assert len([r for r in requests if r["method"] == "session.executeCommand"]) == 1
+            assert len([request for request in requests if request["method"] == "executeCommand"]) == 1
     asyncio.run(run())
 
 
-def test_authenticated_public_execution_preserves_known_validation_without_correlation(tmp_path: Path) -> None:
+def test_authenticated_public_execution_preserves_known_validation_without_correlation() -> None:
     async def run() -> None:
-        async with bridge(tmp_path, mode="validation-failed") as (runtime, requests, _):
+        async with bridge(mode="validation-failed") as (runtime, requests, _):
             result = await runtime.execute_command("session", "compact", "native", raw="/permission")
             assert not result.ok and result.code == "invalid_command"
             assert result.result == {} and result.message == "raw mismatch"
-            assert len([r for r in requests if r["method"] == "session.executeCommand"]) == 1
+            assert len([request for request in requests if request["method"] == "executeCommand"]) == 1
     asyncio.run(run())

@@ -6,7 +6,7 @@ Agents Anywhere 的 DSH 插件。支持没有安装 AA Desktop 时的账号登�
 
 职责与后续开发见 [开发计划](./DEVELOPMENT_PLAN.md)，完整产品设计见 [Onboarding 业务方案](./ONBOARDING_PLAN.md)，检查命令与手动验收见 [验证记录](./VERIFICATION.md)。
 
-历史同步的慢速上传通过协商 `uploadProgressVersion:1` 延长 ACK 的无进展等待窗口。进度只表示 HTTP 传输继续推进；云端确认成功后才能 ACK 和保存检查点。完整快照仍一次提交，详细约束见[本机契约](../contracts/dsh-bridge/1.0/README.md#slow-uploads-negotiated-upload-progress-v1)和[慢速上传说明](../docs/dsh-slow-upload.md)。
+同步批通过 `aa.dsh.v2.Sync.ingestBatch` 交回 Connector，完整快照通过 `aa.dsh.v2.Sync.ingestSnapshot` 客户端流提交；调用返回即表示已 ingest（或被永久拒绝），检查点只能在其后保存。2.2.0 起不再有 `uploadProgressVersion` 与进度续期：`startupTimeoutMs` 只约束初始发现，慢上传就是更慢的调用返回。详细约束见[桥接契约 2.0](../contracts/dsh-bridge/2.0/README.md)和[慢速上传说明](../docs/dsh-slow-upload.md)。
 
 ## 已实现
 
@@ -37,9 +37,9 @@ DSH 左侧边栏「设置」上方 → 远程控制 → 云端登录或连接自
 - **桥接日志**：只读取 Anywhere Bridge 的运行日志，显示最近 200 条，每 2 秒刷新，可暂停或手动刷新。即使 CLI 正占用 Connector、尚未登录、安装检测失败或 AA Desktop 已安装，也可以查看。记录连接、RPC、会话读取、快照、同步批次和 ACK；错误带会话标识、阶段、错误码和调用栈位置，不记录请求正文、原生事件内容、令牌或原始异常消息。
 - **维护**：并排提供打开数据目录、打开日志目录和恢复出厂设置三个按钮，不展示数据与日志路径；headless 环境禁用打开目录。日志仅记录经过筛选的生命周期事件，滚动保留约两份 512 KiB 文件，不记录原始进程输出和凭据。恢复出厂设置先撤销当前设备凭据，再清理本插件的账号、绑定、同步缓存、日志及设置；服务端撤销失败时先保留本地状态，用户可另行确认仅清理本地。DSH 会话、运行时端点、共享 `connector-runtime.json` 和下载好的 Python 环境保留。
 
-桥接日志另存于插件数据目录的 `logs/dsh-runtime.jsonl`，滚动保留当前和上一份约 2 MiB 文件；同时输出到 DSH 的 `agents-anywhere-runtime` 日志分类。默认位置为 `~/.agents-anywhere/dsh-bridge-next/logs/`，自定义 `stateRoot` 时跟随该目录。已有 Connector 生命周期日志继续单独保留。
+Bridge 与 Connector 运行日志统一由 Connector 保存到操作系统用户目录的 `~/.agents-anywhere/logs/`，使用分段 JSONL 文件；Connector 决定轮转、保留和持久确认。插件通过 `aa.local.v2.Logs.write/read/tail` 上报及读取，不再写 `dsh-runtime.jsonl` 或向 Cordis 重复输出运行日志。业务 logger 在入口注入；RPC 请求使用 MeshCall 的 dependency/meta 注入 namespace 和带调用上下文的 logger。断线时缓存最多 512 条未确认日志，重连带稳定事件 ID 重发；插件离线退出会丢失未确认部分，溢出会记录丢弃计数。安装引导日志仍本地保存到 `<stateRoot>/logs/onboarding.jsonl`。详细契约见 [日志服务](../contracts/dsh-bridge/2.0/logs.md)。
 
-AA Desktop 正在运行时，连接功能显示桌面端引导；仅安装而未运行时，插件仍可管理连接。桥接日志始终可用。手机连接复用已有 `/auth/mobile-login/qr`、`status`、`confirm` 接口；二维码包含手机扫描协议要求的临时登录凭据，使用当前账号的后端地址，不使用 DSH 地址或 OAuth Web 开发端口。无需新增 AA Server 接口。
+AA Desktop 正在运行时，连接功能显示桌面端引导；仅安装而未运行时，插件仍可管理连接。桥接运行日志需 Connector 日志服务可用；无连接时不读取旧插件日志文件。手机连接复用已有 `/auth/mobile-login/qr`、`status`、`confirm` 接口；二维码包含手机扫描协议要求的临时登录凭据，使用当前账号的后端地址，不使用 DSH 地址或 OAuth Web 开发端口。无需新增 AA Server 接口。
 
 插件基于 DSH `0.2.0-rc.2` 开发和测试，peer 声明支持 `>=0.2.0-rc.1 <0.3.0-0`，支持附件和模型/effort/权限、Agent 模式配置。Runtime 提供 DSH 一键配置、官方侧栏过滤、原生会话和历史读取、首次完整校准、归档同步、实时事件、文本、图片和普通文件新建/续聊、中断、`ask_user_question` 以及受限操作的单次批准或拒绝。新建使用 AA 显式传入的模型和权限选择；已有会话可切换配置。AA 发来的 PNG/JPEG/WebP/GIF 使用图片接口，普通文件通过本机暂存文件和官方 `fileUploads.uploadStream` 上传，RPC 只传文件元数据。平台发出的附件保留 AA 文件引用；不回传 DSH 本地产生的附件。首次会话清单成功提交到平台之前，runtime 保持初始化状态；同步中断时自动重试。
 
@@ -137,7 +137,7 @@ corepack yarn dev
 
 登录成功后，整个弹窗切换为紧凑的「已登录」面板：账号头像、昵称、邮箱（有设置时）、当前服务器，Connector 运行状态，以及「打开 Web」「退出登录」两个按钮。头像来自账号接口；未设置或图片加载失败时显示 DSH 官方用户图标。旧账号的头像、邮箱会在打开面板时后台补全，读取失败时保留已有资料。
 
-Connector 状态读取其现有 stdio `connector/state` 通知，反映实际运行任务而非仅判断 Python 控制进程存活。凭据失效后，Host 立即查询当前账号下的这个设备：确认已删除时，在 Connector 状态区域显示「本机设备已被删除，是否重新创建？」和「重新创建」按钮；设备仍存在时显示「本机设备已断开连接，是否重新连接？」和「重新连接」按钮。弹窗沿用每 1.5 秒的状态刷新，关闭弹窗不影响 Host 接收通知。
+Connector 状态来自 `aa.local.v2.Control` 的 `events` 流（`kind: "state"`），反映实际运行任务而非仅判断 Python 控制进程存活。凭据失效后，Host 立即查询当前账号下的这个设备：确认已删除时，在 Connector 状态区域显示「本机设备已被删除，是否重新创建？」和「重新创建」按钮；设备仍存在时显示「本机设备已断开连接，是否重新连接？」和「重新连接」按钮。弹窗沿用每 1.5 秒的状态刷新，关闭弹窗不影响 Host 接收通知。
 
 恢复必须由按钮触发：重新连接只给当前 Connector ID 通过现有 `/revoke` 接口签发凭据；重新创建使用新注册键，丢失响应后保留该键以便幂等重试。重启插件也不会自动续签失效凭据或重建已删除设备。网络错误不判断为删除，显示「重新检查」；账号凭据失效则提示重新登录。这里的失效是 Connector 长期凭据被撤销或设备被删除，短期 access token 的正常刷新仍由 Connector 自行处理。
 
@@ -166,11 +166,11 @@ Host 配置位于 DSH 的插件配置行。常用项如下：
 
 Python 下载镜像独立于 PyPI 镜像，提供官方源与 npmmirror。首次初始化缺少该设置时，中文系统默认使用 npmmirror，其他语言使用官方源；已有的手动选择保持不变，恢复出厂设置重新应用语言默认值。选择通过 `UV_PYTHON_INSTALL_MIRROR` 传给 uv，仅影响解释器下载。`@dataiku/uv` 的平台可选依赖由包管理器安装，Host 直接执行其中的原生二进制，不要求 postinstall 脚本运行。
 
-日志页可以切换 Bridge 和 Connector。Connector 日志记录 uv/Python 的 stderr 与进程状态，按时间从上往下显示，首次及每次分页读取 200 行，滚到顶部加载更早记录。日志最多保留 10,000 行，写入前移除终端控制字符并脱敏凭据；stdout 保留为子进程 RPC 通道。日志在 `<stateRoot>/logs/connector-output.json` 中持久化，通过 Host RPC `readConnectorLogs` 分页读取。
+日志页可以切换 Bridge 和 Connector。运行日志通过生成的 Logs 客户端从 Connector 读取，保留全局 seq，支持来源过滤和分页。Connector 不可用时，Connector 页仍可显示本地启动诊断（uv/Python stderr 与进程状态，`<stateRoot>/logs/connector-output.json`）；该日志仅用于启动排错，不复制已接收的运行日志。stdout 只用于 `anywhere-cli rpc` 启动时的一行就绪信息。
 
 受限权限请求通过 DSH 官方 `approval/request` 转成 AA 交互通知，显示工具名与申请原因，提供“允许一次”和“拒绝”。结果通过官方待处理请求返回 DSH，不修改会话权限模式或批准策略。原生客户端作答或请求取消后，远端通知同步关闭；重连恢复同一个待处理请求，重复提交不会重复批准。计划审批 `plan-review` 复用问答卡片，展示完整计划正文和 DSH 提供的选项，也可填写修改意见。批准选项按 DSH 声明的标签匹配，不按位置推断；原生客户端作答、取消和重连沿用同一待处理请求。
 
-Bridge 的独占锁决定端点文件的写入权。获得锁后会重建残留或损坏的 `endpoint.json`，PID 仅用于诊断；关闭时只移除当前实例的端点，再释放锁。为兼容 2.0.3 之前的 Connector，端点还会复制到旧位置 `<dshHome>/agents-anywhere/bridge/endpoint.json`：写入前用同样的锁机制申请该目录，锁被 2.0.3 之前的插件占用时跳过；锁端口被系统保留（Windows 上的 EACCES）时不加锁照常写入，因为旧插件同样无法占用它。
+本机 Router 由 Connector 进程拥有（Unix socket 或 Windows 命名管道）；插件只负责发现与连接。插件不写端点文件：Connector 在 `~/.agents-anywhere/dsh-bridge/connector.json` 发布 rendezvous（endpoint + `dsh-bridge` key），插件读取后注册 `aa.dsh.v2.Bridge`，`instanceId` 或 key 变化时切换到新的 Router。插件管理锁（`acquireManagerLock`）仍防止两个插件实例同时注册，避免 Connector 的调用被分到两个 DSH 进程。旧的 `<dshHome>/agents-anywhere/bridge/endpoint.json` 镜像与 1.0 的 `initialize` 握手已删除。
 
 
 旧配置中的自动启动、心跳、重连及已有会话同步选项在加载时移除，不再影响连接行为。Host 重载自动恢复已授权设备；首次安装等待登录，仅 Desktop 正在运行时交由 Desktop 管理。同步间隔及固定的连接参数写入实际 `connector/connector.json`。`logs/connector.jsonl` 记录本机 Connector 生命周期。
@@ -181,7 +181,7 @@ Bridge 的独占锁决定端点文件的写入权。获得锁后会重建残留�
 
 本机共享记录固定为 `<操作系统用户主目录>/.agents-anywhere/connector-runtime.json`。Python Connector 统一负责启动互斥、运行 PID/启动来源和有序 Connector ID 历史，CLI 也在同一范围内。Desktop 只校验和发布安装信息；插件只读取共享记录，不写 ID、运行记录或安装信息。Desktop 与 Python 的短期文件事务保证并发写入不覆盖对方字段。
 
-插件先保存私有绑定，再通过 RPC 启动 Python Connector。Python 核验已有 PID 确实对应原来的 Connector 进程，接受启动时追加缺失 ID；冲突返回 `-32009 / connector_already_running`。插件展示错误并保留绑定供重试，关闭自己被拒绝的子进程；不会因冲突重复注册。正常退出后由 Python 清除自己的运行记录，异常退出后根据 PID 和进程身份判断残留记录；仅停止后端连接不会释放仍存活的 RPC 进程占用。
+插件先保存私有绑定，再通过 RPC 启动 Python Connector。Python 核验已有 PID 确实对应原来的 Connector 进程，接受启动时追加缺失 ID；冲突返回应用错误码 `connector_already_running`。插件展示错误并保留绑定供重试，关闭自己被拒绝的子进程；不会因冲突重复注册。正常退出后由 Python 清除自己的运行记录，异常退出后根据 PID 和进程身份判断残留记录；仅停止后端连接不会释放仍存活的 RPC 进程占用。
 
 默认插件数据统一放在 `~/.agents-anywhere/dsh-bridge-next/`；插件启动的 Connector 使用其 `connector/` 子目录，实例检查点和 KV 继续按 `<connectorId>/<runtimeId>/` 隔离。首次启动在读取账号和启动 Connector 前，从旧 `~/.agentsanywhere/dsh-bridge-next/` 复制全部持久数据，保留原文件；新目录已有文件优先。复制使用新旧目录的管理锁，旧插件仍运行时会报告冲突。复制失败会阻止管理器启动，修复后可重试。成功后的 `.legacy-state-migrated.json` 防止退出登录或重置后重新导入旧数据，请勿删除该记录。自动生成的 `connector-venv` 不复制，由 uv 在新位置重建；Connector 配置中指向旧根目录的状态路径随迁移更新。显式 `stateRoot` 不自动迁移，继续使用配置的位置。
 
@@ -195,7 +195,7 @@ Bridge 的独占锁决定端点文件的写入权。获得锁后会重建残留�
 
 点击该按钮由 Host 重新校验安装记录，生成一次性 `flowId`，再通过 `agents-anywhere-desktop://onboarding?source=dsh-plugin&flowId=...` 唤起桌面端；macOS 走系统协议处理器，Windows、Linux 和开发态用记录中的可执行文件与启动参数传参。URL 由 Host 拼装，不接受客户端传入的路径、命令或回跳地址，也不携带任何凭据。桌面端每次收到该入口都进入自己的引导页，与是否已完成过引导无关。
 
-检测到 Desktop 正在运行时，插件跳过 Connector 自动恢复和账号资料刷新，账号、设备与 Connector 交由桌面端管理；插件只保留 DSH runtime 端点（`~/.agents-anywhere/dsh-bridge/endpoint.json`，位于操作系统用户主目录，不随 `DSH_HOME` 变化）和桥接日志。Desktop 退出后，插件可以恢复先前已授权的连接。
+检测到 Desktop 正在运行时，插件跳过 Connector 自动恢复和账号资料刷新，账号、设备与 Connector 交由桌面端管理；插件只保留桥接（连接 Connector 发布的 `~/.agents-anywhere/dsh-bridge/connector.json`，位于操作系统用户主目录，不随 `DSH_HOME` 变化）和桥接日志。Desktop 退出后，插件可以恢复先前已授权的连接。
 
 ## 原生命令桥接
 
@@ -234,8 +234,8 @@ Web 在相关 revision/availability 变化时刷新打开的目录，重开菜�
 错误，不代表副作用回滚。未知名称/输入拒绝没有 executionState。handler 抛异常返回
 `command_failed`；取消、超时或断连后无法确认结果返回 `command_outcome_unknown`。
 这些无法确认的结果均为 `ok:false`、`executionState:'unknown'`、`retryable:false`，
-不猜测 correlation，也不自动重试。显式 Python task cancellation 继续向上传播，并发送
-已有 `$/cancelRequest`。UI 应保留失败草稿，提示刷新会话状态后再决定是否重发。
+不猜测 correlation，也不自动重试。显式 Python task cancellation 继续向上传播，由 MeshCall 的调用取消
+（`call.cancel`）传递到插件。UI 应保留失败草稿，提示刷新会话状态后再决定是否重发。
 
 ## 验证范围
 
@@ -243,7 +243,7 @@ Web 在相关 revision/availability 变化时刷新打开的目录，重开菜�
 
 本轮没有自动启动真实开发服务、登录真实账号或进行 DSH GUI 联调。首次手动联调时按上面的链路操作，确认 Web 完成页可达；Windows 实机进程行为仍需在对应环境验证。
 
-2026-09-08 的原分支基线检查与后续 Python 职责调整分别记录，具体测试数量、提交范围和 CI 状态见 [验证记录](./VERIFICATION.md)。插件事件与问答测试使用原有后端 ASGI app 和临时 SQLite；本地开发及生产 Server 仍使用 PostgreSQL。持续检查由 [CI 工作流](../.github/workflows/ci.yml)执行；这些结果不代替真实模型、手机、Windows 或长期运行验收。
+2026-09-08 的原分支基线检查与后续 Python 职责调整分别记录，具体测试数量、提交范围和 CI 状态见 [验证记录](./VERIFICATION.md)。当前涉及后端的事件与问答集成测试使用原有 ASGI app，以及 `AGENT_SERVER_TEST_DB_URL` 指向的一次性 PostgreSQL 测试库；未配置时跳过这两项测试。本地开发及生产 Server 也使用 PostgreSQL。持续检查由 [CI 工作流](../.github/workflows/ci.yml)执行；这些结果不代替真实模型、手机、Windows 或长期运行验收。
 
 ## 目录职责
 

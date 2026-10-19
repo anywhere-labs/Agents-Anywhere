@@ -261,11 +261,11 @@ test('read cursors capture one complete inventory and truncated snapshots are ne
     readSession: async () => snapshot,
   }, status: () => undefined }, 'instance')
   const params = { sessionId: sessionId('instance', 'native'), externalSessionId: 'native' }
-  const limited = await router.request('session.getSnapshot', { ...params, limit: 1 }, new AbortController().signal) as { complete: boolean, items: unknown[] }
+  const limited = await router.request('getSessionSnapshot', { ...params, limit: 1 }, new AbortController().signal) as { complete: boolean, items: unknown[] }
   assert.equal(limited.complete, false)
   assert.equal(limited.items.length, 1)
-  await assert.rejects(router.request('session.startTurn', params, new AbortController().signal), { code: 'UNSUPPORTED_OPERATION' })
-  await assert.rejects(router.request('session.getSnapshot', { ...params, sessionId: 'foreign' }, new AbortController().signal), /namespace/)
+  await assert.rejects(router.request('startTurn', params, new AbortController().signal), { code: 'UNSUPPORTED_OPERATION' })
+  await assert.rejects(router.request('getSessionSnapshot', { ...params, sessionId: 'foreign' }, new AbortController().signal), /namespace/)
 })
 
 

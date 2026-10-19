@@ -1,6 +1,6 @@
 [project]
 name = "anywhere-cli"
-version = "2.1.0"
+version = "2.2.0"
 description = "Local runtime connector for Agents Anywhere"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -10,6 +10,7 @@ dependencies = [
     "httpx[socks]>=0.28.1",
     "jsonschema>=4.26.0",
     "loguru>=0.7.3",
+    "meshcall==0.3.0",
     "openai-codex>=0.144.4",
     "openai-codex-cli-bin>=0.144.4",
     "pexpect>=4.9.0; sys_platform != 'win32'",
@@ -39,6 +40,15 @@ dev = [
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple/"
 default = true
+
+# The mirror lags behind for recently published packages; get ours from PyPI.
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple/"
+explicit = true
+
+[tool.uv.sources]
+meshcall = { index = "pypi" }
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

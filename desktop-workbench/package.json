@@ -2,7 +2,7 @@
   "name": "agents-anywhere-desktop-workbench",
   "productName": "Agents Anywhere",
   "private": true,
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Electron shell for the Agents Anywhere web workbench",
   "packageManager": "yarn@4.6.0",
   "workspaces": [
@@ -32,6 +32,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.10.2",
+    "@types/ws": "8.18.1",
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12",
     "proxy-agent": "^8.0.2",
@@ -49,6 +50,7 @@
       "!dist/electron/*.test.js",
       "!dist/electron/backend/*.test.js",
       "!node_modules/agents-anywhere-desktop-renderer/**",
+      "!node_modules/meshcall-router-*/**",
       "renderer/out/**",
       "package.json"
     ],
@@ -139,5 +141,8 @@
       "icon": "build/icon-mac-source.png",
       "target": "AppImage"
     }
+  },
+  "dependencies": {
+    "meshcall": "0.3.0"
   }
 }

@@ -117,14 +117,12 @@ def bridge_directory() -> Path:
 
 
 def endpoint_path() -> Path:
-    return bridge_directory() / "endpoint.json"
+    """Where this Connector publishes its Router for the plugin (the 2.0 rendezvous)."""
+    return bridge_directory() / "connector.json"
 
 
 def legacy_endpoint_path(values: dict[str, Any]) -> Path:
-    """Endpoint location of older plugins under DSH_HOME.
-
-    Read only when the fixed endpoint is missing, and kept as the session identity.
-    """
+    """Endpoint location of 1.x plugins under DSH_HOME, kept only as the session identity."""
     return Path(
         canonical_path(
             dsh_home(values) / "agents-anywhere" / "bridge" / "endpoint.json"

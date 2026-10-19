@@ -1,5 +1,5 @@
 """Real DSH question bridge -> existing authenticated backend routes, without a dev server."""
-# ruff: noqa: E402
+# ruff: noqa: I001 - dsh_event_probe must set sys.path before agent_server is imported.
 from __future__ import annotations
 
 from connector.core import runtime_owner
@@ -10,7 +10,7 @@ import hashlib
 import sys
 from pathlib import Path
 
-from dsh_event_probe import CheckedRuntime, until
+from dsh_event_probe import until
 from dsh_probe_database import fresh_server_database
 from dsh_probe_transport import IngestTransport
 import httpx
@@ -18,7 +18,9 @@ from jsonschema import Draft202012Validator
 
 from agent_server.app import create_app
 from agent_server.core.auth import create_connector_access_token, create_user_access_token
+
 from connector.runtimes.dsh.provider import DshProvider
+from connector.runtimes.dsh.runtime import DshRuntime
 from connector.server.ingest import ConnectorIngestClient
 from connector.server.runtime_host import ConnectorRuntimeHost
 from connector.server.runtime_rpc_payloads import session_state_payload
@@ -51,7 +53,7 @@ async def main(home: Path) -> None:
                 raise AssertionError("Questions must not download files")
 
             host = ConnectorRuntimeHost(connector.id, notify, download, ingest_notifications=ingest.ingest_notifications, ingest_snapshot=ingest.ingest_snapshot)
-            runtime = CheckedRuntime(await DshProvider().validate_config({"dshHome": str(home)}), host)
+            runtime = DshRuntime(await DshProvider().validate_config({"dshHome": str(home)}), host)
             original_rpc = app.state.rpc
 
             class Rpc:

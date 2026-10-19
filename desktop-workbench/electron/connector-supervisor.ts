@@ -4,6 +4,8 @@ import { ConnectorRpcError, CONNECTOR_CONFLICT_MESSAGE } from "./connector-rpc-e
 import { materializeConnectorProject } from "./connector-project";
 import { bundledPythonExecutable, environmentHome, environmentUsesPython } from "./connector-python";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import type { Mesh as MeshConnection, Router as RouterEndpoint } from "meshcall" with { "resolution-mode": "import" };
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
@@ -14,18 +16,18 @@ import type { ConnectorLogStore } from "./log-store";
 import type {
   ConnectorConfigPatch,
   ConnectorLogEntry,
+  ConnectorLogQuery,
+  ConnectorLogPage,
   ConnectorPrivateConfig,
   ConnectorPublicConfig,
   ConnectorState,
   DesktopSettings,
-  RpcResponse,
 } from "./connector-types";
-
-type PendingRequest = {
-  resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
-  timer: NodeJS.Timeout;
-};
+import {
+  ControlServiceClient,
+  type ConnectorSettings as ControlSettings,
+} from "./generated/connector-control";
+import { LogsServiceClient, type LogEntry, type LogPage } from "./generated/connector-logs";
 
 /**
  * A `uv run` without a matching project environment builds one first,
@@ -35,6 +37,8 @@ type PendingRequest = {
  * deadline.
  */
 const FIRST_RUN_TIMEOUT_MS = 15 * 60_000;
+/** The Connector restarts its Router within a couple of seconds; wait it out. */
+const CONTROL_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_RPC_TIMEOUT_MS = 30_000;
 const PYTHON_BUILDS_GITHUB = "https://github.com/astral-sh/python-build-standalone/releases/download";
 const UV_HTTP_TIMEOUT_SECONDS = "60";
@@ -45,6 +49,25 @@ const RECENT_OUTPUT_LINES = 12;
 const RECENT_OUTPUT_LINE_LENGTH = 500;
 
 type RpcOutput = { lines: string[]; closed: Promise<void> };
+
+/** The control surface of one Connector process; tests substitute their own. */
+export interface ConnectorChannel {
+  control: {
+    getState(options?: { timeoutMs?: number }): Promise<{ running: boolean; authFailed: boolean }>;
+    acquireOwnership(options?: { timeoutMs?: number }): Promise<{ running: boolean; authFailed: boolean }>;
+    saveConfig(config: unknown, options?: { timeoutMs?: number }): Promise<unknown>;
+    start(config: unknown | null, options?: { timeoutMs?: number }): Promise<{ running: boolean; authFailed: boolean }>;
+    stop(options?: { timeoutMs?: number }): Promise<{ running: boolean; authFailed: boolean }>;
+    restart(config: unknown | null, options?: { timeoutMs?: number }): Promise<{ running: boolean; authFailed: boolean }>;
+    events(since: number | null, options?: { signal?: AbortSignal }): AsyncIterable<{ seq: number; kind: string; state?: unknown }>;
+  };
+  logs: {
+    tail(since: number | null, source?: "connector" | "bridge" | null, options?: { signal?: AbortSignal }): AsyncIterable<LogEntry>;
+    read(source?: "connector" | "bridge" | null, beforeSeq?: number | null, afterSeq?: number | null, limit?: number): Promise<LogPage>;
+    clear(): Promise<LogPage>;
+  };
+  close?(): Promise<void>;
+}
 
 type ConnectorSupervisorOptions = {
   onOwnership?: (state: OwnershipState) => void;
@@ -64,6 +87,10 @@ type ConnectorSupervisorOptions = {
   logs: ConnectorLogStore;
   onState: (state: ConnectorState) => void;
   onLog: (entry: ConnectorLogEntry) => void;
+  onRuntimeLog?: (entry: ConnectorLogEntry) => void;
+  onLogSourceChanged?: () => void;
+  /** Test seam; production connects a Mesh to the Connector's Router. */
+  connectControl?: (rendezvous: Rendezvous) => Promise<ConnectorChannel>;
 };
 
 type ConnectorLauncher = {
@@ -78,8 +105,10 @@ export class ConnectorSupervisor {
   /** The current RPC process's recent stderr, quoted when a request fails. */
   private rpcOutput: RpcOutput | null = null;
   private processGroupId: number | null = null;
-  private nextRequestId = 1;
-  private readonly pending = new Map<number, PendingRequest>();
+  private mesh: MeshConnection | null = null;
+  private channel: ConnectorChannel | null = null;
+  private ready: { promise: Promise<ConnectorChannel>; resolve: (channel: ConnectorChannel) => void; reject: (error: Error) => void } | null = null;
+  private streams: AbortController | null = null;
   private shuttingDown = false;
   private keepRuntimeRunning = false;
   /** The directory `uv run --project` uses; a writable copy when packaged. */
@@ -146,6 +175,51 @@ export class ConnectorSupervisor {
   publicState(): ConnectorState {
     this.refreshBindingState();
     return { ...this.state };
+  }
+
+  hasRuntimeLogs(): boolean { return this.channel !== null }
+
+  async readLogs(query: ConnectorLogQuery = {}): Promise<ConnectorLogPage> {
+    if (!this.channel) return this.options.logs.read(query);
+    const page = await this.channel.logs.read(null, query.beforeSeq ?? null, query.afterSeq ?? null,
+      Math.max(1, Math.min(1000, query.pageSize ?? 200)));
+    return { ...page, items: page.items.map(entry => ({ ...entry })) };
+  }
+
+  async clearLogs(): Promise<ConnectorLogPage> {
+    if (!this.channel) return this.options.logs.clear();
+    const page = await this.channel.logs.clear();
+    return { ...page, items: page.items.map(entry => ({ ...entry })) };
+  }
+
+  async exportLogs(filePath: string): Promise<number> {
+    const channel = this.channel;
+    if (!channel) return this.options.logs.exportTo(filePath);
+    const temporary = `${filePath}.${randomUUID()}.tmp`;
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const file = await fs.promises.open(temporary, "wx", 0o600);
+    let count = 0;
+    try {
+      let cursor = 0;
+      let upper: number | null = null;
+      for (;;) {
+        const page = await channel.logs.read(null, null, cursor, 1000);
+        if (upper === null) upper = page.lastSeq ?? 0;
+        const entries = page.items.filter(entry => entry.seq <= upper!);
+        if (!entries.length) break;
+        await file.write(entries.map(entry => JSON.stringify(entry)).join("\n") + "\n");
+        count += entries.length;
+        cursor = entries.at(-1)!.seq;
+        if (cursor >= upper || !page.hasMoreAfter) break;
+      }
+      await file.close();
+      await fs.promises.rename(temporary, filePath);
+      return count;
+    } catch (error) {
+      await file.close().catch(() => undefined);
+      await fs.promises.unlink(temporary).catch(() => undefined);
+      throw error;
+    }
   }
 
   async getState(): Promise<ConnectorState> {
@@ -331,37 +405,65 @@ export class ConnectorSupervisor {
     await this.terminateRpcProcess();
   }
 
+  /** Call one method of `aa.local.v2.Control`; the first call also waits out provisioning. */
   private async request(
     method: string,
     params?: unknown,
     options: { requiresConfig?: boolean; timeoutMs?: number } = {},
   ): Promise<unknown> {
     this.ensureRpcProcess(options.requiresConfig !== false);
-    const child = this.rpcProcess;
-    if (!child?.stdin.writable) throw new Error("Connector RPC is not available.");
-    const output = this.rpcOutput;
-    const id = this.nextRequestId++;
-    const payload = params === undefined
-      ? { jsonrpc: "2.0", id, method }
-      : { jsonrpc: "2.0", id, method, params };
     const timeoutMs = options.timeoutMs ?? DEFAULT_RPC_TIMEOUT_MS;
+    const control = (await this.awaitControl(timeoutMs, method)).control;
+    const call = { timeoutMs };
+    try {
+      switch (method) {
+        case "connector.getState": return await control.getState(call);
+        case "connector.acquireOwnership": return await control.acquireOwnership(call);
+        case "connector.saveConfig": return await control.saveConfig(params as ControlSettings, call);
+        case "connector.start": return await control.start(null, call);
+        case "connector.stop": return await control.stop(call);
+        case "connector.restart": return await control.restart(null, call);
+        default: throw new Error(`Unsupported Connector method: ${method}`);
+      }
+    } catch (error) {
+      throw this.connectorError(error);
+    }
+  }
+
+  private awaitControl(timeoutMs: number, method: string): Promise<ConnectorChannel> {
+    const ready = this.ready;
+    if (!ready) return Promise.reject(new Error("Connector RPC is not available."));
+    const output = this.rpcOutput;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pending.delete(id);
         // A launch still installing dependencies says so in its last output.
         const message = `Connector RPC request timed out after ${Math.round(timeoutMs / 1_000)}s: ${method}`;
         reject(new Error(withRecentOutput(message, output?.lines)));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
-      child.stdin.write(`${JSON.stringify(payload)}\n`, "utf8", (error) => {
-        if (!error) return;
-        const request = this.pending.get(id);
-        if (!request) return;
-        clearTimeout(request.timer);
-        this.pending.delete(id);
-        request.reject(error);
-      });
+      ready.promise.then(
+        client => { clearTimeout(timer); resolve(client); },
+        error => {
+          clearTimeout(timer);
+          // The process finalizer quotes the last stderr itself; a connection error is already final.
+          reject(error);
+        },
+      );
     });
+  }
+
+  private connectorError(error: unknown): Error {
+    const value = error as { code?: unknown; details?: Record<string, unknown> } | null;
+    const code = value && typeof value.code === "string" ? value.code : "";
+    if (!code) return error instanceof Error ? error : new Error(String(error));
+    const details = value?.details;
+    if (code === "connector_already_running") {
+      this.keepRuntimeRunning = false;
+      this.clearRestartTimer();
+      this.options.onOwnership?.({ status: "conflict", message: CONNECTOR_CONFLICT_MESSAGE });
+      return new ConnectorRpcError(-32009, CONNECTOR_CONFLICT_MESSAGE, { reason: "connector_already_running", ...(details ?? {}) });
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    return new ConnectorRpcError(-32000, message || "Connector RPC error", details ?? { reason: code });
   }
 
   private ensureRpcProcess(requiresConfig: boolean): void {
@@ -382,6 +484,7 @@ export class ConnectorSupervisor {
     this.rpcProcess = child;
     this.processGroupId = process.platform === "win32" ? null : child.pid ?? null;
     this.log(`Starting Connector RPC with ${launcher.description}`);
+    this.ready = deferredControl();
     this.rpcReader = readline.createInterface({ input: child.stdout });
     this.rpcReader.on("line", (line) => this.handleRpcLine(line));
     // Whole lines only: uv writes one message in several chunks.
@@ -401,39 +504,101 @@ export class ConnectorSupervisor {
   }
 
   private handleRpcLine(line: string): void {
-    let payload: RpcResponse;
-    try {
-      payload = JSON.parse(line) as RpcResponse;
-    } catch {
-      this.log({ level: "WARNING", message: `Connector RPC emitted a non-JSON line: ${line}` });
+    const ready = this.ready;
+    if (!ready) return;
+    const rendezvous = parseRendezvous(line);
+    if (!rendezvous) {
+      // stdout carries exactly one line: the ready message. Anything else is a
+      // protocol error with no recovery path, so restart the process.
+      ready.reject(new Error(`Connector RPC emitted an unexpected line: ${line.slice(0, RECENT_OUTPUT_LINE_LENGTH)}`));
+      void this.terminateRpcProcess();
       return;
     }
-    if (typeof payload.id === "number") {
-      const request = this.pending.get(payload.id);
-      if (!request) return;
-      clearTimeout(request.timer);
-      this.pending.delete(payload.id);
-      if (payload.error) {
-        const error = new ConnectorRpcError(payload.error.code ?? -32000, payload.error.message || "Connector RPC error", payload.error.data);
-        if (error.ownershipConflict) {
-          this.keepRuntimeRunning = false;
-          this.clearRestartTimer();
-          this.options.onOwnership?.({ status: "conflict", message: CONNECTOR_CONFLICT_MESSAGE });
+    this.log({ level: "INFO", message: `Connector ready (${rendezvous.instanceId})` });
+    void this.connect(rendezvous, ready).then(
+      channel => ready.resolve(channel),
+      error => {
+        ready.reject(error);
+        void this.terminateRpcProcess();
+      },
+    );
+  }
+
+  private async connect(rendezvous: Rendezvous, ready: { promise: Promise<ConnectorChannel> }): Promise<ConnectorChannel> {
+    const fresh = () => this.ready === ready && this.rpcProcess !== null;
+    if (this.options.connectControl) {
+      const channel = await this.options.connectControl(rendezvous);
+      if (!fresh()) { await channel.close?.().catch(() => undefined); throw new Error("Connector 进程在连接期间已退出。"); }
+      this.channel = channel;
+      this.watchStreams(channel);
+      return channel;
+    }
+    const { Mesh, Router } = await import("meshcall");
+    const mesh = new Mesh(new Router(rendezvous.endpoint), { token: rendezvous.key, peerId: `desktop-workbench-${rendezvous.instanceId}` });
+    const deadline = Date.now() + CONTROL_CONNECT_TIMEOUT_MS;
+    let backoff = 200;
+    for (;;) {
+      try { await mesh.connect(); break; } catch (error) {
+        // The Connector owns the Router and restarts it; the endpoint and key stay the same.
+        if (!fresh() || Date.now() >= deadline) {
+          await mesh.close().catch(() => undefined);
+          throw error;
         }
-        request.reject(error);
-      } else request.resolve(payload.result);
-      return;
+        await new Promise(resolve => setTimeout(resolve, backoff));
+        backoff = Math.min(backoff * 2, 1_000);
+      }
     }
-    if (payload.method === "connector/state") {
-      this.mergeRuntimeState(payload.params);
+    if (!fresh()) {
+      await mesh.close().catch(() => undefined);
+      throw new Error("Connector 进程在连接期间已退出。");
+    }
+    this.mesh = mesh;
+    const channel: ConnectorChannel = { control: new ControlServiceClient(mesh), logs: new LogsServiceClient(mesh) };
+    this.channel = channel;
+    this.watchStreams(channel);
+    return channel;
+  }
+
+  /** Follow state and log events; a dropped stream resumes after its last seq. */
+  private watchStreams(channel: ConnectorChannel): void {
+    const controller = new AbortController();
+    this.streams = controller;
+    this.options.onLogSourceChanged?.();
+    const follow = async <T>(name: string, open: (since: number | null, signal: AbortSignal) => AsyncIterable<T>) => {
+      let since: number | null = null;
+      let backoff = 500;
+      while (!controller.signal.aborted) {
+        try {
+          for await (const event of open(since, controller.signal)) {
+            since = (event as { seq?: number }).seq ?? since;
+            backoff = 500;
+            this.handleEvent(event);
+          }
+          if (!controller.signal.aborted) throw new Error(`${name} stream ended`);
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          this.log({ level: "WARNING", message: `${name} stream interrupted: ${errorMessage(error)}` });
+          await new Promise(resolve => setTimeout(resolve, backoff));
+          backoff = Math.min(backoff * 2, 5_000);
+        }
+      }
+    };
+    void follow("Connector state", (since, signal) => channel.control.events(since, { signal }));
+    void follow("Connector log", (since, signal) => channel.logs.tail(since, null, { signal }));
+  }
+
+  private handleEvent(event: unknown): void {
+    if (!event || typeof event !== "object") return;
+    const value = event as { kind?: string; state?: unknown; level?: string; message?: string; time?: string; name?: string; exception?: string | null };
+    if (value.kind === "state") {
+      this.mergeRuntimeState(value.state);
       this.emitState();
       return;
     }
-    if (payload.method === "connector/log") {
-      const entry = payload.params && typeof payload.params === "object"
-        ? payload.params as Partial<ConnectorLogEntry>
-        : { message: String(payload.params ?? "") };
-      this.log(entry);
+    if (typeof value.message === "string") {
+      // Runtime records keep Connector's sequence and are never written by Desktop.
+      const entry = event as LogEntry;
+      this.options.onRuntimeLog?.({ ...entry, level: entry.level ?? "INFO" });
     }
   }
 
@@ -456,7 +621,23 @@ export class ConnectorSupervisor {
     this.rpcOutput = null;
     this.rpcProcess = null;
     this.processGroupId = null;
-    this.rejectPending(message, output);
+    const ready = this.ready;
+    this.ready = null;
+    this.streams?.abort();
+    this.streams = null;
+    const mesh = this.mesh;
+    const channel = this.channel;
+    this.mesh = null;
+    this.channel = null;
+    if (channel) this.options.onLogSourceChanged?.();
+    void mesh?.close().catch(() => undefined);
+    void channel?.close?.().catch(() => undefined);
+    if (ready) {
+      const drained = new Promise<void>(resolve => setTimeout(resolve, OUTPUT_DRAIN_MS));
+      void Promise.race([output?.closed ?? Promise.resolve(), drained]).then(() => {
+        ready.reject(new Error(withRecentOutput(message, output?.lines)));
+      });
+    }
     this.mergeRuntimeState({ running: false, status: "stopped" });
     this.emitState();
     if (
@@ -847,28 +1028,38 @@ export class ConnectorSupervisor {
     this.log({ level: "ERROR", message: errorMessage(error) });
   }
 
-  /**
-   * Fails the unanswered requests with the reason and the last stderr lines,
-   * which usually say why uv or Python stopped. Those lines can still be in
-   * flight when `exit` fires, so stderr gets a moment to close first.
-   */
-  private rejectPending(message: string, output: RpcOutput | null): void {
-    const requests = [...this.pending.values()];
-    this.pending.clear();
-    for (const request of requests) clearTimeout(request.timer);
-    if (requests.length === 0) return;
-    const drained = new Promise<void>((resolve) => setTimeout(resolve, OUTPUT_DRAIN_MS));
-    void Promise.race([output?.closed ?? Promise.resolve(), drained]).then(() => {
-      const error = new Error(withRecentOutput(message, output?.lines));
-      for (const request of requests) request.reject(error);
-    });
-  }
-
   private clearRestartTimer(): void {
     if (!this.restartTimer) return;
     clearTimeout(this.restartTimer);
     this.restartTimer = null;
   }
+}
+
+interface Rendezvous {
+  kind: "connector.ready";
+  version: 1;
+  instanceId: string;
+  pid: number;
+  endpoint: { unixPath: string } | { pipe: string };
+  key: string;
+}
+
+function parseRendezvous(line: string): Rendezvous | undefined {
+  let value: Record<string, unknown>;
+  try { value = JSON.parse(line) as Record<string, unknown>; } catch { return undefined; }
+  const endpoint = value.endpoint && typeof value.endpoint === "object" ? value.endpoint as Record<string, unknown> : {};
+  const local = typeof endpoint.unixPath === "string" ? { unixPath: endpoint.unixPath }
+    : typeof endpoint.pipe === "string" ? { pipe: endpoint.pipe } : undefined;
+  if (value.kind !== "connector.ready" || value.version !== 1 || !local || !Number.isSafeInteger(value.pid)
+    || typeof value.instanceId !== "string" || typeof value.key !== "string" || !value.key.startsWith("mk_")) return undefined;
+  return { kind: "connector.ready", version: 1, instanceId: value.instanceId, pid: value.pid as number, endpoint: local, key: value.key };
+}
+
+function deferredControl(): { promise: Promise<ConnectorChannel>; resolve: (channel: ConnectorChannel) => void; reject: (error: Error) => void } {
+  let resolve!: (channel: ConnectorChannel) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<ConnectorChannel>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
 }
 
 function parsePrivateConfig(value: unknown): ConnectorPrivateConfig {

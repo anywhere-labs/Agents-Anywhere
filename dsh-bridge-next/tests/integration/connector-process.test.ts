@@ -1,44 +1,129 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SourceConnector, ConnectorOwnershipError } from '../../src/host/connector/process.js'
+import { LocalRouter, Mesh, MeshCallError, Router, mutates, query, service, stream, z } from 'meshcall'
+import { ConnectorOwnershipError, SourceConnector } from '../../src/host/connector/process.js'
 import { readJson } from '../../src/host/storage/files.js'
 import { DEFAULT_CONNECTOR_SETTINGS, type ConnectorSettings } from '../../src/contracts/connector.js'
 import { ConnectorSettingsStore } from '../../src/host/connector/settings.js'
 
 // A real stdio subprocess, without running Python, Agents or an AA service.
+// The child prints one `connector.ready` line and serves nothing itself: this
+// test process owns the MeshCall Router and the `aa.local.v2.Control` service.
 const fixtureSource = `
-const readline = require('node:readline');
 let running = false;
 if (process.argv[2] === 'exit-error') { process.stderr.write('error: Python download failed: connection reset\\n'); process.exit(2); }
 process.stderr.write('uv: preparing Python environment\\n');
 process.stderr.write('PRIVATE-DEVICE-TOKEN\\n');
-const lines = readline.createInterface({ input: process.stdin });
-lines.on('line', line => {
-  if (process.argv[2] === 'stall') return;
-  const request = JSON.parse(line);
-  if (request.method === 'connector.start' && process.argv[2] === 'conflict') {
-    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, error: { code: -32009, message: 'Connector conflict', data: { reason: 'connector_already_running' } } }) + '\\n');
-    return;
-  }
-  if (request.method === 'connector.start') running = true;
-  if (request.method === 'connector.stop') running = false;
-  const result = { running, authFailed: false };
-  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
-  if (request.method === 'connector.start' && process.argv[2] === 'auth-failed') setTimeout(() => {
-    running = false;
-    const frame = JSON.stringify({ jsonrpc: '2.0', method: 'connector/state', params: { running, authFailed: true, lastError: 'PRIVATE', configPath: '/PRIVATE' } }) + '\\n';
-    process.stdout.write(frame.slice(0, 30));
-    setTimeout(() => process.stdout.write(frame.slice(30)), 5);
-  }, 20);
-});
-lines.on('close', () => process.exit(0));
+if (process.argv[2] !== 'stall') {
+  const ready = JSON.stringify({
+    kind: 'connector.ready', version: 1,
+    instanceId: 'fixture-' + process.pid, pid: process.pid,
+    endpoint: JSON.parse(process.argv[3]), key: process.argv[4],
+  });
+  process.stdout.write(ready + '\\n');
+}
+process.stdin.resume();
+process.stdin.on('end', () => process.exit(0));
+process.stdin.on('close', () => process.exit(0));
 `
 const binding = { installationId: 'test-installation', name: 'Test device', connectorId: 'conn_test', connectorToken: 'PRIVATE-DEVICE-TOKEN' }
+
+const stateSchema = z.looseObject({
+  status: z.enum(['running', 'expired credential', 'error', 'stopped']),
+  running: z.boolean(), pairing: z.boolean(), authFailed: z.boolean(),
+  configPath: z.string(), runtimePath: z.string(), hasConfig: z.boolean(),
+})
+const eventSchema = z.looseObject({ seq: z.int(), kind: z.enum(['state', 'pairing']) })
+type ConnectorState = { status: 'running' | 'expired credential' | 'error' | 'stopped', running: boolean, pairing: boolean,
+  authFailed: boolean, lastError: null, configPath: string, runtimePath: string, hasConfig: boolean }
+
+/** The state machine behind the fake Control service, driven by the test's mode. */
+class FakeControlBackend {
+  running = false
+  authFailed = false
+  private sequence = 0
+  private readonly history: { seq: number, kind: 'state', state: ConnectorState }[] = []
+  private readonly waiters = new Set<() => void>()
+  constructor(readonly mode: string) {}
+
+  snapshot(): ConnectorState {
+    return { status: this.authFailed ? 'expired credential' : this.running ? 'running' : 'stopped',
+      running: this.running, pairing: false, authFailed: this.authFailed, lastError: null,
+      configPath: '/fixture/connector.json', runtimePath: '/fixture/runtime.json', hasConfig: true }
+  }
+
+  emit(): void {
+    this.history.push({ seq: ++this.sequence, kind: 'state', state: this.snapshot() })
+    for (const wake of this.waiters) wake()
+    this.waiters.clear()
+  }
+
+  startClock(): void {
+    // The plugin subscribes to `events` after `start` returns; emit later so it sees the change.
+    if (this.mode === 'auth-failed') setTimeout(() => { this.running = false; this.authFailed = true; this.emit() }, 100)
+  }
+
+  async *events(since?: number | null): AsyncIterable<{ seq: number, kind: 'state', state: ConnectorState }> {
+    let index = this.history.findIndex(event => event.seq > (since ?? 0))
+    if (index < 0) index = this.history.length
+    try {
+      for (;;) {
+        while (index < this.history.length) yield this.history[index++]!
+        await new Promise<void>(resolve => { this.waiters.add(resolve) })
+      }
+    } finally { this.waiters.clear() }
+  }
+}
+
+@service('aa.local.v2.Control', { description: 'Fake Connector control for process tests.' })
+class FakeControl {
+  constructor(private readonly backend: FakeControlBackend) {}
+
+  @query({ description: 'State', request: z.looseObject({}), response: stateSchema })
+  async getState(): Promise<ConnectorState> { return this.backend.snapshot() }
+
+  @query({ description: 'Paths', request: z.looseObject({}), response: z.looseObject({ configPath: z.string() }) })
+  async getPaths(): Promise<{ configPath: string }> { return { configPath: '/fixture/connector.json' } }
+
+  @mutates({ description: 'Start', request: z.looseObject({}), response: stateSchema })
+  async start(): Promise<ConnectorState> {
+    if (this.backend.mode === 'conflict') {
+      throw new MeshCallError('connector_already_running', 'Connector conflict', { details: { reason: 'connector_already_running' } })
+    }
+    this.backend.running = true
+    this.backend.emit()
+    this.backend.startClock()
+    return this.backend.snapshot()
+  }
+
+  @mutates({ description: 'Stop', request: z.looseObject({}), response: stateSchema })
+  async stop(): Promise<ConnectorState> {
+    this.backend.running = false
+    this.backend.emit()
+    return this.backend.snapshot()
+  }
+
+  @stream({ description: 'Events', request: z.looseObject({ since: z.int().nullable().optional() }), outputItem: eventSchema })
+  async *events(request: { since?: number | null }): AsyncIterable<{ seq: number, kind: 'state', state: ConnectorState }> {
+    yield* this.backend.events(request.since)
+  }
+}
+
+/** Windows cannot serve a Unix socket; both sides accept a named pipe instead. */
+function localEndpoint(directory: string): { router: { unixPath: string } | { pipe: string }, rendezvous: { unixPath: string } | { pipe: string } } {
+  if (process.platform === 'win32') {
+    const pipe = `agents-anywhere-test-${randomUUID()}`
+    return { router: { pipe }, rendezvous: { pipe } }
+  }
+  const unixPath = join(directory, 'router.sock')
+  return { router: { unixPath }, rendezvous: { unixPath } }
+}
 
 async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CONNECTOR_SETTINGS, firstRequestTimeoutMs?: number,
   prune: (command: string) => Promise<unknown> = async () => undefined, onLaunch?: () => void) {
@@ -52,6 +137,13 @@ async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CO
   await writeFile(join(source, 'connector', 'cli.py'), '')
   const script = join(root, 'rpc.cjs')
   await writeFile(script, fixtureSource)
+  const endpoint = localEndpoint(root)
+  const key = `mk_fixture_${randomUUID()}`
+  const backend = new FakeControlBackend(mode)
+  const router = await LocalRouter.start(endpoint.router)
+  const control = new Mesh(new Router(endpoint.rendezvous), { token: key, peerId: `fake-control-${randomUUID()}` })
+  control.mount(new FakeControl(backend))
+  await control.startServing()
   let child: ChildProcessWithoutNullStreams | undefined
   const connector = new SourceConnector({
     stateRoot: join(root, 'data'), connectorSourceDir: source, uvPath: mode === 'missing' ? join(root, 'missing-uv') : process.execPath,
@@ -78,18 +170,23 @@ async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CO
     assert.equal(options.env?.UV_INDEX_URL, expectedIndex)
     assert.equal(options.env?.PIP_INDEX_URL, expectedIndex)
     assert.equal(options.env?.UV_HTTP_TIMEOUT, process.env['UV_HTTP_TIMEOUT'] || '60')
-    child = spawn(command, [script, mode], options)
+    child = spawn(command, [script, mode, JSON.stringify(endpoint.rendezvous), key], options)
     child.once('spawn', didSpawn)
     onLaunch?.()
     return child
   }, () => settings, firstRequestTimeoutMs, async command => { pruned.push(command); return prune(command) })
   return {
     connector, root, pruned, spawned, get child() { return child },
-    async close() { await connector.stop(); await rm(root, { recursive: true, force: true }) },
+    async close() {
+      await connector.stop()
+      await control.close().catch(() => undefined)
+      await router.stop().catch(() => undefined)
+      await rm(root, { recursive: true, force: true })
+    },
   }
 }
 
-test('source Connector uses stdio RPC and a private config, then exits on plugin stop', async () => {
+test('source Connector uses the MeshCall Control service and a private config, then exits on plugin stop', async () => {
   const h = await fixture()
   try {
     await h.connector.prepare()
@@ -156,7 +253,7 @@ test('a spawn error releases the child without waiting indefinitely', { timeout:
   } finally { await h.close() }
 })
 
-test('auth failure is delivered over unsolicited stdio state even while the controller process stays alive', { timeout: 8000 }, async () => {
+test('auth failure is delivered over the unsolicited Control events stream while the process stays alive', { timeout: 8000 }, async () => {
   const h = await fixture('auth-failed')
   let detach = () => {}
   try {
@@ -239,10 +336,14 @@ test('a prune that fails leaves the startup failure it was reclaiming after', { 
   } finally { await h.close() }
 })
 
-test('source Connector preserves RPC conflict identity and stops only its rejected child', async () => {
+test('source Connector preserves the RPC conflict identity and stops only its rejected child', async () => {
   const h = await fixture('conflict')
   try {
-    await assert.rejects(h.connector.start(binding, 'https://api.example.test', new AbortController().signal), ConnectorOwnershipError)
+    // The Control service reports the MeshCall application error
+    // `connector_already_running`; the Source Connector surfaces it as the typed
+    // onboarding error so the UI can show its conflict message.
+    await assert.rejects(h.connector.start(binding, 'https://api.example.test', new AbortController().signal),
+      error => error instanceof ConnectorOwnershipError)
     assert.equal(h.connector.running, false)
     assert.equal(h.child?.exitCode, 0)
     assert.equal((await readJson<{ connectorId: string }>(join(h.root, 'data', 'connector', 'connector.json')))?.connectorId, binding.connectorId)

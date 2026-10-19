@@ -48,28 +48,38 @@ Python Connector 统一维护启动互斥、运行记录和本机 Connector ID �
 
 `instanceId` 用于防止过期实例清除另一个实例的记录。旧的 `AA_CONNECTOR_OWNER_INSTANCE` / `AA_CONNECTOR_OWNER_PID` 不再用于授权或委托占用。
 
-## RPC 冲突与入口处理
+## 控制通道
 
-`anywhere-cli rpc` 先建立控制通道。`connector.acquireOwnership` 用于无配置时的启动预检；`connector.saveConfig`、配对和启动也由 Python 检查占用。Host 不自行检查 PID 或写入运行记录。
+`anywhere-cli rpc` 启动时拉起本进程专属的 MeshCall `LocalRouter`（Unix socket / Windows 命名管道），注册 `aa.local.v2.Control` 与 `aa.local.v2.Logs`，并在 stdout 写一行就绪信息后不再写任何内容：
+
+```json
+{"kind":"connector.ready","version":1,"instanceId":"4f1a…","pid":12345,
+ "endpoint":{"unixPath":"…/router/4f1a….sock"},"key":"mk_host_…"}
+```
+
+宿主（Desktop 或插件管理器）用该 endpoint 与 key 建立 `Mesh`，调用控制方法；stdin 关闭即退出（Router 随之退出）。运行日志由 `aa.local.v2.Logs.write/read/tail/clear` 持久化与读取（host 可 `clear`，dsh-bridge 仅 `write`/`read`/`tail`，详见[日志契约](../../dsh-bridge/2.0/logs.md)），状态与配对通过 `aa.local.v2.Control.events(since)` 订阅；客户端保存 `lastSeq` 并在断线后带退避重新订阅。方法名、参数与旧 JSON-RPC 一一对应（`getState`、`getPaths`、`acquireOwnership`、`getConfig`、`saveConfig`、`start`、`stop`、`restart`、`startPairing`、`cancelPairing`）。
+
+查询与订阅可以并发；`start`、`stop`、`restart` 与 `saveConfig` 在 Controller 内共用生命周期锁，`restart` 的停止与启动不可交错。配对的地址解析和网络轮询不占用该锁；`cancelPairing` 覆盖地址解析阶段，并使旧配对结果失效。配对成功后的凭据保存和自动启动也受生命周期锁保护，取消后尚未提交的配对不得再保存凭据或启动后端。进程退出时拒绝新的启动和配置保存，等待已有任务清理后再释放机器所有权。
+
+控制变更方法均不声明幂等，不由 SDK 自动重试。尤其 `restart` 是一次重启动作，`startPairing` 会替换配对，两者都不能因回复丢失而重放。变更调用失败后，宿主先查询当前状态，再由用户明确决定是否重新发起。
+
+生命周期变更进行中（包括已取消调用留下的后端清理）时，新的 `start`、`stop`、`restart` 和 `saveConfig` 立即返回 `connector_busy`，`retryable:false`，不排队、不合并，也不自动补执行。查询与 `cancelPairing` 仍可用；内部的配对提交和进程关闭可以等待生命周期锁。先后完成的两次显式 `restart` 表示两次用户操作，仍分别执行。
+
+## 启动互斥冲突
+
+`acquireOwnership` 用于无配置时的启动预检；`saveConfig`、配对和启动也由 Python 检查占用。Host 不自行检查 PID 或写入运行记录。冲突是应用错误码 `connector_already_running`：
 
 ```json
 {
-  "jsonrpc": "2.0",
-  "id": 1,
-  "error": {
-    "code": -32009,
-    "message": "Another Connector is running (cli, PID 12345). Stop that Connector process, then retry.",
-    "data": {
-      "reason": "connector_already_running",
-      "owner": {"kind": "cli", "pid": 12345}
-    }
-  }
+  "code": "connector_already_running",
+  "message": "Another Connector is running (cli, PID 12345). Stop that Connector process, then retry.",
+  "details": {"reason": "connector_already_running", "owner": {"kind": "cli", "pid": 12345}}
 }
 ```
 
-冲突是请求错误，RPC 通道仍可响应 `connector.getState`，并在占用方退出后接受重试。直接 CLI 启动则打印错误并以退出码 `2` 退出。
+冲突是调用错误，控制通道仍可响应 `getState`，并在占用方退出后接受重试。其他意外失败映射为应用错误码 `connector_error`（等价于旧 `-32000`），参数错误为 `invalid_argument`。直接 CLI 启动则打印错误并以退出码 `2` 退出。
 
-- Desktop 根据 RPC 错误展示冲突状态和重试入口，停止自动重启循环；重试再次调用 Python。Desktop 自身不持有或释放启动互斥。
+- Desktop 根据错误码展示冲突状态和重试入口，停止自动重启循环；重试再次调用 Python。Desktop 自身不持有或释放启动互斥。
 - 插件把错误转为引导流程中的可重试提示，关闭自己启动但被拒绝的子进程。私有绑定和凭据保留，下次重试不因此新建设备。
 - 提示要求结束占用方的 Connector 进程。仅断开服务器连接不代表进程退出。
 

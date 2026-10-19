@@ -9,10 +9,14 @@ import sys
 from pathlib import Path
 
 from connector.core import runtime_owner
-from connector.runtime_protocol import RuntimeAttachment, RuntimeAttachmentContent, RuntimeConfig, RuntimeInvalidRequestError
+from connector.runtime_protocol import (
+    RuntimeAttachment,
+    RuntimeAttachmentContent,
+    RuntimeConfig,
+)
 from connector.runtimes.dsh import provider_config
 from connector.runtimes.dsh.bridge.client import BridgeClient
-from connector.runtimes.dsh.discovery import load_endpoint
+from connector.runtimes.dsh.bridge.host import bridge_host
 from connector.runtimes.dsh.runtime import DshRuntime
 
 
@@ -41,10 +45,10 @@ async def main(home: Path, selections: dict[str, str]) -> None:
     values = {"dshHome": str(home), "defaultAgentPreset": "standard"}
     runtime = DshRuntime(RuntimeConfig("dsh", 1, values), host)
     # Exercise the real transport and adapter without an unrelated platform sync consumer.
-    client = BridgeClient(endpoint=load_endpoint(values), connector_id=host.connector_id,
-                          session_namespace=host.session_namespace, client_version="1.0",
+    client = BridgeClient(await bridge_host(), connector_id=host.connector_id,
+                          session_namespace=host.session_namespace, client_version="2.0",
                           startup_timeout=5, request_timeout=10,
-                          notification_handler=ignore, exit_handler=ignore)
+                          exit_handler=ignore)
     await client.start()
     runtime._client = client
     image = RuntimeAttachment("file_wire", "input.png", "image/png", len(host.content), hashlib.sha256(host.content).hexdigest())

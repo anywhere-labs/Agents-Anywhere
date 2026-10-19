@@ -16,7 +16,7 @@ import { RuntimeAttachments, parseAttachments, IMAGE_MIME_TYPES } from '../../sr
 import { NativeRuntime } from '../../src/host/dsh-runtime/native.js'
 import { projectHistory } from '../../src/host/dsh-runtime/history.js'
 import { nativeSessionId, sessionId } from '../../src/host/dsh-runtime/identity.js'
-import { SyncFeed, type SyncBatch } from '../../src/host/dsh-runtime/sync.js'
+import { SyncFeed, type SyncOperation, type SyncTransport } from '../../src/host/dsh-runtime/sync.js'
 import { modelSelectionId } from '../../src/host/dsh-runtime/selections.js'
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR4AWP8DwQMQMDEAAUAPfgEADYYS7QAAAAASUVORK5CYII=', 'base64')
@@ -49,8 +49,20 @@ test('official image admission, image-only create, retries and cold history pres
   const fixture = await nativeRuntime(home, ctx => mountAgents(ctx, adapter), 'img-')
   const native = fixture.ctx.agentsAnywhereRuntime.native
   const router = new RuntimeRouter({ native, query: fixture.ctx.sessionQuery, status: id => native.status(id) }, 'images')
-  const batches: SyncBatch[] = [], failures: unknown[] = []
-  const feed = new SyncFeed(native, 'images', batch => { batches.push(batch); queueMicrotask(() => feed.ack(batch.batchSeq)) }, error => failures.push(error))
+  const batches: { operations: SyncOperation[] }[] = [], captures: Record<string, unknown>[][] = [], failures: unknown[] = []
+  const transport: SyncTransport = {
+    async ingestBatch(batch) { batches.push(batch as unknown as { operations: SyncOperation[] }) },
+    async loadCheckpoint() { return null },
+    async saveCheckpoint() {},
+    async deleteCheckpoint() {},
+    async ingestSnapshot(_request, pages) {
+      const items: Record<string, unknown>[] = []
+      for await (const page of pages) items.push(...page.items)
+      captures.push(items)
+      return { accepted: true }
+    },
+  }
+  const feed = new SyncFeed(native, 'images', 'images', transport, error => failures.push(error))
   let reopened: NativeRuntime | undefined
   try {
     const capability = (await native.capabilities()).capabilities.find(item => item.capabilityId === 'runtime.attachment')!
@@ -59,7 +71,7 @@ test('official image admission, image-only create, retries and cold history pres
     feed.start()
     const image = await stage(native.attachments)
     const params = { sessionId: 'sess_image', clientMessageId: 'image-message', content: '', cwd: home, agentPreset: 'standard', selections: initialSelections, attachments: [image] }
-    const result = await router.request('session.createAndStart', params, new AbortController().signal) as { accepted: boolean }
+    const result = await router.request('createAndStartSession', params, new AbortController().signal) as { accepted: boolean }
     assert.equal(result.accepted, true, JSON.stringify(result))
     await until(() => adapter.requests.length === 1)
     const id = SessionId(nativeSessionId('images', 'sess_image'))
@@ -73,14 +85,14 @@ test('official image admission, image-only create, retries and cold history pres
     const modelMessage = adapter.requests[0]!.messages.find(message => message.role === 'user' && message.content.some(part => part.type === 'image'))
     assert.ok(modelMessage, 'the real agent loop receives an image block')
     await rm(join(native.attachments.staging, image.uploadId))
-    assert.equal((await router.request('session.createAndStart', params, new AbortController().signal) as { accepted: boolean }).accepted, true)
+    assert.equal((await router.request('createAndStartSession', params, new AbortController().signal) as { accepted: boolean }).accepted, true)
     assert.equal(adapter.requests.length, 1, 'lost acknowledgement does not send twice')
     adapter.release?.()
     await until(() => native.status(id) === 'idle')
     const expected = projectHistory(await native.read(id), 'sess_image').find(item => item.role === 'user')!
     assert.equal(expected.content.text, '')
     assert.equal((expected.content.attachments as { fileId: string }[])[0]!.fileId, 'file_image')
-    await until(() => JSON.stringify(batches).includes('file_image'))
+    await until(() => JSON.stringify([batches, captures]).includes('file_image'))
     assert.deepEqual(failures, [])
     // Reopen Bridge bookkeeping and query the official persisted session after deleting staging.
     await fixture.ctx.sessions.flush(fixture.ctx.sessions.get(id)!)
@@ -89,7 +101,7 @@ test('official image admission, image-only create, retries and cold history pres
     assert.deepEqual(cold, expected)
     assert.equal(JSON.stringify(projectHistory(await reopened.read(id), sessionId('another-account', id))).includes('file_image'), false)
     const image2 = await stage(native.attachments, png, 'file_second')
-    assert.equal((await router.request('session.startTurn', { sessionId: 'sess_image', externalSessionId: id,
+    assert.equal((await router.request('startTurn', { sessionId: 'sess_image', externalSessionId: id,
       clientMessageId: 'followup', content: '看看这张图', attachments: [image2] }, new AbortController().signal) as { accepted: boolean }).accepted, true)
     await until(() => adapter.requests.length === 2)
     adapter.release?.()
@@ -120,7 +132,7 @@ test('unsupported types, forged bytes and unsafe staging never enqueue a user me
       await assert.rejects(native.attachments.prepare([linked], fixture.ctx.attachments, new AbortController().signal), /symbolic links/)
     }
     const fake = await stage(native.attachments, Buffer.from('not a PNG'), 'file_fake')
-    const result = await router.request('session.createAndStart', { sessionId: 'sess_reject', content: 'test',
+    const result = await router.request('createAndStartSession', { sessionId: 'sess_reject', content: 'test',
       clientMessageId: 'refused', cwd: home, agentPreset: 'standard', selections: initialSelections, attachments: [good, fake] }, new AbortController().signal) as { ok: boolean, code: string }
     assert.equal(result.ok, false)
     assert.equal(result.code, 'INVALID_PARAMS')
@@ -139,7 +151,7 @@ test('official admission refuses images for a text-only model with an actionable
   const router = new RuntimeRouter({ native, query: fixture.ctx.sessionQuery, status: id => native.status(id) }, 'images')
   try {
     const image = await stage(native.attachments)
-    const result = await router.request('session.createAndStart', {
+    const result = await router.request('createAndStartSession', {
       sessionId: 'sess_text_model', content: '', clientMessageId: 'no-vision', cwd: home, agentPreset: 'standard',
       selections: { ...initialSelections, model: modelSelectionId({ provider: 'test', model: 'text-only' }) },
       attachments: [image],
@@ -195,7 +207,7 @@ test('platform files stream into an official new session, mix with images and su
     const image = await stage(native.attachments)
     const params = { sessionId: 'sess_files', clientMessageId: 'files-message', content: '', cwd: home,
       agentPreset: 'standard', selections: initialSelections, attachments: [file, image] }
-    const result = await router.request('session.createAndStart', params, new AbortController().signal) as { accepted: boolean }
+    const result = await router.request('createAndStartSession', params, new AbortController().signal) as { accepted: boolean }
     assert.equal(result.accepted, true, JSON.stringify(result))
     await until(() => adapter.requests.length === 1)
     const id = SessionId(nativeSessionId('files', 'sess_files'))
@@ -211,7 +223,7 @@ test('platform files stream into an official new session, mix with images and su
     assert.ok(event.data.content.some(part => part.type === 'image'))
     await rm(join(native.attachments.staging, file.uploadId))
     await rm(join(native.attachments.staging, image.uploadId))
-    const retry = await router.request('session.createAndStart', params, new AbortController().signal) as { accepted: boolean }
+    const retry = await router.request('createAndStartSession', params, new AbortController().signal) as { accepted: boolean }
     assert.equal(retry.accepted, true, JSON.stringify(retry))
     assert.equal(users().length, 1)
     const projected = projectHistory(await native.read(id), 'sess_files').find(item => item.role === 'user')!

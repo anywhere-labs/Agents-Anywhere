@@ -19,12 +19,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import psutil
+from meshcall import MeshCallError
 
-from connector.core.json_rpc import JsonRpcError
 from connector.logging import logger
 
 if TYPE_CHECKING:
     from connector.core.config import ConnectorConfig
+
+
+CONNECTOR_ALREADY_RUNNING = "connector_already_running"
 
 
 def system_home() -> Path:
@@ -382,12 +385,18 @@ class RuntimeOwner:
         return cls(pid, value["kind"], value.get("connectorId", ""), value.get("serverUrl", ""), value.get("startedAt"))
 
 
-class ConnectorAlreadyRunningError(JsonRpcError):
+class ConnectorAlreadyRunningError(MeshCallError, RuntimeError):
+    """Another live process owns this machine's Connector runtime.
+
+    Over ``aa.local.v2.Control`` it is the application error code
+    ``connector_already_running`` with the owner in ``details``.
+    """
+
     def __init__(self, owner: RuntimeOwner) -> None:
         super().__init__(
-            -32009,
+            CONNECTOR_ALREADY_RUNNING,
             f"Another Connector is running ({owner.kind}, PID {owner.pid}). Stop that Connector process, then retry.",
-            {"reason": "connector_already_running", "owner": {"kind": owner.kind, "pid": owner.pid}},
+            details={"reason": CONNECTOR_ALREADY_RUNNING, "owner": {"kind": owner.kind, "pid": owner.pid}},
         )
         self.owner = owner
 

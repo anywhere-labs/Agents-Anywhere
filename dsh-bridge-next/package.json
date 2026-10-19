@@ -1,6 +1,6 @@
 {
   "name": "@agents-anywhere/dsh-bridge-next",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Agents Anywhere onboarding, Connector management and event-driven session runtime for DeepSeek Harness",
   "type": "module",
   "main": "./lib/index.js",
@@ -136,6 +136,7 @@
     "@types/node": "^24.13.3",
     "@types/react": "~18.3.31",
     "@types/react-dom": "18.3.7",
+    "@types/ws": "8.18.1",
     "anser": "^2.3.5",
     "diff": "^9.0.0",
     "immer": "10.1.1",
@@ -175,6 +176,7 @@
     "@dataiku/uv": "0.12.0",
     "clsx": "2.1.1",
     "lucide-react": "1.41.0",
+    "meshcall": "0.3.0",
     "qrcode": "1.5.4"
   }
 }

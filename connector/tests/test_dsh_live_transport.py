@@ -3,15 +3,19 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from connector.core.config import ConnectorConfig
-from connector.runtime_protocol import RuntimeInstanceHost, RuntimeInstanceSpec, timeline_content_hash
-from connector.runtimes.dsh.bridge.sync import SyncRelay
+from connector.runtime_protocol import (
+    RuntimeInstanceHost,
+    RuntimeInstanceSpec,
+    timeline_content_hash,
+)
 from connector.server.client import BackendRpcClient
 from connector.server.rpc import CONNECTOR_WS_MAX_NOTIFICATION_BYTES
+from tests.dsh_sync_helpers import add_page, begin_snapshot, ingest, ready_relay
 
 
 def backend_client(tmp_path):
@@ -43,23 +47,14 @@ def item_notification(text="streaming text"):
         "sessionId": "session", "runtime": "foreign", "runtimeId": "foreign", "item": item}}
 
 
-def start_relay(host, notifications):
-    acknowledged = asyncio.Event()
-    acks = []
+def start_relay(host, notifications, *, durable=False):
+    """A registered subscription plus the plugin call that hands over one batch.
 
-    async def request(method, params=None):
-        if method == "runtime.sync.subscribe":
-            return {"streamId": "stream", "projectionVersion": 2}
-        assert method == "runtime.sync.ack"
-        acks.append(params["batchSeq"])
-        acknowledged.set()
-
-    bridge = SimpleNamespace(request=request, writer=Mock())
-    relay = SyncRelay(bridge, host)
-    relay.start()
-    relay.accept({"streamId": "stream", "batchSeq": 1, "projectionVersion": 2,
-        "operations": [{"kind": "notifications", "notifications": notifications}]})
-    return relay, acknowledged, acks
+    The call returning is the acknowledgement: the relay processes every
+    operation before ``Sync.ingestBatch`` answers.
+    """
+    relay = ready_relay(host, durable=durable)
+    return relay, ingest(relay, {"kind": "notifications", "notifications": notifications})
 
 
 def test_live_batch_uses_websocket_in_order_and_waits_for_send_before_ack(tmp_path):
@@ -79,14 +74,15 @@ def test_live_batch_uses_websocket_in_order_and_waits_for_send_before_ack(tmp_pa
             item_notification(),
             {"method": "session.state.updated", "params": {"sessionId": "session", "status": "running"}},
         ]
-        relay, acknowledged, acks = start_relay(host, notices)
+        relay, delivery = start_relay(host, notices)
+        task = asyncio.create_task(delivery)
         try:
             await asyncio.wait_for(entered.wait(), 1)
-            assert acks == []
+            # The plugin's ingestBatch call stays unanswered until delivery finishes.
+            assert not task.done()
             assert len(frames) == 1
             release.set()
-            await asyncio.wait_for(acknowledged.wait(), 1)
-            assert acks == [1]
+            await asyncio.wait_for(task, 1)
             assert [frame["method"] for frame in frames] == [notice["method"] for notice in notices]
             assert all(frame["type"] == "notification" for frame in frames)
             assert all(frame["params"]["runtime"] == "dsh" for frame in frames)
@@ -116,12 +112,14 @@ def test_live_events_reuse_the_existing_http_fallback_queue(tmp_path, transport)
 
         client._ingest.enqueue.side_effect = enqueue
         notice = item_notification("x" * CONNECTOR_WS_MAX_NOTIFICATION_BYTES if transport == "oversized" else "text")
-        relay, acknowledged, acks = start_relay(host, [notice,
+        relay, delivery = start_relay(host, [notice,
             {"method": "session.state.updated", "params": {"sessionId": "session", "status": "running"}},
         ])
+        task = asyncio.create_task(delivery)
         try:
             await asyncio.wait_for(entered.wait(), 1)
-            assert acks == []
+            # Awaiting the fallback queue withholds the batch acknowledgement.
+            assert not task.done()
             if transport == "oversized":
                 websocket.send.assert_not_awaited()
             method, params = client._ingest.enqueue.call_args.args
@@ -129,9 +127,7 @@ def test_live_events_reuse_the_existing_http_fallback_queue(tmp_path, transport)
             assert params["runtimeId"] == "rti_dsh"
             assert params["item"]["content"] == notice["params"]["item"]["content"]
             release.set()
-            await asyncio.wait_for(acknowledged.wait(), 1)
-            assert acks == [1]
-            relay.client.writer.close.assert_not_called()
+            await asyncio.wait_for(task, 1)
             client._ingest.ingest_notifications.assert_not_awaited()
             assert client._ingest.enqueue.await_count == (2 if transport == "offline" else 1)
             assert client._timeline_notifications.send.await_count == 2
@@ -147,18 +143,16 @@ def test_complete_snapshot_and_inventory_still_use_ingest_when_websocket_is_conn
         client, host = backend_client(tmp_path)
         websocket = SimpleNamespace(send=AsyncMock())
         client._rpc.set_connection(websocket)
-        relay = SyncRelay(Mock(), host)
+        relay = ready_relay(host)
         try:
-            await relay.operation({"kind": "notifications", "notifications": [
+            await ingest(relay, {"kind": "notifications", "notifications": [
                 {"method": "session.inventory.begin", "params": {"syncId": "inventory"}},
             ]})
-            identity = {"sessionId": "session", "snapshotId": "capture"}
-            await relay.operation({"kind": "snapshot.begin", **identity, "throughSeq": 1,
-                "meta": {"externalSessionId": "native", "cwd": "/repo"}})
-            await relay.operation({"kind": "snapshot.items", **identity, "items": [item_notification()["params"]["item"]]})
+            await begin_snapshot(relay, meta={"externalSessionId": "native", "cwd": "/repo"}, through_seq=1)
+            await add_page(relay, [item_notification()["params"]["item"]])
             assert client._ingest.ingest_notifications.await_count == 1
-            await relay.operation({"kind": "snapshot.commit", **identity, "throughSeq": 1, "totalItems": 1})
-            await relay.operation({"kind": "notifications", "notifications": [
+            assert (await relay.commit_snapshot()).accepted is True
+            await ingest(relay, {"kind": "notifications", "notifications": [
                 {"method": "session.inventory.complete", "params": {"syncId": "inventory"}},
             ]})
             batches = [call.args[0] for call in client._ingest.ingest_notifications.await_args_list]

@@ -11,7 +11,7 @@ import { projectHistoryAsync } from './history.js'
 import { sessionId, nativeSessionId } from './identity.js'
 import type { NativeRuntime } from './native.js'
 import { lastTurnEndKind } from './native.js'
-import { SyncFeed, type SyncBatch } from './sync.js'
+import { SyncFeed, type SyncTransport } from './sync.js'
 import type { TimelineItem } from './types.js'
 
 export interface SessionReader {
@@ -36,57 +36,59 @@ function integer(value: unknown, fallback: number, max: number): number {
   return value
 }
 
-/** Per-connection cursors are temporary captures, not a second persisted session store. */
+/** Per-namespace cursors are temporary captures, not a second persisted session store. */
 export class RuntimeRouter {
   private feed: SyncFeed | undefined
   private inventory: Page<SessionRecord> | undefined
   private history: HistoryPage | undefined
 
-  constructor(private readonly reader: SessionReader, readonly namespace: string,
-    private notify?: (batch: SyncBatch) => void, private failed?: (error: unknown, streamId: string) => void) {}
+  constructor(private readonly reader: SessionReader, readonly namespace: string) {}
+
+  private readonly closing = new AbortController()
+  /** Aborted once this router is torn down; open sync streams end with it. */
+  get closed(): AbortSignal { return this.closing.signal }
 
   close(): void { this.feed?.close(); this.feed = undefined }
+
+  /** Stop this namespace for good: open streams end instead of waiting for drain. */
+  shutdown(): void {
+    this.close()
+    this.closing.abort()
+  }
+
+  /** Replace this namespace's event feed; `failed` reports why a running feed stopped. */
+  subscribe(subscriptionId: string, durableCheckpoints: boolean, transport: SyncTransport,
+    failed: (error: unknown) => void): SyncFeed {
+    if (!this.reader.native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Event sync is unavailable.')
+    this.close()
+    const feed = new SyncFeed(this.reader.native, this.namespace, subscriptionId, transport, error => {
+      if (this.feed !== feed) return
+      this.feed = undefined
+      failed(error)
+    }, durableCheckpoints)
+    this.feed = feed
+    return feed
+  }
+
+  unsubscribe(feed: SyncFeed): void { if (this.feed === feed) this.close() }
 
   async request(method: string, params: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
     signal.throwIfAborted()
     switch (method) {
-      case 'runtime.sync.subscribe': {
-        if (!this.reader.native || !this.notify) throw new BridgeError('UNSUPPORTED_OPERATION', 'Event sync is unavailable.')
-        this.close()
-        const feed = new SyncFeed(this.reader.native, this.namespace, this.notify, error => {
-          if (this.feed !== feed) return
-          this.feed = undefined
-          this.failed?.(error, feed.id)
-        }, 60_000, params.checkpointVersion === 1, params.uploadProgressVersion === 1)
-        this.feed = feed
-        setTimeout(() => { if (this.feed === feed) feed.start() }, 0)
-        return { streamId: feed.id, projectionVersion: PROJECTION_VERSION,
-          ...(params.checkpointVersion === 1 ? { checkpointVersion: 1 } : {}),
-          ...(params.uploadProgressVersion === 1 ? { uploadProgressVersion: 1 } : {}) }
-      }
-      case 'runtime.sync.ack':
-        if (!this.feed || params.streamId !== this.feed.id || typeof params.batchSeq !== 'number') throw new BridgeError('INVALID_PARAMS', 'Unknown event stream.')
-        this.feed.ack(params.batchSeq, params.checkpoint); return { ok: true }
-      case 'runtime.sync.progress':
-        if (!this.feed || params.streamId !== this.feed.id || typeof params.batchSeq !== 'number' || typeof params.bytesSent !== 'number') {
-          throw new BridgeError('INVALID_PARAMS', 'Invalid upload progress.')
-        }
-        this.feed.progress(params.batchSeq, params.bytesSent); return { ok: true }
-      case 'runtime.sync.unsubscribe': this.close(); return { ok: true }
-      case 'runtime.sync.refresh': {
+      case 'refreshSync': {
         // Unreadable sessions must remain addressable for an explicit retry.
         const id = await this.resolve(params, signal, true)
         if (!this.reader.native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Event sync is unavailable.')
         this.reader.native.refresh(id)
         return { accepted: true }
       }
-      case 'session.createAndStart':
-      case 'session.startTurn': {
+      case 'createAndStartSession':
+      case 'startTurn': {
         const native = this.reader.native
         if (!native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Text messaging is unavailable.')
         const attachments = parseAttachments(params.attachments)
         if (typeof params.sessionId !== 'string' || !params.sessionId || typeof params.content !== 'string' || typeof params.clientMessageId !== 'string') throw new BridgeError('INVALID_PARAMS', 'Session ID, text and clientMessageId are required.')
-        const create = method === 'session.createAndStart'
+        const create = method === 'createAndStartSession'
         const id = create ? nativeSessionId(this.namespace, params.sessionId) as SessionId : await this.resolve(params, signal, true)
         try {
           await native.send(id, params.content, params.clientMessageId, typeof params.cwd === 'string' ? params.cwd : undefined, create,
@@ -101,22 +103,22 @@ export class RuntimeRouter {
         }
         return { accepted: true, sessionId: sessionId(this.namespace, id), externalSessionId: id }
       }
-      case 'catalog.listModels': {
+      case 'listModels': {
         if (!this.reader.native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Model catalog is unavailable.')
         const catalog = await this.reader.native.catalogs.models(true)
         const query = typeof params.query === 'string' ? params.query.toLocaleLowerCase() : ''
         return { ...catalog, models: catalog.models.filter(item => `${item.title} ${item.metadata.providerName} ${item.metadata.model}`.toLocaleLowerCase().includes(query))
           .slice(0, integer(params.limit, 1000, 10_000)) }
       }
-      case 'catalog.listPermissions': {
+      case 'listPermissions': {
         if (!this.reader.native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Permission catalog is unavailable.')
         return this.reader.native.catalogs.permissions()
       }
-      case 'catalog.listAgentPresets': {
+      case 'listAgentPresets': {
         if (!this.reader.native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Agent modes are unavailable.')
         return this.reader.native.catalogs.agentPresets()
       }
-      case 'session.updateSelections': {
+      case 'updateSelections': {
         const native = this.reader.native
         if (!native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Configuration changes are unavailable.')
         const id = await this.resolve(params, signal)
@@ -126,23 +128,23 @@ export class RuntimeRouter {
         catch (error) {
           const failure = publicError(error)
           return { ok: false, code: failure.code, message: failure.message,
-            result: { state: await this.request('session.getState', params, new AbortController().signal).catch(() => null) } }
+            result: { state: await this.request('getSessionState', params, new AbortController().signal).catch(() => null) } }
         }
-        return { ok: true, result: { state: await this.request('session.getState', params, signal) } }
+        return { ok: true, result: { state: await this.request('getSessionState', params, signal) } }
       }
-      case 'session.interrupt': {
+      case 'interruptSession': {
         if (!this.reader.native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Interrupt is unavailable.')
         const id = await this.resolve(params, signal)
         await this.reader.native.interrupt(id)
         return { accepted: true, sessionId: sessionId(this.namespace, id), externalSessionId: id }
       }
       case 'ping': return { ok: true }
-      case 'runtime.getConfig': return { runtime: 'dsh', revision: 2, values: {}, metadata: { readOnly: !this.reader.native?.ctx.get('agents'), storageMode: 'dsh-native' } }
-      case 'workspace.list': return { workspaces: this.reader.native?.workspaces() ?? [] }
-      case 'runtime.getCapabilities': return this.reader.native?.capabilities() ?? capabilities()
-      case 'session.list': return this.list(params, signal)
-      case 'session.getSnapshot': return this.snapshot(params, signal)
-      case 'session.getState': {
+      case 'getRuntimeConfig': return { runtime: 'dsh', revision: 2, values: {}, metadata: { readOnly: !this.reader.native?.ctx.get('agents'), storageMode: 'dsh-native' } }
+      case 'listWorkspaces': return { workspaces: this.reader.native?.workspaces() ?? [] }
+      case 'getRuntimeCapabilities': return this.reader.native?.capabilities() ?? capabilities()
+      case 'listSessions': return this.list(params, signal)
+      case 'getSessionSnapshot': return this.snapshot(params, signal)
+      case 'getSessionState': {
         const id = await this.resolve(params, signal, true)
         const native = this.reader.native
         if (!native) {
@@ -169,27 +171,27 @@ export class RuntimeRouter {
           selections: facts.configuration.selections,
           metadata: { ...facts.configuration.metadata, readOnly: !native.ctx.get('sessionController'), attached: liveStatus !== undefined } }
       }
-      case 'session.getNotices': {
+      case 'getSessionNotices': {
         const id = await this.resolve(params, signal)
         return { notices: [...(this.reader.native?.questions.notices(this.namespace, id) ?? []), ...(this.reader.native?.approvals.notices(this.namespace, id) ?? [])] }
       }
-      case 'session.respondInteraction': {
+      case 'respondInteraction': {
         const id = await this.resolve(params, signal)
         if (!this.reader.native || typeof params.noticeId !== 'string' || typeof params.actionId !== 'string') throw new BridgeError('INVALID_PARAMS', 'A question and action are required.')
         if (this.reader.native.approvals.owns(this.namespace, id, params.noticeId)) return this.reader.native.approvals.respond(this.namespace, id, params.noticeId, params.actionId)
         return this.reader.native.questions.respond(this.namespace, id, params.noticeId, params.actionId, params.inputData)
       }
-      case 'session.getCapabilities': {
+      case 'getSessionCapabilities': {
         const id = await this.resolve(params, signal, true)
         await this.reader.native?.ensureKnown(id, signal)
         return this.reader.native?.capabilities(sessionId(this.namespace, id), id) ?? capabilities(sessionId(this.namespace, id))
       }
-      case 'session.listCommands':
-      case 'session.executeCommand': {
+      case 'listCommands':
+      case 'executeCommand': {
         const native = this.reader.native
         if (!native) throw new BridgeError('UNSUPPORTED_OPERATION', 'DSH native commands are unavailable.')
         const id = await this.resolve(params, signal)
-        return method === 'session.listCommands' ? native.commands.list(id, params, signal) : native.commands.execute(id, params, signal)
+        return method === 'listCommands' ? native.commands.list(id, params, signal) : native.commands.execute(id, params, signal)
       }
       default:
         throw new BridgeError('METHOD_NOT_FOUND', 'The DSH runtime does not support this method.')

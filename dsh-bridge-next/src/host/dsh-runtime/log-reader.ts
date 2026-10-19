@@ -1,41 +1,34 @@
-import { createHash } from 'node:crypto'
-import { open } from 'node:fs/promises'
-import { join } from 'node:path'
-import type { BridgeLogEntry, BridgeLogSnapshot } from '../../contracts/logs.js'
+import type { BridgeLogEntry, BridgeLogSnapshot, ConnectorLogPage } from '../../contracts/logs.js'
+import type { LogPage } from '../generated/connector-logs.js'
 import { record } from './types.js'
 
-async function tail(path: string): Promise<string[]> {
-  const file = await open(path, 'r').catch(error => {
-    if (record(error).code === 'ENOENT') return undefined
-    throw error
+/** Adapt the central service to the existing plugin UI contract. No local file reads. */
+export function readBridgeLogs(page: LogPage): BridgeLogSnapshot {
+  const entries: BridgeLogEntry[] = page.items.map(entry => {
+    const event = entry.message
+    // Call-scoped loggers store the formatted message (for example
+    // "rpc.rejected {...}"); classify by its leading event token, not the whole line.
+    const eventName = event.match(/^[A-Za-z][\w.-]*/)?.[0] ?? event
+    let details: Record<string, unknown> = {}
+    try { details = record(JSON.parse(entry.details ?? '{}')) } catch { /* older unstructured record */ }
+    // Call-scoped loggers format extra context into the message; keep it
+    // alongside the bound service/method fields for the details pane.
+    const tail = event.slice(eventName.length).trim()
+    if (tail.startsWith('{')) {
+      try { details = { ...details, ...record(JSON.parse(tail)) } } catch { /* unstructured message */ }
+    }
+    const rawLevel = entry.level.toLowerCase()
+    const level: BridgeLogEntry['level'] = rawLevel === 'warning' ? 'warn' : ['debug', 'info', 'warn', 'error'].includes(rawLevel) ? rawLevel as BridgeLogEntry['level'] : 'info'
+    const method = typeof details.method === 'string' ? details.method : eventName.replace(/\.(started|completed|failed)$/, '')
+    const outcome = level === 'error' || eventName.endsWith('.failed') || eventName.endsWith('_failed') || eventName === 'rpc.rejected' ? 'failure'
+      : eventName.endsWith('.started') ? 'pending' : eventName.endsWith('.completed') || eventName === 'bridge.listening' ? 'success' : 'info'
+    return { id: String(entry.seq), time: entry.time, method, outcome, level, event, details: JSON.stringify(details, null, 2) }
   })
-  if (!file) return []
-  try {
-    const { size } = await file.stat()
-    const start = Math.max(0, size - 256 * 1024)
-    const buffer = Buffer.alloc(size - start)
-    const { bytesRead } = await file.read(buffer, 0, buffer.length, start)
-    const lines = buffer.subarray(0, bytesRead).toString('utf8').split('\n')
-    if (start) lines.shift()
-    return lines
-  } finally { await file.close() }
+  return { entries, updatedAt: new Date().toISOString() }
 }
 
-/** Only our fixed runtime log files are exposed; no Host logs or caller paths. */
-export async function readBridgeLogs(directory: string): Promise<BridgeLogSnapshot> {
-  const entries: BridgeLogEntry[] = []
-  for (const name of ['dsh-runtime.previous.jsonl', 'dsh-runtime.jsonl']) {
-    for (const line of await tail(join(directory, name))) {
-      try {
-        const { time, level, event, ...details } = record(JSON.parse(line))
-        if (typeof time !== 'string' || typeof event !== 'string' || !['debug', 'info', 'warn', 'error'].includes(String(level))) continue
-        const method = typeof details.method === 'string' ? details.method : event.replace(/\.(started|completed|failed)$/, '')
-        const outcome = level === 'error' || event.endsWith('.failed') || event.endsWith('_failed') || event === 'rpc.rejected' ? 'failure'
-          : event.endsWith('.started') ? 'pending'
-            : event.endsWith('.completed') || event === 'bridge.listening' ? 'success' : 'info'
-        entries.push({ id: createHash('sha256').update(line).digest('hex'), time, method, outcome, level: level as BridgeLogEntry['level'], event, details: JSON.stringify(details, null, 2) })
-      } catch { /* A concurrent append may leave the last line incomplete. */ }
-    }
-  }
-  return { entries: entries.slice(-200), updatedAt: new Date().toISOString() }
+export function readConnectorRuntimeLogs(page: LogPage): ConnectorLogPage {
+  return { entries: page.items.map(entry => ({ id: entry.seq, time: entry.time,
+    text: `${entry.level} | ${entry.name} | ${entry.message}${entry.exception ? '\n' + entry.exception : ''}` })),
+    hasMore: page.hasMoreBefore, oldestId: page.firstSeq ?? null, newestId: page.lastSeq ?? null }
 }

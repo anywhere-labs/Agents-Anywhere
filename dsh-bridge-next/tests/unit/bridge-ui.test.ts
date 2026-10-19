@@ -21,7 +21,7 @@ test('published client shows recovery guidance and preserves expanded log rows a
   const ctx = new Context()
   let bridge = { state: 'failed', message: '本机连接被占用，无法启动。', hint: '请退出其他正在运行的 DSH，再点击“尝试重启”。', canRetry: true }
   let restarts = 0
-  let entries = [{ id: 'one', time: '2026-09-10T10:00:00Z', level: 'error', event: 'rpc.failed', method: 'session.getState', outcome: 'failure', details: '{"errorCode":"TEST_ERROR"}' }]
+  let entries = [{ id: 'one', time: '2026-09-10T10:00:00Z', level: 'error', event: 'rpc.failed', method: 'getSessionState', outcome: 'failure', details: '{"errorCode":"TEST_ERROR"}' }]
   const primitives = {
     Button: ({ children, icon, variant: _variant, ...props }: any) => React.createElement('button', props, icon, children),
     Tooltip: ({ children }: any) => children,
@@ -64,7 +64,7 @@ test('published client shows recovery guidance and preserves expanded log rows a
     await click('远程控制')
     assert.match(document.body.textContent!, /本机连接被占用/)
     await click('查看运行日志')
-    const row = [...document.querySelectorAll('details')].find(row => row.querySelector('summary')?.textContent?.includes('session.getState'))!
+    const row = [...document.querySelectorAll('details')].find(row => row.querySelector('summary')?.textContent?.includes('getSessionState'))!
     assert.ok(row)
     assert.equal(row.open, false)
     assert.match(row.querySelector('summary')!.textContent!, /失败/)

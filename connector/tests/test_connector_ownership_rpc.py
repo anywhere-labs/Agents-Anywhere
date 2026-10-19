@@ -5,28 +5,18 @@ import json
 import os
 
 import pytest
+from meshcall import MeshCallError
 
 from connector import cli
 from connector.control import ConnectorController
 from connector.core import runtime_owner
 from connector.core.config import ConnectorConfig
-from connector.core.json_rpc import JsonRpcStdioServer
 from connector.core.runtime_owner import RuntimeLease, read_state, runtime_path
-
-
-class Writer:
-    def __init__(self):
-        self.responses = []
-
-    def write(self, data):
-        self.responses.append(json.loads(data))
-
-    async def drain(self):
-        pass
+from tests.mesh_support import control_channel
 
 
 @pytest.mark.parametrize("owner_kind", ["cli", "desktop-workbench", "dsh-plugin"])
-@pytest.mark.parametrize("method", ["connector.acquireOwnership", "connector.start"])
+@pytest.mark.parametrize("method", ["acquireOwnership", "start"])
 def test_rpc_conflict_is_structured_and_the_same_channel_can_retry(tmp_path, owner_kind, method):
     async def exercise():
         started = []
@@ -42,32 +32,25 @@ def test_rpc_conflict_is_structured_and_the_same_channel_can_retry(tmp_path, own
         first = RuntimeLease(kind=owner_kind)
         first.claim(ConnectorConfig(server_url="https://example.test", connector_id="first", connector_token="private-first"))
         controller = ConnectorController(config_path=tmp_path / "other.json", client_factory=Client)
-        writer = Writer()
-        server = JsonRpcStdioServer(asyncio.StreamReader(), writer, {
-            "connector.acquireOwnership": controller.acquire_ownership,
-            "connector.start": controller.start,
-            "connector.getState": controller.get_state,
-        })
         config = {"serverUrl": "https://example.test", "connectorId": "second", "connectorToken": "private-second"}
-        request = {"jsonrpc": "2.0", "id": 1, "method": method, "params": config}
+        params = {"config": config} if method == "start" else {}
         try:
-            await server.handle_line(json.dumps(request).encode())
-            error = writer.responses[-1]["error"]
-            assert error["code"] == -32009
-            assert error["data"] == {"reason": "connector_already_running", "owner": {"kind": owner_kind, "pid": os.getpid()}}
-            assert "private" not in json.dumps(error)
-            assert started == []
-            assert read_state(first.path)["connectorIds"] == ["first"]
-            # Conflict is a response, not an RPC process crash.
-            await server.handle_line(b'{"jsonrpc":"2.0","id":2,"method":"connector.getState"}')
-            assert writer.responses[-1]["result"]["running"] is False
-            first.release()
-            request.update(id=3, method="connector.start")
-            await server.handle_line(json.dumps(request).encode())
-            await asyncio.sleep(0)
-            assert writer.responses[-1]["result"]["running"] is True
-            assert started == ["second"]
-            assert read_state(first.path)["connectorIds"] == ["first", "second"]
+            async with control_channel(controller) as call:
+                with pytest.raises(MeshCallError) as raised:
+                    await call(method, **params)
+                error = raised.value
+                assert error.code == "connector_already_running"
+                assert error.details == {"reason": "connector_already_running", "owner": {"kind": owner_kind, "pid": os.getpid()}}
+                assert "private" not in json.dumps(error.details) + error.message
+                assert started == []
+                assert read_state(first.path)["connectorIds"] == ["first"]
+                # A conflict is a call error; the channel keeps answering.
+                assert (await call("getState"))["running"] is False
+                first.release()
+                assert (await call("start", config=config))["running"] is True
+                await asyncio.sleep(0)
+                assert started == ["second"]
+                assert read_state(first.path)["connectorIds"] == ["first", "second"]
         finally:
             first.release()
             await controller.shutdown()

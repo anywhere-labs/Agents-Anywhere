@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+
 from connector.runtime_protocol import RuntimeConfig
 from connector.runtimes.dsh import runtime as runtime_module
 from connector.runtimes.dsh.runtime import DshRuntime
@@ -104,17 +105,17 @@ def test_initially_offline_runtime_recovers_through_supervisor(monkeypatch):
         online = False
         recovered = asyncio.Event()
         statuses = []
-        endpoints = []
-        endpoint = object()
+        hosts = []
+        bridge_host_marker = object()
 
         async def offline_probe(values):
             return DshDiscovery(False, False, None, reason="offline")
 
-        def load_endpoint(values):
-            endpoints.append(online)
+        async def bridge_host():
+            hosts.append(online)
             if not online:
-                raise FileNotFoundError("Bridge not started yet")
-            return [endpoint]
+                raise OSError("Bridge not started yet")
+            return bridge_host_marker
 
         client = SimpleNamespace(
             connected=True,
@@ -123,7 +124,7 @@ def test_initially_offline_runtime_recovers_through_supervisor(monkeypatch):
                     "identity": {
                         "runtime": "dsh",
                         "runtimeVersion": "test",
-                        "protocolVersion": "1.0",
+                        "protocolVersion": "2.0",
                     },
                     "features": {"syncMode": "events"},
                 }
@@ -135,8 +136,8 @@ def test_initially_offline_runtime_recovers_through_supervisor(monkeypatch):
         )
         relay = SimpleNamespace(start=Mock(), close=AsyncMock())
 
-        def make_client(**kwargs):
-            assert kwargs["endpoint"] is endpoint
+        def make_client(host, **kwargs):
+            assert host is bridge_host_marker
             return client
 
         async def status_sink(runtime_id, status, error, phase=None):
@@ -150,7 +151,7 @@ def test_initially_offline_runtime_recovers_through_supervisor(monkeypatch):
         supervisor = RuntimeSupervisor(
             (DshProvider(prober=offline_probe),), host, status_sink
         )
-        monkeypatch.setattr(runtime_module.discovery, "load_endpoints", load_endpoint)
+        monkeypatch.setattr(runtime_module, "bridge_host", bridge_host)
         monkeypatch.setattr(runtime_module, "BridgeClient", make_client)
         monkeypatch.setattr(runtime_module, "SyncRelay", lambda *args, **kwargs: relay)
         monkeypatch.setattr(runtime_module, "BRIDGE_POLL_INTERVAL_SECONDS", 0.001)
@@ -191,7 +192,7 @@ def test_initially_offline_runtime_recovers_through_supervisor(monkeypatch):
             assert supervisor.entry("dsh").status == "running"
             assert supervisor.entry("dsh").error is None
             assert supervisor.resolve_runtime("dsh") is bound
-            assert endpoints == [False, True]
+            assert hosts == [False, True]
             host.runtime_capabilities_update.assert_awaited_once()
             relay.start.assert_called_once()
             await bound.native_runtime._restart_task
@@ -213,10 +214,10 @@ def test_initially_offline_runtime_can_be_stopped(monkeypatch):
         async def offline_probe(values):
             return DshDiscovery(False, False, None, reason="offline")
 
-        def load_endpoint(values):
-            raise FileNotFoundError("offline")
+        async def bridge_host():
+            raise OSError("offline")
 
-        monkeypatch.setattr(runtime_module.discovery, "load_endpoints", load_endpoint)
+        monkeypatch.setattr(runtime_module, "bridge_host", bridge_host)
         from connector.runtime_protocol.host import RuntimeHostClient
         class Host(RuntimeHostClient):
             @property

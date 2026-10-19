@@ -3,16 +3,21 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
+import { Mesh, MeshCallError, Router } from 'meshcall'
 import type { ResolvedConfig } from '../config.js'
 import type { BoundDevice } from '../account/binding.js'
 import { writeJson } from '../storage/files.js'
 import { DEFAULT_CONNECTOR_SETTINGS, type ConnectorSettings } from '../../contracts/connector.js'
+import { ControlServiceClient, type ConnectorState as ControlState } from '../generated/connector-control.js'
 import { resolveUv } from './environment.js'
 import { ConnectorLogs } from './logs.js'
 import { materializeConnectorProject } from './project.js'
 
 const runFile = promisify(execFile)
-const MAX_FRAME = 1024 * 1024
+/** The ready line (`connector.ready`) is a few hundred bytes; anything larger is a protocol error. */
+const MAX_READY_BYTES = 64 * 1024
+/** The Router is already serving when it writes the ready line; a wedged handshake must not hang startup. */
+const CONTROL_CONNECT_TIMEOUT_MS = 10_000
 /**
  * The first request waits out uv's initial dependency installation, not a Python launch: the
  * Connector project pulls roughly 235 MiB of wheels, which needs a quarter of an hour on a
@@ -36,10 +41,26 @@ type CachePruner = (command: string) => Promise<unknown>
  * whatever the last one managed to download.
  */
 const pruneUvCache: CachePruner = command => runFile(command, ['cache', 'prune'], { timeout: CACHE_PRUNE_TIMEOUT, windowsHide: true })
-interface Pending {
-  resolve: (value: unknown) => void
-  reject: (error: Error) => void
-  timer: ReturnType<typeof setTimeout>
+
+/** What `anywhere-cli rpc` writes on stdout once its Router serves the control channel. */
+interface Rendezvous {
+  kind: 'connector.ready'
+  version: 1
+  instanceId: string
+  pid: number
+  endpoint: { unixPath: string } | { pipe: string }
+  key: string
+}
+
+function parseRendezvous(line: string): Rendezvous | undefined {
+  let value: Record<string, unknown>
+  try { value = JSON.parse(line) as Record<string, unknown> } catch { return undefined }
+  const endpoint = value.endpoint && typeof value.endpoint === 'object' ? value.endpoint as Record<string, unknown> : {}
+  const local = typeof endpoint.unixPath === 'string' ? { unixPath: endpoint.unixPath }
+    : typeof endpoint.pipe === 'string' ? { pipe: endpoint.pipe } : undefined
+  if (value.kind !== 'connector.ready' || value.version !== 1 || !local || !Number.isSafeInteger(value.pid)
+    || typeof value.instanceId !== 'string' || typeof value.key !== 'string' || !value.key.startsWith('mk_')) return undefined
+  return { kind: 'connector.ready', version: 1, instanceId: value.instanceId, pid: value.pid as number, endpoint: local, key: value.key }
 }
 
 export interface ConnectorProcess {
@@ -58,16 +79,26 @@ export class ConnectorCredentialError extends Error {
 }
 
 export class ConnectorOwnershipError extends Error {
-  readonly code = -32009
+  readonly code = 'connector_already_running'
   constructor() { super('当前已有其他 Connector 在运行，请先结束对应的 Connector 进程，然后重试。') }
+}
+
+/** The Router's application error for a lost ownership race becomes the onboarding signal. */
+function connectorFailure(error: unknown): unknown {
+  return error instanceof MeshCallError && error.code === 'connector_already_running'
+    ? new ConnectorOwnershipError()
+    : error
 }
 
 /** Owns only the child it spawns; DSH Agent operations are served by the plugin runtime. */
 export class SourceConnector implements ConnectorProcess {
   private child: ChildProcessWithoutNullStreams | null = null
-  private nextId = 0
-  private pending = new Map<number, Pending>()
-  private buffer = ''
+  private mesh: Mesh | null = null
+  private control: ControlServiceClient | null = null
+  private readyBuffer = ''
+  private ready: Rendezvous | null = null
+  private readyWaiter: { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> } | null = null
+  private events: AbortController | null = null
   private failure: Error | null = null
   private stopping: Promise<void> | null = null
   private state: ConnectorState = { running: false, authFailed: false }
@@ -93,7 +124,7 @@ export class SourceConnector implements ConnectorProcess {
 
   private updateState(value: unknown): void {
     if (!value || typeof value !== 'object') return
-    const state = value as Partial<ConnectorState>
+    const state = value as Partial<ControlState>
     if (typeof state.running !== 'boolean' || typeof state.authFailed !== 'boolean') return
     if (state.running === this.state.running && state.authFailed === this.state.authFailed) return
     // Do not forward config paths, credentials or raw error text from Python.
@@ -135,7 +166,8 @@ export class SourceConnector implements ConnectorProcess {
     })
     signal.throwIfAborted()
     this.failure = null
-    this.buffer = ''
+    this.readyBuffer = ''
+    this.ready = null
     this.updateState({ running: false, authFailed: false })
     await this.logs.startSession([binding.connectorToken])
     this.logs.record('starting')
@@ -182,6 +214,7 @@ export class SourceConnector implements ConnectorProcess {
       void this.logs.flush().catch(() => undefined)
       if (this.child === child) {
         this.child = null
+        void this.releaseControl()
         this.fail(new Error(`Connector 已退出（${code ?? '终止'}）。请在日志页切换到 Connector 查看原因。`), !this.stopping)
       }
     })
@@ -190,15 +223,18 @@ export class SourceConnector implements ConnectorProcess {
     try {
       signal.throwIfAborted()
       // Includes the first uv dependency installation, not just Python startup.
-      this.updateState(await this.call('connector.getState', this.firstRequestTimeoutMs))
+      await this.connect(signal)
+      const control = this.control!
+      this.updateState(await control.getState({ timeoutMs: this.firstRequestTimeoutMs }))
       signal.throwIfAborted()
-      this.updateState(await this.call('connector.start'))
+      this.updateState(await control.start(undefined, { timeoutMs: this.firstRequestTimeoutMs }))
       signal.throwIfAborted()
+      this.watchEvents()
     } catch (error) {
       await this.stop()
       // Whatever ended this attempt left a partial download behind, and only a prune reclaims it.
       try { await this.prune(command) } catch { /* Housekeeping may not replace the real failure. */ }
-      throw error
+      throw connectorFailure(error)
     } finally {
       signal.removeEventListener('abort', abort)
     }
@@ -207,7 +243,7 @@ export class SourceConnector implements ConnectorProcess {
   async assertHealthy(): Promise<void> {
     if (this.state.authFailed) throw new ConnectorCredentialError()
     if (this.failure) throw this.failure
-    const state = await this.call('connector.getState') as ConnectorState
+    const state = await this.requireControl().getState({ timeoutMs: 15_000 })
     this.updateState(state)
     if (state.authFailed) throw new ConnectorCredentialError()
     if (!state.running) throw new Error('Connector 尚未运行，请返回插件重试。')
@@ -221,8 +257,10 @@ export class SourceConnector implements ConnectorProcess {
 
   private async stopChild(): Promise<void> {
     const child = this.child
-    if (!child) return
-    try { await this.call('connector.stop', 3_000) } catch { /* Child may not have finished starting. */ }
+    this.events?.abort()
+    this.events = null
+    if (!child) { await this.releaseControl(); return }
+    try { await this.control?.stop({ timeoutMs: 3_000 }) } catch { /* Child may not have finished starting. */ }
     child.stdin.end()
     const ended = new Promise<void>((resolve) => {
       if (this.closed.has(child) || child.exitCode !== null || child.signalCode !== null) resolve()
@@ -235,6 +273,15 @@ export class SourceConnector implements ConnectorProcess {
     if (!this.closed.has(child)) await this.terminate(child, true)
     await ended
     if (this.child === child) this.child = null
+    await this.releaseControl()
+  }
+
+  /** Close the Mesh a crashed Connector left behind; its reconnect loop never ends on its own. */
+  private async releaseControl(): Promise<void> {
+    const mesh = this.mesh
+    this.mesh = null
+    this.control = null
+    await mesh?.close().catch(() => undefined)
   }
 
   private async terminate(child: ChildProcessWithoutNullStreams, force: boolean): Promise<void> {
@@ -247,49 +294,103 @@ export class SourceConnector implements ConnectorProcess {
     }
   }
 
-  private call(method: string, timeoutMs = 15_000): Promise<unknown> {
-    if (!this.child || this.failure) return Promise.reject(this.failure ?? new Error('Connector 未启动。'))
-    const id = ++this.nextId
-    return new Promise((resolve, reject) => {
+  private requireControl(): ControlServiceClient {
+    if (!this.control) throw this.failure ?? new Error('Connector 未启动。')
+    return this.control
+  }
+
+  /** Wait for the ready line, then connect to the Connector's Router. */
+  private async connect(signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted()
+    await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pending.delete(id)
+        this.readyWaiter = null
         reject(new Error('Connector 响应超时，请检查 Python 依赖安装和网络连接。'))
-      }, timeoutMs)
-      this.pending.set(id, { resolve, reject, timer })
-      this.child!.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method })}\n`)
+      }, this.firstRequestTimeoutMs)
+      this.readyWaiter = { resolve, reject, timer }
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      if (this.ready) { this.readyWaiter = null; clearTimeout(timer); resolve() }
     })
+    const ready = this.ready!
+    const router = new Router(ready.endpoint)
+    const mesh = new Mesh(router, { token: ready.key, peerId: `dsh-plugin-${ready.instanceId}` })
+    const connecting = mesh.connect()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        connecting,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Connector 控制通道连接超时。')), CONTROL_CONNECT_TIMEOUT_MS)
+          timer.unref()
+        }),
+      ])
+    } catch (error) {
+      // The losing connect promise may still reject later; handle it here so it
+      // is not reported as unhandled, and close the half-open mesh.
+      connecting.catch(() => undefined)
+      await mesh.close().catch(() => undefined)
+      throw error
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+    if (signal.aborted) {
+      await mesh.close().catch(() => undefined)
+      throw signal.reason instanceof Error ? signal.reason : new Error('Connector 启动已取消。')
+    }
+    this.mesh = mesh
+    this.control = new ControlServiceClient(mesh)
+  }
+
+  /** Follow state changes; a dropped stream resumes after the last seq. */
+  private watchEvents(): void {
+    const controller = new AbortController()
+    this.events = controller
+    const run = async () => {
+      let since: number | null = null
+      let backoff = 500
+      while (!controller.signal.aborted) {
+        try {
+          const stream = this.requireControl().events(since, { signal: controller.signal })
+          for await (const event of stream) {
+            since = event.seq
+            if (event.kind === 'state' && event.state) this.updateState(event.state)
+            backoff = 500
+          }
+          if (!controller.signal.aborted) throw new Error('Connector 事件流已结束。')
+        } catch (error) {
+          if (controller.signal.aborted || this.stopping) return
+          if (error instanceof MeshCallError && error.code === 'connector_error') return
+          await delay(backoff)
+          backoff = Math.min(backoff * 2, 5_000)
+        }
+      }
+    }
+    void run()
   }
 
   private receive(chunk: string): void {
-    this.buffer += chunk
-    if (this.buffer.length > MAX_FRAME) { this.fail(new Error('Connector 返回了过大的消息。')); return }
-    let newline: number
-    while ((newline = this.buffer.indexOf('\n')) >= 0) {
-      const line = this.buffer.slice(0, newline)
-      this.buffer = this.buffer.slice(newline + 1)
-      try {
-        const frame = JSON.parse(line) as { id?: number; method?: string; params?: unknown; result?: unknown; error?: unknown }
-        if (frame.method === 'connector/state' && frame.id === undefined) { this.updateState(frame.params); continue }
-        if (typeof frame.id !== 'number') continue
-        const pending = this.pending.get(frame.id)
-        if (!pending) continue
-        this.pending.delete(frame.id)
-        clearTimeout(pending.timer)
-        if (frame.error) {
-          const error = frame.error as { code?: number; data?: { reason?: string } }
-          pending.reject(error.code === -32009 && error.data?.reason === 'connector_already_running'
-            ? new ConnectorOwnershipError() : new Error('Connector 操作失败，请检查本机运行环境后重试。'))
-        }
-        else pending.resolve(frame.result)
-      } catch { this.fail(new Error('Connector 返回了无效的协议消息。')) }
-    }
+    if (this.ready) return
+    this.readyBuffer += chunk
+    if (this.readyBuffer.length > MAX_READY_BYTES) { this.fail(new Error('Connector 返回了过大的消息。')); return }
+    const newline = this.readyBuffer.indexOf('\n')
+    if (newline < 0) return
+    const line = this.readyBuffer.slice(0, newline)
+    this.readyBuffer = this.readyBuffer.slice(newline + 1)
+    const ready = parseRendezvous(line)
+    if (!ready) { this.fail(new Error('Connector 返回了无效的启动消息。')); return }
+    this.ready = ready
+    const waiter = this.readyWaiter
+    this.readyWaiter = null
+    if (waiter) { clearTimeout(waiter.timer); waiter.resolve() }
+    if (this.readyBuffer.trim()) this.fail(new Error('Connector 在启动后仍向 stdout 写入了数据。'))
   }
 
   private fail(error: Error, report = true): void {
     this.failure = error
     if (report) this.logs.record('process_error')
     this.updateState({ ...this.state, running: false })
-    for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error) }
-    this.pending.clear()
+    const waiter = this.readyWaiter
+    this.readyWaiter = null
+    if (waiter) { clearTimeout(waiter.timer); waiter.reject(error) }
   }
 }
