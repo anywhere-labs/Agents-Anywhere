@@ -51,7 +51,10 @@ function run(command, args, env) {
     cwd: PROJECT_ROOT,
     env,
     stdio: "inherit",
-    shell: process.platform === "win32",
+    // Windows needs cmd.exe for `.cmd` shims such as yarn.cmd. Node,
+    // electron-builder, and absolute paths with spaces must be spawned
+    // directly or cmd.exe splits them at the first space.
+    shell: process.platform === "win32" && command.endsWith(".cmd"),
   });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} exited with ${result.status ?? "null"}`);

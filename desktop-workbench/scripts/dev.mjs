@@ -13,7 +13,6 @@ const explicitWebPort = parsePort(process.env.WORKBENCH_WEB_PORT);
 const desktopConfig = JSON.parse(readFileSync(new URL("../config.json", import.meta.url), "utf8"));
 const apiOrigin = process.env.WORKBENCH_API_ORIGIN?.trim() || process.env.AGENTS_ANYWHERE_API?.trim() || desktopConfig.cloud.serverUrl;
 const apiNamespace = process.env.WORKBENCH_API_NAMESPACE ?? process.env.AGENTS_ANYWHERE_API_NAMESPACE ?? desktopConfig.apiNamespace;
-const usesShell = process.platform === "win32";
 const host = "127.0.0.1";
 const yarnCommand = process.platform === "win32" ? "yarn.cmd" : "yarn";
 
@@ -37,7 +36,7 @@ if (!explicitWebUrl) {
       AGENTS_ANYWHERE_API: apiOrigin,
       AGENTS_ANYWHERE_API_NAMESPACE: apiNamespace,
     },
-    shell: usesShell,
+    shell: process.platform === "win32",
   });
 } else {
   console.log(`Using existing web app at ${devUrl}`);
@@ -46,14 +45,15 @@ if (!explicitWebUrl) {
 try {
   await waitForUrl(devUrl);
   await uvBundle;
-  const electronProcess = spawn(path.join(root, "node_modules", ".bin", process.platform === "win32" ? "electron.cmd" : "electron"), ["."], {
+  // Running Electron's launcher with this Node keeps paths containing spaces
+  // intact. The Windows .cmd shim would require a shell and split them.
+  const electronProcess = spawn(process.execPath, [path.join(root, "node_modules", "electron", "cli.js"), "."], {
     cwd: root,
     stdio: "inherit",
     env: {
       ...process.env,
       WORKBENCH_WEB_URL: devUrl,
     },
-    shell: usesShell,
   });
 
   const shutdown = () => {
