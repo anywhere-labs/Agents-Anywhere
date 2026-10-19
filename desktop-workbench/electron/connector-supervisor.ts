@@ -4,6 +4,7 @@ import { ConnectorRpcError, CONNECTOR_CONFLICT_MESSAGE } from "./connector-rpc-e
 import { materializeConnectorProject } from "./connector-project";
 import { bundledPythonExecutable, environmentHome, environmentUsesPython } from "./connector-python";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import type { Mesh as MeshConnection, Router as RouterEndpoint } from "meshcall" with { "resolution-mode": "import" };
 import fs from "node:fs";
 import path from "node:path";
@@ -87,7 +88,7 @@ type ConnectorSupervisorOptions = {
   onState: (state: ConnectorState) => void;
   onLog: (entry: ConnectorLogEntry) => void;
   onRuntimeLog?: (entry: ConnectorLogEntry) => void;
-  onRuntimeLogsReady?: () => void;
+  onLogSourceChanged?: () => void;
   /** Test seam; production connects a Mesh to the Connector's Router. */
   connectControl?: (rendezvous: Rendezvous) => Promise<ConnectorChannel>;
 };
@@ -194,7 +195,7 @@ export class ConnectorSupervisor {
   async exportLogs(filePath: string): Promise<number> {
     const channel = this.channel;
     if (!channel) return this.options.logs.exportTo(filePath);
-    const temporary = `${filePath}.${process.pid}.tmp`;
+    const temporary = `${filePath}.${randomUUID()}.tmp`;
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     const file = await fs.promises.open(temporary, "wx", 0o600);
     let count = 0;
@@ -562,7 +563,7 @@ export class ConnectorSupervisor {
   private watchStreams(channel: ConnectorChannel): void {
     const controller = new AbortController();
     this.streams = controller;
-    this.options.onRuntimeLogsReady?.();
+    this.options.onLogSourceChanged?.();
     const follow = async <T>(name: string, open: (since: number | null, signal: AbortSignal) => AsyncIterable<T>) => {
       let since: number | null = null;
       let backoff = 500;
@@ -628,6 +629,7 @@ export class ConnectorSupervisor {
     const channel = this.channel;
     this.mesh = null;
     this.channel = null;
+    if (channel) this.options.onLogSourceChanged?.();
     void mesh?.close().catch(() => undefined);
     void channel?.close?.().catch(() => undefined);
     if (ready) {

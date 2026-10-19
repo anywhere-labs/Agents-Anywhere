@@ -81,7 +81,7 @@ export class BackendState {
       onState: (state) => this.emit("state", state),
       onLog: (entry) => { if (!this.connector.hasRuntimeLogs()) this.bufferLog(entry); },
       onRuntimeLog: (entry) => this.bufferLog(entry),
-      onRuntimeLogsReady: () => { this.logBatcher.flush(); this.emit("logsCleared", undefined); },
+      onLogSourceChanged: () => { this.logBatcher.flush(); this.emit("logsCleared", undefined); },
     });
     this.devices = new DesktopDeviceService({
       requireOwnership: () => this.requireOwnership(),

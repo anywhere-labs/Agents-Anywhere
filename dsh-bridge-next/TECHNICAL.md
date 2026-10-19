@@ -243,7 +243,7 @@ Web 在相关 revision/availability 变化时刷新打开的目录，重开菜�
 
 本轮没有自动启动真实开发服务、登录真实账号或进行 DSH GUI 联调。首次手动联调时按上面的链路操作，确认 Web 完成页可达；Windows 实机进程行为仍需在对应环境验证。
 
-2026-09-08 的原分支基线检查与后续 Python 职责调整分别记录，具体测试数量、提交范围和 CI 状态见 [验证记录](./VERIFICATION.md)。插件事件与问答测试使用原有后端 ASGI app 和临时 SQLite；本地开发及生产 Server 仍使用 PostgreSQL。持续检查由 [CI 工作流](../.github/workflows/ci.yml)执行；这些结果不代替真实模型、手机、Windows 或长期运行验收。
+2026-09-08 的原分支基线检查与后续 Python 职责调整分别记录，具体测试数量、提交范围和 CI 状态见 [验证记录](./VERIFICATION.md)。当前涉及后端的事件与问答集成测试使用原有 ASGI app，以及 `AGENT_SERVER_TEST_DB_URL` 指向的一次性 PostgreSQL 测试库；未配置时跳过这两项测试。本地开发及生产 Server 也使用 PostgreSQL。持续检查由 [CI 工作流](../.github/workflows/ci.yml)执行；这些结果不代替真实模型、手机、Windows 或长期运行验收。
 
 ## 目录职责
 

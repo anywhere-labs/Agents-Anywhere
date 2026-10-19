@@ -332,3 +332,53 @@ process.stdin.on('end', () => process.exit(0));
     assert.deepEqual([...(launches.at(-1) ?? [])].slice(3, 5), ["--python", savedPython]);
   } finally { await supervisor.shutdown(); }
 });
+
+test("runtime logs retain central sequences, paginate and export without a second Desktop copy", { timeout: 15_000 }, async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-central-logs-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "pyproject.toml"), "");
+  const script = path.join(root, "runtime.cjs");
+  fs.writeFileSync(script, runtime);
+  const spawn = childProcess.spawn;
+  t.mock.method(childProcess, "spawn", (command: string, args: readonly string[], options: childProcess.SpawnOptions) => {
+    if (command === "taskkill.exe") return spawn(command, args, options);
+    return spawn(process.execPath, [script, path.join(root, "environment.json")], options);
+  });
+  const settings = new DesktopSettingsStore(path.join(root, "settings.json"), ["en-US"]);
+  settings.save({ uvPath: process.execPath });
+  const store = new ConnectorLogStore(path.join(root, "logs"), () => settings.get());
+  const entries = Array.from({ length: 1205 }, (_, i) => ({ seq: 9000 + i, time: "now", name: "connector", level: "INFO", message: `runtime-${i}` }));
+  const channel = fakeChannel();
+  const originalTail = channel.logs.tail;
+  channel.logs.tail = async function* (since, source, options) {
+    yield entries[0]!;
+    yield* originalTail(since, source, options);
+  };
+  channel.logs.read = async (_source, before, after, limit = 200) => {
+    const rows = entries.filter(e => (before == null || e.seq < before) && (after == null || e.seq > after));
+    const items = after == null ? rows.slice(-limit) : rows.slice(0, limit);
+    return { items, firstSeq: entries[0]!.seq, lastSeq: entries.at(-1)!.seq, total: entries.length,
+      hasMoreBefore: Boolean(items.length && items[0]!.seq > entries[0]!.seq),
+      hasMoreAfter: Boolean(items.length && items.at(-1)!.seq < entries.at(-1)!.seq) };
+  };
+  const live: ConnectorLogEntry[] = [];
+  const supervisor = new ConnectorSupervisor({
+    configPath: path.join(root, "connector.json"), dataPath: root, connectorDir: root, resourcesPath: root,
+    uvBundleDir: path.join(root, "uv"), pythonBundleDir: path.join(root, "python"),
+    packaged: false, homePath: root, shellEnvironment: {}, settings,
+    binding: new DesktopBindingStore(path.join(root, "binding.json")), logs: store,
+    onState: () => {}, onLog: () => {}, onRuntimeLog: e => live.push(e), connectControl: async () => channel,
+  });
+  try {
+    await supervisor.preflightProvisioning();
+    assert.equal(live[0]!.seq, 9000);
+    assert.ok(!store.read({ pageSize: 5000 }).items.some(e => e.message.startsWith("runtime-")));
+    const page = await supervisor.readLogs({ beforeSeq: 9100, pageSize: 30 });
+    assert.equal(page.items.length, 30);
+    assert.equal(page.items.at(-1)!.seq, 9099);
+    const exported = path.join(root, "export.jsonl");
+    assert.equal(await supervisor.exportLogs(exported), entries.length);
+    assert.deepEqual(fs.readFileSync(exported, "utf8").trim().split("\n").map(line => JSON.parse(line).seq), entries.map(e => e.seq));
+    assert.equal((await supervisor.clearLogs()).total, 0);
+  } finally { await supervisor.shutdown(); }
+});
