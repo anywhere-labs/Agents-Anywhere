@@ -292,8 +292,16 @@ class LocalHub:
     async def _start_serving(self) -> None:
         if self.mesh is None:
             raise RuntimeError("The local router is not started")
-        self._serve = self.mesh.serve(log_level="DEBUG")
-        self._server = await self._serve.__aenter__()
+        serve = self.mesh.serve(log_level="DEBUG")
+        try:
+            server = await serve.__aenter__()
+        except BaseException:
+            # Keep the serving state empty so the supervisor retries instead of
+            # treating the dead Router's old server handle as a live one.
+            with contextlib.suppress(Exception):
+                await serve.__aexit__(None, None, None)
+            raise
+        self._serve, self._server = serve, server
 
     async def _stop_serving(self) -> None:
         server, self._server = self._server, None
@@ -330,9 +338,12 @@ class LocalHub:
                 try:
                     with contextlib.suppress(Exception):
                         await self.router.stop()
+                    # The old server handle died with the Router; drop it before
+                    # re-entering serve so a failure cannot leave a stale handle
+                    # that blocks the recovery branch above.
+                    await self._stop_serving()
                     await self._launch()
                     if self._services:
-                        # The old server handle died with the Router; publish the services again.
                         await self._start_serving()
                 except Exception:  # noqa: BLE001 - keep watching; peers report the Router gone meanwhile.
                     logger.exception("local router restart failed")

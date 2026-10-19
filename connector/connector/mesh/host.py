@@ -21,7 +21,7 @@ from connector.core import runtime_owner
 from connector.logging import install_rpc_log_sink
 from connector.mesh.control import ControlEvents, ControlService
 from connector.mesh.hub import HOST_ROLE, LocalHub, set_local_hub
-from connector.mesh.logs import LogHub, LogsService
+from connector.mesh.logs import LogsService, open_log_hub
 
 READY_KIND = "connector.ready"
 READY_VERSION = 1
@@ -63,7 +63,7 @@ async def serve_host(
 ) -> None:
     loop = asyncio.get_running_loop()
     events = ControlEvents()
-    logs = LogHub(runtime_owner.system_home() / ".agents-anywhere" / "logs")
+    logs = open_log_hub(runtime_owner.system_home() / ".agents-anywhere" / "logs")
     controller = ConnectorController(config_path=config_path, notifier=events.notify)
     log_sink = install_rpc_log_sink(logs.notify, level="DEBUG" if debug else "INFO", remove_default_sink=True)
     hub = LocalHub()

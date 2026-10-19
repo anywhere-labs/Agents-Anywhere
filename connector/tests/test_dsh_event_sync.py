@@ -160,6 +160,26 @@ def test_relay_failure_resubscribes_without_closing_concurrent_rpc(reject, proje
     asyncio.run(exercise())
 
 
+def test_replayed_batch_after_a_lost_acknowledgement_is_idempotent():
+    async def exercise():
+        relay = ready_relay(host())
+        try:
+            replay = SyncBatch(subscriptionId="sub", batchSeq=1, projectionVersion=3,
+                               operations=[{"kind": "workspace.inventory"}])
+            await relay.ingest(replay)
+            assert relay.expected_batch == 2
+            # The Router may redeliver a batch whose acknowledgement was lost;
+            # the original application already advanced the sequence.
+            await relay.ingest(replay)
+            assert relay.expected_batch == 2
+            with pytest.raises(ValueError, match="Out-of-order"):
+                await relay.ingest(SyncBatch(subscriptionId="sub", batchSeq=3, projectionVersion=3,
+                                             operations=[{"kind": "workspace.inventory"}]))
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
 def test_event_runtime_is_not_scanned_and_reconnect_is_explicit():
     async def exercise():
         runtime = SimpleNamespace(sync_mode="events", resynchronize=AsyncMock())

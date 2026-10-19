@@ -55,18 +55,18 @@ class RpcLogSink:
     def _write(self, message: Any) -> None:
         record = message.record
         payload = {
-            "time": record["time"].isoformat(),
-            "level": record["level"].name,
-            "name": record["name"],
-            "message": record["message"],
+            "time": _clip(record["time"].isoformat(), 80),
+            "level": _clip(record["level"].name, 20),
+            "name": _clip(record["name"] or "", 200),
+            "message": _clip(record["message"], 16000),
         }
         extra = {key.removeprefix("meshcall_"): value for key, value in record["extra"].items()
                  if key in {"meshcall_service", "meshcall_method", "meshcall_call_id"}}
         if extra:
-            payload["details"] = json.dumps(extra, default=str)
+            payload["details"] = _clip(json.dumps(extra, default=str), 16000)
         exception = record.get("exception")
         if exception is not None:
-            payload["exception"] = str(exception)
+            payload["exception"] = _clip(exception, 16000)
 
         result = self.notifier("connector/log", payload)
         if not inspect.isawaitable(result):
@@ -86,3 +86,9 @@ def install_rpc_log_sink(
         level=level,
         remove_default_sink=remove_default_sink,
     )
+
+
+def _clip(value: Any, limit: int) -> str:
+    """Keep records inside the log service's field limits instead of dropping them."""
+    text = str(value)
+    return text if len(text) <= limit else text[: limit - 1] + "…"

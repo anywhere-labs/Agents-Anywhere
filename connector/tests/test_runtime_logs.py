@@ -5,6 +5,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+
 from connector.mesh.logs import LogHub, LogRecord, LogsService, LogWrite
 
 
@@ -78,12 +79,41 @@ def test_retention_pages_source_and_tail_gap(tmp_path):
 
 def test_redacts_credentials_before_persisting(tmp_path):
     logs = LogHub(tmp_path)
-    logs.append([entry(1).model_copy(update={"message": 'Bearer abc_secret mk_host_secret',
-                                          "details": '{"connectorToken":"secret"}'})], "bridge")
+    logs.append([entry(1).model_copy(update={
+        "message": ("Bearer abc_secret mk_host_secret connectorToken=plain_secret "
+                    "Authorization: Connector conn_1:tok_secret"),
+        "details": '{"connectorToken":"secret"}',
+    })], "bridge")
     raw = next(tmp_path.glob('runtime-*.jsonl')).read_text()
-    assert 'abc_secret' not in raw and 'mk_host_secret' not in raw
+    for secret in ("abc_secret", "mk_host_secret", "plain_secret", "tok_secret", "secret"):
+        assert secret not in raw
     assert '"secret"' not in logs.read().items[0].details
     json.loads(logs.read().items[0].details)
+
+
+def test_damaged_segment_is_truncated_instead_of_blocking_startup(tmp_path):
+    logs = LogHub(tmp_path)
+    logs.append([entry(1)], "bridge")
+    logs.close()
+    segment = next(tmp_path.glob('runtime-*.jsonl'))
+    with segment.open('ab') as file:
+        file.write(b'not-a-batch\n')
+    repaired = LogHub(tmp_path)
+    assert [item.message for item in repaired.read().items] == ["event-1"]
+    repaired.append([entry(2)], "bridge")
+    # The reserved sequence is recovered from the surviving rows.
+    assert [item.seq for item in repaired.read().items] == [1, 2]
+
+
+def test_damaged_state_does_not_block_startup(tmp_path):
+    logs = LogHub(tmp_path)
+    logs.append([entry(1)], "bridge")
+    logs.close()
+    (tmp_path / 'state.json').write_text('{not json')
+    repaired = LogHub(tmp_path)
+    assert [item.message for item in repaired.read().items] == ["event-1"]
+    repaired.append([entry(2)], "bridge")
+    assert [item.seq for item in repaired.read().items] == [1, 2]
 
 
 def test_disk_failure_does_not_acknowledge_batch(tmp_path, monkeypatch):

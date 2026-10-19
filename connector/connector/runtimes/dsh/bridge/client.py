@@ -87,6 +87,10 @@ class BridgeClient:
         self.initialize_result: dict[str, Any] | None = None
         self._connected = False
         self._closing = False
+        # asyncio keeps only weak references to tasks; retain the exit handler
+        # so a disconnect always rebuilds the runtime instead of being garbage
+        # collected before it runs.
+        self._exit_task: asyncio.Task[None] | None = None
 
     @property
     def connected(self) -> bool:
@@ -167,7 +171,7 @@ class BridgeClient:
         self._connected = False
         logger.info("DSH bridge left the local router ({})", error)
         if self.exit_handler is not None:
-            asyncio.get_running_loop().create_task(self.exit_handler(error))
+            self._exit_task = asyncio.get_running_loop().create_task(self.exit_handler(error))
 
     async def close(self) -> None:
         self._closing = True

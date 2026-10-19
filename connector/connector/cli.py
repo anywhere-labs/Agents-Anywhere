@@ -13,7 +13,7 @@ from connector.core.config import ConnectorConfig
 from connector.core.runtime_owner import (
     RuntimeLease,
 )
-from connector.logging import configure_connector_logging
+from connector.logging import configure_connector_logging, logger
 from connector.mesh.host import serve_host
 from connector.server.client import BackendRpcClient
 from connector.server.pairing import (
@@ -213,16 +213,24 @@ async def _run_cli_connector(
         from connector.core import runtime_owner
         from connector.logging import install_rpc_log_sink
         from connector.mesh.hub import LocalHub, set_local_hub
-        from connector.mesh.logs import LogHub, LogsService
+        from connector.mesh.logs import LogsService, open_log_hub
 
-        logs = LogHub(runtime_owner.system_home() / ".agents-anywhere" / "logs")
+        logs = open_log_hub(runtime_owner.system_home() / ".agents-anywhere" / "logs")
         sink = install_rpc_log_sink(logs.notify)
         hub = LocalHub()
         set_local_hub(hub)
         print(SHELL_LIFETIME_WARNING)
         try:
-            await hub.start()
-            await hub.mount(LogsService(logs))
+            try:
+                await hub.start()
+                await hub.mount(LogsService(logs))
+            except Exception as error:  # noqa: BLE001 - runtime logging is auxiliary
+                # The Router is also how DSH reaches this Connector, so a failure
+                # only degrades DSH; Codex/Claude sessions keep running.
+                logger.warning(
+                    "local control router unavailable; continuing without the log service error_type={} error={}",
+                    type(error).__name__, error,
+                )
             await BackendRpcClient(config).run_forever()
         finally:
             try:

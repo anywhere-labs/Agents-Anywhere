@@ -57,7 +57,7 @@ Python Connector 统一维护启动互斥、运行记录和本机 Connector ID �
  "endpoint":{"unixPath":"…/router/4f1a….sock"},"key":"mk_host_…"}
 ```
 
-宿主（Desktop 或插件管理器）用该 endpoint 与 key 建立 `Mesh`，调用控制方法；stdin 关闭即退出（Router 随之退出）。日志通过 `aa.local.v2.Logs.tail(since)` 订阅，状态与配对通过 `aa.local.v2.Control.events(since)` 订阅；两条流都由客户端保存 `lastSeq` 并在断线后带退避重新订阅。方法名、参数与旧 JSON-RPC 一一对应（`getState`、`getPaths`、`acquireOwnership`、`getConfig`、`saveConfig`、`start`、`stop`、`restart`、`startPairing`、`cancelPairing`）。
+宿主（Desktop 或插件管理器）用该 endpoint 与 key 建立 `Mesh`，调用控制方法；stdin 关闭即退出（Router 随之退出）。运行日志由 `aa.local.v2.Logs.write/read/tail/clear` 持久化与读取（host 可 `clear`，dsh-bridge 仅 `write`/`read`/`tail`，详见[日志契约](../../dsh-bridge/2.0/logs.md)），状态与配对通过 `aa.local.v2.Control.events(since)` 订阅；客户端保存 `lastSeq` 并在断线后带退避重新订阅。方法名、参数与旧 JSON-RPC 一一对应（`getState`、`getPaths`、`acquireOwnership`、`getConfig`、`saveConfig`、`start`、`stop`、`restart`、`startPairing`、`cancelPairing`）。
 
 查询与订阅可以并发；`start`、`stop`、`restart` 与 `saveConfig` 在 Controller 内共用生命周期锁，`restart` 的停止与启动不可交错。配对的地址解析和网络轮询不占用该锁；`cancelPairing` 覆盖地址解析阶段，并使旧配对结果失效。配对成功后的凭据保存和自动启动也受生命周期锁保护，取消后尚未提交的配对不得再保存凭据或启动后端。进程退出时拒绝新的启动和配置保存，等待已有任务清理后再释放机器所有权。
 

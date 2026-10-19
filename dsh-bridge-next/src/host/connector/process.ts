@@ -16,6 +16,8 @@ import { materializeConnectorProject } from './project.js'
 const runFile = promisify(execFile)
 /** The ready line (`connector.ready`) is a few hundred bytes; anything larger is a protocol error. */
 const MAX_READY_BYTES = 64 * 1024
+/** The Router is already serving when it writes the ready line; a wedged handshake must not hang startup. */
+const CONTROL_CONNECT_TIMEOUT_MS = 10_000
 /**
  * The first request waits out uv's initial dependency installation, not a Python launch: the
  * Connector project pulls roughly 235 MiB of wheels, which needs a quarter of an hour on a
@@ -312,7 +314,29 @@ export class SourceConnector implements ConnectorProcess {
     const ready = this.ready!
     const router = new Router(ready.endpoint)
     const mesh = new Mesh(router, { token: ready.key, peerId: `dsh-plugin-${ready.instanceId}` })
-    await mesh.connect()
+    const connecting = mesh.connect()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        connecting,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Connector 控制通道连接超时。')), CONTROL_CONNECT_TIMEOUT_MS)
+          timer.unref()
+        }),
+      ])
+    } catch (error) {
+      // The losing connect promise may still reject later; handle it here so it
+      // is not reported as unhandled, and close the half-open mesh.
+      connecting.catch(() => undefined)
+      await mesh.close().catch(() => undefined)
+      throw error
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+    if (signal.aborted) {
+      await mesh.close().catch(() => undefined)
+      throw signal.reason instanceof Error ? signal.reason : new Error('Connector 启动已取消。')
+    }
     this.mesh = mesh
     this.control = new ControlServiceClient(mesh)
   }

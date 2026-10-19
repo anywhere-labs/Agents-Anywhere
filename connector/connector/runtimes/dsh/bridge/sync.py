@@ -19,7 +19,7 @@ from connector.runtime_protocol.models import (
     SessionSourceObservation,
     SessionSourceState,
 )
-from connector.runtimes.dsh.bridge.client import BridgeClient, BridgeUnavailableError
+from connector.runtimes.dsh.bridge.client import BridgeClient
 from connector.runtimes.dsh.bridge.host import (
     SnapshotPage,
     SnapshotRequest,
@@ -459,9 +459,6 @@ class SyncRelay:
                 self.projection_version = event["projectionVersion"]
                 self.confirmed.set()
             raise RuntimeError("The DSH plugin ended the sync stream")
-        except BridgeUnavailableError:
-            # The plugin left the Router; the runtime reconnects and rebuilds us.
-            return
         finally:
             self.registry.remove(subscription_id, self)
             self.subscription_id = None
@@ -485,6 +482,12 @@ class SyncRelay:
         async with self.ingest_lock:
             if batch.subscriptionId != self.subscription_id or self.projection_version is None:
                 raise ValueError("Batch for a subscription that already ended")
+            if batch.batchSeq == self.expected_batch - 1:
+                # A delivery whose acknowledgement was lost may be retried; the
+                # original application already advanced the sequence, so acking
+                # it again keeps the declared idempotency instead of failing the
+                # whole feed as out-of-order.
+                return
             if batch.batchSeq != self.expected_batch:
                 raise ValueError("Out-of-order event batch; resubscribe to recalibrate")
             if batch.projectionVersion != self.projection_version:

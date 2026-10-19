@@ -49,6 +49,24 @@ def test_rpc_log_sink_defaults_to_info_level() -> None:
     assert [event[1]["message"] for event in events] == ["visible info"]
 
 
+def test_rpc_log_sink_clips_records_to_the_service_limits() -> None:
+    async def exercise() -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        sink = install_rpc_log_sink(lambda method, payload: events.append(payload), level="INFO")
+        try:
+            logger.info("x" * 20_000)
+            await asyncio.sleep(0)
+        finally:
+            await sink.close()
+        return events
+
+    events = asyncio.run(exercise())
+
+    assert len(events) == 1
+    assert len(events[0]["message"]) == 16_000
+    assert events[0]["message"].endswith("…")
+
+
 def test_log_service_access_logs_are_excluded_to_prevent_feedback() -> None:
     async def exercise():
         events = []

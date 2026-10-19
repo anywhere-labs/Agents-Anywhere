@@ -10,6 +10,7 @@ from meshcall import mutates, query, service, stream
 from pydantic import BaseModel, Field
 
 from connector.core.runtime_logs import RuntimeLogStore
+from connector.logging import logger
 from connector.mesh.hub import LOGS_SERVICE
 from connector.mesh.log_redaction import redact
 
@@ -53,17 +54,19 @@ class LogHub:
     def __init__(self, directory: Path | None = None, **policy: Any) -> None:
         self.store = RuntimeLogStore(directory, **policy)
 
-    def append(self, records: list[LogRecord], source: Source) -> int:
+    def append(self, records: list[LogRecord], source: Source, *, durable: bool = True) -> int:
         rows = []
         for record in records:
             payload = record.model_dump(exclude={"producer", "eventId"})
             payload = {key: redact(value) if isinstance(value, str) else value for key, value in payload.items()}
             rows.append({"source": source, "record": payload,
                          "producer": getattr(record, "producer", None), "eventId": getattr(record, "eventId", None)})
-        return self.store.append(rows)
+        return self.store.append(rows, durable=durable)
 
     def notify(self, _method: str, payload: dict[str, Any]) -> None:
-        self.append([LogRecord.model_validate(payload)], "connector")
+        # Connector records are not acknowledged to anyone, so they skip fsync;
+        # an acknowledged bridge batch always goes through LogsService.write.
+        self.append([LogRecord.model_validate(payload)], "connector", durable=False)
 
     def read(self, source: Source | None = None, beforeSeq: int | None = None,
              afterSeq: int | None = None, limit: int = 200) -> LogPage:
@@ -83,6 +86,20 @@ class LogHub:
 
     def close(self) -> None:
         self.store.close()
+
+
+def open_log_hub(directory: Path | None) -> LogHub:
+    """Open the durable journal, degrading to memory when it cannot be used.
+
+    Runtime logging is auxiliary: a damaged or unwritable log directory must
+    not prevent the Connector from serving sessions.
+    """
+    try:
+        return LogHub(directory)
+    except Exception as error:  # noqa: BLE001 - logging never blocks startup
+        logger.warning("runtime log store unavailable; keeping logs in memory error_type={} error={}",
+                       type(error).__name__, error)
+        return LogHub(None)
 
 
 @service(LOGS_SERVICE, description="Write, read and follow Connector-owned persistent runtime logs.")
@@ -112,7 +129,7 @@ class LogsService:
         cursor = since
         while True:
             page = await asyncio.to_thread(self._logs.read, source, None, cursor)
-            oldest = (await asyncio.to_thread(self._logs.read, None, None, None, 1)).firstSeq if source else page.firstSeq
+            oldest = (await asyncio.to_thread(self._logs.store.first_seq) if source else page.firstSeq)
             for index, item in enumerate(page.items):
                 if index == 0 and cursor is not None and oldest is not None and cursor < oldest - 1:
                     item.gapBefore = True

@@ -63,10 +63,14 @@ test('log UI adapter preserves central sequence IDs and method/outcome summaries
   logger.log('debug', 'rpc.completed', { method: 'getSessionState' })
   logger.log('warn', 'rpc.rejected', { method: 'session.send' })
   logger.log('debug', 'session.read.started')
+  // Call-scoped loggers store the formatted message, not a bare event name.
+  new RuntimeRpcLogger(logger).bind({ service: 'aa.dsh.v2.Bridge', method: 'sync', call_id: 'call-9' })
+    .warning('rpc.rejected %s', JSON.stringify({ code: 'SESSION_NOT_FOUND' }))
   const result = readBridgeLogs({ items: entries.map((e, i) => ({ ...e, seq: i + 41 })),
-    firstSeq: 41, lastSeq: 43, total: 3, hasMoreBefore: false, hasMoreAfter: false })
+    firstSeq: 41, lastSeq: 44, total: 4, hasMoreBefore: false, hasMoreAfter: false })
   assert.deepEqual(result.entries.map(e => [e.method, e.outcome]), [
-    ['getSessionState', 'success'], ['session.send', 'failure'], ['session.read', 'pending'],
+    ['getSessionState', 'success'], ['session.send', 'failure'], ['session.read', 'pending'], ['sync', 'failure'],
   ])
   assert.equal(result.entries[0]!.id, '41')
+  assert.equal(JSON.parse(result.entries[3]!.details).code, 'SESSION_NOT_FOUND')
 })
