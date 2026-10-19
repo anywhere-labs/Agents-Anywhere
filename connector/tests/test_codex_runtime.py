@@ -10,11 +10,13 @@ from typing import Any
 import pytest
 from openai_codex import InvalidRequestError
 from openai_codex.generated.v2_all import (
+    AccountRateLimitsUpdatedNotification,
     AgentMessageThreadItem,
     ApprovalsReviewer,
     AskForApprovalValue,
     ContextCompactedNotification,
     ContextCompactionThreadItem,
+    ErrorNotification,
     LocalImageUserInput,
     MentionUserInput,
     TextUserInput,
@@ -962,6 +964,51 @@ def test_codex_sdk_event_normalizes_typed_failed_turn_completion() -> None:
 
     assert event.event_type == "turn/failed"
     assert event.params["turn"]["error"]["message"] == "Exploded"
+
+
+def test_codex_sdk_event_normalizes_usage_limit_error_info() -> None:
+    event = CodexSdkEvent.from_value(
+        Notification(
+            method="error",
+            payload=ErrorNotification(
+                threadId="thread_1",
+                turnId="turn_1",
+                error=TurnError(
+                    message="You've hit your usage limit.",
+                    additionalDetails=None,
+                    codexErrorInfo="usageLimitExceeded",
+                ),
+                willRetry=False,
+            ),
+        ),
+    )
+
+    assert event.params["error"]["codexErrorInfo"] == "usageLimitExceeded"
+
+
+def test_codex_sdk_event_normalizes_rate_limit_snapshot() -> None:
+    event = CodexSdkEvent.from_value(
+        Notification(
+            method="account/rateLimits/updated",
+            payload=AccountRateLimitsUpdatedNotification(
+                rateLimits={
+                    "limitId": "codex",
+                    "primary": {
+                        "usedPercent": 0,
+                        "windowDurationMins": 300,
+                        "resetsAt": 1_800_000_000,
+                    },
+                },
+            ),
+        ),
+    )
+
+    assert event.event_type == "account/rateLimits/updated"
+    assert event.params["rateLimits"]["primary"] == {
+        "usedPercent": 0,
+        "windowDurationMins": 300,
+        "resetsAt": 1_800_000_000,
+    }
 
 
 def test_codex_sdk_event_normalizes_typed_interrupted_turn_completion() -> None:
@@ -4901,6 +4948,178 @@ async def _test_codex_runtime_failed_turn_creates_blocking_error_notice() -> Non
         update for update in reversed(host.state_updates) if update["status"] == "error"
     )
     assert error_update["error"]["code"] == "boom"
+
+
+def test_codex_runtime_new_turn_closes_previous_execution_error() -> None:
+    asyncio.run(_test_codex_runtime_new_turn_closes_previous_execution_error())
+
+
+async def _test_codex_runtime_new_turn_closes_previous_execution_error() -> None:
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+
+    await runtime._handle_notification(
+        {
+            "method": "turn/failed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_failed",
+                "error": {"code": "boom", "message": "Exploded"},
+            },
+        }
+    )
+    await runtime._handle_notification(
+        {
+            "method": "turn/started",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_next",
+            },
+        }
+    )
+
+    assert [notice.status for notice in host.notice_upserts] == ["open", "closed"]
+    closed = host.notice_upserts[-1]
+    assert closed.notice_id == "notice_error_sess_1_turn_failed"
+    assert closed.blocking is None
+    assert closed.metadata["close_reason"] == "turn_started"
+    assert await runtime.get_session_notices("sess_1") == ()
+
+
+def test_codex_runtime_rate_limit_recovery_closes_quota_error() -> None:
+    asyncio.run(_test_codex_runtime_rate_limit_recovery_closes_quota_error())
+
+
+async def _test_codex_runtime_rate_limit_recovery_closes_quota_error() -> None:
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+
+    await runtime._handle_notification(
+        {
+            "method": "turn/failed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_limited",
+                "error": {
+                    "code": "usage_limit",
+                    "message": "You've hit your usage limit.",
+                    "codexErrorInfo": "usageLimitExceeded",
+                },
+            },
+        }
+    )
+    await runtime._handle_notification(
+        {
+            "method": "account/rateLimits/updated",
+            "params": {
+                "rateLimits": {
+                    "limitId": "codex",
+                    "primary": {
+                        "usedPercent": 40,
+                        "windowDurationMins": 300,
+                    },
+                },
+            },
+        }
+    )
+
+    assert [notice.status for notice in host.notice_upserts] == ["open", "closed"]
+    closed = host.notice_upserts[-1]
+    assert closed.notice_id == "notice_error_sess_1_turn_limited"
+    assert closed.blocking is None
+    assert closed.metadata["close_reason"] == "rate_limit_recovered"
+
+
+def test_codex_runtime_rate_limit_recovery_keeps_non_quota_error() -> None:
+    asyncio.run(_test_codex_runtime_rate_limit_recovery_keeps_non_quota_error())
+
+
+def test_codex_runtime_rate_limit_snapshot_requires_recovered_codex_window() -> None:
+    asyncio.run(_test_codex_runtime_rate_limit_snapshot_requires_recovered_codex_window())
+
+
+async def _test_codex_runtime_rate_limit_snapshot_requires_recovered_codex_window() -> None:
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+    await runtime._handle_notification(
+        {
+            "method": "turn/failed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_limited",
+                "error": {
+                    "code": "usage_limit",
+                    "message": "You've hit your usage limit.",
+                    "codexErrorInfo": "usageLimitExceeded",
+                },
+            },
+        }
+    )
+
+    for rate_limits in (
+        {"limitId": "other", "primary": {"usedPercent": 0}},
+        {"limitId": "codex", "primary": {"usedPercent": 100}},
+        {
+            "limitId": "codex",
+            "primary": {"usedPercent": 0},
+            "rateLimitReachedType": "rate_limit_reached",
+        },
+        {
+            "limitId": "codex",
+            "primary": {"usedPercent": 0},
+            "spendControlReached": True,
+        },
+    ):
+        await runtime._handle_notification(
+            {
+                "method": "account/rateLimits/updated",
+                "params": {"rateLimits": rate_limits},
+            }
+        )
+
+    assert [notice.status for notice in host.notice_upserts] == ["open"]
+
+
+async def _test_codex_runtime_rate_limit_recovery_keeps_non_quota_error() -> None:
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+
+    await runtime._handle_notification(
+        {
+            "method": "turn/failed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_server",
+                "error": {
+                    "code": "server_failure",
+                    "message": "Server overloaded.",
+                    "codexErrorInfo": "serverOverloaded",
+                },
+            },
+        }
+    )
+    await runtime._handle_notification(
+        {
+            "method": "account/rateLimits/updated",
+            "params": {
+                "rateLimits": {
+                    "limitId": "codex",
+                    "primary": {"usedPercent": 10},
+                },
+            },
+        }
+    )
+
+    assert [notice.status for notice in host.notice_upserts] == ["open"]
+    notices = await runtime.get_session_notices("sess_1")
+    assert [notice.notice_id for notice in notices] == [
+        "notice_error_sess_1_turn_server"
+    ]
 
 
 def test_codex_runtime_native_failed_completion_sets_error_state() -> None:

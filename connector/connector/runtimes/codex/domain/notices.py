@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import replace
 from typing import Any
 
@@ -101,3 +101,75 @@ class CodexNoticeRegistry:
             if next_notice is not None:
                 closed.append(next_notice)
         return tuple(closed)
+
+    def close_execution_errors_for_session(
+        self,
+        session_id: str,
+        status: str,
+        reason: str,
+        source: str,
+    ) -> tuple[SessionNotice, ...]:
+        return self._close_execution_errors(
+            self.current_for_session(session_id),
+            status=status,
+            reason=reason,
+            source=source,
+        )
+
+    def close_execution_errors_for_codex_error_info(
+        self,
+        codex_error_info: Collection[str],
+        status: str,
+        reason: str,
+        source: str,
+    ) -> tuple[SessionNotice, ...]:
+        return self._close_execution_errors(
+            (
+                notice
+                for notice in self._notices.values()
+                if _codex_error_info(notice) in codex_error_info
+            ),
+            status=status,
+            reason=reason,
+            source=source,
+        )
+
+    def _close_execution_errors(
+        self,
+        notices: Iterable[SessionNotice],
+        status: str,
+        reason: str,
+        source: str,
+    ) -> tuple[SessionNotice, ...]:
+        closed: list[SessionNotice] = []
+        for notice in notices:
+            if (
+                notice.status not in {"open", "responding"}
+                or notice.interaction_type != "execution_error"
+            ):
+                continue
+            next_notice = self.transition(
+                notice.notice_id,
+                status=status,
+                response_required=False,
+                blocking=None,
+                actions=(),
+                metadata={"source": source, "close_reason": reason},
+            )
+            if next_notice is not None:
+                closed.append(next_notice)
+        return tuple(closed)
+
+
+def _codex_error_info(notice: SessionNotice) -> str | None:
+    error = notice.context.get("error")
+    if not isinstance(error, Mapping):
+        return None
+    value = error.get("codexErrorInfo") or error.get("codex_error_info")
+    if isinstance(value, str) and value:
+        return value
+    raw = error.get("raw")
+    if not isinstance(raw, Mapping):
+        return None
+    value = raw.get("codexErrorInfo") or raw.get("codex_error_info")
+    return value if isinstance(value, str) and value else None
