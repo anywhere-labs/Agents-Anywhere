@@ -1,5 +1,15 @@
 # DSH Bridge Next 验证记录
 
+## DSH 0.2.1-rc.2 测试基线（2026-10-19）
+
+整套 `@deepseek-ai/*` 开发依赖升级到 `0.2.1-rc.2`，并按 0.2.1 生态对齐 Cordis 三件套（`cordis-plugin-group` 1.0.5、`cordis-plugin-include` 1.0.10、`cordis-plugin-loader` 1.0.6），新增官方 `@deepseek-ai/dsh-api-remote-access`；`@deepseek-ai/dsh-invariants` 在 0.2.1 线没有发布版本（`YN0082`），且源码、测试、脚本中零引用，予以删除。插件源码 `src/**` 未改动——生产路径对 0.2.1 的适配仍由 #339 承担（`client-connection` 的本地 owner 从 `operator` 改名为 `browserPeer`）。安装时会保留 `@deepseek-ai/dsh-working-directory` 的 peer 未满足提示（由官方 `dsh-api-session-controller` 请求，0.2.1 依赖线本身如此），不影响类型检查、构建与测试。
+
+测试侧跟进 0.2.1 的变更：`@deepseek-ai/dsh-session-persistence-jsonl` 取消默认导出，`tests/fixtures/command-runtime.ts` 与 `tests/benchmarks/startup.ts` 改用命名空间导入加 `Reflect.get(..., 'default')`（仓库原有 `native-runtime.ts` 的写法）；0.2.1 的官方 Gateway 与 SessionController 都注入 `remoteAccess` 服务，`gateway`、`agent-runtime` 夹具在存在该包时条件加载；0.2.1 的 `invoke()` 要求显式活着的 owner Peer，`gateway` 与 `runtime-startup` 夹具传入 `browserPeer ?? operator`；`Include` 的路径改用 `pathToFileURL`，修掉 Windows 本地既有的 `ERR_INVALID_URL_SCHEME`（0.2.0 下同样存在）。本改动最初还包含把 `runtime-recovery` 夹具的请求超时从 100 ms 提到 2 s；`main` 的 #353（MeshCall 0.3.0 迁移）已用 MeshCall 重写该用例，故该项随变基去掉。
+
+复核在 `main` 的 #353 之后（`3edd3df`，包版本 2.2.0）重做：`corepack yarn check` 的类型检查、构建、产物检查全部通过；测试为 **200 项 / 通过 196 / 失败 2 / 跳过 2**。对照口径——只把依赖装到 0.2.1 而不带本次测试侧改动（`main` 的测试 + 已安装的 0.2.1 依赖）为 **192 / 161 / 29**；#353 之前的旧基线分别是 206 / 177 / 29（0.2.0 依赖）与 198 / 165 / 33（整体升级）。剩余 2 项均已分类：`local-ownership.test.ts` 的 Python Connector pid 竞争在 0.2.0 基线上以同一断言失败（`9004 !== 33904` 对 `38300 !== 40720`）；`user-questions.test.ts` 的 `typert gateway: forwarded Remote event source was removed` 由官方 `dsh-api-gateway` 的注销 disposer 构造（`lib/index.js:866-874`，事件源由官方 `dsh-api-remotes` 注册），插件 `src/**` 从不调用 `registerRemoteEvents`，该用例在 0.2.0 下通过、0.2.1 下失败，修复需要官方包或全局的未处理拒绝过滤。跳过 2 项是缺 `AGENT_SERVER_TEST_DB_URL` 的 PostgreSQL 活体探针。另有 1 项偶发：`tests/unit/storage.test.ts` 的「记录被顶替」用例在三次运行中偶发一次把丢失回调计成 2 次（`2 !== 1`），与本次改动无关，记录在此待后续单独处理。
+
+未做：PostgreSQL 活体后端下的探针链路；把 `tests/**` 纳入类型检查（纳入后会因 `desktop-workbench/electron/**` 的 CJS 边界产生 195 条错误，需另开改动）；DSH Desktop / Windows / 手机实机验收。安装路径与握手在官方 DSH Desktop `0.2.1-rc.2` 上的复核记录见 #346。
+
 ## DSH 0.2.0-rc.2 与版本声明统一（2026-09-30）
 
 DSH 开发依赖统一升级到 `0.2.0-rc.2`；Typert peer 从精确的 `0.2.0-rc.1` 改为范围 `>=0.2.0-rc.1 <0.3.0-0`。DSH 0.2.0-rc.2 起在安装和 profile 启动时按 DSH peer 检查插件，精确版本会让后续 rc 拒绝加载插件。握手上报的 `runtimeVersion` 与 `bridgeVersion` 改为运行时读取，不再写死。兼容旧版 DSH 的代码分支不变。

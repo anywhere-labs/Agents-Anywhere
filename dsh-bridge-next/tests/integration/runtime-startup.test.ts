@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { tmpdir } from 'node:os'
 import { LocalRouter, Mesh, Router } from 'meshcall'
+import { HostConnectionService } from '@deepseek-ai/dsh-client-connection'
 import { acquireManagerLock, writeJson } from '../../src/host/storage/files.js'
 import { bridgePath, nativeRuntime } from '../fixtures/native-runtime.js'
 import type { OnboardingSnapshot } from '../../src/contracts/index.js'
@@ -36,7 +37,10 @@ test('a busy local bridge keeps the management gateway available and can restart
     fixture = await nativeRuntime(home)
     for (let i = 0; i < 100 && !fixture.ctx.get('agentsAnywhereOnboarding'); i++) await delay(5)
     const gateway = fixture.ctx.typertGateway
-    const invoke = (method: string) => gateway.invoke({ namespace: 'agentsAnywhereOnboarding', method, args: {} })
+    // 0.2.1 requires every in-process call to speak for a live owner Peer (0.2.0 named it operator).
+    const connection = new HostConnectionService(fixture.ctx, [], {} as ConstructorParameters<typeof HostConnectionService>[2])
+    const peer = (connection as any).browserPeer ?? (connection as any).operator
+    const invoke = (method: string) => gateway.invoke({ namespace: 'agentsAnywhereOnboarding', method, args: {}, peer })
     const snapshot = await invoke('inspect') as OnboardingSnapshot
     assert.equal(snapshot.bridge?.state, 'failed')
     assert.equal(snapshot.bridge?.code, 'BRIDGE_IN_USE')

@@ -11,6 +11,8 @@ import Attachments from '@deepseek-ai/dsh-attachment-local'
 import AgentPresets from '@deepseek-ai/dsh-agent-preset-registry'
 import AgentPreset from '@deepseek-ai/dsh-agent-preset'
 import { HostConnectionService } from '@deepseek-ai/dsh-client-connection'
+// Type-only: also brings in the 0.2.1 `remoteAccess` service declaration for the composition below.
+import type {} from '@deepseek-ai/dsh-api-remote-access'
 import FileUploads from '@deepseek-ai/dsh-client-file-upload'
 import Commands from '@deepseek-ai/dsh-commands'
 import PermissionPresets from '@deepseek-ai/dsh-permission-presets'
@@ -20,8 +22,9 @@ import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { modelSelectionId, permissionSelectionId } from '../../src/host/dsh-runtime/selections.js'
 
@@ -94,5 +97,11 @@ export async function mountAgents(ctx: Context, adapter?: LlmAdapter,
   new HostConnectionService(ctx, [], {} as ConstructorParameters<typeof HostConnectionService>[2])
   await ctx.plugin(FileUploads).await()
   await ctx.plugin(LocalFileSystem).await()
+  // 0.2.1 SessionController injects the official RemoteAccess policy service.
+  const requireRuntime = createRequire(process.env.DSH_INTERACTION_RUNTIME_ROOT ? resolve(process.env.DSH_INTERACTION_RUNTIME_ROOT, 'package.json') : import.meta.url)
+  let remoteAccess: string | undefined
+  try { remoteAccess = requireRuntime.resolve('@deepseek-ai/dsh-api-remote-access') }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'MODULE_NOT_FOUND') throw error }
+  if (remoteAccess && !ctx.get('remoteAccess')) await ctx.plugin((await import(pathToFileURL(remoteAccess).href)).default).await()
   await ctx.plugin(SessionController, { nativeOpen: false }).await()
 }
