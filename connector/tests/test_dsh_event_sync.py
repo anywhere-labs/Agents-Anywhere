@@ -151,6 +151,34 @@ def test_event_runtime_is_not_scanned_and_reconnect_is_explicit():
     asyncio.run(exercise())
 
 
+def test_reconnect_skips_stopped_event_runtimes_without_logging_an_error():
+    from connector.logging import install_rpc_log_sink
+    from connector.runtime_protocol import RuntimeUnavailableError
+
+    async def exercise():
+        logs = []
+
+        async def notify(method, params):
+            logs.append(params)
+
+        def resolve(_):
+            raise RuntimeUnavailableError(
+                "runtime instance 'rti_stopped' is not running (status='stopped')"
+            )
+
+        supervisor = SimpleNamespace(runtimes={"rti_stopped": None}, resolve_runtime=resolve)
+        runner = RuntimeSyncRunner(None, supervisor, host(), dict, AsyncMock())
+        sink = install_rpc_log_sink(notify, level="INFO")
+        try:
+            await runner.reconnect_event_runtimes()
+            await asyncio.sleep(0)
+        finally:
+            await sink.close()
+        assert logs == []
+
+    asyncio.run(exercise())
+
+
 def test_instance_binds_existing_notifications_and_propagates_ingest_failure():
     async def exercise():
         ingest, background = AsyncMock(), AsyncMock()

@@ -89,7 +89,11 @@ class RuntimeSyncRunner:
                 runtime = self.supervisor.resolve_runtime(runtime_id)
                 if runtime.sync_mode == "events":
                     await runtime.resynchronize()
-            except Exception:
+            except RuntimeUnavailableError:
+                # A stopped or deleted instance stays in the supervisor's
+                # registry, but reconnecting must not report it as a failure.
+                continue
+            except Exception:  # noqa: BLE001
                 logger.exception("runtime event recovery deferred runtime={}", runtime_id)
 
     async def sync_existing_once(self) -> None:
