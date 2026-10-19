@@ -4,6 +4,8 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import pytest
+
 from connector.runtimes.dsh.bridge.host import SubscriptionRegistry
 from connector.runtimes.dsh.bridge.sync import SyncRelay
 from tests.dsh_sync_helpers import ingest
@@ -41,6 +43,10 @@ def test_close_cancels_blocked_ingest_before_waiting_for_subscription_cleanup():
             assert relay.task.done()
             assert not relay.ingest_lock.locked()
             assert not relay._ingest_tasks
+            with pytest.raises(RuntimeError, match="closing"):
+                await ingest(relay, _notification_op())
+            with pytest.raises(RuntimeError, match="closing"):
+                await relay.serialized(lambda: host.runtime_health_update("running"))
             await relay.close()
         finally:
             if pending is not None:
@@ -48,6 +54,45 @@ def test_close_cancels_blocked_ingest_before_waiting_for_subscription_cleanup():
                 await asyncio.gather(pending, return_exceptions=True)
             if closing is not None:
                 await asyncio.gather(closing, return_exceptions=True)
+            await relay.close()
+
+    asyncio.run(exercise())
+
+
+def test_close_does_not_cancel_upload_cleanup_a_second_time():
+    async def exercise():
+        entered, cleaning, release, cleaned = (asyncio.Event() for _ in range(4))
+
+        async def upload():
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cleaning.set()
+                await release.wait()
+                cleaned.set()
+                raise
+
+        relay = SyncRelay(FakeBridgeClient(), SimpleNamespace(runtime_health_update=AsyncMock()))
+        pending = asyncio.create_task(relay.serialized(upload))
+        closing = None
+        try:
+            await entered.wait()
+            pending.cancel()
+            await cleaning.wait()
+            closing = asyncio.create_task(relay.close())
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            assert not pending.done(), "shutdown must let existing upload cleanup finish"
+            release.set()
+            await asyncio.wait_for(closing, 1)
+            assert cleaned.is_set()
+            assert not relay.ingest_lock.locked()
+        finally:
+            release.set()
+            await asyncio.gather(pending, return_exceptions=True)
+            if closing is not None:
+                await closing
             await relay.close()
 
     asyncio.run(exercise())

@@ -118,6 +118,8 @@ class SyncRelay:
         # MeshCall runs each ingest call on its own task; close() cancels them
         # so a blocked upload cannot hold the lock during shutdown.
         self._ingest_tasks: set[asyncio.Task[Any]] = set()
+        self._closing = False
+        self._close_task: asyncio.Task[None] | None = None
         self.retry_delay = retry_delay
         self.on_exit = on_exit
         self.failures = 0
@@ -163,18 +165,24 @@ class SyncRelay:
             logger.debug("DSH sync health report skipped ({})", type(error).__name__)
 
     async def close(self) -> None:
-        if self.task and self.task is not asyncio.current_task():
-            self.task.cancel()
-            await asyncio.gather(self.task, return_exceptions=True)
-        tasks = list(self._ingest_tasks)
+        if self._close_task is None:
+            self._closing = True
+            if self.subscription_id is not None:
+                self.registry.remove(self.subscription_id, self)
+            self.confirmed.set()
+            self._close_task = asyncio.create_task(self._close())
+        await asyncio.shield(self._close_task)
+
+    async def _close(self) -> None:
+        # subscribe() needs ingest_lock in its finally block. Cancel the uploads
+        # holding that lock before waiting for either the uploads or subscription.
+        tasks = list(self._ingest_tasks | self.retry_tasks)
+        if self.task is not None:
+            tasks.append(self.task)
         for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        retries = list(self.retry_tasks)
-        for retry in retries:
-            retry.cancel()
-        await asyncio.gather(*retries, return_exceptions=True)
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         self.clear_snapshot()
 
     def clear_snapshot(self) -> None:
@@ -463,11 +471,11 @@ class SyncRelay:
 
     async def ingest(self, batch: SyncBatch) -> None:
         """Run one batch; returning is the plugin's acknowledgement."""
-        await self._await_subscription()
         task = asyncio.current_task()
         if task is not None:
             self._ingest_tasks.add(task)
         try:
+            await self._await_subscription()
             await self._ingest_locked(batch)
         finally:
             if task is not None:
@@ -488,18 +496,26 @@ class SyncRelay:
 
     async def serialized[T](self, operation: Callable[[], Awaitable[T]]) -> T:
         """Run one snapshot or checkpoint operation with the batches, tracked for close()."""
+        self._ensure_open()
         task = asyncio.current_task()
         if task is not None:
             self._ingest_tasks.add(task)
         try:
             async with self.ingest_lock:
+                self._ensure_open()
                 return await operation()
         finally:
             if task is not None:
                 self._ingest_tasks.discard(task)
 
     async def _await_subscription(self) -> None:
+        self._ensure_open()
         await asyncio.wait_for(self.confirmed.wait(), SUBSCRIBE_CONFIRM_TIMEOUT_SECONDS)
+        self._ensure_open()
+
+    def _ensure_open(self) -> None:
+        if self._closing:
+            raise RuntimeError("The DSH sync relay is closing")
 
     async def load_checkpoint(self, external_session_id: str) -> dict[str, Any] | None:
         await self._await_subscription()

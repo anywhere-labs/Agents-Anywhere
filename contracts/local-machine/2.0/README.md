@@ -59,6 +59,8 @@ Python Connector 统一维护启动互斥、运行记录和本机 Connector ID �
 
 宿主（Desktop 或插件管理器）用该 endpoint 与 key 建立 `Mesh`，调用控制方法；stdin 关闭即退出（Router 随之退出）。日志通过 `aa.local.v2.Logs.tail(since)` 订阅，状态与配对通过 `aa.local.v2.Control.events(since)` 订阅；两条流都由客户端保存 `lastSeq` 并在断线后带退避重新订阅。方法名、参数与旧 JSON-RPC 一一对应（`getState`、`getPaths`、`acquireOwnership`、`getConfig`、`saveConfig`、`start`、`stop`、`restart`、`startPairing`、`cancelPairing`）。
 
+查询与订阅可以并发；`start`、`stop`、`restart` 与 `saveConfig` 在 Controller 内共用生命周期锁，`restart` 的停止与启动不可交错。配对的地址解析和网络轮询不占用该锁；`cancelPairing` 覆盖地址解析阶段，并使旧配对结果失效。配对成功后的凭据保存和自动启动也受生命周期锁保护，取消后尚未提交的配对不得再保存凭据或启动后端。进程退出时拒绝新的启动和配置保存，等待已有任务清理后再释放机器所有权。
+
 ## 启动互斥冲突
 
 `acquireOwnership` 用于无配置时的启动预检；`saveConfig`、配对和启动也由 Python 检查占用。Host 不自行检查 PID 或写入运行记录。冲突是应用错误码 `connector_already_running`：
