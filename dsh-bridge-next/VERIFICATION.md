@@ -1,5 +1,23 @@
 # DSH Bridge Next 验证记录
 
+## DSH 0.2.1-rc.2 安装路径与握手复核（2026-10-19）
+
+在官方 DeepSeek Harness Desktop `0.2.1-rc.2`（win-x64 夜间版）上复核了本插件“安装 → 启用 → 启动 → 与 Connector 握手”的完整路径，用的是 `main`（`39b82d4`）源码构建出的 `2.1.0` 包。
+
+本记录是 MeshCall 迁移（#353，`2.2.0`）**之前**的基线：当时插件把端点发布到 `~/.agents-anywhere/dsh-bridge/endpoint.json`（`version 1`），握手协议是 `protocolVersion 1.0` 的 `initialize`。`2.2.0` 起改为硬切 Bridge 2.0：Connector 在本机 MeshCall Router 上注册服务，并在 `~/.agents-anywhere/dsh-bridge/connector.json` 发布 rendezvous，插件读取后注册 `aa.dsh.v2.Bridge`；插件不再写 1.0 的 endpoint 镜像，1.0 握手已删除，旧 Connector 与新插件、或新旧混用都会停在“等待 DSH”。按 `2.2.0` 复现时请以该版本的发现方式为准。
+
+兼容检查：`0.2.1-rc.2` 的安装/加载检查只看 `engines.dsh` 或 `peerDependencies` 中 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` 的声明，判定用 `semver.satisfies(..., includePrerelease: true)`；`@deepseek-ai/cordis`、`@deepseek-ai/schemastery` 不参与判定。本插件唯一被检查的 peer 是 `@deepseek-ai/dsh-typert-protocol: >=0.2.0-rc.1 <0.3.0-0`，`0.2.1-rc.2` 满足，安装不会被拒。
+
+安装：在全新临时 `DSH_HOME` 下用官方 CLI 执行 `dsh plugin --profile web add <本地 tgz>`。第一次安装被 `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: @dataiku/uv@0.12.0` 中止（`0.2.1-rc.2` 使用 pnpm 11）：依赖已经写入 profile manifest，但插件不会加载。在该 profile 的 `pnpm-workspace.yaml` 中加入 `allowBuilds: { '@dataiku/uv': true }` 后重装成功，`@dataiku/uv` 的 postinstall 正常执行并生成 `uv.exe`。
+
+启用：`dsh plugin add` 只安装依赖，不会把插件写进 `dsh.profile.bundles`。同一 profile 在只装依赖时，`--dump-config` 共 1229 行、不含 `agents-anywhere-bridge-next`；把 `@agents-anywhere/dsh-bridge-next` 追加到 `dsh.profile.bundles` 后，配置树出现 `- id: agents-anywhere-bridge-next / name: '@agents-anywhere/dsh-bridge-next' / config: {}`。因此 CLI 安装之后需要在插件界面启用，或在 profile manifest 的 bundles 中确认。
+
+握手：在临时 profile 中执行 `dsh web --port 27999 --no-open` 启动后，插件在 `~/.agents-anywhere/dsh-bridge/endpoint.json` 发布 `version 1`、`127.0.0.1:10251` 的 endpoint，并记录 `bridge.listening`（`protocolVersion 1.0`、`projectionVersion 3`）。用 Connector 的发现流程探测该 endpoint：运行时 `available=true`、`bridge_version="2.1.0"`，`session.interaction.approval` 的 supported/available/allowed 均为 true。审批与提问因此在 `0.2.1-rc.2` 上可用；#344 描述的 `interaction.stream_failed`（`assertPeerLive` TypeError）与桥接被拆掉重启的现象只存在于 npm 上的 `2.0.2`，源码已在 #339 中改用 Connection 的本地 owner Peer。
+
+客户端契约：插件使用 `ctx.slots.inject('sidebar.footer.action', ...)`，与 `@deepseek-ai/dsh-client-ui-sidebar@0.2.1-rc.2` 的插槽注册一致（`lib/client.js` 中 `"sidebar.footer.action": { kind: "list", scope: "root" }`），与同样可用的 `dsh-better-sidebar` 用法相同；`@deepseek-ai/dsh-client-ui-slots` 在 `0.2.1-rc.2` 中已不存在，插件对它的引用只出现在类型层，运行时被抹除。
+
+未验收：官方 Desktop 内的插件界面启用开关（“桌面设置 → 手机连接”）、手机端实机、付费模型、真实长会话的完整 `session.getSnapshot` 同步。另外 Electron 管理的 `desktop` profile 无法用 CLI 导出配置（`error: profile "desktop" is managed exclusively by the Electron application`），其组合出的配置树只能在应用内确认。
+
 ## DSH 0.2.0-rc.2 与版本声明统一（2026-09-30）
 
 DSH 开发依赖统一升级到 `0.2.0-rc.2`；Typert peer 从精确的 `0.2.0-rc.1` 改为范围 `>=0.2.0-rc.1 <0.3.0-0`。DSH 0.2.0-rc.2 起在安装和 profile 启动时按 DSH peer 检查插件，精确版本会让后续 rc 拒绝加载插件。握手上报的 `runtimeVersion` 与 `bridgeVersion` 改为运行时读取，不再写死。兼容旧版 DSH 的代码分支不变。
