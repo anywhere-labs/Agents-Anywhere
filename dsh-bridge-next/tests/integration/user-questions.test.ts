@@ -69,7 +69,9 @@ async function fixture() {
   const router = new RuntimeRouter({ native: runtime, query: native.ctx.sessionQuery, status: id => runtime.status(id) }, 'test')
   const request = (method: string, params: Record<string, unknown>) => router.request(method, params, new AbortController().signal)
   return { ...native, home, adapter, runtime, router, request, close: async () => {
-    router.close(); await native.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true })
+    router.close(); await native.ctx.fiber.dispose()
+    // A Router re-registration can still be writing sockets/locks under home.
+    await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   } }
 }
 
