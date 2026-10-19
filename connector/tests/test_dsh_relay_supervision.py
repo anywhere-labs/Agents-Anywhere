@@ -9,6 +9,50 @@ from connector.runtimes.dsh.bridge.sync import SyncRelay
 from tests.dsh_sync_helpers import ingest
 
 
+def test_close_cancels_blocked_ingest_before_waiting_for_subscription_cleanup():
+    async def exercise():
+        entered = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def publish(*args):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        client = FakeBridgeClient()
+        host = SimpleNamespace(publish_runtime_notifications=publish, runtime_health_update=AsyncMock())
+        relay = SyncRelay(client, host)
+        relay.start()
+        pending = None
+        closing = None
+        try:
+            await _ready(client, relay, 1)
+            pending = asyncio.create_task(ingest(relay, {"kind": "notifications", "notifications": [
+                {"method": "session.inventory.begin", "params": {"scanToken": "scan"}},
+            ]}))
+            await asyncio.wait_for(entered.wait(), 1)
+            closing = asyncio.create_task(relay.close())
+            await asyncio.wait_for(asyncio.shield(closing), 1)
+            assert cancelled.is_set()
+            assert pending.cancelled()
+            assert relay.task.done()
+            assert not relay.ingest_lock.locked()
+            assert not relay._ingest_tasks
+            await relay.close()
+        finally:
+            if pending is not None:
+                pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
+            if closing is not None:
+                await asyncio.gather(closing, return_exceptions=True)
+            await relay.close()
+
+    asyncio.run(exercise())
+
+
 def _notification_op() -> dict:
     return {"kind": "notifications", "notifications": [
         {"method": "session.state.updated", "params": {"sessionId": "session", "status": "idle"}},
