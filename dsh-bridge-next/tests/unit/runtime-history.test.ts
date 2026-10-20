@@ -250,6 +250,20 @@ test('canonical identities and hashes match the shared cross-language fixtures',
   }
   for (const entry of fixture.timelineIds) assert.equal(itemId(entry.externalSessionId, entry.projectionKind, entry.businessId), entry.itemId)
   for (const entry of fixture.contentHashes) assert.equal(contentHash(entry), entry.contentHash)
+  const rawItem = {
+    type: 'tool' as const,
+    status: 'done' as const,
+    role: 'assistant',
+    content: {
+      kind: 'tool_call',
+      title: 'bash',
+      omitted: undefined,
+      nested: { keep: 1, drop: undefined },
+      items: ['a', undefined, 'b'],
+    } as unknown as Record<string, null>,
+  }
+  const transportedItem = JSON.parse(JSON.stringify(rawItem))
+  assert.equal(contentHash(rawItem), contentHash(transportedItem))
 })
 
 test('read cursors capture one complete inventory and truncated snapshots are never marked complete', async () => {

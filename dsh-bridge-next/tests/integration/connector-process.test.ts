@@ -147,11 +147,13 @@ async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CO
   control.mount(new FakeControl(backend))
   await control.startServing()
   let child: ChildProcessWithoutNullStreams | undefined
-  const connector = new SourceConnector({
-    stateRoot: join(root, 'data'), connectorSourceDir: source, uvPath: mode === 'missing' ? join(root, 'missing-uv') : process.execPath,
-    apiBaseUrl: 'https://api.example.test', dshHome: join(root, 'dsh-home'),
-  }, (command, args, options) => {
-    assert.equal(args[0], 'run')
+    let childEnv: NodeJS.ProcessEnv | undefined
+    const connector = new SourceConnector({
+      stateRoot: join(root, 'data'), connectorSourceDir: source, uvPath: mode === 'missing' ? join(root, 'missing-uv') : process.execPath,
+      apiBaseUrl: 'https://api.example.test', dshHome: join(root, 'dsh-home'),
+    }, (command, args, options) => {
+      childEnv = options.env
+      assert.equal(args[0], 'run')
     assert.equal(args[1], '--directory')
     assert.equal(args[3], 'anywhere-cli')
     assert.equal(args[4], 'rpc')
@@ -178,7 +180,7 @@ async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CO
     return child
   }, () => settings, firstRequestTimeoutMs, async command => { pruned.push(command); return prune(command) })
   return {
-    connector, root, pruned, spawned, get child() { return child },
+    connector, root, pruned, spawned, get child() { return child }, get childEnv() { return childEnv },
     async close() {
       await connector.stop()
       await control.close().catch(() => undefined)
@@ -361,4 +363,25 @@ test('startup exit 2 preserves uv diagnostics in the Connector journal', async (
     assert.match(logs, /Python download failed: connection reset/)
     assert.match(logs, /exited \(2\)/)
   } finally { await h.close() }
+})
+
+test('source Connector normalizes [::1] in child NO_PROXY and no_proxy without mutating parent process.env', async () => {
+  const previousNoProxyUpper = process.env['NO_PROXY']
+  const previousNoProxyLower = process.env['no_proxy']
+  process.env['NO_PROXY'] = 'localhost,127.0.0.1,[::1]'
+  process.env['no_proxy'] = '[::1],.internal.example'
+  const h = await fixture()
+  try {
+    await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
+    assert.equal(h.childEnv?.['NO_PROXY'], 'localhost,127.0.0.1,::1')
+    assert.equal(h.childEnv?.['no_proxy'], '::1,.internal.example')
+    assert.equal(process.env['NO_PROXY'], 'localhost,127.0.0.1,[::1]')
+    assert.equal(process.env['no_proxy'], '[::1],.internal.example')
+  } finally {
+    if (previousNoProxyUpper === undefined) delete process.env['NO_PROXY']
+    else process.env['NO_PROXY'] = previousNoProxyUpper
+    if (previousNoProxyLower === undefined) delete process.env['no_proxy']
+    else process.env['no_proxy'] = previousNoProxyLower
+    await h.close()
+  }
 })
