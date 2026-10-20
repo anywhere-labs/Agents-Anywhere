@@ -1,5 +1,5 @@
 import { localRuntimePath } from "./local-runtime";
-import type { OwnershipState } from "./local-runtime";
+import type { OwnershipState, RuntimeOwner } from "./local-runtime";
 import { ConnectorRpcError, CONNECTOR_CONFLICT_MESSAGE } from "./connector-rpc-error";
 import { materializeConnectorProject } from "./connector-project";
 import { bundledPythonExecutable, environmentHome, environmentUsesPython } from "./connector-python";
@@ -18,6 +18,7 @@ import type {
   ConnectorLogEntry,
   ConnectorLogQuery,
   ConnectorLogPage,
+  ConnectorLogSource,
   ConnectorPrivateConfig,
   ConnectorPublicConfig,
   ConnectorState,
@@ -62,9 +63,9 @@ export interface ConnectorChannel {
     events(since: number | null, options?: { signal?: AbortSignal }): AsyncIterable<{ seq: number; kind: string; state?: unknown }>;
   };
   logs: {
-    tail(since: number | null, source?: "connector" | "bridge" | null, options?: { signal?: AbortSignal }): AsyncIterable<LogEntry>;
-    read(source?: "connector" | "bridge" | null, beforeSeq?: number | null, afterSeq?: number | null, limit?: number): Promise<LogPage>;
-    clear(): Promise<LogPage>;
+    tail(since: number | null, source?: ConnectorLogSource | null, options?: { signal?: AbortSignal }): AsyncIterable<LogEntry>;
+    read(source?: ConnectorLogSource | null, beforeSeq?: number | null, afterSeq?: number | null, limit?: number): Promise<LogPage & { logsPath?: string }>;
+    clear(): Promise<LogPage & { logsPath?: string }>;
   };
   close?(): Promise<void>;
 }
@@ -181,14 +182,16 @@ export class ConnectorSupervisor {
 
   async readLogs(query: ConnectorLogQuery = {}): Promise<ConnectorLogPage> {
     if (!this.channel) return this.options.logs.read(query);
-    const page = await this.channel.logs.read(null, query.beforeSeq ?? null, query.afterSeq ?? null,
+    const page = await this.channel.logs.read(query.source ?? null, query.beforeSeq ?? null, query.afterSeq ?? null,
       Math.max(1, Math.min(1000, query.pageSize ?? 200)));
+    if (typeof page.logsPath === "string" && page.logsPath.trim()) this.state.logsPath = page.logsPath;
     return { ...page, items: page.items.map(entry => ({ ...entry })) };
   }
 
   async clearLogs(): Promise<ConnectorLogPage> {
     if (!this.channel) return this.options.logs.clear();
     const page = await this.channel.logs.clear();
+    if (typeof page.logsPath === "string" && page.logsPath.trim()) this.state.logsPath = page.logsPath;
     return { ...page, items: page.items.map(entry => ({ ...entry })) };
   }
 
@@ -452,15 +455,33 @@ export class ConnectorSupervisor {
   }
 
   private connectorError(error: unknown): Error {
-    const value = error as { code?: unknown; details?: Record<string, unknown> } | null;
+    const value = error as { code?: unknown; message?: unknown; details?: Record<string, unknown> } | null;
     const code = value && typeof value.code === "string" ? value.code : "";
     if (!code) return error instanceof Error ? error : new Error(String(error));
     const details = value?.details;
     if (code === "connector_already_running") {
       this.keepRuntimeRunning = false;
       this.clearRestartTimer();
-      this.options.onOwnership?.({ status: "conflict", message: CONNECTOR_CONFLICT_MESSAGE });
-      return new ConnectorRpcError(-32009, CONNECTOR_CONFLICT_MESSAGE, { reason: "connector_already_running", ...(details ?? {}) });
+      const ownerRecord = details?.owner && typeof details.owner === "object" && !Array.isArray(details.owner)
+        ? details.owner as Record<string, unknown>
+        : undefined;
+      const rawMessage = typeof value?.message === "string" ? value.message.trim() : "";
+      const ownerParts = [
+        typeof ownerRecord?.kind === "string" && ownerRecord.kind.trim() ? ownerRecord.kind.trim() : "",
+        typeof ownerRecord?.pid === "number" && Number.isFinite(ownerRecord.pid) ? `PID ${ownerRecord.pid}` : "",
+      ].filter(Boolean);
+      const detailLine = rawMessage && rawMessage !== CONNECTOR_CONFLICT_MESSAGE
+        ? rawMessage
+        : ownerParts.length > 0
+          ? `Another Connector is running (${ownerParts.join(", ")}).`
+          : "";
+      const conflictMessage = detailLine ? `${CONNECTOR_CONFLICT_MESSAGE}\n${detailLine}` : CONNECTOR_CONFLICT_MESSAGE;
+      this.options.onOwnership?.({
+        status: "conflict",
+        message: conflictMessage,
+        ...(ownerRecord ? { owner: ownerRecord as unknown as RuntimeOwner } : {}),
+      });
+      return new ConnectorRpcError(-32009, conflictMessage, { reason: "connector_already_running", ...(details ?? {}) });
     }
     const message = error instanceof Error ? error.message : String(error);
     return new ConnectorRpcError(-32000, message || "Connector RPC error", details ?? { reason: code });
@@ -1007,6 +1028,7 @@ export class ConnectorSupervisor {
     if (typeof next.hasConfig === "boolean") this.state.hasConfig = next.hasConfig;
     if (typeof next.configPath === "string") this.state.configPath = next.configPath;
     if (typeof next.runtimePath === "string") this.state.runtimePath = next.runtimePath;
+    if (typeof next.logsPath === "string" && next.logsPath.trim()) this.state.logsPath = next.logsPath;
     if (this.state.authFailed) this.clearRestartTimer();
     if (this.state.running) this.crashCount = 0;
     this.refreshBindingState();

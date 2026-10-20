@@ -7,15 +7,23 @@ export type ConnectorLogLevel =
   | "ERROR"
   | "CRITICAL";
 
+export type ConnectorLogSource = "connector" | "bridge";
+
 export type ConnectorLogEntry = {
   seq: number;
   level: ConnectorLogLevel | string;
   message: string;
   time: string;
+  name?: string;
+  source?: ConnectorLogSource | string;
+  details?: string | null;
+  exception?: string | null;
+  gapBefore?: boolean;
   [key: string]: unknown;
 };
 
 export type ConnectorLogQuery = {
+  source?: ConnectorLogSource;
   pageSize?: number;
   beforeSeq?: number;
   afterSeq?: number;
@@ -26,7 +34,9 @@ export type ConnectorLogPage = {
   firstSeq: number | null;
   lastSeq: number | null;
   hasMoreBefore: boolean;
+  hasMoreAfter?: boolean;
   total: number;
+  logsPath?: string;
 };
 
 export type ConnectorPrivateConfig = {
@@ -80,6 +90,7 @@ export type ConnectorState = {
   configPath: string;
   runtimePath: string;
   dataPath: string;
+  logsPath?: string;
   connectorDir: string;
   resolvedUvPath: string;
   uvMissing: boolean;

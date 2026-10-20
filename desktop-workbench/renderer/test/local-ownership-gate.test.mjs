@@ -155,3 +155,26 @@ test("a failed bridge call is the error the dialog quotes", async () => {
   h.render()
   assert.deepEqual(h.elements.find(e => e.type === "pre").children, ["Desktop backend is not ready."])
 })
+
+test("a conflict with detail quotes the occupying owner info and offers copying and opening the logs folder", async () => {
+  const copies = [], opened = []
+  const message = "已有其他 Connector 在运行，请先停止该进程后再试。\nAnother Connector is running (cli, PID 1234)."
+  const h = fixture({ status: "conflict", message, owner: { kind: "cli", pid: 1234 } }, {
+    quit: async () => {},
+    recheck: async () => ({ status: "owned" }),
+  }, {
+    connector: { openLogsFolder: async () => { opened.push(true); return "" } },
+    copyText: async text => { copies.push(text) },
+  })
+  h.render()
+  assert.deepEqual(h.elements.find(e => e.type === "AlertDialogDescription").children, ["description"])
+  assert.deepEqual(h.elements.find(e => e.type === "pre").children, [message])
+  assert.deepEqual(labels(h), ["copyError", "openLogs", "quit", "recheck"])
+  const [copy, logs] = h.elements.filter(e => e.type === "Button")
+  copy.props.onClick()
+  await settle()
+  assert.deepEqual(copies, [message])
+  logs.props.onClick()
+  assert.equal(opened.length, 1)
+})
+

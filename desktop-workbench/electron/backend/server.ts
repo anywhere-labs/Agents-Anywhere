@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
+import type { ConnectorLogSource } from "../connector-types";
 import { BACKEND_TOKEN_HEADER, type BackendEventName } from "./protocol";
 import type { BackendState } from "./state";
 
@@ -104,6 +105,7 @@ export class BackendServer {
       if (path === "/onboarding") return this.state.getOnboarding();
       if (path === "/ownership") return this.state.ownershipState();
       if (path === "/logs") return this.state.readLogs({
+        source: logSourceOrUndefined(url.searchParams.get("source")),
         pageSize: numberOrUndefined(url.searchParams.get("pageSize")),
         beforeSeq: numberOrUndefined(url.searchParams.get("beforeSeq")),
         afterSeq: numberOrUndefined(url.searchParams.get("afterSeq")),
@@ -125,6 +127,10 @@ export class BackendServer {
         this.state.appendLog({
           level: typeof body.level === "string" ? body.level : "INFO",
           message: String(body.message ?? ""),
+          ...(typeof body.name === "string" ? { name: body.name } : {}),
+          ...(typeof body.source === "string" ? { source: body.source } : {}),
+          ...(typeof body.details === "string" || body.details === null ? { details: body.details } : {}),
+          ...(typeof body.exception === "string" || body.exception === null ? { exception: body.exception } : {}),
         });
         return { appended: true };
       }
@@ -229,6 +235,12 @@ function numberOrUndefined(value: string | null): number | undefined {
   if (value === null || value.trim() === "") return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function logSourceOrUndefined(value: string | null): ConnectorLogSource | undefined {
+  const trimmed = value?.trim();
+  if (trimmed === "connector" || trimmed === "bridge") return trimmed;
+  return undefined;
 }
 
 function errorMessage(error: unknown): string {

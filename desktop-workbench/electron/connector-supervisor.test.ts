@@ -151,6 +151,8 @@ process.stdin.on('end', () => process.exit(0));
     await assert.rejects(supervisor.start(), isConflict);
     assert.equal(ownership.at(-1)?.status, "conflict");
     assert.match(ownership.at(-1)?.message ?? "", /其他 Connector/);
+    assert.match(ownership.at(-1)?.message ?? "", /cli, PID 1234/);
+    assert.deepEqual(ownership.at(-1)?.owner, { kind: "cli", pid: 1234 });
     assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf8")), credentials);
     assert.equal((await supervisor.getState()).running, false);
     assert.equal(logs.some(line => line.includes("will restart")), false);
@@ -354,12 +356,15 @@ test("runtime logs retain central sequences, paginate and export without a secon
     yield entries[0]!;
     yield* originalTail(since, source, options);
   };
-  channel.logs.read = async (_source, before, after, limit = 200) => {
+  const seenSources: Array<string | null | undefined> = [];
+  channel.logs.read = async (source, before, after, limit = 200) => {
+    seenSources.push(source);
     const rows = entries.filter(e => (before == null || e.seq < before) && (after == null || e.seq > after));
     const items = after == null ? rows.slice(-limit) : rows.slice(0, limit);
     return { items, firstSeq: entries[0]!.seq, lastSeq: entries.at(-1)!.seq, total: entries.length,
       hasMoreBefore: Boolean(items.length && items[0]!.seq > entries[0]!.seq),
-      hasMoreAfter: Boolean(items.length && items.at(-1)!.seq < entries.at(-1)!.seq) };
+      hasMoreAfter: Boolean(items.length && items.at(-1)!.seq < entries.at(-1)!.seq),
+      logsPath: path.join(root, "central-logs") };
   };
   const live: ConnectorLogEntry[] = [];
   const supervisor = new ConnectorSupervisor({
@@ -373,7 +378,10 @@ test("runtime logs retain central sequences, paginate and export without a secon
     await supervisor.preflightProvisioning();
     assert.equal(live[0]!.seq, 9000);
     assert.ok(!store.read({ pageSize: 5000 }).items.some(e => e.message.startsWith("runtime-")));
-    const page = await supervisor.readLogs({ beforeSeq: 9100, pageSize: 30 });
+    const page = await supervisor.readLogs({ beforeSeq: 9100, pageSize: 30, source: "bridge" });
+    assert.equal(seenSources[0], "bridge");
+    assert.equal(page.logsPath, path.join(root, "central-logs"));
+    assert.equal(supervisor.publicState().logsPath, path.join(root, "central-logs"));
     assert.equal(page.items.length, 30);
     assert.equal(page.items.at(-1)!.seq, 9099);
     const exported = path.join(root, "export.jsonl");
