@@ -245,6 +245,7 @@ export class OnboardingManager {
     if (this.disposed) throw new Error('插件已关闭。')
     await this.connector.prepare()
     if (this.disposed) throw new Error('插件已关闭。')
+    await this.requireStandalone()
     if (next.apiBaseUrl !== this.settings.apiBaseUrl) await this.logoutFlow()
     else await this.cancelFlow()
     await writeJson(join(this.config.stateRoot, 'settings.json'), next)
@@ -261,13 +262,17 @@ export class OnboardingManager {
     if (this.account && this.account.expiresAt > Date.now() + 30_000) {
       try {
         const user = await this.apiFactory(this.settings.apiBaseUrl).me(this.account.accessToken, controller.signal)
+        controller.signal.throwIfAborted()
         if (user.userId !== this.account.userId) throw new Error('账号发生变化，请重新登录。')
         this.account = { ...this.account, ...publicProfile(user) }
         this.profileCheckedAt = Date.now()
         await writeJson(join(this.config.stateRoot, 'account.json'), this.account)
+        await this.requireStandalone()
+        controller.signal.throwIfAborted()
         this.launch(flow, controller)
         return { url: flow.progressUrl }
       } catch (error) {
+        if (this.desktop.status !== 'absent') throw new Error(this.desktop.message)
         if (!(error instanceof ApiError) || error.status !== 401) {
           this.setProgress('error', safeMessage(error)); throw error
         }
@@ -306,6 +311,7 @@ export class OnboardingManager {
       renew: Boolean(code),
     })
     this.recovery = null
+    await this.requireStandalone()
     signal.throwIfAborted()
     this.setProgress('starting', '正在启动本机连接，首次准备运行环境可能需要几分钟…')
     await this.connector.start(this.binding, this.settings.apiBaseUrl, signal)
@@ -389,11 +395,14 @@ export class OnboardingManager {
       try {
         await this.connector.prepare()
         await this.connector.stop()
+        await this.requireStandalone()
         controller.signal.throwIfAborted()
         this.setProgress('pairing', action === 'recreate' ? '正在重新创建设备…' : '正在恢复设备连接…')
         this.binding = await recoverBinding(this.config.stateRoot, account, this.apiFactory(account.apiBaseUrl), controller.signal,
           recovery.connectorId, action)
         this.recovery = null
+        await this.requireStandalone()
+        controller.signal.throwIfAborted()
         this.setProgress('starting', '正在启动本机连接…')
         await this.connector.start(this.binding, account.apiBaseUrl, controller.signal)
         await this.waitOnline(this.apiFactory(account.apiBaseUrl), account, this.binding.connectorId, controller.signal)
@@ -423,6 +432,7 @@ export class OnboardingManager {
   private async requireStandalone(): Promise<void> {
     await this.initialize()
     if (this.disposed) throw new Error('插件已关闭。')
+    if (this.roleCheck) await this.roleCheck
     await this.refreshRole()
     if (this.disposed) throw new Error('插件已关闭。')
     if (this.desktop.status !== 'absent') { this.mobile.clear(); throw new Error(this.desktop.message) }
@@ -470,6 +480,7 @@ export class OnboardingManager {
         : await ensureBinding(this.config.stateRoot, account, api, controller.signal, {
           ...(this.dependencies.machineState ? { machineState: this.dependencies.machineState } : {}),
         })
+      await this.requireStandalone()
       controller.signal.throwIfAborted()
       if (this.disposed) throw new Error('插件已关闭。')
       this.setProgress('starting', '正在启动 Connector…')
@@ -483,6 +494,7 @@ export class OnboardingManager {
         throw error
       }
       await this.connector.stop()
+      if (this.desktop.status !== 'absent') throw new Error(this.desktop.message)
     } finally { if (this.controller === controller) this.controller = null }
   }
 
@@ -642,11 +654,13 @@ export class OnboardingManager {
       this.controller?.abort()
       this.recoveryController?.abort()
       this.mobile.clear()
-      if (this.connector.running || this.flow || this.stage !== 'idle') {
-        await this.connector.stop()
-        const flow = this.flow
-        this.flow = null
-        if (flow) await flow.close()
+      const shouldStopConnector = this.connector.running || Boolean(this.controller) || this.stage === 'starting'
+      const wasActive = shouldStopConnector || Boolean(this.flow) || this.stage !== 'idle'
+      if (shouldStopConnector) await this.connector.stop()
+      const flow = this.flow
+      this.flow = null
+      if (flow) await flow.close()
+      if (wasActive || this.message !== desktop.message) {
         this.setProgress('idle', desktop.message)
       }
     })().finally(() => { this.roleCheck = null })

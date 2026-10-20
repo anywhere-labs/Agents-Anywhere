@@ -713,3 +713,39 @@ test('openConnectorFolder uses Connector-returned logsPath and does not block be
   } finally { await h.close() }
 })
 
+test('Desktop appearing during pairing or mid-startup aborts and stops the plugin Connector', async () => {
+  const h = await fixture()
+  h.api.online = true
+  const register = h.api.register.bind(h.api)
+  h.api.register = async (...args) => {
+    const result = await register(...args)
+    h.setDesktop({ status: 'installed', message: 'Desktop running', executablePath: process.execPath, launchArgs: [], packaged: true })
+    return result
+  }
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).desktop.status === 'installed')
+    assert.equal(h.connector.starts, 0, 'Desktop detected during pairing must prevent starting the Connector')
+    assert.equal((await h.manager.inspect()).stage, 'idle')
+    assert.equal((await h.manager.inspect()).message, 'Desktop running')
+
+    h.setDesktop({ status: 'absent', message: 'not registered' })
+    h.api.register = register
+    let enteredStart!: () => void
+    const startEntered = new Promise<void>(resolve => { enteredStart = resolve })
+    h.connector.start = (_binding, _url, signal) => new Promise<void>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason ?? new Error('aborted')), { once: true })
+      enteredStart()
+    })
+    await h.manager.begin()
+    await startEntered
+    const stopsBefore = h.connector.stops
+    h.setDesktop({ status: 'installed', message: 'Desktop running', executablePath: process.execPath, launchArgs: [], packaged: true })
+    const snapshot = await h.manager.inspect()
+    assert.equal(snapshot.desktop.status, 'installed')
+    assert.equal(snapshot.stage, 'idle')
+    assert.ok(h.connector.stops > stopsBefore, 'Desktop detected mid-startup must stop the starting Connector')
+  } finally { await h.close() }
+})
+
+
