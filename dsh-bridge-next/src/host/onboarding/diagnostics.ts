@@ -1,15 +1,20 @@
 import type { Logger } from '@deepseek-ai/cordis'
 import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { RuntimeDiagnostics, type DiagnosticEntry, type Level } from '../dsh-runtime/diagnostics.js'
+import { RuntimeDiagnostics, type DiagnosticEntry, type DiagnosticOutput, type Level } from '../dsh-runtime/diagnostics.js'
 
-/** Installation and onboarding diagnostics remain local in this migration. */
-export function onboardingDiagnostics(sink: Pick<Logger, Level>, directory: string): RuntimeDiagnostics {
+/** Pre-startup and installation diagnostics are kept locally and also forwarded to the central Logs output when provided. */
+export function onboardingDiagnostics(
+  sink: Pick<Logger, Level>,
+  directory: string,
+  secondary?: DiagnosticOutput,
+): RuntimeDiagnostics {
   let pending = Promise.resolve()
   let queued = 0
   return new RuntimeDiagnostics({
     write(entry: DiagnosticEntry) {
       try { sink[entry.level]('event=%s %s', entry.message, entry.details) } catch { /* best effort */ }
+      try { secondary?.write(entry) } catch { /* best effort */ }
       if (queued >= 256) return
       queued++
       pending = pending.then(async () => {
@@ -21,6 +26,8 @@ export function onboardingDiagnostics(sink: Pick<Logger, Level>, directory: stri
         await appendFile(path, JSON.stringify(entry) + '\n', { mode: 0o600 })
       }).catch(() => undefined).finally(() => { queued-- })
     },
-    async flush() { await pending },
-  })
+    async flush() {
+      await Promise.all([pending, secondary?.flush() ?? Promise.resolve()])
+    },
+  }, {}, 'dsh-plugin')
 }

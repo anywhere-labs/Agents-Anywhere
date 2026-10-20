@@ -1,6 +1,7 @@
 import type { BridgeStatus } from '../../contracts/bridge-status.js'
 import { onboardingDiagnostics } from '../onboarding/diagnostics.js'
 import type { RuntimeDiagnostics } from '../dsh-runtime/diagnostics.js'
+import { RpcLogOutput } from '../dsh-runtime/log-output.js'
 import { startupFailure, unavailableBridge } from '../dsh-runtime/startup-status.js'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
@@ -13,7 +14,7 @@ import type { MobileLoginSnapshot } from '../../contracts/mobile.js'
 import { join } from 'node:path'
 import { stateRoot } from '../config.js'
 import { readConnectorLogs } from '../connector/logs.js'
-import type { ConnectorLogPage, ConnectorLogQuery, BridgeLogSnapshot } from '../../contracts/logs.js'
+import type { ConnectorLogPage, ConnectorLogQuery, BridgeLogSnapshot, RuntimeLogPage, RuntimeLogQuery } from '../../contracts/logs.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context { agentsAnywhereOnboarding: OnboardingService }
@@ -27,15 +28,19 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   private managerFailure: BridgeStatus | null = null
   private recovery: Promise<BridgeStatus> | undefined
   private disposed = false
+  private readonly pluginLogOutput = new RpcLogOutput(512, 'plugin')
   private readonly diagnostics: RuntimeDiagnostics
   private readonly logsDirectory: string
 
   constructor(ctx: Context, config: Config) {
     super(ctx, HOST_NAMESPACE)
     this.logsDirectory = join(stateRoot(config), 'logs')
-    this.makeManager = () => new OnboardingManager(resolveConfig(config))
+    this.diagnostics = onboardingDiagnostics(ctx.logger('agents-anywhere-onboarding'), this.logsDirectory, this.pluginLogOutput)
+    this.makeManager = () => new OnboardingManager(resolveConfig(config), {
+      diagnostics: this.diagnostics,
+      logOutput: this.pluginLogOutput,
+    })
     this.manager = this.makeManager()
-    this.diagnostics = onboardingDiagnostics(ctx.logger('agents-anywhere-onboarding'), this.logsDirectory)
     ctx.effect(() => async () => {
       this.disposed = true
       await this.recovery
@@ -59,7 +64,14 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   @Remote('inspect')
   async inspect(): Promise<OnboardingSnapshot> {
     if (this.managerFailure) return { ...this.manager.unavailableSnapshot(this.managerFailure.message), bridge: this.managerFailure }
-    return { ...await this.manager.inspect(), bridge: this.ctx.get('agentsAnywhereRuntime')?.status() ?? unavailableBridge }
+    const snapshot = await this.manager.inspect()
+    const runtime = this.ctx.get('agentsAnywhereRuntime')
+    const logsPath = snapshot.connector.logsPath || runtime?.logsPath || ''
+    return {
+      ...snapshot,
+      connector: { ...snapshot.connector, logsPath },
+      bridge: runtime?.status() ?? unavailableBridge,
+    }
   }
   @Remote('restartBridge')
   restartBridge(): Promise<BridgeStatus> {
@@ -78,12 +90,51 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   }
   @Remote('openDesktop')
   openDesktop(): Promise<DesktopLaunch> { return this.manager.openDesktop() }
+  @Remote('readRuntimeLogs')
+  async readRuntimeLogs(query?: RuntimeLogQuery): Promise<RuntimeLogPage> {
+    const runtime = this.ctx.get('agentsAnywhereRuntime')
+    if (this.manager.hasRuntimeLogs()) {
+      return this.manager.readRuntimeLogs(query)
+    }
+    if (runtime?.hasLogConnection()) {
+      return runtime.readRuntimeLogs(query, this.pluginLogOutput)
+    }
+    return {
+      available: false,
+      items: [],
+      firstSeq: null,
+      lastSeq: null,
+      total: 0,
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+      logsPath: this.manager.logsPath ?? runtime?.logsPath ?? null,
+      updatedAt: new Date().toISOString(),
+    }
+  }
   @Remote('readBridgeLogs')
-  readBridgeLogs(): Promise<BridgeLogSnapshot> { return this.ctx.get('agentsAnywhereRuntime')?.readBridgeLogs() ?? Promise.resolve({ entries: [], updatedAt: new Date().toISOString() }) }
+  async readBridgeLogs(): Promise<BridgeLogSnapshot> {
+    const runtime = this.ctx.get('agentsAnywhereRuntime')
+    if (runtime?.hasLogConnection()) return runtime.readBridgeLogs()
+    if (this.manager.hasRuntimeLogs()) {
+      const page = await this.manager.readRuntimeLogs({ source: 'bridge' })
+      return {
+        entries: page.items.map(item => ({
+          id: String(item.seq),
+          time: item.time,
+          level: item.level,
+          event: item.message,
+          details: item.details ?? '{}',
+          ...(item.method ? { method: item.method } : {}),
+          ...(item.outcome ? { outcome: item.outcome } : {}),
+        })),
+        updatedAt: page.updatedAt,
+      }
+    }
+    return { entries: [], updatedAt: new Date().toISOString() }
+  }
   @Remote('readConnectorLogs')
   readConnectorLogs(query?: ConnectorLogQuery): Promise<ConnectorLogPage> {
-    const runtime = this.ctx.get('agentsAnywhereRuntime')
-    return runtime?.hasLogConnection() ? runtime.readConnectorLogs(query) : readConnectorLogs(this.logsDirectory, query)
+    return readConnectorLogs(this.logsDirectory, query)
   }
   @Remote('begin')
   begin(input?: LoginRequest): Promise<{ url: string }> { return this.manager.begin(input) }
@@ -99,7 +150,9 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   @Remote('saveConnectorSettings')
   saveConnectorSettings(settings: ConnectorSettings): Promise<null> { return this.manager.saveConnectorSettings(settings) }
   @Remote('openConnectorFolder')
-  openConnectorFolder(folder: ConnectorFolder): Promise<null> { return this.manager.openConnectorFolder(folder) }
+  openConnectorFolder(folder: ConnectorFolder): Promise<null> {
+    return this.manager.openConnectorFolder(folder, this.ctx.get('agentsAnywhereRuntime')?.logsPath)
+  }
   @Remote('resetConnector')
   resetConnector(forceLocal: boolean): Promise<null> { return this.manager.resetConnector(forceLocal) }
   @Remote('createMobileLogin')

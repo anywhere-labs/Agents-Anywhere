@@ -51,12 +51,25 @@ test('Bridge DI logger crosses real Python Logs RPC and history survives Connect
       { metadata: { 'aa-session-namespace': 'log-test' }, timeoutMs: 3000 }))
     await diagnostics.flush()
     const logs = new LogsServiceClient(mesh)
+    const pluginOutput = new RpcLogOutput(500, 'plugin')
+    const pluginDiagnostics = new RuntimeDiagnostics(pluginOutput, {}, 'dsh-plugin')
+    pluginOutput.connect(logs)
+    pluginDiagnostics.log('info', 'plugin.onboarding.ready', { step: 'connected' })
+    await pluginDiagnostics.flush()
     const first = await logs.read('bridge')
     assert.ok(first.items.some(entry => entry.message === 'before.connection'))
     const rejected = first.items.find(entry => entry.message.startsWith('rpc.rejected'))!
     assert.equal(JSON.parse(rejected.details!).method, 'getSessionState')
     assert.ok(JSON.parse(rejected.details!).call_id, 'MeshCall injects a bound per-call logger')
     assert.doesNotMatch(JSON.stringify(first), /PRIVATE_NATIVE_BODY/)
+    const pluginOnly = await connection.readRuntimeLogs({ source: 'plugin', limit: 200 }, pluginOutput)
+    assert.equal(pluginOnly.logsPath, join(home, 'logs'))
+    assert.ok(pluginOnly.items.some(entry => entry.source === 'plugin' && entry.message === 'plugin.onboarding.ready'))
+    assert.equal(pluginOnly.items.every(entry => entry.source === 'plugin'), true)
+    const interleaved = await connection.readRuntimeLogs({ source: null, limit: 200 }, pluginOutput)
+    const seenSources = new Set(interleaved.items.map(entry => entry.source))
+    assert.equal(seenSources.has('plugin'), true)
+    assert.equal(seenSources.has('bridge'), true)
     const cursor = first.lastSeq!
     await connection.close()
     await caller.close()
@@ -81,3 +94,4 @@ test('Bridge DI logger crosses real Python Logs RPC and history survives Connect
     await rm(home, { recursive: true, force: true })
   }
 })
+

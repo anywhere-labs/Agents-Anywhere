@@ -12,6 +12,7 @@ export function createHostApi(rpc: HostRpc): OnboardingHostApi {
   }
   return {
     restartBridge: () => call('restartBridge'),
+    readRuntimeLogs: query => call('readRuntimeLogs', query ? { query } : {}),
     readBridgeLogs: () => call('readBridgeLogs'),
     readConnectorLogs: query => call('readConnectorLogs', query ? { query } : {}),
     inspect: () => call('inspect'), openDesktop: () => call('openDesktop'), begin: input => call('begin', input ? { input } : {}),

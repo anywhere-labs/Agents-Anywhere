@@ -59,9 +59,9 @@ export function ConnectorLogsPanel({ t, host }: { t: Translate; host: Onboarding
     const timer = setInterval(() => { if (document.visibilityState !== 'hidden') void refresh() }, 2000)
     return () => clearInterval(timer)
   }, [paused, refresh])
-  return <section className={css.panel} aria-label={t('Connector 日志')}>
+  return <section className={css.panel} aria-label={t('启动前诊断')}>
     <div className={css.toolbar}>
-      <div><h3>{t('Connector 日志')}</h3><p>{t('最多保留 10,000 行 · 每次加载 200 行 · 向上滚动查看更早记录')}</p></div>
+      <div><h3>{t('启动前诊断')}</h3><p>{t('本地进程引导与 uv 启动输出 · 独立于统一运行日志')}</p></div>
       <div className={css.actions}>
         <Button variant="ghost" onClick={() => setPaused(value => !value)}>{paused ? t('继续刷新') : t('暂停刷新')}</Button>
         <Button variant="outline" disabled={busy} onClick={() => void refresh()}>{t('刷新')}</Button>
@@ -72,7 +72,7 @@ export function ConnectorLogsPanel({ t, host }: { t: Translate; host: Onboarding
     <div ref={viewport} className={css.terminal} tabIndex={0} aria-label={t('Connector 终端输出')}
       onScroll={event => { if (event.currentTarget.scrollTop <= 24 && older) void refresh('older') }}>
       {older ? <Button variant="ghost" disabled={busy} onClick={() => void refresh('older')}>{t('加载更早的 200 行')}</Button> : null}
-      {!entries.length && !busy ? <p className={css.empty}>{t('暂无 Connector 日志。启动后，环境准备和运行输出会显示在这里。')}</p> : null}
+      {!entries.length && !busy ? <p className={css.empty}>{t('暂无启动前诊断输出。uv 引导与 Connector 进程拉起输出会显示在这里。')}</p> : null}
       {entries.map(entry => <div key={entry.id} className={css.terminalLine}><time dateTime={entry.time}>{new Date(entry.time).toLocaleTimeString(t('locale.code'))}</time>{' '}{entry.text}</div>)}
     </div>
   </section>

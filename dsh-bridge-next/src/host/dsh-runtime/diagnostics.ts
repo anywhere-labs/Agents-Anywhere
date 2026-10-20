@@ -30,15 +30,19 @@ export function errorDetails(error: unknown, depth = 0): Record<string, unknown>
 
 /** Business diagnostics depend on an injected output, never on a path or RPC connection. */
 export class RuntimeDiagnostics {
-  constructor(private readonly output: DiagnosticOutput = quiet, private readonly fields: Fields = {}) {}
+  constructor(
+    private readonly output: DiagnosticOutput = quiet,
+    private readonly fields: Fields = {},
+    private readonly name = 'dsh-bridge',
+  ) {}
 
-  bind(fields: Fields): RuntimeDiagnostics { return new RuntimeDiagnostics(this.output, { ...this.fields, ...fields }) }
+  bind(fields: Fields): RuntimeDiagnostics { return new RuntimeDiagnostics(this.output, { ...this.fields, ...fields }, this.name) }
 
   log(level: Level, event: string, fields: Fields = {}, error?: unknown): void {
     const details = { ...this.fields, ...fields, ...(error === undefined ? {} : errorDetails(error)) }
     const serialized = JSON.stringify(details)
     try {
-      this.output.write({ time: new Date().toISOString(), level, name: 'dsh-bridge', message: event.slice(0, 16000),
+      this.output.write({ time: new Date().toISOString(), level, name: this.name, message: event.slice(0, 16000),
         details: serialized.length <= 16000 ? serialized : JSON.stringify({ truncated: true, summary: serialized.slice(0, 12000) }) })
     } catch { /* Logging cannot fail native event delivery or RPC handling. */ }
   }

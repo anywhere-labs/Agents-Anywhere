@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { watch, type FSWatcher } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { basename, dirname } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { Mesh, Router, type RunningServer } from 'meshcall'
+import type { RuntimeLogPage, RuntimeLogQuery } from '../../contracts/logs.js'
 import { LogsServiceClient, type LogPage } from '../generated/connector-logs.js'
 import { RuntimeRpcLogger } from './diagnostics.js'
 import { RpcLogOutput } from './log-output.js'
+import { readRuntimeLogPage } from './log-reader.js'
 import { SyncServiceClient, type CheckpointResult, type SnapshotPage, type SnapshotRequest, type SnapshotResult, type SyncBatch as WireBatch } from '../generated/dsh-sync.js'
 import { acquireManagerLock } from '../storage/files.js'
 import { BridgeService } from './bridge-service.js'
@@ -93,12 +95,30 @@ export class BridgeConnection {
       transportFor: subscriptionId => new ConnectorSync(this.requireLink().sync, subscriptionId) })
   }
 
+  private cachedLogsPath: string | null = null
+
   /** The Connector this plugin serves right now, if any. */
   get connectorInstance(): string | undefined { return this.link?.rendezvous.instanceId }
+  get logsPath(): string | null { return this.cachedLogsPath }
 
-  async readLogs(source: 'bridge' | 'connector', before?: number, after?: number): Promise<LogPage> {
+  async readRuntimeLogs(query?: RuntimeLogQuery, extraOutput?: RpcLogOutput): Promise<RuntimeLogPage> {
+    const link = this.requireLink()
     await this.logOutput?.flush()
-    return this.requireLink().logs.read(source, before ?? null, after ?? null, 200, { timeoutMs: 3000 })
+    await extraOutput?.flush(link.logs)
+    return readRuntimeLogPage(link.logs, query, this.logsPath)
+  }
+
+  async readLogs(
+    source: 'connector' | 'bridge' | null = null,
+    before?: number | null,
+    after?: number | null,
+    limit = 200,
+    extraOutput?: RpcLogOutput,
+  ): Promise<LogPage> {
+    const link = this.requireLink()
+    await this.logOutput?.flush()
+    await extraOutput?.flush(link.logs)
+    return link.logs.read(source, before ?? null, after ?? null, limit, { timeoutMs: 3000 })
   }
 
   start(): Promise<void> {
@@ -170,6 +190,7 @@ export class BridgeConnection {
     }
     if (this.closed) { await mesh.close(); return }
     this.link = { rendezvous, mesh, server, sync: new SyncServiceClient(mesh), logs: new LogsServiceClient(mesh) }
+    this.cachedLogsPath = join(dirname(dirname(this.rendezvousPath)), 'logs')
     this.logOutput?.connect(this.link.logs)
     this.lastFailure = undefined
     this.diagnostics.log('info', 'bridge.connected', { connector: rendezvous.instanceId, connectorPid: rendezvous.pid })

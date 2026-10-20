@@ -10,7 +10,7 @@ import { BridgeConnection } from './connection.js'
 import { NativeRuntime } from './native.js'
 import { RpcLogOutput } from './log-output.js'
 import { readBridgeLogs, readConnectorRuntimeLogs } from './log-reader.js'
-import type { ConnectorLogQuery } from '../../contracts/logs.js'
+import type { ConnectorLogQuery, RuntimeLogPage, RuntimeLogQuery } from '../../contracts/logs.js'
 import { RuntimeDiagnostics } from './diagnostics.js'
 
 declare module '@deepseek-ai/cordis' {
@@ -71,6 +71,24 @@ export class DshRuntimeService extends Service {
   }
 
   hasLogConnection(): boolean { return Boolean(this.server.connectorInstance) }
+  get logsPath(): string | null { return this.server.logsPath }
+
+  async readRuntimeLogs(query?: RuntimeLogQuery, extraOutput?: RpcLogOutput): Promise<RuntimeLogPage> {
+    if (!this.hasLogConnection()) {
+      return {
+        available: false,
+        items: [],
+        firstSeq: null,
+        lastSeq: null,
+        total: 0,
+        hasMoreBefore: false,
+        hasMoreAfter: false,
+        logsPath: this.server.logsPath,
+        updatedAt: new Date().toISOString(),
+      }
+    }
+    return this.server.readRuntimeLogs(query, extraOutput)
+  }
 
   async readBridgeLogs() {
     if (!this.hasLogConnection()) return { entries: [], updatedAt: new Date().toISOString() }

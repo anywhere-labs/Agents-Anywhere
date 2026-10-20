@@ -48,6 +48,7 @@ class FakeConnector implements ConnectorProcess {
   running = false
   starts = 0
   stops = 0
+  logsPath: string | null = '/connector-returned/logs'
   listeners = new Set<(state: ConnectorState) => void>()
   onState(listener: (state: ConnectorState) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   expire() { this.running = false; for (const listener of this.listeners) listener({ running: false, authFailed: true }) }
@@ -56,6 +57,7 @@ class FakeConnector implements ConnectorProcess {
   async start() { if (this.startError) throw this.startError; this.running = true; this.starts++ }
   async stop() { this.running = false; this.stops++ }
   async assertHealthy() { if (!this.running) throw new Error('not running') }
+  async resolveLogsPath() { return this.logsPath }
 }
 
 async function fixture() {
@@ -63,6 +65,7 @@ async function fixture() {
   const api = new FakeApi('https://api.example.test')
   const connector = new FakeConnector()
   const checkedServers: string[] = []
+  const openedPaths: string[] = []
   let healthError: Error | null = null
   let detection: DesktopDetection = { status: 'absent', message: 'not registered' }
   let localIds: string[] = []
@@ -74,6 +77,7 @@ async function fixture() {
     systemLanguages: async () => ['en-US'],
     api: base => base === api.baseUrl ? api : new FakeApi(base), connector, detect: async () => { detections++; return detection },
     checkServer: async (base) => { checkedServers.push(base); if (healthError) throw healthError },
+    openFolder: async (target) => { openedPaths.push(target) },
     onlineTimeoutMs: 5000, pollIntervalMs: 10,
     machineState: {
       readConnectorIds: async () => localIds,
@@ -81,7 +85,7 @@ async function fixture() {
   })
   let manager = create()
   return {
-    root, api, connector, checkedServers,
+    root, api, connector, checkedServers, openedPaths,
     get manager() { return manager },
     get detections() { return detections },
     setDesktop(value: DesktopDetection) { detection = value },
@@ -688,3 +692,24 @@ test('failed device reconfiguration returns no browser destination and remains r
     assert.equal(h.api.registrations, 2)
   } finally { await h.close() }
 })
+
+test('openConnectorFolder uses Connector-returned logsPath and does not block behind in-flight Connector startup', async () => {
+  const h = await fixture()
+  h.api.online = true
+  let releaseStart!: () => void
+  let enteredStart!: () => void
+  const startEntered = new Promise<void>(resolve => { enteredStart = resolve })
+  h.connector.start = () => new Promise<void>(resolve => { releaseStart = () => { h.connector.running = true; h.connector.starts++; resolve() }; enteredStart() })
+  try {
+    h.connector.logsPath = join(h.root, 'connector-reported-logs')
+    await callback((await h.manager.begin()).url)
+    await startEntered
+    assert.equal((await h.manager.inspect()).connector.logsPath, h.connector.logsPath)
+    await h.manager.openConnectorFolder('logs')
+    await h.manager.openConnectorFolder('data')
+    assert.deepEqual(h.openedPaths, [h.connector.logsPath, join(h.root, 'connector')])
+    releaseStart()
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+  } finally { await h.close() }
+})
+

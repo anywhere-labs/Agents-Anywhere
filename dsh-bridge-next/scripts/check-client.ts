@@ -109,6 +109,30 @@ export async function checkClient(source: string, packageId: string): Promise<vo
           ok: true, value: { updatedAt: new Date().toISOString(), entries: [{ id: 'fixture-read-failure', outcome: 'failed', time: new Date().toISOString(),
             level: 'error', event: 'session.visibility_read.failed', details: '{"sessionId":"native-test","errorCode":"PERSISTENCE_ERROR"}' }] },
         }
+        if (endpoint.endsWith('/readRuntimeLogs')) return failLogs ? { ok: false, error: { message: 'read failed' } } : {
+          ok: true, value: {
+            available: true,
+            updatedAt: new Date().toISOString(),
+            firstSeq: 1,
+            lastSeq: 1,
+            total: 1,
+            hasMoreBefore: false,
+            hasMoreAfter: false,
+            logsPath: '/example/logs',
+            items: [{
+              seq: 1,
+              time: new Date().toISOString(),
+              source: 'bridge',
+              level: 'error',
+              name: 'dsh-bridge',
+              message: 'session.visibility_read.failed',
+              details: '{\n  "sessionId": "native-test",\n  "errorCode": "PERSISTENCE_ERROR"\n}',
+              exception: null,
+              method: 'session.visibility_read',
+              outcome: 'failure',
+            }],
+          },
+        }
         if (endpoint.endsWith('/inspect')) {
           const inspected = snapshot
           if (inspectGate) await inspectGate
@@ -489,18 +513,18 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(dialog()!.querySelector('[role="tabpanel"]')?.getAttribute('aria-labelledby'), button('运行日志').id)
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang|benson@example/)
     await act(async () => { button('暂停刷新').click() })
-    const pausedReads = calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length
+    const pausedReads = calls.filter(call => call.endpoint.endsWith('/readRuntimeLogs')).length
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 2100)) })
-    assert.equal(calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length, pausedReads)
+    assert.equal(calls.filter(call => call.endpoint.endsWith('/readRuntimeLogs')).length, pausedReads)
     failLogs = true
     await act(async () => { button('刷新').click() })
     assert.match(dialog()!.textContent!, /运行日志读取失败/)
     assert.match(dialog()!.textContent!, /native-test/, 'Failed refresh keeps the last successful logs')
     failLogs = false
     await act(async () => { button('刷新').click(); button('继续刷新').click() })
-    const resumedReads = calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length
+    const resumedReads = calls.filter(call => call.endpoint.endsWith('/readRuntimeLogs')).length
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 2100)) })
-    assert.ok(calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length > resumedReads)
+    assert.ok(calls.filter(call => call.endpoint.endsWith('/readRuntimeLogs')).length > resumedReads)
     failInspect = false
     await reopen()
 

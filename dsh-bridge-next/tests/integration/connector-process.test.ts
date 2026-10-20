@@ -88,8 +88,10 @@ class FakeControl {
   @query({ description: 'State', request: z.looseObject({}), response: stateSchema })
   async getState(): Promise<ConnectorState> { return this.backend.snapshot() }
 
-  @query({ description: 'Paths', request: z.looseObject({}), response: z.looseObject({ configPath: z.string() }) })
-  async getPaths(): Promise<{ configPath: string }> { return { configPath: '/fixture/connector.json' } }
+  @query({ description: 'Paths', request: z.looseObject({}), response: z.looseObject({ configPath: z.string(), configDir: z.string(), runtimePath: z.string() }) })
+  async getPaths(): Promise<{ configPath: string; configDir: string; runtimePath: string }> {
+    return { configPath: '/fixture/connector.json', configDir: '/fixture', runtimePath: '/fixture/runtime.json' }
+  }
 
   @mutates({ description: 'Start', request: z.looseObject({}), response: stateSchema })
   async start(): Promise<ConnectorState> {

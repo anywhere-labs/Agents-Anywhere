@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from 'node:child_process'
 import { mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
 import { Mesh, MeshCallError, Router } from 'meshcall'
@@ -8,10 +8,21 @@ import type { ResolvedConfig } from '../config.js'
 import type { BoundDevice } from '../account/binding.js'
 import { writeJson } from '../storage/files.js'
 import { DEFAULT_CONNECTOR_SETTINGS, type ConnectorSettings } from '../../contracts/connector.js'
+import type { RuntimeLogPage, RuntimeLogQuery } from '../../contracts/logs.js'
 import { ControlServiceClient, type ConnectorState as ControlState } from '../generated/connector-control.js'
+import { LogsServiceClient } from '../generated/connector-logs.js'
+import { RuntimeDiagnostics, RuntimeRpcLogger } from '../dsh-runtime/diagnostics.js'
+import { RpcLogOutput } from '../dsh-runtime/log-output.js'
+import { readRuntimeLogPage } from '../dsh-runtime/log-reader.js'
 import { resolveUv } from './environment.js'
 import { ConnectorLogs } from './logs.js'
 import { materializeConnectorProject } from './project.js'
+
+function deriveLogsPath(value: { logsPath?: unknown; runtimePath?: unknown }): string | null {
+  if (typeof value.logsPath === 'string' && value.logsPath) return value.logsPath
+  if (typeof value.runtimePath === 'string' && value.runtimePath) return join(dirname(value.runtimePath), 'logs')
+  return null
+}
 
 const runFile = promisify(execFile)
 /** The ready line (`connector.ready`) is a few hundred bytes; anything larger is a protocol error. */
@@ -66,14 +77,18 @@ function parseRendezvous(line: string): Rendezvous | undefined {
 export interface ConnectorProcess {
   readonly running: boolean
   readonly lastError?: string | null
+  readonly logsPath?: string | null
   onState(listener: (state: ConnectorState) => void): () => void
   prepare(settings?: ConnectorSettings): Promise<void>
   start(binding: BoundDevice, apiBaseUrl: string, signal: AbortSignal): Promise<void>
   stop(): Promise<void>
   assertHealthy(): Promise<void>
+  hasRuntimeLogs?(): boolean
+  resolveLogsPath?(): Promise<string | null>
+  readRuntimeLogs?(query?: RuntimeLogQuery): Promise<RuntimeLogPage>
 }
 
-export interface ConnectorState { running: boolean; authFailed: boolean }
+export interface ConnectorState { running: boolean; authFailed: boolean; logsPath?: string | null }
 export class ConnectorCredentialError extends Error {
   constructor() { super('本机设备连接已失效，请在插件中恢复连接。') }
 }
@@ -95,6 +110,8 @@ export class SourceConnector implements ConnectorProcess {
   private child: ChildProcessWithoutNullStreams | null = null
   private mesh: Mesh | null = null
   private control: ControlServiceClient | null = null
+  private logsClient: LogsServiceClient | null = null
+  private cachedLogsPath: string | null = null
   private readyBuffer = ''
   private ready: Rendezvous | null = null
   private readyWaiter: { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> } | null = null
@@ -105,31 +122,84 @@ export class SourceConnector implements ConnectorProcess {
   private listeners = new Set<(state: ConnectorState) => void>()
   private readonly closed = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly logs: ConnectorLogs
+  private readonly logOutput: RpcLogOutput
+  private readonly diagnostics: RuntimeDiagnostics
   /** 可写的项目副本；uv 只在这个目录里写 uv.lock，绝不碰插件包目录。 */
   private projectDir: string | null = null
-  constructor(private readonly config: ResolvedConfig, private readonly launch: ConnectorLauncher = spawn,
+  constructor(
+    private readonly config: ResolvedConfig,
+    private readonly launch: ConnectorLauncher = spawn,
     private readonly settings: () => ConnectorSettings = () => DEFAULT_CONNECTOR_SETTINGS,
     private readonly firstRequestTimeoutMs = FIRST_REQUEST_TIMEOUT,
-    private readonly prune: CachePruner = pruneUvCache) {
+    private readonly prune: CachePruner = pruneUvCache,
+    diagnostics?: RuntimeDiagnostics,
+    logOutput?: RpcLogOutput,
+  ) {
     this.logs = new ConnectorLogs(join(config.stateRoot, 'logs'))
+    this.logOutput = logOutput ?? new RpcLogOutput(512, 'plugin')
+    this.diagnostics = diagnostics ?? new RuntimeDiagnostics(this.logOutput, {}, 'dsh-plugin')
   }
 
   private get alive(): boolean { return this.child !== null && this.child.exitCode === null && this.child.signalCode === null }
   get running(): boolean { return this.alive && this.state.running && !this.state.authFailed }
   get lastError(): string | null { return this.failure?.message ?? null }
+  get logsPath(): string | null { return this.cachedLogsPath }
+  hasRuntimeLogs(): boolean { return this.logsClient !== null }
   onState(listener: (state: ConnectorState) => void): () => void {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
   }
 
+  async resolveLogsPath(): Promise<string | null> {
+    if (this.cachedLogsPath) return this.cachedLogsPath
+    if (!this.control) return null
+    try {
+      const paths = await this.control.getPaths({ timeoutMs: 3_000 })
+      const resolved = deriveLogsPath(paths as { logsPath?: unknown; runtimePath?: unknown })
+      if (resolved) {
+        this.cachedLogsPath = resolved
+      }
+    } catch {
+      /* Control channel may be closing or still handshaking. */
+    }
+    return this.cachedLogsPath
+  }
+
+  async readRuntimeLogs(query?: RuntimeLogQuery): Promise<RuntimeLogPage> {
+    const client = this.logsClient
+    if (!client) {
+      return {
+        available: false,
+        items: [],
+        firstSeq: null,
+        lastSeq: null,
+        total: 0,
+        hasMoreBefore: false,
+        hasMoreAfter: false,
+        logsPath: this.cachedLogsPath,
+        updatedAt: new Date().toISOString(),
+      }
+    }
+    await this.logOutput.flush()
+    return readRuntimeLogPage(client, query, this.cachedLogsPath)
+  }
+
   private updateState(value: unknown): void {
     if (!value || typeof value !== 'object') return
-    const state = value as Partial<ControlState>
+    const state = value as Partial<ControlState> & { logsPath?: unknown }
+    const resolvedLogsPath = deriveLogsPath(state)
+    if (resolvedLogsPath) {
+      this.cachedLogsPath = resolvedLogsPath
+    }
     if (typeof state.running !== 'boolean' || typeof state.authFailed !== 'boolean') return
     if (state.running === this.state.running && state.authFailed === this.state.authFailed) return
     // Do not forward config paths, credentials or raw error text from Python.
     this.state = { running: state.running, authFailed: state.authFailed }
     this.logs.record(state.authFailed ? 'auth_failed' : state.running ? 'running' : 'stopped')
+    this.diagnostics.log(state.authFailed ? 'warn' : 'info', 'connector.state_changed', {
+      running: state.running,
+      authFailed: state.authFailed,
+    })
     for (const listener of this.listeners) listener({ ...this.state })
   }
 
@@ -171,6 +241,7 @@ export class SourceConnector implements ConnectorProcess {
     this.updateState({ running: false, authFailed: false })
     await this.logs.startSession([binding.connectorToken])
     this.logs.record('starting')
+    this.diagnostics.log('info', 'connector.starting', { connectorId: binding.connectorId, apiBaseUrl })
     const executable = await resolveUv(this.config, settings)
     const command = executable ?? (settings.uvPath || this.config.uvPath)
     const pypiIndexUrl = settings.uvPypiIndexUrl || 'https://pypi.org/simple'
@@ -211,6 +282,7 @@ export class SourceConnector implements ConnectorProcess {
       this.closed.add(child)
       this.logs.finish()
       this.logs.record(`exited (${code ?? 'signal'})`)
+      this.diagnostics.log(this.stopping ? 'info' : 'warn', 'connector.exited', { exitCode: code ?? 'signal' })
       void this.logs.flush().catch(() => undefined)
       if (this.child === child) {
         this.child = null
@@ -260,6 +332,7 @@ export class SourceConnector implements ConnectorProcess {
     this.events?.abort()
     this.events = null
     if (!child) { await this.releaseControl(); return }
+    try { await this.logOutput.flush() } catch { /* Best effort before child stop. */ }
     try { await this.control?.stop({ timeoutMs: 3_000 }) } catch { /* Child may not have finished starting. */ }
     child.stdin.end()
     const ended = new Promise<void>((resolve) => {
@@ -281,6 +354,8 @@ export class SourceConnector implements ConnectorProcess {
     const mesh = this.mesh
     this.mesh = null
     this.control = null
+    this.logsClient = null
+    this.logOutput.connect(undefined)
     await mesh?.close().catch(() => undefined)
   }
 
@@ -313,7 +388,8 @@ export class SourceConnector implements ConnectorProcess {
     })
     const ready = this.ready!
     const router = new Router(ready.endpoint)
-    const mesh = new Mesh(router, { token: ready.key, peerId: `dsh-plugin-${ready.instanceId}` })
+    const rpcLogger = new RuntimeRpcLogger(this.diagnostics)
+    const mesh = new Mesh(router, { token: ready.key, peerId: `dsh-plugin-${ready.instanceId}`, logger: rpcLogger })
     const connecting = mesh.connect()
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
@@ -339,6 +415,10 @@ export class SourceConnector implements ConnectorProcess {
     }
     this.mesh = mesh
     this.control = new ControlServiceClient(mesh)
+    this.logsClient = new LogsServiceClient(mesh)
+    this.logOutput.connect(this.logsClient)
+    this.diagnostics.log('info', 'connector.control_connected', { instanceId: ready.instanceId, pid: ready.pid })
+    void this.logOutput.flush()
   }
 
   /** Follow state changes; a dropped stream resumes after the last seq. */
@@ -387,7 +467,10 @@ export class SourceConnector implements ConnectorProcess {
 
   private fail(error: Error, report = true): void {
     this.failure = error
-    if (report) this.logs.record('process_error')
+    if (report) {
+      this.logs.record('process_error')
+      this.diagnostics.log('error', 'connector.process_failed', {}, error)
+    }
     this.updateState({ ...this.state, running: false })
     const waiter = this.readyWaiter
     this.readyWaiter = null
