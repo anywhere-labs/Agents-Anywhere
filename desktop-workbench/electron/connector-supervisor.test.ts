@@ -54,6 +54,7 @@ fs.writeFileSync(process.argv[2], JSON.stringify({
   indexUrl: process.env.UV_INDEX_URL,
   pipIndex: process.env.PIP_INDEX_URL,
   pythonMirror: process.env.UV_PYTHON_INSTALL_MIRROR,
+  injected: JSON.parse(process.env.AA_CONNECTOR_INJECTED_ENV),
 }));
 process.stdout.write(JSON.stringify({ kind: 'connector.ready', version: 1, instanceId: 'fake', pid: process.pid, endpoint: { unixPath: '/nonexistent/fake.sock' }, key: 'mk_host_fake' }) + '\\n');
 process.stdin.resume();
@@ -100,9 +101,14 @@ test("first pre-login provisioning receives the initialized mirror and honors sa
     });
     try {
       await supervisor.preflightProvisioning();
-      assert.deepEqual(JSON.parse(fs.readFileSync(captured, "utf8")), {
+      const { injected, ...environment } = JSON.parse(fs.readFileSync(captured, "utf8"));
+      assert.deepEqual(environment, {
         defaultIndex: expected, indexUrl: expected, pipIndex: expected, pythonMirror: NPMMIRROR_PYTHON_BUILDS,
       });
+      // The Connector hands terminals and Runtimes these values instead of its own.
+      assert.equal(injected.UV_DEFAULT_INDEX, "https://inherited.example/simple");
+      assert.equal(injected.UV_PYTHON_INSTALL_MIRROR, "https://inherited.example/python");
+      if (process.env.FORCE_COLOR !== "0") assert.equal(injected.FORCE_COLOR, process.env.FORCE_COLOR ?? null);
     } finally { await supervisor.shutdown(); }
   }
 });

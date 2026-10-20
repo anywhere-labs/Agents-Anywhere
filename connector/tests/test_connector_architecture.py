@@ -13,6 +13,7 @@ ALLOWED_ROOT_MODULES = {
     "launch.py",
     "logging.py",
     "paths.py",
+    "process_env.py",
     "time.py",
 }
 

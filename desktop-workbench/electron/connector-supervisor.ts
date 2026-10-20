@@ -42,6 +42,15 @@ const CONTROL_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_RPC_TIMEOUT_MS = 30_000;
 const PYTHON_BUILDS_GITHUB = "https://github.com/astral-sh/python-build-standalone/releases/download";
 const UV_HTTP_TIMEOUT_SECONDS = "60";
+/**
+ * Settings for the Connector's own uv and Python. The Connector puts them back
+ * as they were before Desktop set them when it starts terminals and Runtimes,
+ * so `uv sync` there never targets the Connector venv.
+ */
+const CONNECTOR_TOOLCHAIN_ENV = [
+  "UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR", "UV_DEFAULT_INDEX", "UV_INDEX_URL", "PIP_INDEX_URL",
+  "UV_PYTHON_INSTALL_MIRROR", "UV_HTTP_TIMEOUT", "PYTHONUNBUFFERED", "PYTHONDONTWRITEBYTECODE", "FORCE_COLOR",
+] as const;
 /** `exit` can arrive before stderr delivers the lines that explain it. */
 const OUTPUT_DRAIN_MS = 250;
 /** How much stderr a failed request quotes; uv and Python explain a failed launch there. */
@@ -883,9 +892,9 @@ export class ConnectorSupervisor {
   private connectorEnvironment(): NodeJS.ProcessEnv {
     const entries = this.pathEntries();
     if (this.state.resolvedUvPath) entries.unshift(path.dirname(this.state.resolvedUvPath));
+    const inherited: NodeJS.ProcessEnv = { ...process.env, ...this.shellEnvironment };
     const environment: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...this.shellEnvironment,
+      ...inherited,
       AA_CONNECTOR_OWNER_KIND: "desktop-workbench",
       PATH: [...new Set(entries)].join(path.delimiter),
       PYTHONUNBUFFERED: "1",
@@ -906,6 +915,9 @@ export class ConnectorSupervisor {
     // Without a bundled or saved interpreter uv downloads CPython itself; the default is GitHub.
     environment.UV_PYTHON_INSTALL_MIRROR = settings.uvPythonInstallMirror || PYTHON_BUILDS_GITHUB;
     environment.UV_HTTP_TIMEOUT ||= UV_HTTP_TIMEOUT_SECONDS;
+    environment.AA_CONNECTOR_INJECTED_ENV = JSON.stringify(Object.fromEntries(CONNECTOR_TOOLCHAIN_ENV
+      .filter(name => environment[name] !== inherited[name])
+      .map(name => [name, inherited[name] ?? null])));
     if (process.platform === "win32") {
       delete environment.Path;
       delete environment.path;

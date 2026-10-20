@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from connector.paths import connector_data_dir
+from connector.process_env import connector_env
 from connector.time import utc_now
 
 STATE_FILE_VERSION = 1
@@ -66,7 +67,7 @@ class JsonSyncStateStore(SyncStateStore):
 
     @classmethod
     def default_path(cls) -> Path:
-        configured = os.environ.get("AGENT_CONNECTOR_STATE_FILE")
+        configured = connector_env("AGENT_CONNECTOR_STATE_FILE")
         return (
             Path(configured).expanduser()
             if configured

@@ -5,6 +5,7 @@ import { resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { resolveUv } from '../../src/host/connector/environment.js'
+import { connectorEnvironment } from '../../src/host/connector/process.js'
 import { DEFAULT_CONNECTOR_SETTINGS } from '../../src/contracts/connector.js'
 
 const config = { stateRoot: '/unused', connectorSourceDir: '/unused', uvPath: 'uv', apiBaseUrl: 'https://example.test' }
@@ -23,4 +24,23 @@ test('npm uv resolves its native optional dependency with install scripts disabl
 test('explicit uv overrides take priority over the npm dependency', async () => {
   assert.equal(await resolveUv(config, { ...DEFAULT_CONNECTOR_SETTINGS, uvPath: process.execPath }), process.execPath)
   assert.equal(await resolveUv({ ...config, uvPath: process.execPath }, DEFAULT_CONNECTOR_SETTINGS), process.execPath)
+})
+
+test('Connector 环境记录插件注入的工具链变量原值，供 Connector 启动终端和 Runtime 时恢复', () => {
+  const environment = connectorEnvironment({
+    AA_CONNECTOR_OWNER_KIND: 'dsh-plugin',
+    UV_PROJECT_ENVIRONMENT: '/data/connector-venv',
+    UV_INDEX_URL: 'https://pypi.org/simple',
+    PIP_INDEX_URL: 'https://same.example/simple',
+  }, {
+    PATH: '/usr/bin',
+    UV_INDEX_URL: 'https://mirror.example/simple',
+    PIP_INDEX_URL: 'https://same.example/simple',
+  })
+  assert.deepEqual(JSON.parse(environment['AA_CONNECTOR_INJECTED_ENV']!), {
+    UV_PROJECT_ENVIRONMENT: null,
+    UV_INDEX_URL: 'https://mirror.example/simple',
+  })
+  assert.equal(environment['PATH'], '/usr/bin')
+  assert.equal(environment['UV_INDEX_URL'], 'https://pypi.org/simple')
 })

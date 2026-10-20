@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 from connector.paths import connector_data_dir
+from connector.process_env import connector_env
 
 ATTACHMENTS_ROOT_ENV = "AGENT_CONNECTOR_ATTACHMENTS_ROOT"
 _SAFE_FILENAME_RE = re.compile(r"[^\w.\-+]+")
@@ -11,9 +12,7 @@ _SAFE_FILENAME_RE = re.compile(r"[^\w.\-+]+")
 
 def attachments_root() -> Path:
     """Return the connector-local root used for runtime attachment copies."""
-    import os
-
-    configured = os.environ.get(ATTACHMENTS_ROOT_ENV)
+    configured = connector_env(ATTACHMENTS_ROOT_ENV)
     root = (
         Path(configured).expanduser()
         if configured

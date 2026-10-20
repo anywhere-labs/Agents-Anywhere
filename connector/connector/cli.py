@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import os
 import sys
 import time
 from pathlib import Path
@@ -15,6 +14,7 @@ from connector.core.runtime_owner import (
 )
 from connector.logging import configure_connector_logging, logger
 from connector.mesh.host import serve_host
+from connector.process_env import connector_env, isolate_process_environment
 from connector.server.client import BackendRpcClient
 from connector.server.pairing import (
     poll_pairing,
@@ -30,6 +30,7 @@ SHELL_LIFETIME_WARNING = (
 
 
 def main(argv: list[str] | None = None) -> None:
+    isolate_process_environment()
     parser = _build_parser()
     args = parser.parse_args(argv)
     configure_connector_logging(debug=bool(getattr(args, "debug", False)))
@@ -267,9 +268,9 @@ def _configure(args: argparse.Namespace) -> None:
 
 
 def _resolve_config(args: argparse.Namespace) -> ConnectorConfig:
-    server_url = args.server_url or os.environ.get("AGENT_SERVER_URL")
-    connector_id = args.connector_id or os.environ.get("AGENT_CONNECTOR_ID")
-    connector_token = args.connector_token or os.environ.get("AGENT_CONNECTOR_TOKEN")
+    server_url = args.server_url or connector_env("AGENT_SERVER_URL")
+    connector_id = args.connector_id or connector_env("AGENT_CONNECTOR_ID")
+    connector_token = args.connector_token or connector_env("AGENT_CONNECTOR_TOKEN")
     if server_url and connector_id and connector_token:
         return ConnectorConfig(
             server_url=server_url.rstrip("/"),

@@ -2,7 +2,18 @@ import os
 
 import pytest
 
+from connector import process_env
 from connector.core import runtime_owner
+
+
+@pytest.fixture(autouse=True)
+def restore_process_environment():
+    # cli.main() isolates the process environment; keep that inside one test.
+    environment = dict(os.environ)
+    yield
+    process_env._connector_environ = None
+    os.environ.clear()
+    os.environ.update(environment)
 
 
 @pytest.fixture(autouse=True)
