@@ -6,7 +6,7 @@ Agents Anywhere 的 DSH 插件。支持没有安装 AA Desktop 时的账号登�
 
 职责与后续开发见 [开发计划](./DEVELOPMENT_PLAN.md)，完整产品设计见 [Onboarding 业务方案](./ONBOARDING_PLAN.md)，检查命令与手动验收见 [验证记录](./VERIFICATION.md)。
 
-同步批通过 `aa.dsh.v2.Sync.ingestBatch` 交回 Connector，完整快照通过 `aa.dsh.v2.Sync.ingestSnapshot` 客户端流提交；调用返回即表示已 ingest（或被永久拒绝），检查点只能在其后保存。2.2.0 起不再有 `uploadProgressVersion` 与进度续期：`startupTimeoutMs` 只约束初始发现，慢上传就是更慢的调用返回。详细约束见[桥接契约 2.0](../contracts/dsh-bridge/2.0/README.md)和[慢速上传说明](../docs/dsh-slow-upload.md)。
+同步批通过 `aa.dsh.v2.Sync.ingestBatch` 交回 Connector，完整快照通过 `aa.dsh.v2.Sync.ingestSnapshot` 客户端流提交；调用返回即表示已 ingest（或被永久拒绝），检查点只能在其后保存。2.1.0 起不再有 `uploadProgressVersion` 与进度续期：`startupTimeoutMs` 只约束初始发现，慢上传就是更慢的调用返回。详细约束见[桥接契约 2.0](../contracts/dsh-bridge/2.0/README.md)和[慢速上传说明](../docs/dsh-slow-upload.md)。
 
 ## 已实现
 

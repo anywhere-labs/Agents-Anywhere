@@ -1,6 +1,6 @@
 # DSH 大历史的慢速上传
 
-> **2.2.0 起本文描述的进度续期机制已移除。** DSH 桥接迁移到 MeshCall（见 [Bridge 2.0 契约](../contracts/dsh-bridge/2.0/README.md)）后，每批增量历史通过 `aa.dsh.v2.Sync.ingestBatch` 交回 Connector，完整快照通过 `aa.dsh.v2.Sync.ingestSnapshot` 客户端流提交；调用本身不设超时：上传慢就是调用返回慢，连接由 MeshCall keepalive 维持，不再需要 `runtime.sync.progress` 续期。以下内容保留 2.1.x 的实现记录。
+> **2.1.0 起本文描述的进度续期机制已移除。** DSH 桥接迁移到 MeshCall（见 [Bridge 2.0 契约](../contracts/dsh-bridge/2.0/README.md)）后，每批增量历史通过 `aa.dsh.v2.Sync.ingestBatch` 交回 Connector，完整快照通过 `aa.dsh.v2.Sync.ingestSnapshot` 客户端流提交；调用本身不设超时：上传慢就是调用返回慢，连接由 MeshCall keepalive 维持，不再需要 `runtime.sync.progress` 续期。以下内容保留 Bridge 1.0 过渡期的实现记录。
 
 ## 问题与最小修复
 
