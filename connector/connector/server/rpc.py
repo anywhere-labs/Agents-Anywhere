@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from connector.logging import logger
 from connector.runtime_protocol import RuntimeProtocolError
+from connector.runtime_protocol.size_budget import bound_payload
 
 ConnectorDispatcher = Callable[[str, dict[str, Any]], Awaitable[Any]]
 
@@ -294,21 +295,41 @@ class ConnectorRpcChannel:
         encoded_bytes = len(encoded.encode("utf-8"))
         encode_elapsed_ms = (time.monotonic() - encode_started_at) * 1000
         if max_frame_bytes is not None and encoded_bytes > max_frame_bytes:
-            logger.warning(
-                "connector websocket frame too large before send type={} method={} request_id={} bytes={} max_bytes={}",
-                frame_type,
-                method,
-                request_id,
-                encoded_bytes,
-                max_frame_bytes,
-            )
-            raise ConnectorWebSocketFrameTooLarge(
-                frame_type=str(frame_type) if frame_type is not None else None,
-                method=str(method) if method is not None else None,
-                request_id=str(request_id) if request_id is not None else None,
-                encoded_bytes=encoded_bytes,
-                max_frame_bytes=max_frame_bytes,
-            )
+            # Last-resort guard. Every content field is trimmed where it is
+            # built, but an unforeseen one (a runtime inlining a data URL, a
+            # future field) must not cost the user the whole item: shrinking here
+            # keeps the timeline growing with the oversized part cut, instead of
+            # losing the notification and ending the turn with no cause.
+            bounded, shrank = bound_payload(payload, max_frame_bytes)
+            if shrank:
+                logger.warning(
+                    "connector websocket frame too large before send type={} method={} "
+                    "request_id={} bytes={} max_bytes={}; content trimmed to fit",
+                    frame_type,
+                    method,
+                    request_id,
+                    encoded_bytes,
+                    max_frame_bytes,
+                )
+                payload = bounded
+                encoded = json.dumps(payload, ensure_ascii=False)
+                encoded_bytes = len(encoded.encode("utf-8"))
+            if encoded_bytes > max_frame_bytes:
+                logger.warning(
+                    "connector websocket frame unrecoverable type={} method={} request_id={} bytes={} max_bytes={}",
+                    frame_type,
+                    method,
+                    request_id,
+                    encoded_bytes,
+                    max_frame_bytes,
+                )
+                raise ConnectorWebSocketFrameTooLarge(
+                    frame_type=str(frame_type) if frame_type is not None else None,
+                    method=str(method) if method is not None else None,
+                    request_id=str(request_id) if request_id is not None else None,
+                    encoded_bytes=encoded_bytes,
+                    max_frame_bytes=max_frame_bytes,
+                )
         send_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         await queue.put(
             _QueuedSend(

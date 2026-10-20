@@ -3,13 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 
-import pytest
-
 from connector.server.client import notification_requires_ingest
 from connector.server.rpc import (
     CONNECTOR_WS_MAX_NOTIFICATION_BYTES,
     ConnectorRpcChannel,
-    ConnectorWebSocketFrameTooLarge,
 )
 
 
@@ -239,21 +236,23 @@ def test_connector_rpc_clear_connection_cancels_request_tasks() -> None:
     assert asyncio.run(exercise()) == (True, 0)
 
 
-def test_connector_rpc_rejects_oversized_notification_before_send() -> None:
+def test_connector_rpc_trims_oversized_notification_before_send() -> None:
     async def exercise() -> MemoryWebSocket:
         websocket = MemoryWebSocket()
         channel = ConnectorRpcChannel()
         channel.set_connection(websocket)
         payload = {"text": "x" * CONNECTOR_WS_MAX_NOTIFICATION_BYTES}
 
-        with pytest.raises(ConnectorWebSocketFrameTooLarge):
-            await channel.send_notification("timeline.sync", payload)
+        await channel.send_notification("timeline.sync", payload)
 
         return websocket
 
     websocket = asyncio.run(exercise())
 
-    assert websocket.sent == []
+    assert len(websocket.sent) == 1
+    sent = json.loads(websocket.sent[0])
+    assert len(websocket.sent[0].encode("utf-8")) <= CONNECTOR_WS_MAX_NOTIFICATION_BYTES
+    assert len(sent["params"]["text"]) < CONNECTOR_WS_MAX_NOTIFICATION_BYTES
 
 
 def test_timeline_sync_uses_ingest_route() -> None:

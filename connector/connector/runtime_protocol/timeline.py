@@ -9,6 +9,7 @@ from typing import Any, ClassVar, Literal
 
 from connector.core.unicode import escape_lone_surrogates
 from connector.runtime_protocol.models import RuntimeTimelineItem
+from connector.runtime_protocol.size_budget import bound_content_field
 
 TimelineItemType = Literal[
     "turn.start",
@@ -182,9 +183,11 @@ class ToolTimelineContent(TimelineContent):
         if self.command is not None:
             payload["command"] = self.command
         if self.input is not None:
-            payload["input"] = self.input
+            payload["input"] = bound_content_field(self.input)
         if self.output is not None:
-            payload["output"] = self.output
+            # Tool output is unbounded by nature (a whole file, a huge diff);
+            # bound it here so one item cannot exceed the backend frame budget.
+            payload["output"] = bound_content_field(self.output)
         if self.exit_code is not None:
             payload["exitCode"] = self.exit_code
         payload.update(self.metadata)
