@@ -42,7 +42,7 @@ allowBuilds:
 
 确认插件已启用后重启对应的 DSH 实例，从左侧边栏打开“远程控制”，按提示登录并连接。若你的 Profile 不是 `desktop`，请替换命令中的 Profile 名称。
 
-安装命令不锁定插件版本，会获取 npm 当前的默认发布版本。插件包与 DSH 的兼容范围请以所安装版本的 `peerDependencies` 为准；较新的 DSH 不代表旧插件包自动兼容。当前仓库源码声明支持 DSH `0.2.0-rc.1` 及之后的 0.2.x 版本（peer 范围 `>=0.2.0-rc.1 <0.3.0-0`），开发与测试基线为 `0.2.1-rc.2`，并在 2026-10-19 复核了官方 DSH Desktop `0.2.1-rc.2` 上的安装路径与握手（见[验证记录](https://github.com/anywhere-labs/Agents-Anywhere/blob/main/dsh-bridge-next/VERIFICATION.md)）。DSH 在安装和启动插件时都会按这个范围检查，不满足时拒绝安装或跳过加载；内置本插件的 DSH Desktop 使用与自身版本配套的构建，不能简单等同于 npm 上的包。需要固定可复现的部署时，再在包名后添加经过验证的版本号：npm 上目前的 `2.0.2` 在 `0.2.1-rc.2` 上缺少审批和提问能力（[#344](https://github.com/anywhere-labs/Agents-Anywhere/issues/344)，源码已在 #339 中修复，将随下一个发布版本（`2.1.0` / `2.2.0`）发布），在该版本发布前请从源码构建后安装。
+安装命令不锁定插件版本，会获取 npm 当前的默认发布版本。插件包与 DSH 的兼容范围请以所安装版本的 `peerDependencies` 为准；较新的 DSH 不代表旧插件包自动兼容。当前仓库源码声明支持 DSH `0.2.0-rc.1` 及之后的 0.2.x 版本（peer 范围 `>=0.2.0-rc.1 <0.3.0-0`），开发与测试基线为 `0.2.1-rc.2`（此前的 `0.2.0-rc.2` 只是历史基线，在测试基线升级后已作废），并在 2026-10-19 复核了官方 DSH Desktop `0.2.1-rc.2` 上的安装路径与握手（见[验证记录](https://github.com/anywhere-labs/Agents-Anywhere/blob/main/dsh-bridge-next/VERIFICATION.md)）。DSH 在安装和启动插件时都会按这个范围检查，不满足时拒绝安装或跳过加载；内置本插件的 DSH Desktop 使用与自身版本配套的构建，不能简单等同于 npm 上的包。需要固定可复现的部署时，再在包名后添加经过验证的版本号：npm 上目前的 `2.0.2` 在 `0.2.1-rc.2` 上缺少审批和提问能力（[#344](https://github.com/anywhere-labs/Agents-Anywhere/issues/344)，源码已在 #339 中修复，将随下一个发布版本（`2.1.0` / `2.2.0`）发布），在该版本发布前请从源码构建后安装。
 
 ## 确认 DSH 已接入
 

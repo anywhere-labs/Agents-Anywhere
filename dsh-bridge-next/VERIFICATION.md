@@ -4,7 +4,7 @@
 
 在官方 DeepSeek Harness Desktop `0.2.1-rc.2`（win-x64 夜间版）上复核了本插件“安装 → 启用 → 启动 → 与 Connector 握手”的完整路径，用的是 `main`（`39b82d4`）源码构建出的 `2.1.0` 包。
 
-本记录是 MeshCall 迁移（#353，`2.2.0`）**之前**的基线：当时插件把端点发布到 `~/.agents-anywhere/dsh-bridge/endpoint.json`（`version 1`），握手协议是 `protocolVersion 1.0` 的 `initialize`。`2.2.0` 起改为硬切 Bridge 2.0：Connector 在本机 MeshCall Router 上注册服务，并在 `~/.agents-anywhere/dsh-bridge/connector.json` 发布 rendezvous，插件读取后注册 `aa.dsh.v2.Bridge`；插件不再写 1.0 的 endpoint 镜像，1.0 握手已删除，旧 Connector 与新插件、或新旧混用都会停在“等待 DSH”。按 `2.2.0` 复现时请以该版本的发现方式为准。
+本记录是 MeshCall 迁移（#353，`2.2.0`）**之前**的基线：当时插件把端点发布到 `~/.agents-anywhere/dsh-bridge/endpoint.json`（`version 1`），握手协议是 `protocolVersion 1.0` 的 `initialize`。`2.2.0` 起改为硬切 Bridge 2.0：Connector 在本机 MeshCall Router 上注册服务，并在 `~/.agents-anywhere/dsh-bridge/connector.json` 发布 rendezvous，插件读取后注册 `aa.dsh.v2.Bridge`；插件不再写 1.0 的 endpoint 镜像，1.0 握手已删除，旧 Connector 与新插件、或新旧混用都会停在“等待 DSH”。本次记录没有在 `2.2.0` 上重新验证握手，也没有在 `2.2.0` 上重跑安装流程；按 `2.2.0` 复现时请以该版本的发现方式为准。
 
 兼容检查：`0.2.1-rc.2` 的安装/加载检查只看 `engines.dsh` 或 `peerDependencies` 中 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` 的声明，判定用 `semver.satisfies(..., includePrerelease: true)`；`@deepseek-ai/cordis`、`@deepseek-ai/schemastery` 不参与判定。本插件唯一被检查的 peer 是 `@deepseek-ai/dsh-typert-protocol: >=0.2.0-rc.1 <0.3.0-0`，`0.2.1-rc.2` 满足，安装不会被拒。
 
@@ -20,9 +20,9 @@
 
 ## DSH 0.2.0-rc.2 与版本声明统一（2026-09-30）
 
-DSH 开发依赖统一升级到 `0.2.0-rc.2`；Typert peer 从精确的 `0.2.0-rc.1` 改为范围 `>=0.2.0-rc.1 <0.3.0-0`。DSH 0.2.0-rc.2 起在安装和 profile 启动时按 DSH peer 检查插件，精确版本会让后续 rc 拒绝加载插件。握手上报的 `runtimeVersion` 与 `bridgeVersion` 改为运行时读取，不再写死。兼容旧版 DSH 的代码分支不变。
+本节是 2026-09-30 的历史记录：当时 DSH 开发依赖统一升级到 `0.2.0-rc.2`；Typert peer 从精确的 `0.2.0-rc.1` 改为范围 `>=0.2.0-rc.1 <0.3.0-0`。DSH 0.2.0-rc.2 起在安装和 profile 启动时按 DSH peer 检查插件，精确版本会让后续 rc 拒绝加载插件。握手上报的 `runtimeVersion` 与 `bridgeVersion` 改为运行时读取，不再写死。兼容旧版 DSH 的代码分支不变。
 
-rc.2 实机可用由维护者实测确认。`corepack yarn check` 在 rc.2 依赖下完成类型检查、构建、产物检查和 **180 项插件测试**，全部通过；新增断言确认握手上报的版本与 Host 的 Typert 包及插件 `package.json` 一致。按 DSH 的规则（`semver.satisfies`，`includePrerelease: true`）核对范围：`0.2.0-rc.1`、`0.2.0-rc.2`、`0.2.x` 正式版及其 rc 满足，`0.1.x` 和 `0.3.0-rc.1` 起不满足。本次没有重新做 DSH Desktop、Windows 或手机实机验收。
+rc.2 实机可用由维护者实测确认。`corepack yarn check` 在 rc.2 依赖下完成类型检查、构建、产物检查和 **180 项插件测试**，全部通过；新增断言确认握手上报的版本与 Host 的 Typert 包及插件 `package.json` 一致。按 DSH 的规则（`semver.satisfies`，`includePrerelease: true`）核对范围：`0.2.0-rc.1`、`0.2.0-rc.2`、`0.2.x` 正式版及其 rc 满足，`0.1.x` 和 `0.3.0-rc.1` 起不满足。本次没有重新做 DSH Desktop、Windows 或手机实机验收。当前开发与测试基线已改为 `0.2.1-rc.2`，见顶部的 2026-10-19 复核。
 
 ## DSH 0.2.0-rc.1 适配（2026-09-28）
 
