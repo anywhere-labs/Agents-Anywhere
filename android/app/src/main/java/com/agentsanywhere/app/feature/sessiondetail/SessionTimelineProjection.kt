@@ -33,7 +33,7 @@ internal fun mergeRemoteTimelineItems(
     replace: Boolean,
 ): TimelineProjection {
     val latestIncoming = latestTimelineItemsById(incoming)
-    val normalizedIncoming = normalizeTimelineOrderingItems(currentOrdering, latestIncoming)
+    val normalizedIncoming = normalizeTimelineOrderingItems(currentOrdering, latestIncoming, replace)
     val orderingItems = if (replace) {
         normalizedIncoming
     } else {
@@ -574,17 +574,23 @@ internal data class TimelineProjection(
 private fun normalizeTimelineOrderingItems(
     current: List<TimelineOrderingItem>,
     incoming: List<RemoteTimelineItem>,
+    replace: Boolean,
 ): List<TimelineOrderingItem> {
+    if (replace) {
+        return incoming.map { item ->
+            TimelineOrderingItem(
+                id = item.id,
+                orderSeq = item.orderSeq,
+                revision = item.revision,
+                updatedSeq = item.updatedSeq,
+            )
+        }
+    }
     val currentById = current.associateBy { it.id }
-    var maxOrderSeq = maxOf(
-        current.maxOfOrNull { it.orderSeq.takeIf { value -> value > 0 } ?: 0 } ?: 0,
-        incoming.maxOfOrNull { it.orderSeq.takeIf { value -> value > 0 } ?: 0 } ?: 0,
-    )
     return incoming.map { item ->
-        val existingOrder = currentById[item.id]?.orderSeq?.takeIf { it > 0 }
         val normalizedOrder = item.orderSeq.takeIf { it > 0 }
-            ?: existingOrder
-            ?: (++maxOrderSeq)
+            ?: currentById[item.id]?.orderSeq?.takeIf { it > 0 }
+            ?: item.orderSeq
         TimelineOrderingItem(
             id = item.id,
             orderSeq = normalizedOrder,
@@ -605,7 +611,7 @@ internal fun mergeTimelineOrderingItems(
             byId[observed.id] = observed.copy(
                 orderSeq = observed.orderSeq.takeIf { it > 0 }
                     ?: existing?.orderSeq?.takeIf { it > 0 }
-                    ?: ((byId.values.maxOfOrNull { it.orderSeq } ?: 0) + 1),
+                    ?: observed.orderSeq,
             )
         }
     }
