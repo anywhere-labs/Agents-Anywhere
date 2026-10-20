@@ -986,6 +986,31 @@ def test_codex_sdk_event_normalizes_usage_limit_error_info() -> None:
     assert event.params["error"]["codexErrorInfo"] == "usageLimitExceeded"
 
 
+def test_codex_sdk_event_preserves_errors_without_codex_error_info() -> None:
+    @dataclass
+    class LegacyTurnError:
+        message: str
+        additional_details: str
+
+    event = CodexSdkEvent.from_value(
+        Notification(
+            method="error",
+            payload=ErrorNotification.model_construct(
+                thread_id="thread_1",
+                turn_id="turn_1",
+                error=LegacyTurnError("Request failed", "Upstream unavailable"),
+                will_retry=False,
+            ),
+        ),
+    )
+
+    assert event.params["error"] == {
+        "code": "LegacyTurnError",
+        "message": "Request failed",
+        "additionalDetails": "Upstream unavailable",
+    }
+
+
 def test_codex_sdk_event_normalizes_rate_limit_snapshot() -> None:
     event = CodexSdkEvent.from_value(
         Notification(

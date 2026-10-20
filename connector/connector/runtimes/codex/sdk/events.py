@@ -550,12 +550,13 @@ def _sdk_content_text(items: Sequence[ContentItem]) -> str:
 
 
 def _sdk_turn_error(error: Any) -> dict[str, Any]:
+    codex_error_info = getattr(error, "codex_error_info", None)
     return {
         "code": error.__class__.__name__ if error is not None else "codex_turn_failed",
         "message": _string_attr(error, "message") or "Codex turn failed.",
         **(
-            {"codexErrorInfo": _enum_value(error.codex_error_info)}
-            if error is not None and error.codex_error_info is not None
+            {"codexErrorInfo": _enum_value(codex_error_info)}
+            if codex_error_info is not None
             else {}
         ),
         **(
