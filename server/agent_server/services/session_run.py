@@ -263,6 +263,17 @@ class SessionRunService:
         except ConnectorOfflineError as exc:
             await self._store.clear_active_run(session.id)
             raise SessionRunConflictError(str(exc)) from exc
+        except TimeoutError as exc:
+            # Same reasoning as send_message: a connector that did create the
+            # session reports it through its own state push, so clearing the run
+            # cannot hide a live turn.
+            await self._store.clear_active_run(session.id)
+            raise SessionRunTimeoutError(
+                {
+                    "code": "runtime_create_timeout",
+                    "message": "connector did not create the runtime session in time",
+                }
+            ) from exc
         except ConnectorRpcError as exc:
             await self._store.clear_active_run(session.id)
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
@@ -466,6 +477,19 @@ class SessionRunService:
         except ConnectorOfflineError as exc:
             await self._store.clear_active_run(session_id)
             raise SessionRunConflictError(str(exc)) from exc
+        except TimeoutError as exc:
+            # The connector may still be running this turn, but it re-creates the
+            # active run from its next session.state.updated push whenever the
+            # status is "running", so clearing here cannot mask a live turn.
+            # Leaving the row behind instead wedges the session in "waiting"
+            # permanently whenever the message never landed at all.
+            await self._store.clear_active_run(session_id)
+            raise SessionRunTimeoutError(
+                {
+                    "code": "runtime_send_timeout",
+                    "message": "connector did not accept the message in time",
+                }
+            ) from exc
         except ConnectorRpcError as exc:
             await self._store.clear_active_run(session_id)
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
@@ -538,6 +562,13 @@ class SessionRunService:
             )
         except ConnectorOfflineError as exc:
             raise SessionRunConflictError(str(exc)) from exc
+        except TimeoutError as exc:
+            raise SessionRunTimeoutError(
+                {
+                    "code": "runtime_state_timeout",
+                    "message": "connector did not report session state in time",
+                }
+            ) from exc
         except ConnectorRpcError as exc:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         if not isinstance(result, dict):
@@ -611,6 +642,13 @@ class SessionRunService:
             )
         except ConnectorOfflineError as exc:
             raise SessionRunConflictError(str(exc)) from exc
+        except TimeoutError as exc:
+            raise SessionRunTimeoutError(
+                {
+                    "code": "runtime_selections_timeout",
+                    "message": "connector did not apply the selection update in time",
+                }
+            ) from exc
         except ConnectorRpcError as exc:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         if isinstance(result, dict) and result.get("ok") is False:
@@ -694,6 +732,13 @@ class SessionRunService:
             )
         except ConnectorOfflineError as exc:
             raise SessionRunConflictError(str(exc)) from exc
+        except TimeoutError as exc:
+            raise SessionRunTimeoutError(
+                {
+                    "code": "runtime_steer_timeout",
+                    "message": "connector did not accept the steering message in time",
+                }
+            ) from exc
         except ConnectorRpcError as exc:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         await self._usage.record(
@@ -960,6 +1005,17 @@ class SessionRunService:
             )
         except ConnectorOfflineError as exc:
             raise SessionRunConflictError(str(exc)) from exc
+        except TimeoutError as exc:
+            # Deliberately no clear_active_run here: a timed-out interrupt may
+            # still land, and the connector's next session.state.updated push is
+            # the authority on whether the run really ended. Clearing would
+            # report "idle" for a turn that is still going.
+            raise SessionRunTimeoutError(
+                {
+                    "code": "runtime_interrupt_timeout",
+                    "message": "connector did not acknowledge the interrupt in time",
+                }
+            ) from exc
         except ConnectorRpcError as exc:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         await self._store.clear_active_run(session_id)

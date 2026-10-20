@@ -13,8 +13,10 @@ from agent_server.core.capabilities import (
 )
 from agent_server.core.models import SessionView
 from agent_server.core.protocol import ProtocolCapability, ProtocolCapabilitySet
+from agent_server.infra.connector_rpc import ConnectorRpcError
 from agent_server.services.effective_capabilities import (
     derive_session_effective_capabilities,
+    project_session_capabilities,
     publish_connector_session_capabilities,
 )
 
@@ -446,3 +448,237 @@ def test_capability_batch_reads_once_and_newer_batch_supersedes_old_work():
                    for payload in publisher.sent)
 
     asyncio.run(exercise())
+
+
+def test_capability_batch_prefers_live_facts_over_persisted():
+    session = _session(takeover=True)
+
+    class Repository:
+        def __init__(self) -> None:
+            self.reads = 0
+
+        @asynccontextmanager
+        async def session_revision_fence(self, session_id: str):
+            yield
+
+        async def list_sessions_for_connector(
+            self, connector_id: str
+        ) -> list[SessionView]:
+            return [session]
+
+        async def get_protocol_capabilities(
+            self, connector_id: str, *, user_id=None
+        ) -> dict:
+            self.reads += 1
+            return {
+                "revision": 7,
+                "capabilities": [
+                    {
+                        "capabilityId": SESSION_SEND_MESSAGE,
+                        "scope": "runtime",
+                        "runtime": "codex",
+                        "supported": False,
+                        "available": False,
+                    }
+                ],
+            }
+
+        async def get_protocol_capabilities_stamp(self, connector_id: str):
+            return (7, "persisted")
+
+        async def get_session_seq(self, session_id: str) -> int:
+            return 5
+
+    class LivePresence:
+        async def is_online(self, connector_id: str) -> bool:
+            return True
+
+        async def request(
+            self, connector_id: str, method: str, params: dict, *, timeout: float
+        ):
+            assert method == "session.capabilities"
+            assert params["sessionId"] == session.id
+            assert params["runtimeId"] == session.runtime
+            return {
+                "capabilitySet": {
+                    "revision": 42,
+                    "capabilities": [
+                        {
+                            "capabilityId": SESSION_SEND_MESSAGE,
+                            "scope": "runtime",
+                            "runtime": "codex",
+                            "supported": True,
+                            "available": True,
+                            "allowed": True,
+                        }
+                    ],
+                }
+            }
+
+    class Publisher:
+        def __init__(self) -> None:
+            self.payloads: list[dict] = []
+
+        async def publish(self, session_id: str, payload: dict) -> None:
+            self.payloads.append(payload)
+
+    repository, publisher = Repository(), Publisher()
+    asyncio.run(
+        publish_connector_session_capabilities(
+            repository, LivePresence(), publisher, session.connectorId,
+        )
+    )
+
+    assert repository.reads == 0
+    assert len(publisher.payloads) == 1
+    payload = publisher.payloads[0]
+    assert payload["capabilitySet"]["revision"] == 42
+    send = next(
+        item
+        for item in payload["capabilitySet"]["capabilities"]
+        if item["capabilityId"] == SESSION_SEND_MESSAGE
+    )
+    assert send["supported"] is True
+    assert send["available"] is True
+    assert send["unavailableReason"] is None
+
+
+def test_capability_batch_falls_back_to_persisted_when_live_read_fails():
+    session = _session(takeover=True)
+
+    class Repository:
+        def __init__(self) -> None:
+            self.reads = 0
+
+        @asynccontextmanager
+        async def session_revision_fence(self, session_id: str):
+            yield
+
+        async def list_sessions_for_connector(
+            self, connector_id: str
+        ) -> list[SessionView]:
+            return [session]
+
+        async def get_protocol_capabilities(
+            self, connector_id: str, *, user_id=None
+        ) -> dict:
+            self.reads += 1
+            return {
+                "revision": 7,
+                "capabilities": [
+                    {
+                        "capabilityId": SESSION_SEND_MESSAGE,
+                        "scope": "runtime",
+                        "runtime": "codex",
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    }
+                ],
+            }
+
+        async def get_protocol_capabilities_stamp(self, connector_id: str):
+            return (7, "persisted")
+
+        async def get_session_seq(self, session_id: str) -> int:
+            return 5
+
+    class FailingPresence:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def is_online(self, connector_id: str) -> bool:
+            return True
+
+        async def request(
+            self, connector_id: str, method: str, params: dict, *, timeout: float
+        ):
+            self.attempts += 1
+            raise ConnectorRpcError("runtime_error", "capability read failed")
+
+    class Publisher:
+        def __init__(self) -> None:
+            self.payloads: list[dict] = []
+
+        async def publish(self, session_id: str, payload: dict) -> None:
+            self.payloads.append(payload)
+
+    repository, presence, publisher = Repository(), FailingPresence(), Publisher()
+    asyncio.run(
+        publish_connector_session_capabilities(
+            repository, presence, publisher, session.connectorId,
+        )
+    )
+
+    assert presence.attempts == 1
+    assert repository.reads == 1
+    payload = publisher.payloads[0]
+    assert payload["capabilitySet"]["revision"] == 7
+    send = next(
+        item
+        for item in payload["capabilitySet"]["capabilities"]
+        if item["capabilityId"] == SESSION_SEND_MESSAGE
+    )
+    assert send["supported"] is True
+    assert send["available"] is True
+
+
+def test_project_session_capabilities_prefers_live_facts_for_recovery():
+    session = _session(takeover=True)
+
+    class Repository:
+        def __init__(self) -> None:
+            self.reads = 0
+
+        async def get_protocol_capabilities(
+            self, connector_id: str, *, user_id=None
+        ) -> dict:
+            self.reads += 1
+            return {
+                "revision": 3,
+                "capabilities": [
+                    {
+                        "capabilityId": SESSION_SEND_MESSAGE,
+                        "scope": "runtime",
+                        "runtime": "codex",
+                        "supported": False,
+                        "available": False,
+                    }
+                ],
+            }
+
+    class LivePresence:
+        async def is_online(self, connector_id: str) -> bool:
+            return True
+
+        async def request(
+            self, connector_id: str, method: str, params: dict, *, timeout: float
+        ):
+            return {
+                "capabilitySet": {
+                    "revision": 42,
+                    "capabilities": [
+                        {
+                            "capabilityId": SESSION_SEND_MESSAGE,
+                            "scope": "runtime",
+                            "runtime": "codex",
+                            "supported": True,
+                            "available": True,
+                            "allowed": True,
+                        }
+                    ],
+                }
+            }
+
+    repository = Repository()
+    _projected_session, runtime_capabilities, effective_capabilities = asyncio.run(
+        project_session_capabilities(repository, LivePresence(), session)
+    )
+
+    assert repository.reads == 0
+    assert runtime_capabilities.revision == 42
+    send = find_capability(effective_capabilities, SESSION_SEND_MESSAGE)
+    assert send is not None
+    assert send.supported is True
+    assert send.available is True
+    assert send.unavailableReason is None

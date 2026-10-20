@@ -12,6 +12,7 @@ from agent_server.core.models import (
     SessionRuntimeState,
     SessionView,
 )
+from agent_server.core.protocol import ProtocolCapabilitySet
 from agent_server.core.runtime_identity import resolve_session_runtime_binding
 from agent_server.core.utc import utc_now
 from agent_server.infra.timeline_broker import TimelineBroker
@@ -29,8 +30,10 @@ from agent_server.services.device_runtimes import (
     DeviceRuntimeService,
 )
 from agent_server.services.effective_capabilities import (
+    derive_session_effective_capabilities,
     project_session_capabilities,
     publish_connector_session_capabilities,
+    read_session_capability_facts_with_fallback,
 )
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.repository_ports import ConnectorIngestRepository
@@ -302,6 +305,7 @@ class ConnectorIngestService:
         async def publish_bucket(
             session_id: str,
             bucket: dict[str, Any],
+            runtime_capabilities: ProtocolCapabilitySet | None,
         ) -> bool:
             status_changed = False
             try:
@@ -329,12 +333,15 @@ class ConnectorIngestService:
             runtime_state: SessionRuntimeState | None = None
             if bucket["runtime_state"]:
                 bound_session = await self._store.get_session(session_id)
+                previous_runtime_state = await self._runtime_state_cache.get(
+                    session_id
+                )
                 runtime_state = runtime_state_from_ingest_effect(
                     bound_session,
                     next_seq,
                     bucket["runtime_state"],
+                    previous_runtime_state,
                 )
-                previous_runtime_state = await self._runtime_state_cache.get(session_id)
                 if runtime_states_semantically_equal(
                     previous_runtime_state,
                     runtime_state,
@@ -391,15 +398,27 @@ class ConnectorIngestService:
                         )
                     effective_capabilities = None
                     if bucket["capability_changed"]:
-                        (
-                            session,
-                            _runtime_capabilities,
-                            effective_capabilities,
-                        ) = await project_session_capabilities(
-                            self._store,
-                            self._presence,
-                            session,
-                        )
+                        if runtime_capabilities is not None:
+                            session = await with_effective_session_connector_status(
+                                self._presence,
+                                session,
+                            )
+                            effective_capabilities = (
+                                derive_session_effective_capabilities(
+                                    session=session,
+                                    runtime_capabilities=runtime_capabilities,
+                                )
+                            )
+                        else:
+                            (
+                                session,
+                                _runtime_capabilities,
+                                effective_capabilities,
+                            ) = await project_session_capabilities(
+                                self._store,
+                                self._presence,
+                                session,
+                            )
                     else:
                         session = await with_effective_session_connector_status(
                             self._presence,
@@ -448,15 +467,29 @@ class ConnectorIngestService:
                 or bucket["refetch"]
             ):
                 continue
+            runtime_capabilities: ProtocolCapabilitySet | None = None
+            if bucket["session"] and bucket["capability_changed"]:
+                try:
+                    fact_session = await self._store.get_session(session_id)
+                except KeyError:
+                    fact_session = None
+                if fact_session is not None:
+                    runtime_capabilities = (
+                        await read_session_capability_facts_with_fallback(
+                            self._store,
+                            self._presence,
+                            fact_session,
+                        )
+                    )
             if bucket["deferred_timeline_only"]:
                 dashboard_changed = (
-                    await publish_bucket(session_id, bucket)
+                    await publish_bucket(session_id, bucket, runtime_capabilities)
                     or dashboard_changed
                 )
                 continue
             async with self._store.session_revision_fence(session_id):
                 dashboard_changed = (
-                    await publish_bucket(session_id, bucket)
+                    await publish_bucket(session_id, bucket, runtime_capabilities)
                     or dashboard_changed
                 )
         return dashboard_changed
@@ -497,6 +530,7 @@ def runtime_state_from_ingest_effect(
     session: SessionView,
     next_seq: int,
     raw_state: dict[str, Any],
+    previous: SessionRuntimeState | None = None,
 ) -> SessionRuntimeState:
     now = utc_now()
     session_id, runtime, runtime_id = resolve_session_runtime_binding(
@@ -514,14 +548,14 @@ def runtime_state_from_ingest_effect(
             "status": raw_state.get("status") or "idle",
             "selections": raw_state.get("selections")
             if isinstance(raw_state.get("selections"), dict)
-            else {},
+            else (previous.selections if previous is not None else {}),
             "statusReason": raw_state.get("statusReason"),
             "error": raw_state.get("error")
             if isinstance(raw_state.get("error"), dict)
             else None,
             "metadata": raw_state.get("metadata")
             if isinstance(raw_state.get("metadata"), dict)
-            else {},
+            else (previous.metadata if previous is not None else {}),
             "updatedSeq": next_seq,
             "createdAt": now,
             "updatedAt": now,

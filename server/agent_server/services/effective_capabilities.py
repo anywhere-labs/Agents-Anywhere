@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import os
 from contextlib import AbstractAsyncContextManager
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 from weakref import WeakKeyDictionary
 
 from agent_server.core.capabilities import (
@@ -18,7 +19,10 @@ from agent_server.core.capabilities import (
 )
 from agent_server.core.models import SessionView
 from agent_server.core.protocol import ProtocolCapability, ProtocolCapabilitySet
-from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.connector_rpc import (
+    ConnectorOfflineError,
+    ConnectorRpcError,
+)
 from agent_server.services.connector_presence import (
     ConnectorPresencePort,
     with_effective_session_connector_status,
@@ -72,11 +76,32 @@ class SessionCapabilityPublisher(Protocol):
     async def publish(self, session_id: str, payload: dict[str, Any]) -> None: ...
 
 
+@runtime_checkable
+class SessionCapabilityRpcPort(Protocol):
+    async def request(
+        self,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+        *,
+        timeout: float,
+    ) -> Any: ...
+
+
+def session_rpc_timeout_seconds() -> float:
+    """Live session reads are best effort; tests shorten the wait for an absent runtime."""
+    try:
+        return float(os.environ.get("AGENT_SERVER_SESSION_RPC_TIMEOUT_SECONDS", "10"))
+    except ValueError:
+        return 10.0
+
+
 async def read_session_capability_facts(
-    manager: ConnectorRpcManager,
+    manager: SessionCapabilityRpcPort,
     session: SessionView,
     *,
     runtime_id: str,
+    timeout: float | None = None,
 ) -> ProtocolCapabilitySet:
     """Use the same live facts for displayed capabilities and action admission."""
     params: dict[str, Any] = {
@@ -86,8 +111,11 @@ async def read_session_capability_facts(
     }
     if session.externalSessionId:
         params["externalSessionId"] = session.externalSessionId
+    resolved_timeout = (
+        timeout if timeout is not None else session_rpc_timeout_seconds()
+    )
     result = await manager.request(
-        session.connectorId, "session.capabilities", params, timeout=10,
+        session.connectorId, "session.capabilities", params, timeout=resolved_timeout,
     )
     if not isinstance(result, dict) or not isinstance(result.get("capabilitySet"), dict):
         raise ValueError("connector did not return a capability set")
@@ -95,6 +123,44 @@ async def read_session_capability_facts(
         return ProtocolCapabilitySet.model_validate(result["capabilitySet"])
     except ValueError as exc:
         raise ValueError("connector returned an invalid capability set") from exc
+
+
+async def try_read_session_capability_facts(
+    presence: ConnectorPresencePort,
+    session: SessionView,
+) -> ProtocolCapabilitySet | None:
+    """Read live capability facts, or None when the runtime cannot answer now."""
+    if not await presence.is_online(session.connectorId):
+        return None
+    if not isinstance(presence, SessionCapabilityRpcPort):
+        return None
+    try:
+        return await read_session_capability_facts(
+            presence,
+            session,
+            runtime_id=session.runtimeId or session.runtime,
+        )
+    except (ConnectorOfflineError, ConnectorRpcError, TimeoutError, ValueError):
+        return None
+
+
+async def read_session_capability_facts_with_fallback(
+    store: SessionCapabilityRepository,
+    presence: ConnectorPresencePort,
+    session: SessionView,
+    *,
+    user_id: str | None = None,
+) -> ProtocolCapabilitySet:
+    """Read live capability facts with persisted notifications as best effort."""
+    runtime_capabilities = await try_read_session_capability_facts(presence, session)
+    if runtime_capabilities is not None:
+        return runtime_capabilities
+    return ProtocolCapabilitySet.model_validate(
+        await store.get_protocol_capabilities(
+            session.connectorId,
+            user_id=user_id,
+        )
+    )
 
 
 async def project_session_capabilities(
@@ -105,11 +171,11 @@ async def project_session_capabilities(
     user_id: str | None = None,
 ) -> tuple[SessionView, ProtocolCapabilitySet, ProtocolCapabilitySet]:
     session = await with_effective_session_connector_status(presence, session)
-    runtime_capabilities = ProtocolCapabilitySet.model_validate(
-        await store.get_protocol_capabilities(
-            session.connectorId,
-            user_id=user_id,
-        )
+    runtime_capabilities = await read_session_capability_facts_with_fallback(
+        store,
+        presence,
+        session,
+        user_id=user_id,
     )
     effective_capabilities = derive_session_effective_capabilities(
         session=session,
@@ -136,18 +202,27 @@ async def publish_connector_session_capabilities(
         for session in sessions:
             if active.get(connector_id) is not token:
                 return
+            live_capabilities = await try_read_session_capability_facts(
+                presence, session,
+            )
             async with store.session_revision_fence(session.id):
                 session = await with_effective_session_connector_status(presence, session)
-                # Other server processes can publish newer facts while this
-                # batch waits for a session fence. Check only the small stamp;
-                # deserialize and index again only when the stored set changes.
-                current_stamp = await store.get_protocol_capabilities_stamp(connector_id)
-                if index is None or current_stamp != stamp:
-                    index = SessionCapabilityIndex(ProtocolCapabilitySet.model_validate(
-                        await store.get_protocol_capabilities(connector_id)
-                    ))
-                    stamp = current_stamp
-                effective_capabilities = index.project(session)
+                if live_capabilities is not None:
+                    effective_capabilities = derive_session_effective_capabilities(
+                        session=session,
+                        runtime_capabilities=live_capabilities,
+                    )
+                else:
+                    # Other server processes can publish newer facts while this
+                    # batch waits for a session fence. Check only the small stamp;
+                    # deserialize and index again only when the stored set changes.
+                    current_stamp = await store.get_protocol_capabilities_stamp(connector_id)
+                    if index is None or current_stamp != stamp:
+                        index = SessionCapabilityIndex(ProtocolCapabilitySet.model_validate(
+                            await store.get_protocol_capabilities(connector_id)
+                        ))
+                        stamp = current_stamp
+                    effective_capabilities = index.project(session)
                 next_seq = await store.get_session_seq(session.id)
                 if active.get(connector_id) is not token:
                     return
