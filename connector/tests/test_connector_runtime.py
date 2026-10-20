@@ -1926,6 +1926,7 @@ def test_default_runtime_providers_use_new_protocol_providers() -> None:
         "codex",
         "claude",
         "dsh",
+        "opencode",
     )
     assert isinstance(providers[0], CodexProvider)
     assert isinstance(providers[1], ClaudeProvider)
@@ -2074,6 +2075,16 @@ def test_access_token_rejection_reconnects_without_invalidating_saved_credential
 
 def test_runtime_sync_task_survives_websocket_reconnect(monkeypatch) -> None:
     asyncio.run(_exercise_runtime_sync_task_survives_websocket_reconnect(monkeypatch))
+
+
+def test_protocol_capabilities_republished_on_runtime_status_change(monkeypatch) -> None:
+    asyncio.run(
+        _exercise_protocol_capabilities_republished_on_runtime_status_change(monkeypatch)
+    )
+
+
+def test_protocol_capabilities_loop_republishes_on_availability_change(monkeypatch) -> None:
+    asyncio.run(_exercise_protocol_capabilities_loop_republishes_on_availability_change(monkeypatch))
 
 
 def test_connector_runtime_stops_on_auth_websocket_close(monkeypatch) -> None:
@@ -2773,6 +2784,161 @@ async def _exercise_runtime_sync_task_survives_websocket_reconnect(monkeypatch) 
         if client._runtime_sync_task is not None:
             client._runtime_sync_task.cancel()
             await asyncio.gather(client._runtime_sync_task, return_exceptions=True)
+
+
+async def _exercise_protocol_capabilities_republished_on_runtime_status_change(
+    monkeypatch,
+) -> None:
+    import tempfile
+
+    scratch = tempfile.mkdtemp(prefix="conn-caps-")
+    monkeypatch.setenv("AGENT_CONNECTOR_DATA_DIR", scratch)
+    client = _client()
+    notifications: list[tuple[str, dict[str, Any]]] = []
+    availability = {"available": False}
+
+    async def discover_runtimes() -> dict[str, list[Any]]:
+        return {
+            "runtimeTypes": [
+                {
+                    "runtimeType": "opencode",
+                    "available": availability["available"],
+                    "capabilities": {
+                        "modelCatalog": True,
+                        "startTurn": True,
+                        "interruptTurn": True,
+                    },
+                }
+            ]
+        }
+
+    async def send_notification(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    def latest_send_message_available() -> bool:
+        for method, params in reversed(notifications):
+            if method != "protocol.capabilitiesUpdated":
+                continue
+            for capability in params["capabilities"]:
+                if (
+                    capability["capabilityId"] == "session.send_message"
+                    and capability["runtime"] == "opencode"
+                ):
+                    return bool(capability["available"])
+        raise AssertionError("opencode send_message capability never published")
+
+    request_session = SimpleNamespace(discover_runtimes=discover_runtimes)
+    client._request_session = request_session
+    monkeypatch.setattr(client, "send_notification", send_notification)
+    monkeypatch.setattr(
+        client.agent_runtime_supervisor,
+        "entry",
+        lambda runtime_id: SimpleNamespace(runtime_type="opencode"),
+    )
+    monkeypatch.setattr(
+        "connector.server.client.PROTOCOL_CAPABILITIES_REFRESH_DEBOUNCE_S",
+        0.01,
+    )
+
+    try:
+        # The websocket opened before opencode registered: connect-time snapshot
+        # publishes send_message as unavailable, which is what stuck the button.
+        await client._publish_runtime_capabilities(request_session)
+        assert latest_send_message_available() is False
+
+        # serve came up later; the runtime now reports running and discovery
+        # sees it, so the status change must push a corrected snapshot.
+        availability["available"] = True
+        await client._publish_agent_runtime_status("rti_x", "running", None)
+        await asyncio.sleep(0.05)
+
+        status_changes = [
+            method for method, _ in notifications if method == "runtime.statusChanged"
+        ]
+        assert status_changes == ["runtime.statusChanged"]
+        assert latest_send_message_available() is True
+
+        # A second burst of transitions collapses into one more refresh task
+        # rather than re-publishing synchronously for each status.
+        availability["available"] = True
+        await client._publish_agent_runtime_status("rti_x", "starting", None)
+        await client._publish_agent_runtime_status("rti_x", "running", None)
+        assert client._capabilities_refresh_task is not None
+        await asyncio.sleep(0.05)
+        assert client._capabilities_refresh_task is None
+    finally:
+        client._request_session = None
+        if client._capabilities_refresh_task is not None:
+            client._capabilities_refresh_task.cancel()
+            await asyncio.gather(client._capabilities_refresh_task, return_exceptions=True)
+
+
+async def _exercise_protocol_capabilities_loop_republishes_on_availability_change(
+    monkeypatch,
+) -> None:
+    import tempfile
+
+    scratch = tempfile.mkdtemp(prefix="conn-caps-loop-")
+    monkeypatch.setenv("AGENT_CONNECTOR_DATA_DIR", scratch)
+    client = _client()
+    notifications: list[tuple[str, dict[str, Any]]] = []
+    availability = {"available": False}
+
+    async def discover_runtimes() -> dict[str, list[Any]]:
+        return {
+            "runtimeTypes": [
+                {
+                    "runtimeType": "opencode",
+                    "available": availability["available"],
+                    "capabilities": {
+                        "modelCatalog": True,
+                        "startTurn": True,
+                        "interruptTurn": True,
+                    },
+                }
+            ]
+        }
+
+    async def send_notification(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    def published_snapshots() -> list[bool]:
+        return [
+            any(
+                capability["capabilityId"] == "session.send_message"
+                and capability["runtime"] == "opencode"
+                and capability["available"]
+                for capability in params["capabilities"]
+            )
+            for method, params in notifications
+            if method == "protocol.capabilitiesUpdated"
+        ]
+
+    request_session = SimpleNamespace(discover_runtimes=discover_runtimes)
+    monkeypatch.setattr(client, "send_notification", send_notification)
+    monkeypatch.setattr(
+        "connector.server.client.PROTOCOL_CAPABILITIES_POLL_INTERVAL_S",
+        0.01,
+    )
+
+    task = asyncio.create_task(client._runtime_capabilities_loop(request_session))
+    try:
+        await asyncio.sleep(0.05)
+        assert published_snapshots() == [False]  # initial publish, still unavailable
+
+        # opencode serve comes up: discovery now reports the instance available,
+        # so the loop must push a corrected snapshot exactly once.
+        availability["available"] = True
+        await asyncio.sleep(0.08)
+        assert published_snapshots() == [False, True]
+
+        # No further change: the loop must not keep re-publishing identical
+        # snapshots (which would inflate the capability revision every tick).
+        await asyncio.sleep(0.08)
+        assert published_snapshots() == [False, True]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 async def _exercise_websocket_auth_close_stops(monkeypatch) -> None:

@@ -59,6 +59,39 @@ from connector.server.urls import (
 
 INGEST_ONLY_NOTIFICATION_METHODS = frozenset({"timeline.sync"})
 SYNC_STATE_FLUSH_INTERVAL_SECONDS = 1.0
+# Trailing debounce for re-publishing protocol capabilities after a runtime
+# status change: many instances transition in bursts (validating -> starting ->
+# running), and only the settled availability needs to reach the server.
+PROTOCOL_CAPABILITIES_REFRESH_DEBOUNCE_S = 1.5
+# Fallback poll interval for runtimes that only become available after the
+# websocket opened (e.g. opencode auto-starting ``serve``). Lifecycle events are
+# the primary signal; this catches runtimes whose status never reaches the
+# supervisor sink.
+PROTOCOL_CAPABILITIES_POLL_INTERVAL_S = 10.0
+
+
+def _protocol_capability_signature(discovery: dict[str, Any]) -> tuple[Any, ...]:
+    """Availability-relevant fingerprint of a runtime discovery snapshot.
+
+    Only per-type ``available``/config presence can change at runtime; provider
+    capability flags are static. Comparing this lets the publisher skip an
+    identical re-publish and only bump the revision when availability flips.
+    """
+
+    runtimes = discovery.get("runtimeTypes")
+    if not isinstance(runtimes, list):
+        return ()
+    return tuple(
+        sorted(
+            (
+                item.get("runtimeType"),
+                item.get("available") is True,
+                item.get("configSchema") is not None,
+            )
+            for item in runtimes
+            if isinstance(item, dict)
+        )
+    )
 
 
 class BackendRpcClient:
@@ -101,6 +134,10 @@ class BackendRpcClient:
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._rpc = ConnectorRpcChannel()
         self._protocol_revision_clock = ProtocolRevisionClock()
+        # Active websocket request session, used to re-publish protocol
+        # capabilities when a runtime's availability changes after connect.
+        self._request_session: ConnectorRequestSession | None = None
+        self._capabilities_refresh_task: asyncio.Task[None] | None = None
         # Persistent HTTP client: a long-lived connection pool eliminates the
         # 5–10ms TCP/TLS setup that the old `async with AsyncClient(...)`
         # per-call pattern paid on every notification.
@@ -260,8 +297,9 @@ class BackendRpcClient:
             proxy=None if is_loopback_url(self.config.server_url) else True,
         ) as ws:
             self._rpc.set_connection(ws)
+            self._request_session = request_session
             capabilities_task = asyncio.create_task(
-                self._publish_runtime_capabilities(request_session)
+                self._runtime_capabilities_loop(request_session)
             )
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             recovery_task = asyncio.create_task(self._runtime_sync.reconnect_event_runtimes())
@@ -281,6 +319,10 @@ class BackendRpcClient:
                     await heartbeat_task
                     raise ConnectorNetworkError("backend heartbeat stopped")
             finally:
+                self._request_session = None
+                if self._capabilities_refresh_task is not None:
+                    self._capabilities_refresh_task.cancel()
+                    self._capabilities_refresh_task = None
                 capabilities_task.cancel()
                 heartbeat_task.cancel()
                 recovery_task.cancel()
@@ -293,6 +335,41 @@ class BackendRpcClient:
     async def _read_backend_messages(self, ws, request_session) -> None:
         async for raw_message in ws:
             self.start_message(json.loads(raw_message), request_session=request_session)
+
+    async def _runtime_capabilities_loop(
+        self, request_session: ConnectorRequestSession
+    ) -> None:
+        """Publish the capability snapshot, then re-publish when availability changes.
+
+        A one-shot publish at connect freezes whatever was discoverable at that
+        instant. A runtime that becomes available only after the websocket opens
+        (opencode auto-starting ``serve``, a control-started instance whose
+        lifecycle never reaches the supervisor status sink) would otherwise be
+        published as ``available=False`` forever, permanently disabling the
+        client send button. Re-discovering on a short cadence and pushing only on
+        a signature change closes that gap without churning the revision clock.
+        """
+
+        published: tuple[Any, ...] | None = None
+        while True:
+            try:
+                discovery = await request_session.discover_runtimes()
+                signature = _protocol_capability_signature(discovery)
+                if published is None or signature != published:
+                    await self.send_notification(
+                        "protocol.capabilitiesUpdated",
+                        protocol_capabilities_from_runtime_types(
+                            discovery, revision=self._protocol_revision_clock.next()
+                        ),
+                    )
+                    published = signature
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - keep the publisher alive
+                logger.exception(
+                    "runtime capability discovery failed; connector RPC remains available"
+                )
+            await asyncio.sleep(PROTOCOL_CAPABILITIES_POLL_INTERVAL_S)
 
     async def _publish_runtime_capabilities(
         self, request_session: ConnectorRequestSession
@@ -370,7 +447,17 @@ class BackendRpcClient:
                     method,
                     exc,
                 )
-        await self._ingest.enqueue(method, params)
+        try:
+            await self._ingest.enqueue(method, params)
+        except Exception:
+            # A swallowed delivery failure leaves the runtime convinced the item
+            # reached the platform, so the turn dies later with no cause. Surface
+            # it instead: the runtime can mark the item failed and tell the user.
+            logger.opt(lazy=True).exception(
+                "timeline notification undeliverable on every channel method={}",
+                method,
+            )
+            raise
 
     async def send_response(
         self,
@@ -439,6 +526,58 @@ class BackendRpcClient:
         await self._publish_runtime_status(
             entry.runtime_type, runtime_id, status, error, phase
         )
+        self._schedule_protocol_capabilities_refresh()
+
+    def _schedule_protocol_capabilities_refresh(self) -> None:
+        """Re-publish protocol capabilities after a runtime availability change.
+
+        The server derives a session's effective ``available`` flag from the
+        connector's published capability snapshot, and it only refreshes that
+        snapshot on ``protocol.capabilitiesUpdated`` (never on
+        ``runtime.statusChanged``). The snapshot is otherwise pushed once when
+        the websocket opens, before a runtime that starts late (e.g. opencode
+        auto-starting ``serve``) is registered, so its capabilities would stay
+        ``available=False`` and permanently disable the client send button. This
+        trailing-debounced re-publish lets ``discover()`` see the settled
+        instance state and push the corrected snapshot.
+        """
+
+        if self._request_session is None:
+            return
+        pending = self._capabilities_refresh_task
+        if pending is not None and not pending.done():
+            pending.cancel()
+        task = asyncio.create_task(
+            self._refresh_protocol_capabilities_after(
+                PROTOCOL_CAPABILITIES_REFRESH_DEBOUNCE_S
+            )
+        )
+        self._capabilities_refresh_task = task
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_capabilities_refresh_done)
+
+    async def _refresh_protocol_capabilities_after(self, delay_s: float) -> None:
+        # Cancellation during the sleep (a newer transition re-arms the
+        # debounce) propagates and simply ends this task; the done callback
+        # treats a cancelled task as a no-op.
+        await asyncio.sleep(delay_s)
+        session = self._request_session
+        if session is None:
+            return
+        await self._publish_runtime_capabilities(session)
+
+    def _on_capabilities_refresh_done(self, task: asyncio.Task[None]) -> None:
+        self._background_tasks.discard(task)
+        if self._capabilities_refresh_task is task:
+            self._capabilities_refresh_task = None
+        if task.cancelled():
+            return
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001 - next transition retries
+            logger.exception("protocol capabilities refresh failed")
 
     async def ingest_snapshot(self, *args, **kwargs) -> None:
         await self._ingest.ingest_snapshot(*args, **kwargs)
