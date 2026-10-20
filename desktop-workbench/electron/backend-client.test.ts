@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -158,6 +159,45 @@ setTimeout(() => process.exit(0), 200);
     await client.start(initFor(root));
     await client.shutdown();
     assert.equal(client.running, false, "shutdown waits for the disconnected backend to exit");
+  } finally {
+    await client.shutdown();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("closed-channel errors preserve the backend's actual failure reason", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-backend-client-error-reason-"));
+  const entryPath = path.join(root, "fixture-backend.js");
+  fs.writeFileSync(entryPath, `
+process.send({ type: "ready", port: 1, token: "fixture-token" });
+setInterval(() => {}, 1_000);
+`, "utf8");
+  const fork = childProcess.fork;
+  let child: childProcess.ChildProcess | undefined;
+  t.mock.method(childProcess, "fork", (...args: Parameters<typeof fork>) => {
+    child = fork(...args);
+    return child;
+  });
+  const logged: string[] = [];
+  t.mock.method(console, "error", (message: string) => logged.push(message));
+  const exits: string[] = [];
+  const client = new DesktopBackendClient({
+    entryPath,
+    fetcher: async () => new Response("", { status: 200 }),
+    onExit: (message) => exits.push(message),
+  });
+  try {
+    await client.start(initFor(root));
+    assert.ok(child);
+    child.emit("error", Object.assign(new Error("backend initialization failed"), { code: "ENOENT" }));
+    for (const code of ["ERR_IPC_CHANNEL_CLOSED", "EPIPE"]) {
+      child.emit("error", Object.assign(new Error(code), { code }));
+    }
+    child.kill();
+    await waitFor(() => exits.length > 0, "The backend exit was never reported.");
+    assert.match(exits[0], /Desktop backend process error: backend initialization failed/);
+    assert.doesNotMatch(exits[0], /ERR_IPC_CHANNEL_CLOSED|EPIPE/);
+    assert.deepEqual(logged, ["[desktop-backend] backend initialization failed"]);
   } finally {
     await client.shutdown();
     fs.rmSync(root, { recursive: true, force: true });

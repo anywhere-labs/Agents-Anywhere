@@ -95,6 +95,7 @@ export class DesktopBackendClient {
     // The IPC channel can close before `exit` is delivered. Without a listener
     // the resulting `error` event would crash the Electron main process.
     child.on("error", (error) => {
+      if (isClosedChannelError(error)) return;
       this.lastError = `Desktop backend process error: ${error.message}`;
       console.error(`[desktop-backend] ${error.message}`);
     });
