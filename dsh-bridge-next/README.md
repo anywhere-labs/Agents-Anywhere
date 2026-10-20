@@ -9,6 +9,7 @@
 - 在其他设备上查看 DSH 会话与运行进度，发送消息或继续已有会话。
 - 根据 DSH 和当前会话的能力选择模型、权限与 Agent 模式，发送文字、图片或普通文件，回复输入请求与单次操作审批。
 - 使用 Agents Anywhere Cloud 或自己的服务实例；在插件中查看连接状态、管理本机 Connector 和桥接日志。
+- 在“运行日志 → 启动前诊断”展开当前插件或 Bridge 启动失败的错误码与调用栈位置；Connector 未启动或本地日志文件无法读取时，已捕获的启动故障仍可查看，无需开启 DSH Desktop 开发者日志。成功重试后清除当前故障；更早的错误可通过宿主日志排查。
 - 如果 Agents Anywhere Desktop 正在运行，转到该应用完成连接；否则可以直接在插件中登录并连接本机设备。Agents Anywhere Desktop 和 DSH Desktop 是两个不同的应用。
 
 ## 在 DSH Desktop 中启用

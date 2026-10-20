@@ -2,7 +2,7 @@ import type { BridgeStatus } from '../../contracts/bridge-status.js'
 import { onboardingDiagnostics } from '../onboarding/diagnostics.js'
 import type { RuntimeDiagnostics } from '../dsh-runtime/diagnostics.js'
 import { RpcLogOutput } from '../dsh-runtime/log-output.js'
-import { startupFailure, unavailableBridge } from '../dsh-runtime/startup-status.js'
+import { startupFailure, startupFailureDiagnostic, unavailableBridge } from '../dsh-runtime/startup-status.js'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { HOST_NAMESPACE, type DesktopLaunch, type DeviceRecoveryAction, type DeviceRecoveryResult, type LoginRequest, type OnboardingHostApi, type OnboardingSnapshot } from '../../contracts/index.js'
@@ -14,7 +14,7 @@ import type { MobileLoginSnapshot } from '../../contracts/mobile.js'
 import { join } from 'node:path'
 import { stateRoot } from '../config.js'
 import { readConnectorLogs } from '../connector/logs.js'
-import type { ConnectorLogPage, ConnectorLogQuery, BridgeLogSnapshot, RuntimeLogPage, RuntimeLogQuery } from '../../contracts/logs.js'
+import type { ConnectorLogPage, ConnectorLogQuery, BridgeLogSnapshot, RuntimeLogPage, RuntimeLogQuery, StartupFailureDiagnostic } from '../../contracts/logs.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context { agentsAnywhereOnboarding: OnboardingService }
@@ -26,6 +26,7 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   private manager: OnboardingManager
   private readonly makeManager: () => OnboardingManager
   private managerFailure: BridgeStatus | null = null
+  private managerFailureSnapshot: StartupFailureDiagnostic | null = null
   private recovery: Promise<BridgeStatus> | undefined
   private disposed = false
   private readonly pluginLogOutput = new RpcLogOutput(512, 'plugin')
@@ -50,9 +51,10 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   }
 
   async [Service.init](): Promise<void> {
-    try { await this.manager.initialize(); this.managerFailure = null }
+    try { await this.manager.initialize(); this.managerFailure = null; this.managerFailureSnapshot = null }
     catch (error) {
       this.managerFailure = startupFailure(error)
+      this.managerFailureSnapshot = startupFailureDiagnostic(error, 'plugin', 'onboarding.start_failed', this.managerFailure)
       this.diagnostics.log('error', 'onboarding.start_failed', { code: this.managerFailure.code }, error)
       return
     }
@@ -135,6 +137,13 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   @Remote('readConnectorLogs')
   readConnectorLogs(query?: ConnectorLogQuery): Promise<ConnectorLogPage> {
     return readConnectorLogs(this.logsDirectory, query)
+  }
+  @Remote('readStartupDiagnostics')
+  async readStartupDiagnostics(): Promise<StartupFailureDiagnostic[]> {
+    const bridgeFailure = this.ctx.get('agentsAnywhereRuntime')?.startupDiagnostic()
+    return [this.managerFailureSnapshot, bridgeFailure]
+      .filter((entry): entry is StartupFailureDiagnostic => Boolean(entry))
+      .map(entry => ({ ...entry }))
   }
   @Remote('begin')
   begin(input?: LoginRequest): Promise<{ url: string }> { return this.manager.begin(input) }

@@ -34,6 +34,15 @@ export interface RuntimeLogPage {
 }
 
 export interface ConnectorLogEntry { id: number; time: string; text: string }
+/** Current startup failures, independent of Connector availability and log-file access.
+ * These are bounded fault snapshots, not central Logs records or historical cursors. */
+export interface StartupFailureDiagnostic {
+  time: string
+  source: 'plugin' | 'bridge'
+  event: string
+  message: string
+  details: string
+}
 export interface ConnectorLogQuery { before?: number; after?: number }
 export interface ConnectorLogPage {
   entries: ConnectorLogEntry[]

@@ -1,5 +1,5 @@
 import type { BridgeStatus } from '../../contracts/bridge-status.js'
-import { startupFailure } from './startup-status.js'
+import { startupFailure, startupFailureDiagnostic } from './startup-status.js'
 import { foldSessionTitle } from '@deepseek-ai/dsh-session-title'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
@@ -10,7 +10,7 @@ import { BridgeConnection } from './connection.js'
 import { NativeRuntime } from './native.js'
 import { RpcLogOutput } from './log-output.js'
 import { readBridgeLogs, readConnectorRuntimeLogs } from './log-reader.js'
-import type { ConnectorLogQuery, RuntimeLogPage, RuntimeLogQuery } from '../../contracts/logs.js'
+import type { ConnectorLogQuery, RuntimeLogPage, RuntimeLogQuery, StartupFailureDiagnostic } from '../../contracts/logs.js'
 import { RuntimeDiagnostics } from './diagnostics.js'
 
 declare module '@deepseek-ai/cordis' {
@@ -27,6 +27,10 @@ export class DshRuntimeService extends Service {
   private disposed = false
   private currentStatus: BridgeStatus = { state: 'starting', message: '正在启动本机连接…', hint: '', canRetry: false }
   status(): BridgeStatus { return { ...this.currentStatus } }
+  private startupFailureSnapshot: StartupFailureDiagnostic | null = null
+  startupDiagnostic(): StartupFailureDiagnostic | null {
+    return this.startupFailureSnapshot && { ...this.startupFailureSnapshot }
+  }
   private readonly diagnostics: RuntimeDiagnostics
   private readonly logOutput = new RpcLogOutput()
   readonly native: NativeRuntime
@@ -111,8 +115,10 @@ export class DshRuntimeService extends Service {
         await this.native.attachments.initialize()
         await this.server.start()
         this.currentStatus = { state: 'ready', message: '本机连接已就绪', hint: '', canRetry: false }
+        this.startupFailureSnapshot = null
       } catch (error) {
         this.currentStatus = startupFailure(error)
+        this.startupFailureSnapshot = startupFailureDiagnostic(error, 'bridge', 'bridge.restart_failed', this.currentStatus)
         this.diagnostics.log('error', 'bridge.restart_failed', { code: this.currentStatus.code }, error)
       }
       return this.status()

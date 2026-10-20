@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { tmpdir } from 'node:os'
@@ -10,6 +10,7 @@ import { acquireManagerLock, writeJson } from '../../src/host/storage/files.js'
 import { bridgePath, nativeRuntime } from '../fixtures/native-runtime.js'
 import type { OnboardingSnapshot } from '../../src/contracts/index.js'
 import type { BridgeStatus } from '../../src/contracts/bridge-status.js'
+import type { StartupFailureDiagnostic } from '../../src/contracts/logs.js'
 import { startupFailure } from '../../src/host/dsh-runtime/startup-status.js'
 
 /** A Connector Router on a private endpoint, as the Connector itself would start one. */
@@ -41,6 +42,9 @@ test('a busy local bridge keeps the management gateway available and can restart
     assert.equal(snapshot.bridge?.state, 'failed')
     assert.equal(snapshot.bridge?.code, 'BRIDGE_IN_USE')
     assert.match(snapshot.bridge!.hint, /退出其他/)
+    const startup = await invoke('readStartupDiagnostics') as StartupFailureDiagnostic[]
+    assert.ok(startup.some(entry => entry.source === 'plugin' && entry.event === 'onboarding.start_failed'))
+    assert.match(JSON.stringify(startup), /MANAGER_LOCK_HELD/)
     assert.equal((await invoke('restartBridge') as BridgeStatus).state, 'failed')
     await release()
     await releaseManager()
@@ -50,6 +54,7 @@ test('a busy local bridge keeps the management gateway available and can restart
     assert.equal(runtime.restart(), first, 'concurrent retries share one attempt')
     assert.equal((await first).state, 'ready')
     assert.equal((await invoke('inspect') as OnboardingSnapshot).bridge?.state, 'ready')
+    assert.deepEqual(await invoke('readStartupDiagnostics'), [], 'successful restart clears active startup failures')
     // A Connector publishes the MeshCall rendezvous; the restarted Bridge serves it.
     const local = await localRouter()
     router = local.router
@@ -71,6 +76,45 @@ test('a busy local bridge keeps the management gateway available and can restart
     await client?.close().catch(() => undefined)
     await router?.stop().catch(() => undefined)
     await releaseManager(); await release(); await fixture?.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('permission failures remain readable through the management RPC without Connector or writable log files', { timeout: 30_000 }, async t => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-startup-permission-'))
+  t.after(() => rm(home, { recursive: true, force: true }))
+  const fixture = await nativeRuntime(home)
+  for (let i = 0; i < 100 && !fixture.ctx.get('agentsAnywhereOnboarding'); i++) await delay(5)
+  const runtime = fixture.ctx.agentsAnywhereRuntime
+  await runtime.restart()
+  const initialize = runtime.native.attachments.initialize.bind(runtime.native.attachments)
+  try {
+    runtime.native.attachments.initialize = async () => {
+      throw Object.assign(new Error('PRIVATE_TOKEN PRIVATE_PROMPT', {
+        cause: Object.assign(new Error('PRIVATE_PATH'), { code: 'EPERM' }),
+      }), { code: 'EACCES' })
+    }
+    assert.equal((await runtime.restart()).code, 'EACCES')
+    const logs = join(home, 'account', 'logs')
+    await rm(logs, { recursive: true, force: true })
+    await writeFile(logs, 'not a log directory')
+    const invoke = (method: string) => fixture.ctx.typertGateway.invoke({ namespace: 'agentsAnywhereOnboarding', method, args: {} })
+    await assert.rejects(invoke('readConnectorLogs'))
+    const failures = await invoke('readStartupDiagnostics') as StartupFailureDiagnostic[]
+    assert.equal(failures.length, 1)
+    assert.equal(failures[0]!.source, 'bridge')
+    assert.equal(failures[0]!.event, 'bridge.restart_failed')
+    const details = JSON.parse(failures[0]!.details)
+    assert.equal(details.errorCode, 'EACCES')
+    assert.equal(details.cause.errorCode, 'EPERM')
+    assert.ok(details.stack.length > 0)
+    assert.doesNotMatch(JSON.stringify(failures), /PRIVATE_/)
+    assert.equal(runtime.hasLogConnection(), false)
+    runtime.native.attachments.initialize = initialize
+    assert.equal((await runtime.restart()).state, 'ready')
+    assert.deepEqual(await invoke('readStartupDiagnostics'), [])
+  } finally {
+    runtime.native.attachments.initialize = initialize
+    await fixture.ctx.fiber.dispose()
   }
 })
 

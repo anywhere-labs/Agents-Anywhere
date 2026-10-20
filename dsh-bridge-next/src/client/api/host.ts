@@ -15,6 +15,7 @@ export function createHostApi(rpc: HostRpc): OnboardingHostApi {
     readRuntimeLogs: query => call('readRuntimeLogs', query ? { query } : {}),
     readBridgeLogs: () => call('readBridgeLogs'),
     readConnectorLogs: query => call('readConnectorLogs', query ? { query } : {}),
+    readStartupDiagnostics: () => call('readStartupDiagnostics'),
     inspect: () => call('inspect'), openDesktop: () => call('openDesktop'), begin: input => call('begin', input ? { input } : {}),
     cancel: () => call('cancel'), logout: () => call('logout'),
     recoverDevice: action => call('recoverDevice', { action }),

@@ -168,6 +168,8 @@ Python 下载镜像独立于 PyPI 镜像，提供官方源与 npmmirror。首次
 
 日志页可以切换 Bridge 和 Connector。运行日志通过生成的 Logs 客户端从 Connector 读取，保留全局 seq，支持来源过滤和分页。Connector 不可用时，Connector 页仍可显示本地启动诊断（uv/Python stderr 与进程状态，`<stateRoot>/logs/connector-output.json`）；该日志仅用于启动排错，不复制已接收的运行日志。stdout 只用于 `anywhere-cli rpc` 启动时的一行就绪信息。
 
+“启动前诊断”还通过插件管理 RPC `readStartupDiagnostics()` 展示当前插件初始化和 Bridge 启动失败的故障快照（每个来源至多一条），保留错误码、调用栈位置和 cause 链，沿用运行诊断的脱敏规则。此快照不依赖 Connector 或日志目录可读写；即使终端输出读取失败，已捕获的权限错误仍可展开查看。成功重试后移除对应故障，插件重新加载后重新采集；历史排查仍使用现有安装引导和 Host 日志。快照与终端输出独立读取，均不冒充中央运行日志、不混用分页游标。
+
 受限权限请求通过 DSH 官方 `approval/request` 转成 AA 交互通知，显示工具名与申请原因，提供“允许一次”和“拒绝”。结果通过官方待处理请求返回 DSH，不修改会话权限模式或批准策略。原生客户端作答或请求取消后，远端通知同步关闭；重连恢复同一个待处理请求，重复提交不会重复批准。计划审批 `plan-review` 复用问答卡片，展示完整计划正文和 DSH 提供的选项，也可填写修改意见。批准选项按 DSH 声明的标签匹配，不按位置推断；原生客户端作答、取消和重连沿用同一待处理请求。
 
 本机 Router 由 Connector 进程拥有（Unix socket 或 Windows 命名管道）；插件只负责发现与连接。插件不写端点文件：Connector 在 `~/.agents-anywhere/dsh-bridge/connector.json` 发布 rendezvous（endpoint + `dsh-bridge` key），插件读取后注册 `aa.dsh.v2.Bridge`，`instanceId` 或 key 变化时切换到新的 Router。插件管理锁（`acquireManagerLock`）仍防止两个插件实例同时注册，避免 Connector 的调用被分到两个 DSH 进程。旧的 `<dshHome>/agents-anywhere/bridge/endpoint.json` 镜像与 1.0 的 `initialize` 握手已删除。

@@ -105,6 +105,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     ctx.provide('connection', { rpc: { call: async (channel: string, endpoint: string, payload: unknown) => {
         assert.equal(channel, '/api')
         calls.push({ endpoint, payload })
+        if (endpoint.endsWith('/readStartupDiagnostics')) return { ok: true, value: [] }
         if (endpoint.endsWith('/readBridgeLogs')) return failLogs ? { ok: false, error: { message: 'read failed' } } : {
           ok: true, value: { updatedAt: new Date().toISOString(), entries: [{ id: 'fixture-read-failure', outcome: 'failed', time: new Date().toISOString(),
             level: 'error', event: 'session.visibility_read.failed', details: '{"sessionId":"native-test","errorCode":"PERSISTENCE_ERROR"}' }] },

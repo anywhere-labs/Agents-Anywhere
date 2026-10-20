@@ -8,7 +8,7 @@ import React, { act } from 'react'
 import * as jsx from 'react/jsx-runtime'
 import { createRoot } from 'react-dom/client'
 import { createPortal } from 'react-dom'
-import type { RuntimeLogEntry, RuntimeLogQuery } from '../../src/contracts/logs.js'
+import type { RuntimeLogEntry, RuntimeLogQuery, StartupFailureDiagnostic } from '../../src/contracts/logs.js'
 
 test('published client shows unified interleaved runtime logs, source filters, cursor pagination, and explicit pre-startup diagnostics boundary', async () => {
   const dom = new JSDOM('<body><div id="root"></div></body>', { runScripts: 'outside-only', url: 'https://test.invalid' })
@@ -23,6 +23,8 @@ test('published client shows unified interleaved runtime logs, source filters, c
   let bridge = { state: 'failed', message: '本机连接被占用，无法启动。', hint: '请退出其他正在运行的 DSH，再点击“尝试重启”。', canRetry: true }
   let restarts = 0
   let logsAvailable = true
+  let terminalUnavailable = false
+  let startupFailures: StartupFailureDiagnostic[] = []
   let runtimeLogs: RuntimeLogEntry[] = [
     {
       seq: 1,
@@ -107,9 +109,11 @@ test('published client shows unified interleaved runtime logs, source filters, c
       }
     },
     readConnectorLogs: async (query: { before?: number; after?: number } = {}) => {
+      if (terminalUnavailable) throw new Error('EACCES')
       const candidates = terminal.filter(entry => (query.before === undefined || entry.id < query.before) && (query.after === undefined || entry.id > query.after))
       return { entries: query.after === undefined ? candidates.slice(-200) : candidates.slice(0, 200), hasMore: candidates.length > 200, oldestId: terminal[0]?.id ?? null, newestId: terminal.at(-1)?.id ?? null }
     },
+    readStartupDiagnostics: async () => startupFailures,
     readBridgeLogs: async () => ({ updatedAt: new Date().toISOString(), entries: [] }),
   }
   const root = createRoot(document.getElementById('root')!)
@@ -202,6 +206,30 @@ test('published client shows unified interleaved runtime logs, source filters, c
     assert.equal(terminalView.querySelectorAll('time').length, 451)
     assert.equal(terminalView.querySelector('script'), null)
     assert.match(terminalView.textContent!, /<script>plain log<\/script>/)
+
+    // Fault snapshots remain visible even when local output cannot be read and
+    // central Logs is unavailable; they never enter the terminal cursor space.
+    terminalUnavailable = true
+    startupFailures = [{ time: '2026-10-20T10:00:00Z', source: 'plugin', event: 'onboarding.start_failed',
+      message: '本机连接启动失败：访问权限不足。', details: '{"errorCode":"EACCES","stack":["at startup.ts:1:2"]}' },
+    { time: '2026-10-20T10:00:01Z', source: 'bridge', event: 'bridge.restart_failed',
+      message: '本机连接启动失败：访问权限不足。', details: '{"errorCode":"EPERM"}' }]
+    await click('刷新')
+    const startupView = document.querySelector('[aria-label="当前启动失败"]')!
+    assert.ok(startupView)
+    assert.match(startupView.textContent!, /onboarding.start_failed/)
+    assert.match(startupView.textContent!, /bridge.restart_failed/)
+    assert.match(startupView.textContent!, /EACCES/)
+    assert.match(startupView.textContent!, /EPERM/)
+    assert.match(document.body.textContent!, /Connector 日志读取失败/)
+    assert.equal(terminalView.querySelectorAll('time').length, 451)
+    await act(async () => { locale.setLocale('en') })
+    assert.ok(document.querySelector('[aria-label="Current startup failures"]'))
+    await act(async () => { locale.setLocale('zh') })
+    startupFailures = []
+    terminalUnavailable = false
+    await click('刷新')
+    assert.equal(document.querySelector('[aria-label="当前启动失败"]'), null)
 
     logsAvailable = true
     await click('Bridge')

@@ -1,5 +1,15 @@
 import type { BridgeStatus } from '../../contracts/bridge-status.js'
+import type { StartupFailureDiagnostic } from '../../contracts/logs.js'
+import { errorDetails } from './diagnostics.js'
 import { record } from './types.js'
+
+/** The raw exception must never cross the management gateway. Keep the same safe
+ * error context used by runtime diagnostics, even when the log directory is unwritable. */
+export function startupFailureDiagnostic(error: unknown, source: StartupFailureDiagnostic['source'],
+  event: string, status: BridgeStatus): StartupFailureDiagnostic {
+  return { time: new Date().toISOString(), source, event, message: status.message,
+    details: JSON.stringify({ code: status.code, ...errorDetails(error) }) }
+}
 
 /** Public guidance never includes raw exceptions, paths or endpoint credentials. */
 export function startupFailure(error: unknown): BridgeStatus {
