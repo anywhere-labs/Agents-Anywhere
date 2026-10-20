@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import datetime
 import os
+import re
 import tempfile
 import threading
 import tomllib
 from pathlib import Path
 
+from connector.logging import logger
 from connector.runtime_protocol import RuntimeInvalidRequestError
 from connector.runtimes.codex.sdk.model_gateway import (
     CODEX_MODEL_GATEWAY_PROVIDER_ID,
@@ -18,6 +20,7 @@ _WRITE_LOCK = threading.RLock()
 _MANAGED_MARKER = (
     "# Managed by Agents Anywhere; updated whenever the Codex runtime starts."
 )
+_MAX_CONFIG_BACKUPS = 5
 
 
 def persist_codex_model_gateway(
@@ -60,6 +63,7 @@ def persist_codex_model_gateway(
             if original_exists and original:
                 _backup_config(path, original)
             _atomic_write(path, updated)
+            _prune_config_backups(path)
         except RuntimeInvalidRequestError:
             raise
         except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
@@ -89,7 +93,11 @@ def _provider_table_ranges(contents: str) -> list[tuple[int, int]]:
         )
         if is_managed:
             if start is None:
-                start = index - 1 if _is_managed_marker(lines[index - 1]) else index
+                start = (
+                    index - 1
+                    if index > 0 and _is_managed_marker(lines[index - 1])
+                    else index
+                )
             end = index + 1
         elif start is not None:
             if path is not None:
@@ -224,6 +232,30 @@ def _backup_config(path: Path, contents: str) -> None:
         backup = path.with_name(f"{path.name}.backup.{stamp}.{suffix}")
         suffix += 1
     _atomic_write(backup, contents)
+
+
+def _prune_config_backups(path: Path) -> None:
+    pattern = re.compile(
+        rf"^{re.escape(path.name)}\.backup\."
+        r"(\d{8}T\d{12}Z)(?:\.(\d+))?$"
+    )
+    backups: list[tuple[tuple[str, int], Path]] = []
+    for candidate in path.parent.glob(f"{path.name}.backup.*"):
+        match = pattern.fullmatch(candidate.name)
+        if match is None or not candidate.is_file():
+            continue
+        sort_key = (match.group(1), int(match.group(2) or 0))
+        backups.append((sort_key, candidate))
+    backups.sort(reverse=True)
+    for _, backup in backups[_MAX_CONFIG_BACKUPS:]:
+        try:
+            backup.unlink()
+        except OSError as exc:
+            logger.warning(
+                "failed to prune Codex config backup path={} error={}",
+                backup,
+                exc,
+            )
 
 
 def _atomic_write(path: Path, contents: str, mode: int = 0o600) -> None:

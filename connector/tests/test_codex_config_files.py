@@ -108,6 +108,56 @@ def test_persist_is_idempotent_after_first_write(tmp_path: Path) -> None:
     assert len(list(tmp_path.glob("config.toml.backup.*"))) == first_backups
 
 
+def test_persist_handles_managed_table_at_start_of_file(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[model_providers.agents_anywhere_gateway]\n"
+        'name = "Agents Anywhere Model Gateway"\n'
+        'base_url = "https://old.example/v1"\n'
+        "\n"
+        "# Managed by Agents Anywhere; updated whenever the Codex runtime starts.\n",
+        encoding="utf-8",
+    )
+
+    persist_codex_model_gateway(
+        str(tmp_path),
+        ModelGateway(
+            base_url="https://new.example/v1",
+            api_key="new-secret",
+        ),
+    )
+
+    contents = config_path.read_text(encoding="utf-8")
+    assert tomllib.loads(contents)["model_providers"][
+        "agents_anywhere_gateway"
+    ]["base_url"] == "https://new.example/v1"
+    assert contents.count("[model_providers.agents_anywhere_gateway]") == 1
+
+
+def test_persist_keeps_only_the_five_newest_backups(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[features]\n", encoding="utf-8")
+
+    for index in range(7):
+        persist_codex_model_gateway(
+            str(tmp_path),
+            ModelGateway(
+                base_url=f"https://gateway-{index}.example/v1",
+                api_key=f"gateway-secret-{index}",
+            ),
+        )
+
+    backups = sorted(
+        tmp_path.glob("config.toml.backup.*"),
+        key=lambda path: path.name,
+    )
+    assert len(backups) == 5
+    assert all(stat.S_IMODE(backup.stat().st_mode) == 0o600 for backup in backups)
+    assert "gateway-secret-0" not in "\n".join(
+        backup.read_text(encoding="utf-8") for backup in backups
+    )
+
+
 def test_persist_none_removes_only_the_managed_provider(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(
