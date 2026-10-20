@@ -113,8 +113,18 @@ def turn_start_request(
 ) -> dict[str, Any]:
     """Mirror the owner's current settings into a ``turn/start`` request."""
 
+    # latestThreadSettings carries a permission change a follower just applied;
+    # currentPermissions lags until the next turn runs, and the turn would run
+    # with (and reinstate) the old permissions, so it only fills missing keys.
+    settings = state.get("latestThreadSettings")
+    settings = settings if isinstance(settings, Mapping) else {}
     permissions = state.get("currentPermissions")
     permissions = permissions if isinstance(permissions, Mapping) else {}
+
+    def permission(key: str) -> Any:
+        value = settings.get(key)
+        return permissions.get(key) if value is None else value
+
     collaboration = state.get("latestCollaborationMode")
     return {
         "threadId": thread_id,
@@ -128,9 +138,9 @@ def turn_start_request(
         "multiAgentMode": "explicitRequestOnly",
         "serviceTier": None,
         "collaborationMode": collaboration if isinstance(collaboration, Mapping) else None,
-        "approvalPolicy": permissions.get("approvalPolicy"),
-        "approvalsReviewer": permissions.get("approvalsReviewer"),
-        "sandboxPolicy": permissions.get("sandboxPolicy"),
+        "approvalPolicy": permission("approvalPolicy"),
+        "approvalsReviewer": permission("approvalsReviewer"),
+        "sandboxPolicy": permission("sandboxPolicy"),
         "permissions": None,
         "runtimeWorkspaceRoots": None,
         "summary": "none",
