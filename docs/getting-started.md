@@ -4,7 +4,7 @@
 
 ## 开始之前
 
-准备一台用于运行 Agent 的工作设备，并配置所用 Agent 的运行环境和账号。当前支持 Codex、Claude Code 和 DeepSeek Harness（DSH）。远程操作时，工作设备需要保持开机、联网。
+准备一台用于运行 Agent 的工作设备，并配置所用 Agent 的运行环境和账号。当前支持 Codex、Claude Code、DeepSeek Harness（DSH）和 OpenCode。远程操作时，工作设备需要保持开机、联网。
 
 桌面客户端（Desktop）包含 Connector，用于将本机连接到服务。Linux 和无图形界面的服务器可单独运行 Connector，通过其他客户端操作。Runtime 是运行或连接具体 Agent 的组件，其状态和支持的能力决定哪些操作可用。
 
