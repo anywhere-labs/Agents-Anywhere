@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
+from connector.process_env import child_environment
 from connector.runtime_protocol import RuntimeInvalidRequestError
 from connector.runtimes.custom_models import custom_models_schema
 from connector.runtimes.model_gateway import model_gateway_schema
@@ -96,7 +96,7 @@ def merge_environment(raw: Any) -> dict[str, str]:
     else:
         raise RuntimeInvalidRequestError("environment must be an object")
 
-    environment = dict(os.environ)
+    environment = child_environment()
     for key, value in overrides.items():
         if not isinstance(key, str) or not key or "=" in key or "\x00" in key:
             raise RuntimeInvalidRequestError(

@@ -12,6 +12,7 @@ from typing import Literal
 
 from connector.launch import launch_target
 from connector.logging import logger
+from connector.process_env import child_environment
 
 CodexRuntimeBinaryMode = Literal["prefer_system", "sdk_bundled"]
 CodexRuntimeBinarySource = Literal["configured", "system", "sdk_bundled"]
@@ -103,7 +104,7 @@ def codex_runtime_environment(
     *,
     codex_home: str | None = None,
 ) -> tuple[dict[str, str], LoginShellPathResult]:
-    env = dict(os.environ)
+    env = child_environment()
     shell_path = read_login_shell_path()
     if shell_path.path is not None:
         env["PATH"] = shell_path.path

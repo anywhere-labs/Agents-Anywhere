@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from connector.paths import connector_data_dir
+from connector.process_env import connector_env
 
 
 @dataclass(slots=True)
@@ -22,7 +22,7 @@ class ConnectorConfig:
 
     @classmethod
     def default_path(cls) -> Path:
-        configured = os.environ.get("AGENT_CONNECTOR_CONFIG")
+        configured = connector_env("AGENT_CONNECTOR_CONFIG")
         return (
             Path(configured).expanduser()
             if configured
@@ -38,22 +38,22 @@ class ConnectorConfig:
                 "AGENT_CONNECTOR_ID",
                 "AGENT_CONNECTOR_TOKEN",
             )
-            if not os.environ.get(name)
+            if not connector_env(name)
         ]
         if missing:
             raise RuntimeError(f"missing required environment variables: {', '.join(missing)}")
         return cls(
-            server_url=os.environ["AGENT_SERVER_URL"].rstrip("/"),
-            connector_id=os.environ["AGENT_CONNECTOR_ID"],
-            connector_token=os.environ["AGENT_CONNECTOR_TOKEN"],
-            heartbeat_seconds=float(os.environ.get("AGENT_CONNECTOR_HEARTBEAT_SECONDS", "20")),
-            reconnect_seconds=float(os.environ.get("AGENT_CONNECTOR_RECONNECT_SECONDS", "3")),
+            server_url=str(connector_env("AGENT_SERVER_URL")).rstrip("/"),
+            connector_id=str(connector_env("AGENT_CONNECTOR_ID")),
+            connector_token=str(connector_env("AGENT_CONNECTOR_TOKEN")),
+            heartbeat_seconds=float(connector_env("AGENT_CONNECTOR_HEARTBEAT_SECONDS") or "20"),
+            reconnect_seconds=float(connector_env("AGENT_CONNECTOR_RECONNECT_SECONDS") or "3"),
             sync_existing_on_connect=_bool_env(
                 "AGENT_CONNECTOR_SYNC_EXISTING",
                 True,
             ),
-            sync_interval_seconds=float(os.environ.get("AGENT_CONNECTOR_SYNC_INTERVAL_SECONDS", "30")),
-            state_path=os.environ.get("AGENT_CONNECTOR_STATE_FILE"),
+            sync_interval_seconds=float(connector_env("AGENT_CONNECTOR_SYNC_INTERVAL_SECONDS") or "30"),
+            state_path=connector_env("AGENT_CONNECTOR_STATE_FILE"),
         )
 
     @classmethod
@@ -105,7 +105,7 @@ class ConnectorConfig:
 
 
 def _bool_env(name: str, default: bool) -> bool:
-    value = os.environ.get(name)
+    value = connector_env(name)
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}

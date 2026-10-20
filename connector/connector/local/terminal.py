@@ -18,6 +18,7 @@ from connector.local.common import (
     workspace_root,
 )
 from connector.local.terminal_records import append_scrollback, terminal_view
+from connector.process_env import child_environment, connector_env
 
 TerminalOutput = Callable[[str, dict[str, Any]], Awaitable[None]]
 TERMINAL_SCROLLBACK_MAX_BYTES = 512 * 1024
@@ -113,7 +114,7 @@ class TerminalBackend:
         shell_cmd = self._default_shell(params.get("shell"))
         argv = [command, *args] if isinstance(command, str) and command.strip() else self._default_argv(shell_cmd)
         env_override = params.get("env") or {}
-        env = {**os.environ}
+        env = child_environment()
         env.setdefault("TERM", "xterm-256color")
         env.setdefault("COLORTERM", "truecolor")
         for k, v in env_override.items():
@@ -558,7 +559,7 @@ class TerminalBackend:
 def _env_float(name: str, default: float, override: float | None) -> float:
     if override is not None:
         return max(0.0, float(override))
-    raw = os.environ.get(name)
+    raw = connector_env(name)
     if raw is None:
         return float(default)
     try:

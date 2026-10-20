@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from connector.process_env import child_environment
 from connector.runtime_protocol import RuntimeInvalidRequestError
 from connector.runtime_protocol.filesystem import canonical_path
 from connector.runtimes.codex.sdk.binary import CodexRuntimeBinaryMode
@@ -180,7 +181,7 @@ def merge_environment(raw: Any) -> dict[str, str]:
     else:
         raise RuntimeInvalidRequestError("environment must be an object")
 
-    environment = dict(os.environ)
+    environment = child_environment()
     for key, value in overrides.items():
         if not isinstance(key, str) or not key or "=" in key or "\x00" in key:
             raise RuntimeInvalidRequestError(

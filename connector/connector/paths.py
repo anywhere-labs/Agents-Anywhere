@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
+
+from connector.process_env import connector_env
 
 DATA_DIR_ENV = "AGENT_CONNECTOR_DATA_DIR"
 DATA_DIR_NAME = ".agents-anywhere"
@@ -14,7 +15,7 @@ LEGACY_SQLITE_NAMES = {
 
 
 def connector_data_dir() -> Path:
-    configured = os.environ.get(DATA_DIR_ENV)
+    configured = connector_env(DATA_DIR_ENV)
     if configured:
         return Path(configured).expanduser().resolve(strict=False)
     home = Path.home()

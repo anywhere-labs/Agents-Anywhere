@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from connector.paths import connector_data_dir
+from connector.process_env import connector_env
 
 JSON_KV_FILE_VERSION = 1
 
@@ -28,7 +29,7 @@ class JsonKeyValueStore:
 
     @classmethod
     def default_path(cls) -> Path:
-        configured = os.environ.get("AGENT_CONNECTOR_KV_FILE")
+        configured = connector_env("AGENT_CONNECTOR_KV_FILE")
         if configured:
             return Path(configured).expanduser().resolve(strict=False)
         return connector_data_dir() / "connector-kv.json"

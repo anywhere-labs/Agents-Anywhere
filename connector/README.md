@@ -202,6 +202,9 @@ The server can ask an online connector to perform local work:
 | `AGENT_CONNECTOR_KV_FILE` | Legacy KV copy source. Defaults to `~/.agents-anywhere/connector-kv.json`; new runtime writes use the instance's `kv.json`. |
 | `AGENT_CONNECTOR_ATTACHMENTS_ROOT` | Runtime attachment download directory. Defaults to `~/.agents-anywhere/attachments`. |
 | `CLAUDE_BIN` | Explicit Claude Code CLI path. |
+| `AA_CONNECTOR_INJECTED_ENV` | Set by Desktop and the DSH plugin: a JSON object mapping each toolchain variable they set for the Connector (`UV_*`, `PIP_INDEX_URL`, `PYTHON*`, `FORCE_COLOR`) to its previous value, or `null` when it was unset. |
+
+Terminals and Runtimes do not inherit the Connector's own launch environment. On startup the Connector reads its settings above, then restores the variables named in `AA_CONNECTOR_INJECTED_ENV`, removes `VIRTUAL_ENV`, `UV` and `UV_RUN_RECURSION_DEPTH` added by `uv run`, drops the Connector venv's scripts directory from `PATH`, and removes `AGENT_CONNECTOR_*`, `AA_CONNECTOR_*` and `AGENT_SERVER_URL`. `uv sync`, `python` and `pip` in a terminal or Agent therefore use the user's environment, not the Connector venv.
 
 ## Verify
 

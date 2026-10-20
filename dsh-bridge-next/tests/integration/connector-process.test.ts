@@ -172,6 +172,8 @@ async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CO
     assert.equal(options.env?.UV_INDEX_URL, expectedIndex)
     assert.equal(options.env?.PIP_INDEX_URL, expectedIndex)
     assert.equal(options.env?.UV_HTTP_TIMEOUT, process.env['UV_HTTP_TIMEOUT'] || '60')
+    // Connector 启动终端和 Runtime 时用这里记录的原值，不把自己的 venv 传下去。
+    assert.equal(JSON.parse(options.env?.['AA_CONNECTOR_INJECTED_ENV'] ?? '{}').UV_PROJECT_ENVIRONMENT, process.env['UV_PROJECT_ENVIRONMENT'] ?? null)
     child = spawn(command, [script, mode, JSON.stringify(endpoint.rendezvous), key], options)
     child.once('spawn', didSpawn)
     onLaunch?.()

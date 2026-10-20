@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,6 +22,7 @@ from connector.core.runtime_owner import (
     runtime_path,
 )
 from connector.logging import logger
+from connector.process_env import connector_env
 from connector.server.auth import ConnectorAuthenticationError
 from connector.server.client import BackendRpcClient
 from connector.server.pairing import (
@@ -56,7 +56,7 @@ class ConnectorController:
         self.notifier = notifier
         self.client_factory = client_factory
         self.runtime_path = runtime_path(self.config_path)
-        self.lease = RuntimeLease(self.runtime_path, kind=os.environ.get("AA_CONNECTOR_OWNER_KIND", "cli"),
+        self.lease = RuntimeLease(self.runtime_path, kind=connector_env("AA_CONNECTOR_OWNER_KIND", "cli"),
                                   legacy_paths=[self.config_path.with_name("connector-runtime.json")])
         self._runtime_task: asyncio.Task[None] | None = None
         self._pairing_task: asyncio.Task[None] | None = None

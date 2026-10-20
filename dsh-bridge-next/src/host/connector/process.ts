@@ -39,6 +39,12 @@ const CONTROL_CONNECT_TIMEOUT_MS = 10_000
 const FIRST_REQUEST_TIMEOUT = 3_600_000
 /** Bounds a transfer that stopped producing bytes, which uv can see and this process cannot. */
 const UV_READ_TIMEOUT_SECONDS = '60'
+// Connector 自身 uv / Python 的设置。Connector 启动终端和 Runtime 时会把它们恢复成注入前的值，
+// 免得在那里执行 `uv sync` 时作用到 Connector 的 venv。
+const CONNECTOR_TOOLCHAIN_ENV = [
+  'UV_PROJECT_ENVIRONMENT', 'PYTHONDONTWRITEBYTECODE', 'PYTHONUNBUFFERED', 'UV_HTTP_TIMEOUT',
+  'UV_PYTHON_INSTALL_MIRROR', 'UV_DEFAULT_INDEX', 'UV_INDEX_URL', 'PIP_INDEX_URL',
+] as const
 /** Reclaiming the cache is housekeeping, so it may not outlast the failure that asked for it. */
 const CACHE_PRUNE_TIMEOUT = 60_000
 type ConnectorLauncher = (command: string, args: string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams
@@ -103,6 +109,15 @@ function connectorFailure(error: unknown): unknown {
   return error instanceof MeshCallError && error.code === 'connector_already_running'
     ? new ConnectorOwnershipError()
     : error
+}
+
+/** 在继承的环境上叠加 Connector 设置，并告诉 Connector 哪些工具链变量是插件注入的、原值是什么。 */
+export function connectorEnvironment(overrides: NodeJS.ProcessEnv, inherited: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = { ...inherited, ...overrides }
+  environment['AA_CONNECTOR_INJECTED_ENV'] = JSON.stringify(Object.fromEntries(CONNECTOR_TOOLCHAIN_ENV
+    .filter(name => environment[name] !== inherited[name])
+    .map(name => [name, inherited[name] ?? null])))
+  return environment
 }
 
 /** Owns only the child it spawns; DSH Agent operations are served by the plugin runtime. */
@@ -256,8 +271,7 @@ export class SourceConnector implements ConnectorProcess {
       cwd: projectDir,
       windowsHide: true,
       detached: process.platform !== 'win32',
-      env: {
-        ...process.env,
+      env: connectorEnvironment({
         AA_CONNECTOR_OWNER_KIND: 'dsh-plugin',
         ...(this.config.dshHome ? { DSH_HOME: this.config.dshHome } : {}),
         AGENT_CONNECTOR_DATA_DIR: dataDir,
@@ -269,7 +283,7 @@ export class SourceConnector implements ConnectorProcess {
         UV_DEFAULT_INDEX: pypiIndexUrl,
         UV_INDEX_URL: pypiIndexUrl,
         PIP_INDEX_URL: pypiIndexUrl,
-      },
+      }),
     })
     this.child = child
     child.stdout.setEncoding('utf8')
