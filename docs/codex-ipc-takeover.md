@@ -372,7 +372,7 @@ CodexRuntime
 #### 配置开关、kill-chatgpt 与扫描策略（2026-10-11）
 
 - **配置开关**：Codex Runtime 配置新增 `ipcEnabled`（默认开）与 `ipcDeeplinkHandoff`（默认开，仅 IPC 开启时生效），schema revision 升到 8，i18n key 为 `dashboard.device.runtimeConfigFields.ipcEnabled.*` / `ipcDeeplinkHandoff.*`（Web / Desktop / iOS 已加文案，Android 读 schema 的 `title`）。`ipcEnabled=false` 时 Runtime 不连 IPC 路由、不跟随任何窗口、也不作为 owner 应答，所有线程走自家 app-server。
-- **`/kill-chatgpt` 命令**（别名 `kill-codex-app`、`quit-chatgpt`）：找到桌面 App 主进程（macOS 为 `ChatGPT.app/Contents/MacOS/ChatGPT` 或 `Codex.app/Contents/MacOS/Codex`），先 SIGTERM，5 s 后仍存活则 SIGKILL；App 退出后它持有的所有写锁随之释放，当前线程若正被跟随会立即 unfollow，下一条消息直接走自家 app-server。这个命令不依赖 IPC 开关，目的是在 IPC 关闭或 App 不可达时也能把线程"抢"回来。实现见 `ipc/desktop_app.py`，结果里带 `terminated` / `killed` / `survivors` 三组 pid。
+- **`/kill-chatgpt` 命令**（别名 `kill-codex-app`、`quit-chatgpt`）：找到桌面 App 主进程（macOS 为 `ChatGPT.app/Contents/MacOS/ChatGPT` 或 `Codex.app/Contents/MacOS/Codex`），先 SIGTERM，5 s 后仍存活则 SIGKILL（Windows 上按进程树 terminate / kill，见下文「Windows 适配与真机修复」）；App 退出后它持有的所有写锁随之释放，当前线程若正被跟随会立即 unfollow，下一条消息直接走自家 app-server。这个命令不依赖 IPC 开关，目的是在 IPC 关闭或 App 不可达时也能把线程"抢"回来。实现见 `ipc/desktop_app.py`，结果里带 `terminated` / `killed` / `survivors` 三组 pid。
 - **写锁判定改用 flock**：Codex 的 `thread-writer-locks/<id>.lock` 文件在持有者退出后并不会删除，所以"文件存在"不等于"被持有"。`CodexIpcService.thread_is_held` 现在对文件做一次非阻塞 `flock(LOCK_EX|LOCK_NB)`：拿不到就是真的被持有，拿到了立即释放并视为空闲。这样 kill 掉 App 后不会再为残留的锁文件白做 3 s 探测。
 - **不再定期扫描**：`CodexIpcService` 默认 `scan_interval=None`，只在启动（IPC 连上）时扫描一次写锁目录与最近会话；之后只由事件触发重探：窗口广播 `thread-stream-following-changed`、新客户端 `client-status-changed: connected`、announce 重试（3 s × 3），以及写前 `_ipc_attach_for_write` 的按需探测。需要周期扫描时可显式传 `scan_interval`。
 
@@ -385,7 +385,8 @@ Windows 适配：
 - 路由是命名管道 `\\.\pipe\codex-ipc`。`pathlib` 会把它改写成 `\pipe\codex-ipc`，所以连接时直接用字符串常量 `WINDOWS_PIPE_PATH`，不经过 `Path`。
 - Windows 上 Connector **不当 router**：`IpcRouter` 只有 Unix socket 实现，命名管道服务端还没写、也没验证，所以等 App 或 VS Code 来当 router。选举本身是可行的：libuv 和 CPython asyncio 创建第一个管道实例时都带 `FILE_FLAG_FIRST_PIPE_INSTANCE`，第二个监听者会像 socket 的 `EADDRINUSE` 一样失败，不会出现两个 router。另外 Windows 上能不能启用 IPC 取决于事件循环而不是平台：`create_pipe_connection` 只有 `ProactorEventLoop` 才有（Windows 默认），`CodexIpcClient.start()` 据此判断，不满足就记日志并禁用。
 - 没有 uid 和 IPC 目录，`ensure_ipc_directory` 在 win32 直接返回（原实现调用 `os.getuid()` 会抛错）。
-- App 进程识别：主进程是 `...\WindowsApps\OpenAI.Codex_<version>_x64__<publisher>\app\ChatGPT.exe`，按包名 `OpenAI.Codex_` 匹配，不会误认同名的 ChatGPT 桌面版；Windows 没有 `ps`，改用 psutil。
+- App 进程识别：主进程是 `...\WindowsApps\OpenAI.Codex_<version>_x64__<publisher>\app\ChatGPT.exe`，按包名 `OpenAI.Codex_` 匹配，不会误认同名的 ChatGPT 桌面版；Windows 没有 `ps`，改用 psutil。先按进程名 `ChatGPT.exe` 过滤，再对命中的进程取 `exe` / `ppid`：psutil 在 Windows 上每取一次 `ppid` 都要对全部进程拍一次快照，对所有进程都取会很慢（约 750 个进程时首次 34.84 s，改后 0.36 s）。探测套 `PROBE_TIMEOUT`，超时按「未知」（`None`）返回。
+- `/kill-chatgpt` 在 Windows 上按进程树退出：Windows 没有 SIGTERM / SIGKILL，`terminate()` 和 `kill()` 都是 `TerminateProcess`，不会连带子进程；而持有线程写锁的 app-server（`codex.exe ... app-server`）是 App 主进程的子进程，下面还挂着 MCP 进程，所以要把整棵树一起停掉。POSIX 那套 `os.kill(pid, 0)` / `os.waitpid(..., WNOHANG)` 探活在 Windows 上不可用：已退出的 pid 抛 `OSError [WinError 87]` 而不是 `ProcessLookupError`，`os.WNOHANG` 和 `signal.SIGKILL` 也不存在。
 - 写锁判定用 `msvcrt.locking` 非阻塞字节锁代替 `flock`。实测 Windows 上 Codex 释放写锁时会删除锁文件。
 
 真机验收中发现并修复的问题：

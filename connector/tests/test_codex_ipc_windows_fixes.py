@@ -6,8 +6,12 @@ These run on every platform; the socket-based IPC suites are skipped on win32.
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import sys
+import time
 from typing import Any
 
+import pytest
 from test_codex_runtime import FakeCodexClient, FakeHost, _config
 
 from connector.runtime_protocol import RuntimeSessionStateCache
@@ -502,4 +506,170 @@ def test_windows_client_is_disabled_on_a_loop_without_pipe_support(tmp_path, mon
         assert client._task is None
         await client.stop()
 
-    asyncio.run(run())
+    # Windows defaults to the proactor loop, which does have it; pin the
+    # selector loop so the scenario is the same on every platform.
+    asyncio.run(run(), loop_factory=asyncio.SelectorEventLoop)
+
+
+# -- Windows: finding and stopping the Codex App -----------------------------------
+
+
+class _FakePsutil:
+    """Just enough of psutil for desktop_app's Windows helpers."""
+
+    class Error(Exception):
+        pass
+
+    class NoSuchProcess(Error):
+        pass
+
+    class AccessDenied(Error):
+        pass
+
+    def __init__(self) -> None:
+        self.table: dict[int, dict[str, Any]] = {}
+        self.exe_calls: list[int] = []
+        self.terminated: list[int] = []
+        self.killed: list[int] = []
+        # pids that ignore terminate() and only die on kill()
+        self.stubborn: set[int] = set()
+
+    def add(self, pid: int, name: str, exe: str, ppid: int) -> None:
+        self.table[pid] = {"name": name, "exe": exe, "ppid": ppid}
+
+    def process_iter(self, attrs: list[str]) -> list[Any]:
+        assert attrs == ["name"], "only the name may be read for every process"
+        return [self.Process(pid, info={"name": row["name"]}) for pid, row in self.table.items()]
+
+    def wait_procs(self, procs: list[Any], timeout: float) -> tuple[list[Any], list[Any]]:
+        alive = [proc for proc in procs if proc.pid in self.table]
+        return [proc for proc in procs if proc not in alive], alive
+
+    def pid_exists(self, pid: int) -> bool:
+        return pid in self.table
+
+    def Process(self, pid: int, info: dict[str, Any] | None = None) -> Any:
+        fake = self
+
+        class _Proc:
+            def __init__(self) -> None:
+                if pid not in fake.table:
+                    raise fake.NoSuchProcess(pid)
+                self.pid = pid
+                self.info = info or {}
+
+            def exe(self) -> str:
+                fake.exe_calls.append(pid)
+                return fake.table[pid]["exe"]
+
+            def ppid(self) -> int:
+                return fake.table[pid]["ppid"]
+
+            def children(self, recursive: bool = False) -> list[Any]:
+                found: list[Any] = []
+                frontier = [pid]
+                while frontier:
+                    parent = frontier.pop()
+                    for child, row in list(fake.table.items()):
+                        if row["ppid"] == parent:
+                            found.append(fake.Process(child))
+                            frontier.append(child)
+                return found
+
+            def terminate(self) -> None:
+                fake.terminated.append(pid)
+                if pid not in fake.stubborn:
+                    fake.table.pop(pid, None)
+
+            def kill(self) -> None:
+                fake.killed.append(pid)
+                fake.table.pop(pid, None)
+
+        return _Proc()
+
+
+CODEX_EXE = r"C:\Program Files\WindowsApps\OpenAI.Codex_26.1007.9446.0_x64__x\app\ChatGPT.exe"
+
+
+def _codex_tree(fake: _FakePsutil) -> None:
+    fake.add(100, "ChatGPT.exe", CODEX_EXE, 4)  # main
+    fake.add(101, "ChatGPT.exe", CODEX_EXE, 100)  # renderer
+    fake.add(102, "codex.exe", r"C:\Users\u\AppData\Local\OpenAI\Codex\bin\codex.exe", 100)  # app-server
+    fake.add(103, "node.exe", r"C:\node.exe", 102)  # MCP server under the app-server
+    fake.add(200, "ChatGPT.exe", r"C:\Program Files\ChatGPT\ChatGPT.exe", 4)  # not the Codex package
+    fake.add(300, "explorer.exe", r"C:\Windows\explorer.exe", 4)
+
+
+def test_windows_app_pids_read_exe_only_for_chatgpt_processes(monkeypatch) -> None:
+    from connector.runtimes.codex.ipc import desktop_app
+
+    fake = _FakePsutil()
+    _codex_tree(fake)
+    monkeypatch.setitem(sys.modules, "psutil", fake)
+
+    assert desktop_app._windows_codex_app_pids() == (100,)
+    # Reading exe/ppid of every process is what made the probe take ~30 s.
+    assert sorted(fake.exe_calls) == [100, 101, 200]
+
+
+def test_windows_app_probe_times_out_as_unknown(monkeypatch) -> None:
+    from connector.runtimes.codex.ipc import desktop_app
+
+    monkeypatch.setattr(desktop_app.sys, "platform", "win32")
+    monkeypatch.setattr(desktop_app, "_windows_codex_app_pids", lambda: time.sleep(0.3) or (1,))
+
+    assert asyncio.run(desktop_app.desktop_app_pids(timeout=0.05)) is None
+
+
+def test_windows_quit_stops_the_app_server_with_the_main_process(monkeypatch) -> None:
+    from connector.runtimes.codex.ipc import desktop_app
+
+    fake = _FakePsutil()
+    _codex_tree(fake)
+    fake.stubborn.add(100)
+    monkeypatch.setitem(sys.modules, "psutil", fake)
+
+    terminated, killed, survivors = desktop_app._quit_windows((100,), 0.01)
+
+    assert (terminated, killed, survivors) == ((), (100,), ())
+    assert sorted(fake.terminated) == [100, 101, 102, 103]
+    assert fake.killed == [100]
+    assert sorted(fake.table) == [200, 300]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="real process tree, Windows only")
+def test_windows_quit_desktop_app_on_a_real_process_tree(monkeypatch) -> None:
+    import psutil
+
+    from connector.runtimes.codex.ipc import desktop_app
+
+    parent = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import subprocess, sys, time;"
+                "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']);"
+                "time.sleep(60)"
+            ),
+        ]
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not psutil.Process(parent.pid).children(recursive=True) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        children = [child.pid for child in psutil.Process(parent.pid).children(recursive=True)]
+        assert children
+
+        async def pids(*, timeout: float) -> tuple[int, ...]:
+            return (parent.pid,)
+
+        monkeypatch.setattr(desktop_app, "desktop_app_pids", pids)
+        result = asyncio.run(desktop_app.quit_desktop_app(grace_period=3.0))
+
+        assert result.ok
+        assert result.terminated == (parent.pid,)
+        assert [pid for pid in children if psutil.pid_exists(pid)] == []
+    finally:
+        if parent.poll() is None:
+            parent.kill()

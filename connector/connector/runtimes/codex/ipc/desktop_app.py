@@ -4,7 +4,8 @@ On macOS the Codex desktop app ships inside ChatGPT.app; a standalone
 Codex.app exists as well. The main process is what owns the IPC windows and the
 app-server that holds thread writer locks, so stopping it releases every thread
 the app had loaded. Helper processes (renderers, node sidecars) are children of
-the main process and go away with it.
+the main process and go away with it on macOS and Linux; on Windows they do
+not, so the whole process tree is stopped there.
 """
 
 from __future__ import annotations
@@ -92,7 +93,11 @@ async def desktop_app_pids(*, timeout: float = PROBE_TIMEOUT) -> tuple[int, ...]
     """Return the main-process pids of running desktop apps; None when unknown."""
 
     if sys.platform == "win32":
-        return await asyncio.to_thread(_windows_codex_app_pids)
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(_windows_codex_app_pids), timeout)
+        except TimeoutError:
+            logger.warning("codex desktop app probe timed out after {}s", timeout)
+            return None
     markers = DESKTOP_PROCESS_MARKERS.get(sys.platform)
     if not markers:
         return None
@@ -110,24 +115,81 @@ async def desktop_app_running(*, timeout: float = PROBE_TIMEOUT) -> bool | None:
 
 
 def _windows_codex_app_pids() -> tuple[int, ...]:
-    """Main ChatGPT.exe processes of the Codex package (OpenAI.Codex_* in WindowsApps)."""
+    """Main ChatGPT.exe processes of the Codex package (OpenAI.Codex_* in WindowsApps).
+
+    Filter by name before asking for anything else: psutil reads ``ppid`` on
+    Windows from a snapshot of every process, taken again per call, so asking
+    for the ppid of all ~700 processes takes tens of seconds.
+    """
 
     import psutil
 
-    pids: list[int] = []
-    for process in psutil.process_iter(["pid", "name", "exe", "ppid"]):
-        exe = process.info.get("exe") or ""
-        if r"\windowsapps\openai.codex_" not in exe.lower():
-            continue
+    candidates: list[tuple[int, int]] = []
+    for process in psutil.process_iter(["name"]):
         if (process.info.get("name") or "").lower() != "chatgpt.exe":
             continue
         try:
-            parent = psutil.Process(process.info["ppid"]).name().lower()
-        except (psutil.Error, KeyError):
-            parent = ""
-        if parent != "chatgpt.exe":
-            pids.append(process.info["pid"])
-    return tuple(pids)
+            exe = process.exe()
+            ppid = process.ppid()
+        except psutil.Error:
+            continue
+        if r"\windowsapps\openai.codex_" in exe.lower():
+            candidates.append((process.pid, ppid))
+    ours = {pid for pid, _ in candidates}
+    return tuple(pid for pid, ppid in candidates if ppid not in ours)
+
+
+def _quit_windows(
+    pids: Sequence[int], grace_period: float
+) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
+    """Stop each main process together with its process tree.
+
+    Windows has no SIGTERM/SIGKILL; terminate() and kill() are both
+    TerminateProcess, which does not take children with it. The app-server
+    (``codex.exe app-server``) that holds the thread writer locks is a child of
+    the main ChatGPT.exe, so the whole tree has to go.
+    """
+
+    import psutil
+
+    mains = set(pids)
+    processes: list[psutil.Process] = []
+    for pid in pids:
+        try:
+            main = psutil.Process(pid)
+            processes.extend([main, *main.children(recursive=True)])
+        except psutil.NoSuchProcess:
+            continue
+    terminated: list[int] = []
+    for process in processes:
+        try:
+            process.terminate()
+        except psutil.NoSuchProcess:
+            continue
+        except psutil.AccessDenied as exc:
+            logger.warning("codex desktop app terminate denied pid={} error={}", process.pid, exc)
+            continue
+        if process.pid in mains:
+            terminated.append(process.pid)
+    _, alive = psutil.wait_procs(processes, timeout=grace_period)
+    killed: list[int] = []
+    for process in alive:
+        try:
+            process.kill()
+        except psutil.NoSuchProcess:
+            continue
+        except psutil.AccessDenied as exc:
+            logger.warning("codex desktop app kill denied pid={} error={}", process.pid, exc)
+            continue
+        if process.pid in mains:
+            killed.append(process.pid)
+    psutil.wait_procs(alive, timeout=1.0)
+    survivors = tuple(pid for pid in pids if psutil.pid_exists(pid))
+    return (
+        tuple(pid for pid in terminated if pid not in killed),
+        tuple(killed),
+        survivors,
+    )
 
 
 def _alive(pid: int) -> bool:
@@ -152,6 +214,8 @@ async def quit_desktop_app(
 ) -> DesktopAppShutdown:
     """Stop every desktop app main process: SIGTERM, then SIGKILL after ``grace_period``.
 
+    On Windows each main process is stopped with its whole process tree.
+
     Side effects: the ChatGPT / Codex desktop app exits, every thread it had
     loaded loses its IPC owner and its writer lock is released.
     """
@@ -159,6 +223,23 @@ async def quit_desktop_app(
     pids = await desktop_app_pids(timeout=timeout)
     if not pids:
         return DesktopAppShutdown(details={"platform": sys.platform, "found": False})
+    if sys.platform == "win32":
+        terminated_tree, killed_tree, survivors_tree = await asyncio.to_thread(
+            _quit_windows, pids, grace_period
+        )
+        result = DesktopAppShutdown(
+            terminated=terminated_tree,
+            killed=killed_tree,
+            survivors=survivors_tree,
+            details={"platform": sys.platform, "found": True},
+        )
+        logger.info(
+            "codex desktop app stopped terminated={} killed={} survivors={}",
+            result.terminated,
+            result.killed,
+            result.survivors,
+        )
+        return result
     terminated: list[int] = []
     for pid in pids:
         try:
