@@ -2,7 +2,7 @@
 
 在 DeepSeek Harness（DSH）中连接 Agents Anywhere，从手机、平板或 Web 查看 DSH 会话、继续对话、回复提问和审批请求。Agent 仍在安装 DSH 的工作设备上运行；远程使用时，这台设备需要保持开机、联网，并让 DSH 与 Connector 正常运行。
 
-插件随 **DSH Desktop** 提供，也可从 **npm** 安装到兼容的独立 DSH 环境。两种安装方式选其一；使用 DSH Desktop 时无需重复安装 npm 包。
+插件随开源客户端 [DSH Desktop](https://github.com/anywhere-labs/dsh-desktop) 提供，也可从 **npm** 安装到其他 DSH 环境。DeepSeek 官方的 DeepSeek Harness Desktop **没有内置**本插件，请按“从 npm 安装”一节操作。两种安装方式选其一；使用内置本插件的 DSH Desktop 时无需重复安装 npm 包。
 
 ## 可以做什么
 
@@ -14,7 +14,7 @@
 
 ## 在 DSH Desktop 中启用
 
-DSH Desktop 已集成此插件，**不需要另行下载或执行 npm 安装命令**。在 DSH Desktop 的“插件”页面找到“远程控制”并启用，然后从左侧边栏“设置”上方打开“远程控制”。部分 Desktop 版本的开关位于“桌面设置”的“手机连接”区域；请以当前应用显示的入口为准。
+本节适用于内置本插件的 [DSH Desktop](https://github.com/anywhere-labs/dsh-desktop)。该应用已集成此插件，**不需要另行下载或执行 npm 安装命令**。在 DSH Desktop 的“插件”页面找到“远程控制”并启用，然后从左侧边栏“设置”上方打开“远程控制”。部分 Desktop 版本的开关位于“桌面设置”的“手机连接”区域；请以当前应用显示的入口为准。
 
 ![DSH Desktop 中的 Agents Anywhere 连接面板，显示账号和 Connector 运行状态](docs/images/remote-control-desktop.webp)
 
@@ -22,17 +22,28 @@ DSH Desktop 已集成此插件，**不需要另行下载或执行 npm 安装命�
 
 插件随 DSH Desktop 一同打包和更新；请通过 Desktop 的发布渠道升级，不要对内置插件叠加独立 npm 安装。
 
-## 从 npm 安装到独立 DSH
+## 从 npm 安装
 
-如果使用独立安装的 DSH，可以通过官方插件命令从 npm 安装。先确认目标 Profile 的名称，以及当前 npm 包声明的 DSH 依赖是否与你的环境相容。下面以 `desktop` Profile 为例：
+如果使用 DeepSeek 官方的 DeepSeek Harness Desktop 或其他独立安装的 DSH，可以通过官方插件命令从 npm 安装。先确认目标 Profile 的名称，以及当前 npm 包声明的 DSH 依赖是否与你的环境相容。下面以 `desktop` Profile 为例：
 
 ```bash
 dsh plugin --profile desktop add @agents-anywhere/dsh-bridge-next
 ```
 
-安装完成后重启对应的 DSH 实例，从左侧边栏打开“远程控制”，按提示登录并连接。若你的 Profile 不是 `desktop`，请替换命令中的 Profile 名称。
+DSH 的插件命令调用 pnpm 安装，pnpm 11 及以上默认不执行依赖的安装脚本。本插件依赖的 `@dataiku/uv` 需要安装脚本来准备 uv，因此首次安装会以 `ERR_PNPM_IGNORED_BUILDS`（`Ignored build scripts: @dataiku/uv@0.12.0`）失败：依赖已写入 Profile，但插件不可用。在该 Profile 目录（`$DSH_HOME/profiles/<Profile 名称>`）的 `pnpm-workspace.yaml` 中加入以下内容后，重新执行上面的命令：
+
+```yaml
+allowBuilds:
+  '@dataiku/uv': true
+```
+
+`dsh plugin add` 只安装依赖，不会启用插件。安装后，在该 Profile 的 `package.json` 中把 `@agents-anywhere/dsh-bridge-next` 加入 `dsh.profile.bundles`；可以用 `dsh --profile <Profile 名称> --dump-config` 确认输出中出现 `id: agents-anywhere-bridge-next`。
+
+启用后重启对应的 DSH 实例，从左侧边栏打开“远程控制”，按提示登录并连接。若你的 Profile 不是 `desktop`，请替换命令中的 Profile 名称。
 
 安装命令不锁定插件版本，会获取 npm 当前的默认发布版本。插件包与 DSH 的兼容范围请以所安装版本的 `peerDependencies` 为准；较新的 DSH 不代表旧插件包自动兼容。当前仓库源码声明支持 DSH `0.2.0-rc.1` 及之后的 0.2.x 版本（peer 范围 `>=0.2.0-rc.1 <0.3.0-0`），开发与测试基线为 `0.2.1-rc.2`；范围内的其他版本（包括 `0.2.0-rc.x`）只做 peer 声明，不在自动化检查中验证。DSH 在安装和启动插件时都会按这个范围检查，不满足时拒绝安装或跳过加载；DSH Desktop 使用与自身版本配套的内置构建，不能简单等同于 npm 上的包。需要固定可复现的部署时，再在包名后添加经过验证的版本号。
+
+npm 上当前的 `2.0.2` 在 DSH `0.2.1-rc.2` 上收不到审批和提问（[#344](https://github.com/anywhere-labs/Agents-Anywhere/issues/344)）。修复已在仓库源码中，发布到 npm 之前，请按[技术说明](TECHNICAL.md)中的开发安装方式从源码构建并安装。
 
 ## 确认 DSH 已接入
 

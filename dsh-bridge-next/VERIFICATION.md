@@ -1,5 +1,17 @@
 # DSH Bridge Next 验证记录
 
+## DSH 0.2.1-rc.2 命令行安装路径（2026-10-21）
+
+用 npm 上的官方 `@deepseek-ai/dsh@0.2.1-rc.2` CLI，在全新的临时 `DSH_HOME`（Linux 容器，pnpm 12.14.0）里，把从源码打包的插件（`2.1.0`）安装到 `web` Profile：
+
+1. `dsh plugin --profile web add <tgz>` 以 exit 1 结束，报 `ERR_PNPM_IGNORED_BUILDS`、`Ignored build scripts: @dataiku/uv@0.12.0`。依赖已写入 Profile 的 `package.json`，但 `@dataiku/uv` 没有生成 `uv`。
+2. 在 Profile 的 `pnpm-workspace.yaml` 中加入 `allowBuilds: { '@dataiku/uv': true }` 后重新执行，exit 0，`node_modules/@dataiku/uv/uv` 生成。此时 `dsh --profile web --dump-config` 共 1229 行，不含本插件，`dsh.profile.bundles` 仍只有 `@deepseek-ai/dsh-base` 和 `@deepseek-ai/dsh-web-app`。
+3. 把 `@agents-anywhere/dsh-bridge-next` 加入 `dsh.profile.bundles` 后，配置树出现 `- id: agents-anywhere-bridge-next`、`name: '@agents-anywhere/dsh-bridge-next'`、`config: {}`。
+
+pnpm 11.28.6 中有同样的报错和 `allowBuilds` 提示，因此按 pnpm 11 及以上处理；DSH Desktop 自带的 pnpm 版本没有核实。
+
+未做：DeepSeek 官方 DeepSeek Harness Desktop 的安装包检查及界面内的启用路径；Electron 管理的 `desktop` Profile；Windows；启动后与 Connector 的会合与握手；手机端。
+
 ## DSH 0.2.1-rc.2 测试基线（2026-10-21）
 
 `@deepseek-ai/dsh-*` 开发依赖从 `0.2.0-rc.2` 升到 `0.2.1-rc.2`；Cordis 插件对齐 0.2.1 线（`cordis-plugin-group` 1.0.5、`cordis-plugin-include` 1.0.10、`cordis-plugin-loader` 1.0.6）；新增 `@deepseek-ai/dsh-api-remote-access`；删除 `@deepseek-ai/dsh-invariants`（0.2.1 线没有发布版本，仓库内零引用）。peer 范围 `>=0.2.0-rc.1 <0.3.0-0` 不变，但自动化检查只覆盖 `0.2.1-rc.2`，范围内其他版本只做声明。安装时 `@deepseek-ai/dsh-working-directory` 的 peer 未满足提示来自官方 `dsh-api-session-controller`，不影响检查。
