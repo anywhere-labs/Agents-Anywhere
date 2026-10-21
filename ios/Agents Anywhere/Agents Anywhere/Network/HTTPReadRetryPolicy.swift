@@ -13,7 +13,7 @@ nonisolated struct HTTPReadRetryPolicy {
         return formatter.date(from: header).map { max(0, $0.timeIntervalSince(now)) }
     }
 
-    @MainActor func permitsRetry(_ error: Error) -> Bool {
+    func permitsRetry(_ error: Error) -> Bool {
         if let error = error as? URLError {
             return [.timedOut, .networkConnectionLost, .cannotConnectToHost, .dnsLookupFailed,
                     .cannotFindHost, .notConnectedToInternet].contains(error.code)

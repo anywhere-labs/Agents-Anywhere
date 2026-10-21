@@ -12,11 +12,13 @@ struct SessionSidebarPresentation: Equatable {
         else if session.unread && session.status == .idle { indicator = .unread }
         else { indicator = .none }
         isRunning = session.status == .running
-        if let raw = session.sortAt {
-            let date = (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(raw))
-                ?? (try? Date.ISO8601FormatStyle().parse(raw))
-            sortTime = date?.timeIntervalSince1970 ?? 0
-        } else { sortTime = 0 }
+        sortTime = V2Timestamp.seconds(session.sortAt) ?? 0
+    }
+    /// Builds each presentation once instead of twice per comparison.
+    static func sorted(_ sessions: [V2SessionMeta]) -> [V2SessionMeta] {
+        sessions.map { ($0, Self($0)) }
+            .sorted { $0.1.precedes($1.1, id: $0.0.id, otherID: $1.0.id) }
+            .map(\.0)
     }
     func precedes(_ other: Self, id: String, otherID: String) -> Bool {
         if isRunning != other.isRunning { return isRunning }

@@ -86,7 +86,7 @@ final class NewSessionModel {
     /// mounted. Remote inventory and catalog validation happen independently.
     func updateConnectors(_ values: [V2Connector]) {
         guard isValid else { return }
-        connectors = values
+        if connectors != values { connectors = values }
         if !values.isEmpty, !values.contains(where: { $0.id == connectorID }) {
             connectorID = values.first { $0.id == preference.connectorID }?.id
                 ?? values.first { $0.status == .online }?.id ?? values.first?.id ?? ""
@@ -97,7 +97,8 @@ final class NewSessionModel {
 
     func updateProjects(_ values: [V2Project]) {
         guard isValid else { return }
-        projects = values; hasLoadedProjects = true
+        if projects != values { projects = values }
+        if !hasLoadedProjects { hasLoadedProjects = true }
         // The path is the draft's identity. Late lists, renames and display-mode
         // changes may discover a project without changing the chosen directory.
         if workspace.isEmpty, let saved = project { workspace = saved.workspacePath }
@@ -128,11 +129,17 @@ final class NewSessionModel {
     }
 
     private func identifyProject() {
-        projectID = ProjectWorkspacePath.project(in: projects, connectorID: connectorID, path: workspace, deviceOS: connector?.deviceOs)?.id
+        let resolved = ProjectWorkspacePath.project(in: projects, connectorID: connectorID, path: workspace, deviceOS: connector?.deviceOs)?.id
+        if projectID != resolved { projectID = resolved }
         guard !connectorID.isEmpty else { return }
-        preference.connectorID = connectorID
-        preference.workspaces[connectorID] = workspace
-        var saved = preference.projectIDs ?? [:]; saved[connectorID] = projectID; preference.projectIDs = saved
+        // Dashboard ticks call this for every push; only write defaults when the target changed.
+        var next = preference
+        next.connectorID = connectorID
+        next.workspaces[connectorID] = workspace
+        var saved = next.projectIDs ?? [:]; saved[connectorID] = projectID; next.projectIDs = saved
+        guard next.connectorID != preference.connectorID || next.workspaces != preference.workspaces
+            || next.projectIDs != preference.projectIDs else { return }
+        preference = next
         persist()
     }
 
@@ -372,6 +379,7 @@ final class NewSessionModel {
 
     func invalidate() {
         isValid = false; preparationVersion += 1; prepared = nil
+        draftSaveTask?.cancel(); draftSaveTask = nil
         inventoryTasks.values.forEach { $0.cancel() }; inventoryTasks = [:]
         homeTasks.values.forEach { $0.cancel() }; homeTasks = [:]
         draft.invalidate(); inventories = [:]; settings.replace(.init()); error = nil
@@ -381,7 +389,23 @@ final class NewSessionModel {
     private var savedSelections: [V2RuntimeSelectionScope: V2SelectionID] {
         Dictionary(uniqueKeysWithValues: (preference.selections[targetKey] ?? [:]).map { (V2RuntimeSelectionScope(rawValue: $0.key), $0.value) })
     }
-    func saveDraft() { preference.draftText = draft.text; persist() }
+    func saveDraft() {
+        draftSaveTask?.cancel(); draftSaveTask = nil
+        guard preference.draftText != draft.text else { return }
+        preference.draftText = draft.text; persist()
+    }
+
+    /// Keystrokes coalesce into one defaults write; flushCache still saves immediately.
+    func scheduleDraftSave() {
+        guard isValid, draftSaveTask == nil else { return }
+        draftSaveTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            guard let self, !Task.isCancelled else { return }
+            draftSaveTask = nil
+            saveDraft()
+        }
+    }
+    @ObservationIgnored private var draftSaveTask: Task<Void, Never>?
 
     private func persist() {
         if let data = try? JSONEncoder().encode(preference) { defaults.set(data, forKey: preferenceKey) }

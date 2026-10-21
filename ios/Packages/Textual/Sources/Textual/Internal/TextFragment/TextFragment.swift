@@ -46,8 +46,9 @@ struct TextFragment<Content: AttributedStringProtocol>: View {
         self.textBuilder = TextBuilder(newValue, environment: textEnvironment)
       }
       .modifier(TextSelectionBackground())
-      .modifier(AttachmentOverlay(attachments: content.attachments()))
-      .modifier(TextLinkInteraction(hasLinks: content.runs.contains { $0.link != nil }))
+      // Both scans walk every run; the builder computes them once per content.
+      .modifier(AttachmentOverlay(attachments: textBuilder?.attachments ?? []))
+      .modifier(TextLinkInteraction(hasLinks: textBuilder?.hasLinks ?? false))
   }
 
   private var text: Text {

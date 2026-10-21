@@ -3579,6 +3579,23 @@
         }
       }
     },
+    "Off: new text fades in without the blur and rise.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off: new text fades in without the blur and rise."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭后新文字只做透明度渐变，不再模糊上浮。"
+          }
+        }
+      }
+    },
     "Offline": {
       "comment": "Shared with Web: dashboard.device.offline. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -4387,6 +4404,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "请返回应用后重新登录。"
+          }
+        }
+      }
+    },
+    "Reveal animation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reveal animation"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文字浮现动画"
           }
         }
       }

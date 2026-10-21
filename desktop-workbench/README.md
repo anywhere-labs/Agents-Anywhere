@@ -3,7 +3,7 @@
 Agents Anywhere Desktop combines the web workbench and a locally managed
 Connector in one Electron application.
 
-The Connector, its logs, the Desktop settings and the local binding live in an
+The Connector supervisor, Desktop startup logs, settings and local binding live in an
 independent backend process (`child_process.fork` with `ELECTRON_RUN_AS_NODE`).
 It never touches the window, so a blocked or crashed backend cannot freeze the
 user interface. The backend serves a loopback HTTP + SSE API; Electron Main
@@ -431,3 +431,11 @@ dependencies for universal packaging.
 
 For an offline packaging retry, set `WORKBENCH_ELECTRON_DIST` to a directory
 containing the matching Electron ZIPs for both macOS architectures.
+
+Runtime logs are persisted by Connector under `~/.agents-anywhere/logs/` as rotating
+JSONL segments. Desktop reads, follows, clears and exports them through the local
+`aa.local.v2.Logs` service; receiving a runtime log never writes another Desktop
+copy. Log storage settings apply to Desktop startup diagnostics only. When no
+Connector channel is available, the log view and export use those local startup
+diagnostics. Runtime retention and RPC semantics are documented in
+[the log contract](../contracts/dsh-bridge/2.0/logs.md).

@@ -451,30 +451,21 @@ def test_failed_project_cleanup_rolls_back_all_database_deletions(api, request):
 
     async def reject_cleanup():
         async with client.app.state.store.engine.begin() as connection:
-            if connection.dialect.name == "postgresql":
-                await connection.execute(text(
-                    "CREATE FUNCTION reject_project_delete() RETURNS trigger LANGUAGE plpgsql AS $$ "
-                    "BEGIN RAISE EXCEPTION 'cleanup failed' USING ERRCODE = '23000'; END; $$"
-                ))
-                await connection.execute(text(
-                    "CREATE TRIGGER reject_project_delete BEFORE DELETE ON projects "
-                    "FOR EACH ROW EXECUTE FUNCTION reject_project_delete()"
-                ))
-                return
-            await connection.execute(
-                text(
-                    "CREATE TRIGGER reject_project_delete BEFORE DELETE ON projects "
-                    "BEGIN SELECT RAISE(ABORT, 'cleanup failed'); END"
-                )
-            )
+            await connection.execute(text(
+                "CREATE FUNCTION reject_project_delete() RETURNS trigger LANGUAGE plpgsql AS $$ "
+                "BEGIN RAISE EXCEPTION 'cleanup failed' USING ERRCODE = '23000'; END; $$"
+            ))
+            await connection.execute(text(
+                "CREATE TRIGGER reject_project_delete BEFORE DELETE ON projects "
+                "FOR EACH ROW EXECUTE FUNCTION reject_project_delete()"
+            ))
 
     asyncio.run(reject_cleanup())
 
     async def remove_trigger():
         async with client.app.state.store.engine.begin() as connection:
-            if connection.dialect.name == "postgresql":
-                await connection.execute(text("DROP TRIGGER reject_project_delete ON projects"))
-                await connection.execute(text("DROP FUNCTION reject_project_delete()"))
+            await connection.execute(text("DROP TRIGGER reject_project_delete ON projects"))
+            await connection.execute(text("DROP FUNCTION reject_project_delete()"))
 
     request.addfinalizer(lambda: asyncio.run(remove_trigger()))
     with pytest.raises(IntegrityError, match="cleanup failed"):

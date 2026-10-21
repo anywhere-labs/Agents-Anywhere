@@ -8,7 +8,7 @@ struct SessionInteractionContent: View {
     @State private var showsDetails = false
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+        TimelineView(NoticeExpiryClock(expiresAt: item.expiresAt)) { timeline in
             VStack(alignment: .leading, spacing: 14) {
                 Label(item.notice.title, appSymbol: icon).font(.subheadline.weight(.semibold))
                     .foregroundStyle(item.notice.severity == "error" ? Color.red : Color.primary)

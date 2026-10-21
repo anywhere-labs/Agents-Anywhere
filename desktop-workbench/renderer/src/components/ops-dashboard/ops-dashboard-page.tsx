@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Activity, Gauge, Laptop, LineChart, RefreshCw, Users } from "lucide-react"
+import { RefreshCw } from "lucide-react"
 import { useTranslations } from "next-intl"
 
 import { useAuth } from "@/components/auth/auth-context"
@@ -11,14 +11,12 @@ import { QualityTab } from "@/components/ops-dashboard/quality-tab"
 import { UsageTab } from "@/components/ops-dashboard/usage-tab"
 import { UsersTab } from "@/components/ops-dashboard/users-tab"
 import { PageHeader } from "@/components/pages/page-header"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { useWorkspace } from "@/components/workspace-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { UsageLiveResponse, UsageReportResponse } from "@/features/dashboard/types"
 import {
@@ -32,27 +30,18 @@ import {
 } from "@/features/admin-usage/report-helpers"
 import { cn } from "@/lib/utils"
 
-type DashboardTab = "overview" | "users" | "usage" | "devices" | "quality"
+export type DashboardTab = "overview" | "users" | "usage" | "devices" | "quality"
 
 const PRESETS: UsageRangePreset[] = ["7d", "30d", "90d", "custom"]
 const LIVE_REFRESH_MS = 30_000
 
-const TABS: { id: DashboardTab; icon: typeof LineChart }[] = [
-  { id: "overview", icon: LineChart },
-  { id: "users", icon: Users },
-  { id: "usage", icon: Gauge },
-  { id: "devices", icon: Laptop },
-  { id: "quality", icon: Activity },
-]
-
-export function OpsDashboardPage() {
-  const { navigate } = useWorkspace()
+/** The usage board; `tab` comes from the administration route (`#/admin/<tab>`). */
+export function OpsDashboardPage({ tab }: { tab: DashboardTab }) {
   const { session } = useAuth()
   const t = useTranslations("pages.opsDashboard")
   const token = session?.accessToken
   const timeZone = React.useMemo(() => browserTimeZone(), [])
 
-  const [tab, setTab] = React.useState<DashboardTab>("overview")
   const [preset, setPreset] = React.useState<UsageRangePreset>("30d")
   const [range, setRange] = React.useState<UsageDateRange>(() => presetRange("30d", localToday(timeZone)))
   const [draft, setDraft] = React.useState<UsageDateRange>(range)
@@ -129,87 +118,72 @@ export function OpsDashboardPage() {
   const dataSince = report?.range.dataSince ?? null
 
   return (
-    <div className="flex h-full flex-col bg-background">
-      <div className="px-5 pb-0 pt-14 sm:px-8">
-        <PageHeader title={t("title")} description={t("description")} onBack={() => navigate("home")}>
+    <ScrollArea className="@container/page h-full w-full bg-background">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-8 pb-16 pt-14 @min-[68rem]/page:pt-8">
+        <PageHeader title={t(`tabs.${tab}`)} description={t("description")}>
           <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={loading}>
             {loading ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
             {t("refresh")}
           </Button>
         </PageHeader>
 
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            size="sm"
-            value={preset}
-            onValueChange={(value) => {
-              if (value) choosePreset(value as UsageRangePreset)
-            }}
-          >
-            {PRESETS.map((item) => (
-              <ToggleGroupItem key={item} value={item} aria-label={t(`range.${item}`)}>
-                {t(`range.${item}`)}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-          {preset === "custom" ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                type="date"
-                aria-label={t("range.from")}
-                value={draft.from}
-                max={draft.to}
-                onChange={(event) => setDraft((current) => ({ ...current, from: event.currentTarget.value }))}
-                className={cn("h-8 w-36", draftError && "border-destructive")}
-              />
-              <span className="text-xs text-muted-foreground">–</span>
-              <Input
-                type="date"
-                aria-label={t("range.to")}
-                value={draft.to}
-                min={draft.from}
-                onChange={(event) => setDraft((current) => ({ ...current, to: event.currentTarget.value }))}
-                className={cn("h-8 w-36", draftError && "border-destructive")}
-              />
-              <Button type="button" size="sm" onClick={applyDraft}>
-                {t("range.apply")}
-              </Button>
-              {draftError ? <span className="text-xs text-destructive">{t("range.invalid")}</span> : null}
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            {/* The joined preset group does not wrap; on narrow screens it scrolls instead of overflowing. */}
+            <div className="no-scrollbar max-w-full overflow-x-auto">
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                size="sm"
+                value={preset}
+                onValueChange={(value) => {
+                  if (value) choosePreset(value as UsageRangePreset)
+                }}
+              >
+                {PRESETS.map((item) => (
+                  <ToggleGroupItem key={item} value={item} aria-label={t(`range.${item}`)}>
+                    {t(`range.${item}`)}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
             </div>
-          ) : (
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {range.from} – {range.to}
-            </span>
-          )}
-          <Badge variant="outline" className="font-normal text-muted-foreground">
-            {timeZone}
-          </Badge>
+            {preset === "custom" ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  type="date"
+                  aria-label={t("range.from")}
+                  value={draft.from}
+                  max={draft.to}
+                  onChange={(event) => setDraft((current) => ({ ...current, from: event.currentTarget.value }))}
+                  className={cn("h-8 w-36", draftError && "border-destructive")}
+                />
+                <span className="text-xs text-muted-foreground">–</span>
+                <Input
+                  type="date"
+                  aria-label={t("range.to")}
+                  value={draft.to}
+                  min={draft.from}
+                  onChange={(event) => setDraft((current) => ({ ...current, to: event.currentTarget.value }))}
+                  className={cn("h-8 w-36", draftError && "border-destructive")}
+                />
+                <Button type="button" size="sm" onClick={applyDraft}>
+                  {t("range.apply")}
+                </Button>
+                {draftError ? <span className="text-xs text-destructive">{t("range.invalid")}</span> : null}
+              </div>
+            ) : (
+              <span className="text-sm tabular-nums text-muted-foreground">
+                {range.from} – {range.to}
+              </span>
+            )}
+            <span className="text-xs text-muted-foreground">{timeZone}</span>
+          </div>
+          <LiveStrip
+            live={live}
+            note={dataSince ? t("dataSince", { date: dataSince }) : report ? t("noDataYet") : null}
+          />
         </div>
 
-        <LiveStrip live={live} />
-
-        <p className="mt-3 text-xs text-muted-foreground">
-          {dataSince ? t("dataSince", { date: dataSince }) : report ? t("noDataYet") : ""}
-        </p>
-
-        <Tabs value={tab} onValueChange={(value) => setTab(value as DashboardTab)} className="mt-4">
-          <TabsList className="w-full justify-start overflow-x-auto">
-            {TABS.map((item) => {
-              const Icon = item.icon
-              return (
-                <TabsTrigger key={item.id} value={item.id} className="gap-1.5">
-                  <Icon className="size-3.5" />
-                  {t(`tabs.${item.id}`)}
-                </TabsTrigger>
-              )
-            })}
-          </TabsList>
-        </Tabs>
-      </div>
-
-      <main className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-8 sm:py-6">
         {error ? (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-5 py-4 text-sm text-destructive">
             <span>{error}</span>
@@ -224,8 +198,8 @@ export function OpsDashboardPage() {
         ) : (
           <ReportSkeleton />
         )}
-      </main>
-    </div>
+      </div>
+    </ScrollArea>
   )
 }
 
@@ -237,7 +211,7 @@ function DashboardContent({ tab, report }: { tab: DashboardTab; report: UsageRep
   return <OverviewTab report={report} />
 }
 
-function LiveStrip({ live }: { live: UsageLiveResponse | null }) {
+function LiveStrip({ live, note }: { live: UsageLiveResponse | null; note: string | null }) {
   const t = useTranslations("pages.opsDashboard")
   const items: { key: string; value: string }[] = [
     {
@@ -247,36 +221,32 @@ function LiveStrip({ live }: { live: UsageLiveResponse | null }) {
     { key: "runningTurns", value: live ? formatNumber(live.runningTurns) : "—" },
     { key: "activeUsers15m", value: live ? formatNumber(live.activeUsers15m) : "—" },
   ]
+  // Live figures stay a line of text: they are current state, not part of the
+  // selected range, so they must not look like another row of the report.
   return (
-    <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-border bg-card px-4 py-2.5 text-sm">
-      <span className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        <span className="relative flex size-2">
-          <span className="absolute inline-flex size-full animate-ping rounded-full bg-chart-2 opacity-60" />
-          <span className="relative inline-flex size-2 rounded-full bg-chart-2" />
-        </span>
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+      <span className="flex items-center gap-2 font-medium">
+        <span className="size-2 rounded-full bg-emerald-500" aria-hidden="true" />
         {t("live.title")}
       </span>
       {items.map((item) => (
         <span key={item.key} className="flex items-baseline gap-1.5">
-          <span className="text-xs text-muted-foreground">{t(`live.${item.key}`)}</span>
-          <span className="font-semibold tabular-nums">{item.value}</span>
+          <span className="text-muted-foreground">{t(`live.${item.key}`)}</span>
+          <span className="font-medium tabular-nums">{item.value}</span>
         </span>
       ))}
+      {note ? <span className="text-xs text-muted-foreground sm:ml-auto">{note}</span> : null}
     </div>
   )
 }
 
 function ReportSkeleton() {
   return (
-    <div className="flex flex-col gap-4">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-        {Array.from({ length: 6 }).map((_, index) => (
-          <Skeleton key={index} className="h-24 rounded-xl" />
-        ))}
-      </div>
-      <div className="grid gap-4 xl:grid-cols-2">
-        <Skeleton className="h-80 rounded-xl" />
-        <Skeleton className="h-80 rounded-xl" />
+    <div className="flex flex-col gap-6">
+      <Skeleton className="h-24 rounded-[24px]" />
+      <div className="grid gap-6 xl:grid-cols-2">
+        <Skeleton className="h-80 rounded-[24px]" />
+        <Skeleton className="h-80 rounded-[24px]" />
       </div>
     </div>
   )

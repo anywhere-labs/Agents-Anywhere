@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { CommandDefinitionId } from '@deepseek-ai/dsh-commands'
 import { commandRuntime } from '../fixtures/command-runtime.js'
-import { SyncFeed, type SyncBatch } from '../../src/host/dsh-runtime/sync.js'
+import { SyncFeed, type SyncOperation, type SyncTransport } from '../../src/host/dsh-runtime/sync.js'
 import { BridgeError } from '../../src/host/dsh-runtime/errors.js'
 import { nativeRuntime } from '../fixtures/native-runtime.js'
 import { mountAgents } from '../fixtures/agent-runtime.js'
@@ -30,27 +30,27 @@ test('AA exposes and executes only compact even when UI-dependent commands are r
   for (const name of ['about', 'compact', 'export', 'goal', 'plan', 'model', 'file', 'feedback']) {
     f.ctx.commands.register({ name, description: name, handler: () => { calls.push(name); return { kind: 'success' } } })
   }
-  const list = async (values = {}) => (await f.router.request('session.listCommands', { ...params, ...values }, signal()) as { commands: Descriptor[] }).commands
+  const list = async (values = {}) => (await f.router.request('listCommands', { ...params, ...values }, signal()) as { commands: Descriptor[] }).commands
   assert.deepEqual((await list()).map(c => c.id), ['compact'])
   assert.deepEqual((await list({ limit: 1 })).map(c => c.id), ['compact'])
   assert.deepEqual(await list({ query: 'export' }), [])
   for (const command of ['about', 'export', 'goal', 'plan', 'model', 'file', 'feedback', 'permission', 'compact-thread']) {
-    const result = await f.router.request('session.executeCommand', { ...params, command, raw: `/${command}` }, signal()) as Result
+    const result = await f.router.request('executeCommand', { ...params, command, raw: `/${command}` }, signal()) as Result
     assert.equal(result.ok, false)
     assert.equal(result.code, 'unknown_command')
   }
   assert.deepEqual(calls, [])
   assert.equal(agent.session.snapshotEvents().filter(e => e.type === 'command/run').length, 0)
-  const result = await f.router.request('session.executeCommand', { ...params, command: 'compact', raw: '/compact' }, signal()) as Result
+  const result = await f.router.request('executeCommand', { ...params, command: 'compact', raw: '/compact' }, signal()) as Result
   assert.equal(result.ok, true)
   assert.deepEqual(calls, ['compact'])
 }))
 
 test('AA does not invent compact when the native Agent has no compact command', async () => fixture(async f => {
   const { params } = await f.create('without-compact')
-  const result = await f.router.request('session.listCommands', params, signal()) as { commands: Descriptor[] }
+  const result = await f.router.request('listCommands', params, signal()) as { commands: Descriptor[] }
   assert.deepEqual(result.commands, [])
-  const execution = await f.router.request('session.executeCommand', { ...params, command: 'compact', raw: '/compact' }, signal()) as Result
+  const execution = await f.router.request('executeCommand', { ...params, command: 'compact', raw: '/compact' }, signal()) as Result
   assert.equal(execution.ok, false)
   assert.equal(execution.code, 'unknown_command')
 }))
@@ -63,7 +63,7 @@ test('command catalog uses actual scoped registry metadata and filters before ap
     ctx.commands.register({ name: 'compact', description: 'scoped compact', input: { hint: 'scoped text' }, handler: () => ({ kind: 'success' }) })
   } })
   await scoped.await()
-  const list = async (params: Record<string, unknown>) => (await f.router.request('session.listCommands', params, signal()) as { commands: Descriptor[] }).commands
+  const list = async (params: Record<string, unknown>) => (await f.router.request('listCommands', params, signal()) as { commands: Descriptor[] }).commands
   const own = await list({ ...first.params, query: 'scoped', limit: 1 })
   assert.equal(own.length, 1)
   assert.equal(own[0]!.id, 'compact')
@@ -91,7 +91,7 @@ test('native execution preserves exact raw line, correlations and known errors w
     return { kind: 'success', text: invocation.rawInput, sourceEventSeq: event.seq }
   } })
   const raw = '/compact  first\n second  '
-  const result = await f.router.request('session.executeCommand', { ...params, command: 'compact', raw, args: ['ignored'] }, signal()) as Result
+  const result = await f.router.request('executeCommand', { ...params, command: 'compact', raw, args: ['ignored'] }, signal()) as Result
   assert.equal(result.ok, true)
   assert.equal(result.message, '  first\n second  ')
   assert.equal(result.result.executionState, 'accepted')
@@ -102,7 +102,7 @@ test('native execution preserves exact raw line, correlations and known errors w
   assert.equal((run.data as any).commandId, result.result.commandId)
   assert.equal((done.data as any).commandId, result.result.commandId)
   assert.equal(result.result.sourceEventSeq, Number(events.findLast(e => e.type === 'session/title')!.seq))
-  const denied = await f.router.request('session.executeCommand', { ...params, command: 'compact', raw: '/compact invalid' }, signal()) as Result
+  const denied = await f.router.request('executeCommand', { ...params, command: 'compact', raw: '/compact invalid' }, signal()) as Result
   assert.equal(denied.ok, false)
   assert.equal(denied.result.kind, 'error')
   assert.equal(denied.result.executionState, 'completed')
@@ -119,25 +119,25 @@ test('admission rejects mismatched IDs, malformed raw, ambiguous args and attach
     { command: 'compact', args: null }, { command: 'compact', raw: 12 },
     { command: 'compact', raw: '/compact', attachments: [{ type: 'file', receiptId: 'unused' }] },
   ]) {
-    const result = await f.router.request('session.executeCommand', { ...params, ...request }, signal()) as Result
+    const result = await f.router.request('executeCommand', { ...params, ...request }, signal()) as Result
     assert.equal(result.ok, false)
     assert.equal(result.result.commandId, undefined)
   }
-  const unknown = await f.router.request('session.executeCommand', { ...params, command: 'unknown', raw: '/unknown' }, signal()) as Result
+  const unknown = await f.router.request('executeCommand', { ...params, command: 'unknown', raw: '/unknown' }, signal()) as Result
   assert.equal(unknown.code, 'unknown_command')
   assert.equal(agent.session.snapshotEvents().filter(e => e.type === 'command/run').length, 0)
-  await assert.rejects(f.router.request('session.executeCommand', { ...params, sessionId: 'another-runtime', command: 'compact' }, signal()), (e: unknown) => e instanceof BridgeError && e.code === 'INVALID_PARAMS')
+  await assert.rejects(f.router.request('executeCommand', { ...params, sessionId: 'another-runtime', command: 'compact' }, signal()), (e: unknown) => e instanceof BridgeError && e.code === 'INVALID_PARAMS')
   f.native.source.archived.add(agent.id)
-  await assert.rejects(f.router.request('session.executeCommand', { ...params, command: 'compact' }, signal()), (e: unknown) => e instanceof BridgeError && e.code === 'SESSION_ARCHIVED')
-  const caps = await f.router.request('session.getCapabilities', params, signal()) as { capabilities: { capabilityId: string, available: boolean }[] }
+  await assert.rejects(f.router.request('executeCommand', { ...params, command: 'compact' }, signal()), (e: unknown) => e instanceof BridgeError && e.code === 'SESSION_ARCHIVED')
+  const caps = await f.router.request('getSessionCapabilities', params, signal()) as { capabilities: { capabilityId: string, available: boolean }[] }
   assert.equal(caps.capabilities.find(c => c.capabilityId === 'session.commands')!.available, false)
-  await assert.rejects(f.router.request('session.listCommands', { externalSessionId: 'missing', query: '' }, signal()), (e: unknown) => e instanceof BridgeError && e.code === 'SESSION_NOT_FOUND')
+  await assert.rejects(f.router.request('listCommands', { externalSessionId: 'missing', query: '' }, signal()), (e: unknown) => e instanceof BridgeError && e.code === 'SESSION_NOT_FOUND')
 }))
 
 test('capability cannot advertise native commands after the actual registry unloads', async () => fixture(async f => {
   const { params } = await f.create('service-unload')
   await f.ctx.commands.ctx.fiber.dispose()
-  const caps = await f.router.request('session.getCapabilities', params, signal()) as { capabilities: { capabilityId: string, supported: boolean, available: boolean, allowed: boolean }[] }
+  const caps = await f.router.request('getSessionCapabilities', params, signal()) as { capabilities: { capabilityId: string, supported: boolean, available: boolean, allowed: boolean }[] }
   const row = caps.capabilities.find(c => c.capabilityId === 'session.commands')!
   assert.equal(row.supported, false)
   assert.equal(row.available, false)
@@ -147,11 +147,11 @@ test('capability cannot advertise native commands after the actual registry unlo
 test('raw-absent single free-form arg retains whitespace and native thrown/aborted handlers have unknown outcomes', async () => fixture(async f => {
   const { agent, params } = await f.create('outcomes')
   const disposeEcho = f.ctx.commands.register({ name: 'compact', description: 'echo', input: { hint: 'text' }, handler: inv => ({ kind: 'success', text: inv.rawInput }) })
-  const echoed = await f.router.request('session.executeCommand', { ...params, command: 'compact', args: [' first\nlast '] }, signal()) as Result
+  const echoed = await f.router.request('executeCommand', { ...params, command: 'compact', args: [' first\nlast '] }, signal()) as Result
   assert.equal(echoed.message, '  first\nlast ')
   disposeEcho()
   const disposeFail = f.ctx.commands.register({ name: 'compact', description: 'fail', handler: () => { throw new Error('private native detail') } })
-  const failed = await f.router.request('session.executeCommand', { ...params, command: 'compact' }, signal()) as Result
+  const failed = await f.router.request('executeCommand', { ...params, command: 'compact' }, signal()) as Result
   assert.equal(failed.ok, false)
   assert.equal(failed.code, 'command_failed')
   assert.deepEqual(failed.result, { executionState: 'unknown', retryable: false })
@@ -161,7 +161,7 @@ test('raw-absent single free-form arg retains whitespace and native thrown/abort
   disposeFail()
   f.ctx.commands.register({ name: 'compact', description: 'wait', handler: () => { enter(); return new Promise(() => {}) } })
   const abort = new AbortController()
-  const pending = f.router.request('session.executeCommand', { ...params, command: 'compact' }, abort.signal) as Promise<Result>
+  const pending = f.router.request('executeCommand', { ...params, command: 'compact' }, abort.signal) as Promise<Result>
   await entered
   abort.abort()
   const cancelled = await pending
@@ -169,13 +169,13 @@ test('raw-absent single free-form arg retains whitespace and native thrown/abort
   assert.deepEqual(cancelled.result, { executionState: 'unknown', retryable: false })
   assert.equal((agent.session.snapshotEvents().findLast(e => e.type === 'command/done')!.data as any).kind, 'error')
   const count = agent.session.snapshotEvents().filter(e => e.type === 'command/run').length
-  await assert.rejects(f.router.request('session.executeCommand', { ...params, command: 'compact' }, AbortSignal.abort()))
+  await assert.rejects(f.router.request('executeCommand', { ...params, command: 'compact' }, AbortSignal.abort()))
   assert.equal(agent.session.snapshotEvents().filter(e => e.type === 'command/run').length, count)
 }))
 
 test('registry change refreshes existing capability signals with a restart-safe catalog revision', async () => fixture(async f => {
   const { params } = await f.create('invalidation')
-  const get = async () => await f.router.request('session.getCapabilities', params, signal()) as { capabilities: { capabilityId: string, supported: boolean, available: boolean, allowed: boolean, metadata?: { catalogRevision?: string } }[] }
+  const get = async () => await f.router.request('getSessionCapabilities', params, signal()) as { capabilities: { capabilityId: string, supported: boolean, available: boolean, allowed: boolean, metadata?: { catalogRevision?: string } }[] }
   const initial = (await get()).capabilities.find(c => c.capabilityId === 'session.commands')!
   assert.equal(initial.supported, true)
   assert.equal(initial.available, true)
@@ -185,8 +185,15 @@ test('registry change refreshes existing capability signals with a restart-safe 
   const restarted = new RuntimeCommands(f.ctx, f.native.configuration, f.native.source, () => {})
   try { assert.notEqual((await restarted.capability()).catalogRevision, initial.metadata?.catalogRevision) }
   finally { restarted.close() }
-  const batches: SyncBatch[] = [], errors: unknown[] = []
-  const feed = new SyncFeed(f.native, 'test', batch => { batches.push(batch); queueMicrotask(() => feed.ack(batch.batchSeq)) }, error => errors.push(error))
+  const batches: { batchSeq: number, operations: SyncOperation[] }[] = [], errors: unknown[] = []
+  const transport: SyncTransport = {
+    async ingestBatch(batch) { batches.push(batch as unknown as { batchSeq: number, operations: SyncOperation[] }) },
+    async loadCheckpoint() { return null },
+    async saveCheckpoint() {},
+    async deleteCheckpoint() {},
+    async ingestSnapshot(_request, pages) { for await (const _page of pages) { /* drain */ } return { accepted: true } },
+  }
+  const feed = new SyncFeed(f.native, 'test', 'commands', transport, error => errors.push(error))
   const notes = () => batches.flatMap(b => b.operations).flatMap(op => op.kind === 'notifications' ? op.notifications as { method: string, params: any }[] : [])
   async function until(check: () => boolean) { for (let i = 0; i < 200 && !check(); i++) await delay(10); assert.ok(check()) }
   try {

@@ -14,7 +14,8 @@ export function PageHeader({
 }: {
   title: string
   description?: string
-  onBack: () => void
+  /** Pages that live under a section sidebar leave this out; the sidebar leads home. */
+  onBack?: () => void
   children?: ReactNode
 }) {
   const tCommon = useTranslations("common")
@@ -26,10 +27,12 @@ export function PageHeader({
         {description ? <p className="mt-1 text-sm text-muted-foreground">{description}</p> : null}
       </div>
       <div className="flex flex-wrap items-end gap-2">
-        <Button type="button" variant="ghost" size="sm" onClick={onBack}>
-          <ChevronLeft data-icon="inline-start" />
-          {tCommon("back")}
-        </Button>
+        {onBack ? (
+          <Button type="button" variant="ghost" size="sm" onClick={onBack}>
+            <ChevronLeft data-icon="inline-start" />
+            {tCommon("back")}
+          </Button>
+        ) : null}
         {children}
       </div>
     </header>

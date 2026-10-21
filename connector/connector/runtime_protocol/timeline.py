@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar, Literal
 
+from connector.core.unicode import escape_lone_surrogates
 from connector.runtime_protocol.models import RuntimeTimelineItem
 
 TimelineItemType = Literal[
@@ -598,4 +599,6 @@ def timeline_content_hash(
         separators=(",", ":"),
         default=str,
     )
-    return "sha256:" + hashlib.sha256(encoded.encode()).hexdigest()
+    # JavaScript keeps a lone surrogate as a ``\udXXX`` escape; mirror that so
+    # the digest matches the plugin's instead of failing to encode.
+    return "sha256:" + hashlib.sha256(escape_lone_surrogates(encoded).encode("utf-8")).hexdigest()

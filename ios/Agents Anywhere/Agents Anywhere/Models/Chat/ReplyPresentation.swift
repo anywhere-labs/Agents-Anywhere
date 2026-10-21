@@ -1,6 +1,9 @@
 import Foundation
 
 nonisolated enum ReplyPresentation {
+    /// UserDefaults key: true draws new glyphs with a plain opacity fade instead
+    /// of the blur-and-rise reveal.
+    static let plainFadeKey = "aa.native.chat.reveal.plain-fade"
     static let revealSeconds: TimeInterval = 0.24
     /// Streamed text waits in a buffer while the previous batch reveals. The
     /// next batch is published once that reveal ends, plus one 60 Hz frame, so

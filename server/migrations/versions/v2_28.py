@@ -20,7 +20,7 @@ depends_on: str | Sequence[str] | None = None
 _WORKSPACE_UNIQUE_CONSTRAINT = "uq_projects_user_connector_workspace"
 
 
-def _unique_constraint_names() -> set[str | None]:
+def _unique_constraint_names() -> set[str]:
     inspector = sa.inspect(op.get_bind())
     if "projects" not in inspector.get_table_names():
         return set()
@@ -33,11 +33,7 @@ def _unique_constraint_names() -> set[str | None]:
 def upgrade() -> None:
     if _WORKSPACE_UNIQUE_CONSTRAINT not in _unique_constraint_names():
         return
-    with op.batch_alter_table("projects") as batch_op:
-        batch_op.drop_constraint(
-            _WORKSPACE_UNIQUE_CONSTRAINT,
-            type_="unique",
-        )
+    op.drop_constraint(_WORKSPACE_UNIQUE_CONSTRAINT, "projects", type_="unique")
 
 
 def downgrade() -> None:
@@ -58,8 +54,8 @@ def downgrade() -> None:
         raise RuntimeError(
             "cannot downgrade v2_28 while multiple projects share a workspace"
         )
-    with op.batch_alter_table("projects") as batch_op:
-        batch_op.create_unique_constraint(
-            _WORKSPACE_UNIQUE_CONSTRAINT,
-            ["user_id", "connector_id", "workspace_key"],
-        )
+    op.create_unique_constraint(
+        _WORKSPACE_UNIQUE_CONSTRAINT,
+        "projects",
+        ["user_id", "connector_id", "workspace_key"],
+    )

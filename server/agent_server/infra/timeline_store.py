@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from agent_server.core.models import TimelineItem
 from agent_server.infra.db import timeline_items
-from agent_server.infra.db.engine import POSTGRES_BACKEND
 
 
 def _json_dumps(value: Any) -> str:
@@ -17,9 +16,8 @@ def _json_dumps(value: Any) -> str:
 
 
 class SqlTimelineStore:
-    def __init__(self, engine: AsyncEngine, *, backend: str = POSTGRES_BACKEND) -> None:
+    def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
-        self._backend = backend
 
     async def read(self, session_id: str) -> list[TimelineItem]:
         async with self._engine.connect() as conn:
@@ -115,8 +113,8 @@ class SqlTimelineStore:
         """Insert-or-update a single row by composite PK (session_id, id).
 
         Hot path: called per streaming Codex delta. Avoids the O(N) DELETE-all
-        + INSERT-all pattern that `replace()` does. The dialect-specific
-        upsert keeps it to one row mutation.
+        + INSERT-all pattern that `replace()` does. The ``ON CONFLICT`` upsert
+        keeps it to one row mutation.
         """
         await self.upsert_many(conn, [item])
 

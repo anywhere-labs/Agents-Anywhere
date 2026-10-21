@@ -1,12 +1,12 @@
 import Foundation
 
-protocol HTTPTransport {
+nonisolated protocol HTTPTransport {
     func send<Body: Encodable, Response: Decodable>(_ request: HTTPRequest<Body, Response>) async throws -> Response
     func upload<Response: Decodable>(_ request: HTTPUploadRequest<Response>) async throws -> Response
     func download(_ url: URL) async throws -> URL
 }
 
-struct URLSessionHTTPTransport: HTTPTransport {
+nonisolated struct URLSessionHTTPTransport: HTTPTransport {
     private let serverURL: URL
     private let urlSession: URLSession
     private let tokenProvider: AuthTokenProvider
@@ -199,9 +199,9 @@ struct URLSessionHTTPTransport: HTTPTransport {
     }
 }
 
-private let v2Namespace = "/api/v2"
+nonisolated private let v2Namespace = "/api/v2"
 
-func v2APIPath(_ path: String) -> String {
+nonisolated func v2APIPath(_ path: String) -> String {
     let normalized = path.hasPrefix("/") ? path : "/\(path)"
     if normalized == v2Namespace || normalized.hasPrefix("\(v2Namespace)/") {
         return normalized
@@ -209,7 +209,7 @@ func v2APIPath(_ path: String) -> String {
     return "\(v2Namespace)\(normalized)"
 }
 
-extension URL {
+nonisolated extension URL {
     func normalizedV2ServerURL() -> URL {
         let components = URLComponents(url: self, resolvingAgainstBaseURL: false)
         guard var normalized = components else { return self }
@@ -220,14 +220,14 @@ extension URL {
     }
 }
 
-extension String {
+nonisolated extension String {
     var v2URLPathComponentEncoded: String {
         let forbidden = CharacterSet(charactersIn: "/?#")
         return addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(forbidden)) ?? self
     }
 }
 
-extension DecodingError {
+nonisolated extension DecodingError {
     var v2Description: String {
         switch self {
         case let .keyNotFound(key, context):

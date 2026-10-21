@@ -92,7 +92,7 @@ struct V2RuntimeAPI: V2RuntimeAPIProtocol {
         return try await transport.send(request)
     }
 
-    private func send<Body: Encodable, Response: Decodable>(
+    private func send<Body: Encodable, Response: Decodable & Sendable>(
         sessionId: V2SessionID,
         suffix: String,
         method: HTTPMethod,

@@ -38,6 +38,7 @@ deleted; `user_id` is set to `NULL` when the user is deleted.
 | --- | --- | --- | --- |
 | `user.active` | Any authenticated API call (`current_user_id`) or dashboard WebSocket connection | `active:{user}:{hour}` | Throttled in memory to one write per user per 5 minutes; at most one row per user per hour. |
 | `session.created` | `POST /sessions/create-and-start` succeeded | `session:{sessionId}` | Only sessions created from the platform. |
+| `session.viewed` | `GET /sessions/{id}/snapshot` succeeded — the call every client makes when it opens a session | none | One row per open. Repeats by the same user for the same session within 60 seconds (reconnects, refreshes) are folded in memory. |
 | `message.sent` | `create-and-start`, `POST .../runtime/messages`, `POST .../runtime/steer` accepted by the Connector | `msg:{clientMessageId}` (none without a client id) | Counted at the platform intent, not when the timeline item arrives. |
 | `turn.ended` | Connector notification `session.turnEnded` for a **takeover** session | `turn:{sessionId}:{turnId}` | `outcome` is `completed` / `interrupted` / `cancelled` / `failed`. `duration_ms` measures from the latest `message.sent` of the session; omitted when unknown or above 6 hours. Turns in read-only imported sessions are not platform usage. |
 | `approval.requested` | `notice.upsert` with `type=interaction`, `interactionType=approval`, `status=open` | `approval:{noticeId}:requested` | |
@@ -79,6 +80,9 @@ starts, so a day boundary can be off by up to that offset.
 | `summary.wau` / `summary.mau` | Distinct users active in the 7 / 30 local days ending on `toDate`; the daily series carries the rolling value for every day, looking back before `fromDate`. |
 | `summary.messages` | `message.sent` events. |
 | `summary.sessions` | Distinct sessions that received a platform message in the range. |
+| `summary.sessionViews` | `session.viewed` events: how many times sessions were opened in the range. |
+| `summary.sessionsViewed` | Distinct sessions opened in the range. |
+| `summary.sessionsReadOnly` | Sessions opened in the range that received no platform message in it — the ones people only read. `daily[]` carries all three per local day. |
 | `summary.turns`, `turnFailureRate` | `turn.ended` events and the share with `outcome=failed` (`null` without turns). |
 | `summary.turnDurationMs` | Nearest-rank p50 / p90 / p99 over completed turns with a known duration (newest 200 000 samples). |
 | `summary.approvalsRequested` / `approvalsResolved` / `approvalWaitMs` | Approval events and percentiles of `approval.resolved` durations. |
@@ -101,13 +105,15 @@ starts, so a day boundary can be off by up to that offset.
 {
   "range": {"fromDate": "2026-10-01", "toDate": "2026-10-30", "timezone": "Asia/Shanghai", "dataSince": "2026-10-10", "generatedAt": "..."},
   "summary": {"activeUsers": 12, "newUsers": 2, "avgDau": 4.5, "wau": 9, "mau": 12, "totalUsers": 40,
-              "messages": 310, "sessions": 48, "turns": 290, "turnFailureRate": 0.03,
+              "messages": 310, "sessions": 48, "sessionViews": 120, "sessionsViewed": 57, "sessionsReadOnly": 14,
+              "turns": 290, "turnFailureRate": 0.03,
               "turnDurationMs": {"p50": 42000, "p90": 180000, "p99": 600000, "samples": 281},
               "approvalsRequested": 15, "approvalsResolved": 14,
               "approvalWaitMs": {"p50": 8000, "p90": 60000, "p99": 60000, "samples": 14},
               "runtimeErrors": 1, "connectorsOnline": 7, "totalConnectors": 11},
   "daily": [{"date": "2026-10-01", "activeUsers": 3, "newUsers": 0, "wau": 8, "mau": 12, "messages": 12,
-             "sessions": 4, "turns": 11, "turnsFailed": 0, "turnDurationP50Ms": 40000, "turnDurationP90Ms": 90000,
+             "sessions": 4, "sessionViews": 9, "sessionsViewed": 5, "sessionsReadOnly": 2,
+             "turns": 11, "turnsFailed": 0, "turnDurationP50Ms": 40000, "turnDurationP90Ms": 90000,
              "approvalsRequested": 1, "approvalsResolved": 1, "runtimeErrors": 0, "connectorsOnline": 2}],
   "hourOfDay": [{"hour": 0, "messages": 0, "activeUsers": 0}],
   "users": {"segments": [{"segment": "light", "min": 1, "max": 5, "count": 6}],

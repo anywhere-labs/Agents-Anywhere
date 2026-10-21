@@ -14,7 +14,7 @@ nonisolated struct V2AttachmentReference: Codable, Identifiable, Hashable {
     var id: V2AttachmentID { fileId }
 }
 
-struct V2AttachmentDownload: Decodable, Hashable {
+nonisolated struct V2AttachmentDownload: Decodable, Hashable {
     let fileId: V2AttachmentID
     let sessionId: V2SessionID
     let path: String
@@ -26,7 +26,7 @@ struct V2AttachmentDownload: Decodable, Hashable {
     let serverTime: String
 }
 
-struct V2AttachmentContent: Hashable {
+nonisolated struct V2AttachmentContent: Hashable {
     let fileId: V2AttachmentID?
     let name: String?
     let mediaType: String?
@@ -46,7 +46,7 @@ struct V2AttachmentContent: Hashable {
     }
 }
 
-struct V2AttachmentUploadResponse: Decodable, Hashable {
+nonisolated struct V2AttachmentUploadResponse: Decodable, Hashable {
     let attachments: [V2AttachmentReference]
     let serverTime: String
 }
@@ -65,7 +65,7 @@ private extension JSONValue {
 }
 
 /// create-and-start returns timeline attachment metadata, not the upload DTO.
-struct V2CreatedAttachment: Codable, Hashable {
+nonisolated struct V2CreatedAttachment: Codable, Hashable {
     let fileId: String
     let name: String
     let mediaType: String

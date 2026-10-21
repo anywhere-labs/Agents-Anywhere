@@ -71,7 +71,7 @@ class FakeState {
     this.appended.push(entry);
   }
 
-  exportLogs(filePath: string): number {
+  async exportLogs(filePath: string): Promise<number> {
     return filePath.length;
   }
 

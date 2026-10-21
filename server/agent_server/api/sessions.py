@@ -86,6 +86,7 @@ from agent_server.deps import (
     get_store,
     get_timeline_broker,
     get_timeline_write_buffer,
+    get_usage_recorder,
 )
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
@@ -117,6 +118,7 @@ from agent_server.services.session_meta_projection import (
 from agent_server.services.session_run import SessionRunError, SessionRunService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
+from agent_server.services.usage_events import UsageRecorder
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -897,6 +899,7 @@ async def session_snapshot(
     timeline_write_buffer: TimelineWriteBuffer = Depends(
         get_timeline_write_buffer
     ),
+    usage_recorder: UsageRecorder = Depends(get_usage_recorder),
 ) -> ProtocolSessionSnapshotResponse:
     snapshot_started_at = time.monotonic()
 
@@ -914,6 +917,8 @@ async def session_snapshot(
         stage_started_at = time.monotonic()
         session = await db.get_session(session_id, user_id=user_id)
         log_snapshot_stage("authorization", stage_started_at)
+        # Opening a session is platform usage; the recorder folds quick repeats.
+        await usage_recorder.touch_session_view(session, user_id=user_id)
 
         stage_started_at = time.monotonic()
         notices = await read_session_notices_for_snapshot(manager, session)

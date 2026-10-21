@@ -23,10 +23,6 @@ _PROTOCOL_REVISION_TABLES = (
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
-    if bind.dialect.name != "postgresql":
-        # SQLite INTEGER values are already signed 64-bit values.
-        return
     for table_name in _PROTOCOL_REVISION_TABLES:
         op.alter_column(
             table_name,

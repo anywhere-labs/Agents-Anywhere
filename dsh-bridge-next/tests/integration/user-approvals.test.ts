@@ -14,7 +14,7 @@ import { RuntimeRouter } from '../../src/host/dsh-runtime/router.js'
 import { UserApprovals } from '../../src/host/dsh-runtime/approvals.js'
 import { InteractionStream } from '../../src/host/dsh-runtime/interaction-stream.js'
 import { sessionId } from '../../src/host/dsh-runtime/identity.js'
-import { SyncFeed, type SyncBatch } from '../../src/host/dsh-runtime/sync.js'
+import { SyncFeed, type SyncOperation, type SyncTransport } from '../../src/host/dsh-runtime/sync.js'
 
 async function until(check: () => boolean, label: string) {
   for (let n = 0; n < 500; n++) { if (check()) return; await delay(10) }
@@ -46,25 +46,25 @@ async function fixture() {
 test('official restricted approval offers one-shot grant and rejection through the bridge interaction API', { timeout: 20_000 }, async () => {
   const f = await fixture()
   try {
-    const capabilities = await f.request('runtime.getCapabilities', {}) as { metadata: { approval: boolean }; capabilities: { capabilityId: string; supported: boolean }[] }
+    const capabilities = await f.request('getRuntimeCapabilities', {}) as { metadata: { approval: boolean }; capabilities: { capabilityId: string; supported: boolean }[] }
     assert.equal(capabilities.metadata.approval, true)
     assert.equal(capabilities.capabilities.find(item => item.capabilityId === 'session.interaction.approval')?.supported, true)
     for (const [action, outcome] of [['allow-once', 'allowed-once'], ['reject', 'rejected']] as const) {
       const decision = f.ask()
       await until(() => f.runtime.approvals.waiting(f.id), 'approval pending')
-      const notices = await f.request('session.getNotices', { sessionId: f.platformId }) as { notices: any[] }
+      const notices = await f.request('getSessionNotices', { sessionId: f.platformId }) as { notices: any[] }
       const notice = notices.notices.find(item => item.status === 'open')!
       assert.equal(notice.interactionType, 'approval')
       assert.match(notice.message, /工作区之外/)
       assert.deepEqual(notice.actions.map((item: any) => item.actionId), ['allow-once', 'reject'])
-      assert.equal((await f.request('session.getState', { sessionId: f.platformId }) as { status: string }).status, 'waiting_approval')
-      assert.equal((await f.request('session.respondInteraction', { sessionId: sessionId('test', 'native-main'), noticeId: notice.noticeId, actionId: action }) as { ok: boolean }).ok, false)
-      assert.equal((await f.request('session.respondInteraction', { sessionId: f.platformId, noticeId: notice.noticeId, actionId: 'allow-always' }) as { ok: boolean }).ok, false)
-      const results = await Promise.all([0, 1].map(() => f.request('session.respondInteraction', { sessionId: f.platformId, noticeId: notice.noticeId, actionId: action }) as Promise<{ ok: boolean }>))
+      assert.equal((await f.request('getSessionState', { sessionId: f.platformId }) as { status: string }).status, 'waiting_approval')
+      assert.equal((await f.request('respondInteraction', { sessionId: sessionId('test', 'native-main'), noticeId: notice.noticeId, actionId: action }) as { ok: boolean }).ok, false)
+      assert.equal((await f.request('respondInteraction', { sessionId: f.platformId, noticeId: notice.noticeId, actionId: 'allow-always' }) as { ok: boolean }).ok, false)
+      const results = await Promise.all([0, 1].map(() => f.request('respondInteraction', { sessionId: f.platformId, noticeId: notice.noticeId, actionId: action }) as Promise<{ ok: boolean }>))
       assert.equal(results.filter(result => result.ok).length, 1)
       assert.equal(await decision, outcome)
       await until(() => !f.runtime.approvals.waiting(f.id), 'decision clears pending state')
-      assert.equal((await f.request('session.respondInteraction', { sessionId: f.platformId, noticeId: notice.noticeId, actionId: action }) as { ok: boolean }).ok, false)
+      assert.equal((await f.request('respondInteraction', { sessionId: f.platformId, noticeId: notice.noticeId, actionId: action }) as { ok: boolean }).ok, false)
     }
     const decisions = f.ctx.agents.get(f.id)!.session.snapshotEvents().filter(event => event.type === 'approval/decided')
     assert.equal(decisions.length, 2, 'native audit records exactly one result per ask')
@@ -82,8 +82,15 @@ test('native answer and interruption withdraw remote approval; feed reconnect re
     await until(() => f.runtime.approvals.waiting(f.id) && eventId !== undefined, 'approval is visible on both clients')
     const notice = f.runtime.approvals.notices('test', f.id).find(item => item.status === 'open')!
     for (let i = 0; i < 2; i++) {
-      const batches: SyncBatch[] = []
-      const feed = new SyncFeed(f.runtime, 'test', batch => { batches.push(batch); queueMicrotask(() => feed.ack(batch.batchSeq)) }, error => assert.fail(String(error)))
+      const batches: { operations: SyncOperation[] }[] = []
+      const transport: SyncTransport = {
+        async ingestBatch(batch) { batches.push(batch as unknown as { operations: SyncOperation[] }) },
+        async loadCheckpoint() { return null },
+        async saveCheckpoint() {},
+        async deleteCheckpoint() {},
+        async ingestSnapshot(_request, pages) { for await (const _page of pages) { /* drain */ } return { accepted: true } },
+      }
+      const feed = new SyncFeed(f.runtime, 'test', `approvals-${i}`, transport, error => assert.fail(String(error)))
       feeds.push(feed); feed.start()
       await until(() => JSON.stringify(batches).includes(notice.noticeId), 'pending approval appears in initial and reconnect feed')
       feed.close()
@@ -91,7 +98,7 @@ test('native answer and interruption withdraw remote approval; feed reconnect re
     await nativeClient.reply(eventId!, { kind: 'result', value: 'allowed-once' })
     assert.equal(await decision, 'allowed-once')
     await until(() => !f.runtime.approvals.waiting(f.id), 'native answer closes remote notice')
-    assert.equal((await f.request('session.respondInteraction', { sessionId: f.platformId, noticeId: notice.noticeId, actionId: 'allow-once' }) as { ok: boolean }).ok, false)
+    assert.equal((await f.request('respondInteraction', { sessionId: f.platformId, noticeId: notice.noticeId, actionId: 'allow-once' }) as { ok: boolean }).ok, false)
     const abort = new AbortController()
     const cancelled = f.ask(abort.signal)
     await until(() => f.runtime.approvals.waiting(f.id), 'cancelable approval')

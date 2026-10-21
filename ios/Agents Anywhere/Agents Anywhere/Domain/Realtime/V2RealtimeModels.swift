@@ -1,16 +1,16 @@
 import Foundation
 
-enum V2RealtimeScope: Hashable {
+nonisolated enum V2RealtimeScope: Hashable {
     case dashboard
     case session(V2SessionID)
 }
 
-struct V2WebSocketTicketRequest: Encodable, Hashable {
+nonisolated struct V2WebSocketTicketRequest: Encodable, Hashable {
     let clientId: String
     let scope: V2WebSocketTicketScope
 }
 
-struct V2WebSocketTicketScope: Encodable, Hashable {
+nonisolated struct V2WebSocketTicketScope: Encodable, Hashable {
     let sessionId: V2SessionID?
     let dashboard: Bool
 
@@ -26,13 +26,13 @@ struct V2WebSocketTicketScope: Encodable, Hashable {
     }
 }
 
-struct V2WebSocketTicket: Decodable, Hashable {
+nonisolated struct V2WebSocketTicket: Decodable, Hashable {
     let ticket: String
     let expiresAt: String
     let serverTime: String
 }
 
-struct V2SessionEvent: Decodable, Identifiable, Hashable {
+nonisolated struct V2SessionEvent: Decodable, Identifiable, Hashable {
     let protocolVersion: String
     let eventId: String
     let sequence: Int
@@ -55,14 +55,14 @@ struct V2SessionEvent: Decodable, Identifiable, Hashable {
     }
 }
 
-struct V2EventRecoveryResponse: Decodable, Hashable {
+nonisolated struct V2EventRecoveryResponse: Decodable, Hashable {
     let events: [V2SessionEvent]
     let nextCursor: String
     let snapshotRequired: Bool
     let serverTime: String
 }
 
-struct V2DashboardSnapshot: Decodable, Hashable {
+nonisolated struct V2DashboardSnapshot: Decodable, Hashable {
     let type: String
     let connectors: [V2Connector]
     let projects: [V2Project]

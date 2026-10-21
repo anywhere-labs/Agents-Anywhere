@@ -4,58 +4,58 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { machineStateLockPort, withMachineStateLock } from "./machine-state-lock";
+import { machineStateLockRecordPath, withMachineStateLock } from "./machine-state-lock";
 
-const realCreateServer = net.createServer;
-
-/** Makes every lease fail to listen the way an OS-refused port does. */
-function refuseLeases(code: string): () => void {
-  net.createServer = ((...args: Parameters<typeof net.createServer>) => {
-    const server = realCreateServer(...args);
-    server.listen = (() => {
-      process.nextTick(() => server.emit("error", Object.assign(new Error(code), { code })));
-      return server;
-    }) as typeof server.listen;
-    return server;
-  }) as typeof net.createServer;
-  return () => { net.createServer = realCreateServer; };
-}
-
-function listenOn(port: number): Promise<net.Server> {
+function listenSilently(): Promise<net.Server> {
   return new Promise((resolve, reject) => {
-    const holder = realCreateServer(socket => socket.destroy());
+    // Accepts connections but never answers with a token.
+    const holder = net.createServer(() => {});
     holder.once("error", reject);
-    holder.listen({ host: "127.0.0.1", port }, () => resolve(holder));
+    holder.listen({ host: "127.0.0.1", port: 0 }, () => resolve(holder));
   });
 }
 
-test("a lock port the OS refuses is skipped, unless another writer is listening on it", async t => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "aa-lock-refused-"));
-  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
-  const file = path.join(home, "connector-runtime.json");
-  const port = await machineStateLockPort(file);
-  const warnings: string[] = [];
-  t.after(refuseLeases("EACCES"));
-  assert.equal(await withMachineStateLock(file, () => "written", { timeoutMs: 200, warn: m => warnings.push(m) }), "written");
-  assert.deepEqual(warnings, [`Local Connector record lock port ${port} is unavailable (EACCES); writing without the lock.`]);
-  const holder = await listenOn(port);
-  try {
-    await assert.rejects(() => withMachineStateLock(file, () => "raced", { timeoutMs: 200 }), /busy/);
-  } finally {
-    await new Promise(resolve => holder.close(resolve));
-  }
-  assert.equal(warnings.length, 1);
-});
-
-test("a lease another writer holds is waited for, then reported as busy", async t => {
+test("a transaction another writer holds is waited for, then reported as busy", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "aa-lock-busy-"));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const file = path.join(home, "connector-runtime.json");
-  const holder = await listenOn(await machineStateLockPort(file));
-  try {
+  const record = machineStateLockRecordPath(file);
+  const result = await withMachineStateLock(file, async () => {
+    const published = JSON.parse(fs.readFileSync(record, "utf8")) as { pid: number; port: number; token: string };
+    assert.equal(published.pid, process.pid);
+    assert.ok(published.port > 0 && published.token.length > 0);
     await assert.rejects(() => withMachineStateLock(file, () => "raced", { timeoutMs: 200 }), /busy/);
-  } finally {
-    await new Promise(resolve => holder.close(resolve));
-  }
+    return "held";
+  });
+  assert.equal(result, "held");
+  assert.equal(fs.existsSync(record), false, "release removes the record it owns");
   assert.equal(await withMachineStateLock(file, () => "written"), "written");
+});
+
+test("a dead writer's record is taken over even when its port is now held by something else", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "aa-lock-stale-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const file = path.join(home, "connector-runtime.json");
+  const record = machineStateLockRecordPath(file);
+  const stranger = await listenSilently();
+  t.after(() => new Promise(resolve => stranger.close(resolve)));
+  const port = (stranger.address() as net.AddressInfo).port;
+  fs.writeFileSync(record, JSON.stringify({ version: 1, port, pid: 999_999, token: "stale", startedAt: "2026-01-01T00:00:00.000Z" }));
+  const warnings: string[] = [];
+  assert.equal(await withMachineStateLock(file, () => "written", { timeoutMs: 2_000, warn: m => warnings.push(m) }), "written");
+  assert.deepEqual(warnings, ["Stale local machine record lock taken over (pid 999999)."]);
+  assert.equal(fs.existsSync(record), false);
+  fs.writeFileSync(record, "{not a record");
+  assert.equal(await withMachineStateLock(file, () => "again", { timeoutMs: 2_000 }), "again");
+});
+
+test("release never removes a record that is no longer ours", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "aa-lock-foreign-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const file = path.join(home, "connector-runtime.json");
+  const record = machineStateLockRecordPath(file);
+  await withMachineStateLock(file, () => {
+    fs.writeFileSync(record, JSON.stringify({ version: 1, port: 1, pid: 1, token: "intruder", startedAt: "2026-01-01T00:00:00.000Z" }));
+  });
+  assert.equal((JSON.parse(fs.readFileSync(record, "utf8")) as { token: string }).token, "intruder");
 });

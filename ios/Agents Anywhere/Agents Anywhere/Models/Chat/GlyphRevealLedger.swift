@@ -4,9 +4,11 @@ import Foundation
 /// text's measured size. Geometry always uses the final, untransformed glyphs.
 nonisolated struct GlyphRevealEffect {
     let progress: Double
+    /// With the reveal animation switched off, new glyphs only fade in.
+    var rises = true
     var opacity: Double { progress }
-    var blurRadius: Double { 3 * (1 - progress) }
-    var offsetY: Double { 3 * (1 - progress) }
+    var blurRadius: Double { rises ? 3 * (1 - progress) : 0 }
+    var offsetY: Double { rises ? 3 * (1 - progress) : 0 }
 }
 
 /// Glyphs before `settledCount` draw normally. Each batch is one flush's

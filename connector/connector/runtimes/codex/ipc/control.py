@@ -185,7 +185,7 @@ class CodexIpcTurnController:
 
         message_id = client_message_id or str(uuid.uuid4())
         codex_attachments = await materialize_codex_attachments(
-            self.host, session_id, attachments
+            self.host, session_id, attachments, self.notices
         )
         self.pending_messages.register(
             external_session_id=thread.thread_id,
@@ -264,7 +264,7 @@ class CodexIpcTurnController:
                 result={"externalSessionId": thread.thread_id},
             )
         codex_attachments = await materialize_codex_attachments(
-            self.host, session_id, attachments
+            self.host, session_id, attachments, self.notices
         )
         self.pending_messages.register(
             external_session_id=thread.thread_id,

@@ -64,7 +64,7 @@ export class NativeRuntime {
   private readonly facts = new Map<string, { revision: string, value: SessionFacts }>()
 
   constructor(readonly ctx: Context, creationDirectory: string,
-    readonly diagnostics = new RuntimeDiagnostics(ctx.logger('agents-anywhere-runtime')),
+    readonly diagnostics = new RuntimeDiagnostics(),
     legacyAttachmentStaging?: string) {
     this.creations = new CreationIntents(creationDirectory)
     this.attachments = new RuntimeAttachments(join(dirname(creationDirectory), 'attachments'), legacyAttachmentStaging)

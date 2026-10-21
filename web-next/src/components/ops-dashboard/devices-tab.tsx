@@ -24,15 +24,15 @@ export function DevicesTab({ report }: { report: UsageReportResponse }) {
       : t("devices.asOfSnapshot", { date: devices.inventoryAsOf })
 
   return (
-    <div className="flex flex-col gap-4">
-      <StatGrid className="xl:grid-cols-4 2xl:grid-cols-4">
+    <div className="flex flex-col gap-6">
+      <StatGrid columns={4}>
         <StatTile label={t("metrics.totalConnectors")} value={formatNumber(devices.totalConnectors)} helper={asOf} />
         <StatTile label={t("metrics.connectorsSeen7d")} value={formatNumber(devices.connectorsSeen7d)} />
         <StatTile label={t("metrics.connectorsSeen30d")} value={formatNumber(devices.connectorsSeen30d)} />
         <StatTile label={t("metrics.connectorsOnline")} value={formatNumber(summary.connectorsOnline)} helper={t("metrics.connectorsOnlineHint")} />
       </StatGrid>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-6 xl:grid-cols-2">
         <ChartCard title={t("devices.byOs")}>
           {devices.byOs.length === 0 ? (
             <EmptyNote>{t("charts.empty")}</EmptyNote>

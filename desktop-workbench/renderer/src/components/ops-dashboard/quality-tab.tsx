@@ -41,8 +41,8 @@ export function QualityTab({ report }: { report: UsageReportResponse }) {
     OUTCOME_KEYS.has(outcome) ? t(`quality.outcomeLabels.${outcome}`) : outcome
 
   return (
-    <div className="flex flex-col gap-4">
-      <StatGrid className="xl:grid-cols-5 2xl:grid-cols-5">
+    <div className="flex flex-col gap-6">
+      <StatGrid columns={5}>
         <StatTile
           label={t("metrics.turnFailureRate")}
           value={formatPercent(summary.turnFailureRate)}
@@ -62,7 +62,7 @@ export function QualityTab({ report }: { report: UsageReportResponse }) {
         <StatTile label={t("metrics.runtimeErrors")} value={formatNumber(summary.runtimeErrors)} />
       </StatGrid>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-6 xl:grid-cols-2">
         <ChartCard title={t("charts.turnOutcomesDaily")}>
           <BarsChart
             data={outcomesDaily}
@@ -84,7 +84,7 @@ export function QualityTab({ report }: { report: UsageReportResponse }) {
         </ChartCard>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-6 xl:grid-cols-2">
         <ChartCard title={t("charts.approvalsDaily")}>
           <BarsChart
             data={report.daily}
@@ -94,7 +94,7 @@ export function QualityTab({ report }: { report: UsageReportResponse }) {
             ]}
           />
         </ChartCard>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-6 sm:grid-cols-2">
           <OutcomeTable title={t("quality.outcomes")} rows={quality.turnOutcomes} label={outcomeLabel} />
           <OutcomeTable title={t("quality.approvalOutcomes")} rows={quality.approvalOutcomes} label={outcomeLabel} />
         </div>

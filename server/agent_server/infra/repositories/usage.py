@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from agent_server.core.usage import (
     EVENT_CONNECTOR_ONLINE,
     EVENT_MESSAGE_SENT,
+    EVENT_SESSION_VIEWED,
     INVENTORY_CONNECTORS_BY_OS,
     INVENTORY_CONNECTORS_SEEN_7D,
     INVENTORY_CONNECTORS_SEEN_30D,
@@ -154,18 +155,22 @@ class UsageRepositoryMixin:
                 await conn.execute(
                     select(
                         usage_events_t.c.hour_bucket,
+                        usage_events_t.c.event_type,
                         usage_events_t.c.session_id,
                         usage_events_t.c.runtime_type,
                         usage_events_t.c.user_id,
-                        func.count().label("messages"),
+                        func.count().label("count"),
                     )
                     .where(
                         _hour_range(start_hour, end_hour),
-                        usage_events_t.c.event_type == EVENT_MESSAGE_SENT,
+                        usage_events_t.c.event_type.in_(
+                            (EVENT_MESSAGE_SENT, EVENT_SESSION_VIEWED)
+                        ),
                         usage_events_t.c.session_id.is_not(None),
                     )
                     .group_by(
                         usage_events_t.c.hour_bucket,
+                        usage_events_t.c.event_type,
                         usage_events_t.c.session_id,
                         usage_events_t.c.runtime_type,
                         usage_events_t.c.user_id,
@@ -175,10 +180,11 @@ class UsageRepositoryMixin:
         return [
             UsageSessionRow(
                 hour_bucket=str(row[0]),
-                session_id=str(row[1]),
-                runtime_type=row[2],
-                user_id=row[3],
-                messages=int(row[4] or 0),
+                event_type=str(row[1]),
+                session_id=str(row[2]),
+                runtime_type=row[3],
+                user_id=row[4],
+                count=int(row[5] or 0),
             )
             for row in rows
         ]

@@ -579,7 +579,6 @@ def ensure_infrastructure() -> None:
 
 def _server_environment() -> dict[str, str]:
     return {
-        "AGENT_SERVER_DB_BACKEND": "postgres",
         "AGENT_SERVER_DB_URL": DB_URL,
         "AGENT_SERVER_REDIS_URL": REDIS_URL,
         "AGENT_SERVER_FILES_LOCAL_ROOT": str(LOCAL_DIR / "files"),

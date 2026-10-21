@@ -491,7 +491,6 @@ printf '%s[setup]%s Applying database migrations...\n' "${CYAN}" "${RESET}"
 (
   cd "${SERVER_DIR}"
   env \
-    AGENT_SERVER_DB_BACKEND=postgres \
     AGENT_SERVER_DB_URL="${DB_URL}" \
     AGENT_SERVER_REDIS_URL="${REDIS_URL}" \
     AGENT_SERVER_FILES_LOCAL_ROOT="${LOCAL_DIR}/files" \
@@ -502,7 +501,6 @@ printf '%s[setup]%s Applying database migrations...\n' "${CYAN}" "${RESET}"
 
 start_service server "${CYAN}" "${SERVER_DIR}" \
   env \
-  AGENT_SERVER_DB_BACKEND=postgres \
   AGENT_SERVER_DB_URL="${DB_URL}" \
   AGENT_SERVER_REDIS_URL="${REDIS_URL}" \
   AGENT_SERVER_FILES_LOCAL_ROOT="${LOCAL_DIR}/files" \

@@ -263,7 +263,8 @@
       "approved": "Approved",
       "waiting": "Waiting for scan"
     },
-    "copyFailed": "Copy failed. Please select the text and copy it manually."
+    "copyFailed": "Copy failed. Please select the text and copy it manually.",
+    "backHome": "Back to home"
   },
   "dashboard": {
     "actions": {
@@ -339,10 +340,7 @@
       "clear": "Clear filters"
     },
     "nav": {
-      "dashboard": "Dashboard",
-      "service": "Service",
-      "settings": "Settings",
-      "team": "Team"
+      "settings": "Settings"
     },
     "new": {
       "askApproval": "Ask approval",
@@ -1546,7 +1544,7 @@
       "desktopUvPythonInstallMirrorDescription": "Where uv downloads Python when it first prepares the Connector environment.",
       "desktopPythonMirrorDefault": "Official (GitHub)",
       "desktopPythonMirrorNpmmirror": "npmmirror",
-      "desktopLogStorage": "Logs",
+      "desktopLogStorage": "Desktop startup log storage",
       "desktopLogChunkSize": "Chunk size",
       "desktopLogRetainChunks": "Retained chunks",
       "desktopLogRetentionDays": "Days to retain",
@@ -1566,7 +1564,7 @@
       "desktopConnectorConfigRestarted": "Connection settings saved and Connector restarted.",
       "desktopConnectorConfigFailed": "Failed to save Connector connection settings.",
       "desktopLogs": "Runtime logs",
-      "desktopLogsDescription": "Recent connector activity.",
+      "desktopLogsDescription": "Connector stores runtime logs centrally. Runtime logs are shown when connected; otherwise Desktop startup diagnostics are shown. Storage settings above affect Desktop logs only.",
       "desktopRefreshLogs": "Refresh",
       "desktopExportLogs": "Export",
       "desktopLogsExported": "Exported {count} log entries.",
@@ -1577,6 +1575,10 @@
       "desktopLogsLoadFailed": "Failed to load Connector logs.",
       "desktopLogsClearFailed": "Failed to clear Connector logs.",
       "desktopLoadOlderLogs": "Load earlier logs",
+      "desktopLogsSourceAll": "All",
+      "desktopLogsSourceConnector": "Connector",
+      "desktopLogsSourceBridge": "Bridge",
+      "desktopLogsGapBefore": "Earlier logs were rotated",
       "desktopFactoryReset": "Factory reset",
       "desktopFactoryResetTitle": "Reset this Desktop?",
       "desktopFactoryResetDescription": "Disconnect this device, remove local settings, logs, credentials, and cached sign-in data, then restart the app.",
@@ -1807,7 +1809,11 @@
         "messages": "Messages",
         "messagesPerActiveUser": "Messages per user",
         "messagesPerActiveUserHelper": "{value} per active user",
-        "sessions": "Sessions",
+        "activeSessions": "Active sessions",
+        "readOnlySessions": "Read-only sessions",
+        "readOnlySessionsHelper": "plus {count} read-only",
+        "sessionsViewedHelper": "{count} sessions opened",
+        "sessionViews": "Session opens",
         "turns": "Turns",
         "failureRateHelper": "{value} failed",
         "ofTurns": "of {count} turns",
@@ -1833,6 +1839,8 @@
         "rollingWindows": "Active users and rolling windows",
         "rollingWindowsHint": "WAU / MAU count distinct users in the trailing 7 / 30 days ending on each day.",
         "messagesDaily": "Messages per day",
+        "sessionsDaily": "Sessions per day",
+        "sessionsDailyHint": "Active: received a message that day; read-only: only opened.",
         "hourOfDay": "By hour of day",
         "hourOfDayHint": "Messages in the range by local hour in {timezone}.",
         "histogram": "Messages per user",
@@ -1853,7 +1861,8 @@
         "wau": "WAU",
         "mau": "MAU",
         "messages": "Messages",
-        "sessions": "Sessions",
+        "activeSessions": "Active sessions",
+        "readOnlySessions": "Read-only",
         "turns": "Turns",
         "turnsOther": "Other turns",
         "turnsFailed": "Failed turns",
@@ -1965,16 +1974,10 @@
       "saveProvider": "Save provider",
       "saving": "Saving...",
       "firstPartyClients": "First-party Clients",
-      "firstPartyClientsDescription": "Use the Web redirect URL for upstream OAuth providers. Built-in native clients use fixed identifiers and callbacks.",
-      "clientMode": "Mode",
-      "locked": "locked",
+      "firstPartyClientsDescription": "The built-in mobile and desktop apps use fixed client IDs and callbacks; there is nothing to register with the upstream provider.",
       "callback": "Callback",
       "webCallback": "Web redirect URL",
       "nativeCallback": "Native callback",
-      "mobileClientId": "Mobile client ID",
-      "mobileCallback": "Mobile callback",
-      "desktopClientId": "Desktop client ID",
-      "desktopCallback": "Desktop callback",
       "about": "About",
       "aboutDescription": "Agents Anywhere is an open-source remote control surface for AI coding agents.",
       "viewOnGithub": "View on GitHub",
@@ -2000,7 +2003,29 @@
       },
       "passwordReset": "Password reset",
       "passwordResetDescription": "Let users reset a forgotten password with an email verification code.",
-      "passwordResetNeedsEmail": "Turn on email first. Password reset sends a verification code by email."
+      "passwordResetNeedsEmail": "Turn on email first. Password reset sends a verification code by email.",
+      "sections": {
+        "general": {
+          "title": "General",
+          "description": "Who can create accounts and how they sign in."
+        },
+        "auth": {
+          "title": "Authentication",
+          "description": "The upstream OAuth provider and the callbacks built-in clients use."
+        },
+        "email": {
+          "title": "Email",
+          "description": "Outgoing mail and email verification codes."
+        },
+        "info": {
+          "title": "About this server",
+          "description": "Version, runtime status and project links."
+        }
+      },
+      "webCallbackHint": "Register this callback URL when creating the app at the upstream provider.",
+      "mobileClient": "Mobile app",
+      "desktopClient": "Desktop app",
+      "callbackUrl": "Callback URL"
     }
   },
   "preview": {
@@ -2075,6 +2100,17 @@
       "retry": "Reload",
       "publishedAt": "Last published: {time}",
       "notPublished": "Not published yet"
+    }
+  },
+  "admin": {
+    "title": "Administration",
+    "groups": {
+      "data": "Data",
+      "management": "Team & announcements",
+      "service": "Service"
+    },
+    "announcements": {
+      "description": "Publish or update the announcement shown to every user."
     }
   }
 }

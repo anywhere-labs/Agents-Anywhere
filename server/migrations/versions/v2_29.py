@@ -78,9 +78,8 @@ def _project_foreign_key() -> dict | None:
 
 
 def _delete_session(bind, session_id: str) -> None:
-    # All current session-owned tables use ON DELETE CASCADE.  Explicitly
-    # remove rows as well so this remains safe on legacy SQLite databases whose
-    # foreign_keys pragma was disabled when they were created.
+    # All current session-owned tables use ON DELETE CASCADE. Explicitly
+    # remove rows as well so the cleanup does not depend on the cascade.
     for table in ("session_active_runs", "timeline_items", "session_shares"):
         if table in sa.inspect(bind).get_table_names():
             bind.execute(
@@ -193,18 +192,15 @@ def _set_project_foreign_key(ondelete: str) -> None:
     current = (foreign_key or {}).get("options", {}).get("ondelete")
     if foreign_key is None or str(current).upper() == ondelete:
         return
-    with op.batch_alter_table("sessions") as batch_op:
-        batch_op.drop_constraint(
-            foreign_key.get("name") or _PROJECT_FOREIGN_KEY,
-            type_="foreignkey",
-        )
-        batch_op.create_foreign_key(
-            _PROJECT_FOREIGN_KEY,
-            "projects",
-            ["project_id"],
-            ["id"],
-            ondelete=ondelete,
-        )
+    op.drop_constraint(foreign_key["name"], "sessions", type_="foreignkey")
+    op.create_foreign_key(
+        _PROJECT_FOREIGN_KEY,
+        "sessions",
+        "projects",
+        ["project_id"],
+        ["id"],
+        ondelete=ondelete,
+    )
 
 
 def upgrade() -> None:

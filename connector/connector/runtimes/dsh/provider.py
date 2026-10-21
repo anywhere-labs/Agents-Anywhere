@@ -88,7 +88,7 @@ class DshProvider(RuntimeProvider):
         )
         metadata.update(
             {
-                "protocolVersion": "1.0",
+                "protocolVersion": "2.0",
                 "storageMode": "dsh-native",
                 "sameSessionWriterLimit": 1,
                 "crossProcessWriterExclusion": False,
@@ -193,7 +193,7 @@ class DshProvider(RuntimeProvider):
         metadata = dict(result.metadata or {})
         metadata.update(
             {
-                "protocolVersion": "1.0",
+                "protocolVersion": "2.0",
                 "readOnly": not provider_config.dsh_capabilities(metadata.get("runtimeCapabilities"))["startTurn"],
                 "storageMode": "dsh-native",
                 "sameSessionWriterLimit": 1,

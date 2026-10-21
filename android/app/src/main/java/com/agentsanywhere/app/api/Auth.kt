@@ -117,6 +117,14 @@ class AuthApi(
         }
     }
 
+    fun refreshMobileLogin(serverUrl: String, refreshToken: String): AuthResponse {
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/auth/mobile-login/refresh",
+            body = JSONObject().put("refreshToken", refreshToken),
+        ).toAuthResponse()
+    }
+
     fun updateAvatar(
         serverUrl: String,
         token: String,

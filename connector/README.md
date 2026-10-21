@@ -15,11 +15,11 @@ connector/
   runtime_protocol/  AgentRuntime, RuntimeProvider, RuntimeHostClient contracts
   runtimes/          Codex, Claude and DSH RuntimeProvider/AgentRuntime packages
   server/            Backend auth, ingest, RPC channel, request dispatch, host mapping
-  core/              Connector config, JSON-RPC, runtime owner, runtime config storage
+  core/              Connector config, runtime owner, runtime config storage
   local/             Local filesystem, shell, and terminal backends
   _reference/        Old adapter implementations retained only as migration references
   cli.py             anywhere-cli CLI
-  control.py         Local desktop/control JSON-RPC entrypoint
+  control.py         Connector controller shared by the CLI and the local control service
 tests/          Connector tests
 pyproject.toml  Connector dependencies and console script
 run.sh          Local helper for saved-config startup
@@ -123,7 +123,7 @@ record at normal shutdown. A crash leaves a record that the next start checks ag
 the actual process. Stopping the backend connection through `connector.stop` retains
 ownership while the RPC process is alive.
 
-RPC callers receive `-32009` with `data.reason = connector_already_running` on a
+Local control callers receive the MeshCall application error `connector_already_running` on a
 conflict. `connector.acquireOwnership` supports preflight before credentials exist;
 a rejected request keeps the RPC channel alive for `connector.getState` and retry.
 Direct CLI startup reports the conflict and exits with code `2`.

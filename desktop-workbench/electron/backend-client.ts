@@ -167,8 +167,14 @@ export class DesktopBackendClient {
     this.stream = null;
     const child = this.child;
     if (!child) return;
+    // `send` on a closed channel emits `error` asynchronously, which a
+    // try/catch cannot see. Keep this listener for the rest of the child's
+    // lifetime: the event fires after `send` returns, so removing it in a
+    // finally would leave the error unhandled again.
+    const ignoreChannelError = () => undefined;
+    child.on("error", ignoreChannelError);
     try {
-      child.send({ type: "shutdown" } satisfies BackendControlMessage);
+      if (child.connected) child.send({ type: "shutdown" } satisfies BackendControlMessage);
     } catch {
       // The channel is already gone; the exit race below handles it.
     }

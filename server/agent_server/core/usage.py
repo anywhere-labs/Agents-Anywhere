@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 EVENT_USER_ACTIVE = "user.active"
 EVENT_SESSION_CREATED = "session.created"
+EVENT_SESSION_VIEWED = "session.viewed"
 EVENT_MESSAGE_SENT = "message.sent"
 EVENT_TURN_ENDED = "turn.ended"
 EVENT_APPROVAL_REQUESTED = "approval.requested"
@@ -26,6 +27,7 @@ USAGE_EVENT_TYPES = frozenset(
     {
         EVENT_USER_ACTIVE,
         EVENT_SESSION_CREATED,
+        EVENT_SESSION_VIEWED,
         EVENT_MESSAGE_SENT,
         EVENT_TURN_ENDED,
         EVENT_APPROVAL_REQUESTED,
@@ -119,10 +121,11 @@ class UsageUserRow:
 @dataclass(frozen=True, slots=True)
 class UsageSessionRow:
     hour_bucket: str
+    event_type: str
     session_id: str
     runtime_type: str | None
     user_id: str | None
-    messages: int
+    count: int
 
 
 @dataclass(frozen=True, slots=True)

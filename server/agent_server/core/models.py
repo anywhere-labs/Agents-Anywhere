@@ -384,6 +384,9 @@ class UsageSummary(BaseModel):
     totalUsers: int = 0
     messages: int = 0
     sessions: int = 0
+    sessionViews: int = 0
+    sessionsViewed: int = 0
+    sessionsReadOnly: int = 0
     turns: int = 0
     turnFailureRate: float | None = None
     turnDurationMs: UsagePercentiles = Field(default_factory=UsagePercentiles)
@@ -403,6 +406,9 @@ class UsageDailyPoint(BaseModel):
     mau: int = 0
     messages: int = 0
     sessions: int = 0
+    sessionViews: int = 0
+    sessionsViewed: int = 0
+    sessionsReadOnly: int = 0
     turns: int = 0
     turnsFailed: int = 0
     turnDurationP50Ms: int | None = None
@@ -671,6 +677,10 @@ class MobileLoginConfirmRequest(BaseModel):
 class MobileLoginExchangeRequest(BaseModel):
     userId: str
     loginToken: str
+
+
+class MobileLoginRefreshRequest(BaseModel):
+    refreshToken: str
 
 
 class MobileLoginExchangeResponse(BaseModel):

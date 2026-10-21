@@ -16,7 +16,7 @@ struct SessionInteractionCard: View {
     var metrics = SessionInteractionMetrics()
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+        TimelineView(NoticeExpiryClock(expiresAt: item.expiresAt)) { timeline in
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .center, spacing: 8) {
                     AppSymbol(item.form == nil ? "checkmark.shield" : "text.bubble")
@@ -167,4 +167,18 @@ struct SessionInteractionMetrics: DynamicProperty {
     var titleHeight: CGFloat { max(44, lineHeight * 2) }
     var minimumHeight: CGFloat { titleHeight + actionHeight + 32 }
     var compactHeight: CGFloat { minimumHeight + lineHeight * 2 }
+}
+
+/// Ticks once per second only while a notice can still expire. Cards without an
+/// expiry, and expired ones, render once instead of re-evaluating every second.
+struct NoticeExpiryClock: TimelineSchedule {
+    let expiresAt: Date?
+    func entries(from start: Date, mode: Mode) -> AnySequence<Date> {
+        guard let expiresAt, expiresAt > start else { return AnySequence([start]) }
+        let last = expiresAt.addingTimeInterval(1)
+        return AnySequence(sequence(first: start) { previous in
+            let next = previous.addingTimeInterval(1)
+            return next <= last ? next : nil
+        })
+    }
 }

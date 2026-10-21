@@ -94,5 +94,5 @@ export async function mountAgents(ctx: Context, adapter?: LlmAdapter,
   new HostConnectionService(ctx, [], {} as ConstructorParameters<typeof HostConnectionService>[2])
   await ctx.plugin(FileUploads).await()
   await ctx.plugin(LocalFileSystem).await()
-  await ctx.plugin(SessionController).await()
+  await ctx.plugin(SessionController, { nativeOpen: false }).await()
 }

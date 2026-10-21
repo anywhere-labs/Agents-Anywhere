@@ -14,12 +14,14 @@ from test_backend_mvp import (
     wait_for_rpc_method,
 )
 
+from agent_server.core.models import SessionView
 from agent_server.core.usage import (
     EVENT_APPROVAL_REQUESTED,
     EVENT_APPROVAL_RESOLVED,
     EVENT_CONNECTOR_ONLINE,
     EVENT_MESSAGE_SENT,
     EVENT_RUNTIME_ERROR,
+    EVENT_SESSION_VIEWED,
     EVENT_TURN_ENDED,
     EVENT_USER_ACTIVE,
     UsageEvent,
@@ -119,6 +121,25 @@ def test_platform_message_records_usage_event(tmp_path):
     assert row["runtime_type"] == "codex"
     assert row["dedupe_key"] == "msg:cm_usage_1"
     assert row["hour_bucket"] == row["occurred_at"][:13]
+
+
+def test_opening_a_session_records_a_view(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    admin_id = _user_id(client, headers)
+
+    for _ in range(2):
+        response = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+        assert response.status_code == 200, response.text
+
+    rows = _events(client, event_type=EVENT_SESSION_VIEWED)
+    assert len(rows) == 1, "a repeat open inside the view window is the same read"
+    row = rows[0]
+    assert row["user_id"] == admin_id
+    assert row["session_id"] == session_id
+    assert row["connector_id"] == connector_id
+    assert row["runtime_type"] == "codex"
+    assert row["dedupe_key"] is None
 
 
 def test_connector_notifications_record_quality_events(tmp_path):
@@ -270,6 +291,55 @@ def test_usage_recorder_buffers_until_flush_and_throttles_presence():
     asyncio.run(scenario())
 
 
+def test_usage_recorder_counts_session_views_once_per_window():
+    class FakeStore:
+        def __init__(self) -> None:
+            self.rows: list[dict[str, Any]] = []
+
+        async def insert_usage_events(self, rows: list[dict[str, Any]]) -> int:
+            self.rows.extend(rows)
+            return len(rows)
+
+        async def latest_usage_event_at(self, *, session_id: str, event_type: str) -> str | None:
+            return None
+
+    session = SessionView(
+        id="sess_view",
+        connectorId="conn_a",
+        connectorStatus="online",
+        runtime="codex",
+        runtimeId="rti_work",
+        status="idle",
+        takeover=False,
+        updatedSeq=1,
+    )
+
+    async def scenario() -> None:
+        store = FakeStore()
+        recorder = UsageRecorder(store, session_view_interval_seconds=60)
+        assert await recorder.touch_session_view(session, user_id="alice") is True
+        assert await recorder.touch_session_view(session, user_id="alice") is False
+        assert await recorder.touch_session_view(session, user_id="bob") is True
+        other = session.model_copy(update={"id": "sess_other"})
+        assert await recorder.touch_session_view(other, user_id="alice") is True
+        assert [(row["event_type"], row["user_id"], row["session_id"]) for row in store.rows] == [
+            (EVENT_SESSION_VIEWED, "alice", "sess_view"),
+            (EVENT_SESSION_VIEWED, "bob", "sess_view"),
+            (EVENT_SESSION_VIEWED, "alice", "sess_other"),
+        ]
+        assert store.rows[0]["connector_id"] == "conn_a"
+        assert store.rows[0]["runtime_type"] == "codex"
+        assert store.rows[0]["runtime_id"] == "rti_work"
+        assert store.rows[0]["dedupe_key"] is None
+
+        # A zero window counts every open.
+        eager = UsageRecorder(store, session_view_interval_seconds=0)
+        assert await eager.touch_session_view(session, user_id="alice") is True
+        assert await eager.touch_session_view(session, user_id="alice") is True
+
+    asyncio.run(scenario())
+
+
 # --- reporting -----------------------------------------------------------------
 
 
@@ -288,6 +358,10 @@ def _seed_report_events(client, headers: dict[str, str]) -> tuple[str, str]:
             UsageEvent(EVENT_RUNTIME_ERROR, "2026-10-02T01:06:00Z", session_id="s2", runtime_type="claude"),
             UsageEvent(EVENT_CONNECTOR_ONLINE, "2026-10-01T23:00:00Z", connector_id="c1", device_os="macos"),
             UsageEvent(EVENT_CONNECTOR_ONLINE, "2026-10-02T01:00:00Z", connector_id="c2", device_os="windows"),
+            # s1 is read by the user who also wrote to it; s3 is only ever read.
+            UsageEvent(EVENT_SESSION_VIEWED, "2026-10-01T23:35:00Z", user_id=alice, session_id="s1", runtime_type="codex", connector_id="c1"),
+            UsageEvent(EVENT_SESSION_VIEWED, "2026-10-02T01:10:00Z", user_id=bob, session_id="s3", runtime_type="codex", connector_id="c1"),
+            UsageEvent(EVENT_SESSION_VIEWED, "2026-10-02T01:20:00Z", user_id=bob, session_id="s3", runtime_type="codex", connector_id="c1"),
         ],
     )
     return alice, bob
@@ -331,7 +405,13 @@ def test_usage_report_maps_hours_onto_the_requested_timezone(tmp_path):
     assert days["2026-10-01"]["activeUsers"] == 1
     assert days["2026-10-01"]["messages"] == 1
     assert days["2026-10-01"]["connectorsOnline"] == 1
+    assert days["2026-10-01"]["sessionViews"] == 1
+    assert days["2026-10-01"]["sessionsViewed"] == 1
+    assert days["2026-10-01"]["sessionsReadOnly"] == 0
     assert days["2026-10-02"]["activeUsers"] == 1
+    assert days["2026-10-02"]["sessionViews"] == 2
+    assert days["2026-10-02"]["sessionsViewed"] == 1
+    assert days["2026-10-02"]["sessionsReadOnly"] == 1
     assert days["2026-10-02"]["turns"] == 2
     assert days["2026-10-02"]["turnsFailed"] == 1
     assert days["2026-10-02"]["turnDurationP50Ms"] == 30_000
@@ -346,6 +426,9 @@ def test_usage_report_maps_hours_onto_the_requested_timezone(tmp_path):
     assert summary["avgDau"] == 1.0
     assert summary["messages"] == 2
     assert summary["sessions"] == 2
+    assert summary["sessionViews"] == 3
+    assert summary["sessionsViewed"] == 2
+    assert summary["sessionsReadOnly"] == 1
     assert summary["turns"] == 2
     assert summary["turnFailureRate"] == 0.5
     assert summary["turnDurationMs"] == {"p50": 30_000, "p90": 30_000, "p99": 30_000, "samples": 1}
@@ -368,6 +451,7 @@ def test_usage_report_maps_hours_onto_the_requested_timezone(tmp_path):
     assert runtimes["claude"]["discoveredConnectors"] == 1
     assert runtimes["codex"]["displayName"] == "codex"
     assert runtimes["codex"]["messages"] == 1
+    assert runtimes["codex"]["sessions"] == 1, "reading a session does not make it a runtime session"
 
     outcomes = {row["outcome"]: row["count"] for row in utc["quality"]["turnOutcomes"]}
     assert outcomes == {"completed": 1, "interrupted": 0, "cancelled": 0, "failed": 1}

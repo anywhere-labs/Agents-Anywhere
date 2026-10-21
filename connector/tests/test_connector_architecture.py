@@ -22,7 +22,6 @@ FORBIDDEN_ACTIVE_IMPORTS = {
     "connector.claude",
     "connector.codex",
     "connector.interactions",
-    "connector.json_rpc",
     "connector.local_ops",
     "connector.local_runtime",
     "connector.protocol",

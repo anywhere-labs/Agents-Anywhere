@@ -263,7 +263,8 @@
       "approved": "已批准",
       "waiting": "等待扫码"
     },
-    "copyFailed": "复制失败，请选中文本后手动复制。"
+    "copyFailed": "复制失败，请选中文本后手动复制。",
+    "backHome": "返回主页"
   },
   "dashboard": {
     "actions": {
@@ -322,10 +323,7 @@
       "title": "无法加载主界面"
     },
     "nav": {
-      "dashboard": "看板",
-      "service": "服务",
-      "settings": "设置",
-      "team": "团队"
+      "settings": "设置"
     },
     "filters": {
       "deviceAgentAria": "按设备与 Agent 筛选项目",
@@ -1546,7 +1544,7 @@
       "desktopUvPythonInstallMirrorDescription": "首次准备 Connector 环境时，uv 从这里下载 Python。",
       "desktopPythonMirrorDefault": "官方源（GitHub）",
       "desktopPythonMirrorNpmmirror": "npmmirror",
-      "desktopLogStorage": "日志",
+      "desktopLogStorage": "Desktop 启动日志存储",
       "desktopLogChunkSize": "分块大小",
       "desktopLogRetainChunks": "保留分块",
       "desktopLogRetentionDays": "保留天数",
@@ -1566,7 +1564,7 @@
       "desktopConnectorConfigRestarted": "连接参数已保存，Connector 已重新启动。",
       "desktopConnectorConfigFailed": "无法保存 Connector 连接参数。",
       "desktopLogs": "运行日志",
-      "desktopLogsDescription": "最近的连接器活动。",
+      "desktopLogsDescription": "运行日志由 Connector 统一保存；Connector 可用时显示运行日志，不可用时显示 Desktop 启动诊断。以上存储设置仅影响 Desktop 自身日志。",
       "desktopRefreshLogs": "刷新",
       "desktopExportLogs": "导出",
       "desktopLogsExported": "已导出 {count} 条日志。",
@@ -1577,6 +1575,10 @@
       "desktopLogsLoadFailed": "无法加载 Connector 日志。",
       "desktopLogsClearFailed": "无法清空 Connector 日志。",
       "desktopLoadOlderLogs": "加载更早日志",
+      "desktopLogsSourceAll": "全部",
+      "desktopLogsSourceConnector": "Connector",
+      "desktopLogsSourceBridge": "Bridge",
+      "desktopLogsGapBefore": "更早的日志已被轮转清理",
       "desktopFactoryReset": "恢复出厂设置",
       "desktopFactoryResetTitle": "重置这台 Desktop？",
       "desktopFactoryResetDescription": "断开这台设备，删除本机设置、日志、凭据和登录缓存，然后重启应用。",
@@ -1807,7 +1809,11 @@
         "messages": "消息",
         "messagesPerActiveUser": "人均消息",
         "messagesPerActiveUserHelper": "人均 {value} 条",
-        "sessions": "会话",
+        "activeSessions": "活跃会话",
+        "readOnlySessions": "只读会话",
+        "readOnlySessionsHelper": "另有 {count} 个只读",
+        "sessionsViewedHelper": "共读过 {count} 个会话",
+        "sessionViews": "读取次数",
         "turns": "回合",
         "failureRateHelper": "失败率 {value}",
         "ofTurns": "共 {count} 个回合",
@@ -1833,6 +1839,8 @@
         "rollingWindows": "活跃用户与滚动窗口",
         "rollingWindowsHint": "WAU / MAU 为截至当天的 7 天 / 30 天去重活跃用户。",
         "messagesDaily": "每日消息",
+        "sessionsDaily": "每日会话",
+        "sessionsDailyHint": "活跃：当天发过消息；只读：当天只打开过。",
         "hourOfDay": "按小时分布",
         "hourOfDayHint": "按 {timezone} 的本地小时统计区间内的消息数。",
         "histogram": "每用户消息数分布",
@@ -1853,7 +1861,8 @@
         "wau": "WAU",
         "mau": "MAU",
         "messages": "消息",
-        "sessions": "会话",
+        "activeSessions": "活跃会话",
+        "readOnlySessions": "只读会话",
         "turns": "回合",
         "turnsOther": "其他回合",
         "turnsFailed": "失败回合",
@@ -1965,16 +1974,10 @@
       "saveProvider": "保存提供方",
       "saving": "保存中...",
       "firstPartyClients": "第一方客户端",
-      "firstPartyClientsDescription": "上游 OAuth 提供方请使用 Web 重定向地址。内置原生客户端使用固定的标识和回调地址。",
-      "clientMode": "模式",
-      "locked": "已锁定",
+      "firstPartyClientsDescription": "内置的手机和桌面客户端使用固定的客户端 ID 和回调地址，不需要在上游提供方注册。",
       "callback": "回调地址",
       "webCallback": "Web 重定向地址",
       "nativeCallback": "原生回调地址",
-      "mobileClientId": "手机客户端 ID",
-      "mobileCallback": "手机客户端回调",
-      "desktopClientId": "桌面客户端 ID",
-      "desktopCallback": "桌面客户端回调",
       "about": "关于",
       "aboutDescription": "Agents Anywhere 是面向 AI 编程代理的开源远程控制界面。",
       "viewOnGithub": "在 GitHub 查看",
@@ -2000,7 +2003,29 @@
       },
       "passwordReset": "找回密码",
       "passwordResetDescription": "允许用户通过邮箱验证码重置忘记的密码。",
-      "passwordResetNeedsEmail": "需要先开启邮件服务，找回密码会通过邮件发送验证码。"
+      "passwordResetNeedsEmail": "需要先开启邮件服务，找回密码会通过邮件发送验证码。",
+      "sections": {
+        "general": {
+          "title": "常规",
+          "description": "谁可以注册账号、如何登录。"
+        },
+        "auth": {
+          "title": "身份认证",
+          "description": "上游 OAuth 提供方，以及内置客户端的回调地址。"
+        },
+        "email": {
+          "title": "邮件",
+          "description": "发件服务与邮箱验证码。"
+        },
+        "info": {
+          "title": "服务信息",
+          "description": "版本、运行状态与项目信息。"
+        }
+      },
+      "webCallbackHint": "在上游提供方注册应用时填写这个回调地址。",
+      "mobileClient": "手机客户端",
+      "desktopClient": "桌面客户端",
+      "callbackUrl": "回调地址"
     }
   },
   "preview": {
@@ -2075,6 +2100,17 @@
       "retry": "重新加载",
       "publishedAt": "上次发布：{time}",
       "notPublished": "尚未发布"
+    }
+  },
+  "admin": {
+    "title": "管理",
+    "groups": {
+      "data": "数据",
+      "management": "团队与公告",
+      "service": "服务"
+    },
+    "announcements": {
+      "description": "发布或更新向所有用户展示的公告。"
     }
   }
 }

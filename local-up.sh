@@ -410,7 +410,6 @@ printf '%s[setup]%s Applying database migrations...\n' "${CYAN}" "${RESET}"
 (
   cd "${SERVER_DIR}"
   env \
-    AGENT_SERVER_DB_BACKEND=postgres \
     AGENT_SERVER_DB_URL="${AGENT_SERVER_DB_URL}" \
     AGENT_SERVER_REDIS_URL="${AGENT_SERVER_REDIS_URL}" \
     uv run python -m agent_server.infra.db.migrations upgrade
@@ -418,7 +417,6 @@ printf '%s[setup]%s Applying database migrations...\n' "${CYAN}" "${RESET}"
 
 SERVER_COMMAND=(
   env
-  "AGENT_SERVER_DB_BACKEND=postgres"
   "AGENT_SERVER_DB_URL=${AGENT_SERVER_DB_URL}"
   "AGENT_SERVER_REDIS_URL=${AGENT_SERVER_REDIS_URL}"
   "AGENT_SERVER_FILES_LOCAL_ROOT=${AGENT_SERVER_FILES_LOCAL_ROOT}"

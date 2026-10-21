@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from types import SimpleNamespace
 
 import pytest
 
-from connector.runtime_protocol import RuntimeAttachment, RuntimeAttachmentContent, RuntimeConfig, RuntimeInvalidRequestError
+from connector.runtime_protocol import (
+    RuntimeAttachment,
+    RuntimeAttachmentContent,
+    RuntimeConfig,
+    RuntimeInvalidRequestError,
+)
 from connector.runtimes.dsh import provider_config
 from connector.runtimes.dsh.attachments import staged_attachments
 from connector.runtimes.dsh.runtime import DshRuntime
@@ -63,9 +67,9 @@ def test_image_only_turn_keeps_large_bytes_out_of_rpc_and_cleans_up(tmp_path):
 
     class Runtime(DshRuntime):
         async def _request(self, method, params=None):
-            if method == "runtime.getCapabilities":
+            if method == "getRuntimeCapabilities":
                 return {"capabilities": [{"capabilityId": "runtime.attachment", "supported": True, "available": True, "allowed": True}]}
-            assert method == "session.startTurn" and params["content"] == ""
+            assert method == "startTurn" and params["content"] == ""
             reference = params["attachments"][0]
             path = provider_config.bridge_directory() / "attachments/staging" / reference["uploadId"]
             assert path.read_bytes() == content
@@ -80,21 +84,25 @@ def test_image_only_turn_keeps_large_bytes_out_of_rpc_and_cleans_up(tmp_path):
     asyncio.run(run())
 
 
-def test_attachments_are_staged_beside_a_legacy_endpoint(tmp_path):
-    content = b"legacy"
-    legacy = provider_config.legacy_endpoint_path({"dshHome": str(tmp_path)})
+def test_attachments_are_staged_under_the_bridge_rendezvous_not_dsh_home(tmp_path):
+    content = b"rendezvous"
+    dsh_home = tmp_path / "dsh-home"
 
     class Runtime(DshRuntime):
         async def _request(self, method, params=None):
-            if method == "runtime.getCapabilities":
+            if method == "getRuntimeCapabilities":
                 return {"capabilities": [{"capabilityId": "runtime.attachment", "supported": True, "available": True, "allowed": True}]}
-            path = legacy.parent / "attachments/staging" / params["attachments"][0]["uploadId"]
+            assert method == "startTurn"
+            path = provider_config.bridge_directory() / "attachments/staging" / params["attachments"][0]["uploadId"]
             assert path.read_bytes() == content
+            # Staging is shared through the Router rendezvous, so it does not
+            # move with DSH_HOME (and is not derived from a 1.x endpoint file).
+            assert path.parent.parent == provider_config.endpoint_path().parent / "attachments"
+            assert not path.is_relative_to(dsh_home)
             return {"accepted": True}
 
     async def run():
-        runtime = Runtime(RuntimeConfig("dsh", 1, {"dshHome": str(tmp_path)}), Host(content))
-        runtime._client = SimpleNamespace(endpoint=SimpleNamespace(path=legacy))
+        runtime = Runtime(RuntimeConfig("dsh", 1, {"dshHome": str(dsh_home)}), Host(content))
         result = await runtime.start_turn("session", "native", "", attachments=(image(content=content),), client_message_id="message")
         assert result.ok
     asyncio.run(run())

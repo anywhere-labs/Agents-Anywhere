@@ -1,12 +1,18 @@
 import Foundation
 
-struct TimelineTurnAction {
+struct TimelineTurnAction: Equatable {
     let replies: [ChatTimelineRowModel]
     var changes: [ChatTimelineRowModel] = []
     var startsMidTurn = false
+    /// Joined on demand (copy/share), never during timeline body evaluation.
     var copyText: String {
         replies.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+    var hasReplyText: Bool { replies.contains { $0.text.contains { !$0.isWhitespace } } }
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.startsMidTurn == rhs.startsMidTurn && lhs.replies.elementsEqual(rhs.replies, by: ===)
+            && lhs.changes.elementsEqual(rhs.changes, by: ===)
     }
 }
 

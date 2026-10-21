@@ -67,21 +67,14 @@ def test_v2_24_protocol_limit_uses_postgresql_bigint_bind() -> None:
 
 def test_runtime_database_url_is_required(monkeypatch) -> None:
     monkeypatch.delenv("AGENT_SERVER_DB_URL", raising=False)
-    monkeypatch.delenv("AGENT_SERVER_DB_BACKEND", raising=False)
-    monkeypatch.delenv("AGENT_SERVER_DB", raising=False)
 
     with pytest.raises(ValueError, match="AGENT_SERVER_DB_URL is required"):
         resolve_db_url()
 
 
-def test_runtime_sqlite_environment_is_rejected(monkeypatch) -> None:
-    monkeypatch.setenv("AGENT_SERVER_DB_URL", "sqlite+aiosqlite:///runtime.sqlite3")
-    monkeypatch.delenv("AGENT_SERVER_DB_BACKEND", raising=False)
-
-    with pytest.raises(
-        ValueError, match="SQLite runtime configuration is no longer supported"
-    ):
-        resolve_db_url()
+def test_non_postgresql_database_url_is_rejected() -> None:
+    with pytest.raises(ValueError, match="unsupported AGENT_SERVER_DB_URL scheme"):
+        resolve_db_url("mysql+aiomysql://agents:secret@127.0.0.1:3306/agents")
 
 
 def test_empty_database_upgrades_to_current_schema(fresh_database_url) -> None:
@@ -248,7 +241,6 @@ def test_v2_0_database_upgrades_through_current_revision(fresh_database_url) -> 
 @pytest.mark.parametrize(
     ("source_revision", "target_revision"),
     [
-        ("v1_legacy", "v2_0"),
         ("v2_0", "v2_1"),
         ("v2_1", "v2_2"),
         ("v2_2", "v2_3"),
@@ -1022,9 +1014,69 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_43() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_43"
-    assert CURRENT_SCHEMA_VERSION == "2.43"
+def test_current_schema_version_is_v2_44() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_44"
+    assert CURRENT_SCHEMA_VERSION == "2.44"
+
+
+def _insert_required(connection, table: str, values: dict) -> None:
+    """Insert a row, filling other NOT NULL columns without defaults."""
+    row = {
+        column["name"]: 0 if "INT" in str(column["type"]).upper() else "x"
+        for column in inspect(connection).get_columns(table)
+        if not column["nullable"] and column["default"] is None
+    }
+    row.update(values)
+    names = ", ".join(row)
+    params = ", ".join(f":{name}" for name in row)
+    connection.execute(text(f"INSERT INTO {table} ({names}) VALUES ({params})"), row)
+
+
+def test_v2_44_drops_unconfigured_runtime_placeholders(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_43")
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.begin() as connection:
+            # Placeholder rows only need the columns the migration looks at.
+            connection.execute(text("SET LOCAL session_replication_role = 'replica'"))
+            _insert_required(connection, "connectors", {"id": "conn", "revoked": 0})
+            _insert_required(connection, "connector_runtime_types", {
+                "connector_id": "conn", "runtime_type": "codex",
+            })
+            for runtime_id, config in (
+                ("rti_placeholder", None),
+                ("rti_configured", "{}"),
+                ("rti_with_session", None),
+            ):
+                _insert_required(connection, "device_runtimes", {
+                    "connector_id": "conn",
+                    "runtime_id": runtime_id,
+                    "runtime_type": "codex",
+                    "name": runtime_id,
+                    "name_key": runtime_id,
+                    "config_json": config,
+                    "error_json": None,
+                })
+            _insert_required(connection, "sessions", {
+                "id": "sess", "connector_id": "conn", "runtime": "codex",
+                "runtime_id": "rti_with_session",
+            })
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url)
+
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.connect() as connection:
+            remaining = set(connection.execute(
+                text("SELECT runtime_id FROM device_runtimes")
+            ).scalars())
+        assert remaining == {"rti_configured", "rti_with_session"}
+    finally:
+        engine.dispose()
+
 
 
 def test_v2_43_adds_the_runtime_phase_column(fresh_database_url) -> None:
@@ -2077,11 +2129,10 @@ def test_postgres_pool_settings_are_configurable(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_SERVER_DB_POOL_TIMEOUT", "4.5")
     monkeypatch.setenv("AGENT_SERVER_DB_POOL_RECYCLE", "600")
 
-    backend, engine = build_engine(
+    engine = build_engine(
         url="postgresql+asyncpg://agents:secret@127.0.0.1:5432/agents"
     )
     try:
-        assert backend == "postgres"
         assert engine.pool.size() == 7
         assert engine.pool._max_overflow == 3
         assert engine.pool._timeout == 4.5

@@ -808,6 +808,9 @@ export type UsageSummary = {
   totalUsers: number;
   messages: number;
   sessions: number;
+  sessionViews: number;
+  sessionsViewed: number;
+  sessionsReadOnly: number;
   turns: number;
   turnFailureRate: number | null;
   turnDurationMs: UsagePercentiles;
@@ -827,6 +830,9 @@ export type UsageDailyPoint = {
   mau: number;
   messages: number;
   sessions: number;
+  sessionViews: number;
+  sessionsViewed: number;
+  sessionsReadOnly: number;
   turns: number;
   turnsFailed: number;
   turnDurationP50Ms: number | null;

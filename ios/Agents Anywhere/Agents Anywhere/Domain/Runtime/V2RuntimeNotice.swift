@@ -1,6 +1,6 @@
 import Foundation
 
-enum V2RuntimeNoticeStatus: String, Codable, Hashable {
+nonisolated enum V2RuntimeNoticeStatus: String, Codable, Hashable {
     case open
     case responding
     case responseAccepted = "response_accepted"
@@ -13,7 +13,7 @@ enum V2RuntimeNoticeStatus: String, Codable, Hashable {
     case unknown
 }
 
-struct V2RuntimeNotice: Decodable, Identifiable, Hashable {
+nonisolated struct V2RuntimeNotice: Decodable, Identifiable, Hashable {
     let raw: JSONValue
     let noticeId: V2NoticeID
     let type: String
@@ -82,12 +82,12 @@ struct V2RuntimeNotice: Decodable, Identifiable, Hashable {
     }
 }
 
-struct V2RuntimeNoticeBlocking: Decodable, Hashable {
+nonisolated struct V2RuntimeNoticeBlocking: Decodable, Hashable {
     let scope: String
     let targetId: String
 }
 
-struct V2RuntimeNoticeAction: Decodable, Identifiable, Hashable {
+nonisolated struct V2RuntimeNoticeAction: Decodable, Identifiable, Hashable {
     let actionId: String
     let label: String
     let style: String?
@@ -96,18 +96,18 @@ struct V2RuntimeNoticeAction: Decodable, Identifiable, Hashable {
     var id: String { actionId }
 }
 
-struct V2RuntimeNoticeActionInput: Decodable, Hashable {
+nonisolated struct V2RuntimeNoticeActionInput: Decodable, Hashable {
     let required: Bool
     let schema: JSONValue?
     let uiSchema: JSONValue?
 }
 
-struct V2RuntimeNoticeSnapshot: Decodable, Hashable {
+nonisolated struct V2RuntimeNoticeSnapshot: Decodable, Hashable {
     let notices: [V2RuntimeNotice]
     let serverTime: String?
 }
 
-struct V2RuntimeNoticeRespondRequest: Encodable, Hashable {
+nonisolated struct V2RuntimeNoticeRespondRequest: Encodable, Hashable {
     let actionId: String
     let input: JSONValue?
 }

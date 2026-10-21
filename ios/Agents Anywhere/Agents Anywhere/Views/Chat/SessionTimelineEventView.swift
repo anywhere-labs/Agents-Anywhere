@@ -1,11 +1,19 @@
 import SwiftUI
 
-struct SessionTimelineGroupView: View {
+struct SessionTimelineGroupView: View, Equatable {
     let group: ChatTimelineGroup
     let chat: SessionChatModel
     let onAttachment: (V2AttachmentContent) -> Void
     let onFile: (String) -> Void
     var turnAction: TimelineTurnAction?
+    /// Interaction cards targeting rows of this group. Passing the subset keeps
+    /// unrelated groups equal when another row's notice changes.
+    var inlineNotices: [SessionNoticeModel] = []
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.group == rhs.group && lhs.chat === rhs.chat && lhs.turnAction == rhs.turnAction
+            && lhs.inlineNotices.elementsEqual(rhs.inlineNotices, by: ===)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -14,8 +22,9 @@ struct SessionTimelineGroupView: View {
             if let turnAction {
                 SessionTurnReviewFooter(action: turnAction, root: chat.session.metadata?.cwd,
                     hasOlderItems: chat.session.hasOlderItems, onFile: onFile)
+                    .equatable()
                 if !turnAction.replies.isEmpty {
-                    SessionTurnActions(action: turnAction).traceChatLayout("actions:\(group.id)")
+                    SessionTurnActions(action: turnAction).equatable().traceChatLayout("actions:\(group.id)")
                 }
             }
         }
@@ -37,9 +46,10 @@ struct SessionTimelineGroupView: View {
             ForEach(group.rows) { row in
                 SessionTimelineRow(row: row, chat: chat, onAttachment: onAttachment, cwd: chat.session.metadata?.cwd,
                     disclosures: chat.disclosures, onFile: onFile)
-                ForEach(chat.session.notices.notices.filter {
-                    $0.isVisible && !$0.blocks(chat.session.id) && $0.timelineTargetID == row.id
-                }) { notice in SessionInteractionCard(item: notice, chat: chat) }
+                    .equatable()
+                ForEach(inlineNotices.filter { $0.timelineTargetID == row.id }) { notice in
+                    SessionInteractionCard(item: notice, chat: chat)
+                }
             }
         }
     }
@@ -50,10 +60,9 @@ struct SessionTimelineEventView: View {
     let cwd: String?
     let disclosures: TimelineDisclosureState
     let onFile: (String) -> Void
-    private var entry: TimelineEntryPresentation { TimelineEntryPresentation(item: row.value, cwd: cwd) }
 
     var body: some View {
-        let value = entry
+        let value = row.entry(cwd: cwd)
         switch value.kind {
         case .reasoning:
             if row.text.isEmpty || TimelineText.inlineSummary(row.text) != nil {
@@ -128,7 +137,7 @@ private struct TimelineToolDetails: View {
     let cwd: String?
     let onFile: (String) -> Void
     var body: some View {
-        let value = TimelineEntryPresentation(item: row.value, cwd: cwd)
+        let value = row.entry(cwd: cwd)
         let changes = value.changes
         VStack(spacing: 0) {
             if let command = value.command { TimelineCodePanel(label: String(localized: "Command"), code: command) }
@@ -218,9 +227,28 @@ struct TimelineCodePanel: View {
     let code: String
     var isDiff = false
     @State private var copied = false
+    @State private var memo = PanelMemo()
     @ScaledMetric(relativeTo: .caption) private var rowHeight: CGFloat = 19
-    private var displayCode: String { String(code.prefix(200_000)) }
+    /// Diff parsing and line counting repeat only when the code changes, not
+    /// when the copy feedback or a neighbouring row invalidates this body.
+    private final class PanelMemo {
+        var code: String?
+        var displayCode = ""
+        var lineCount = 0
+        var diffLines: [TimelineDiff.Line] = []
+    }
+    private func prepared() -> PanelMemo {
+        if memo.code != code {
+            memo.code = code
+            memo.displayCode = String(code.prefix(200_000))
+            memo.lineCount = memo.displayCode.utf8.reduce(1) { $0 + ($1 == UInt8(ascii: "\n") ? 1 : 0) }
+            memo.diffLines = isDiff ? TimelineDiff(memo.displayCode).lines : []
+        }
+        return memo
+    }
     var body: some View {
+        let panel = prepared()
+        let displayCode = panel.displayCode
         VStack(spacing: 0) {
             HStack {
                 Text(label).font(.system(.caption, design: .monospaced))
@@ -234,7 +262,7 @@ struct TimelineCodePanel: View {
             ScrollView([.horizontal, .vertical]) {
                 if isDiff {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(TimelineDiff(displayCode).lines) { line in
+                        ForEach(panel.diffLines) { line in
                             HStack(alignment: .top, spacing: 8) {
                                 Text(line.sign).frame(width: 10)
                                 Text(line.oldLine.map(String.init) ?? "").frame(width: 34, alignment: .trailing)
@@ -252,7 +280,7 @@ struct TimelineCodePanel: View {
                         .fixedSize(horizontal: true, vertical: false).padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .frame(height: min(320, max(76, CGFloat(displayCode.components(separatedBy: "\n").count) * rowHeight + 24)))
+            .frame(height: min(320, max(76, CGFloat(panel.lineCount) * rowHeight + 24)))
             if displayCode.count < code.count { Text(String(localized: "预览已截断，复制可获取完整内容")).font(.caption).foregroundStyle(.secondary).padding(8) }
         }.background(Color(uiColor: .secondarySystemBackground))
     }

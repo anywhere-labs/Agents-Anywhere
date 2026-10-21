@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-struct SessionTimelineRow: View {
+struct SessionTimelineRow: View, Equatable {
     let row: ChatTimelineRowModel
     let chat: SessionChatModel
     let onAttachment: (V2AttachmentContent) -> Void
@@ -9,6 +9,12 @@ struct SessionTimelineRow: View {
     let disclosures: TimelineDisclosureState
     let onFile: (String) -> Void
     @ScaledMetric(relativeTo: .body) private var lineHeight: CGFloat = 22
+
+    /// Observation still re-evaluates this row when its own model changes; the
+    /// comparison only stops sibling invalidations from reaching every row.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.row === rhs.row && lhs.chat === rhs.chat && lhs.cwd == rhs.cwd && lhs.disclosures === rhs.disclosures
+    }
 
     var body: some View {
         Group {

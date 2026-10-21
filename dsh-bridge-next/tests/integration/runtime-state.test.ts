@@ -37,12 +37,12 @@ test('session.getState answers an unchanged log from cached facts', { timeout: 6
     const reads = countLogReads(f.ctx)
     const params = { sessionId: sessionId('instance', 'persisted-only'), externalSessionId: 'persisted-only' }
 
-    const first = await f.request('session.getState', params) as StateResult
+    const first = await f.request('getSessionState', params) as StateResult
     const afterFirst = reads.count()
     assert.ok(afterFirst > 0, 'the first read inspects the log')
     assert.equal(first.status, 'idle')
 
-    const second = await f.request('session.getState', params) as StateResult
+    const second = await f.request('getSessionState', params) as StateResult
     assert.equal(reads.count(), afterFirst, 'an unchanged log is never read twice')
     assert.equal(second.status, first.status)
     assert.deepEqual(second.selections, first.selections)
@@ -54,13 +54,13 @@ test('session.getState rereads a live session whose log changed', { timeout: 60_
   const f = await fixture('aa-dsh-state-live-')
   try {
     const params = { sessionId: sessionId('instance', 'native-main'), externalSessionId: 'native-main' }
-    const completed = await f.request('session.getState', params) as StateResult
+    const completed = await f.request('getSessionState', params) as StateResult
     assert.equal(completed.status, 'idle')
 
     f.session.append('turn/start', { turn: 2 })
     f.session.append('turn/end', { turn: 2, reason: { kind: 'error' } })
 
-    const failed = await f.request('session.getState', params) as StateResult
+    const failed = await f.request('getSessionState', params) as StateResult
     assert.equal(failed.status, 'error')
   } finally { await f.close() }
 })
@@ -114,7 +114,7 @@ test('warm single-session RPC and concurrent startup inventories never relist th
     const afterInventory = reads.count()
     const params = { sessionId: sessionId('instance', 'persisted-only') }
     for (let i = 0; i < 5; i++) {
-      await f.request('session.getState', params)
+      await f.request('getSessionState', params)
       await f.runtime.read(SessionId('persisted-only'))
     }
     assert.equal(listings, 1, 'neither platform-ID resolution nor cache validation lists sessions')

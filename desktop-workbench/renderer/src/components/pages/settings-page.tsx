@@ -3,23 +3,16 @@
 import * as React from "react"
 import Cropper, { type Area, type Point } from "react-easy-crop"
 import {
-  Archive,
   Camera,
   ChevronDown,
-  ChevronLeft,
   Download,
   FolderOpen,
-  Laptop,
-  Logs,
   Power,
-  Rocket,
   RotateCw,
   Settings,
   Smartphone,
-  Sun,
   Trash2,
   Upload,
-  User,
 } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { useTheme } from "next-themes"
@@ -48,13 +41,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
-  Drawer,
-  DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerTrigger,
-} from "@/components/ui/drawer"
-import {
   Field,
   FieldContent,
   FieldDescription,
@@ -79,6 +65,7 @@ import { Switch } from "@/components/ui/switch"
 import { AccountProfileCard } from "@/components/pages/account-profile-card"
 import { MobileConnectionDialog } from "@/components/pages/mobile-signin-panel"
 import { ArchivedSessionsTab } from "@/components/settings/archived-sessions-tab"
+import { parseSettingsTab, settingsNavigation } from "@/components/settings/settings-navigation"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useAuth } from "@/components/auth/auth-context"
 import { LocaleSwitcher } from "@/components/locale-switcher"
@@ -92,44 +79,15 @@ import { useDesktopConnector } from "@/features/desktop/desktop-connector-contex
 import {
   getDesktopWorkbenchBridge,
   type DesktopConnectorLog,
+  type DesktopConnectorLogSource,
 } from "@/features/desktop/bridge"
 import { useMobileConnectionsSidebarVisibility } from "@/features/mobile-connections/sidebar-visibility"
 import { cn } from "@/lib/utils"
 
-type SettingsTab =
-  | "account"
-  | "mobile-connections"
-  | "desktop"
-  | "startup"
-  | "logs"
-  | "appearance"
-  | "archived-sessions"
-type SettingsLabelKey =
-  | "account"
-  | "mobileConnections"
-  | "desktop"
-  | "startup"
-  | "logs"
-  | "appearance"
-  | "archivedSessions"
 type AppearanceMode = "light" | "dark" | "auto"
 
 const AVATAR_OUTPUT_SIZE = 256
 const AVATAR_MAX_FILE_SIZE = 8 * 1024 * 1024
-
-const navItems: {
-  id: SettingsTab
-  labelKey: SettingsLabelKey
-  icon: typeof User
-}[] = [
-  { id: "account", labelKey: "account", icon: User },
-  { id: "appearance", labelKey: "appearance", icon: Sun },
-  { id: "mobile-connections", labelKey: "mobileConnections", icon: Smartphone },
-  { id: "desktop", labelKey: "desktop", icon: Laptop },
-  { id: "startup", labelKey: "startup", icon: Rocket },
-  { id: "logs", labelKey: "logs", icon: Logs },
-  { id: "archived-sessions", labelKey: "archivedSessions", icon: Archive },
-]
 
 const SYNC_INTERVAL_OPTIONS = [15, 30, 60, 300] as const
 const PYPI_MIRROR_OPTIONS = [
@@ -816,10 +774,13 @@ function LogsTab() {
   const t = useTranslations("pages.settings")
   const { supported, loading, busy, state, saveSettings } = useDesktopConnector()
   const [logs, setLogs] = React.useState<DesktopConnectorLog[]>([])
+  const [sourceFilter, setSourceFilter] = React.useState<"all" | DesktopConnectorLogSource>("all")
   const [logsLoading, setLogsLoading] = React.useState(false)
   const [olderLogsLoading, setOlderLogsLoading] = React.useState(false)
-  const [firstLogSeq, setFirstLogSeq] = React.useState<number | null>(null)
-  const [hasMoreLogs, setHasMoreLogs] = React.useState(false)
+  const firstLogSeq = typeof logs[0]?.seq === "number" ? logs[0].seq : null
+  const logsEpoch = React.useRef(0)
+  const [oldestLogSeq, setOldestLogSeq] = React.useState<number | null>(null)
+  const hasMoreLogs = firstLogSeq != null && oldestLogSeq != null && firstLogSeq > oldestLogSeq
   const [clearingLogs, setClearingLogs] = React.useState(false)
   const [exportingLogs, setExportingLogs] = React.useState(false)
   const [logSettings, setLogSettings] = React.useState({
@@ -839,46 +800,76 @@ function LogsTab() {
   const loadLogs = React.useCallback(async () => {
     const bridge = getDesktopWorkbenchBridge()
     if (!bridge?.connector) return
+    const epoch = logsEpoch.current
     setLogsLoading(true)
     try {
-      const page = await bridge.connector.getLogs({ pageSize: 200 })
-      setLogs(page.items)
-      setFirstLogSeq(typeof page.items[0]?.seq === "number" ? page.items[0].seq : null)
-      setHasMoreLogs(page.hasMoreBefore)
+      const page = await bridge.connector.getLogs({
+        pageSize: 200,
+        source: sourceFilter === "all" ? undefined : sourceFilter,
+      })
+      if (epoch !== logsEpoch.current) return
+      setLogs((current) => [...page.items, ...current.filter((entry) =>
+        typeof entry.seq === "number" && page.lastSeq != null && entry.seq > page.lastSeq)].slice(-200))
+      setOldestLogSeq(page.firstSeq)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("desktopLogsLoadFailed"))
     } finally {
       setLogsLoading(false)
     }
-  }, [t])
+  }, [sourceFilter, t])
 
   React.useEffect(() => {
     const bridge = getDesktopWorkbenchBridge()
     if (!supported || !bridge?.connector) return
     void loadLogs()
     const unsubscribeLog = bridge.connector.onLog((entries) => {
-      if (entries.length === 0) return
-      setLogs((current) => [...current, ...entries].slice(-200))
+      const filtered = entries.filter((entry) =>
+        sourceFilter === "all" || (entry.source ?? "connector") === sourceFilter
+      )
+      if (filtered.length === 0) return
+      setOldestLogSeq((current) => current ?? (typeof filtered[0]?.seq === "number" ? filtered[0].seq : null))
+      setLogs((current) => {
+        const existing = new Set(current.map((entry) => entry.seq ?? entry.id))
+        return [...current, ...filtered.filter((entry) => !existing.has(entry.seq ?? entry.id))].slice(-200)
+      })
     })
-    const unsubscribeCleared = bridge.connector.onLogsCleared(() => setLogs([]))
+    const unsubscribeCleared = bridge.connector.onLogsCleared(() => {
+      logsEpoch.current++
+      setLogs([])
+      setOldestLogSeq(null)
+      void loadLogs()
+    })
     return () => {
       if (typeof unsubscribeLog === "function") unsubscribeLog()
       if (typeof unsubscribeCleared === "function") unsubscribeCleared()
     }
-  }, [loadLogs, supported])
+  }, [loadLogs, sourceFilter, supported])
+
+  const selectSourceFilter = (next: "all" | DesktopConnectorLogSource) => {
+    if (next === sourceFilter) return
+    logsEpoch.current++
+    setLogs([])
+    setOldestLogSeq(null)
+    setSourceFilter(next)
+  }
 
   const loadOlderLogs = async () => {
     const bridge = getDesktopWorkbenchBridge()
     if (!bridge?.connector || olderLogsLoading || firstLogSeq === null || !hasMoreLogs) return
+    const epoch = logsEpoch.current
     setOlderLogsLoading(true)
     try {
-      const page = await bridge.connector.getLogs({ pageSize: 200, beforeSeq: firstLogSeq })
+      const page = await bridge.connector.getLogs({
+        pageSize: 200,
+        beforeSeq: firstLogSeq,
+        source: sourceFilter === "all" ? undefined : sourceFilter,
+      })
+      if (epoch !== logsEpoch.current) return
       setLogs((current) => {
         const existing = new Set(current.map((entry) => entry.seq ?? entry.id))
         return [...page.items.filter((entry) => !existing.has(entry.seq ?? entry.id)), ...current]
       })
-      setFirstLogSeq(typeof page.items[0]?.seq === "number" ? page.items[0].seq : firstLogSeq)
-      setHasMoreLogs(page.hasMoreBefore)
+      setOldestLogSeq(page.firstSeq)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("desktopLogsLoadFailed"))
     } finally {
@@ -893,8 +884,7 @@ function LogsTab() {
     try {
       await bridge.connector.clearLogs()
       setLogs([])
-      setFirstLogSeq(null)
-      setHasMoreLogs(false)
+      setOldestLogSeq(null)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("desktopLogsClearFailed"))
     } finally {
@@ -916,8 +906,30 @@ function LogsTab() {
     }
   }
 
+  const displayLogs = React.useMemo(
+    () =>
+      [...logs].reverse().sort((a, b) => {
+        const timeA = Date.parse(a.time ?? a.timestamp ?? "")
+        const timeB = Date.parse(b.time ?? b.timestamp ?? "")
+        if (Number.isFinite(timeA) && Number.isFinite(timeB) && timeA !== timeB) {
+          return timeB - timeA
+        }
+        if (typeof a.seq === "number" && typeof b.seq === "number" && a.seq !== b.seq) {
+          return b.seq - a.seq
+        }
+        return 0
+      }),
+    [logs]
+  )
+
   if (!supported) return <DesktopUnavailable title={t("logs")} />
   if (loading && !state) return <LoadingState className="min-h-64" />
+
+  const sourceOptions: Array<{ value: "all" | DesktopConnectorLogSource; label: string }> = [
+    { value: "all", label: t("desktopLogsSourceAll") },
+    { value: "connector", label: t("desktopLogsSourceConnector") },
+    { value: "bridge", label: t("desktopLogsSourceBridge") },
+  ]
 
   return (
     <div className="flex flex-col gap-4">
@@ -964,7 +976,18 @@ function LogsTab() {
             <h2 className="text-base font-semibold">{t("desktopLogs")}</h2>
             <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopLogsDescription")}</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            {getDesktopWorkbenchBridge()?.connector?.openLogsFolder ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void getDesktopWorkbenchBridge()?.connector?.openLogsFolder?.()}
+              >
+                <FolderOpen data-icon="inline-start" />
+                {t("desktopOpenLogsFolder")}
+              </Button>
+            ) : null}
             {getDesktopWorkbenchBridge()?.connector?.exportLogs ? (
               <Button type="button" variant="outline" size="sm" onClick={() => void exportLogs()} disabled={exportingLogs}>
                 {exportingLogs ? <Spinner /> : <Download data-icon="inline-start" />}
@@ -982,30 +1005,69 @@ function LogsTab() {
           </div>
         </div>
         <Separator />
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-border/60 px-6 py-2.5">
+          {sourceOptions.map((option) => (
+            <Button
+              key={option.value}
+              type="button"
+              variant={sourceFilter === option.value ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 px-2.5 text-xs"
+              onClick={() => selectSourceFilter(option.value)}
+            >
+              {option.label}
+            </Button>
+          ))}
+        </div>
         <div className="max-h-[32rem] min-h-64 overflow-y-auto bg-muted/20 px-4 py-3">
-          {hasMoreLogs && logs.length > 0 ? (
-            <div className="mb-2 flex justify-center">
-              <Button type="button" variant="ghost" size="sm" onClick={() => void loadOlderLogs()} disabled={olderLogsLoading}>
-                {olderLogsLoading ? <Spinner /> : <ChevronDown className="rotate-180" data-icon="inline-start" />}
-                {olderLogsLoading ? t("desktopLoadingLogs") : t("desktopLoadOlderLogs")}
-              </Button>
-            </div>
-          ) : null}
-          {logs.length === 0 ? (
+          {displayLogs.length === 0 ? (
             <div className="flex min-h-56 items-center justify-center text-sm text-muted-foreground">
               {logsLoading ? t("desktopLoadingLogs") : t("desktopNoLogs")}
             </div>
           ) : (
             <div className="flex flex-col gap-1 font-mono text-xs">
-              {logs.map((entry, index) => (
-                <div key={entry.seq ?? entry.id ?? `${entry.time ?? entry.timestamp ?? "log"}-${index}`} className="grid grid-cols-[auto_auto_minmax(0,1fr)] gap-2 rounded px-2 py-1 hover:bg-muted/60">
-                  <span className="text-muted-foreground">{formatDesktopLogTime(entry.time ?? entry.timestamp)}</span>
-                  <span className={desktopLogLevelClass(entry.level)}>{entry.level ?? "INFO"}</span>
-                  <span className="min-w-0 whitespace-pre-wrap break-words text-foreground/90">{entry.message}</span>
-                </div>
-              ))}
+              {displayLogs.map((entry, index) => {
+                const source = entry.source ?? "connector"
+                const loggerName = entry.name?.trim() && entry.name.trim() !== source ? entry.name.trim() : null
+                const { message, detailsText } = formatDesktopLogPayload(entry)
+                return (
+                  <React.Fragment key={entry.seq ?? entry.id ?? `${entry.time ?? entry.timestamp ?? "log"}-${index}`}>
+                    <div className="rounded px-2 py-1 hover:bg-muted/60">
+                      <div className="grid grid-cols-[auto_auto_auto_minmax(0,1fr)] items-baseline gap-2">
+                        <span className="text-muted-foreground">{formatDesktopLogTime(entry.time ?? entry.timestamp)}</span>
+                        <span className={desktopLogLevelClass(entry.level)}>{formatDesktopLogLevel(entry.level)}</span>
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                          {source}
+                        </span>
+                        <span className="min-w-0 whitespace-pre-wrap break-words text-foreground/90">
+                          {loggerName ? <span className="mr-1.5 text-muted-foreground">[{loggerName}]</span> : null}
+                          {message}
+                        </span>
+                      </div>
+                      {detailsText ? (
+                        <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap break-words rounded border border-border/70 bg-background/70 px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground select-text">
+                          {detailsText}
+                        </pre>
+                      ) : null}
+                    </div>
+                    {entry.gapBefore ? (
+                      <div className="my-1 rounded border border-dashed border-border/80 bg-muted/40 px-2.5 py-1 text-center text-[11px] text-muted-foreground">
+                        {t("desktopLogsGapBefore")}
+                      </div>
+                    ) : null}
+                  </React.Fragment>
+                )
+              })}
             </div>
           )}
+          {hasMoreLogs && displayLogs.length > 0 ? (
+            <div className="mt-2 flex justify-center">
+              <Button type="button" variant="ghost" size="sm" onClick={() => void loadOlderLogs()} disabled={olderLogsLoading}>
+                {olderLogsLoading ? <Spinner /> : <ChevronDown data-icon="inline-start" />}
+                {olderLogsLoading ? t("desktopLoadingLogs") : t("desktopLoadOlderLogs")}
+              </Button>
+            </div>
+          ) : null}
         </div>
       </section>
     </div>
@@ -1098,12 +1160,82 @@ function formatDesktopLogTime(value: string | undefined): string {
   })
 }
 
+function formatDesktopLogLevel(level: string | undefined): string {
+  const normalized = level?.trim().toUpperCase() || "INFO"
+  return normalized === "WARN" ? "WARNING" : normalized
+}
+
 function desktopLogLevelClass(level: string | undefined): string {
-  const normalized = level?.toUpperCase() ?? "INFO"
+  const normalized = formatDesktopLogLevel(level)
   if (normalized === "ERROR" || normalized === "CRITICAL") return "font-semibold text-destructive"
   if (normalized === "WARNING") return "font-semibold text-amber-500"
   if (normalized === "SUCCESS") return "font-semibold text-emerald-500"
   return "text-muted-foreground"
+}
+
+function formatDesktopLogPayload(entry: DesktopConnectorLog): {
+  message: string
+  detailsText: string | null
+} {
+  const rawMessage = entry.message ?? ""
+  const eventMatch = rawMessage.match(/^[A-Za-z][\w.-]*/)
+  const eventName = eventMatch?.[0] ?? rawMessage
+  const tail = rawMessage.slice(eventName.length).trim()
+
+  let parsedDetails: unknown = undefined
+  const rawDetails = entry.details?.trim()
+  if (rawDetails) {
+    try {
+      parsedDetails = JSON.parse(rawDetails)
+    } catch {
+      parsedDetails = undefined
+    }
+  }
+
+  let message = rawMessage
+  if (
+    tail.startsWith("{") &&
+    tail.endsWith("}") &&
+    (parsedDetails === undefined ||
+      (typeof parsedDetails === "object" && parsedDetails !== null && !Array.isArray(parsedDetails)))
+  ) {
+    try {
+      const parsedTail = JSON.parse(tail)
+      if (typeof parsedTail === "object" && parsedTail !== null && !Array.isArray(parsedTail)) {
+        parsedDetails = {
+          ...(typeof parsedDetails === "object" && parsedDetails !== null
+            ? (parsedDetails as Record<string, unknown>)
+            : {}),
+          ...(parsedTail as Record<string, unknown>),
+        }
+        message = eventName
+      }
+    } catch {
+      // Keep original message if tail is not valid JSON.
+    }
+  }
+
+  let formattedDetails: string | null = null
+  if (parsedDetails !== undefined) {
+    if (typeof parsedDetails === "object" && parsedDetails !== null && !Array.isArray(parsedDetails)) {
+      if (Object.keys(parsedDetails).length > 0) {
+        formattedDetails = JSON.stringify(parsedDetails, null, 2)
+      }
+    } else {
+      formattedDetails = JSON.stringify(parsedDetails, null, 2)
+    }
+  } else if (rawDetails && rawDetails !== "{}") {
+    formattedDetails = rawDetails
+  }
+
+  const extraBlocks = [formattedDetails, entry.exception?.trim()].filter(
+    (part): part is string => Boolean(part)
+  )
+
+  return {
+    message,
+    detailsText: extraBlocks.length > 0 ? extraBlocks.join("\n\n") : null,
+  }
 }
 
 function ResetPasswordDialog({
@@ -1448,13 +1580,11 @@ function AppearanceTab() {
 }
 
 export function SettingsPage() {
-  const { navigate, openSession, projects, sessions, isLoading, refreshData, settingsTab, upsertSession } = useWorkspace()
+  const { openSession, projects, sessions, isLoading, refreshData, settingsTab, upsertSession } = useWorkspace()
   const { session, me: authMe, refreshMe } = useAuth()
   const t = useTranslations("pages.settings")
-  const tCommon = useTranslations("common")
-  const [tab, setTab] = React.useState<SettingsTab>(() => (
-    navItems.some((item) => item.id === settingsTab) ? settingsTab as SettingsTab : "account"
-  ))
+  // The section sidebar owns navigation; the route is the single source of truth.
+  const tab = parseSettingsTab(settingsTab)
   const [me, setMe] = React.useState<AuthMe | null>(authMe)
   const [loadingMe, setLoadingMe] = React.useState(!authMe)
   const [meError, setMeError] = React.useState<string | null>(null)
@@ -1493,19 +1623,6 @@ export function SettingsPage() {
     }
   }, [authMe, session, t])
 
-  React.useEffect(() => {
-    if (settingsTab && navItems.some((item) => item.id === settingsTab)) {
-      setTab(settingsTab as SettingsTab)
-    } else if (settingsTab) {
-      setTab("account")
-    }
-  }, [settingsTab])
-
-  const handleTabChange = (newTab: SettingsTab) => {
-    setTab(newTab)
-    navigate("settings", newTab)
-  }
-
   const handleMeChange = async (nextMe: AuthMe) => {
     setMe(nextMe)
     try {
@@ -1516,57 +1633,18 @@ export function SettingsPage() {
     }
   }
 
-  const activeNavItem = navItems.find((item) => item.id === tab) ?? navItems[0]!
-  const ActiveNavIcon = activeNavItem.icon
+  const activeNavItem = settingsNavigation.find((item) => item.id === tab) ?? settingsNavigation[0]
 
   return (
     <div className="flex h-full flex-col bg-background">
       <div className="px-5 pb-0 pt-5 sm:px-8 sm:pt-8">
         <div className="-ml-2 flex items-center gap-1">
           <DashboardSidebarToggle />
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate("home")}
-            className="gap-1.5 text-muted-foreground"
-          >
-            <ChevronLeft className="size-4" />
-            {tCommon("back")}
-          </Button>
-          <h1 className="ml-2 text-2xl font-semibold">{t("title")}</h1>
+          <h1 className="ml-2 text-2xl font-semibold">{t(activeNavItem.labelKey)}</h1>
         </div>
-        <SettingsCategoryDrawer
-          tab={tab}
-          activeIcon={ActiveNavIcon}
-          activeLabel={t(activeNavItem.labelKey)}
-          onTabChange={handleTabChange}
-        />
       </div>
 
-      <div className="flex min-h-0 flex-1 gap-8 overflow-hidden px-5 pb-5 pt-4 sm:px-8 sm:pb-8 sm:pt-5">
-        <nav className="hidden w-52 shrink-0 flex-col gap-0.5 lg:flex">
-          {navItems.map((item) => {
-            const Icon = item.icon
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => handleTabChange(item.id)}
-                className={cn(
-                  "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors",
-                  tab === item.id
-                    ? "bg-sidebar-accent text-foreground"
-                    : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
-                )}
-              >
-                <Icon className="size-4" />
-                {t(item.labelKey)}
-              </button>
-            )
-          })}
-        </nav>
-
+      <div className="flex min-h-0 flex-1 overflow-hidden px-5 pb-5 pt-4 sm:px-8 sm:pb-8 sm:pt-5">
         <ScrollArea className="h-full min-h-0 min-w-0 flex-1" viewportProps={{ className: "pb-8" }}>
           {tab === "account" && (
             loadingMe ? (
@@ -1609,62 +1687,6 @@ export function SettingsPage() {
         </ScrollArea>
       </div>
     </div>
-  )
-}
-
-function SettingsCategoryDrawer({
-  tab,
-  activeIcon: ActiveIcon,
-  activeLabel,
-  onTabChange,
-}: {
-  tab: SettingsTab
-  activeIcon: typeof User
-  activeLabel: string
-  onTabChange: (tab: SettingsTab) => void
-}) {
-  const t = useTranslations("pages.settings")
-  const [open, setOpen] = React.useState(false)
-
-  return (
-    <Drawer open={open} onOpenChange={setOpen} direction="bottom">
-      <DrawerTrigger asChild>
-        <Button type="button" variant="outline" size="sm" className="mt-4 gap-2 lg:hidden">
-          <ActiveIcon className="size-4" />
-          {activeLabel}
-          <ChevronDown className="size-3.5 text-muted-foreground" />
-        </Button>
-      </DrawerTrigger>
-      <DrawerContent>
-        <DrawerHeader>
-          <DrawerTitle>{t("title")}</DrawerTitle>
-        </DrawerHeader>
-        <div className="flex flex-col gap-1 px-4 pb-4">
-          {navItems.map((item) => {
-            const Icon = item.icon
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => {
-                  onTabChange(item.id)
-                  setOpen(false)
-                }}
-                className={cn(
-                  "flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm transition-colors",
-                  tab === item.id
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                )}
-              >
-                <Icon className="size-4 shrink-0" />
-                <span className="font-medium">{t(item.labelKey)}</span>
-              </button>
-            )
-          })}
-        </div>
-      </DrawerContent>
-    </Drawer>
   )
 }
 

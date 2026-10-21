@@ -2,7 +2,7 @@ import { translateMessage, type Translate } from '../../locales.js'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { OnboardingHostApi } from '../../../contracts/index.js'
-import type { ConnectorLogEntry } from '../../../contracts/logs.js'
+import type { ConnectorLogEntry, StartupFailureDiagnostic } from '../../../contracts/logs.js'
 import css from './bridge-logs-panel.module.css'
 
 export function ConnectorLogsPanel({ t, host }: { t: Translate; host: OnboardingHostApi }) {
@@ -11,6 +11,8 @@ export function ConnectorLogsPanel({ t, host }: { t: Translate; host: Onboarding
   const [paused, setPaused] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [failures, setFailures] = useState<StartupFailureDiagnostic[]>([])
+  const [diagnosticError, setDiagnosticError] = useState(false)
   const viewport = useRef<HTMLDivElement>(null)
   const current = useRef<ConnectorLogEntry[]>([])
   const loading = useRef(false)
@@ -22,6 +24,11 @@ export function ConnectorLogsPanel({ t, host }: { t: Translate; host: Onboarding
     loading.current = true
     setBusy(true)
     const version = generation.current
+    // Read fault snapshots independently: a permissions error reading terminal
+    // output must not hide the startup failure that explains it.
+    const diagnosticTask = host.readStartupDiagnostics().then(value => {
+      if (version === generation.current) { setFailures(value); setDiagnosticError(false) }
+    }, () => { if (version === generation.current) setDiagnosticError(true) })
     const previous = current.current
     const query = mode === 'older' && previous.length ? { before: previous[0]!.id } : initialized.current && previous.length ? { after: previous.at(-1)!.id } : {}
     try {
@@ -42,7 +49,10 @@ export function ConnectorLogsPanel({ t, host }: { t: Translate; host: Onboarding
       setOlder(page.oldestId !== null && next.length > 0 && next[0]!.id > page.oldestId)
       setError(null)
     } catch { if (version === generation.current) setError('Connector 日志读取失败，请重试。') }
-    finally { if (version === generation.current) { loading.current = false; setBusy(false) } }
+    finally {
+      await diagnosticTask
+      if (version === generation.current) { loading.current = false; setBusy(false) }
+    }
   }, [host])
   useLayoutEffect(() => {
     const element = viewport.current
@@ -59,20 +69,41 @@ export function ConnectorLogsPanel({ t, host }: { t: Translate; host: Onboarding
     const timer = setInterval(() => { if (document.visibilityState !== 'hidden') void refresh() }, 2000)
     return () => clearInterval(timer)
   }, [paused, refresh])
-  return <section className={css.panel} aria-label={t('Connector 日志')}>
+  return <section className={css.panel} aria-label={t('启动前诊断')}>
     <div className={css.toolbar}>
-      <div><h3>{t('Connector 日志')}</h3><p>{t('最多保留 10,000 行 · 每次加载 200 行 · 向上滚动查看更早记录')}</p></div>
+      <div><h3>{t('启动前诊断')}</h3><p>{t('当前启动失败与本地进程引导输出 · 独立于统一运行日志')}</p></div>
       <div className={css.actions}>
         <Button variant="ghost" onClick={() => setPaused(value => !value)}>{paused ? t('继续刷新') : t('暂停刷新')}</Button>
         <Button variant="outline" disabled={busy} onClick={() => void refresh()}>{t('刷新')}</Button>
       </div>
     </div>
+    {diagnosticError ? <p className={css.error} role="alert">{t('启动失败详情读取失败，请刷新重试。')}</p> : null}
+    {failures.length ? <div aria-label={t('当前启动失败')}>
+      <h4>{t('当前启动失败')}</h4>
+      <ul className={css.startupFailures}>
+        {failures.map(failure => <li key={`${failure.source}:${failure.time}`} className={css.entry} data-outcome="failure">
+          <details>
+            <summary className={css.summary}>
+              <time dateTime={failure.time}>{new Date(failure.time).toLocaleTimeString(t('locale.code'))}</time>
+              <span className={css.sourceBadge}>{failure.source === 'plugin' ? t('插件') : 'Bridge'}</span>
+              <span className={css.levelBadge} data-level="error">ERROR</span>
+              <code>{failure.event}</code>
+              <span className={css.outcome}>{t('失败')}</span>
+            </summary>
+            <div className={css.detail}>
+              <p>{translateMessage(t, failure.message)}</p>
+              <pre>{failure.details}</pre>
+            </div>
+          </details>
+        </li>)}
+      </ul>
+    </div> : null}
     <p className={css.status} role="status">{busy ? t('正在读取…') : t('{status} · 已显示 {count} 行', { status: paused ? t('已暂停刷新') : t('每 2 秒刷新'), count: entries.length })}</p>
     {error ? <p className={css.error} role="alert">{translateMessage(t, error)}</p> : null}
     <div ref={viewport} className={css.terminal} tabIndex={0} aria-label={t('Connector 终端输出')}
       onScroll={event => { if (event.currentTarget.scrollTop <= 24 && older) void refresh('older') }}>
       {older ? <Button variant="ghost" disabled={busy} onClick={() => void refresh('older')}>{t('加载更早的 200 行')}</Button> : null}
-      {!entries.length && !busy ? <p className={css.empty}>{t('暂无 Connector 日志。启动后，环境准备和运行输出会显示在这里。')}</p> : null}
+      {!entries.length && !busy ? <p className={css.empty}>{t('暂无启动前诊断输出。uv 引导与 Connector 进程拉起输出会显示在这里。')}</p> : null}
       {entries.map(entry => <div key={entry.id} className={css.terminalLine}><time dateTime={entry.time}>{new Date(entry.time).toLocaleTimeString(t('locale.code'))}</time>{' '}{entry.text}</div>)}
     </div>
   </section>

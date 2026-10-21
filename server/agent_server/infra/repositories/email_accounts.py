@@ -14,7 +14,7 @@ import secrets
 import time
 from typing import Any
 
-from sqlalchemy import case, delete, func, insert, select, update
+from sqlalchemy import case, delete, func, insert, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -305,7 +305,8 @@ class EmailAccountRepositoryMixin:
                 .values(failed_attempts=codes_t.c.failed_attempts + 1)
             )
             return False
-        # The conditional write also gives SQLite atomic one-use consumption.
+        # The conditional write guarantees one-use consumption on top of the
+        # row lock.
         consumed = await conn.execute(
             update(codes_t)
             .where(
@@ -346,14 +347,9 @@ class EmailAccountRepositoryMixin:
         try:
             async with self._engine.begin() as conn:
                 if _bootstrap:
-                    # Serialize first-account creation for PostgreSQL, also covering
-                    # concurrent attempts with different email addresses.
-                    if conn.dialect.name == "postgresql":
-                        from sqlalchemy import text
-
-                        await conn.execute(
-                            text("SELECT pg_advisory_xact_lock(4141454)")
-                        )
+                    # Serialize first-account creation, also covering concurrent
+                    # attempts with different email addresses.
+                    await conn.execute(text("SELECT pg_advisory_xact_lock(4141454)"))
                     if (
                         await conn.execute(select(func.count()).select_from(users_t))
                     ).scalar_one():

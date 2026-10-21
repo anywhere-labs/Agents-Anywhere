@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"progress-1","method":"runtime.sync.progress","params":{"streamId":"stream","batchSeq":1,"bytesSent":65536}}

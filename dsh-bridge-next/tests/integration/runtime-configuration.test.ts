@@ -146,9 +146,9 @@ test('catalogs omit defaults, distinguish provider routes before filtering and t
     assert.equal(modes.configField.default, 'standard')
     assert.ok(modes.presets.every(item => !('isDefault' in item) && !('path' in item)))
     const router = new RuntimeRouter({ native: runtime, query: f.ctx.sessionQuery, status: id => runtime.status(id) }, 'test')
-    const filtered = await router.request('catalog.listModels', { query: 'other', limit: 1 }, signal()) as typeof catalog
+    const filtered = await router.request('listModels', { query: 'other', limit: 1 }, signal()) as typeof catalog
     assert.equal(filtered.models[0]?.title, 'Text（other）')
-    const caps = await router.request('session.getCapabilities', { externalSessionId: f.session.id, sessionId: sessionId('test', f.session.id) }, signal()) as Awaited<ReturnType<typeof runtime.capabilities>>
+    const caps = await router.request('getSessionCapabilities', { externalSessionId: f.session.id, sessionId: sessionId('test', f.session.id) }, signal()) as Awaited<ReturnType<typeof runtime.capabilities>>
     assert.equal(caps.capabilities.find(c => c.capabilityId === 'catalog.model')?.allowed, true)
     router.close()
   } finally { await f.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }

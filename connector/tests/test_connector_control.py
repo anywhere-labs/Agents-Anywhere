@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 from typing import Any, ClassVar
 
+from meshcall import MeshCallError
+
 from connector.control import ConnectorController, config_to_payload
 from connector.core.config import ConnectorConfig
-from connector.core.json_rpc import JsonRpcStdioServer
 from connector.server.auth import ConnectorAuthenticationError
+from tests.mesh_support import control_channel
 
 
 class FakeBackendRpcClient:
@@ -26,19 +28,6 @@ class FailingAuthBackendRpcClient:
 
     async def run_forever(self) -> None:
         raise ConnectorAuthenticationError("connector credential no longer valid")
-
-
-class MemoryWriter:
-    def __init__(self) -> None:
-        self.lines: list[dict[str, Any]] = []
-
-    def write(self, data: bytes) -> None:
-        import json
-
-        self.lines.append(json.loads(data))
-
-    async def drain(self) -> None:
-        return None
 
 
 def test_connector_controller_saves_config_and_starts_runtime(tmp_path) -> None:
@@ -121,32 +110,37 @@ def test_connector_controller_marks_auth_failure(tmp_path) -> None:
     assert "credential" in state["lastError"]
 
 
-def test_connector_controller_getters_accept_json_rpc_params(tmp_path) -> None:
+def test_control_service_answers_getters_over_the_router(tmp_path) -> None:
     async def exercise() -> list[dict[str, Any]]:
-        reader = asyncio.StreamReader()
-        writer = MemoryWriter()
         controller = ConnectorController(config_path=tmp_path / "missing.json")
-        server = JsonRpcStdioServer(
-            reader,
-            writer,  # type: ignore[arg-type]
-            {
-                "connector.getState": controller.get_state,
-                "connector.getConfig": controller.get_config,
-            },
-        )
+        async with control_channel(controller) as call:
+            return [await call("getState"), await call("getConfig")]
 
-        await server.handle_line(
-            b'{"jsonrpc":"2.0","id":1,"method":"connector.getState","params":{}}\n'
-        )
-        await server.handle_line(
-            b'{"jsonrpc":"2.0","id":2,"method":"connector.getConfig","params":{}}\n'
-        )
-        return writer.lines
+    state, config = asyncio.run(exercise())
 
-    lines = asyncio.run(exercise())
+    assert state["status"] == "stopped"
+    assert config["serverUrl"] == ""
 
-    assert lines[0]["result"]["status"] == "stopped"
-    assert lines[1]["result"]["serverUrl"] == ""
+
+def test_control_service_reports_missing_config_and_invalid_settings(tmp_path) -> None:
+    async def exercise() -> list[MeshCallError]:
+        controller = ConnectorController(config_path=tmp_path / "missing.json")
+        errors = []
+        async with control_channel(controller) as call:
+            for method, params in [("start", {}), ("saveConfig", {"config": {"serverUrl": "https://x.test"}})]:
+                try:
+                    await call(method, **params)
+                except MeshCallError as exc:
+                    errors.append(exc)
+        await controller.shutdown()
+        return errors
+
+    missing, invalid = asyncio.run(exercise())
+
+    assert missing.code == "connector_error"
+    assert "missing.json" in missing.message
+    assert invalid.code == "invalid_argument"
+    assert "required" in invalid.message
 
 
 def test_config_to_payload_keeps_optional_state_path() -> None:

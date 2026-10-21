@@ -2,18 +2,40 @@ import SwiftUI
 
 /// Mounted only for completed turns. Observing file-change payloads here keeps
 /// token appends out of the timeline's structural grouping and earlier footers.
-struct SessionTurnReviewFooter: View {
+struct SessionTurnReviewFooter: View, Equatable {
     let action: TimelineTurnAction
     let root: String?
     let hasOlderItems: Bool
     let onFile: (String) -> Void
     @State private var showsReview = false
     @State private var pendingFile: String?
+    @State private var memo = ReviewMemo()
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.action == rhs.action && lhs.root == rhs.root && lhs.hasOlderItems == rhs.hasOlderItems
+    }
+
+    /// Parsing every diff of a completed turn is repeated only when one of
+    /// its file-change items actually changed, not on each timeline invalidation.
+    private final class ReviewMemo {
+        var key: [ReviewKey] = []
+        var root: String?
+        var review: TimelineTurnReview?
+    }
+    private struct ReviewKey: Equatable { let id: String; let revision: Int; let updatedSeq: Int }
+
+    private var review: TimelineTurnReview {
+        let key = action.changes.map { ReviewKey(id: $0.id, revision: $0.value.revision, updatedSeq: $0.value.updatedSeq) }
+        if let cached = memo.review, memo.key == key, memo.root == root { return cached }
+        let windows = root?.range(of: #"^[A-Za-z]:[/\\]|^\\\\"#, options: .regularExpression) != nil
+        let built = TimelineTurnReview.build(items: action.changes.map(\.value), root: root, caseInsensitive: windows)
+        memo.key = key; memo.root = root; memo.review = built
+        return built
+    }
 
     var body: some View {
         if !action.changes.isEmpty {
-            let windows = root?.range(of: #"^[A-Za-z]:[/\\]|^\\\\"#, options: .regularExpression) != nil
-            let review = TimelineTurnReview.build(items: action.changes.map(\.value), root: root, caseInsensitive: windows)
+            let review = review
             if !review.files.isEmpty {
                 Button { showsReview = true } label: {
                     HStack(spacing: 6) {

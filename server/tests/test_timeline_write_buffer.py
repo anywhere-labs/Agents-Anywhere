@@ -1116,7 +1116,11 @@ async def test_durable_writer_floors_redis_head_inside_session_fence(tmp_path) -
 async def test_stale_durable_writer_is_ordered_before_replacement_lease(
     tmp_path,
 ) -> None:
-    """Model PostgreSQL's row-lock wait because SQLite ignores FOR UPDATE."""
+    """Order the replacement lease behind the stale writer's commit.
+
+    The paused store hooks make the interleaving deterministic; in production
+    the ``sessions`` row lock provides the same ordering.
+    """
 
     first_store = Store()
     connector, _, _ = await first_store.create_connector(name="dev", user_id="user_1")

@@ -1,6 +1,6 @@
 import Foundation
 
-struct V2DeviceWorkspace: Identifiable, Hashable {
+nonisolated struct V2DeviceWorkspace: Identifiable, Hashable {
     let path: String
     let name: String
     let sessionCount: Int
@@ -9,7 +9,7 @@ struct V2DeviceWorkspace: Identifiable, Hashable {
     var id: String { path }
 }
 
-enum V2DeviceSessionFilter: String, CaseIterable, Identifiable, Hashable {
+nonisolated enum V2DeviceSessionFilter: String, CaseIterable, Identifiable, Hashable {
     case active
     case archived
     case all
@@ -33,7 +33,7 @@ enum V2DeviceSessionFilter: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
-enum V2DeviceProjection {
+nonisolated enum V2DeviceProjection {
     static func sessions(
         connectorId: V2ConnectorID,
         allSessions: [V2SessionMeta]

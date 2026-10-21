@@ -47,8 +47,7 @@ export function LocalOwnershipGate({ children }: { children: ReactNode }) {
   }
 
   const conflict = state.status === "conflict"
-  // The conflict copy names its cause; any other failure quotes the error itself.
-  const detail = conflict ? "" : state.message?.trim() ?? ""
+  const detail = state.message?.trim() ?? ""
   const connector = getDesktopWorkbenchBridge()?.connector
   const copyDetail = async () => {
     try { await copyText(detail); setCopied(true) }
@@ -62,7 +61,7 @@ export function LocalOwnershipGate({ children }: { children: ReactNode }) {
           <AlertDialogTitle>{t(conflict ? "title" : "errorTitle")}</AlertDialogTitle>
           <AlertDialogDescription>{t(conflict ? "description" : detail ? "errorDescription" : "errorWithoutDetail")}</AlertDialogDescription>
         </AlertDialogHeader>
-        {conflict ? null : <div className="grid min-w-0 gap-2">
+        {detail || connector?.openLogsFolder ? <div className="grid min-w-0 gap-2">
           {detail ? <pre className="code-mono max-h-48 overflow-auto rounded-lg bg-muted px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap break-words select-text">{detail}</pre> : null}
           <div className="flex flex-wrap gap-2">
             {detail ? <Button variant="outline" size="sm" onClick={() => void copyDetail()}>
@@ -74,7 +73,7 @@ export function LocalOwnershipGate({ children }: { children: ReactNode }) {
               {t("openLogs")}
             </Button> : null}
           </div>
-        </div>}
+        </div> : null}
         <AlertDialogFooter>
           <Button variant="outline" onClick={() => void getDesktopWorkbenchBridge()?.ownership?.quit()}>{t("quit")}</Button>
           <Button disabled={busy} onClick={() => void recheck()}>{t(busy ? "checking" : "recheck")}</Button>

@@ -1,13 +1,13 @@
 import Foundation
 
-protocol V2RealtimeAPIProtocol {
+nonisolated protocol V2RealtimeAPIProtocol {
     func ticket(clientId: String, scope: V2RealtimeScope) async throws -> V2WebSocketTicket
     func recover(sessionId: V2SessionID, after cursor: String) async throws -> V2EventRecoveryResponse
     func sessionEvents(sessionId: V2SessionID, ticket: String) throws -> AsyncThrowingStream<V2SessionEvent, Error>
     func dashboardSnapshots(ticket: String) throws -> AsyncThrowingStream<V2DashboardSnapshot, Error>
 }
 
-struct V2RealtimeAPI: V2RealtimeAPIProtocol {
+nonisolated struct V2RealtimeAPI: V2RealtimeAPIProtocol {
     let serverURL: URL
     let transport: any HTTPTransport
     let webSocketTransport: any WebSocketTransport
@@ -91,10 +91,9 @@ struct V2RealtimeAPI: V2RealtimeAPIProtocol {
                 do {
                     for try await data in connection.messages() {
                         lastFrame = .now
-                        if isKeepalive(data) {
-                            continue
-                        }
-                        if case .dropped = continuation.yield(try decoder.decode(valueType, from: data)) {
+                        // Keepalive detection and value decoding share one parse.
+                        guard let value = try decoder.decode(V2SocketFrame<Value>.self, from: data).value else { continue }
+                        if case .dropped = continuation.yield(value) {
                             throw HTTPError.streamOverflow
                         }
                     }
@@ -113,10 +112,6 @@ struct V2RealtimeAPI: V2RealtimeAPIProtocol {
         }
     }
 
-    private func isKeepalive(_ data: Data) -> Bool {
-        (try? decoder.decode(V2SocketMessageKind.self, from: data).type) == "keepalive"
-    }
-
     private func webSocketURL(path: String, ticket: String) throws -> URL {
         guard var components = URLComponents(
             url: URL(string: path, relativeTo: serverURL)?.absoluteURL ?? serverURL,
@@ -133,6 +128,19 @@ struct V2RealtimeAPI: V2RealtimeAPIProtocol {
     }
 }
 
-private struct V2SocketMessageKind: Decodable {
-    let type: String
+/// Reads the frame kind and, unless it is a keepalive, the typed value from the
+/// same decoder pass.
+nonisolated private struct V2SocketFrame<Value: Decodable>: Decodable {
+    let value: Value?
+
+    private enum CodingKeys: String, CodingKey { case type }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if try container.decodeIfPresent(String.self, forKey: .type) == "keepalive" {
+            value = nil
+        } else {
+            value = try Value(from: decoder)
+        }
+    }
 }

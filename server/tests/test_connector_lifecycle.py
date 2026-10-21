@@ -213,14 +213,18 @@ def test_runtime_deletion_cancels_old_queue_and_retires_legacy_identity(tmp_path
         assert pump.obsolete == 1
         with pytest.raises(KeyError):
             await state.store.get_session(session_id)
-        # Retired identities remain denied, even after configuring a successor.
+        # Retired identities remain denied, even after adding a new instance.
         result = await service.ingest(
             connector_id=connector_id,
             payload=ConnectorIngestRequest(notifications=[notification]),
         )
         assert result.accepted == 0 and result.rejected[0].code == "runtime_not_configured"
-        assert runtime.runtimeId != "codex"
-        await state.store.set_device_runtime_config(connector_id, runtime.runtimeId, {})
+        assert runtime.runtimeId == "codex"
+        # Deletion leaves no row; a new instance gets a fresh identity.
+        created = await state.store.create_device_runtime(
+            connector_id, runtime_type="codex", name="Codex", config={}, active=False,
+        )
+        runtime = runtime.model_copy(update={"runtimeId": created["runtimeId"]})
         await state.rpc.set_runtime_ingress_enabled(connector_id, runtime.runtimeId, True)
         assert "codex" in await state.store.get_unconfigured_runtime_ids(connector_id)
         result = await service.ingest(

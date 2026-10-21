@@ -50,7 +50,6 @@ def fresh_server_database() -> Iterator[str]:
     asyncio.run(_execute(base_url, f'CREATE DATABASE "{name}"'))
     previous = os.environ.get("AGENT_SERVER_DB_URL")
     os.environ["AGENT_SERVER_DB_URL"] = url
-    os.environ.pop("AGENT_SERVER_DB_BACKEND", None)
     # The probes drive the app from several event loops; see engine.build_engine.
     os.environ.setdefault("AGENT_SERVER_DB_NULL_POOL", "1")
     try:

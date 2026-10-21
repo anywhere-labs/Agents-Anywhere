@@ -54,6 +54,8 @@ import {
 } from "./desktop-server";
 import type {
   ConnectorLogEntry,
+  ConnectorLogPage,
+  ConnectorState,
   DesktopFactoryResetInput,
   DesktopNotificationInput,
   DesktopNotificationResult,
@@ -771,8 +773,13 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("workbench:connector:openLogsFolder", async (event) => {
     assertTrustedRenderer(event);
-    fs.mkdirSync(connectorLogsPath(), { recursive: true, mode: 0o700 });
-    return shell.openPath(connectorLogsPath());
+    const state = await backend?.request<ConnectorState>("/state").catch(() => null);
+    const page = !state?.logsPath?.trim()
+      ? await backend?.request<ConnectorLogPage>("/logs?pageSize=1").catch(() => null)
+      : null;
+    const logsDir = state?.logsPath?.trim() || page?.logsPath?.trim() || connectorLogsPath();
+    fs.mkdirSync(logsDir, { recursive: true, mode: 0o700 });
+    return shell.openPath(logsDir);
   });
   ipcMain.handle("workbench:connector:exportLogs", async (event) => {
     assertTrustedRenderer(event);

@@ -1,19 +1,14 @@
-"""Real PostgreSQL row-lock interleavings; run with the isolated PG harness."""
+"""Row-lock interleavings between the source fast path and concurrent writers."""
 
 from __future__ import annotations
 
 import asyncio
-import os
 
 import pytest
-from agent_server.infra.db import sessions
 from sqlalchemy import delete, select, text, update
 from test_backend_mvp import create_connector_and_session, make_client
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("AGENT_SERVER_DB_URL", "").startswith("postgresql"),
-    reason="requires an explicitly configured disposable PostgreSQL database",
-)
+from agent_server.infra.db import sessions
 
 
 @pytest.mark.parametrize("competing_write", ["semantic_change", "delete"])

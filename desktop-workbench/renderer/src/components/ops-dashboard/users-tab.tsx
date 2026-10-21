@@ -18,7 +18,7 @@ export function UsersTab({ report }: { report: UsageReportResponse }) {
   const histogram = report.users.messageHistogram.map((bucket) => ({ label: bucket.label, users: bucket.count }))
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-6">
       <StatGrid>
         <StatTile label={t("metrics.activeUsers")} value={formatNumber(summary.activeUsers)} />
         <StatTile label={t("metrics.newUsers")} value={formatNumber(summary.newUsers)} />
@@ -39,19 +39,18 @@ export function UsersTab({ report }: { report: UsageReportResponse }) {
         />
       </ChartCard>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-6 xl:grid-cols-2">
         <ChartCard title={t("segments.title")} hint={t("segments.hint")}>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <StatGrid inset columns={3}>
             {report.users.segments.map((segment) => (
-              <div key={segment.segment} className="rounded-lg border border-border px-3 py-3">
-                <div className="text-xs text-muted-foreground">{t(`segments.${segment.segment}`)}</div>
-                <div className="mt-1 text-xl font-semibold tabular-nums">{formatNumber(segment.count)}</div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {t("segments.messagesRange", { range: segmentRangeLabel(segment.min, segment.max) })}
-                </div>
-              </div>
+              <StatTile
+                key={segment.segment}
+                label={t(`segments.${segment.segment}`)}
+                value={formatNumber(segment.count)}
+                helper={t("segments.messagesRange", { range: segmentRangeLabel(segment.min, segment.max) })}
+              />
             ))}
-          </div>
+          </StatGrid>
         </ChartCard>
         <ChartCard title={t("charts.histogram")} hint={t("charts.histogramHint")}>
           <BarsChart

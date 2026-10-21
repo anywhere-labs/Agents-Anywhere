@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import os
 import sys
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -23,13 +21,13 @@ from connector.runtime_protocol.filesystem import (
     filesystem_resource_key,
 )
 from connector.runtimes.dsh import provider_config
-from connector.runtimes.dsh.discovery import (
-    BridgeEndpoint,
-    DshDiscovery,
-    discover,
-    load_endpoints,
-    probe,
+from connector.runtimes.dsh.bridge import client as bridge_client_module
+from connector.runtimes.dsh.bridge import host as bridge_host_module
+from connector.runtimes.dsh.bridge.client import (
+    BridgeRpcError,
+    BridgeUnavailableError,
 )
+from connector.runtimes.dsh.discovery import DshDiscovery, discover, probe
 from connector.runtimes.dsh.provider import DshProvider
 from connector.runtimes.dsh.runtime import DshRuntime
 from connector.runtimes.providers import default_runtime_providers
@@ -44,19 +42,11 @@ def test_dsh_is_third_default_provider() -> None:
 
 
 def test_dsh_provider_identity_schema_and_validation(tmp_path: Path) -> None:
-    endpoint_path = tmp_path / "home" / "agents-anywhere" / "bridge" / "endpoint.json"
-    endpoint = BridgeEndpoint("127.0.0.1", 12345, "token", os.getpid(), endpoint_path)
-
-    async def discover(values: dict[str, Any]) -> DshDiscovery:
-        return DshDiscovery(
-            available=True,
-            configured=True,
-            endpoint=endpoint,
-            metadata={"profile": "web"},
-        )
+    async def discoverer(_values: dict[str, Any]) -> DshDiscovery:
+        return DshDiscovery(available=True, configured=True, metadata={"profile": "web"})
 
     async def run() -> None:
-        provider = DshProvider(discoverer=discover)
+        provider = DshProvider(discoverer=discoverer)
         assert provider.runtime == "dsh"
         assert provider.runtime_type == "dsh"
         assert provider.implementation_type == "local-service"
@@ -106,27 +96,16 @@ def test_dsh_provider_identity_schema_and_validation(tmp_path: Path) -> None:
     asyncio.run(run())
 
 
-def test_dsh_provider_canonicalizes_home_and_endpoint_claims(
-    tmp_path: Path,
-) -> None:
+def test_dsh_provider_canonicalizes_home_claims(tmp_path: Path) -> None:
+    async def discoverer(_values: dict[str, Any]) -> DshDiscovery:
+        return DshDiscovery(True, True, metadata={})
+
     async def run() -> None:
         real_home = tmp_path / "real-home"
-        endpoint_path = real_home / "agents-anywhere" / "bridge" / "endpoint.json"
-        endpoint_path.parent.mkdir(parents=True)
-        endpoint = BridgeEndpoint(
-            "127.0.0.1",
-            12345,
-            "secret-token",
-            os.getpid(),
-            endpoint_path,
-        )
-
-        async def discover(values: dict[str, Any]) -> DshDiscovery:
-            return DshDiscovery(True, True, endpoint, metadata={})
-
+        real_home.mkdir()
         linked_home = tmp_path / "linked-home"
         linked_home.symlink_to(real_home, target_is_directory=True)
-        provider = DshProvider(discoverer=discover)
+        provider = DshProvider(discoverer=discoverer)
         direct = await provider.validate_config(
             {"dshHome": str(real_home / ".." / "real-home")}
         )
@@ -135,30 +114,20 @@ def test_dsh_provider_canonicalizes_home_and_endpoint_claims(
         assert direct.values["dshHome"] == str(real_home.resolve())
         assert linked.values["dshHome"] == str(real_home.resolve())
         assert provider.resource_claims(direct) == provider.resource_claims(linked)
-        source = provider.session_source_key(direct)
-        assert source == provider.session_source_key(linked)
-        assert "secret-token" not in source.key
-        assert "12345" not in source.key
-        assert str(os.getpid()) not in source.key
+        assert provider.session_source_key(direct) == provider.session_source_key(linked)
 
     asyncio.run(run())
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Darwin path identity semantics")
 def test_dsh_provider_blocks_case_and_unicode_path_aliases(tmp_path: Path) -> None:
-    async def discover(values: dict[str, Any]) -> DshDiscovery:
-        path = Path(str(values["dshHome"])) / "agents-anywhere/bridge/endpoint.json"
-        return DshDiscovery(
-            True,
-            True,
-            BridgeEndpoint("127.0.0.1", 12345, "token", os.getpid(), path),
-            metadata={},
-        )
+    async def discoverer(_values: dict[str, Any]) -> DshDiscovery:
+        return DshDiscovery(True, True, metadata={})
 
     async def run() -> None:
-        provider = DshProvider(discoverer=discover)
-        composed = tmp_path / "DSH-Caf\u00e9"
-        decomposed = tmp_path / "dsh-cafe\u0301"
+        provider = DshProvider(discoverer=discoverer)
+        composed = tmp_path / "DSH-Café"
+        decomposed = tmp_path / "dsh-café"
 
         first = await provider.validate_config({"dshHome": str(composed)})
         second = await provider.validate_config({"dshHome": str(decomposed)})
@@ -273,7 +242,7 @@ def test_text_runtime_requires_message_identity_and_forwards_catalogs() -> None:
         runtime = _Pages([{"runtime": "dsh", "revision": 3, "models": []}, {"runtime": "dsh", "revision": 3, "permissions": []}])
         assert (await runtime.list_model_catalog()).models == ()
         assert (await runtime.list_permission_catalog()).permissions == ()
-        assert [method for method, _ in runtime.calls] == ["catalog.listModels", "catalog.listPermissions"]
+        assert [method for method, _ in runtime.calls] == ["listModels", "listPermissions"]
         runtime.calls.clear()
         with pytest.raises(RuntimeInvalidRequestError):
             await runtime.start_turn("a", "native-a", "hello")
@@ -307,8 +276,8 @@ def test_dsh_questions_forward_existing_notices_and_answers_without_reinterpreta
         result = await runtime.respond_interaction("a", "question-1", "submit", answer)
         assert result.ok and result.result == {"resolved": True}
         assert runtime.calls == [
-            ("session.getNotices", {"sessionId": "a", "externalSessionId": "native-a"}),
-            ("session.respondInteraction", {"sessionId": "a", "noticeId": "question-1", "actionId": "submit", "inputData": answer}),
+            ("getSessionNotices", {"sessionId": "a", "externalSessionId": "native-a"}),
+            ("respondInteraction", {"sessionId": "a", "noticeId": "question-1", "actionId": "submit", "inputData": answer}),
         ]
         result = await runtime.respond_interaction("a", "question-1", "cancel")
         assert not result.ok and result.code == "dsh_question_not_pending"
@@ -316,144 +285,174 @@ def test_dsh_questions_forward_existing_notices_and_answers_without_reinterpreta
     asyncio.run(run())
 
 
-def test_endpoint_lives_in_aa_home_while_session_identity_keeps_the_legacy_key(
+def test_rendezvous_is_fixed_in_aa_home_while_session_identity_keeps_the_legacy_key(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv("DSH_HOME", str(tmp_path / "env-dsh"))
     home = tmp_path / "custom-dsh"
-    config = asyncio.run(DshProvider().validate_config({"dshHome": str(home)}))
 
-    assert provider_config.endpoint_path() == Path(
-        canonical_path(runtime_owner.system_home() / ".agents-anywhere/dsh-bridge/endpoint.json")
+    async def ready(_values: dict[str, Any]) -> DshDiscovery:
+        return DshDiscovery(True, True, metadata={})
+
+    provider = DshProvider(prober=ready)
+    config = asyncio.run(provider.validate_config({"dshHome": str(home)}))
+
+    rendezvous = Path(
+        canonical_path(runtime_owner.system_home() / ".agents-anywhere/dsh-bridge/connector.json")
     )
-    endpoint_claim = next(claim for claim in DshProvider().resource_claims(config) if claim.kind == "dsh_bridge_endpoint")
+    assert provider_config.bridge_directory() == rendezvous.parent
+    assert provider_config.endpoint_path() == rendezvous
+    endpoint_claim = next(claim for claim in provider.resource_claims(config) if claim.kind == "dsh_bridge_endpoint")
     assert endpoint_claim.key == filesystem_resource_key(provider_config.endpoint_path())
-    # Session namespaces hash this key; it must match the pre-move endpoint location.
-    assert DshProvider().session_source_key(config).key == filesystem_resource_key(
-        home / "agents-anywhere" / "bridge" / "endpoint.json"
-    )
+    # Session namespaces hash the 1.x endpoint location, not the 2.0 rendezvous,
+    # so existing session IDs stay stable.
+    legacy = home / "agents-anywhere" / "bridge" / "endpoint.json"
+    assert provider_config.legacy_endpoint_path(dict(config.values)) == Path(canonical_path(legacy))
+    assert provider.session_source_key(config).key == filesystem_resource_key(legacy)
 
 
-def _write_endpoint(path: Path, port: int) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"version": 1, "host": "127.0.0.1", "port": port, "pid": os.getpid(), "token": "token"}))
-
-
-def test_endpoints_prefer_the_aa_home_and_fall_back_to_the_legacy_dsh_home(tmp_path: Path) -> None:
-    values = {"dshHome": str(tmp_path / "dsh")}
-    current = provider_config.endpoint_path()
-    legacy = provider_config.legacy_endpoint_path(values)
-
-    with pytest.raises(FileNotFoundError):
-        load_endpoints(values)
-
-    # An older plugin only publishes under DSH_HOME.
-    _write_endpoint(legacy, 1111)
-    assert [endpoint.port for endpoint in load_endpoints(values)] == [1111]
-
-    _write_endpoint(current, 2222)
-    assert [endpoint.path for endpoint in load_endpoints(values)] == [current, legacy]
-
-    # A malformed fixed endpoint does not hide the legacy one.
-    current.write_text("{}")
-    assert [endpoint.path for endpoint in load_endpoints(values)] == [legacy]
-
-    # With nothing usable, the malformed record is the reported cause.
-    legacy.unlink()
-    with pytest.raises(ValueError):
-        load_endpoints(values)
-
-
-def test_probe_skips_a_stale_fixed_endpoint_for_a_live_legacy_one(tmp_path: Path, monkeypatch) -> None:
-    from connector.runtimes.dsh import discovery
-
-    values = {"dshHome": str(tmp_path / "dsh")}
-    _write_endpoint(provider_config.endpoint_path(), 1)
-    _write_endpoint(provider_config.legacy_endpoint_path(values), 2222)
-
-    async def fake_probe(endpoint, _values):
-        live = endpoint.port == 2222
-        return DshDiscovery(live, live, endpoint if live else None, reason=None if live else f"stale {endpoint.port}")
-
-    monkeypatch.setattr(discovery, "_probe_endpoint", fake_probe)
-    result = asyncio.run(discovery.probe(values))
-    assert result.available
-    assert result.endpoint.port == 2222
-
-    # When both fail, the fixed endpoint's reason is reported.
-    _write_endpoint(provider_config.legacy_endpoint_path(values), 3)
-    assert asyncio.run(discovery.probe(values)).reason == "stale 1"
-
-
-def test_runtime_connects_to_the_legacy_endpoint_when_the_fixed_one_is_stale(tmp_path: Path, monkeypatch) -> None:
-    from connector.runtimes.dsh import runtime as runtime_module
-
-    values = {"dshHome": str(tmp_path / "dsh")}
-    _write_endpoint(provider_config.endpoint_path(), 1)
-    _write_endpoint(provider_config.legacy_endpoint_path(values), 2222)
-    attempts: list[int] = []
-    closed: list[int] = []
-
-    class Client:
-        def __init__(self, endpoint, **_kwargs):
-            self.endpoint = endpoint
-
-        async def start(self):
-            attempts.append(self.endpoint.port)
-            if self.endpoint.port == 1:
-                raise ConnectionError("stale")
-            return {"identity": {"runtime": "dsh", "protocolVersion": "1.0"}}
-
-        async def close(self):
-            closed.append(self.endpoint.port)
-
-    monkeypatch.setattr(runtime_module, "BridgeClient", Client)
-
+def test_discovery_reports_support_without_touching_the_bridge() -> None:
     async def run() -> None:
-        runtime = DshRuntime(RuntimeConfig("dsh", 1, values), _Host())
-        normalized = provider_config.normalized_config_values(values)
-        client, _ = await runtime._connect(load_endpoints(values), normalized)
-        assert client.endpoint.port == 2222
-        assert attempts == [1, 2222]
-        assert closed == [1]
-
-        # With no live endpoint the first failure is raised.
-        attempts.clear()
-        _write_endpoint(provider_config.legacy_endpoint_path(values), 1)
-        with pytest.raises(ConnectionError):
-            await runtime._connect(load_endpoints(values), normalized)
-        assert attempts == [1, 1]
+        supported = await discover({})
+        assert supported.available is True
+        assert supported.configured is True
+        assert supported.reason is None
+        assert supported.metadata["endpoint"] == str(provider_config.endpoint_path())
+        assert supported.metadata["storageMode"] == "dsh-native"
+        assert supported.metadata["sameSessionWriterLimit"] == 1
+        assert supported.metadata["crossProcessWriterExclusion"] is False
 
     asyncio.run(run())
 
 
-def test_offline_endpoint_can_be_configured_for_background_recovery(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("DSH_HOME", str(tmp_path))
-    path = provider_config.endpoint_path()
-    path.parent.mkdir(parents=True)
+class _FakePluginClient:
+    """The BridgeClient surface discovery.probe uses."""
+
+    def __init__(
+        self,
+        responses: dict[str, Any] | None = None,
+        *,
+        start_error: Exception | None = None,
+    ) -> None:
+        self.responses = responses or {}
+        self.start_error = start_error
+        self.calls: list[tuple[str, Any]] = []
+        self.closed = False
+
+    async def start(self) -> dict[str, Any]:
+        self.calls.append(("start", None))
+        if self.start_error is not None:
+            raise self.start_error
+        return {"identity": {
+            "runtime": "dsh", "runtimeVersion": "test",
+            "protocolVersion": "2.0", "bridgeVersion": "1.4.0",
+        }}
+
+    async def request(self, method: str, params: Any = None) -> dict[str, Any]:
+        self.calls.append((method, params))
+        if method not in self.responses:
+            raise AssertionError(f"unexpected method {method}")
+        value = self.responses[method]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _patch_bridge(monkeypatch, client: _FakePluginClient, *, host_error: Exception | None = None) -> None:
+    async def fake_bridge_host():
+        if host_error is not None:
+            raise host_error
+        return SimpleNamespace()
+
+    monkeypatch.setattr(bridge_host_module, "bridge_host", fake_bridge_host)
+    monkeypatch.setattr(bridge_client_module, "BridgeClient", lambda _host, **_kwargs: client)
+
+
+def test_probe_reports_the_registered_plugin_and_optional_catalogs(monkeypatch) -> None:
+    async def run() -> None:
+        client = _FakePluginClient({
+            "ping": {"ok": True},
+            "getRuntimeCapabilities": {
+                "runtime": "dsh", "revision": 1,
+                "capabilities": [{"capabilityId": "session.send_message", "supported": True, "available": True, "allowed": True}],
+            },
+            "listAgentPresets": {"presets": [{"id": "default", "enabled": True}]},
+        })
+        _patch_bridge(monkeypatch, client)
+
+        result = await probe({"dshHome": "/ignored"})
+
+        assert result.available is True and result.configured is True
+        assert result.bridge_version == "1.4.0"
+        assert result.metadata["runtimeCapabilities"]["revision"] == 1
+        assert result.metadata["agentPresetCatalog"] == {"presets": [{"id": "default", "enabled": True}]}
+        assert result.metadata["endpoint"] == str(provider_config.endpoint_path())
+        assert result.metadata["storageMode"] == "dsh-native"
+        assert client.closed is True
+        assert [method for method, _ in client.calls] == [
+            "start", "ping", "getRuntimeCapabilities", "listAgentPresets",
+        ]
+
+    asyncio.run(run())
+
+
+def test_probe_keeps_a_read_only_plugin_discoverable(monkeypatch) -> None:
+    async def run() -> None:
+        client = _FakePluginClient({
+            "ping": {"ok": True},
+            "getRuntimeCapabilities": BridgeRpcError("METHOD_NOT_FOUND", "read-only plugin"),
+            "listAgentPresets": BridgeRpcError("METHOD_NOT_FOUND", "read-only plugin"),
+        })
+        _patch_bridge(monkeypatch, client)
+
+        result = await probe({})
+
+        assert result.available is True and result.configured is True
+        assert "runtimeCapabilities" not in result.metadata
+        assert "agentPresetCatalog" not in result.metadata
+        assert client.closed is True
+
+    asyncio.run(run())
+
+
+def test_probe_reports_offline_when_no_plugin_is_registered(monkeypatch) -> None:
+    async def run() -> None:
+        client = _FakePluginClient(start_error=BridgeUnavailableError("no plugin on the router"))
+        _patch_bridge(monkeypatch, client)
+
+        result = await probe({})
+
+        assert result.available is False and result.configured is False
+        assert result.reason == "请启动 DSH，并启用手机连接插件。"
+        assert client.closed is True
+
+    asyncio.run(run())
+
+
+def test_probe_reports_a_local_router_start_failure(monkeypatch) -> None:
+    async def run() -> None:
+        client = _FakePluginClient()
+        _patch_bridge(monkeypatch, client, host_error=RuntimeError("router cannot start"))
+
+        result = await probe({})
+
+        assert result.available is False and result.configured is False
+        assert result.reason.startswith("无法启动本机 Router")
+        assert "router cannot start" in result.reason
+        assert client.closed is False
+
+    asyncio.run(run())
+
+
+def test_offline_probe_still_yields_a_valid_config() -> None:
+    async def prober(_values: dict[str, Any]) -> DshDiscovery:
+        return DshDiscovery(False, False, reason="请启动 DSH，并启用手机连接插件。")
 
     async def run() -> None:
-        # Discovery only reports that this connector supports DSH.
-        supported = await discover({})
-        assert supported.available is True
-        assert supported.reason is None
-
-        # Reachability is reported separately from configuration validity.
-        assert not (await probe({})).available
-        # A live process with a dead port is not an available runtime.
-        path.write_text(
-            json.dumps(
-                {
-                    "version": 1,
-                    "host": "127.0.0.1",
-                    "port": 1,
-                    "pid": os.getpid(),
-                    "token": "not-a-real-token",
-                }
-            )
-        )
-        assert not (await probe({})).available
-        config = await DshProvider().validate_config({})
+        config = await DshProvider(prober=prober).validate_config({})
         assert config.runtime == "dsh"
         assert config.metadata["configured"] is False
 
@@ -488,30 +487,34 @@ def test_reads_retry_connection_after_bounded_recovery_is_exhausted() -> None:
 
 def test_initial_catalog_error_does_not_close_other_runtime_requests(monkeypatch):
     from connector.runtimes.dsh import runtime as runtime_module
-    from connector.runtimes.dsh.bridge.client import BridgeRpcError
 
     async def run():
         broken = True
 
         async def request(method, params=None):
-            if method == "runtime.getCapabilities":
+            if method == "getRuntimeCapabilities":
                 return {"runtime": "dsh", "revision": 1, "capabilities": [
-                    {"capabilityId": name} for name in ["session.send_message", "catalog.model"]
+                    {"capabilityId": name, "supported": True, "available": True, "allowed": True}
+                    for name in ["session.send_message", "catalog.model"]
                 ]}
-            if method == "catalog.listModels":
+            if method == "listModels":
                 if broken:
-                    raise BridgeRpcError(-32603, "catalog failed", {"retryable": True})
+                    raise BridgeRpcError("INTERNAL", "catalog failed", retryable=True)
                 return {"runtime": "dsh", "revision": 1, "models": []}
             if method == "ping":
                 return {"ok": True}
             raise AssertionError(method)
 
         client = SimpleNamespace(connected=True, request=request, close=AsyncMock(), start=AsyncMock(return_value={
-            "identity": {"runtime": "dsh", "runtimeVersion": "test", "protocolVersion": "1.0"},
+            "identity": {"runtime": "dsh", "runtimeVersion": "test", "protocolVersion": "2.0"},
             "features": {"syncMode": "polling"},
         }))
-        monkeypatch.setattr(runtime_module.discovery, "load_endpoints", lambda _values: [None])
-        monkeypatch.setattr(runtime_module, "BridgeClient", lambda **_kwargs: client)
+
+        async def fake_bridge_host():
+            return SimpleNamespace()
+
+        monkeypatch.setattr(runtime_module, "bridge_host", fake_bridge_host)
+        monkeypatch.setattr(runtime_module, "BridgeClient", lambda _host, **_kwargs: client)
         host = SimpleNamespace(
             connector_id="test", runtime_capabilities_update=AsyncMock(),
             model_catalog_update=AsyncMock(), runtime_health_update=AsyncMock(),

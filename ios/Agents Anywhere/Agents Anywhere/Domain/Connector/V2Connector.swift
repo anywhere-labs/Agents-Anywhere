@@ -12,31 +12,31 @@ nonisolated struct V2Connector: Codable, Identifiable, Hashable {
     let updatedAt: String
 }
 
-struct V2ConnectorListResponse: Decodable, Hashable {
+nonisolated struct V2ConnectorListResponse: Decodable, Hashable {
     let connectors: [V2Connector]
     let serverTime: String
 }
 
-struct V2ConnectorResponse: Decodable, Hashable {
+nonisolated struct V2ConnectorResponse: Decodable, Hashable {
     let connector: V2Connector
     let serverTime: String
 }
 
-struct V2ConnectorCreateRequest: Encodable, Hashable {
+nonisolated struct V2ConnectorCreateRequest: Encodable, Hashable {
     let name: String
 }
 
-struct V2ConnectorCreateResponse: Decodable, Hashable {
+nonisolated struct V2ConnectorCreateResponse: Decodable, Hashable {
     let connector: V2Connector
     let connectorToken: String
     let tokenPrefix: String
 }
 
-struct V2ConnectorUpdateRequest: Encodable, Hashable {
+nonisolated struct V2ConnectorUpdateRequest: Encodable, Hashable {
     let name: String
 }
 
-struct V2ConnectorRevokeResponse: Decodable, Hashable, Identifiable {
+nonisolated struct V2ConnectorRevokeResponse: Decodable, Hashable, Identifiable {
     let connector: V2Connector
     let connectorToken: String
     let tokenPrefix: String
@@ -45,18 +45,18 @@ struct V2ConnectorRevokeResponse: Decodable, Hashable, Identifiable {
     var id: V2ConnectorID { connector.id }
 }
 
-enum V2ConnectorSessionArchiveScope: String, Encodable, Hashable {
+nonisolated enum V2ConnectorSessionArchiveScope: String, Encodable, Hashable {
     case active
     case archived
     case all
 }
 
-struct V2ConnectorSessionArchiveRequest: Encodable, Hashable {
+nonisolated struct V2ConnectorSessionArchiveRequest: Encodable, Hashable {
     let archived: Bool
     let scope: V2ConnectorSessionArchiveScope
 }
 
-struct V2ConnectorSessionArchiveResponse: Decodable, Hashable {
+nonisolated struct V2ConnectorSessionArchiveResponse: Decodable, Hashable {
     let sessions: [V2SessionMeta]
     let affected: Int
     let serverTime: String

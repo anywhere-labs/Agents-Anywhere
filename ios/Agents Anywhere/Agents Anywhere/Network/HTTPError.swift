@@ -1,6 +1,6 @@
 import Foundation
 
-enum HTTPError: LocalizedError {
+nonisolated enum HTTPError: LocalizedError {
     case invalidRequestURL(path: String)
     case invalidResponse
     case unauthorized
@@ -36,7 +36,7 @@ enum HTTPError: LocalizedError {
     }
 }
 
-struct HTTPServerErrorEnvelope: Decodable {
+nonisolated struct HTTPServerErrorEnvelope: Decodable {
     let detail: JSONValue
 
     var message: String {

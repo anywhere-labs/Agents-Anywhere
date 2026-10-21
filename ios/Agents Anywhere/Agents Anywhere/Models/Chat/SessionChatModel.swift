@@ -166,7 +166,7 @@ final class SessionChatModel {
         if command.takesArguments {
             draft.text = current == "/\(command.id)" ? current + " " + prose : current
             draft.isFocused = true
-            repository.draftDidChange()
+            repository.draftDidChange(sessionID: session.id)
             return
         }
         await runCommand(command, raw: current, clearing: prose.isEmpty ? draft.text : nil)
@@ -192,7 +192,7 @@ final class SessionChatModel {
         if outcome.ok {
             let message = outcome.message.map { $0.count > 200 ? String($0.prefix(200)) + "…" : $0 }
             commandSuccess = CommandFeedback(title: outcome.state == .completed ? String(localized: "指令已完成。") : String(localized: "指令已接受，后台任务可能仍在进行。"), message: message)
-            if let source = source ?? raw as String?, !source.isEmpty, session.composer.text == source { session.composer.text = ""; repository.draftDidChange() }
+            if let source = source ?? raw as String?, !source.isEmpty, session.composer.text == source { session.composer.text = ""; repository.draftDidChange(sessionID: session.id) }
         } else if outcome.state == .unknown {
             commandFailure = CommandFeedback(title: String(localized: "指令结果尚不确定"),
                 message: [String(localized: "结果尚不确定，请先检查会话状态再决定是否重试。"), outcome.message].compactMap { $0 }.joined(separator: "\n"))
@@ -298,7 +298,7 @@ final class SessionChatModel {
                     guard let file = uploaded.first else { throw HTTPError.invalidResponse }
                     pending.bindUpload(file, localID: attachment.id)
                     self.session.attachmentPreviews.remember(pending.attachments, clientID: pending.id)
-                    self.repository.draftDidChange()
+                    self.repository.draftDidChange(sessionID: self.session.id)
                 }
         }
     }

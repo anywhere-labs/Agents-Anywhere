@@ -1,7 +1,9 @@
 "use client"
 
+import { useTranslations } from "next-intl"
 import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts"
 
+import { EmptyNote } from "@/components/ops-dashboard/stat-tile"
 import {
   ChartContainer,
   ChartLegend,
@@ -37,6 +39,15 @@ function chartConfig(series: ChartSeries[]): ChartConfig {
   return Object.fromEntries(series.map((item) => [item.key, { label: item.label, color: item.color }]))
 }
 
+// A range with nothing recorded shows one sentence in place of a flat line
+// along zero, which otherwise reads as a chart of nothing.
+function hasValues(data: ChartDatum[], series: ChartSeries[]): boolean {
+  return data.some((row) => series.some((item) => {
+    const value = row[item.key]
+    return typeof value === "number" && value > 0
+  }))
+}
+
 function axisTick(value: string | number) {
   return formatShortDate(value)
 }
@@ -58,6 +69,8 @@ export function TrendLineChart({
   className?: string
   tickFormatter?: (value: string | number) => string
 }) {
+  const t = useTranslations("pages.opsDashboard")
+  if (!hasValues(data, series)) return <EmptyNote className={cn("h-64", className)}>{t("charts.empty")}</EmptyNote>
   return (
     <ChartContainer config={chartConfig(series)} className={cn("aspect-auto h-64 w-full", className)}>
       <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
@@ -101,6 +114,8 @@ export function BarsChart({
   className?: string
   tickFormatter?: (value: string | number) => string
 }) {
+  const t = useTranslations("pages.opsDashboard")
+  if (!hasValues(data, series)) return <EmptyNote className={cn("h-64", className)}>{t("charts.empty")}</EmptyNote>
   return (
     <ChartContainer config={chartConfig(series)} className={cn("aspect-auto h-64 w-full", className)}>
       <BarChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }} barCategoryGap="30%">

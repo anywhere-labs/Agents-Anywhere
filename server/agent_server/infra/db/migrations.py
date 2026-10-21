@@ -20,10 +20,9 @@ from sqlalchemy.pool import NullPool
 
 from agent_server.infra.db.engine import resolve_db_url
 
-LEGACY_V1_REVISION = "v1_legacy"
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_43"
-CURRENT_SCHEMA_VERSION = "2.43"
+CURRENT_SCHEMA_REVISION = "v2_44"
+CURRENT_SCHEMA_VERSION = "2.44"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -49,7 +48,7 @@ def upgrade_database(
 
 
 def _upgrade_database(*, db_url: str | None, revision: str) -> None:
-    _, resolved_url = resolve_db_url(url=db_url)
+    resolved_url = resolve_db_url(db_url)
     timeout = migration_lock_timeout()
     with postgres_migration_lock(resolved_url, timeout_seconds=timeout):
         state = asyncio.run(classify_database(resolved_url))
@@ -204,8 +203,6 @@ async def require_current_database(engine: AsyncEngine) -> None:
 def schema_version_for_revision(revision: str | None) -> str:
     if revision is None:
         return "unversioned"
-    if revision == LEGACY_V1_REVISION:
-        return "1.legacy"
     if revision.startswith("v") and "_" in revision:
         major, minor = revision[1:].split("_", 1)
         if major.isdigit() and minor.isdigit():
@@ -462,7 +459,7 @@ def main() -> None:
         )
         return
 
-    _, db_url = resolve_db_url()
+    db_url = resolve_db_url()
     state = asyncio.run(classify_database(db_url))
     revision = state.revision if state.kind == "versioned" else None
     if args.verbose:

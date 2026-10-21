@@ -1,7 +1,7 @@
 import Foundation
 
 /// Presentation can choose recovery actions without interpreting localized messages.
-struct V2ClientFailure: Error, Hashable, LocalizedError {
+nonisolated struct V2ClientFailure: Error, Hashable, LocalizedError {
     enum Kind: Hashable { case offline, transient, authentication, unavailable, rejected, cancelled, invalidResponse }
     let kind: Kind
     let message: String

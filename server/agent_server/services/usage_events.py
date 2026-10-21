@@ -27,6 +27,7 @@ from agent_server.core.usage import (
     EVENT_MESSAGE_SENT,
     EVENT_RUNTIME_ERROR,
     EVENT_SESSION_CREATED,
+    EVENT_SESSION_VIEWED,
     EVENT_TURN_ENDED,
     EVENT_USER_ACTIVE,
     UsageEvent,
@@ -38,11 +39,15 @@ from agent_server.services.repository_ports import UsageEventRepository
 DEFAULT_FLUSH_INTERVAL_SECONDS = 1.0
 DEFAULT_MAX_BATCH = 500
 DEFAULT_USER_ACTIVE_INTERVAL_SECONDS = 300.0
+# Opening the same session again within this window (a reconnect, a refresh,
+# a double-mounted view) is still the same read.
+DEFAULT_SESSION_VIEW_INTERVAL_SECONDS = 60.0
 # A turn longer than this is almost certainly measured against a stale
 # message (for example a takeover session driven locally in between).
 MAX_TURN_DURATION_MS = 6 * 60 * 60 * 1000
 _MAX_TRACKED_USERS = 50_000
 _MAX_TRACKED_SESSIONS = 10_000
+_MAX_TRACKED_VIEWS = 50_000
 
 
 class UsageRecorder:
@@ -53,16 +58,19 @@ class UsageRecorder:
         flush_interval_seconds: float = DEFAULT_FLUSH_INTERVAL_SECONDS,
         max_batch: int = DEFAULT_MAX_BATCH,
         user_active_interval_seconds: float = DEFAULT_USER_ACTIVE_INTERVAL_SECONDS,
+        session_view_interval_seconds: float = DEFAULT_SESSION_VIEW_INTERVAL_SECONDS,
     ) -> None:
         self._store = store
         self._flush_interval_seconds = max(0.05, flush_interval_seconds)
         self._max_batch = max(1, max_batch)
         self._user_active_interval_seconds = max(0.0, user_active_interval_seconds)
+        self._session_view_interval_seconds = max(0.0, session_view_interval_seconds)
         self._pending: list[dict[str, Any]] = []
         self._flush_lock = asyncio.Lock()
         self._sweeper_task: asyncio.Task[None] | None = None
         self._closed = False
         self._user_seen: OrderedDict[str, float] = OrderedDict()
+        self._views_seen: OrderedDict[tuple[str, str], float] = OrderedDict()
         self._last_message_at: OrderedDict[str, str] = OrderedDict()
 
     # --- lifecycle ----------------------------------------------------------
@@ -128,14 +136,13 @@ class UsageRecorder:
     async def touch_user(self, user_id: str, *, occurred_at: str | None = None) -> bool:
         """Record platform presence for a user, throttled per process."""
 
-        now = time.monotonic()
-        last = self._user_seen.get(user_id)
-        if last is not None and now - last < self._user_active_interval_seconds:
+        if not _admit(
+            self._user_seen,
+            user_id,
+            interval_seconds=self._user_active_interval_seconds,
+            max_entries=_MAX_TRACKED_USERS,
+        ):
             return False
-        self._user_seen[user_id] = now
-        self._user_seen.move_to_end(user_id)
-        while len(self._user_seen) > _MAX_TRACKED_USERS:
-            self._user_seen.popitem(last=False)
         timestamp = occurred_at or utc_now()
         await self.record(
             UsageEvent(
@@ -144,6 +151,25 @@ class UsageRecorder:
                 user_id=user_id,
                 dedupe_key=f"active:{user_id}:{hour_bucket(timestamp)}",
             )
+        )
+        return True
+
+    async def touch_session_view(
+        self, session: SessionView, *, user_id: str, occurred_at: str | None = None
+    ) -> bool:
+        """Record that a user opened a session. Every open counts as one read,
+        except repeats of the same user and session inside the view window.
+        """
+
+        if not _admit(
+            self._views_seen,
+            (user_id, session.id),
+            interval_seconds=self._session_view_interval_seconds,
+            max_entries=_MAX_TRACKED_VIEWS,
+        ):
+            return False
+        await self.record(
+            session_viewed_event(session, user_id=user_id, occurred_at=occurred_at)
         )
         return True
 
@@ -186,8 +212,33 @@ class NullUsageRecorder:
     async def touch_user(self, user_id: str, *, occurred_at: str | None = None) -> bool:
         return False
 
+    async def touch_session_view(
+        self, session: SessionView, *, user_id: str, occurred_at: str | None = None
+    ) -> bool:
+        return False
+
     async def last_message_sent_at(self, session_id: str) -> str | None:
         return None
+
+
+def _admit(
+    seen: OrderedDict[Any, float],
+    key: Any,
+    *,
+    interval_seconds: float,
+    max_entries: int,
+) -> bool:
+    """Admit ``key`` unless it was admitted less than ``interval_seconds`` ago."""
+
+    now = time.monotonic()
+    last = seen.get(key)
+    if last is not None and now - last < interval_seconds:
+        return False
+    seen[key] = now
+    seen.move_to_end(key)
+    while len(seen) > max_entries:
+        seen.popitem(last=False)
+    return True
 
 
 # --- event builders ---------------------------------------------------------
@@ -205,6 +256,20 @@ def session_created_event(
         runtime_type=session.runtime,
         runtime_id=session.runtimeId,
         dedupe_key=f"session:{session.id}",
+    )
+
+
+def session_viewed_event(
+    session: SessionView, *, user_id: str, occurred_at: str | None = None
+) -> UsageEvent:
+    return UsageEvent(
+        EVENT_SESSION_VIEWED,
+        occurred_at or utc_now(),
+        user_id=user_id,
+        connector_id=session.connectorId,
+        session_id=session.id,
+        runtime_type=session.runtime,
+        runtime_id=session.runtimeId,
     )
 
 

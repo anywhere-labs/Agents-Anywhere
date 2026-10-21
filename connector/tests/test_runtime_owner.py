@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import errno
 import json
 import os
 import socket
@@ -135,47 +134,47 @@ def test_process_check_recognizes_connector_entry_points_only(executable, argume
     assert runtime_owner._connector_command(executable, arguments) is expected
 
 
-def test_state_lock_excludes_a_socket_that_has_not_started_listening(tmp_path):
-    """A racing owner must block the lock even between its bind() and listen()."""
+def test_state_lock_waits_for_a_live_holder_then_reports_busy(tmp_path):
+    """The holder answers probes with its token; a contender waits, then gives up as busy."""
     path = tmp_path / "connector-runtime.json"
-    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    holder.bind(("127.0.0.1", runtime_owner.state_lock_port(path)))
-    try:
+    record_path = runtime_owner.state_lock_record_path(path)
+    with runtime_owner.state_lock(path):
+        record = json.loads(record_path.read_text())
+        assert record["pid"] == os.getpid() and record["port"] > 0 and record["token"]
         with pytest.raises(RuntimeError, match="busy"), runtime_owner.state_lock(path, timeout=0.2):
-            pytest.fail("Claimed a port that another socket already holds")
-    finally:
-        holder.close()
+            pytest.fail("Entered a transaction another writer holds")
+    assert not record_path.exists()
     with runtime_owner.state_lock(path, timeout=0.2):
         pass
 
 
-def test_state_lock_is_skipped_when_the_os_refuses_the_port(tmp_path, monkeypatch):
-    """A port the OS reserves, such as a Windows excluded range, must not block every write."""
+def test_state_lock_takes_over_a_dead_record_even_if_its_port_is_reused(tmp_path):
+    """A record whose port no longer answers with its token belongs to nobody."""
     path = tmp_path / "connector-runtime.json"
-    port = runtime_owner.state_lock_port(path)
-    original_bind = socket.socket.bind
-
-    def refuse_lock_port(self, address):
-        if address[1] == port:
-            raise OSError(errno.EACCES, "An attempt was made to access a socket in a way forbidden by its access permissions")
-        return original_bind(self, address)
-
-    monkeypatch.setattr(socket.socket, "bind", refuse_lock_port)
-    with runtime_owner.state_lock(path, timeout=0.2):
-        pass
-    with state_transaction(path) as state:
-        state["connectorIds"] = ["written-without-lock"]
-    assert read_state(path)["connectorIds"] == ["written-without-lock"]
-    # A listener on that port is a real writer, so the same refusal keeps waiting.
-    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    original_bind(holder, ("127.0.0.1", port))
-    holder.listen()
+    record_path = runtime_owner.state_lock_record_path(path)
+    stranger = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    stranger.bind(("127.0.0.1", 0))
+    stranger.listen()
     try:
-        with pytest.raises(RuntimeError, match="busy"), runtime_owner.state_lock(path, timeout=0.2):
-            pytest.fail("Skipped a lock that another writer holds")
+        record_path.write_text(json.dumps({"version": 1, "port": stranger.getsockname()[1], "pid": 999_999,
+                                           "token": "stale", "startedAt": "2026-01-01T00:00:00.000Z"}))
+        with runtime_owner.state_lock(path, timeout=2):
+            assert json.loads(record_path.read_text())["token"] != "stale"
+        assert not record_path.exists()
+        record_path.write_text("{not a record")
+        with runtime_owner.state_lock(path, timeout=2):
+            pass
     finally:
-        holder.close()
+        stranger.close()
+
+
+def test_state_lock_release_keeps_a_record_it_no_longer_owns(tmp_path):
+    path = tmp_path / "connector-runtime.json"
+    record_path = runtime_owner.state_lock_record_path(path)
+    with runtime_owner.state_lock(path):
+        record_path.write_text(json.dumps({"version": 1, "port": 1, "pid": 1, "token": "intruder",
+                                           "startedAt": "2026-01-01T00:00:00.000Z"}))
+    assert json.loads(record_path.read_text())["token"] == "intruder"
 
 
 def test_fresh_record_neither_creates_nor_locks_the_legacy_directory():

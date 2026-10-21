@@ -75,12 +75,10 @@ def _latest_timeline_item_source() -> tuple[Any, Any]:
     ``idx_timeline_items_session_latest`` index for the correlated lookup and
     the ``(session_id, id)`` primary key for the row itself.
 
-    A correlated subquery is used rather than ``LATERAL`` because SQLite (the
-    default test backend) does not implement ``LATERAL``. The subquery
-    correlates on ``sessions.id`` rather than on the aliased join target:
-    correlating on the alias makes the subquery depend on the table it is
-    joined to, so the planner cannot drive the join from the session rows and
-    degrades into a scan of the whole timeline table.
+    The correlated subquery correlates on ``sessions.id`` rather than on the
+    aliased join target: correlating on the alias makes the subquery depend on
+    the table it is joined to, so the planner cannot drive the join from the
+    session rows and degrades into a scan of the whole timeline table.
     """
 
     latest = timeline_items_t.alias("latest_timeline_item")

@@ -40,6 +40,7 @@ from agent_server.core.usage import (
     EVENT_APPROVAL_RESOLVED,
     EVENT_MESSAGE_SENT,
     EVENT_RUNTIME_ERROR,
+    EVENT_SESSION_VIEWED,
     EVENT_TURN_ENDED,
     INVENTORY_CONNECTORS_BY_OS,
     INVENTORY_CONNECTORS_SEEN_7D,
@@ -278,6 +279,8 @@ class _DayAgg:
     new_users: int = 0
     users: set[str] = field(default_factory=set)
     sessions: set[str] = field(default_factory=set)
+    session_views: int = 0
+    viewed_sessions: set[str] = field(default_factory=set)
     connectors: set[str] = field(default_factory=set)
     turn_durations: list[int] = field(default_factory=list)
 
@@ -345,6 +348,8 @@ class _ReportBuilder:
         self._user_days: dict[str, set[int]] = defaultdict(set)
         self._user_messages: Counter[str] = Counter()
         self._sessions: set[str] = set()
+        self._session_views = 0
+        self._viewed_sessions: set[str] = set()
         self._connectors: set[str] = set()
         self._os_online: dict[str, set[str]] = defaultdict(set)
         self._turn_durations: list[int] = []
@@ -400,6 +405,12 @@ class _ReportBuilder:
             day, _ = self._clock.local(row.hour_bucket)
             agg = self._daily.get(day)
             if agg is None:
+                continue
+            if row.event_type == EVENT_SESSION_VIEWED:
+                agg.session_views += row.count
+                agg.viewed_sessions.add(row.session_id)
+                self._session_views += row.count
+                self._viewed_sessions.add(row.session_id)
                 continue
             agg.sessions.add(row.session_id)
             self._sessions.add(row.session_id)
@@ -477,6 +488,9 @@ class _ReportBuilder:
                     mau=mau.get(day.toordinal(), 0),
                     messages=agg.messages,
                     sessions=len(agg.sessions),
+                    sessionViews=agg.session_views,
+                    sessionsViewed=len(agg.viewed_sessions),
+                    sessionsReadOnly=len(agg.viewed_sessions - agg.sessions),
                     turns=agg.turns,
                     turnsFailed=agg.turns_failed,
                     turnDurationP50Ms=turn_pct.p50,
@@ -510,6 +524,9 @@ class _ReportBuilder:
             totalUsers=inventory.users_total,
             messages=total_messages,
             sessions=len(self._sessions),
+            sessionViews=self._session_views,
+            sessionsViewed=len(self._viewed_sessions),
+            sessionsReadOnly=len(self._viewed_sessions - self._sessions),
             turns=total_turns,
             turnFailureRate=round(total_failed / total_turns, 4) if total_turns else None,
             turnDurationMs=turn_pct,

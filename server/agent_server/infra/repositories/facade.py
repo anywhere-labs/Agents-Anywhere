@@ -47,13 +47,11 @@ class Store(
         self,
         *,
         db_url: str | None = None,
-        backend: str | None = None,
         file_storage: FileStorage | None = None,
     ) -> None:
-        resolved_backend, engine = build_engine(backend=backend, url=db_url)
-        self.backend: str = resolved_backend
+        engine = build_engine(db_url)
         self._engine: AsyncEngine = engine
-        self.timeline: SqlTimelineStore = SqlTimelineStore(engine, backend=resolved_backend)
+        self.timeline: SqlTimelineStore = SqlTimelineStore(engine)
         self.files: FileStorage = file_storage or build_file_storage(
             default_local_root=_default_files_root(engine)
         )

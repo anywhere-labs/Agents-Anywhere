@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import pathlib
 import secrets
 from collections.abc import Iterator
 
@@ -58,22 +57,19 @@ def _test_database_url() -> str:
 TEST_DATABASE_URL = _test_database_url()
 # Application code resolves the database through AGENT_SERVER_DB_URL.
 os.environ["AGENT_SERVER_DB_URL"] = TEST_DATABASE_URL
-os.environ.pop("AGENT_SERVER_DB_BACKEND", None)
 
 
-def make_test_client(destination: pathlib.Path | None = None) -> TestClient:
-    """Return a client for a freshly migrated, truncated test database.
+def make_test_client() -> TestClient:
+    """Return an API client on the shared test database.
 
-    ``destination`` is accepted for backwards compatibility with callers that
-    used to name a private SQLite file; the suite now shares one Postgres
-    database that is truncated before every test.
+    The autouse fixture migrates and truncates the database before every test;
+    scripts that reuse this helper call ``reset_shared_database()`` themselves.
     """
     from agent_server.app import create_app
 
     return ApiV2TestClient(create_app())
 
 
-_PG_PREFIX = "postgresql"
 _API_PREFIX = "/api/v2"
 _API_ROOTS = (
     "/.well-known",
@@ -152,10 +148,15 @@ def _ensure_migrated() -> None:
     _SCHEMA_READY = True
 
 
-@pytest.fixture(autouse=True)
-def _isolate_shared_database() -> None:
+def reset_shared_database() -> None:
+    """Migrate the shared test database once, then empty every table."""
     _ensure_migrated()
     asyncio.run(_truncate(_asyncpg_url(TEST_DATABASE_URL)))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_shared_database() -> None:
+    reset_shared_database()
 
 
 async def _run_maintenance(url: str, sql: str) -> None:
