@@ -94,7 +94,7 @@ async function remote(ctx: Context) {
       const response = await ctx.connection.createSharedFetchHandler('/api').fetch(new Request('http://127.0.0.1/api/$events/result', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ type: 'client-request', rpcId, method: '$events/result', payload: { args: { clientId: ready.clientId, eventId, outcome } } }),
-      }))
+      }), interactionPeer(ctx.connection))
       assert.equal((await response.json()).result.ok, true)
     } }
 }

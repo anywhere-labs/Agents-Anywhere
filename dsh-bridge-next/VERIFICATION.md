@@ -1,5 +1,24 @@
 # DSH Bridge Next 验证记录
 
+## DSH 0.2.1-rc.2 测试基线（2026-10-21）
+
+`@deepseek-ai/dsh-*` 开发依赖从 `0.2.0-rc.2` 升到 `0.2.1-rc.2`；Cordis 插件对齐 0.2.1 线（`cordis-plugin-group` 1.0.5、`cordis-plugin-include` 1.0.10、`cordis-plugin-loader` 1.0.6）；新增 `@deepseek-ai/dsh-api-remote-access`；删除 `@deepseek-ai/dsh-invariants`（0.2.1 线没有发布版本，仓库内零引用）。peer 范围 `>=0.2.0-rc.1 <0.3.0-0` 不变，但自动化检查只覆盖 `0.2.1-rc.2`，范围内其他版本只做声明。安装时 `@deepseek-ai/dsh-working-directory` 的 peer 未满足提示来自官方 `dsh-api-session-controller`，不影响检查。
+
+只升依赖、不改测试时，按 CI 的 DSH plugin job 配置（Linux、Node 22.23.2、uv 0.12.3、Python 3.12、PostgreSQL 17）运行 `corepack yarn check`：196 项中 5 项失败，原因都是 0.2.1 的接口变化，插件 `src/**` 无需改动：
+
+- `@deepseek-ai/dsh-session-persistence-jsonl` 不再提供默认导出：`SyntaxError: The requested module '@deepseek-ai/dsh-session-persistence-jsonl' does not provide an export named 'default'`，`runtime-commands.test.ts` 整个文件无法加载。
+- Gateway 与 SessionController 注入 `remoteAccess`，夹具没有加载时 Gateway 不会启用：`Cannot read properties of undefined (reading 'invoke')`。
+- 进程内 Gateway 调用必须带上存活的 owner Peer：`Cannot read properties of undefined (reading 'signal')`（`gateway`、`runtime-startup` 中的两个用例）。不带 Peer 时，原本断言“应当拒绝”的调用也会因为这个 TypeError 通过，补上 Peer 后这些断言才恢复原意。
+- Connection 共享 fetch 的签名变为 `fetch(request, peer)`。测试里远程客户端提交 `$events/result` 时没有传 Peer，回答被拒（`result.ok === false`）。插件源码在 #339 已改为传入 owner Peer。
+
+修正后，同一配置下 `corepack yarn check` exit 0：204 项全部通过，没有跳过（包括两条 PostgreSQL 探针）。
+
+已排除：`typert gateway: forwarded Remote event source was removed` 不是官方 Gateway 的缺陷。它出现在上面最后一项失败之后：用例在 `await first` 之前就已失败，teardown 时 Gateway 注销事件源，拒绝了还没有被等待的 `ask()`，形成未处理拒绝，node:test 把它报告为该用例的错误，原始的断言失败反而看不到。修好回答路径后，这条用例无需跳过。
+
+Windows 本地另有一批失败与 0.2.1 无关，CI 不受影响，不在本次范围：`Include` 收到裸 Windows 路径（`ERR_INVALID_URL_SCHEME: The URL must be of scheme file`）；uv 的 venv 启动器使 spawn 得到的 pid 不是持有租约的解释器 pid；`TEMP` 为 8.3 短路径时 `machine-state` 路径断言不等；未开启开发者模式时创建符号链接报 `EPERM`；环境变量名不区分大小写，`NO_PROXY` 与 `no_proxy` 无法分开测试；在普通文件下读取路径时 Windows 返回 `ENOENT` 而不是 `ENOTDIR`。
+
+未做：DSH Desktop、手机端实机验收。
+
 ## DSH 0.2.0-rc.2 与版本声明统一（2026-09-30）
 
 DSH 开发依赖统一升级到 `0.2.0-rc.2`；Typert peer 从精确的 `0.2.0-rc.1` 改为范围 `>=0.2.0-rc.1 <0.3.0-0`。DSH 0.2.0-rc.2 起在安装和 profile 启动时按 DSH peer 检查插件，精确版本会让后续 rc 拒绝加载插件。握手上报的 `runtimeVersion` 与 `bridgeVersion` 改为运行时读取，不再写死。兼容旧版 DSH 的代码分支不变。

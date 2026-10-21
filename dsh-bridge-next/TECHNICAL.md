@@ -41,7 +41,7 @@ Bridge 与 Connector 运行日志统一由 Connector 保存到操作系统用户
 
 AA Desktop 正在运行时，连接功能显示桌面端引导；仅安装而未运行时，插件仍可管理连接。桥接运行日志需 Connector 日志服务可用；无连接时不读取旧插件日志文件。手机连接复用已有 `/auth/mobile-login/qr`、`status`、`confirm` 接口；二维码包含手机扫描协议要求的临时登录凭据，使用当前账号的后端地址，不使用 DSH 地址或 OAuth Web 开发端口。无需新增 AA Server 接口。
 
-插件基于 DSH `0.2.0-rc.2` 开发和测试，peer 声明支持 `>=0.2.0-rc.1 <0.3.0-0`，支持附件和模型/effort/权限、Agent 模式配置。Runtime 提供 DSH 一键配置、官方侧栏过滤、原生会话和历史读取、首次完整校准、归档同步、实时事件、文本、图片和普通文件新建/续聊、中断、`ask_user_question` 以及受限操作的单次批准或拒绝。新建使用 AA 显式传入的模型和权限选择；已有会话可切换配置。AA 发来的 PNG/JPEG/WebP/GIF 使用图片接口，普通文件通过本机暂存文件和官方 `fileUploads.uploadStream` 上传，RPC 只传文件元数据。平台发出的附件保留 AA 文件引用；不回传 DSH 本地产生的附件。首次会话清单成功提交到平台之前，runtime 保持初始化状态；同步中断时自动重试。
+插件基于 DSH `0.2.1-rc.2` 开发和测试，peer 声明支持 `>=0.2.0-rc.1 <0.3.0-0`（自动化检查只覆盖 `0.2.1-rc.2`），支持附件和模型/effort/权限、Agent 模式配置。Runtime 提供 DSH 一键配置、官方侧栏过滤、原生会话和历史读取、首次完整校准、归档同步、实时事件、文本、图片和普通文件新建/续聊、中断、`ask_user_question` 以及受限操作的单次批准或拒绝。新建使用 AA 显式传入的模型和权限选择；已有会话可切换配置。AA 发来的 PNG/JPEG/WebP/GIF 使用图片接口，普通文件通过本机暂存文件和官方 `fileUploads.uploadStream` 上传，RPC 只传文件元数据。平台发出的附件保留 AA 文件引用；不回传 DSH 本地产生的附件。首次会话清单成功提交到平台之前，runtime 保持初始化状态；同步中断时自动重试。
 
 实机日志定位到官方历史读取器拒绝一个序号不连续的会话，进而拖断整个同步流。当前通过 `ctx.sessionQuery` 读取，按会话隔离读取失败，保留 AA 已接收的历史，并允许后续刷新重试。图片及配置恢复后，包含坏历史的完整回传测试继续通过。桥接日志页、Python 启动互斥、ID 历史和 Desktop 安装信息职责调整保留；检查与实机状态见 [验证记录](./VERIFICATION.md)。
 
@@ -78,7 +78,7 @@ cd /Users/t4wefan/code/github/Agents-Anywhere/dsh-bridge-next
 corepack yarn install
 corepack yarn check
 
-DSH_HOME="$HOME/.dsh" npx -y -p @deepseek-ai/dsh@0.2.0-rc.2 \
+DSH_HOME="$HOME/.dsh" npx -y -p @deepseek-ai/dsh@0.2.1-rc.2 \
   dsh plugin --profile desktop add "link:$PWD"
 ```
 
@@ -264,4 +264,4 @@ scripts/               构建、源码复制与产物检查
 tests/                 单元及集成测试
 ```
 
-Host 输出 `lib/index.js`，Client 输出 DSH 模块加载格式的 `lib/client.js`，不能当独立网页打开。开发依赖统一锁定 Harness `0.2.0-rc.2`；Cordis、Typert 与 Schemastery 使用 Host 提供的 peer 依赖，以免破坏服务类型身份。DSH 只按 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` peer 判断插件兼容性（预发布版本参与范围匹配），因此 Typert peer 的范围就是插件声明支持的 DSH 版本范围：同一 minor 内的新 rc 和正式版无需改声明，升级到新 minor 前需要重新验证并放宽上限。握手上报的 `runtimeVersion` 读取 Host 实际提供的 Typert 包版本，`bridgeVersion` 读取插件自身 `package.json`。依赖、构建产物和锁文件遵循仓库现有忽略规则。
+Host 输出 `lib/index.js`，Client 输出 DSH 模块加载格式的 `lib/client.js`，不能当独立网页打开。开发依赖统一锁定 Harness `0.2.1-rc.2`；Cordis、Typert 与 Schemastery 使用 Host 提供的 peer 依赖，以免破坏服务类型身份。DSH 只按 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` peer 判断插件兼容性（预发布版本参与范围匹配），因此 Typert peer 的范围就是插件声明支持的 DSH 版本范围：同一 minor 内的新 rc 和正式版无需改声明，升级到新 minor 前需要重新验证并放宽上限。握手上报的 `runtimeVersion` 读取 Host 实际提供的 Typert 包版本，`bridgeVersion` 读取插件自身 `package.json`。依赖、构建产物和锁文件遵循仓库现有忽略规则。

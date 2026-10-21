@@ -9,13 +9,13 @@ import Storage from '@deepseek-ai/dsh-storage'
 import * as StorageJson from '@deepseek-ai/dsh-storage-json'
 import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
 import WorkspaceRegistry from '@deepseek-ai/dsh-workspace'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import os from 'node:os'
-import { createRequire, syncBuiltinESMExports } from 'node:module'
-import { pathToFileURL } from 'node:url'
+import { syncBuiltinESMExports } from 'node:module'
 import { readFile } from 'node:fs/promises'
 import Include, { type PatchOptions } from '@deepseek-ai/cordis-plugin-include'
 import { load } from 'js-yaml'
+import { mountRemoteAccess } from './gateway-host.js'
 
 /** Bridge rendezvous files under the fixture home, which the fixture installs as the OS user home. */
 export const bridgePath = (home: string, ...parts: string[]) => join(home, '.agents-anywhere', 'dsh-bridge', ...parts)
@@ -79,12 +79,7 @@ export async function nativeRuntime(home: string, beforeHost?: (ctx: Context) =>
     await ctx.sessions.flush(cold)
     detach()
     await ctx.plugin(TypertRegistry).await()
-    let remoteAccess: string | undefined
-    const requireRuntime = createRequire(process.env.DSH_INTERACTION_RUNTIME_ROOT
-      ? resolve(process.env.DSH_INTERACTION_RUNTIME_ROOT, 'package.json') : import.meta.url)
-    try { remoteAccess = requireRuntime.resolve('@deepseek-ai/dsh-api-remote-access') }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'MODULE_NOT_FOUND') throw error }
-    if (remoteAccess) await ctx.plugin((await import(pathToFileURL(remoteAccess).href)).default).await()
+    await mountRemoteAccess(ctx)
     await ctx.plugin(Gateway).await()
     await beforeHost?.(ctx)
     const host = await import('../../lib/index.js')
