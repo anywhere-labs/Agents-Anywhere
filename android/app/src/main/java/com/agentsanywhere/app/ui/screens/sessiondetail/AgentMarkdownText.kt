@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,7 +20,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,8 +36,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -67,6 +67,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -348,22 +349,24 @@ private fun MarkdownQuote(
     onOpenFile: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.height(IntrinsicSize.Min),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            // Code and math blocks use SubcomposeLayout, which cannot answer intrinsic queries.
+            // Draw the quote rule using the measured content height instead.
+            .drawBehind {
+                val ruleWidth = 2.dp.toPx()
+                val ruleStart = if (layoutDirection == LayoutDirection.Ltr) 0f else size.width - ruleWidth
+                drawRect(
+                    color = styles.border,
+                    topLeft = Offset(ruleStart, 0f),
+                    size = Size(ruleWidth, size.height),
+                )
+            }
+            .padding(start = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Box(
-            Modifier
-                .fillMaxHeight()
-                .width(2.dp)
-                .background(styles.border),
-        )
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            MarkdownBlocks(nodes, mathSource, darkMode, styles.copy(bodyColor = styles.muted), onOpenFile, onOpenUrl)
-        }
+        MarkdownBlocks(nodes, mathSource, darkMode, styles.copy(bodyColor = styles.muted), onOpenFile, onOpenUrl)
     }
 }
 
