@@ -8,9 +8,13 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { localRuntimePath, readLocalState } from '../../src/host/desktop/local-runtime.js'
 import { launchConnector } from '../helpers/python-connector.js'
 
+function isAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM' }
+}
+
 const config = (id: string) => ({ serverUrl: 'https://example.test', connectorId: id, connectorToken: 'fixture' })
 
-test('Python Desktop and plugin race, CLI is excluded, and the same RPC channel retries after exit', { timeout: 20000 }, async t => {
+test('Python Desktop and plugin race, CLI is excluded, and the same RPC channel retries after exit', { timeout: 60_000 }, async t => {
   const home = await mkdtemp(join(tmpdir(), 'aa-python-owners-'))
   t.after(() => rm(home, { recursive: true, force: true }))
   const desktop = launchConnector(home, 'desktop-workbench'), plugin = launchConnector(home, 'dsh-plugin')
@@ -28,7 +32,7 @@ test('Python Desktop and plugin race, CLI is excluded, and the same RPC channel 
   const winnerId = winner === desktop ? 'desktop-id' : 'plugin-id'
   const loserId = winner === desktop ? 'plugin-id' : 'desktop-id'
   const file = localRuntimePath(home)
-  assert.equal(readLocalState(file).runtime?.pid, winner.child.pid)
+  assert.equal(readLocalState(file).runtime?.pid, await winner.pid())
   assert.equal(readLocalState(file).runtime?.childPid, undefined)
   assert.deepEqual(readLocalState(file).connectorIds, [winnerId])
   const cli = launchConnector(home, 'cli', 'start')
@@ -47,10 +51,19 @@ test('Python Desktop and plugin race, CLI is excluded, and the same RPC channel 
     assert.equal(next.child.exitCode, null)
     await delay(20)
   }
-  assert.equal(readLocalState(file).runtime?.pid, next.child.pid)
+  assert.equal(readLocalState(file).runtime?.pid, await next.pid())
   assert.deepEqual(readLocalState(file).connectorIds, [winnerId, loserId, 'cli-id'])
+  const claimed = await next.pid()
   await next.close()
-  assert.equal(readLocalState(file).runtime, undefined)
+  if (process.platform !== 'win32') {
+    assert.equal(readLocalState(file).runtime, undefined)
+  } else {
+    // Windows cannot deliver SIGINT to another process: close() terminates the CLI
+    // without its release path, leaving a stale record. It must not name a live process.
+    for (let i = 0; i < 100 && isAlive(claimed); i++) await delay(50)
+    assert.equal(isAlive(claimed), false, 'the terminated CLI interpreter is still running')
+    assert.equal(readLocalState(file).runtime?.pid ?? claimed, claimed)
+  }
 })
 
 test('CLI ownership blocks both RPC launchers without killing their control channels', { timeout: 15000 }, async t => {

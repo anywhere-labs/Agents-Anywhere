@@ -100,7 +100,10 @@ test('permission failures remain readable through the management RPC without Con
     await writeFile(logs, 'not a log directory')
     const peer = ownerPeer(fixture.ctx)
     const invoke = (method: string) => fixture.ctx.typertGateway.invoke({ namespace: 'agentsAnywhereOnboarding', method, args: {}, peer })
-    await assert.rejects(invoke('readConnectorLogs'))
+    // Reading below a regular file fails with ENOTDIR on POSIX; Windows reports ENOENT,
+    // which the reader treats as no log written yet.
+    if (process.platform === 'win32') assert.deepEqual((await invoke('readConnectorLogs') as { entries: unknown[] }).entries, [])
+    else await assert.rejects(invoke('readConnectorLogs'))
     const failures = await invoke('readStartupDiagnostics') as StartupFailureDiagnostic[]
     assert.equal(failures.length, 1)
     assert.equal(failures[0]!.source, 'bridge')

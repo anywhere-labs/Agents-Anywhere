@@ -368,15 +368,17 @@ test('startup exit 2 preserves uv diagnostics in the Connector journal', async (
 test('source Connector normalizes [::1] in child NO_PROXY and no_proxy without mutating parent process.env', async () => {
   const previousNoProxyUpper = process.env['NO_PROXY']
   const previousNoProxyLower = process.env['no_proxy']
+  // Windows environment names are case-insensitive: NO_PROXY and no_proxy are one variable.
+  const distinct = process.platform !== 'win32'
   process.env['NO_PROXY'] = 'localhost,127.0.0.1,[::1]'
-  process.env['no_proxy'] = '[::1],.internal.example'
+  if (distinct) process.env['no_proxy'] = '[::1],.internal.example'
   const h = await fixture()
   try {
     await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
     assert.equal(h.childEnv?.['NO_PROXY'], 'localhost,127.0.0.1,::1')
-    assert.equal(h.childEnv?.['no_proxy'], '::1,.internal.example')
+    if (distinct) assert.equal(h.childEnv?.['no_proxy'], '::1,.internal.example')
     assert.equal(process.env['NO_PROXY'], 'localhost,127.0.0.1,[::1]')
-    assert.equal(process.env['no_proxy'], '[::1],.internal.example')
+    if (distinct) assert.equal(process.env['no_proxy'], '[::1],.internal.example')
   } finally {
     if (previousNoProxyUpper === undefined) delete process.env['NO_PROXY']
     else process.env['NO_PROXY'] = previousNoProxyUpper

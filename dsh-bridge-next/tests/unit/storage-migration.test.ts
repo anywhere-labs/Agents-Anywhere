@@ -104,10 +104,15 @@ test('copy failure leaves no completion receipt and retries missing files withou
   })
 })
 
-test('symlinks fail explicitly instead of keeping checkpoint writes in the old directory', async () => {
+test('symlinks fail explicitly instead of keeping checkpoint writes in the old directory', async t => {
   await fixture(async (source, target) => {
     await writeJson(join(source, 'account.json'), {})
-    await symlink(join(source, 'account.json'), join(source, 'checkpoint.json'))
+    try { await symlink(join(source, 'account.json'), join(source, 'checkpoint.json')) }
+    catch (error) {
+      if (process.platform !== 'win32' || (error as NodeJS.ErrnoException).code !== 'EPERM') throw error
+      t.skip('creating symlinks on Windows requires Developer Mode or administrator rights')
+      return
+    }
     await assert.rejects(migrateStateRoot(target, source), /非普通文件/)
     assert.equal(await readJson(join(target, '.legacy-state-migrated.json')), null)
   })
