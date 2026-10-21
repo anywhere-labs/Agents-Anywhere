@@ -5513,6 +5513,39 @@ def test_send_message_records_active_run(tmp_path):
     assert active["params"]["content"] == "hi"
 
 
+def test_send_message_timeout_clears_run_and_allows_retry(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    fake_rpc.timeout_session_methods = {"session.send_message"}
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "hi", "clientMessageId": "opt_timeout"},
+    )
+
+    assert response.status_code == 504, response.text
+    assert response.json()["detail"]["code"] == "runtime_send_timeout"
+    # Without the clear the row survives, the session derives to "waiting" and can
+    # never be sent to again: has_active_run -> waiting, and can_send_session_message
+    # only accepts idle. Nothing sweeps it afterwards.
+    assert asyncio.run(client.app.state.store.get_active_run(session_id)) is None
+
+    fake_rpc.timeout_session_methods.clear()
+    retry = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "retry", "clientMessageId": "opt_timeout_retry"},
+    )
+
+    assert retry.status_code == 200, retry.text
+    assert asyncio.run(client.app.state.store.get_active_run(session_id)) is not None
+
+
 def test_send_message_rejects_persisted_runtime_archived_session(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
@@ -8609,6 +8642,119 @@ def test_connector_turn_end_after_read_rearms_unread(tmp_path):
     read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
     assert read_session["unread"] is False
     assert read_session["lastReadSeq"] >= read_session["latestTurnEndSeq"]
+
+
+def test_connector_turn_end_settles_a_running_session_without_a_state_push(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.state.updated",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "runtimeId": "codex",
+                    "externalSessionId": f"thr_{connector_id}_demo",
+                    "status": "running",
+                    "selections": {"model": "gpt-5-codex"},
+                },
+            }
+        )
+
+        def read_running():
+            sessions = client.get("/sessions", headers=headers).json()["sessions"]
+            current = next(session for session in sessions if session["id"] == session_id)
+            return current if current["status"] == "running" else None
+
+        wait_for(read_running)
+        assert asyncio.run(client.app.state.store.get_active_run(session_id)) is not None
+
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.turnEnded",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "runtimeId": "codex",
+                    "externalSessionId": f"thr_{connector_id}_demo",
+                    "turnId": "turn_1",
+                    "outcome": "completed",
+                },
+            }
+        )
+
+        def read_idle():
+            sessions = client.get("/sessions", headers=headers).json()["sessions"]
+            current = next(session for session in sessions if session["id"] == session_id)
+            return current if current["status"] == "idle" else None
+
+        session = wait_for(read_idle)
+
+    assert asyncio.run(client.app.state.store.get_active_run(session_id)) is None
+    state = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
+    assert state.status_code == 200, state.text
+    assert state.json()["state"]["status"] == "idle"
+    assert state.json()["state"]["selections"] == {"model": "gpt-5-codex"}
+    assert session["latestTurnEndSeq"] > 0
+
+
+def test_connector_turn_end_keeps_a_waiting_approval_session(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.state.updated",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "runtimeId": "codex",
+                    "status": "waiting_approval",
+                },
+            }
+        )
+
+        def read_waiting():
+            sessions = client.get("/sessions", headers=headers).json()["sessions"]
+            current = next(session for session in sessions if session["id"] == session_id)
+            return current if current["status"] == "waiting_approval" else None
+
+        wait_for(read_waiting)
+
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.turnEnded",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "runtimeId": "codex",
+                    "turnId": "turn_1",
+                    "outcome": "cancelled",
+                },
+            }
+        )
+
+        def read_settled():
+            sessions = client.get("/sessions", headers=headers).json()["sessions"]
+            current = next(session for session in sessions if session["id"] == session_id)
+            return current if current["latestTurnEndSeq"] > 0 else None
+
+        session = wait_for(read_settled)
+
+    assert session["status"] == "waiting_approval"
 
 
 def test_session_metadata_update_does_not_clear_unread_turn_end(tmp_path):

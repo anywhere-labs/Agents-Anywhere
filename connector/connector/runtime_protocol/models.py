@@ -117,6 +117,7 @@ class RuntimePermissionItem:
     description: str | None = None
     enabled: bool = True
     disabled_reason: str | None = None
+    default: bool = False
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 

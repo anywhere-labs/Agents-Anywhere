@@ -33,11 +33,12 @@ from connector.runtimes.dsh.runtime import DshRuntime
 from connector.runtimes.providers import default_runtime_providers
 
 
-def test_dsh_is_third_default_provider() -> None:
+def test_default_providers_include_dsh_and_opencode() -> None:
     assert [provider.runtime for provider in default_runtime_providers()] == [
         "codex",
         "claude",
         "dsh",
+        "opencode",
     ]
 
 

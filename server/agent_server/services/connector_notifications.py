@@ -765,10 +765,23 @@ class SessionTurnEndedNotificationHandler:
                     started_at=await self._usage.last_message_sent_at(session.id),
                 )
             )
+        runtime_state: dict[str, Any] | None = None
+        if session.status in {"running", "waiting"}:
+            await self._store.clear_active_run(session_id)
+            runtime_state = {
+                "sessionId": session.id,
+                "runtime": session.runtime,
+                "runtimeId": session.runtimeId or session.runtime,
+                "externalSessionId": session.externalSessionId,
+                "status": "idle",
+                "statusReason": None,
+                "error": None,
+            }
         return IngestEffect(
             session_id=session.id,
             session_changed=True,
             dashboard_changed=True,
+            runtime_state=runtime_state,
         )
 
 

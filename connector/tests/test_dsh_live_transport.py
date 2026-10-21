@@ -98,7 +98,18 @@ def test_live_batch_uses_websocket_in_order_and_waits_for_send_before_ack(tmp_pa
 
 
 @pytest.mark.parametrize("transport", ["offline", "oversized"])
-def test_live_events_reuse_the_existing_http_fallback_queue(tmp_path, transport):
+def test_live_events_reuse_the_existing_http_fallback_queue(
+    tmp_path, transport, monkeypatch
+):
+    if transport == "oversized":
+        # The frame budget trims a merely oversize payload before sending. Keep
+        # this test focused on the fallback path by simulating a frame that
+        # cannot be shrunk into the WebSocket budget.
+        monkeypatch.setattr(
+            "connector.server.rpc.bound_payload",
+            lambda payload, _max_bytes: (payload, False),
+        )
+
     async def exercise():
         client, host = backend_client(tmp_path)
         entered, release = asyncio.Event(), asyncio.Event()

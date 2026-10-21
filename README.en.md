@@ -78,7 +78,7 @@ The macOS, Windows and Android files are **Agents Anywhere** installers hosted i
 | **Manage projects and sessions** | Switch between devices, projects and sessions, and follow progress through live timelines. |
 | **Approve actions and respond to requests** | Respond to approvals and input requests; interrupt or continue tasks where the runtime supports it. |
 | **Browse files and use terminals** | Browse and preview files, upload and download attachments, and open remote shells and interactive terminals. |
-| **Configure agents** | Configure Codex, Claude Code and DSH; choose models, permissions and actions from the capabilities each runtime supports. |
+| **Configure agents** | Configure Codex, Claude Code, DSH and OpenCode; choose models, permissions and actions from the capabilities each runtime supports. |
 
 A runtime is the component that runs or connects an agent on your work machine. Model accounts and usage charges follow the rules of the agent you use. Capabilities vary by runtime; follow the options shown in the client. [Connect DSH →](dsh-bridge-next/README.md)
 
@@ -109,7 +109,7 @@ Agents use the workspace and permissions of the Connector machine. Connect to Cl
 flowchart LR
     Clients["Desktop · Mobile · Web"] <-->|"Access and control"| Server["Agents Anywhere Server"]
     Server <-->|"Connector RPC"| Connector["Connector on your work machine"]
-    Connector <--> Agents["Codex · Claude Code · DSH"]
+    Connector <--> Agents["Codex · Claude Code · DSH · OpenCode"]
     Connector <--> Workspace["Workspace · Files · Terminal"]
 ```
 

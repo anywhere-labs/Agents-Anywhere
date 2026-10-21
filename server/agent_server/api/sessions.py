@@ -110,6 +110,7 @@ from agent_server.services.device_runtimes import (
 from agent_server.services.effective_capabilities import (
     derive_session_effective_capabilities,
     read_session_capability_facts,
+    read_session_capability_facts_with_fallback,
 )
 from agent_server.services.event_recovery import EventRecoveryService
 from agent_server.services.session_meta_projection import (
@@ -1669,13 +1670,11 @@ async def read_session_capabilities_with_fallback(
       snapshot and WebSocket publish paths.
     """
 
-    if await manager.is_online(session.connectorId):
-        try:
-            return await read_session_capabilities_from_connector(manager, session)
-        except HTTPException:
-            pass
-    return ProtocolCapabilitySet.model_validate(
-        await db.get_protocol_capabilities(session.connectorId, user_id=user_id)
+    return await read_session_capability_facts_with_fallback(
+        db,
+        manager,
+        session,
+        user_id=user_id,
     )
 
 

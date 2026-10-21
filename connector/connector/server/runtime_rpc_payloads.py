@@ -328,7 +328,7 @@ def permission_catalog_payload(catalog: RuntimePermissionCatalog) -> dict[str, A
                 "displayName": permission.title,
                 "selectionId": permission.selection_id,
                 "description": permission.description,
-                "default": False,
+                "default": permission.default,
                 "metadata": {
                     **dict(permission.metadata),
                     "enabled": permission.enabled,

@@ -78,7 +78,7 @@ macOS、Windows 和 Android 的下载文件均为 **Agents Anywhere** 安装包�
 | **管理项目与会话** | 在设备、项目和会话之间切换，通过时间线（Timeline）查看运行进度。 |
 | **审批操作与回复请求** | 响应工具审批和输入请求；按 Runtime 能力打断或继续任务。 |
 | **查看文件与使用终端** | 浏览与预览文件、上传下载附件，打开远程 shell 和交互式终端。 |
-| **配置 Agent** | 配置 Codex、Claude Code 和 DSH；根据对应 Runtime 支持的能力选择模型、权限与操作。 |
+| **配置 Agent** | 配置 Codex、Claude Code、DSH 和 OpenCode；根据对应 Runtime 支持的能力选择模型、权限与操作。 |
 
 Runtime 是工作设备上运行和连接 Agent 的组件。模型账号和调用费用遵循所使用 Agent 的规则。各 Runtime 的能力存在差异，具体操作以客户端显示为准。[DSH 接入说明 →](dsh-bridge-next/README.md)
 
@@ -109,7 +109,7 @@ Agent 使用 Connector 所在机器的工作区与权限。可以连接 Cloud，
 flowchart LR
     Clients["桌面 · 手机 · Web"] <-->|"访问与控制"| Server["Agents Anywhere Server"]
     Server <-->|"Connector RPC"| Connector["工作设备上的 Connector"]
-    Connector <--> Agents["Codex · Claude Code · DSH"]
+    Connector <--> Agents["Codex · Claude Code · DSH · OpenCode"]
     Connector <--> Workspace["工作区 · 文件 · 终端"]
 ```
 
