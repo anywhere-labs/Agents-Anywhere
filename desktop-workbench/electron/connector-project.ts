@@ -29,6 +29,36 @@ function payloadDigest(source: string): string {
 }
 
 /**
+ * Copy `source` into `destination`, recursively and following symbolic links, with
+ * the same semantics as `fs.cpSync(source, destination, { recursive: true,
+ * dereference: true })` — which cannot be used here.
+ *
+ * `cpSync` without a `filter` dispatches to the native `cpSyncCopyDir` fast path, which
+ * walks the tree with `std::filesystem` (nodejs/node#58461). On Windows that fast path
+ * fails to convert a destination path containing a non-ASCII character to wide
+ * characters — a Windows profile such as `C:\Users\苏元洛\...` always does — and the
+ * resulting throw is fatal, because this runtime is built without exceptions: an
+ * existing destination directory can be silently left empty, and a missing one can
+ * abort the process (`length_error was thrown in -fno-exceptions mode with message
+ * "basic_string"`, exit code `0xC0000409`). The async `cp` path traverses in
+ * JavaScript instead, and so do the plain primitives below, which is why they are not
+ * affected and this copy works on any path.
+ */
+function copyTree(source: string, destination: string): void {
+  // `statSync` follows symlinks, which is what `dereference: true` asks for.
+  const stats = fs.statSync(source);
+  if (stats.isDirectory()) {
+    // Merging into an existing directory is a no-op, exactly like `cpSync`.
+    fs.mkdirSync(destination, { recursive: true, mode: stats.mode & 0o777 });
+    for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+      copyTree(path.join(source, entry.name), path.join(destination, entry.name));
+    }
+    return;
+  }
+  fs.copyFileSync(source, destination);
+}
+
+/**
  * Mirror the bundled Connector project into a writable data directory and
  * return the copy, as the DSH plugin does.
  *
@@ -46,7 +76,7 @@ export function materializeConnectorProject(source: string, dataPath: string): s
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const staging = fs.mkdtempSync(`${target}.partial-`);
   try {
-    fs.cpSync(source, staging, { recursive: true, dereference: true });
+    copyTree(source, staging);
     if (!complete(staging)) throw new Error("Bundled Connector source is incomplete.");
     try {
       fs.renameSync(staging, target);
