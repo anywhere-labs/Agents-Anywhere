@@ -13,10 +13,10 @@ enum ProjectSidebarPresentation {
         }
     }
     static func sessions(_ values: [V2SessionMeta], projectID: String?, filter: V2DeviceSessionFilter) -> [V2SessionMeta] {
-        values.filter { value in
+        SessionSidebarPresentation.sorted(values.filter { value in
             guard projectID == nil || value.projectId == projectID else { return false }
             return matches(value, filter: filter)
-        }.sorted { SessionSidebarPresentation($0).precedes(SessionSidebarPresentation($1), id: $0.id, otherID: $1.id) }
+        })
     }
     static func unassignedSessions(_ values: [V2SessionMeta], projects: [V2Project], filter: V2DeviceSessionFilter) -> [V2SessionMeta] {
         let projectIDs = Set(projects.map(\.id))
@@ -26,8 +26,12 @@ enum ProjectSidebarPresentation {
     }
     static func projects(_ values: [V2Project], filter: V2DeviceSessionFilter, sessions: [V2SessionMeta] = []) -> [V2Project] {
         var activity: [String: TimeInterval] = [:]
+        // One pass over sessions decides visibility for every project, instead
+        // of scanning the whole session list once per project.
+        var projectsWithMatches: Set<String> = []
         for session in sessions {
             guard let id = session.projectId else { continue }
+            if matches(session, filter: filter) { projectsWithMatches.insert(id) }
             let time = [session.sortAt, session.lastActivityAt, session.createdAt].compactMap { $0 }.first { !$0.isEmpty }
             activity[id] = max(activity[id] ?? 0, timestamp(time))
         }
@@ -36,7 +40,7 @@ enum ProjectSidebarPresentation {
                 && project.activeSessionCount == 0 && project.sidebarSessionCounts.active == 0 && project.sidebarSessionCounts.archived == 0
             return (project.id, (empty: empty, activity: max(timestamp(project.lastActivityAt), activity[project.id] ?? 0), created: timestamp(project.createdAt)))
         })
-        return values.filter { visible($0, filter: filter, sessions: sessions) }.sorted {
+        return values.filter { $0.manuallyCreated || projectsWithMatches.contains($0.id) }.sorted {
             if $0.pinned != $1.pinned { return $0.pinned }
             let left = order[$0.id]!, right = order[$1.id]!
             if left.empty != right.empty { return left.empty }
@@ -48,8 +52,6 @@ enum ProjectSidebarPresentation {
     }
 
     private static func timestamp(_ value: String?) -> TimeInterval {
-        guard let value else { return 0 }
-        return ((try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(value))
-            ?? (try? Date.ISO8601FormatStyle().parse(value)))?.timeIntervalSince1970 ?? 0
+        V2Timestamp.seconds(value) ?? 0
     }
 }

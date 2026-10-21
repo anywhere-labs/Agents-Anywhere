@@ -14,9 +14,8 @@ import secrets
 import time
 from typing import Any
 
-from sqlalchemy import case, delete, func, insert, select, update
+from sqlalchemy import case, delete, func, insert, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -172,7 +171,7 @@ class EmailAccountRepositoryMixin:
             )
             # Atomic database counters protect across workers, devices, and restarts.
             key = f"email:{hashlib.sha256(email.encode()).hexdigest()}"
-            upsert = pg_insert if conn.dialect.name == "postgresql" else sqlite_insert
+            upsert = pg_insert
             await conn.execute(
                 upsert(limits_t)
                 .values(key=key, window_start=now, count=0)
@@ -194,7 +193,7 @@ class EmailAccountRepositoryMixin:
                 raise EmailRateLimitError(
                     "too many verification emails; try again later"
                 )
-            upsert = pg_insert if conn.dialect.name == "postgresql" else sqlite_insert
+            upsert = pg_insert
             await conn.execute(
                 upsert(codes_t)
                 .values(
@@ -306,7 +305,8 @@ class EmailAccountRepositoryMixin:
                 .values(failed_attempts=codes_t.c.failed_attempts + 1)
             )
             return False
-        # The conditional write also gives SQLite atomic one-use consumption.
+        # The conditional write guarantees one-use consumption on top of the
+        # row lock.
         consumed = await conn.execute(
             update(codes_t)
             .where(
@@ -347,14 +347,9 @@ class EmailAccountRepositoryMixin:
         try:
             async with self._engine.begin() as conn:
                 if _bootstrap:
-                    # Serialize first-account creation for PostgreSQL, also covering
-                    # concurrent attempts with different email addresses.
-                    if conn.dialect.name == "postgresql":
-                        from sqlalchemy import text
-
-                        await conn.execute(
-                            text("SELECT pg_advisory_xact_lock(4141454)")
-                        )
+                    # Serialize first-account creation, also covering concurrent
+                    # attempts with different email addresses.
+                    await conn.execute(text("SELECT pg_advisory_xact_lock(4141454)"))
                     if (
                         await conn.execute(select(func.count()).select_from(users_t))
                     ).scalar_one():

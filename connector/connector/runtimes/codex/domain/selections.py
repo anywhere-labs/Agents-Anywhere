@@ -200,9 +200,13 @@ async def permission_selection_from_thread_state(
             and native.get("approvalPolicy") != approval_policy
         ):
             continue
+        native_reviewer = native.get("approvalsReviewer")
         if (
             approvals_reviewer is not None
-            and native.get("approvalsReviewer") != approvals_reviewer
+            and native_reviewer != approvals_reviewer
+            # "user" is Codex's default reviewer; catalog items that do not pin
+            # a reviewer (full access) still match it.
+            and not (approvals_reviewer == "user" and native_reviewer is None)
         ):
             continue
         if (

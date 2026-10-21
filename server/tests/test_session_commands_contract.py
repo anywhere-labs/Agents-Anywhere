@@ -1,4 +1,4 @@
-"""Public command dispatch boundaries, backed by isolated SQLite fixtures."""
+"""Public command dispatch boundaries, backed by the shared PostgreSQL test database."""
 
 import pytest
 from test_backend_mvp import FakeLocalRpc, create_connector_and_session, make_client

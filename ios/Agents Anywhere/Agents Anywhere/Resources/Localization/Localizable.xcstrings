@@ -3579,6 +3579,23 @@
         }
       }
     },
+    "Off: new text fades in without the blur and rise.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off: new text fades in without the blur and rise."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭后新文字只做透明度渐变，不再模糊上浮。"
+          }
+        }
+      }
+    },
     "Offline": {
       "comment": "Shared with Web: dashboard.device.offline. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -4387,6 +4404,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "请返回应用后重新登录。"
+          }
+        }
+      }
+    },
+    "Reveal animation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reveal animation"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文字浮现动画"
           }
         }
       }
@@ -6767,6 +6801,78 @@
           "stringUnit": {
             "state": "translated",
             "value": "Gateway API Key"
+          }
+        }
+      }
+    },
+    "dashboard.device.runtimeConfigFields.ipcDeeplinkHandoff.description": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.ipcDeeplinkHandoff.description. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When a thread is locked by the running Codex desktop app but no window shows it, open it in the app (codex://threads/…) so the app becomes the owner the connector follows. Only used while IPC is on."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当线程被正在运行的 Codex 桌面 App 锁定、但没有窗口显示它时，通过 codex://threads/… 让 App 打开该线程，使其成为 Connector 跟随的持有者。仅在 IPC 开启时生效。"
+          }
+        }
+      }
+    },
+    "dashboard.device.runtimeConfigFields.ipcDeeplinkHandoff.label": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.ipcDeeplinkHandoff.label. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hand locked threads to the Codex App"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把被锁定的线程交给 Codex App"
+          }
+        }
+      }
+    },
+    "dashboard.device.runtimeConfigFields.ipcEnabled.description": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.ipcEnabled.description. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Join the Codex desktop app / IDE extension IPC router so threads open in a Codex window are followed and operated through that window. Turn this off to always run threads in the connector's own Codex app-server."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接入 Codex 桌面 App / IDE 插件的 IPC 路由：在 Codex 窗口里打开的线程会被跟随，并通过该窗口代为操作。关闭后所有线程始终在 Connector 自己的 Codex app-server 中运行。"
+          }
+        }
+      }
+    },
+    "dashboard.device.runtimeConfigFields.ipcEnabled.label": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.ipcEnabled.label. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Follow Codex App / IDE sessions (IPC)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跟随 Codex App / IDE 会话（IPC）"
           }
         }
       }

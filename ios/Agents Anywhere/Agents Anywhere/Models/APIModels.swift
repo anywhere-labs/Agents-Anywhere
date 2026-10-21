@@ -43,7 +43,7 @@ struct OAuthTokenResponse: Decodable, Hashable {
     }
 }
 
-struct AuthMe: Codable {
+struct AuthMe: Codable, Equatable {
     let userId: String
     let email: String?
     let displayName: String

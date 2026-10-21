@@ -25,7 +25,10 @@ HTTP and WebSocket transports
 
 `Agents Anywhere/Network` owns URL construction, authentication injection,
 JSON transport, multipart upload, raw WebSocket frames, and transport errors.
-It does not know sessions, runtimes, or UI state.
+It does not know sessions, runtimes, or UI state. The project defaults to
+`MainActor` isolation; the transports, `V2RealtimeAPI` and every wire type in
+`Domain` are declared `nonisolated`, so HTTP responses and socket frames decode
+off the main actor and arrive on it already typed. Keep new DTOs `nonisolated`.
 
 ## API
 
@@ -80,7 +83,8 @@ as network updates. Views never own a second session socket or network reducer.
 - `SessionChatModel` coordinates actual message, attachment, selection and notice
   actions through the existing repository and services.
 - `SessionTimelinePresentation` receives repository projections and publishes
-  stable rendered rows at 5 Hz. Its idle clock sleeps. Initial/recovered history
+  stable rendered rows once the previous reveal batch ends (about every 257 ms,
+  roughly 4 Hz; text after a pause publishes at once). Its idle clock sleeps. Initial/recovered history
   and live token appends have distinct presentation semantics.
 - `SessionNoticeStore` owns stable form drafts and response submission state;
   authoritative runtime notices determine blocking and completion.
@@ -101,7 +105,8 @@ reads from undoing dashboard pushes or explicit mutations; expanded page members
 survives replacement of the global first page. Counts belong to the server.
 
 `V2RestorationStore` holds the last navigation destination and a profile bound to
-the saved server and credential fingerprint. The token stays in Keychain.
+the saved server and credential fingerprint. The token stays in Keychain;
+`AppState` keeps an in-memory copy so view bodies never perform a Keychain read.
 `V2LocalStore` serializes versioned, bounded archives off the main actor, with
 atomic writes, iOS data protection and backup exclusion. Launch reads local state
 before rendering the restored page; profile validation, dashboard refresh and

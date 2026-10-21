@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
+import type { ConnectorLogSource } from "../connector-types";
 import { BACKEND_TOKEN_HEADER, type BackendEventName } from "./protocol";
 import type { BackendState } from "./state";
 
@@ -95,7 +96,7 @@ export class BackendServer {
     }
   }
 
-  private route(method: string, url: URL, body: Record<string, unknown>): unknown {
+  private async route(method: string, url: URL, body: Record<string, unknown>): Promise<unknown> {
     const path = url.pathname;
     if (method === "GET") {
       if (path === "/state") return this.state.getConnectorState();
@@ -104,6 +105,7 @@ export class BackendServer {
       if (path === "/onboarding") return this.state.getOnboarding();
       if (path === "/ownership") return this.state.ownershipState();
       if (path === "/logs") return this.state.readLogs({
+        source: logSourceOrUndefined(url.searchParams.get("source")),
         pageSize: numberOrUndefined(url.searchParams.get("pageSize")),
         beforeSeq: numberOrUndefined(url.searchParams.get("beforeSeq")),
         afterSeq: numberOrUndefined(url.searchParams.get("afterSeq")),
@@ -125,10 +127,14 @@ export class BackendServer {
         this.state.appendLog({
           level: typeof body.level === "string" ? body.level : "INFO",
           message: String(body.message ?? ""),
+          ...(typeof body.name === "string" ? { name: body.name } : {}),
+          ...(typeof body.source === "string" ? { source: body.source } : {}),
+          ...(typeof body.details === "string" || body.details === null ? { details: body.details } : {}),
+          ...(typeof body.exception === "string" || body.exception === null ? { exception: body.exception } : {}),
         });
         return { appended: true };
       }
-      if (path === "/logs/export") return { count: this.state.exportLogs(String(body.filePath ?? "")) };
+      if (path === "/logs/export") return { count: await this.state.exportLogs(String(body.filePath ?? "")) };
       if (path === "/device/create") return this.state.createAndConnect(body as never);
       if (path === "/device/reconnect") return this.state.reconnectAndConnect(body as never);
       if (path === "/device/disconnect") return this.state.disconnectLocal(body as never);
@@ -151,9 +157,9 @@ export class BackendServer {
       "x-accel-buffering": "no",
     });
     response.write(`retry: ${SSE_RETRY_MS}\n\n`);
-    // Ownership is deliberately not sent here: until the first real probe
-    // finishes the value is a placeholder, and the renderer must show its
-    // loading state rather than an error dialog.
+    // Before the first probe answers, ownership is `checking`, which the
+    // renderer shows as progress, so even the earliest frame is safe to send.
+    this.send(response, "ownership", this.state.ownershipState());
     this.send(response, "settings", this.state.getSettings());
     this.clients.add(response);
     const ping = setInterval(() => {
@@ -229,6 +235,12 @@ function numberOrUndefined(value: string | null): number | undefined {
   if (value === null || value.trim() === "") return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function logSourceOrUndefined(value: string | null): ConnectorLogSource | undefined {
+  const trimmed = value?.trim();
+  if (trimmed === "connector" || trimmed === "bridge") return trimmed;
+  return undefined;
 }
 
 function errorMessage(error: unknown): string {

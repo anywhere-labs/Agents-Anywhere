@@ -9,8 +9,11 @@ final class ChatTimelineRowModel: Identifiable {
     private(set) var text: String
     private(set) var isRevealing = false
     private(set) var layoutGeneration = 0
-    @ObservationIgnored private var settlesAt: TimeInterval = 0
+    @ObservationIgnored private(set) var settlesAt: TimeInterval = 0
     @ObservationIgnored private var hasFlushed = false
+    @ObservationIgnored private var entryCache: (cwd: String?, entry: TimelineEntryPresentation)?
+    /// False while a streaming batch withholds the final glyph of the received text.
+    @ObservationIgnored private var displaysFullText = false
 
     init(_ value: V2TimelineItem, animate: Bool = false) {
         id = value.id; self.value = value
@@ -21,7 +24,8 @@ final class ChatTimelineRowModel: Identifiable {
     /// Returns true when newly displayed text starts a reveal batch.
     @discardableResult
     func flush(_ next: V2TimelineItem, animate: Bool, now: TimeInterval) -> Bool {
-        if animate && hasFlushed && value == next { settle(now: now); return false }
+        // Unchanged rows neither recompute their structure nor rescan their text.
+        if hasFlushed && value == next && (animate || displaysFullText) { settle(now: now); return false }
         hasFlushed = true
         let received = next.displayText
         let appending = received.hasPrefix(text)
@@ -30,6 +34,7 @@ final class ChatTimelineRowModel: Identifiable {
         let safeText = animate && appending && next.isStreamingText && !received.isEmpty
             ? String(received.dropLast()) : received
         let displayed = safeText.hasPrefix(text) || !appending ? safeText : received
+        displaysFullText = displayed == received
         var started = false
         if displayed != text {
             isRevealing = animate && appending
@@ -37,11 +42,20 @@ final class ChatTimelineRowModel: Identifiable {
             if isRevealing { settlesAt = now + ReplyPresentation.revealSeconds + ReplyPresentation.drawSlack }
             text = displayed
         }
-        if value != next { value = next }
+        if value != next { value = next; entryCache = nil }
         let nextStructure = TimelineRowStructure(next)
         if structure != nextStructure { structure = nextStructure }
         if !animate || now >= settlesAt { isRevealing = false }
         return started
+    }
+
+    /// Tool/marker rows parse their payload once per item version instead of
+    /// on every body evaluation of the row and its expanded details.
+    func entry(cwd: String?) -> TimelineEntryPresentation {
+        if let entryCache, entryCache.cwd == cwd { return entryCache.entry }
+        let entry = TimelineEntryPresentation(item: value, cwd: cwd)
+        entryCache = (cwd, entry)
+        return entry
     }
 
     /// The drawing clock follows the last revealed batch, not the item's
@@ -60,6 +74,7 @@ final class SessionTimelinePresentation {
     private(set) var rows: [ChatTimelineRowModel] = []
     private(set) var pendingMessages: [V2PendingMessage] = []
     private(set) var hasPresentedSnapshot = false
+    @ObservationIgnored private var rowsByID: [V2TimelineItemID: ChatTimelineRowModel] = [:]
     @ObservationIgnored private var pending: [V2TimelineItem]?
     @ObservationIgnored private var animatePending = false
     @ObservationIgnored private var initialized = false
@@ -93,17 +108,28 @@ final class SessionTimelinePresentation {
 
     func flush(now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         if let pending {
-            let existing = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
             let previousTail = rows.last?.value.orderSeq ?? Int.min
             var started = false
-            let updated = pending.map { value in
-                let animate = animatePending && (existing[value.id] != nil || value.orderSeq > previousTail)
-                let row = existing[value.id] ?? ChatTimelineRowModel(value, animate: animate && value.isAssistantText)
+            var updated: [ChatTimelineRowModel] = []
+            updated.reserveCapacity(pending.count)
+            var orderChanged = pending.count != rows.count
+            for (index, value) in pending.enumerated() {
+                let existing = rowsByID[value.id]
+                let animate = animatePending && (existing != nil || value.orderSeq > previousTail)
+                let row: ChatTimelineRowModel
+                if let existing { row = existing } else {
+                    row = ChatTimelineRowModel(value, animate: animate && value.isAssistantText)
+                    rowsByID[value.id] = row
+                }
                 if row.flush(value, animate: animate, now: now) { started = true }
-                return row
+                if !orderChanged, rows[index] !== row { orderChanged = true }
+                updated.append(row)
             }
             if started { nextBatchAt = now + ReplyPresentation.batchInterval }
-            if rows.map(\.id) != updated.map(\.id) { rows = updated }
+            if orderChanged {
+                rows = updated
+                rowsByID = Dictionary(uniqueKeysWithValues: updated.map { ($0.id, $0) })
+            }
             if !hasPresentedSnapshot { hasPresentedSnapshot = true }
             self.pending = nil; pendingWasStaged = false
         }
@@ -132,7 +158,10 @@ final class SessionTimelinePresentation {
                         // once. Without new text, poll briefly to notice arrivals
                         // and settle rows whose reveal has ended.
                         let now = ProcessInfo.processInfo.systemUptime
-                        let wait = self.pending != nil ? self.nextBatchAt - now : Self.idlePoll
+                        // Without new text, sleep until the earliest reveal ends
+                        // instead of waking at a fixed cadence.
+                        let wait = self.pending != nil ? self.nextBatchAt - now
+                            : max(Self.minimumIdleWait, (self.rows.filter(\.isRevealing).map(\.settlesAt).min() ?? now) - now)
                         if wait > 0 {
                             do { try await Task.sleep(for: .seconds(wait)) } catch { return }
                         }
@@ -147,7 +176,7 @@ final class SessionTimelinePresentation {
         }
     }
 
-    private static let idlePoll: TimeInterval = 1.0 / 30
+    private static let minimumIdleWait: TimeInterval = 1.0 / 60
 
     func synchronizePending(_ messages: [V2PendingMessage]) {
         // Change optimistic membership in the same tick that publishes echoes,
@@ -166,13 +195,5 @@ extension V2TimelineItem {
     var isStreamingText: Bool {
         (status == .pending || status == .running)
             && isAssistantText
-    }
-    var displayText: String {
-        switch content {
-        case let .message(value): TimelineText.message(value.text)
-        case let .reasoning(value): TimelineText.reasoning(value.raw)
-        case let .marker(value): isReasoning ? TimelineText.reasoning(value.raw) : ""
-        default: ""
-        }
     }
 }

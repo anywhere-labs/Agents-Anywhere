@@ -358,105 +358,169 @@ class AdminUserListResponse(BaseModel):
     serverTime: str
 
 
-class DashboardIntensitySettings(BaseModel):
-    basis: Literal["messages"] = "messages"
-    lightMax: int = Field(default=10, ge=0)
-    mediumMax: int = Field(default=50, ge=0)
-
-
-class DashboardHistogramSettings(BaseModel):
-    messages: list[int] = Field(default_factory=lambda: [0, 5, 20, 100])
-    sessions: list[int] = Field(default_factory=lambda: [0, 1, 5, 20])
-
-
-class DashboardSettingsView(BaseModel):
-    intensity: DashboardIntensitySettings = Field(default_factory=DashboardIntensitySettings)
-    histogramBins: DashboardHistogramSettings = Field(default_factory=DashboardHistogramSettings)
-    serverTime: str | None = None
-
-
-class DashboardSettingsUpdateRequest(BaseModel):
-    intensity: DashboardIntensitySettings | None = None
-    histogramBins: DashboardHistogramSettings | None = None
-
-
-class DashboardRange(BaseModel):
+class UsageRange(BaseModel):
     fromDate: str
     toDate: str
     timezone: str
+    # UTC date of the earliest recorded usage event; None when nothing has been
+    # recorded yet. Usage is collected from the day the feature was deployed.
+    dataSince: str | None = None
+    generatedAt: str
 
 
-class DashboardSummary(BaseModel):
-    totalUsers: int = 0
-    newUsers: int = 0
-    dau: int = 0
+class UsagePercentiles(BaseModel):
+    p50: int | None = None
+    p90: int | None = None
+    p99: int | None = None
+    samples: int = 0
+
+
+class UsageSummary(BaseModel):
     activeUsers: int = 0
+    newUsers: int = 0
+    avgDau: float = 0
     wau: int = 0
     mau: int = 0
-    totalMessages: int = 0
-    activeSessions: int = 0
-    avgMessagesPerActiveUser: float = 0
-    avgActiveSessionsPerActiveUser: float = 0
-    totalDevices: int = 0
-    avgDevicesPerUser: float = 0
+    totalUsers: int = 0
+    messages: int = 0
+    sessions: int = 0
+    sessionViews: int = 0
+    sessionsViewed: int = 0
+    sessionsReadOnly: int = 0
+    turns: int = 0
+    turnFailureRate: float | None = None
+    turnDurationMs: UsagePercentiles = Field(default_factory=UsagePercentiles)
+    approvalsRequested: int = 0
+    approvalsResolved: int = 0
+    approvalWaitMs: UsagePercentiles = Field(default_factory=UsagePercentiles)
+    runtimeErrors: int = 0
+    connectorsOnline: int = 0
+    totalConnectors: int = 0
 
 
-class DashboardSeriesPoint(BaseModel):
+class UsageDailyPoint(BaseModel):
     date: str
-    totalUsers: int = 0
-    newUsers: int = 0
-    dau: int = 0
     activeUsers: int = 0
+    newUsers: int = 0
     wau: int = 0
     mau: int = 0
-    totalMessages: int = 0
-    activeSessions: int = 0
-    avgMessagesPerActiveUser: float = 0
-    avgActiveSessionsPerActiveUser: float = 0
-    totalDevices: int = 0
-    avgDevicesPerUser: float = 0
+    messages: int = 0
+    sessions: int = 0
+    sessionViews: int = 0
+    sessionsViewed: int = 0
+    sessionsReadOnly: int = 0
+    turns: int = 0
+    turnsFailed: int = 0
+    turnDurationP50Ms: int | None = None
+    turnDurationP90Ms: int | None = None
+    approvalsRequested: int = 0
+    approvalsResolved: int = 0
+    runtimeErrors: int = 0
+    connectorsOnline: int = 0
 
 
-class DashboardBreakdownItem(BaseModel):
-    key: str
+class UsageHourPoint(BaseModel):
+    hour: int
+    messages: int = 0
+    activeUsers: int = 0
+
+
+class UsageBucket(BaseModel):
     label: str
-    value: float
-    percent: float = 0
-
-
-class DashboardHistogramBucket(BaseModel):
-    key: str
-    label: str
-    count: int
-    min: int | None = None
+    min: int
     max: int | None = None
+    count: int = 0
 
 
-class DashboardUserSegmentItem(BaseModel):
+class UsageSegment(BaseModel):
     segment: Literal["light", "medium", "heavy"]
-    label: str
-    count: int
+    min: int
+    max: int | None = None
+    count: int = 0
 
 
-class DashboardOverviewResponse(BaseModel):
-    range: DashboardRange
-    summary: DashboardSummary
-    series: list[DashboardSeriesPoint]
-    messageHistogram: list[DashboardHistogramBucket]
-    sessionHistogram: list[DashboardHistogramBucket]
-    userSegments: list[DashboardUserSegmentItem]
-    deviceBreakdown: list[DashboardBreakdownItem]
-    agentBreakdown: list[DashboardBreakdownItem]
-    sessionAgentBreakdown: list[DashboardBreakdownItem]
-    settings: DashboardSettingsView
+class UsageRetentionCohort(BaseModel):
+    cohortStart: str
+    cohortEnd: str
+    cohortSize: int
+    d1: float | None = None
+    d7: float | None = None
+    d30: float | None = None
+
+
+class UsageUsersSection(BaseModel):
+    segments: list[UsageSegment]
+    messageHistogram: list[UsageBucket]
+    retention: list[UsageRetentionCohort]
+
+
+class UsageRuntimeRow(BaseModel):
+    runtimeType: str
+    displayName: str
+    messages: int = 0
+    sessions: int = 0
+    activeUsers: int = 0
+    turns: int = 0
+    turnsFailed: int = 0
+    turnDurationP50Ms: int | None = None
+    runtimeErrors: int = 0
+    configuredConnectors: int = 0
+    discoveredConnectors: int = 0
+
+
+class UsageOsRow(BaseModel):
+    os: str
+    connectors: int = 0
+    connectorsOnline: int = 0
+
+
+class UsageInventoryPoint(BaseModel):
+    date: str
+    users: int = 0
+    connectors: int = 0
+
+
+class UsageDevicesSection(BaseModel):
+    totalConnectors: int = 0
+    connectorsSeen7d: int = 0
+    connectorsSeen30d: int = 0
+    byOs: list[UsageOsRow]
+    inventoryDaily: list[UsageInventoryPoint]
+    # "live" when stock metrics were computed from current tables, otherwise
+    # the UTC date of the daily snapshot they were read from.
+    inventoryAsOf: str
+
+
+class UsageOutcomeRow(BaseModel):
+    outcome: str
+    count: int = 0
+
+
+class UsageQualitySection(BaseModel):
+    turnOutcomes: list[UsageOutcomeRow]
+    turnDurationMs: UsagePercentiles
+    approvalOutcomes: list[UsageOutcomeRow]
+    approvalWaitMs: UsagePercentiles
+    runtimeErrors: int = 0
+
+
+class UsageReportResponse(BaseModel):
+    range: UsageRange
+    summary: UsageSummary
+    daily: list[UsageDailyPoint]
+    hourOfDay: list[UsageHourPoint]
+    users: UsageUsersSection
+    runtimes: list[UsageRuntimeRow]
+    devices: UsageDevicesSection
+    quality: UsageQualitySection
     serverTime: str
 
 
-class DashboardSnapshotResponse(BaseModel):
-    date: str
-    computedAt: str
-    metrics: int
-    users: int
+class UsageLiveResponse(BaseModel):
+    onlineConnectors: int = 0
+    totalConnectors: int = 0
+    runningTurns: int = 0
+    activeUsers15m: int = 0
     serverTime: str
 
 
@@ -613,6 +677,10 @@ class MobileLoginConfirmRequest(BaseModel):
 class MobileLoginExchangeRequest(BaseModel):
     userId: str
     loginToken: str
+
+
+class MobileLoginRefreshRequest(BaseModel):
+    refreshToken: str
 
 
 class MobileLoginExchangeResponse(BaseModel):

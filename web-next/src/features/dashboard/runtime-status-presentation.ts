@@ -34,6 +34,22 @@ export function isRuntimeNotRunningCode(code: string | null | undefined): boolea
   return typeof code === "string" && NOT_RUNNING_ERROR_CODES.has(code)
 }
 
+/** Progress detail reported by the connector while the instance is starting (e.g. "syncing sessions"). */
+export function runtimePhaseMessage(runtime: DeviceRuntimeView): string | null {
+  const message = runtime.phase?.message
+  return typeof message === "string" && message.trim() ? message : null
+}
+
+/**
+ * Whether the error payload should be surfaced as a fault badge. A runtime
+ * that is starting or running is making progress, so a leftover error (older
+ * connectors report sync progress through it) is not shown as a problem.
+ */
+export function runtimeShowsErrorBadge(runtime: DeviceRuntimeView): boolean {
+  if (!runtime.error) return false
+  return runtime.status !== "starting" && runtime.status !== "running"
+}
+
 export function runtimeStatusTone(runtime: DeviceRuntimeView): RuntimeStatusTone {
   if (runtime.status === "running") return "ok"
   if (runtime.status === "starting" || runtime.status === "stopping") return "progress"

@@ -9,13 +9,12 @@ from pathlib import Path
 
 import httpx
 
-from connector.control import ConnectorController
 from connector.core.config import ConnectorConfig
-from connector.core.json_rpc import JsonRpcStdioServer, open_stdio_server
 from connector.core.runtime_owner import (
     RuntimeLease,
 )
-from connector.logging import configure_connector_logging, install_rpc_log_sink
+from connector.logging import configure_connector_logging, logger
+from connector.mesh.host import serve_host
 from connector.server.client import BackendRpcClient
 from connector.server.pairing import (
     poll_pairing,
@@ -105,7 +104,7 @@ def _build_parser() -> argparse.ArgumentParser:
     configure.add_argument("--connector-token", required=True, help="connector token")
 
     rpc = subparsers.add_parser(
-        "rpc", help="serve the desktop connector JSON-RPC API over stdio"
+        "rpc", help="serve the local control API (MeshCall) for the desktop app and plugins"
     )
     _add_config_args(rpc)
     _add_debug_arg(rpc)
@@ -155,37 +154,7 @@ async def _start(args: argparse.Namespace) -> None:
 
 
 async def _rpc(args: argparse.Namespace) -> None:
-    server: JsonRpcStdioServer | None = None
-
-    async def notify(method: str, params: object) -> None:
-        if server is not None:
-            await server.notify(method, params)
-
-    controller = ConnectorController(config_path=args.config, notifier=notify)
-    handlers = {
-        "connector.acquireOwnership": controller.acquire_ownership,
-        "connector.getState": controller.get_state,
-        "connector.getPaths": controller.get_paths,
-        "connector.getConfig": controller.get_config,
-        "connector.saveConfig": controller.save_config,
-        "connector.start": controller.start,
-        "connector.stop": controller.stop,
-        "connector.restart": controller.restart,
-        "connector.startPairing": controller.start_pairing,
-        "connector.cancelPairing": controller.cancel_pairing,
-    }
-    log_level = "DEBUG" if args.debug else "INFO"
-    log_sink = install_rpc_log_sink(
-        notify,
-        level=log_level,
-        remove_default_sink=True,
-    )
-    server = await open_stdio_server(handlers)
-    try:
-        await server.serve_forever()
-    finally:
-        await controller.shutdown()
-        await log_sink.close()
+    await serve_host(config_path=args.config, debug=args.debug)
 
 
 async def _pair(args: argparse.Namespace) -> None:
@@ -240,9 +209,36 @@ async def _run_cli_connector(
 ) -> None:
     lease = lease or RuntimeLease(legacy_paths=[Path(config_path).with_name("connector-runtime.json")] if config_path else [])
     lease.claim(config)
-    print(SHELL_LIFETIME_WARNING)
     try:
-        await BackendRpcClient(config).run_forever()
+        from connector.core import runtime_owner
+        from connector.logging import install_rpc_log_sink
+        from connector.mesh.hub import LocalHub, set_local_hub
+        from connector.mesh.logs import LogsService, open_log_hub
+
+        logs = open_log_hub(runtime_owner.system_home() / ".agents-anywhere" / "logs")
+        sink = install_rpc_log_sink(logs.notify)
+        hub = LocalHub()
+        set_local_hub(hub)
+        print(SHELL_LIFETIME_WARNING)
+        try:
+            try:
+                await hub.start()
+                await hub.mount(LogsService(logs))
+            except Exception as error:  # noqa: BLE001 - runtime logging is auxiliary
+                # The Router is also how DSH reaches this Connector, so a failure
+                # only degrades DSH; Codex/Claude sessions keep running.
+                logger.warning(
+                    "local control router unavailable; continuing without the log service error_type={} error={}",
+                    type(error).__name__, error,
+                )
+            await BackendRpcClient(config).run_forever()
+        finally:
+            try:
+                await hub.stop()
+            finally:
+                set_local_hub(None)
+                await sink.close()
+                logs.close()
     finally:
         lease.release()
 

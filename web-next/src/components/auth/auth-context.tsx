@@ -91,6 +91,8 @@ function hashToScreen(hash: string): AuthScreen {
     path.startsWith("session/") ||
     path.startsWith("new-session/") ||
     path.startsWith("settings") ||
+    path === "admin" ||
+    path.startsWith("admin/") ||
     path === "dashboard" ||
     path === "team" ||
     path === "service" ||

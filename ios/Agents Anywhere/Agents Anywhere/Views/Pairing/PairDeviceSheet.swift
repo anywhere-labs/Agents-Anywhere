@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 struct PairDeviceSheet: View {
-    @EnvironmentObject private var appState: AppState
+    @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @State private var path: [Step] = []

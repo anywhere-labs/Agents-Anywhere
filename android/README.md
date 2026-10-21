@@ -24,6 +24,17 @@ The client supports Android 8.0+ (API 26), sessions, devices, runtime configurat
 approvals, files and terminals through the v2 API. Cloud is the default service;
 a self-hosted address can be selected in the login flow.
 
+QR sign-in stores a mobile refresh token valid for 30 days. Authenticated JSON
+and file-upload requests that return 401 refresh the access token through
+`POST /api/v2/auth/mobile-login/refresh` and retry once. Concurrent 401s share
+one refresh. A missing or rejected refresh token, or a retry that still returns
+401, sends the user back to sign-in; network and server errors preserve the
+saved session. Refreshing does not extend the original refresh-token expiry.
+Project loading tracks the saved login independently of the access token, so a
+successful refresh keeps the request's results and clears its loading state.
+Terminal connections and reconnects validate the session before opening their
+WebSocket and use the current access token while preserving the replay cursor.
+
 ## Build from the command line
 
 Use JDK 17 and the Android SDK matching `compileSdk` in `app/build.gradle.kts`

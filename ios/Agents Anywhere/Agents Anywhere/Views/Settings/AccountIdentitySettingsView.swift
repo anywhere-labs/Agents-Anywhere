@@ -4,7 +4,7 @@ struct AccountIdentitySettingsView: View {
     enum Mode { case nickname, email }
     let mode: Mode
     @Binding var draft: AccountIdentityDraft
-    @EnvironmentObject private var appState: AppState
+    @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     @State private var config: AuthConfig?
     @State private var isLoadingConfig = false

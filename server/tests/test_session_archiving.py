@@ -116,7 +116,7 @@ class ArchiveClient:
 
 @pytest.fixture
 def archive_client(tmp_path):
-    client = TestClient(create_app(tmp_path / "archive.sqlite3"))
+    client = TestClient(create_app())
     client.get("/auth/config")
     registered = client.post(
         "/auth/register",

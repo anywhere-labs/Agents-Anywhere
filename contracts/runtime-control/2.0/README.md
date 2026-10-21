@@ -32,17 +32,15 @@ After an instance is created, implementations must reject changes to its
 `runtimeId` or `runtimeType`. Renaming an instance does not change its session
 namespace and does not, by itself, restart the runtime.
 
-`instancePolicy` is `single` or `multiple` and limits simultaneously running
-instances, not saved configurations. A single-instance provider has
+`instancePolicy` is `single` or `multiple`. A single-instance provider has
 `maxInstances: 1`. A multiple-instance provider has an integer limit of at
-least two, or `null` when the provider does not impose a fixed running count.
-Users can save more configurations than this limit. The Connector enforces
-the count while serializing native starts and stops; stopped instances and
-failed starts that cleaned up successfully do not occupy slots. Failed cleanup
-or a failed stop retains its slot until the native runtime is stopped.
-Resource claims may still prevent two otherwise valid instances from using the
-same native source at the same time; saving a stopped configuration does not
-reserve that source.
+least two, or `null` when the provider does not impose a fixed count. The limit
+applies at two layers. Server limits the number of configured instances of a
+type to it, so a type at its limit is not addable. Connector limits the number
+of simultaneously running instances and does not count a stopped or deleted
+configuration; it must release a deleted instance's slot so a replacement can be
+configured at once. Resource claims may still prevent two otherwise valid
+instances from using the same native source.
 
 Implementation models and generated client types must use the exact
 `single`/`multiple` tokens; `singleton` is not a Runtime Control 2.0 value.
@@ -103,7 +101,12 @@ the bound or replace a timestamp revision with an unbounded content hash.
 `RuntimeInstanceStatus.active` is desired state, so it may remain `true` while
 `status` is `error`. An error status carries a structured error with a stable
 `code` and human-readable `message`; optional provider details are preserved.
-All timestamps use RFC 3339 date-time strings.
+A non-error status may carry an optional `phase` (`code`, `message`, optional
+`retryable`) describing the step the instance is in, for example
+`{"code": "syncing", "message": "正在同步 DSH 会话…"}` while `status` is
+`starting`. A phase is informational and never implies a fault; only `status`
+decides whether the instance is usable. All timestamps use RFC 3339 date-time
+strings.
 
 ## Validation
 

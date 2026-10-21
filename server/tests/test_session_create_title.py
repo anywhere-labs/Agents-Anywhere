@@ -4,7 +4,6 @@ import asyncio
 
 from session_fixtures import create_session_with_project
 
-from agent_server.infra.db.migrations import upgrade_database
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.repositories.store_support import (
     DERIVED_SESSION_TITLE_MAX_CHARS,
@@ -13,9 +12,7 @@ from agent_server.infra.repositories.store_support import (
 
 def _create_titles(tmp_path, titles: list[str | None]) -> list[str | None]:
     async def exercise() -> list[str | None]:
-        path = tmp_path / "titles.sqlite3"
-        upgrade_database(sqlite_path=path)
-        store = Store(path)
+        store = Store()
         try:
             connector, _token, _prefix = await store.create_connector(
                 name="dev",

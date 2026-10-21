@@ -35,7 +35,7 @@ from connector.runtimes.model_gateway import model_gateway_from_config
 
 SdkChecker = Callable[[], dict[str, Any]]
 SdkClientFactory = Callable[[RuntimeConfig], Any]
-CODEX_CONFIG_SCHEMA_REVISION = 7
+CODEX_CONFIG_SCHEMA_REVISION = 8
 
 
 class CodexProvider(RuntimeProvider):
@@ -122,6 +122,8 @@ class CodexProvider(RuntimeProvider):
                     "useSystemCodex",
                     "codexExecutablePath",
                     "codexHome",
+                    "ipcEnabled",
+                    "ipcDeeplinkHandoff",
                     "modelGateway",
                     "environment",
                     "customModels",
@@ -134,6 +136,8 @@ class CodexProvider(RuntimeProvider):
             },
             defaults={
                 "useSystemCodex": True,
+                "ipcEnabled": True,
+                "ipcDeeplinkHandoff": True,
                 "environment": {},
                 "customModels": [],
             },
@@ -153,6 +157,14 @@ class CodexProvider(RuntimeProvider):
             raw_values.get("useSystemCodex"),
         )
         raw_values["useSystemCodex"] = use_system_codex
+        ipc_enabled = provider_config.normalize_boolean_preference(
+            "ipcEnabled", raw_values.get("ipcEnabled"), True
+        )
+        raw_values["ipcEnabled"] = ipc_enabled
+        ipc_deeplink_handoff = provider_config.normalize_boolean_preference(
+            "ipcDeeplinkHandoff", raw_values.get("ipcDeeplinkHandoff"), True
+        )
+        raw_values["ipcDeeplinkHandoff"] = ipc_deeplink_handoff
         codex_executable_path = provider_config.normalize_codex_executable_path(
             raw_values.get("codexExecutablePath")
         )
@@ -201,6 +213,8 @@ class CodexProvider(RuntimeProvider):
 
         normalized_values: dict[str, Any] = {
             "useSystemCodex": use_system_codex,
+            "ipcEnabled": ipc_enabled,
+            "ipcDeeplinkHandoff": ipc_deeplink_handoff,
             "environment": dict(raw_values.get("environment") or {}),
             "customModels": normalize_custom_models(raw_values.get("customModels")),
             "codexHome": codex_home,
@@ -239,6 +253,8 @@ class CodexProvider(RuntimeProvider):
             host=host,
             client=client,
             client_message_kv=runtime_kv_store(host),
+            ipc_enabled=config.values.get("ipcEnabled", True) is not False,
+            ipc_deeplink_handoff=config.values.get("ipcDeeplinkHandoff", True) is not False,
         )
 
     def resource_claims(

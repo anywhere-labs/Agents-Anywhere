@@ -14,31 +14,6 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 target_metadata = metadata
 
-_PRESERVED_V1_TABLES = {
-    "agent_efforts",
-    "agent_models",
-    "agent_modes",
-    "device_agent_settings",
-    "user_agent_defaults",
-}
-_PRESERVED_V1_COLUMNS = {
-    ("connectors", "runtime_capabilities"),
-    ("sessions", "runtime_settings_override"),
-}
-
-
-def include_object(
-    obj, name: str | None, type_: str, reflected: bool, compare_to
-) -> bool:
-    if not reflected or compare_to is not None:
-        return True
-    if type_ == "table" and name in _PRESERVED_V1_TABLES:
-        return False
-    return not (
-        type_ == "column"
-        and (getattr(obj.table, "name", None), name) in _PRESERVED_V1_COLUMNS
-    )
-
 
 def run_migrations_offline() -> None:
     context.configure(
@@ -47,7 +22,6 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
-        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -58,7 +32,6 @@ def _run_migrations(connection) -> None:
         connection=connection,
         target_metadata=target_metadata,
         compare_type=True,
-        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()

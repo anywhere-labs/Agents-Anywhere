@@ -180,6 +180,9 @@ class DeviceRuntimeView(BaseModel):
     capabilities: dict[str, bool]
     config: dict[str, Any] | None
     error: dict[str, Any] | None
+    # Step inside a non-error status, e.g. {"code": "syncing", ...} while
+    # starting. Informational only; status decides usability.
+    phase: dict[str, Any] | None = None
     lastDiscoveredAt: str
     createdAt: str
     updatedAt: str

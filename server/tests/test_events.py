@@ -15,7 +15,6 @@ from agent_server.core.events import (
 )
 from agent_server.core.models import TimelineItemIn
 from agent_server.infra.connector_rpc import ConnectorRpcManager
-from agent_server.infra.db.migrations import upgrade_database
 from agent_server.infra.repositories.facade import Store
 from agent_server.services.event_recovery import EventRecoveryService
 from session_fixtures import create_session_with_project
@@ -270,9 +269,7 @@ def test_timeline_snapshot_replace_requires_snapshot_for_deleted_items(
     tmp_path,
 ) -> None:
     async def exercise() -> None:
-        path = tmp_path / "events.sqlite3"
-        upgrade_database(sqlite_path=path)
-        store = Store(path)
+        store = Store()
         presence = ConnectorRpcManager()
         try:
             connector, _token, _prefix = await store.create_connector(

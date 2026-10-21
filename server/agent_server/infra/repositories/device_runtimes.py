@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import case, delete, insert, or_, select, update
+from sqlalchemy import case, delete, func, insert, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from agent_server.core.device_runtime import RuntimeTypeDescriptor
@@ -237,10 +237,30 @@ class DeviceRuntimeRepositoryMixin:
         now = utc_now()
         try:
             async with self._engine.begin() as conn:
+                # Lock the type row so concurrent creates serialize before
+                # counting existing instances. NO KEY leaves foreign-key checks
+                # from other writers unblocked.
+                locked = (
+                    await conn.execute(
+                        select(runtime_types_t.c.runtime_type)
+                        .where(
+                            runtime_types_t.c.connector_id == connector_id,
+                            runtime_types_t.c.runtime_type == runtime_type,
+                        )
+                        .with_for_update(key_share=True)
+                    )
+                ).first()
+                if locked is None:
+                    raise KeyError(runtime_type)
+
                 type_row = (
                     (
                         await conn.execute(
-                            select(runtime_types_t.c.present)
+                            select(
+                                runtime_types_t.c.present,
+                                runtime_types_t.c.instance_policy,
+                                runtime_types_t.c.max_instances,
+                            )
                             .join(
                                 connectors_t,
                                 connectors_t.c.id == runtime_types_t.c.connector_id,
@@ -262,8 +282,24 @@ class DeviceRuntimeRepositoryMixin:
                         "runtime type is not currently present on the connector"
                     )
 
-                # The Connector enforces provider limits when starting native
-                # runtimes; saved configurations do not consume running slots.
+                current_count = (
+                    await conn.execute(
+                        select(func.count())
+                        .select_from(device_runtimes_t)
+                        .where(
+                            device_runtimes_t.c.connector_id == connector_id,
+                            device_runtimes_t.c.runtime_type == runtime_type,
+                        )
+                    )
+                ).scalar_one()
+                max_instances = (
+                    1
+                    if type_row["instance_policy"] == "single"
+                    else type_row["max_instances"]
+                )
+                if max_instances is not None and current_count >= max_instances:
+                    raise ValueError("runtime instance limit reached")
+
                 await conn.execute(
                     insert(device_runtimes_t).values(
                         connector_id=connector_id,
@@ -275,6 +311,7 @@ class DeviceRuntimeRepositoryMixin:
                         active=1 if active else 0,
                         status="stopped",
                         error_json=None,
+                        phase_json=None,
                         created_at=now,
                         updated_at=now,
                     )
@@ -406,6 +443,7 @@ class DeviceRuntimeRepositoryMixin:
             runtime_id,
             config_json=_json_dumps(config),
             error_json=None,
+            phase_json=None,
         )
 
     async def set_device_runtime_active(
@@ -427,12 +465,14 @@ class DeviceRuntimeRepositoryMixin:
         status: str,
         *,
         error: dict[str, Any] | None = None,
+        phase: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return await self._update_device_runtime(
             connector_id,
             runtime_id,
             status=status,
             error_json=_json_dumps(error) if error is not None else None,
+            phase_json=_json_dumps(phase) if phase is not None else None,
         )
 
     async def delete_runtime_session_files(self, session_ids: list[str]) -> None:
@@ -445,9 +485,13 @@ class DeviceRuntimeRepositoryMixin:
         runtime_id: str,
         *,
         cleanup_files: bool = True,
-        replacement_runtime_id: str | None = None,
+        retire: bool = False,
     ) -> list[str]:
-        """Clear an instance and physically delete its sessions; return their IDs."""
+        """Clear an instance and physically delete its sessions; return their IDs.
+
+        With ``retire`` the instance is deleted outright and its ID is retired,
+        so the runtime no longer exists and does not hold a configuration slot.
+        """
         session_query = select(sessions_t.c.id).where(
             sessions_t.c.connector_id == connector_id,
             sessions_t.c.runtime_id == runtime_id,
@@ -464,6 +508,7 @@ class DeviceRuntimeRepositoryMixin:
                     active=0,
                     status="stopped",
                     error_json=None,
+                    phase_json=None,
                     updated_at=utc_now(),
                 )
             )
@@ -488,9 +533,9 @@ class DeviceRuntimeRepositoryMixin:
             # attachment cleanup fails before the transaction commits.
             if cleanup_files:
                 await self.delete_runtime_session_files(session_ids)
-            if replacement_runtime_id is not None:
-                # Only manual deletion retires identity. Keep an unconfigured
-                # successor for existing clients' configure-then-start flow.
+            if retire:
+                # Manual deletion removes the instance entirely. The retired ID
+                # rejects late ingestion from a Connector that still knows it.
                 await conn.execute(insert(retired_runtimes_t).values(
                     connector_id=connector_id, runtime_id=runtime_id, retired_at=utc_now(),
                 ))
@@ -498,10 +543,10 @@ class DeviceRuntimeRepositoryMixin:
                     catalogs_t.c.connector_id == connector_id,
                     catalogs_t.c.runtime_id == runtime_id,
                 ))
-                await conn.execute(update(device_runtimes_t).where(
+                await conn.execute(delete(device_runtimes_t).where(
                     device_runtimes_t.c.connector_id == connector_id,
                     device_runtimes_t.c.runtime_id == runtime_id,
-                ).values(runtime_id=replacement_runtime_id, created_at=utc_now()))
+                ))
         return session_ids
 
     async def _update_device_runtime(
@@ -604,6 +649,9 @@ def _runtime_row(row: Any) -> dict[str, Any]:
     configured = row["config_json"] is not None
     status = str(row["status"])
     error = _json_loads(row["error_json"])
+    phase = _json_loads(row["phase_json"]) if "phase_json" in row else None
+    if not isinstance(phase, dict):
+        phase = None
     return {
         "connectorId": str(row["connector_id"]),
         "runtimeId": str(row["runtime_id"]),
@@ -619,6 +667,8 @@ def _runtime_row(row: Any) -> dict[str, Any]:
         "reason": (
             error.get("message")
             if isinstance(error, dict) and isinstance(error.get("message"), str)
+            else phase.get("message")
+            if phase is not None and isinstance(phase.get("message"), str)
             else None
         ),
         "configured": configured,
@@ -632,6 +682,7 @@ def _runtime_row(row: Any) -> dict[str, Any]:
         "capabilities": _json_loads(row["type_capabilities_json"]) or {},
         "config": _json_loads(row["config_json"]),
         "error": error,
+        "phase": phase,
         "lastDiscoveredAt": str(row["type_last_discovered_at"]),
         "createdAt": str(row["created_at"]),
         "updatedAt": str(row["updated_at"]),

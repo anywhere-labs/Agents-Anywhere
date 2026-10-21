@@ -210,7 +210,7 @@ async def _test_runtime_protocol_supervisor_discovers_providers() -> None:
     supervisor = RuntimeSupervisor(
         providers=(provider,),
         host=FakeHost(),
-        status_sink=lambda runtime, status, error: _append(
+        status_sink=lambda runtime, status, error, _phase=None: _append(
             statuses, (runtime, status, error)
         ),
     )
@@ -238,7 +238,7 @@ async def _test_runtime_protocol_supervisor_maps_discovery_failure_to_unavailabl
     supervisor = RuntimeSupervisor(
         providers=(provider,),
         host=FakeHost(),
-        status_sink=lambda _runtime, status, _error: _append(statuses, status),
+        status_sink=lambda _runtime, status, _error, _phase=None: _append(statuses, status),
     )
 
     items = await supervisor.discover()
@@ -258,7 +258,7 @@ async def _test_runtime_protocol_supervisor_starts_and_reuses_same_config() -> N
     supervisor = RuntimeSupervisor(
         providers=(provider,),
         host=FakeHost(),
-        status_sink=lambda _runtime, status, _error: _append(statuses, status),
+        status_sink=lambda _runtime, status, _error, _phase=None: _append(statuses, status),
     )
 
     first = await supervisor.start("fake", {"mode": "auto"})
@@ -283,7 +283,7 @@ async def _test_runtime_protocol_supervisor_reports_provider_health_for_live_ins
     supervisor = RuntimeSupervisor(
         providers=(provider,),
         host=FakeHost(),
-        status_sink=lambda _runtime, status, error: _append(
+        status_sink=lambda _runtime, status, error, _phase=None: _append(
             statuses, (status, error)
         ),
     )
@@ -322,7 +322,7 @@ async def _test_runtime_protocol_supervisor_restarts_when_config_changes() -> No
     supervisor = RuntimeSupervisor(
         providers=(provider,),
         host=FakeHost(),
-        status_sink=lambda _runtime, status, _error: _append(statuses, status),
+        status_sink=lambda _runtime, status, _error, _phase=None: _append(statuses, status),
     )
 
     first = await supervisor.start("fake", {"mode": "auto"})
@@ -364,7 +364,7 @@ async def _test_runtime_protocol_supervisor_validate_config_does_not_mark_runnin
     supervisor = RuntimeSupervisor(
         providers=(provider,),
         host=FakeHost(),
-        status_sink=lambda _runtime, status, _error: _append(statuses, status),
+        status_sink=lambda _runtime, status, _error, _phase=None: _append(statuses, status),
     )
 
     runtime = await supervisor.start("fake", {"mode": "auto"})
@@ -420,7 +420,7 @@ async def _test_runtime_protocol_supervisor_validate_config_failure_keeps_runnin
     supervisor = RuntimeSupervisor(
         providers=(provider,),
         host=FakeHost(),
-        status_sink=lambda _runtime, status, error: _append(statuses, (status, error)),
+        status_sink=lambda _runtime, status, error, _phase=None: _append(statuses, (status, error)),
     )
 
     runtime = await supervisor.start("fake", {"mode": "auto"})
@@ -455,7 +455,7 @@ async def _test_runtime_protocol_supervisor_reuses_equivalent_normalized_config(
     supervisor = RuntimeSupervisor(
         providers=(provider,),
         host=FakeHost(),
-        status_sink=lambda _runtime, status, _error: _append(statuses, status),
+        status_sink=lambda _runtime, status, _error, _phase=None: _append(statuses, status),
     )
 
     first = await supervisor.start("fake", {"mode": "auto"})
@@ -491,7 +491,7 @@ async def _test_runtime_protocol_supervisor_keeps_running_runtime_after_invalid_
     supervisor = RuntimeSupervisor(
         providers=(provider,),
         host=FakeHost(),
-        status_sink=lambda _runtime, status, error: _append(statuses, (status, error)),
+        status_sink=lambda _runtime, status, error, _phase=None: _append(statuses, (status, error)),
     )
 
     runtime = await supervisor.start("fake", {"mode": "auto"})
@@ -929,3 +929,33 @@ def test_stopped_config_validation_does_not_reserve_running_resources() -> None:
 
 async def _append(target: list[Any], value: Any) -> None:
     target.append(value)
+
+
+def test_runtime_protocol_supervisor_reports_phase_and_clears_it_on_status_change() -> None:
+    asyncio.run(_test_runtime_protocol_supervisor_reports_phase_and_clears_it())
+
+
+async def _test_runtime_protocol_supervisor_reports_phase_and_clears_it() -> None:
+    provider = FakeProvider()
+    statuses: list[tuple[str, Mapping[str, Any] | None, Mapping[str, Any] | None]] = []
+    supervisor = RuntimeSupervisor(
+        providers=(provider,),
+        host=FakeHost(),
+        status_sink=lambda _runtime, status, error, phase=None: _append(
+            statuses, (status, error, phase)
+        ),
+    )
+    await supervisor.discover()
+    await supervisor.start(
+        RuntimeInstanceSpec(runtime_id="fake", runtime_type="fake", name="Fake"), {}
+    )
+    phase = {"code": "syncing", "message": "syncing sessions", "retryable": True}
+    await supervisor.report_status("fake", "starting", None, phase)
+    assert supervisor.entry("fake").status == "starting"
+    assert supervisor.entry("fake").error is None
+    assert supervisor.entry("fake").phase == phase
+    assert statuses[-1] == ("starting", None, phase)
+
+    await supervisor.report_status("fake", "running")
+    assert supervisor.entry("fake").phase is None
+    assert statuses[-1] == ("running", None, None)

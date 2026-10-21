@@ -26,6 +26,9 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
   const management = snapshot.connector
   const [draft, setDraft] = useState(management?.settings)
   const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [stopping, setStopping] = useState(false)
+  const [openingFolder, setOpeningFolder] = useState<'data' | 'logs' | null>(null)
   const [reset, setReset] = useState<'normal' | 'force' | null>(null)
   const [acknowledged, setAcknowledged] = useState(false)
   const id = useId()
@@ -39,6 +42,10 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
   const mirror = PYPI_MIRRORS.find(mirror => mirror.url === draft.uvPypiIndexUrl)?.id ?? 'default'
   const update = <K extends keyof typeof draft>(key: K, value: (typeof draft)[K]) => {
     setDraft({ ...draft, [key]: value }); setSaved(false); state.clearError()
+  }
+  const openFolder = (folder: 'data' | 'logs') => {
+    setOpeningFolder(folder)
+    void state.runBackground(() => host.openConnectorFolder(folder)).finally(() => setOpeningFolder(null))
   }
   const confirmReset = async () => {
     const force = reset === 'force'
@@ -66,7 +73,10 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
         {snapshot.account ? t('前往恢复连接') : t('前往登录')}
       </Button> : <div className={css.actions}>
         {snapshot.connectorRunning ? <>
-          <Button variant="outline" icon={<Power size={14} />} disabled={state.busy} onClick={() => void state.run(() => host.controlConnector('stop'))}>{t('停止 Connector')}</Button>
+          <Button variant="outline" icon={<Power size={14} />} disabled={stopping || Boolean(state.readError)} onClick={() => {
+            setStopping(true)
+            void state.run(() => host.controlConnector('stop'), { interrupt: true }).finally(() => setStopping(false))
+          }}>{t('停止 Connector')}</Button>
           <Button variant="outline" icon={<RotateCw size={14} />} disabled={busy} onClick={() => void state.run(() => host.controlConnector('restart'))}>{t('重启 Connector')}</Button>
         </> : <Button variant="outline" icon={<Power size={14} />} disabled={busy} onClick={() => void state.run(() => host.controlConnector('start'))}>{t('启动 Connector')}</Button>}
       </div>}
@@ -74,7 +84,12 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
 
     <form className={css.form} onSubmit={event => {
       event.preventDefault()
-      if (!busy && dirty) void state.run(() => host.saveConnectorSettings(draft)).then(success => { if (success) setSaved(true) })
+      if (!busy && dirty) {
+        setSaving(true)
+        void state.run(() => host.saveConnectorSettings(draft))
+          .then(success => { if (success) setSaved(true) })
+          .finally(() => setSaving(false))
+      }
     }}>
       <div className={css.section}>
         <h3>{t('运行环境')}</h3>
@@ -106,7 +121,7 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
         <div className={css.save}>
           {saved && !dirty ? <span className={css.hint} role="status">{t('设置已保存')}</span> : null}
           <Button type="submit" variant="primary" disabled={busy || !dirty}>
-            {state.busy ? t('正在保存…') : snapshot.connectorRunning ? t('保存并重启') : t('保存设置')}
+            {saving ? t('正在保存…') : snapshot.connectorRunning ? t('保存并重启') : t('保存设置')}
           </Button>
         </div>
       </div>
@@ -115,10 +130,10 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
     <div className={css.section}>
       <h3>{t('维护')}</h3>
       <div className={css.actions}>
-        <Button variant="outline" icon={<FolderOpen size={14} />} disabled={state.busy || !management.canOpenFolders}
-          onClick={() => void state.run(() => host.openConnectorFolder('data'))}>{t('打开数据目录')}</Button>
-        <Button variant="outline" icon={<FolderOpen size={14} />} disabled={state.busy || !management.canOpenFolders}
-          onClick={() => void state.run(() => host.openConnectorFolder('logs'))}>{t('打开日志目录')}</Button>
+        <Button variant="outline" icon={<FolderOpen size={14} />} disabled={openingFolder !== null || !management.canOpenFolders}
+          onClick={() => openFolder('data')}>{t('打开数据目录')}</Button>
+        <Button variant="outline" icon={<FolderOpen size={14} />} disabled={openingFolder !== null || !management.canOpenFolders}
+          onClick={() => openFolder('logs')}>{t('打开日志目录')}</Button>
         <Button variant="outline" className={css.danger} disabled={busy}
           onClick={() => { setReset('normal'); setAcknowledged(false); state.clearError() }}>{t('恢复出厂设置')}</Button>
       </div>

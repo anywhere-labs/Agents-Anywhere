@@ -20,9 +20,9 @@ test('Python Desktop and plugin race, CLI is excluded, and the same RPC channel 
   const results = await Promise.allSettled([desktop.request('connector.start', config('desktop-id')), plugin.request('connector.start', config('plugin-id'))])
   assert.equal(results.filter(r => r.status === 'fulfilled').length, 1)
   const failure = results.find(r => r.status === 'rejected') as PromiseRejectedResult
-  assert.equal(failure.reason.code, -32009,
+  assert.equal(failure.reason.code, 'connector_already_running',
     `${failure.reason.message}\ndesktop stderr:\n${desktop.stderr}\nplugin stderr:\n${plugin.stderr}`)
-  assert.equal(failure.reason.data.reason, 'connector_already_running')
+  assert.equal(failure.reason.details.reason, 'connector_already_running')
   const winner = results[0].status === 'fulfilled' ? desktop : plugin
   const loser = winner === desktop ? plugin : desktop
   const winnerId = winner === desktop ? 'desktop-id' : 'plugin-id'
@@ -61,8 +61,8 @@ test('CLI ownership blocks both RPC launchers without killing their control chan
   t.after(async () => { await cli.close(); for (const client of clients) await client.close() })
   for (let i = 0; !cli.stderr.includes('backend-ready'); i++) { assert.ok(i < 300, cli.stderr); await delay(20) }
   for (const client of clients) {
-    await assert.rejects(client.request('connector.acquireOwnership'), { code: -32009 })
-    await assert.rejects(client.request('connector.start', config('blocked')), { code: -32009 })
+    await assert.rejects(client.request('connector.acquireOwnership'), { code: 'connector_already_running' })
+    await assert.rejects(client.request('connector.start', config('blocked')), { code: 'connector_already_running' })
     assert.equal((await client.request('connector.getState')).running, false)
   }
   assert.deepEqual(readLocalState(localRuntimePath(home)).connectorIds, ['cli-id'])

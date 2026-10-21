@@ -17,7 +17,6 @@ import { toast } from "sonner"
 import { useAuth } from "@/components/auth/auth-context"
 import { PageHeader } from "@/components/pages/page-header"
 import { ServiceEmailCard } from "@/components/pages/service-email-card"
-import { ServiceAnnouncementCard } from "@/components/pages/service-announcement-card"
 import { LoadingState } from "@/components/loading-state"
 import { Button } from "@/components/ui/button"
 import {
@@ -44,8 +43,8 @@ import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { useWorkspace } from "@/components/workspace-context"
 import { authApi } from "@/features/auth/api"
+import { API_NAMESPACE } from "@/lib/api/client"
 import type {
   InstanceSettings,
   OAuthProviderConfig,
@@ -54,6 +53,7 @@ import type {
 } from "@/features/auth/types"
 import { cn } from "@/lib/utils"
 import { copyText } from "@/lib/clipboard"
+import { servicePageKey, type AdminServiceSection } from "@/features/admin/navigation"
 
 type OAuthTemplateKey = "custom" | "github" | "gitlab" | "google"
 
@@ -98,7 +98,8 @@ function browserPublicUrl(fallback: string): string {
 }
 
 function webOAuthRedirectUrl(publicUrl: string): string {
-  return `${publicUrl.replace(/\/$/, "")}/auth/oauth/callback`
+  // The Server mounts the upstream OAuth callback under the API namespace.
+  return `${publicUrl.replace(/\/$/, "")}${API_NAMESPACE}/auth/oauth/callback`
 }
 
 function normalizeBaseUrl(value: string): string {
@@ -198,8 +199,8 @@ const oauthTemplates: Record<OAuthTemplateKey, OAuthTemplate> = {
   },
 }
 
-export function ServicePage() {
-  const { navigate } = useWorkspace()
+export function ServicePage({ section }: { section: AdminServiceSection }) {
+  const page = servicePageKey(section)
   const { session, me } = useAuth()
   const t = useTranslations("pages.service")
   const tCommon = useTranslations("common")
@@ -347,79 +348,85 @@ export function ServicePage() {
   return (
     <ScrollArea className="@container/page h-full w-full bg-background">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-8 pb-16 pt-14 @min-[68rem]/page:pt-8">
-        <PageHeader title={t("title")} description={t("description")} onBack={() => navigate("home")}>
+        <PageHeader title={t(`sections.${page}.title`)} description={t(`sections.${page}.description`)}>
           <Button type="button" variant="outline" onClick={() => load()} disabled={loading}>
             <RefreshCw data-icon="inline-start" />
             {t("refresh")}
           </Button>
         </PageHeader>
 
-        <ServerCard
-          info={serviceInfo}
-          publicUrl={publicUrl}
-          copied={copied}
-          onCopy={copy}
-        />
-
-        <Card>
-          <CardHeader>
-            <CardTitle>{t("access")}</CardTitle>
-            <CardDescription>{t("accessDescription")}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <FieldGroup>
-              <SettingSwitchField
-                label={t("openRegistration")}
-                description={t("openRegistrationDescription")}
-                checked={settings.registrationOpen}
-                disabled={!isAdmin || togglePending === "registrationOpen"}
-                pending={togglePending === "registrationOpen"}
-                onCheckedChange={(value) => void handleSettingToggle("registrationOpen", value)}
-              />
-              <SettingSwitchField
-                label={t("oauthRegistration")}
-                description={t("oauthRegistrationDescription")}
-                checked={settings.oauthRegistrationOpen}
-                disabled={!isAdmin || togglePending === "oauthRegistrationOpen"}
-                pending={togglePending === "oauthRegistrationOpen"}
-                onCheckedChange={(value) => void handleSettingToggle("oauthRegistrationOpen", value)}
-              />
-              <SettingSwitchField
-                label={t("passwordReset")}
-                description={settings.email.enabled ? t("passwordResetDescription") : t("passwordResetNeedsEmail")}
-                checked={settings.passwordResetEnabled === true}
-                disabled={!isAdmin || togglePending === "passwordResetEnabled"}
-                pending={togglePending === "passwordResetEnabled"}
-                onCheckedChange={(value) => void handleSettingToggle("passwordResetEnabled", value)}
-              />
-            </FieldGroup>
-          </CardContent>
-        </Card>
-
-        <ServiceEmailCard settings={settings.email} token={session?.accessToken ?? ""} isAdmin={isAdmin} onSaved={setSettings} />
-
-        {isAdmin && session?.accessToken && <ServiceAnnouncementCard token={session.accessToken} />}
-
-        <OAuthProviderCard
-          draft={oauthDraft}
-          isExisting={Boolean(settings.oauth)}
-          isAdmin={isAdmin}
-          saving={oauthSaving}
-          template={oauthTemplate}
-          baseUrl={oauthBaseUrl}
-          onDraftChange={updateOAuthDraft}
-          onTemplateChange={applyOAuthTemplate}
-          onBaseUrlChange={updateOAuthBaseUrl}
-          onReset={() => {
-            setOauthDraft(oauthDraftFromConfig(settings.oauth))
-            setOauthTemplate("custom")
-            setOauthBaseUrl("")
-          }}
-          onSave={() => void saveOAuthProvider()}
-        />
-
-        <FirstPartyClientsCard publicUrl={publicUrl} copied={copied} onCopy={copy} />
-        <AboutCard />
+        {page === "general" ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>{t("access")}</CardTitle>
+              <CardDescription>{t("accessDescription")}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <FieldGroup>
+                <SettingSwitchField
+                  label={t("openRegistration")}
+                  description={t("openRegistrationDescription")}
+                  checked={settings.registrationOpen}
+                  disabled={!isAdmin || togglePending === "registrationOpen"}
+                  pending={togglePending === "registrationOpen"}
+                  onCheckedChange={(value) => void handleSettingToggle("registrationOpen", value)}
+                />
+                <SettingSwitchField
+                  label={t("oauthRegistration")}
+                  description={t("oauthRegistrationDescription")}
+                  checked={settings.oauthRegistrationOpen}
+                  disabled={!isAdmin || togglePending === "oauthRegistrationOpen"}
+                  pending={togglePending === "oauthRegistrationOpen"}
+                  onCheckedChange={(value) => void handleSettingToggle("oauthRegistrationOpen", value)}
+                />
+                <SettingSwitchField
+                  label={t("passwordReset")}
+                  description={settings.email.enabled ? t("passwordResetDescription") : t("passwordResetNeedsEmail")}
+                  checked={settings.passwordResetEnabled === true}
+                  disabled={!isAdmin || togglePending === "passwordResetEnabled"}
+                  pending={togglePending === "passwordResetEnabled"}
+                  onCheckedChange={(value) => void handleSettingToggle("passwordResetEnabled", value)}
+                />
+              </FieldGroup>
+            </CardContent>
+          </Card>
+        ) : page === "auth" ? (
+          <>
+            <OAuthProviderCard
+              redirectUrl={webOAuthRedirectUrl(publicUrl)}
+              copied={copied}
+              onCopy={copy}
+              draft={oauthDraft}
+              isExisting={Boolean(settings.oauth)}
+              isAdmin={isAdmin}
+              saving={oauthSaving}
+              template={oauthTemplate}
+              baseUrl={oauthBaseUrl}
+              onDraftChange={updateOAuthDraft}
+              onTemplateChange={applyOAuthTemplate}
+              onBaseUrlChange={updateOAuthBaseUrl}
+              onReset={() => {
+                setOauthDraft(oauthDraftFromConfig(settings.oauth))
+                setOauthTemplate("custom")
+                setOauthBaseUrl("")
+              }}
+              onSave={() => void saveOAuthProvider()}
+            />
+            <FirstPartyClientsCard copied={copied} onCopy={copy} />
+          </>
+        ) : page === "email" ? (
+          <ServiceEmailCard settings={settings.email} token={session?.accessToken ?? ""} isAdmin={isAdmin} onSaved={setSettings} />
+        ) : (
+          <>
+            <ServerCard
+              info={serviceInfo}
+              publicUrl={publicUrl}
+              copied={copied}
+              onCopy={copy}
+            />
+            <AboutCard />
+          </>
+        )}
       </div>
     </ScrollArea>
   )
@@ -508,14 +515,34 @@ function ServerCard({
   )
 }
 
+/** A titled run of rows inside a card; groups are divided by the same hairline as rows. */
+function InfoGroup({
+  title,
+  children,
+  last,
+}: {
+  title: string
+  children: React.ReactNode
+  last?: boolean
+}) {
+  return (
+    <div className={cn(!last && "border-b border-border")}>
+      <div className="px-5 pb-1.5 pt-3 text-xs font-medium text-muted-foreground">{title}</div>
+      {children}
+    </div>
+  )
+}
+
 function InfoRow({
   label,
   value,
+  hint,
   action,
   last,
 }: {
   label: string
   value: React.ReactNode
+  hint?: string
   action?: React.ReactNode
   last?: boolean
 }) {
@@ -524,6 +551,7 @@ function InfoRow({
       <div className="w-32 shrink-0 text-sm text-muted-foreground">{label}</div>
       <div className={cn("relative min-w-0 flex-1 text-sm", action && "pr-10")}>
         <div className="no-scrollbar min-w-0 overflow-x-auto overflow-y-hidden whitespace-nowrap">{value}</div>
+        {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
         {action ? (
           <div className="absolute inset-y-0 right-0 flex items-center bg-card pl-2 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-10 before:bg-gradient-to-r before:from-transparent before:to-card">
             {action}
@@ -564,6 +592,9 @@ function SettingSwitchField({
 }
 
 function OAuthProviderCard({
+  redirectUrl,
+  copied,
+  onCopy,
   draft,
   isExisting,
   isAdmin,
@@ -576,6 +607,9 @@ function OAuthProviderCard({
   onReset,
   onSave,
 }: {
+  redirectUrl: string
+  copied: CopyKey | null
+  onCopy: (key: CopyKey, value: string) => void
   draft: OAuthProviderConfigUpdate
   isExisting: boolean
   isAdmin: boolean
@@ -589,6 +623,7 @@ function OAuthProviderCard({
   onSave: () => void
 }) {
   const t = useTranslations("pages.service")
+  const tCommon = useTranslations("common")
   const disabled = !isAdmin || saving
   const showCustomFields = template === "custom"
 
@@ -601,6 +636,21 @@ function OAuthProviderCard({
           <KeyRound />
         </CardAction>
       </CardHeader>
+      {/* The one value the provider's own console asks for, before anything is filled in here. */}
+      <CardContent className="px-0">
+        <InfoRow
+          label={t("webCallback")}
+          value={<code className="code-mono text-sm">{redirectUrl}</code>}
+          hint={t("webCallbackHint")}
+          action={
+            <CopyButton
+              copied={copied === "webCallback"}
+              label={tCommon("copy")}
+              onClick={() => onCopy("webCallback", redirectUrl)}
+            />
+          }
+        />
+      </CardContent>
       <CardContent>
         <FieldGroup>
           <Field orientation="horizontal" data-disabled={disabled}>
@@ -816,17 +866,18 @@ function TextField({
 }
 
 function FirstPartyClientsCard({
-  publicUrl,
   copied,
   onCopy,
 }: {
-  publicUrl: string
   copied: CopyKey | null
   onCopy: (key: CopyKey, value: string) => void
 }) {
   const t = useTranslations("pages.service")
   const tCommon = useTranslations("common")
-  const webCallback = webOAuthRedirectUrl(publicUrl)
+  const clients: { key: "mobile" | "desktop"; title: string; id: string; callback: string }[] = [
+    { key: "mobile", title: t("mobileClient"), id: MOBILE_CLIENT_ID, callback: MOBILE_CALLBACK },
+    { key: "desktop", title: t("desktopClient"), id: DESKTOP_CLIENT_ID, callback: DESKTOP_CALLBACK },
+  ]
 
   return (
     <Card>
@@ -838,66 +889,33 @@ function FirstPartyClientsCard({
         </CardAction>
       </CardHeader>
       <CardContent className="px-0">
-        <InfoRow
-          label={t("clientMode")}
-          value={<span className="rounded-full bg-muted px-2 py-0.5 text-xs">{t("locked")}</span>}
-        />
-        <InfoRow
-          label={t("mobileClientId")}
-          value={<code className="code-mono text-sm">{MOBILE_CLIENT_ID}</code>}
-          action={
-            <CopyButton
-              copied={copied === "mobileClient"}
-              label={tCommon("copy")}
-              onClick={() => onCopy("mobileClient", MOBILE_CLIENT_ID)}
+        {clients.map((client, index) => (
+          <InfoGroup key={client.key} title={client.title} last={index === clients.length - 1}>
+            <InfoRow
+              label={t("clientId")}
+              value={<code className="code-mono text-sm">{client.id}</code>}
+              action={
+                <CopyButton
+                  copied={copied === `${client.key}Client`}
+                  label={tCommon("copy")}
+                  onClick={() => onCopy(`${client.key}Client`, client.id)}
+                />
+              }
             />
-          }
-        />
-        <InfoRow
-          label={t("webCallback")}
-          value={<code className="code-mono text-sm">{webCallback}</code>}
-          action={
-            <CopyButton
-              copied={copied === "webCallback"}
-              label={tCommon("copy")}
-              onClick={() => onCopy("webCallback", webCallback)}
+            <InfoRow
+              label={t("callbackUrl")}
+              value={<code className="code-mono text-sm">{client.callback}</code>}
+              action={
+                <CopyButton
+                  copied={copied === `${client.key}Callback`}
+                  label={tCommon("copy")}
+                  onClick={() => onCopy(`${client.key}Callback`, client.callback)}
+                />
+              }
+              last
             />
-          }
-        />
-        <InfoRow
-          label={t("mobileCallback")}
-          value={<code className="code-mono text-sm">{MOBILE_CALLBACK}</code>}
-          action={
-            <CopyButton
-              copied={copied === "mobileCallback"}
-              label={tCommon("copy")}
-              onClick={() => onCopy("mobileCallback", MOBILE_CALLBACK)}
-            />
-          }
-        />
-        <InfoRow
-          label={t("desktopClientId")}
-          value={<code className="code-mono text-sm">{DESKTOP_CLIENT_ID}</code>}
-          action={
-            <CopyButton
-              copied={copied === "desktopClient"}
-              label={tCommon("copy")}
-              onClick={() => onCopy("desktopClient", DESKTOP_CLIENT_ID)}
-            />
-          }
-        />
-        <InfoRow
-          label={t("desktopCallback")}
-          value={<code className="code-mono text-sm">{DESKTOP_CALLBACK}</code>}
-          action={
-            <CopyButton
-              copied={copied === "desktopCallback"}
-              label={tCommon("copy")}
-              onClick={() => onCopy("desktopCallback", DESKTOP_CALLBACK)}
-            />
-          }
-          last
-        />
+          </InfoGroup>
+        ))}
       </CardContent>
     </Card>
   )

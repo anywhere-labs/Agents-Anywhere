@@ -1,6 +1,6 @@
 import Foundation
 
-enum AccountAvatarImageSource: Hashable {
+nonisolated enum AccountAvatarImageSource: Hashable {
     case data(Data)
     case remote(URL)
 

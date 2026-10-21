@@ -98,8 +98,6 @@ extension V2TimelineItem {
     var startsVisibleTurn: Bool {
         guard type == .message, role == .user else { return false }
         if TimelineText.first(source["itemType"], source["rawType"]) == "steeringUserMessage" { return false }
-        if source["runtime"] == .string("claude"),
-           ["[Request interrupted by user]", "[Request interrupted by user for tool use]"].contains(displayText.trimmingCharacters(in: .whitespacesAndNewlines)) { return false }
         return true
     }
 }

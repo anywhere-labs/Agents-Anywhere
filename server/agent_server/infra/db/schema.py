@@ -106,6 +106,8 @@ device_runtimes = Table(
     Column("active", Integer, nullable=False, server_default="0"),
     Column("status", Text, nullable=False, server_default="stopped"),
     Column("error_json", Text),
+    # Optional step inside a non-error status (e.g. syncing while starting).
+    Column("phase_json", Text),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     PrimaryKeyConstraint("connector_id", "runtime_id"),
@@ -213,19 +215,6 @@ email_verification_limits = Table(
     Column("window_start", BigInteger, nullable=False),
     Column("count", Integer, nullable=False),
     Index("idx_email_limits_window", "window_start"),
-)
-
-
-platform_user_activity = Table(
-    "platform_user_activity",
-    metadata,
-    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
-    Column("activity_date", Text, nullable=False),
-    Column("first_seen_at", Text, nullable=False),
-    Column("last_seen_at", Text, nullable=False),
-    Column("event_count", Integer, nullable=False, server_default="0"),
-    PrimaryKeyConstraint("user_id", "activity_date"),
-    Index("idx_platform_user_activity_last_seen", "last_seen_at"),
 )
 
 
@@ -542,49 +531,46 @@ session_shares = Table(
 )
 
 
-dashboard_daily_metrics = Table(
-    "dashboard_daily_metrics",
+# Append-only usage facts recorded at the moment platform activity happens.
+# `hour_bucket` is the UTC hour (`YYYY-MM-DDTHH`) so reports can aggregate in
+# SQL and map hours onto local days for any requested timezone in Python.
+# Connector and session ids are plain text on purpose: a device or session may
+# be deleted later while its usage history must survive.
+usage_events = Table(
+    "usage_events",
     metadata,
-    Column("date", Text, nullable=False),
+    Column("id", Text, primary_key=True),
+    Column("occurred_at", Text, nullable=False),
+    Column("hour_bucket", Text, nullable=False),
+    Column("event_type", Text, nullable=False),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="SET NULL")),
+    Column("connector_id", Text),
+    Column("session_id", Text),
+    Column("runtime_type", Text),
+    Column("runtime_id", Text),
+    Column("device_os", Text),
+    Column("outcome", Text),
+    Column("duration_ms", Integer),
+    Column("dedupe_key", Text),
+    UniqueConstraint("dedupe_key", name="uq_usage_events_dedupe_key"),
+    Index("idx_usage_events_hour", "hour_bucket"),
+    Index("idx_usage_events_type_hour", "event_type", "hour_bucket"),
+    Index("idx_usage_events_session_time", "session_id", "occurred_at"),
+    Index("idx_usage_events_user_hour", "user_id", "hour_bucket"),
+)
+
+
+# Daily stock metrics (users, devices, configured runtimes) captured once per
+# UTC day by the usage maintenance loop. Flow metrics live in `usage_events`.
+usage_inventory_snapshots = Table(
+    "usage_inventory_snapshots",
+    metadata,
+    Column("snapshot_date", Text, nullable=False),
     Column("metric_key", Text, nullable=False),
-    Column("dimension_key", Text, nullable=False, server_default=""),
-    Column("dimension_value", Text, nullable=False, server_default=""),
+    Column("dimension", Text, nullable=False, server_default=""),
     Column("value", Float, nullable=False),
     Column("computed_at", Text, nullable=False),
-    PrimaryKeyConstraint("date", "metric_key", "dimension_key", "dimension_value"),
-    Index("idx_dashboard_daily_metrics_date", "date"),
-)
-
-
-dashboard_user_daily_facts = Table(
-    "dashboard_user_daily_facts",
-    metadata,
-    Column("date", Text, nullable=False),
-    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
-    Column("messages", Integer, nullable=False, server_default="0"),
-    Column("active_sessions", Integer, nullable=False, server_default="0"),
-    Column("created_sessions", Integer, nullable=False, server_default="0"),
-    Column("devices", Integer, nullable=False, server_default="0"),
-    Column("macos_devices", Integer, nullable=False, server_default="0"),
-    Column("windows_devices", Integer, nullable=False, server_default="0"),
-    Column("linux_devices", Integer, nullable=False, server_default="0"),
-    Column("unknown_devices", Integer, nullable=False, server_default="0"),
-    Column("codex_agents", Integer, nullable=False, server_default="0"),
-    Column("claude_agents", Integer, nullable=False, server_default="0"),
-    Column("dsh_agents", Integer, nullable=False, server_default="0"),
-    Column("last_activity_at", Text),
-    Column("computed_at", Text, nullable=False),
-    PrimaryKeyConstraint("date", "user_id"),
-    Index("idx_dashboard_user_daily_facts_user_date", "user_id", "date"),
-)
-
-
-dashboard_settings = Table(
-    "dashboard_settings",
-    metadata,
-    Column("key", Text, primary_key=True),
-    Column("value_json", Text, nullable=False),
-    Column("updated_at", Text, nullable=False),
+    PrimaryKeyConstraint("snapshot_date", "metric_key", "dimension"),
 )
 
 

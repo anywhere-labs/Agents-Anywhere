@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct PasswordSettingsView: View {
-    @EnvironmentObject private var appState: AppState
+    @Environment(AppState.self) private var appState
 
     @Binding var draft: AccountPasswordDraft
     @Environment(\.dismiss) private var dismiss

@@ -54,9 +54,15 @@ connector/connector/
 
   core/
     config.py
-    json_rpc.py
     preferences.py
     runtime_owner.py
+
+  mesh/
+    hub.py           Local Router ownership, per-role API keys, supervision
+    control.py       aa.local.v2.Control
+    logs.py          aa.local.v2.Logs
+    events.py        Thread-safe ordered event fan-out with replay
+    host.py          anywhere-cli rpc: ready line, stdin lifetime
 
   server/
     auth.py
@@ -122,9 +128,9 @@ a dedicated breaking move after all old root paths are gone and guarded.
 User-facing and desktop-control entry points:
 
 - CLI command parsing.
-- Desktop JSON-RPC controller.
+- Desktop control service (`aa.local.v2.Control` over the local MeshCall Router).
 - Pairing control exposed to local UI.
-- Start/stop/restart of the Connector process from desktop RPC.
+- Start/stop/restart of the Connector process from the desktop's control channel.
 
 Root entrypoints may assemble the Connector application. They must not know
 Codex/Claude adapter internals.
@@ -135,7 +141,6 @@ Small shared primitives:
 
 - config file loading/saving
 - local preferences
-- JSON-RPC frame helpers for local control
 - runtime owner lock/state helpers
 
 `core/` must not import runtime adapters or server application code.

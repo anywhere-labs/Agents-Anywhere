@@ -31,6 +31,7 @@ from agent_server.core.models import (
     MobileLoginExchangeRequest,
     MobileLoginExchangeResponse,
     MobileLoginQrCreateResponse,
+    MobileLoginRefreshRequest,
     MobileLoginRequestRequest,
     MobileLoginStatusRequest,
     MobileLoginStatusResponse,
@@ -42,7 +43,7 @@ from agent_server.core.models import (
     UserView,
 )
 from agent_server.core.utc import utc_now
-from agent_server.deps import current_user, current_user_id, get_store
+from agent_server.deps import current_user, get_store, user_id_from_authorization
 from agent_server.infra.repositories.email_accounts import (
     EmailRateLimitError,
     EmailVerificationError,
@@ -197,7 +198,7 @@ async def send_email_code(
 ) -> EmailCodeResponse:
     user = None
     if request.headers.get("authorization"):
-        user = await current_user(current_user_id(request.headers.get("authorization")), db)
+        user = await current_user(user_id_from_authorization(request.headers.get("authorization")), db)
     if payload.purpose == "bind" and user is None:
         raise HTTPException(status_code=401, detail="authentication required")
     if payload.purpose == "register":
@@ -438,7 +439,7 @@ async def change_password(
     if authorization is None and payload.email and payload.code:
         await _reset_password(payload, db)
         return
-    user = await current_user(current_user_id(authorization), db)
+    user = await current_user(user_id_from_authorization(authorization), db)
     if not payload.newPassword and not payload.newPasswordVerifier:
         raise HTTPException(status_code=422, detail="new password is required")
     await db.update_user_password(
@@ -508,6 +509,26 @@ async def exchange_mobile_login(
         expiresAt=_iso_from_epoch(int(time.time()) + MOBILE_REFRESH_EXPIRES_IN),
         serverTime=utc_now(),
     )
+
+
+@router.post("/auth/mobile-login/refresh", response_model=AuthResponse)
+async def refresh_mobile_login(
+    payload: MobileLoginRefreshRequest,
+    db: Store = Depends(get_store),
+) -> AuthResponse:
+    token_payload = verify_signed_token(MOBILE_REFRESH_TOKEN_KIND, payload.refreshToken)
+    if token_payload is None or token_payload.get("aud") != "agents-anywhere-mobile":
+        raise HTTPException(status_code=401, detail="invalid or expired mobile refresh token")
+    subject = token_payload.get("sub")
+    if not isinstance(subject, str) or not subject:
+        raise HTTPException(status_code=401, detail="invalid or expired mobile refresh token")
+    try:
+        user = await db.get_user(subject)
+    except KeyError:
+        raise HTTPException(status_code=401, detail="user no longer exists") from None
+    if user.disabled:
+        raise HTTPException(status_code=403, detail="account disabled")
+    return _auth_response(user)
 
 
 @router.post("/auth/mobile-login/request", response_model=MobileLoginStatusResponse)

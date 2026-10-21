@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct RootView: View {
-    @EnvironmentObject private var appState: AppState
+    @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
     @State private var showingManualLogin = false
     @State private var showingQRCodeLogin = false
@@ -67,5 +67,5 @@ struct RootView: View {
 
 #Preview {
     RootView()
-        .environmentObject(AppState())
+        .environment(AppState())
 }

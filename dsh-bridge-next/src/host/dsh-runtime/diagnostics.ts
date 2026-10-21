@@ -1,14 +1,13 @@
-import type { Logger } from '@deepseek-ai/cordis'
-import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import type { RpcLogger } from 'meshcall'
+import { format } from 'node:util'
 import { BridgeError } from './errors.js'
 import { record } from './types.js'
 
-type Level = 'debug' | 'info' | 'warn' | 'error'
-type Fields = Record<string, string | number | boolean | undefined>
-type Sink = Pick<Logger, Level>
-const quiet: Sink = { debug() {}, info() {}, warn() {}, error() {} }
-const MAX_BYTES = 2 * 1024 * 1024
+export type Level = 'debug' | 'info' | 'warn' | 'error'
+export type Fields = Record<string, string | number | boolean | undefined>
+export interface DiagnosticEntry { time: string; level: Level; name: string; message: string; details: string }
+export interface DiagnosticOutput { write(entry: DiagnosticEntry): void; flush(): Promise<void> }
+const quiet: DiagnosticOutput = { write() {}, async flush() {} }
 
 /** Native parser exceptions may quote a whole event. Keep codes and stack locations,
  * never exception messages, source lines, request bodies, tokens or event payloads. */
@@ -29,38 +28,23 @@ export function errorDetails(error: unknown, depth = 0): Record<string, unknown>
   }
 }
 
-/** Shared by the native reader, RPC server and event feed. The plugin's existing
- * Open logs folder action exposes this file, including when the CLI owns Connector. */
+/** Business diagnostics depend on an injected output, never on a path or RPC connection. */
 export class RuntimeDiagnostics {
-  private pending: Promise<void> = Promise.resolve()
-  private queued = 0
-  private dropped = 0
-  private fileErrorReported = false
+  constructor(
+    private readonly output: DiagnosticOutput = quiet,
+    private readonly fields: Fields = {},
+    private readonly name = 'dsh-bridge',
+  ) {}
 
-  constructor(private sink: Sink = quiet, private directory?: string) {}
+  bind(fields: Fields): RuntimeDiagnostics { return new RuntimeDiagnostics(this.output, { ...this.fields, ...fields }, this.name) }
 
   log(level: Level, event: string, fields: Fields = {}, error?: unknown): void {
-    const details = { ...fields, ...(error === undefined ? {} : errorDetails(error)) }
-    try { this.sink[level]('event=%s %s', event, JSON.stringify(details)) }
-    catch { /* A failed log sink must not fail RPC or native event delivery. */ }
-    if (!this.directory) return
-    if (this.queued >= 256) { this.dropped++; return }
-    const entry = { time: new Date().toISOString(), pid: process.pid, level, event, ...details }
-    this.queued++
-    this.pending = this.pending.then(async () => {
-      await mkdir(this.directory!, { recursive: true, mode: 0o700 })
-      const path = join(this.directory!, 'dsh-runtime.jsonl')
-      const size = await stat(path).then(file => file.size, () => 0)
-      if (size > MAX_BYTES) await rename(path, join(this.directory!, 'dsh-runtime.previous.jsonl'))
-      const dropped = this.dropped
-      this.dropped = 0
-      await appendFile(path, `${JSON.stringify({ ...entry, ...(dropped ? { droppedLogEntries: dropped } : {}) })}\n`, { mode: 0o600 })
-    }).catch(error => {
-      if (this.fileErrorReported) return
-      this.fileErrorReported = true
-      try { this.sink.error('event=diagnostics.write_failed %s', JSON.stringify(errorDetails(error))) }
-      catch { /* Logging remains best effort when both sinks fail. */ }
-    }).finally(() => { this.queued-- })
+    const details = { ...this.fields, ...fields, ...(error === undefined ? {} : errorDetails(error)) }
+    const serialized = JSON.stringify(details)
+    try {
+      this.output.write({ time: new Date().toISOString(), level, name: this.name, message: event.slice(0, 16000),
+        details: serialized.length <= 16000 ? serialized : JSON.stringify({ truncated: true, summary: serialized.slice(0, 12000) }) })
+    } catch { /* Logging cannot fail native event delivery or RPC handling. */ }
   }
 
   async measure<T>(event: string, fields: Fields, action: () => Promise<T>): Promise<T> {
@@ -76,7 +60,28 @@ export class RuntimeDiagnostics {
     }
   }
 
-  async flush(): Promise<void> { await this.pending }
+  async flush(): Promise<void> { await this.output.flush() }
+}
+
+/** The same injected output receives framework access logs and per-call loggers. */
+export class RuntimeRpcLogger implements RpcLogger {
+  constructor(private readonly diagnostics: RuntimeDiagnostics, private readonly fields: Fields = {}) {}
+  bind(context: Readonly<Record<string, unknown>>): RpcLogger {
+    const safe: Fields = {}
+    for (const [key, value] of Object.entries(context)) {
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') safe[key] = value
+    }
+    return new RuntimeRpcLogger(this.diagnostics, { ...this.fields, ...safe })
+  }
+  log(level: 'debug' | 'info' | 'warning' | 'error', message: string, ...args: unknown[]): void {
+    if (this.fields.service === 'aa.local.v2.Logs') return
+    const safe = args.map(value => value instanceof Error ? errorDetails(value) : value)
+    this.diagnostics.log(level === 'warning' ? 'warn' : level, format(message, ...safe), this.fields)
+  }
+  debug(message: string, ...args: unknown[]): void { this.log('debug', message, ...args) }
+  info(message: string, ...args: unknown[]): void { this.log('info', message, ...args) }
+  warning(message: string, ...args: unknown[]): void { this.log('warning', message, ...args) }
+  error(message: string, ...args: unknown[]): void { this.log('error', message, ...args) }
 }
 
 export const quietDiagnostics = new RuntimeDiagnostics()

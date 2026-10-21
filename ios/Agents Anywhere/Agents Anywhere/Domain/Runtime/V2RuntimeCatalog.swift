@@ -1,17 +1,17 @@
 import Foundation
 
-struct V2ModelCatalogResponse: Decodable, Hashable {
+nonisolated struct V2ModelCatalogResponse: Decodable, Hashable {
     let catalog: V2ModelCatalog
     let serverTime: String
 }
 
-struct V2ModelCatalog: Decodable, Hashable {
+nonisolated struct V2ModelCatalog: Decodable, Hashable {
     let runtime: V2RuntimeID
     let revision: Int
     let models: [V2ModelCatalogItem]
 }
 
-struct V2ModelCatalogItem: Decodable, Identifiable, Hashable {
+nonisolated struct V2ModelCatalogItem: Decodable, Identifiable, Hashable {
     let enabled: Bool?
     let disabledReason: String?
     let displayName: String
@@ -23,7 +23,7 @@ struct V2ModelCatalogItem: Decodable, Identifiable, Hashable {
     let metadata: JSONValue
 }
 
-struct V2ReasoningCatalogItem: Decodable, Identifiable, Hashable {
+nonisolated struct V2ReasoningCatalogItem: Decodable, Identifiable, Hashable {
     let enabled: Bool?
     let disabledReason: String?
     let displayName: String
@@ -35,18 +35,18 @@ struct V2ReasoningCatalogItem: Decodable, Identifiable, Hashable {
     let metadata: JSONValue
 }
 
-struct V2PermissionCatalogResponse: Decodable, Hashable {
+nonisolated struct V2PermissionCatalogResponse: Decodable, Hashable {
     let catalog: V2PermissionCatalog
     let serverTime: String
 }
 
-struct V2PermissionCatalog: Decodable, Hashable {
+nonisolated struct V2PermissionCatalog: Decodable, Hashable {
     let runtime: V2RuntimeID
     let revision: Int
     let permissions: [V2PermissionCatalogItem]
 }
 
-struct V2PermissionCatalogItem: Decodable, Identifiable, Hashable {
+nonisolated struct V2PermissionCatalogItem: Decodable, Identifiable, Hashable {
     let enabled: Bool?
     let disabledReason: String?
     let displayName: String

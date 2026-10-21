@@ -25,6 +25,7 @@ final class DeviceAgentModel {
         }
     }
     func updateConnection(_ connected: Bool) {
+        guard self.connected != connected else { return }
         self.connected = connected
         if !connected { version += 1; isLoading = false }
     }

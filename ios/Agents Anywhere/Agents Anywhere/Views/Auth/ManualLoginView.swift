@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 struct ManualLoginView: View {
-    @ObservedObject var appState: AppState
+    let appState: AppState
     @Environment(\.dismiss) private var dismiss
     @StateObject private var oauthLogin = OAuthLoginCoordinator()
     @State private var path: [ServerLoginRoute] = []

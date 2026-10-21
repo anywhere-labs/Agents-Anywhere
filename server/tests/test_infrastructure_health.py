@@ -10,7 +10,7 @@ from agent_server.infra.db.migrations import CURRENT_SCHEMA_VERSION
 
 
 def test_health_reports_the_application_version_and_releases_are_retired(tmp_path) -> None:
-    app = create_app(tmp_path / "versions.sqlite3")
+    app = create_app()
     client = TestClient(app)
     expected = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]["version"]
     for route in ("/api/v2/health", "/api/v2/health/live"):
@@ -25,7 +25,7 @@ def test_health_reports_the_application_version_and_releases_are_retired(tmp_pat
 
 
 def test_liveness_and_readiness_are_separate(tmp_path) -> None:
-    client = TestClient(create_app(tmp_path / "health.sqlite3"))
+    client = TestClient(create_app())
 
     assert client.get("/api/v2/health/live").json()["status"] == "ok"
     response = client.get("/api/v2/health/ready")
@@ -40,7 +40,7 @@ def test_liveness_and_readiness_are_separate(tmp_path) -> None:
 
 
 def test_readiness_fails_closed_when_redis_is_unavailable(tmp_path) -> None:
-    client = TestClient(create_app(tmp_path / "redis-health.sqlite3"))
+    client = TestClient(create_app())
 
     class UnavailableRedis:
         distributed = True
@@ -61,7 +61,7 @@ def test_readiness_fails_closed_when_redis_is_unavailable(tmp_path) -> None:
 
 
 def test_readiness_rejects_a_dead_subscription_even_when_redis_pings(tmp_path) -> None:
-    client = TestClient(create_app(tmp_path / "subscription-health.sqlite3"))
+    client = TestClient(create_app())
     class DeadBroker:
         healthy = False
     client.app.state.timeline_broker = DeadBroker()

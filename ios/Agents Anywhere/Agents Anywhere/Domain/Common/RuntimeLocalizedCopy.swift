@@ -2,7 +2,7 @@ import Foundation
 
 /// Only explicit protocol translation keys are looked up. Agent/user prose,
 /// model names, paths and opaque action/selection IDs remain unchanged.
-enum RuntimeLocalizedCopy {
+nonisolated enum RuntimeLocalizedCopy {
     static func text(_ fallback: String, metadata: JSONValue, field: String = "labelKey", locale: Locale = .current, bundle: Bundle = .main) -> String {
         guard let key = metadata["i18n"]?[field]?.stringValue else { return fallback }
         let translated = String(localized: String.LocalizationValue(key), bundle: bundle, locale: locale)
@@ -10,7 +10,7 @@ enum RuntimeLocalizedCopy {
     }
 }
 
-extension V2DeviceRuntimeStatus {
+nonisolated extension V2DeviceRuntimeStatus {
     var displayName: String {
         switch self {
         case .stopped: String(localized: "dashboard.device.runtimeStatus.stopped")
@@ -27,7 +27,7 @@ extension V2DeviceRuntimeStatus {
     }
 }
 
-extension V2RuntimeStatus {
+nonisolated extension V2RuntimeStatus {
     var displayName: String {
         switch self {
         case .idle: String(localized: "Idle")

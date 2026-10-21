@@ -15,6 +15,8 @@ struct ChatMarkdownView: View {
     /// When each block's newest glyphs finish revealing. A block's drawing
     /// clock runs only until then, so a stalled or finished block stops redrawing.
     @State private var revealDeadlines: [Int: Date] = [:]
+    /// Completed blocks parsed so far; each batch re-parses only the open tail.
+    @State private var parseState = MarkdownParseState()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -29,13 +31,17 @@ struct ChatMarkdownView: View {
             let request = ParseRequest(text: text, resolvesFileReferences: resolvesFileReferences)
             // Parsing a long response must not block scroll and drawer gestures.
             // Cancelled requests cannot publish an older snapshot over a new reply.
-            let worker = Task.detached(priority: .userInitiated) { try Self.parse(request) }
+            // Streaming replies reuse the blocks before the last safe boundary.
+            let previous = isStreaming ? parseState : nil
+            let worker = Task.detached(priority: .userInitiated) { try Self.parse(request, previous: previous) }
             let result = await withTaskCancellationHandler {
                 await worker.result
             } onCancel: {
                 worker.cancel()
             }
-            guard !Task.isCancelled, case .success(let next) = result else { return }
+            guard !Task.isCancelled, case .success(let parsed) = result else { return }
+            parseState = parsed.state
+            let next = parsed.blocks
             guard blocks != next else { return }
             if isStreaming {
                 // Set in the same update as the text, so the first frame of new
@@ -55,9 +61,29 @@ struct ChatMarkdownView: View {
         let resolvesFileReferences: Bool
     }
 
-    nonisolated private static func parse(_ request: ParseRequest) throws -> [MarkdownBlockSnapshot] {
+    /// Completed text is parsed once per safe boundary; the open tail is parsed
+    /// per batch. A reply whose text no longer extends the cached prefix (a
+    /// correction or recovery) starts over from an empty state.
+    nonisolated private static func parse(_ request: ParseRequest, previous: MarkdownParseState?)
+        throws -> (blocks: [MarkdownBlockSnapshot], state: MarkdownParseState) {
+        let text = request.text
+        var state = previous.flatMap { $0.covers(text) ? $0 : nil } ?? MarkdownParseState()
+        let consumed = state.prefixEnd(text)
+        let split = MarkdownStreamSplit.safeSplitIndex(in: text).flatMap { $0 >= consumed ? $0 : nil }
+        if let split, split > consumed {
+            let completed = try parse(String(text[consumed..<split]), request: request, startingAt: state.nextID)
+            state.blocks.append(contentsOf: completed)
+            state.nextID += completed.count
+            state.prefixText = String(text[..<split])
+        }
+        let tail = String(text[(split ?? consumed)...])
+        let tailBlocks = tail.isEmpty ? [] : try parse(tail, request: request, startingAt: state.nextID)
+        return (state.blocks + tailBlocks, state)
+    }
+
+    nonisolated private static func parse(_ text: String, request: ParseRequest, startingAt startID: Int) throws -> [MarkdownBlockSnapshot] {
         try Task.checkCancellation()
-        var document = try AttributedStringMarkdownParser.parse(request.text, syntaxExtensions: [.math])
+        var document = try AttributedStringMarkdownParser.parse(text, syntaxExtensions: [.math])
         try Task.checkCancellation()
         if request.resolvesFileReferences {
             for run in document.runs {
@@ -73,7 +99,7 @@ struct ChatMarkdownView: View {
             return badge
         }
         try Task.checkCancellation()
-        return MarkdownBlockSnapshot.split(document)
+        return MarkdownBlockSnapshot.split(document, startingAt: startID)
     }
 }
 

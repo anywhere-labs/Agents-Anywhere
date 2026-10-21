@@ -213,7 +213,7 @@ test("navigation stays outside the content panels and session chrome is scoped t
       ResizablePanelGroup: "ResizablePanelGroup",
       ResizablePanel: "ResizablePanel",
       ResizableHandle: "ResizableHandle",
-      AppSidebar: "AppSidebar",
+      WorkspaceNavigation: "WorkspaceNavigation",
       SidebarInset: "SidebarInset",
       WorkspaceMain: "WorkspaceMain",
       SessionToolSidebarsHost: "SessionToolSidebarsHost",

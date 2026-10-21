@@ -2,17 +2,7 @@
 
 import * as React from "react"
 import Cropper, { type Area, type Point } from "react-easy-crop"
-import {
-  Archive,
-  Camera,
-  ChevronDown,
-  RotateCw,
-  Smartphone,
-  Sun,
-  Trash2,
-  Upload,
-  User,
-} from "lucide-react"
+import { Camera, RotateCw, Smartphone, Trash2, Upload } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { useTheme } from "next-themes"
 import { toast } from "sonner"
@@ -29,13 +19,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  Drawer,
-  DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerTrigger,
-} from "@/components/ui/drawer"
 import {
   Field,
   FieldContent,
@@ -54,6 +37,7 @@ import { AccountProfileCard } from "@/components/pages/account-profile-card"
 import { accountDisplayName } from "@/features/auth/account-profile"
 import { MobileConnectionDialog } from "@/components/pages/mobile-signin-panel"
 import { ArchivedSessionsTab } from "@/components/settings/archived-sessions-tab"
+import { parseSettingsTab, settingsNavigation } from "@/components/settings/settings-navigation"
 import { PageHeader } from "@/components/pages/page-header"
 import { useAuth } from "@/components/auth/auth-context"
 import { LocaleSwitcher } from "@/components/locale-switcher"
@@ -64,27 +48,10 @@ import type { AuthMe } from "@/features/auth/types"
 import { useMobileConnectionsSidebarVisibility } from "@/features/mobile-connections/sidebar-visibility"
 import { cn } from "@/lib/utils"
 
-type SettingsTab =
-  | "account"
-  | "appearance"
-  | "mobile-connections"
-  | "archived-sessions"
-type SettingsLabelKey =
-  | "account"
-  | "appearance"
-  | "mobileConnections"
-  | "archivedSessions"
 type AppearanceMode = "light" | "dark" | "auto"
 
 const AVATAR_OUTPUT_SIZE = 256
 const AVATAR_MAX_FILE_SIZE = 8 * 1024 * 1024
-
-const navItems: { id: SettingsTab; labelKey: SettingsLabelKey; icon: typeof User }[] = [
-  { id: "account", labelKey: "account", icon: User },
-  { id: "appearance", labelKey: "appearance", icon: Sun },
-  { id: "mobile-connections", labelKey: "mobileConnections", icon: Smartphone },
-  { id: "archived-sessions", labelKey: "archivedSessions", icon: Archive },
-]
 
 function AccountTab({
   me,
@@ -568,12 +535,11 @@ function AppearanceTab() {
 }
 
 export function SettingsPage() {
-  const { navigate, openSession, projects, sessions, isLoading, refreshData, settingsTab, upsertSession } = useWorkspace()
+  const { openSession, projects, sessions, isLoading, refreshData, settingsTab, upsertSession } = useWorkspace()
   const { session, me: authMe, refreshMe } = useAuth()
   const t = useTranslations("pages.settings")
-  const [tab, setTab] = React.useState<SettingsTab>(() => (
-    navItems.some((item) => item.id === settingsTab) ? settingsTab as SettingsTab : "account"
-  ))
+  // The section sidebar owns navigation; the route is the single source of truth.
+  const tab = parseSettingsTab(settingsTab)
   const [me, setMe] = React.useState<AuthMe | null>(authMe)
   const [loadingMe, setLoadingMe] = React.useState(!authMe)
   const [meError, setMeError] = React.useState<string | null>(null)
@@ -610,19 +576,6 @@ export function SettingsPage() {
     }
   }, [authMe, session?.accessToken, t])
 
-  React.useEffect(() => {
-    if (settingsTab && navItems.some((item) => item.id === settingsTab)) {
-      setTab(settingsTab as SettingsTab)
-    } else if (settingsTab) {
-      setTab("account")
-    }
-  }, [settingsTab])
-
-  const handleTabChange = (newTab: SettingsTab) => {
-    setTab(newTab)
-    navigate("settings", newTab)
-  }
-
   const handleMeChange = async (nextMe: AuthMe) => {
     setMe(nextMe)
     try {
@@ -633,8 +586,7 @@ export function SettingsPage() {
     }
   }
 
-  const activeNavItem = navItems.find((item) => item.id === tab) ?? navItems[0]!
-  const ActiveNavIcon = activeNavItem.icon
+  const activeNavItem = settingsNavigation.find((item) => item.id === tab) ?? settingsNavigation[0]
   const mobileUserId = me
     ? accountDisplayName(me)
     : authMe
@@ -644,38 +596,10 @@ export function SettingsPage() {
   return (
     <div className="flex h-full flex-col bg-background">
       <div className="px-5 pb-0 pt-14 sm:px-8">
-        <PageHeader title={t("title")} description={t("description")} onBack={() => navigate("home")} />
-        <SettingsCategoryDrawer
-          tab={tab}
-          activeIcon={ActiveNavIcon}
-          activeLabel={t(activeNavItem.labelKey)}
-          onTabChange={handleTabChange}
-        />
+        <PageHeader title={t(activeNavItem.labelKey)} />
       </div>
 
-      <div className="flex min-h-0 flex-1 gap-8 overflow-hidden px-5 py-5 sm:px-8 sm:py-8">
-        <nav className="hidden w-52 shrink-0 flex-col gap-0.5 lg:flex">
-          {navItems.map((item) => {
-            const Icon = item.icon
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => handleTabChange(item.id)}
-                className={cn(
-                  "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors",
-                  tab === item.id
-                    ? "bg-sidebar-accent text-foreground"
-                    : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
-                )}
-              >
-                <Icon className="size-4" />
-                {t(item.labelKey)}
-              </button>
-            )
-          })}
-        </nav>
-
+      <div className="flex min-h-0 flex-1 overflow-hidden px-5 py-5 sm:px-8 sm:py-6">
         <ScrollArea className="h-full min-h-0 min-w-0 flex-1" viewportProps={{ className: "pb-8" }}>
           {tab === "account" && (
             loadingMe ? (
@@ -711,62 +635,6 @@ export function SettingsPage() {
         </ScrollArea>
       </div>
     </div>
-  )
-}
-
-function SettingsCategoryDrawer({
-  tab,
-  activeIcon: ActiveIcon,
-  activeLabel,
-  onTabChange,
-}: {
-  tab: SettingsTab
-  activeIcon: typeof User
-  activeLabel: string
-  onTabChange: (tab: SettingsTab) => void
-}) {
-  const t = useTranslations("pages.settings")
-  const [open, setOpen] = React.useState(false)
-
-  return (
-    <Drawer open={open} onOpenChange={setOpen} direction="bottom">
-      <DrawerTrigger asChild>
-        <Button type="button" variant="outline" size="sm" className="mt-4 gap-2 lg:hidden">
-          <ActiveIcon className="size-4" />
-          {activeLabel}
-          <ChevronDown className="size-3.5 text-muted-foreground" />
-        </Button>
-      </DrawerTrigger>
-      <DrawerContent>
-        <DrawerHeader>
-          <DrawerTitle>{t("title")}</DrawerTitle>
-        </DrawerHeader>
-        <div className="flex flex-col gap-1 px-4 pb-4">
-          {navItems.map((item) => {
-            const Icon = item.icon
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => {
-                  onTabChange(item.id)
-                  setOpen(false)
-                }}
-                className={cn(
-                  "flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm transition-colors",
-                  tab === item.id
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                )}
-              >
-                <Icon className="size-4 shrink-0" />
-                <span className="font-medium">{t(item.labelKey)}</span>
-              </button>
-            )
-          })}
-        </div>
-      </DrawerContent>
-    </Drawer>
   )
 }
 

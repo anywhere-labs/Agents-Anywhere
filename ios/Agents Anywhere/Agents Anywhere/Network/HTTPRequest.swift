@@ -1,17 +1,17 @@
 import Foundation
 
-struct EmptyRequestBody: Encodable {}
+nonisolated struct EmptyRequestBody: Encodable {}
 
-struct EmptyResponse: Decodable {}
+nonisolated struct EmptyResponse: Decodable {}
 
-struct HTTPUploadFile: Hashable {
+nonisolated struct HTTPUploadFile: Hashable {
     let fieldName: String
     let fileName: String
     let mediaType: String
     let data: Data
 }
 
-struct HTTPUploadRequest<Response: Decodable> {
+nonisolated struct HTTPUploadRequest<Response: Decodable> {
     let path: String
     let files: [HTTPUploadFile]
     let requiresAuth: Bool
@@ -23,7 +23,7 @@ struct HTTPUploadRequest<Response: Decodable> {
     }
 }
 
-struct HTTPRequest<Body: Encodable, Response: Decodable> {
+nonisolated struct HTTPRequest<Body: Encodable, Response: Decodable> {
     let method: HTTPMethod
     let path: String
     let queryItems: [URLQueryItem]
@@ -45,7 +45,7 @@ struct HTTPRequest<Body: Encodable, Response: Decodable> {
     }
 }
 
-extension HTTPRequest where Body == EmptyRequestBody {
+nonisolated extension HTTPRequest where Body == EmptyRequestBody {
     init(
         method: HTTPMethod,
         path: String,

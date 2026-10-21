@@ -6,7 +6,11 @@ struct V2SessionProjection {
     private(set) var data: V2SessionData
     private let maximumItems: Int
     private var eventIDs: Set<String> = []
+    /// Fixed-size ring of recent durable event IDs; replacing the oldest slot
+    /// avoids shifting the whole window for every event once it is full.
     private var eventOrder: [String] = []
+    private var eventOrderNext = 0
+    private static let dedupeWindow = 2048
     private let decoder = JSONDecoder()
 
     init(snapshot: V2SessionSnapshot, maximumItems: Int) {
@@ -48,11 +52,15 @@ struct V2SessionProjection {
         data.liveStateIsFresh = data.session.connectorStatus == .online
     }
 
-    mutating func applyMeta(_ session: V2SessionMeta) {
-        guard session.id == data.session.id, session.updatedSeq >= data.session.updatedSeq else { return }
+    /// Returns false when the metadata was stale or identical, so callers can
+    /// skip republishing the whole projection.
+    @discardableResult mutating func applyMeta(_ session: V2SessionMeta) -> Bool {
+        guard session.id == data.session.id, session.updatedSeq >= data.session.updatedSeq,
+              session != data.session else { return false }
         let changedRuntime = session.effectiveRuntimeId != data.session.effectiveRuntimeId
         data.session = session
         if changedRuntime || session.connectorStatus != .online { markStale() }
+        return true
     }
 
     mutating func applyState(_ state: V2RuntimeState) {
@@ -73,10 +81,9 @@ struct V2SessionProjection {
         case "runtime.capability.updated":
             data.capabilities = try payload("capabilitySet", in: event)
         case "timeline.item_created", "timeline.item_updated":
-            merge([try payload("item", in: event)], history: false)
+            merge([try item("item", in: event)], history: false)
         case "timeline.snapshot":
-            let items: [V2TimelineItem] = try payload("items", in: event)
-            replaceTimeline(items, hasMore: false)
+            replaceTimeline(try items("items", in: event), hasMore: false)
         case "runtime.notice.snapshot":
             data.notices = try payload("notices", in: event)
         case "runtime.notice.updated":
@@ -97,8 +104,13 @@ struct V2SessionProjection {
         advanceCursor(event.cursor)
         if !event.isLiveProjection {
             eventIDs.insert(event.eventId)
-            eventOrder.append(event.eventId)
-            if eventOrder.count > 2048 { eventIDs.remove(eventOrder.removeFirst()) }
+            if eventOrder.count < Self.dedupeWindow {
+                eventOrder.append(event.eventId)
+            } else {
+                eventIDs.remove(eventOrder[eventOrderNext])
+                eventOrder[eventOrderNext] = event.eventId
+                eventOrderNext = (eventOrderNext + 1) % Self.dedupeWindow
+            }
         }
     }
 
@@ -136,6 +148,7 @@ struct V2SessionProjection {
     }
 
     private mutating func merge(_ incoming: [V2TimelineItem], history: Bool) {
+        if !history, incoming.count == 1 { mergeOne(incoming[0]); return }
         var byID = Dictionary(uniqueKeysWithValues: data.items.map { ($0.id, $0) })
         let start = data.items.first?.orderSeq ?? 0
         let end = data.items.last?.orderSeq ?? 0
@@ -156,6 +169,69 @@ struct V2SessionProjection {
         } else {
             data.items = Array(sorted.suffix(maximumItems))
             data.hasOlderItems = data.hasOlderItems || sorted.count > maximumItems
+        }
+    }
+
+    /// A streamed token is one `item_updated` for an item that is almost always
+    /// already present. Replace it in place instead of rebuilding a dictionary
+    /// and re-sorting the whole window for every socket frame.
+    private mutating func mergeOne(_ item: V2TimelineItem) {
+        guard item.sessionId == data.session.id else { return }
+        let key = (item.orderSeq, item.id)
+        let position = insertionIndex(of: key)
+        if position < data.items.count, data.items[position].id == item.id {
+            let old = data.items[position]
+            guard item.revision > old.revision || (item.revision == old.revision && item.updatedSeq >= old.updatedSeq) else { return }
+            data.items[position] = item
+            return
+        }
+        // An item whose orderSeq moved sorts elsewhere; the server keeps orderSeq
+        // stable, so this scan only runs for genuinely new or relocated items.
+        if let existing = data.items.firstIndex(where: { $0.id == item.id }) {
+            let old = data.items[existing]
+            guard item.revision > old.revision || (item.revision == old.revision && item.updatedSeq >= old.updatedSeq) else { return }
+            data.items.remove(at: existing)
+            data.items.insert(item, at: insertionIndex(of: key))
+            return
+        }
+        let start = data.items.first?.orderSeq ?? 0
+        let end = data.items.last?.orderSeq ?? 0
+        if data.hasOlderItems, item.orderSeq < start { return }
+        if data.hasNewerItems, item.orderSeq > end { return }
+        data.items.insert(item, at: position)
+        if data.items.count > maximumItems {
+            data.items.removeFirst(data.items.count - maximumItems)
+            data.hasOlderItems = true
+        }
+    }
+
+    private func insertionIndex(of key: (Int, String)) -> Int {
+        var low = 0, high = data.items.count
+        while low < high {
+            let mid = (low + high) / 2
+            let candidate = (data.items[mid].orderSeq, data.items[mid].id)
+            if candidate < key { low = mid + 1 } else { high = mid }
+        }
+        return low
+    }
+
+    private func item(_ key: String, in event: V2SessionEvent) throws -> V2TimelineItem {
+        guard let raw = event.payload[key] else {
+            throw HTTPError.decoding(message: String(localized: "Missing '\(key)' in \(event.type)."))
+        }
+        do { return try V2TimelineItem(json: raw) }
+        catch let error as DecodingError {
+            throw HTTPError.decoding(message: "\(event.type) · \(key): \(error.v2Description)")
+        }
+    }
+
+    private func items(_ key: String, in event: V2SessionEvent) throws -> [V2TimelineItem] {
+        guard let raw = event.payload[key]?.arrayValue else {
+            throw HTTPError.decoding(message: String(localized: "Missing '\(key)' in \(event.type)."))
+        }
+        do { return try raw.map { try V2TimelineItem(json: $0) } }
+        catch let error as DecodingError {
+            throw HTTPError.decoding(message: "\(event.type) · \(key): \(error.v2Description)")
         }
     }
 

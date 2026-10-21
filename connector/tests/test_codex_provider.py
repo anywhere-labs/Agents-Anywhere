@@ -76,17 +76,19 @@ async def _test_codex_provider_treats_sdk_as_only_active_surface() -> None:
     assert item.reason is None
 
 
-def test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() -> None:
-    asyncio.run(_test_codex_provider_schema_exposes_no_ipc_or_app_server_switches())
+def test_codex_provider_schema_exposes_ipc_switches_but_no_app_server_mode() -> None:
+    asyncio.run(_test_codex_provider_schema_exposes_ipc_switches_but_no_app_server_mode())
 
 
-async def _test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() -> None:
+async def _test_codex_provider_schema_exposes_ipc_switches_but_no_app_server_mode() -> None:
     provider = CodexProvider(sdk_checker=_available_sdk)
 
     schema = await provider.get_config_schema()
 
     assert schema.defaults == {
         "useSystemCodex": True,
+        "ipcEnabled": True,
+        "ipcDeeplinkHandoff": True,
         "environment": {},
         "customModels": [],
     }
@@ -94,6 +96,8 @@ async def _test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() ->
         "useSystemCodex",
         "codexExecutablePath",
         "codexHome",
+        "ipcEnabled",
+        "ipcDeeplinkHandoff",
         "modelGateway",
         "environment",
         "customModels",
@@ -106,9 +110,18 @@ async def _test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() ->
         "codexHome",
         "customModels",
         "environment",
+        "ipcDeeplinkHandoff",
+        "ipcEnabled",
         "modelGateway",
         "useSystemCodex",
     }
+    for name in ("ipcEnabled", "ipcDeeplinkHandoff"):
+        prop = schema.schema["properties"][name]
+        assert prop["type"] == "boolean" and prop["default"] is True
+        assert prop["metadata"]["i18n"] == {
+            "labelKey": f"dashboard.device.runtimeConfigFields.{name}.label",
+            "descriptionKey": f"dashboard.device.runtimeConfigFields.{name}.description",
+        }
     assert schema.schema["properties"]["useSystemCodex"] == {
         "type": "boolean",
         "title": "Use System Codex",
@@ -139,7 +152,6 @@ async def _test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() ->
     }
     assert "minLength" not in schema.schema["properties"]["codexHome"]
     assert "sdkMode" not in schema.schema["properties"]
-    assert "ipcEnabled" not in schema.schema["properties"]
     assert "executablePath" not in schema.schema["properties"]
     assert schema.ui_schema["codexExecutablePath"]["component"] == "path"
     assert schema.schema["properties"]["codexExecutablePath"]["metadata"] == {
@@ -182,6 +194,8 @@ async def _test_codex_provider_validates_sdk_config() -> None:
     assert config.runtime == "codex"
     assert config.values == {
         "useSystemCodex": True,
+        "ipcEnabled": True,
+        "ipcDeeplinkHandoff": True,
         "environment": {"EXAMPLE": "1"},
         "customModels": [
             {
@@ -342,8 +356,8 @@ async def _test_codex_provider_rejects_legacy_config_fields() -> None:
 
     with pytest.raises(RuntimeInvalidRequestError, match="Additional properties"):
         await provider.validate_config({"sdkMode": "app-server"})
-    with pytest.raises(RuntimeInvalidRequestError, match="Additional properties"):
-        await provider.validate_config({"ipcEnabled": True})
+    with pytest.raises(RuntimeInvalidRequestError, match="ipcEnabled must be a boolean"):
+        await provider.validate_config({"ipcEnabled": "yes"})
     with pytest.raises(RuntimeInvalidRequestError, match="Additional properties"):
         await provider.validate_config({"executablePath": "/opt/codex"})
     with pytest.raises(RuntimeInvalidRequestError, match="Additional properties"):
@@ -643,3 +657,27 @@ class _FakeSdkClient:
     ) -> None:
         _ = request_id
         _ = result
+
+
+def test_codex_provider_passes_ipc_switches_to_runtime(tmp_path: Path) -> None:
+    asyncio.run(_test_codex_provider_passes_ipc_switches_to_runtime(tmp_path))
+
+
+async def _test_codex_provider_passes_ipc_switches_to_runtime(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    provider = CodexProvider(
+        sdk_checker=_available_sdk, sdk_client_factory=lambda config: object()
+    )
+    enabled = await provider.validate_config({"codexHome": str(codex_home)})
+    assert enabled.values["ipcEnabled"] is True
+    assert enabled.values["ipcDeeplinkHandoff"] is True
+    runtime = await provider.create_runtime(enabled, _NoHost())
+    assert runtime.ipc_enabled is True and runtime.ipc_deeplink_handoff is True
+
+    disabled = await provider.validate_config(
+        {"codexHome": str(codex_home), "ipcEnabled": False, "ipcDeeplinkHandoff": False}
+    )
+    assert disabled.values["ipcEnabled"] is False
+    runtime = await provider.create_runtime(disabled, _NoHost())
+    assert runtime.ipc_enabled is False and runtime.ipc_deeplink_handoff is False

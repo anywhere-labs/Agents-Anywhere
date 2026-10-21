@@ -41,8 +41,12 @@ struct StreamingGlyphReveal: ViewModifier {
     @Environment(\.streamingGlyphAnimation) private var isStreaming
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.streamingRevealDeadline) private var deadline
+    @AppStorage(ReplyPresentation.plainFadeKey) private var plainFade = false
     @State private var ledger: GlyphRevealLedger
     @State private var stoppedDeadline: Date?
+    /// A tool wait or thinking pause flips `isStreaming` off and on again. The
+    /// block stays on the renderer branch so each flip does not rebuild its Text.
+    @State private var hasStreamed = false
     private let revealedPhraseCount: Int?
 
     init(ledger: GlyphRevealLedger = GlyphRevealLedger(), revealedPhraseCount: Int? = nil) {
@@ -54,9 +58,9 @@ struct StreamingGlyphReveal: ViewModifier {
         let enabled = isStreaming && !reduceMotion
         // Text arrives in batches, one after the previous reveal ends. Drawing
         // interpolates each batch without reparsing or appending text.
-        if !enabled && revealedPhraseCount == nil {
+        if !enabled && !hasStreamed && revealedPhraseCount == nil {
             // Settled history uses native Text drawing with no clock or glyph walk.
-            content
+            content.onChange(of: enabled) { _, next in if next { hasStreamed = true } }
         } else {
             // Every running clock re-evaluates its text each frame, so an idle
             // block pauses and draws its glyphs settled. 60 fps is enough for a
@@ -64,8 +68,9 @@ struct StreamingGlyphReveal: ViewModifier {
             let running = enabled && stoppedDeadline != deadline && deadline > .now
             TimelineView(.animation(minimumInterval: 1 / 60, paused: !running)) { timeline in
                 content.textRenderer(GlyphRevealRenderer(ledger: ledger, now: timeline.date.timeIntervalSinceReferenceDate,
-                    enabled: running, revealedPhraseCount: revealedPhraseCount))
+                    enabled: running, revealedPhraseCount: revealedPhraseCount, rises: !plainFade))
             }
+            .onChange(of: enabled, initial: true) { _, next in if next { hasStreamed = true } }
             .task(id: deadline) {
                 let delay = deadline.timeIntervalSinceNow
                 guard delay > 0, delay < 60 else { return }
@@ -82,9 +87,10 @@ nonisolated struct GlyphRevealRenderer: TextRenderer {
     let now: TimeInterval
     let enabled: Bool
     var revealedPhraseCount: Int? = nil
+    var rises = true
 
     // Extend raster bounds for the blur and slight rise, not layout bounds.
-    var displayPadding: EdgeInsets { .init(top: 6, leading: 6, bottom: 9, trailing: 6) }
+    var displayPadding: EdgeInsets { rises ? .init(top: 6, leading: 6, bottom: 9, trailing: 6) : .init() }
 
     func draw(layout: Text.Layout, in context: inout GraphicsContext) {
         let count = layout.reduce(0) { total, line in
@@ -132,10 +138,12 @@ nonisolated struct GlyphRevealRenderer: TextRenderer {
         }
         for (batch, batchSlices) in zip(batches, slices) where !batchSlices.isEmpty {
             var copy = context
-            let effect = GlyphRevealEffect(progress: batch.progress)
+            let effect = GlyphRevealEffect(progress: batch.progress, rises: rises)
             copy.opacity *= effect.opacity
-            copy.translateBy(x: 0, y: effect.offsetY)
-            copy.addFilter(.blur(radius: effect.blurRadius))
+            if rises {
+                copy.translateBy(x: 0, y: effect.offsetY)
+                copy.addFilter(.blur(radius: effect.blurRadius))
+            }
             copy.drawLayer { layer in
                 for slice in batchSlices { layer.draw(slice, options: .disablesSubpixelQuantization) }
             }

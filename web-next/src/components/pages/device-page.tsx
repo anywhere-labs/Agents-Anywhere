@@ -75,6 +75,8 @@ import {
 import {
   runtimeErrorCode,
   runtimeErrorReason,
+  runtimePhaseMessage,
+  runtimeShowsErrorBadge,
   runtimeIsNotStarted,
   runtimeStatusTone,
 } from "@/features/dashboard/runtime-status-presentation"
@@ -288,6 +290,7 @@ function runtimeListKey(runtimes: DeviceRuntimeView[]) {
       runtime.available,
       runtime.updatedAt,
       runtimeErrorCode(runtime) ?? "",
+      typeof runtime.phase?.code === "string" ? runtime.phase.code : "",
     ].join(":"))
     .sort()
     .join("|")
@@ -824,7 +827,12 @@ export function DevicePage() {
                               <Badge variant="outline" className="shrink-0 font-normal">
                                 {runtimeStatusLabel(runtime)}
                               </Badge>
-                              {runtime.error ? (
+                              {runtime.status === "starting" && runtimePhaseMessage(runtime) ? (
+                                <span className="truncate text-xs text-muted-foreground">
+                                  {runtimePhaseMessage(runtime)}
+                                </span>
+                              ) : null}
+                              {runtimeShowsErrorBadge(runtime) ? (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Badge

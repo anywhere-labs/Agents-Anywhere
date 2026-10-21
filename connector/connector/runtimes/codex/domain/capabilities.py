@@ -39,6 +39,7 @@ class CodexCapabilityContext:
     external_session_id: str | None = None
     status: RuntimeStatus = "idle"
     has_active_turn: bool = False
+    ipc_attached: bool = False
 
 
 def codex_runtime_capabilities(context: CodexCapabilityContext) -> RuntimeCapabilitySet:
@@ -161,6 +162,7 @@ def codex_capability_context(
     resolved_external_session_id = (
         state.external_session_id if state is not None else external_session_id
     )
+    ipc_attached = state is not None and state.metadata.get("attachment") == "ipc"
     return CodexCapabilityContext(
         connector_id=connector_id,
         revision=revision,
@@ -169,6 +171,7 @@ def codex_capability_context(
         external_session_id=resolved_external_session_id,
         status=status,
         has_active_turn=has_active_turn,
+        ipc_attached=ipc_attached,
     )
 
 
@@ -232,7 +235,11 @@ def session_can_steer(context: CodexCapabilityContext) -> bool:
 
 
 def session_loaded(context: CodexCapabilityContext) -> bool:
-    return context.client_available and context.external_session_id is not None
+    # A thread followed through the IDE/desktop IPC is operable even when the
+    # Connector's own app-server client is unavailable.
+    return (
+        context.client_available or context.ipc_attached
+    ) and context.external_session_id is not None
 
 
 def client_unavailable_reason(context: CodexCapabilityContext) -> str | None:

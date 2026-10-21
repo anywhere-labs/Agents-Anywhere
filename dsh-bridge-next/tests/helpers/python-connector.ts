@@ -4,6 +4,8 @@ import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { Mesh, MeshCallError, Router } from 'meshcall'
+import { ControlServiceClient } from '../../src/host/generated/connector-control.js'
 
 export const connectorProject = fileURLToPath(new URL('../../../connector', import.meta.url))
 export const python = process.env.AA_TEST_PYTHON ?? join(connectorProject, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
@@ -36,38 +38,53 @@ BackendRpcClient.run_forever=fake_backend
     env: { ...process.env, AA_CONNECTOR_OWNER_KIND: kind, AA_TEST_CONNECTOR_HOME: home, PYTHONPATH: [hook, connectorProject].join(delimiter) },
     stdio: 'pipe',
   })
-  let buffer = '', stderr = '', id = 0
-  const pending = new Map<number, { resolve: (value: any) => void; reject: (reason: any) => void; timer: NodeJS.Timeout }>()
+  let buffer = '', stderr = ''
+  let mesh: Mesh | undefined
+  let resolveReady!: (client: ControlServiceClient) => void
+  let rejectReady!: (error: Error) => void
+  const ready = new Promise<ControlServiceClient>((resolve, reject) => { resolveReady = resolve; rejectReady = reject })
+  // Direct-CLI launches (`start`) never use the control channel; do not let its
+  // expected rejection surface as an unhandled rejection.
+  void ready.catch(() => undefined)
   child.stderr.on('data', chunk => { stderr += chunk })
   child.stdout.on('data', chunk => {
     buffer += chunk
     let end: number
     while ((end = buffer.indexOf('\n')) !== -1) {
       const line = buffer.slice(0, end); buffer = buffer.slice(end + 1)
-      if (!line.startsWith('{')) continue
-      const frame = JSON.parse(line), call = pending.get(frame.id)
-      if (!call) continue
-      clearTimeout(call.timer); pending.delete(frame.id)
-      if (frame.error) call.reject(Object.assign(new Error(frame.error.message), frame.error))
-      else call.resolve(frame.result)
+      let value: { kind?: string, endpoint?: { unixPath?: string, pipe?: string }, key?: string }
+      try { value = JSON.parse(line) } catch { continue }
+      if (value.kind !== 'connector.ready' || !value.endpoint || typeof value.key !== 'string') continue
+      const endpoint = value.endpoint.unixPath ? { unixPath: value.endpoint.unixPath } : { pipe: value.endpoint.pipe ?? '' }
+      void (async () => {
+        mesh = new Mesh(new Router(endpoint), { token: value.key! })
+        await mesh.connect()
+        return new ControlServiceClient(mesh)
+      })().then(resolveReady, rejectReady)
     }
   })
   const fail = (error: Error) => {
-    for (const call of pending.values()) { clearTimeout(call.timer); call.reject(error) }
-    pending.clear()
+    rejectReady(error)
   }
   child.on('error', fail)
   child.on('exit', () => fail(new Error(`Connector exited: ${stderr}`)))
   return {
     child,
     get stderr() { return stderr },
-    request(method: string, params?: unknown): Promise<any> {
-      const requestId = ++id
-      return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { pending.delete(requestId); reject(new Error(`RPC timeout: ${method}`)) }, 10_000)
-        pending.set(requestId, { resolve, reject, timer })
-        child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: requestId, method, params })}\n`)
-      })
+    async request(method: string, params?: unknown): Promise<any> {
+      const client = await ready
+      try {
+        switch (method) {
+          case 'connector.getState': return await client.getState({ timeoutMs: 10_000 })
+          case 'connector.acquireOwnership': return await client.acquireOwnership({ timeoutMs: 10_000 })
+          case 'connector.start': return await client.start(params as never ?? null, { timeoutMs: 10_000 })
+          case 'connector.stop': return await client.stop({ timeoutMs: 10_000 })
+          default: throw new Error(`Unsupported Connector method: ${method}`)
+        }
+      } catch (error) {
+        if (error instanceof MeshCallError) throw Object.assign(new Error(error.message), { code: error.code, details: error.details })
+        throw error
+      }
     },
     async close(crash = false) {
       if (child.exitCode !== null || child.signalCode !== null) return
@@ -75,6 +92,7 @@ BackendRpcClient.run_forever=fake_backend
       if (crash || mode === 'start') child.kill(crash ? 'SIGKILL' : 'SIGINT')
       else child.stdin.end()
       await exited
+      await mesh?.close().catch(() => undefined)
     },
   }
 }

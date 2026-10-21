@@ -22,6 +22,8 @@ extension TextFragment {
 
     @ObservationIgnored private var currentAttachmentSizes: [AttachmentKey: CGSize]
     @ObservationIgnored private let content: Content
+    @ObservationIgnored let attachments: Set<AnyAttachment>
+    @ObservationIgnored let hasLinks: Bool
     @ObservationIgnored private let cache: NSCache<KeyBox<[AttachmentKey: CGSize]>, Box<Text>>
 
     init(_ content: Content, environment: TextEnvironmentValues) {
@@ -34,6 +36,8 @@ extension TextFragment {
       )
       self.currentAttachmentSizes = attachmentSizes
       self.content = content
+      self.attachments = content.attachments()
+      self.hasLinks = content.runs.contains { $0.link != nil }
       self.cache = NSCache()
       self.cache.countLimit = 10
 

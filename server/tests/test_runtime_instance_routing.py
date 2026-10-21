@@ -8,7 +8,6 @@ from sqlalchemy import insert
 
 from agent_server.core.models import SessionView
 from agent_server.infra.db import connectors
-from agent_server.infra.db.migrations import upgrade_database
 from agent_server.infra.repositories.facade import Store
 from agent_server.services.connector_notifications import (
     InteractionNotificationHandler,
@@ -19,9 +18,7 @@ from agent_server.services.connector_notifications import (
 
 
 def test_session_catalog_and_active_run_state_are_instance_scoped(tmp_path) -> None:
-    path = tmp_path / "runtime-routing.sqlite3"
-    upgrade_database(db_url=f"sqlite+aiosqlite:///{path}")
-    store = Store(path)
+    store = Store()
     try:
         asyncio.run(_insert_connector(store, "conn_a"))
         first = asyncio.run(
@@ -129,9 +126,7 @@ def test_session_catalog_and_active_run_state_are_instance_scoped(tmp_path) -> N
 
 
 def test_connector_cannot_rebind_an_existing_session(tmp_path) -> None:
-    path = tmp_path / "connector-binding.sqlite3"
-    upgrade_database(db_url=f"sqlite+aiosqlite:///{path}")
-    store = Store(path)
+    store = Store()
     try:
         asyncio.run(_insert_connector(store, "conn_a"))
         asyncio.run(_insert_connector(store, "conn_b"))
@@ -391,9 +386,7 @@ async def _insert_connector(store: Store, connector_id: str) -> None:
 
 
 def test_connector_session_binding_resolves_match_and_reports_mismatch(tmp_path) -> None:
-    path = tmp_path / "connector-binding-resolution.sqlite3"
-    upgrade_database(db_url=f"sqlite+aiosqlite:///{path}")
-    store = Store(path)
+    store = Store()
 
     async def resolve(**kwargs):
         return await store.resolve_connector_session_binding(**kwargs)

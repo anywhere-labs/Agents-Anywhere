@@ -2,7 +2,7 @@
 
 ## 分支与环境
 
-`main` 是 v2 主线，新功能从最新 `main` 创建分支。`v2` 保留用于发布过渡，不再把旧 `main` 的 API 和数据库假定套用到当前主线。历史资料见[升级指南](upgrading.md)。
+`main` 是 v2 主线，新功能从最新 `main` 创建分支，分支名为 `<type>/<domain>/<topic>`（type 如 `feat`、`fix`、`docs`；domain 缩写为 `fe`、`be`、`con`、`dsk`、`apk`、`ios`、`dsh`、`docs`，多个 domain 用 `+` 连接），如 `feat/con+be/<topic>`。`v2` 保留用于发布过渡，不再把旧 `main` 的 API 和数据库假定套用到当前主线。历史资料见[升级指南](upgrading.md)。
 
 使用 Python 3.12+、uv、Node.js 22、Corepack/Yarn。Docker 源码启动器需要 Docker Compose；Android 需要 JDK 17 与 Android SDK，iOS 需要 Xcode。各子项目独立安装依赖，不在仓库根目录运行一个假设存在的总构建命令。
 
@@ -49,7 +49,16 @@ yarn dev
 ```bash
 cd server
 uv sync
+# tests/test_connector_pipeline.py 会导入 Connector 包，把它装进 Server 环境一次即可；
+# 临时跳过可加 --ignore=tests/test_connector_pipeline.py
+uv pip install --python .venv/bin/python ../connector
 uv run ruff check . --exclude .venv
+# 测试跑在真实 PostgreSQL 上：用本地 compose 起一个库，并单独建一个名字含 test 的数据库。
+# 测试会在每个用例前清空该库的所有表，所以绝不能指向开发库或生产库。
+docker compose -f ../docker/docker-compose.local.yml up -d postgres
+docker compose -f ../docker/docker-compose.local.yml exec postgres \
+  psql -U agents_anywhere -c 'CREATE DATABASE agents_anywhere_test'
+export AGENT_SERVER_TEST_DB_URL=postgresql+asyncpg://agents_anywhere:agents_anywhere_dev_password@127.0.0.1:55432/agents_anywhere_test
 uv run pytest -q
 ```
 
@@ -58,6 +67,14 @@ cd connector
 uv sync
 uv run ruff check connector tests
 uv run pytest -q
+```
+
+```bash
+# DSH 插件：集成测试会在进程内拉起 Connector 的 DSH 探针和 Server，需要上面同一个测试库变量
+cd dsh-bridge-next
+corepack yarn install
+AGENT_SERVER_TEST_DB_URL=postgresql+asyncpg://agents_anywhere:agents_anywhere_dev_password@127.0.0.1:55432/agents_anywhere_test \
+  corepack yarn check
 ```
 
 ```bash

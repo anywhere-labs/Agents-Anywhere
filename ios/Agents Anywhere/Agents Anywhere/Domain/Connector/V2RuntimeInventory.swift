@@ -1,6 +1,6 @@
 import Foundation
 
-struct V2RuntimeConfigDescriptor: Decodable, Hashable {
+nonisolated struct V2RuntimeConfigDescriptor: Decodable, Hashable {
     let revision: Int
     let schema: JSONValue
     let uiSchema: JSONValue?
@@ -8,7 +8,7 @@ struct V2RuntimeConfigDescriptor: Decodable, Hashable {
     let metadata: [String: JSONValue]
 }
 
-struct V2RuntimeType: Decodable, Identifiable, Hashable {
+nonisolated struct V2RuntimeType: Decodable, Identifiable, Hashable {
     let connectorId: V2ConnectorID
     let runtimeType: String
     let implementationType: String?
@@ -35,24 +35,24 @@ struct V2RuntimeType: Decodable, Identifiable, Hashable {
     var id: String { runtimeType }
 }
 
-struct V2RuntimeTypeListResponse: Decodable, Hashable {
+nonisolated struct V2RuntimeTypeListResponse: Decodable, Hashable {
     let connectorId: V2ConnectorID
     let runtimeTypes: [V2RuntimeType]
     let serverTime: String
 }
 
-struct V2RuntimeInstanceCreateRequest: Encodable, Hashable {
+nonisolated struct V2RuntimeInstanceCreateRequest: Encodable, Hashable {
     let runtimeType: String
     let name: String
     let config: [String: JSONValue]
     let active: Bool
 }
 
-struct V2RuntimeInstanceRenameRequest: Encodable, Hashable {
+nonisolated struct V2RuntimeInstanceRenameRequest: Encodable, Hashable {
     let name: String
 }
 
-struct V2RuntimeInventory: Hashable {
+nonisolated struct V2RuntimeInventory: Hashable {
     let types: [V2RuntimeType]
     let instances: [V2DeviceRuntime]
 
@@ -73,7 +73,7 @@ struct V2RuntimeInventory: Hashable {
     }
 }
 
-struct V2ConnectorPreferencesResponse: Decodable, Hashable {
+nonisolated struct V2ConnectorPreferencesResponse: Decodable, Hashable {
     let connectorId: V2ConnectorID
     let preferences: [String: JSONValue]
     let serverTime: String

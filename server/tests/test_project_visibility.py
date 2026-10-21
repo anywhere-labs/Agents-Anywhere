@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 from sqlalchemy import create_engine, insert, select, text, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError
 
 from agent_server.infra.db import connectors, projects, sessions, users
 from agent_server.infra.db.migrations import upgrade_database
@@ -15,9 +15,7 @@ NOW = "2026-09-06T00:00:00Z"
 
 @pytest.fixture
 def store(tmp_path):
-    path = tmp_path / "project-visibility.sqlite3"
-    upgrade_database(db_url=f"sqlite+aiosqlite:///{path}")
-    repository = Store(path)
+    repository = Store()
 
     async def seed():
         async with repository.engine.begin() as connection:
@@ -226,30 +224,49 @@ def test_failed_archive_rolls_back_sessions_and_manual_flag(store):
         async with store.engine.begin() as connection:
             await connection.execute(
                 text(
-                    "CREATE TRIGGER reject_project_archive BEFORE UPDATE ON projects "
-                    "WHEN NEW.manually_created = 0 BEGIN SELECT RAISE(ABORT, 'archive failed'); END"
+                    "CREATE FUNCTION reject_project_archive() RETURNS trigger AS $$ "
+                    "BEGIN IF NOT NEW.manually_created THEN "
+                    "RAISE EXCEPTION 'archive failed'; END IF; RETURN NEW; END $$ "
+                    "LANGUAGE plpgsql"
                 )
             )
-        with pytest.raises(IntegrityError, match="archive failed"):
-            await store.archive_project_sessions(
-                project.id, True, scope="all", user_id="owner"
+            await connection.execute(
+                text(
+                    "CREATE TRIGGER reject_project_archive BEFORE UPDATE ON projects "
+                    "FOR EACH ROW EXECUTE FUNCTION reject_project_archive()"
+                )
             )
-        async with store.engine.connect() as connection:
-            assert (
-                await connection.execute(select(projects.c.manually_created))
-            ).scalar_one() is True
-            assert (
-                await connection.execute(select(sessions.c.archived))
-            ).scalar_one() == 0
+        try:
+            with pytest.raises(DBAPIError, match="archive failed"):
+                await store.archive_project_sessions(
+                    project.id, True, scope="all", user_id="owner"
+                )
+            async with store.engine.connect() as connection:
+                assert (
+                    await connection.execute(select(projects.c.manually_created))
+                ).scalar_one() is True
+                assert (
+                    await connection.execute(select(sessions.c.archived))
+                ).scalar_one() == 0
+        finally:
+            # The test database is shared; leave no trigger behind.
+            async with store.engine.begin() as connection:
+                await connection.execute(
+                    text("DROP TRIGGER IF EXISTS reject_project_archive ON projects")
+                )
+                await connection.execute(
+                    text("DROP FUNCTION IF EXISTS reject_project_archive()")
+                )
 
     asyncio.run(scenario())
 
 
-def test_v2_31_backfills_existing_projects_and_defaults_new_rows_to_false(tmp_path):
-    path = tmp_path / "legacy-projects.sqlite3"
-    url = f"sqlite+aiosqlite:///{path}"
+def test_v2_31_backfills_existing_projects_and_defaults_new_rows_to_false(
+    fresh_database_url,
+):
+    url = fresh_database_url
     upgrade_database(db_url=url, revision="v2_30")
-    engine = create_engine(f"sqlite:///{path}")
+    engine = create_engine(url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1))
     try:
         with engine.begin() as connection:
             connection.execute(

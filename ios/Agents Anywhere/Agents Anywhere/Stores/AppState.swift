@@ -1,61 +1,65 @@
-import Combine
 import Foundation
+import Observation
 #if os(iOS)
 import UIKit
 #endif
 
-@MainActor
-final class AppState: ObservableObject {
+@MainActor @Observable
+final class AppState {
     enum Route {
         case loading
         case signedOut
         case signedIn
     }
 
-    @Published private(set) var route: Route = .loading
-    @Published private(set) var serverURL: URL?
-    @Published private(set) var me: AuthMe? {
+    private(set) var route: Route = .loading
+    private(set) var serverURL: URL?
+    private(set) var me: AuthMe? {
         didSet {
+            guard me != oldValue else { return }
             accountAvatarSource = AccountAvatarImageSource.parse(me?.avatar)
             if let me, let serverURL, let token = accessToken() { restoration.save(profile: me, server: serverURL, token: token) }
         }
     }
-    @Published var chatSelection = ChatShellSelection.newSession {
+    var chatSelection = ChatShellSelection.newSession {
         didSet { if let scope = cachedServices?.scope, scope.accountID == me?.userId { restoration.save(selection: chatSelection, in: scope) } }
     }
-    @Published private(set) var restoreConnectionError: String?
-    @Published private(set) var accountAvatarSource: AccountAvatarImageSource?
-    @Published private(set) var connectors: [V2Connector] = []
-    @Published private(set) var sessions: [V2SessionMeta] = []
-    @Published private(set) var projects: [V2Project] = []
-    @Published private(set) var isDashboardLoading = false
-    @Published private(set) var hasLoadedConnectors = false
-    @Published private(set) var hasLoadedSessions = false
-    @Published var authError: String?
-    @Published private(set) var authNeedsLocalNetworkSettings = false
-    @Published var dashboardError: String?
-    @Published var sessionsError: String?
-    @Published var connectorsError: String?
-    @Published var isWorking = false
-    @Published private(set) var isRetryingServerConnection = false
-    @Published private(set) var sessionActionError: String?
-    @Published private(set) var isAccountWorking = false
-    @Published private(set) var accountError: String?
+    private(set) var restoreConnectionError: String?
+    private(set) var accountAvatarSource: AccountAvatarImageSource?
+    private(set) var connectors: [V2Connector] = []
+    private(set) var sessions: [V2SessionMeta] = []
+    private(set) var projects: [V2Project] = []
+    private(set) var isDashboardLoading = false
+    private(set) var hasLoadedConnectors = false
+    private(set) var hasLoadedSessions = false
+    var authError: String?
+    private(set) var authNeedsLocalNetworkSettings = false
+    var dashboardError: String?
+    var sessionsError: String?
+    var connectorsError: String?
+    var isWorking = false
+    private(set) var isRetryingServerConnection = false
+    private(set) var sessionActionError: String?
+    private(set) var isAccountWorking = false
+    private(set) var accountError: String?
 
-    private let keychain = KeychainStore()
-    private let restoration = V2RestorationStore()
-    private var accountSyncTask: Task<Void, Never>?
-    private var accountSyncID = UUID()
-    private var authenticationEpoch = UUID()
-    private let serverDefaultsKey = "agentsAnywhere.serverURL"
-    private let tokenAccount = "accessToken"
-    private let dashboardClientId = "ios-dashboard-\(UUID().uuidString)"
-    private var lastDashboardRefreshAt: Date?
-    private var dashboardUpdatesTask: Task<Void, Never>?
-    private var cachedServices: V2ClientServices?
-    private var cachedServicesTokenProvider: MutableAuthTokenProvider?
-    private var isInBackground = false
-    private var visibleSessionID: V2SessionID?
+    @ObservationIgnored private let keychain = KeychainStore()
+    @ObservationIgnored private let restoration = V2RestorationStore()
+    @ObservationIgnored private var accountSyncTask: Task<Void, Never>?
+    @ObservationIgnored private var accountSyncID = UUID()
+    @ObservationIgnored private var authenticationEpoch = UUID()
+    @ObservationIgnored private let serverDefaultsKey = "agentsAnywhere.serverURL"
+    @ObservationIgnored private let tokenAccount = "accessToken"
+    @ObservationIgnored private let dashboardClientId = "ios-dashboard-\(UUID().uuidString)"
+    @ObservationIgnored private var lastDashboardRefreshAt: Date?
+    @ObservationIgnored private var dashboardUpdatesTask: Task<Void, Never>?
+    @ObservationIgnored private var cachedServices: V2ClientServices?
+    @ObservationIgnored private var cachedServicesTokenProvider: MutableAuthTokenProvider?
+    /// Keychain is the durable source; view bodies and task identities read
+    /// this copy instead of performing a Security framework round trip each time.
+    @ObservationIgnored private var cachedToken: String?
+    @ObservationIgnored private var isInBackground = false
+    @ObservationIgnored private var visibleSessionID: V2SessionID?
 
     init() {
         Task { await restoreSession() }
@@ -69,7 +73,10 @@ final class AppState: ObservableObject {
     var isServerConnected: Bool { cachedServices?.dashboardRepository.canWrite == true }
 
     func accessToken() -> String? {
-        try? keychain.readString(account: tokenAccount)
+        if let cachedToken { return cachedToken }
+        let token = try? keychain.readString(account: tokenAccount)
+        if let token, !token.isEmpty { cachedToken = token }
+        return token
     }
 
     func restoreSession() async {
@@ -318,15 +325,16 @@ final class AppState: ObservableObject {
     private func syncDashboard(_ services: V2ClientServices) {
         guard cachedServices === services else { return }
         let repository = services.dashboardRepository
+        // Each tracked write invalidates every view reading that property; only publish real changes.
         if connectors != repository.connectors { connectors = repository.connectors }
         if projects != repository.projects { projects = repository.projects }
         if sessions != repository.sessions { sessions = repository.sessions }
-        isDashboardLoading = repository.isLoading
-        hasLoadedConnectors = repository.hasLoaded
-        hasLoadedSessions = repository.hasLoaded
-        dashboardError = repository.error
-        connectorsError = repository.error
-        sessionsError = repository.error
+        if isDashboardLoading != repository.isLoading { isDashboardLoading = repository.isLoading }
+        if hasLoadedConnectors != repository.hasLoaded { hasLoadedConnectors = repository.hasLoaded }
+        if hasLoadedSessions != repository.hasLoaded { hasLoadedSessions = repository.hasLoaded }
+        if dashboardError != repository.error { dashboardError = repository.error }
+        if connectorsError != repository.error { connectorsError = repository.error }
+        if sessionsError != repository.error { sessionsError = repository.error }
         services.sessionReads.setActive(!isInBackground)
         services.sessionReads.updateConnectivity(repository.isFresh ? services.connectivity.status : .init(availability: .offline))
         services.sessionRepository.applyMetadata(sessions)
@@ -654,6 +662,7 @@ final class AppState: ObservableObject {
         dashboardUpdatesTask?.cancel()
         dashboardUpdatesTask = nil
         try keychain.delete(account: tokenAccount)
+        cachedToken = nil
         authenticationEpoch = UUID(); accountSyncID = UUID()
         accountSyncTask?.cancel(); accountSyncTask = nil; isRetryingServerConnection = false
         restoration.clear(scope: cachedServices?.scope)
@@ -765,7 +774,7 @@ final class AppState: ObservableObject {
         guard
             let serverURL,
             let accountID = me?.userId,
-            let token = try? keychain.readString(account: tokenAccount),
+            let token = accessToken(),
             !token.isEmpty
         else {
             return nil
@@ -828,6 +837,10 @@ final class AppState: ObservableObject {
         // A failed Keychain write must not replace the saved server or invalidate
         // the existing session. Commit in-memory/defaults changes only on success.
         try keychain.saveString(token, account: tokenAccount)
+        cachedToken = token
+        // A re-login with an unchanged profile must still bind the saved profile
+        // to the new credential fingerprint, since `me` will not change.
+        if let me { restoration.save(profile: me, server: serverURL, token: token) }
         authenticationEpoch = UUID(); accountSyncID = UUID()
         accountSyncTask?.cancel(); accountSyncTask = nil; isRetryingServerConnection = false
         restoreConnectionError = nil

@@ -13,9 +13,8 @@ Reading one newest row per session orders by
 sort those rows. This revision replaces that index with the full ordering key,
 which turns the per-session lookup into a single index scan with no sort.
 
-The index uses the ``coalesce(item_time, '')`` expression rather than
-``item_time DESC NULLS LAST`` because SQLite rejects ``NULLS LAST`` in index
-definitions.
+The index uses the ``coalesce(item_time, '')`` expression so that it matches
+the ordering key of the session list query exactly.
 
 Revision ID: v2_35
 Revises: v2_34
@@ -41,12 +40,7 @@ def _index_exists(name: str) -> bool:
     """
 
     bind = op.get_bind()
-    if bind.dialect.name == "sqlite":
-        statement = sa.text(
-            "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = :name"
-        )
-    else:
-        statement = sa.text("SELECT 1 FROM pg_indexes WHERE indexname = :name")
+    statement = sa.text("SELECT 1 FROM pg_indexes WHERE indexname = :name")
     return bind.execute(statement, {"name": name}).first() is not None
 
 

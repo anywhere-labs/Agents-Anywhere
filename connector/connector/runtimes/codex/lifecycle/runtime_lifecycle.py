@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from connector.logging import logger
@@ -17,6 +18,7 @@ class CodexRuntimeLifecycle:
     notifications: CodexNotificationProjector
     started: bool = False
     model_list_result: CodexModelListResult | None = None
+    on_handled: Callable[[CodexNotificationMessage], Awaitable[None]] | None = None
 
     async def start(self) -> None:
         if self.started:
@@ -41,3 +43,5 @@ class CodexRuntimeLifecycle:
 
     async def handle_notification(self, message: CodexNotificationMessage) -> None:
         await self.notifications.handle(message)
+        if self.on_handled is not None:
+            await self.on_handled(message)

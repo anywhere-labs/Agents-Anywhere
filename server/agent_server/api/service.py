@@ -30,8 +30,7 @@ async def service_info(
     endpoint = _public_endpoint(request)
     version = app.version or "0.0.0"
 
-    backend_name = db.backend
-    database_label = "SQLite" if backend_name == "sqlite" else "PostgreSQL"
+    database_label = "PostgreSQL"
     database_path = _database_display_path(db)
 
     return ServiceInfoResponse(
@@ -60,9 +59,7 @@ def _public_endpoint(request: Request) -> str:
 
 def _database_display_path(db: Store) -> str | None:
     url = db.engine.url
-    if db.backend == "sqlite":
-        return url.database or None
-    # For non-sqlite, expose host:port/dbname without credentials.
+    # Expose host:port/dbname without credentials.
     host = url.host or "?"
     port = f":{url.port}" if url.port else ""
     name = url.database or "?"

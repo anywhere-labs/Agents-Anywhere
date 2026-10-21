@@ -79,7 +79,6 @@ import { useAuth } from "@/components/auth/auth-context"
 import { EmailCodeField, DisplayNameField } from "@/components/auth/account-identity-fields"
 import { accountDisplayName, isValidEmail, isValidDisplayName } from "@/features/auth/account-profile"
 import { LoadingState } from "@/components/loading-state"
-import { useWorkspace } from "@/components/workspace-context"
 import { authApi } from "@/features/auth/api"
 import type { AdminUser, UserRole } from "@/features/auth/types"
 import { cn } from "@/lib/utils"
@@ -107,7 +106,6 @@ function initialDraft(): UserDraft {
 }
 
 export function TeamPage() {
-  const { navigate } = useWorkspace()
   const { session, me } = useAuth()
   const t = useTranslations("pages.team")
   const [users, setUsers] = React.useState<AdminUser[]>([])
@@ -231,7 +229,7 @@ export function TeamPage() {
   return (
     <ScrollArea className="@container/page h-full w-full bg-background">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-8 pb-16 pt-14 @min-[68rem]/page:pt-8">
-        <PageHeader title={t("title")} description={t("description")} onBack={() => navigate("home")}>
+        <PageHeader title={t("title")} description={t("description")}>
           <Button size="sm" disabled={!isAdmin} onClick={() => setCreateOpen(true)}>
             <Plus data-icon="inline-start" />
             {t("newUser")}

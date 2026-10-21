@@ -32,6 +32,11 @@ test('published Gateway carries questions, plan review and approvals into the ex
   try {
     await ctx.plugin(Registry).await()
     new HostConnectionService(ctx, [], {})
+    // 0.2.1 Gateway requires the official RemoteAccess policy service.
+    let remoteAccess: string | undefined
+    try { remoteAccess = requireRuntime.resolve('@deepseek-ai/dsh-api-remote-access') }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'MODULE_NOT_FOUND') throw error }
+    if (remoteAccess) await ctx.plugin((await import(pathToFileURL(remoteAccess).href)).default).await()
     await ctx.plugin(Gateway).await()
     // The producer below supplies official Remote dispatches; the separate user-questions
     // suite covers the real Agent/tool/Loader. This test isolates versioned transport.

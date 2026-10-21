@@ -1,5 +1,15 @@
 import type { BridgeStatus } from '../../contracts/bridge-status.js'
+import type { StartupFailureDiagnostic } from '../../contracts/logs.js'
+import { errorDetails } from './diagnostics.js'
 import { record } from './types.js'
+
+/** The raw exception must never cross the management gateway. Keep the same safe
+ * error context used by runtime diagnostics, even when the log directory is unwritable. */
+export function startupFailureDiagnostic(error: unknown, source: StartupFailureDiagnostic['source'],
+  event: string, status: BridgeStatus): StartupFailureDiagnostic {
+  return { time: new Date().toISOString(), source, event, message: status.message,
+    details: JSON.stringify({ code: status.code, ...errorDetails(error) }) }
+}
 
 /** Public guidance never includes raw exceptions, paths or endpoint credentials. */
 export function startupFailure(error: unknown): BridgeStatus {
@@ -7,7 +17,7 @@ export function startupFailure(error: unknown): BridgeStatus {
   const cause = record(value.cause)
   const code = typeof value.code === 'string' ? value.code : typeof cause.code === 'string' ? cause.code : undefined
   const message = error instanceof Error ? error.message : ''
-  if (code === 'EADDRINUSE' || /Another DSH bridge owns|另一个插件实例正在管理/.test(message)) return {
+  if (code === 'MANAGER_LOCK_HELD' || code === 'EADDRINUSE' || /Another DSH bridge owns|另一个插件实例正在管理/.test(message)) return {
     state: 'failed', code: 'BRIDGE_IN_USE', canRetry: true,
     message: '本机连接被占用，无法启动。',
     hint: '请退出其他正在运行的 DSH，再点击“尝试重启”。如果只开了一个 DSH，请检查是否重复启用了插件。',

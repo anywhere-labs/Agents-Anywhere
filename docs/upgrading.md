@@ -2,7 +2,7 @@
 
 ## 先区分三个版本
 
-本次产品版本为 **2.0.3**；当前源码中的数据库 revision 为 **`v2_41`**，schema version 为 **`2.41`**。各端的 PATCH 版本可以不同，数据库 revision 独立编号，不能用来推断兼容性，见[版本号规则](versioning.md)。
+本次产品版本为 **2.1.0**；当前源码中的数据库 revision 为 **`v2_44`**，schema version 为 **`2.44`**。各端的 PATCH 版本可以不同，数据库 revision 独立编号，不能用来推断兼容性，见[版本号规则](versioning.md)。
 
 `main` 现在承载 v2。本文所说的 **v1 / 旧主线** 指主线切换前的实现，源代码提交为 `6c47e419`，不再指当前 `main`。早期 [main-to-v2 文档](migrations/main-to-v2/README.md)保留作历史参考。
 
@@ -20,34 +20,15 @@
    uv run python -m agent_server.infra.db.migrations current --verbose
    ```
 
-   以上命令使用该环境的 `AGENT_SERVER_DB_URL`。当前目标应为 `v2_41`；以后升级时，以待部署源码的 `CURRENT_SCHEMA_REVISION` 为准。
+   以上命令使用该环境的 `AGENT_SERVER_DB_URL`。当前目标应为 `v2_44`；以后升级时，以待部署源码的 `CURRENT_SCHEMA_REVISION` 为准。
 4. 启动同一版本的 Server/Web，检查 `/api/v2/health/ready`，再恢复入口流量和 Connector。验证账号登录、设备连接、会话恢复、消息、审批、文件和终端。
 5. 使用 [2.0.3 下载入口](../README.md#下载与入口)升级客户端。当前安装包没有可用的应用内下载地址，需手动分发。
 
 Compose 的 `migrate-next` 会在新 Server 前执行迁移，但不会停止另一个 Compose 项目、旧容器或外部写入者。部署者需要先停止旧写入进程。不要把代码分支切换当成数据库迁移。
 
-## 从 v1 SQLite 部署迁移
+## 从 v1 部署升级
 
-v2 Server 运行时使用 PostgreSQL。SQLite 仅作为旧数据导入源和隔离测试工具，不是 v2 的生产数据库选项。
-
-1. 盘点旧版数据库、文件存储、账号、Connector 数据目录和 Runtime。旧版 ACP adapters 没有被重新引入当前 providers；依赖它们的机器应先确定迁移方案。
-2. 停止 v1 写入，备份 SQLite、文件数据和部署配置。首次运行 v2 Connector 前备份 `~/.agent-server` 或自己的配置目录。
-3. 先向独立、空的 PostgreSQL 目标演练导入：
-
-   ```bash
-   cd server
-   uv sync
-   uv run python -m agent_server.infra.db.migrations rehearse-v1 \
-     --source-sqlite /backup/agent-server.sqlite3 \
-     --target-url postgresql+asyncpg://agents:password@db/agents_rehearsal \
-     --report migration-report.json
-   ```
-
-   工具只读打开源文件，升级它的副本，导入并核对行数和 SHA-256。保留报告；文件 payload 需要另外复制和验证。正式导入同样需要空目标，并在停止旧写入后的最终备份上执行。
-4. 完成 v2 schema 升级、文件后端配置和 Redis 配置，再一起切换 Server、Web、Connector 与客户端。
-5. 检查旧账号的邮箱登录迁移。[邮箱账号与昵称](migrations/main-to-v2/email-accounts.md)说明旧用户名登录停止支持的边界，不能假定数据库升级后所有账号无需处理即可登录。
-
-旧版客户端不能仅通过补上 `/api/v2` 就获得兼容性：Session、Runtime 和实时恢复契约也发生了变化。
+v1 数据导入只在 2.0.x 提供。仍在 v1 的部署要先检出 2.0.x 的源码，按该版本的本文档完成导入，再升级到 2.1.0。
 
 ## Redis 与备份
 

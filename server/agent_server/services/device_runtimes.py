@@ -18,7 +18,6 @@ from agent_server.core.device_runtime import (
     RuntimeTypeView,
     validate_config,
 )
-from agent_server.core.runtime_identity import generate_runtime_instance_id
 from agent_server.infra.connector_rpc import (
     ConnectorConnection,
     ConnectorOfflineError,
@@ -92,6 +91,17 @@ class DeviceRuntimeNotStartedError(DeviceRuntimeError):
 
     status_code = 409
     code = "runtime_not_started"
+
+
+class DeviceRuntimeStartingError(DeviceRuntimeError):
+    """The instance is still starting (for example synchronizing sessions).
+
+    Re-sending ``runtime.start`` would restart it and lose the progress, so
+    callers get a retryable conflict instead.
+    """
+
+    status_code = 409
+    code = "runtime_starting"
 
 
 NAMED_INSTANCE_REQUIRED_FIELDS_KEY = "requiredForNamedInstance"
@@ -508,6 +518,21 @@ class DeviceRuntimeService:
             )
             if current.status == "running":
                 return current
+            if current.status == "starting" and current.phase is not None:
+                # The connector is mid-start (e.g. syncing sessions); another
+                # runtime.start would restart it and throw that work away.
+                phase = current.phase
+                message = phase.get("message")
+                text = message if isinstance(message, str) and message else "runtime is starting"
+                raise DeviceRuntimeStartingError(
+                    text,
+                    detail={
+                        "code": DeviceRuntimeStartingError.code,
+                        "message": text,
+                        "retryable": True,
+                        "phase": phase,
+                    },
+                )
             started = await self._start_locked(current)
             await self._publish(connector_id, "runtime.ensure_running")
             return started
@@ -585,17 +610,22 @@ class DeviceRuntimeService:
                         await self._timeline_write_buffer.discard_session(session_id)
                     if self._runtime_state_cache is not None:
                         await self._runtime_state_cache.discard(session_id)
-                replacement_id = generate_runtime_instance_id()
                 await self._store.clear_device_runtime_config(
-                    connector_id, runtime_id, cleanup_files=False,
-                    replacement_runtime_id=replacement_id,
+                    connector_id, runtime_id, cleanup_files=False, retire=True,
                 )
             except BaseException:
                 remaining = await self._get_owned(connector_id, runtime_id, user_id=user_id)
                 await self._manager.set_runtime_ingress_enabled(connector_id, runtime_id, remaining.configured)
                 raise
-            await self._manager.set_runtime_ingress_enabled(connector_id, replacement_id, False)
-            runtime = await self._get_owned(connector_id, replacement_id, user_id=user_id)
+            # The row is gone; report its final state so clients drop it.
+            runtime = runtime.model_copy(update={
+                "configured": False,
+                "active": False,
+                "available": False,
+                "status": "stopped",
+                "config": None,
+                "error": None,
+            })
             await self._publish(connector_id, "runtime.config_deleted")
             return runtime
 
@@ -606,6 +636,7 @@ class DeviceRuntimeService:
         status: str,
         *,
         error: dict[str, Any] | None = None,
+        phase: dict[str, Any] | None = None,
         expected_connection_id: str | None = None,
     ) -> DeviceRuntimeView | None:
         if status not in {
@@ -646,6 +677,7 @@ class DeviceRuntimeService:
                         runtime_id,
                         status,
                         error=error,
+                        phase=_phase_payload(phase),
                     )
                 )
             except KeyError as exc:
@@ -787,12 +819,14 @@ class DeviceRuntimeService:
         if status not in {"starting", "running", "error"}:
             status = "running"
         error = result.get("error")
+        phase = result.get("phase")
         return DeviceRuntimeView.model_validate(
             await self._store.set_device_runtime_status(
                 runtime.connectorId,
                 runtime.runtimeId,
                 status,
                 error=error if isinstance(error, dict) else None,
+                phase=_phase_payload(phase if isinstance(phase, dict) else None),
             )
         )
 
@@ -1022,3 +1056,15 @@ def _config_revision(runtime: DeviceRuntimeView) -> int:
         MAX_JAVASCRIPT_SAFE_INTEGER,
         max(1, int(parsed.timestamp() * 1000)),
     )
+
+
+def _phase_payload(phase: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Keep only well-formed phases: a stable code plus a human message."""
+
+    if not isinstance(phase, dict):
+        return None
+    code = phase.get("code")
+    message = phase.get("message")
+    if not isinstance(code, str) or not code or not isinstance(message, str) or not message:
+        return None
+    return dict(phase)

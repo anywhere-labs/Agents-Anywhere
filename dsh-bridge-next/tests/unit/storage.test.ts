@@ -6,7 +6,9 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { acquireManagerLock, readJson, writeJson } from '../../src/host/storage/files.js'
+import { createServer } from 'node:net'
+import type { AddressInfo } from 'node:net'
+import { acquireManagerLock, managerLockRecordPath, readJson, writeJson } from '../../src/host/storage/files.js'
 import { desktopRecordPath, detectDesktop } from '../../src/host/desktop/detect.js'
 
 test('private atomic state and singleton ownership are scoped to the configured data directory', async () => {
@@ -18,10 +20,50 @@ test('private atomic state and singleton ownership are scoped to the configured 
     await writeJson(join(root, 'nested', 'account.json'), { token: 'private-test-token' })
     assert.deepEqual(await readJson(join(root, 'nested', 'account.json')), { token: 'private-test-token' })
     if (process.platform !== 'win32') assert.equal((await stat(join(root, 'nested', 'account.json'))).mode & 0o777, 0o600)
+    const held = await readJson<{ port: number, pid: number, token: string }>(managerLockRecordPath(lock))
+    assert.equal(held?.pid, process.pid)
+    assert.ok(held && held.port > 0 && held.token.length > 0, 'the owner publishes its lease next to the data')
     await release()
+    assert.equal(await readJson(managerLockRecordPath(lock)), null, 'release removes the record it owns')
     const second = await acquireManagerLock(lock)
     await second()
     assert.equal(await readJson(lock), null)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('a dead owner is taken over even when its port is now held by something else', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'aa-dead-lock-'))
+  const lock = join(root, 'manager.lock')
+  // An unrelated listener on the recorded port never answers with the token.
+  const stranger = createServer(socket => socket.end('hello\n'))
+  await new Promise<void>(resolve => stranger.listen(0, '127.0.0.1', resolve))
+  try {
+    const port = (stranger.address() as AddressInfo).port
+    await writeJson(managerLockRecordPath(lock), { version: 1, port, pid: 999_999, token: 'stale-token', startedAt: '2026-01-01T00:00:00.000Z' })
+    const release = await acquireManagerLock(lock)
+    const current = await readJson<{ token: string }>(managerLockRecordPath(lock))
+    assert.notEqual(current?.token, 'stale-token')
+    await release()
+    await writeJson(managerLockRecordPath(lock), { not: 'a record' })
+    const again = await acquireManagerLock(lock)
+    await again()
+  } finally {
+    stranger.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('an owner whose record was replaced reports the loss instead of managing on', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'aa-lost-lock-'))
+  const lock = join(root, 'manager.lock')
+  try {
+    let lost = 0
+    const release = await acquireManagerLock(lock, () => { lost++ }, { watchIntervalMs: 20 })
+    await writeJson(managerLockRecordPath(lock), { version: 1, port: 1, pid: 1, token: 'intruder', startedAt: '2026-01-01T00:00:00.000Z' })
+    for (let i = 0; i < 50 && lost === 0; i++) await new Promise(resolve => setTimeout(resolve, 10))
+    assert.equal(lost, 1)
+    await release()
+    assert.equal((await readJson<{ token: string }>(managerLockRecordPath(lock)))?.token, 'intruder', 'release never deletes a record it no longer owns')
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 

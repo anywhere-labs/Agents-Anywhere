@@ -1,4 +1,4 @@
-import { userInfo } from 'node:os'
+import { homedir, userInfo } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import z from '@deepseek-ai/schemastery'
@@ -36,6 +36,15 @@ export function stateRoot(config: Config): string {
 /** Fixed per-user rendezvous with the Connector; DSH_HOME and stateRoot do not move it. */
 export function bridgeDirectory(): string {
   return join(userInfo().homedir, '.agents-anywhere', 'dsh-bridge')
+}
+
+/**
+ * Where plugins before 2.0.3 published the endpoint. Connectors before 2.0.3 look only here, so
+ * the bridge mirrors its endpoint to this directory; it is resolved exactly as those plugins did.
+ */
+export function legacyBridgeDirectory(config: Config): string | undefined {
+  const home = config.dshHome ?? process.env['DSH_HOME'] ?? join(homedir(), '.dsh')
+  return isAbsolute(home) ? join(home, 'agents-anywhere', 'bridge') : undefined
 }
 
 export function resolveConfig(config: Config): ResolvedConfig {

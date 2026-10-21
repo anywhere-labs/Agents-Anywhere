@@ -1,17 +1,22 @@
 """Pytest fixtures shared across tests.
 
-When AGENT_SERVER_DB_URL points at a real database (e.g. Postgres) the tests
-share state across runs, unlike the per-tmp_path sqlite default. Truncate
-known tables before each test so tests stay isolated.
+The Server test suite runs against a real PostgreSQL database. Point
+``AGENT_SERVER_TEST_DB_URL`` at a throwaway database (its name must contain
+``test``); every table is truncated before each test so tests stay isolated.
+Locally:
+
+    docker compose -f docker/docker-compose.local.yml up -d postgres
+    docker compose -f docker/docker-compose.local.yml exec postgres \
+        psql -U agents_anywhere -c 'CREATE DATABASE agents_anywhere_test'
+    export AGENT_SERVER_TEST_DB_URL=postgresql+asyncpg://agents_anywhere:agents_anywhere_dev_password@127.0.0.1:55432/agents_anywhere_test
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-import pathlib
-import shutil
-import tempfile
+import secrets
+from collections.abc import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,36 +29,47 @@ os.environ.setdefault("AGENT_SERVER_SESSION_RPC_TIMEOUT_SECONDS", "0.2")
 os.environ.setdefault("AGENT_SERVER_PASSWORD_ITERATIONS", "1000")
 # Most tests exercise protocol behavior. The process pool has dedicated tests.
 os.environ.setdefault("AGENT_SERVER_EVENT_WORKERS", "0")
+# Tests run one app from many short-lived event loops; see engine.build_engine.
+os.environ.setdefault("AGENT_SERVER_DB_NULL_POOL", "1")
 
-_TEMPLATE_DB: pathlib.Path | None = None
+_TEST_DB_ENV = "AGENT_SERVER_TEST_DB_URL"
+_PG_PREFIX = "postgresql"
 
 
-def migrated_template_db() -> pathlib.Path:
-    """One migrated database per session.
+def _test_database_url() -> str:
+    url = os.environ.get(_TEST_DB_ENV, "").strip()
+    if not url:
+        raise pytest.UsageError(
+            f"{_TEST_DB_ENV} is not set. The Server tests need a throwaway "
+            "PostgreSQL database; see tests/conftest.py for the local setup."
+        )
+    if not url.startswith(_PG_PREFIX):
+        raise pytest.UsageError(f"{_TEST_DB_ENV} must be a postgresql+asyncpg URL")
+    database = url.rsplit("/", 1)[-1].split("?", 1)[0]
+    if "test" not in database:
+        # The suite truncates every table; never let it near a real database.
+        raise pytest.UsageError(
+            f"{_TEST_DB_ENV} must name a database containing 'test', got {database!r}"
+        )
+    return url
 
-    Building the schema costs ~0.15s per test and the suite creates one database
-    per test, so the schema is migrated once and copied afterwards (~0.01s).
+
+TEST_DATABASE_URL = _test_database_url()
+# Application code resolves the database through AGENT_SERVER_DB_URL.
+os.environ["AGENT_SERVER_DB_URL"] = TEST_DATABASE_URL
+
+
+def make_test_client() -> TestClient:
+    """Return an API client on the shared test database.
+
+    The autouse fixture migrates and truncates the database before every test;
+    scripts that reuse this helper call ``reset_shared_database()`` themselves.
     """
-    global _TEMPLATE_DB
-    if _TEMPLATE_DB is None:
-        from agent_server.app import create_app
-
-        directory = pathlib.Path(tempfile.mkdtemp(prefix="agent-server-template-"))
-        path = directory / "template.sqlite3"
-        create_app(path)
-        _TEMPLATE_DB = path
-    return _TEMPLATE_DB
-
-
-def make_test_client(destination: pathlib.Path) -> TestClient:
-    """Return a client backed by a private copy of the migrated template."""
     from agent_server.app import create_app
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(migrated_template_db(), destination)
-    return ApiV2TestClient(create_app(destination))
+    return ApiV2TestClient(create_app())
 
-_PG_PREFIX = "postgresql"
+
 _API_PREFIX = "/api/v2"
 _API_ROOTS = (
     "/.well-known",
@@ -70,15 +86,11 @@ _API_ROOTS = (
     "/sessions",
     "/ws-ticket",
 )
-_TRUNCATE_SQL = (
-    "TRUNCATE TABLE email_verification_codes, email_verification_limits, dashboard_daily_metrics, dashboard_user_daily_facts, dashboard_settings, "
-    "session_shares, timeline_items, session_active_runs, "
-    "sessions, projects, "
-    "connector_runtime_catalogs, connector_protocol_capabilities, device_runtimes, "
-    "connector_runtime_types, "
-    "pairing_codes, connectors, users, instance_settings "
-    "RESTART IDENTITY CASCADE"
-)
+def _truncate_sql() -> str:
+    from agent_server.infra.db.schema import metadata
+
+    tables = ", ".join(sorted(table.name for table in metadata.sorted_tables))
+    return f"TRUNCATE TABLE {tables} RESTART IDENTITY CASCADE"
 
 
 def _asyncpg_url(url: str) -> str:
@@ -113,18 +125,64 @@ async def _truncate(url: str) -> None:
     conn = await asyncpg.connect(url)
     try:
         try:
-            await conn.execute(_TRUNCATE_SQL)
+            await conn.execute(_truncate_sql())
         except asyncpg.UndefinedTableError:
             # Tables may not exist yet on the very first run; create_app()
-            # will create them and subsequent invocations will succeed.
+            # migrates the database and subsequent invocations will succeed.
             pass
     finally:
         await conn.close()
 
 
-@pytest.fixture(autouse=True)
-def _isolate_external_database() -> None:
-    url = os.environ.get("AGENT_SERVER_DB_URL")
-    if not url or not url.startswith(_PG_PREFIX):
+_SCHEMA_READY = False
+
+
+def _ensure_migrated() -> None:
+    """Migrate the shared test database once per session."""
+    global _SCHEMA_READY
+    if _SCHEMA_READY:
         return
-    asyncio.run(_truncate(_asyncpg_url(url)))
+    from agent_server.infra.db.migrations import upgrade_database
+
+    upgrade_database(db_url=TEST_DATABASE_URL)
+    _SCHEMA_READY = True
+
+
+def reset_shared_database() -> None:
+    """Migrate the shared test database once, then empty every table."""
+    _ensure_migrated()
+    asyncio.run(_truncate(_asyncpg_url(TEST_DATABASE_URL)))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_shared_database() -> None:
+    reset_shared_database()
+
+
+async def _run_maintenance(url: str, sql: str) -> None:
+    import asyncpg
+
+    conn = await asyncpg.connect(url)
+    try:
+        await conn.execute(sql)
+    finally:
+        await conn.close()
+
+
+@pytest.fixture
+def fresh_database_url() -> Iterator[str]:
+    """A brand-new, empty PostgreSQL database for tests that drive migrations.
+
+    The database is created next to the shared test database and dropped
+    afterwards. The URL uses the same credentials and the asyncpg driver.
+    """
+    base, _, _ = TEST_DATABASE_URL.rpartition("/")
+    name = f"aa_test_{secrets.token_hex(6)}"
+    maintenance = _asyncpg_url(TEST_DATABASE_URL)
+    asyncio.run(_run_maintenance(maintenance, f'CREATE DATABASE "{name}"'))
+    try:
+        yield f"{base}/{name}"
+    finally:
+        asyncio.run(
+            _run_maintenance(maintenance, f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        )

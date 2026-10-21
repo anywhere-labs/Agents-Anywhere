@@ -419,11 +419,10 @@ def test_oauth_binding_conflict_rolls_back_new_account(tmp_path):
     assert asyncio.run(store.user_for_email("second@example.test")) is None
 
 
-def test_schema_upgrade_preserves_old_identifiers_without_backfill(tmp_path):
-    path = tmp_path / "old.sqlite3"
-    url = f"sqlite+aiosqlite:///{path}"
+def test_schema_upgrade_preserves_old_identifiers_without_backfill(fresh_database_url):
+    url = fresh_database_url
     upgrade_database(db_url=url, revision="v2_24")
-    engine = create_engine(f"sqlite:///{path}")
+    engine = create_engine(url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1))
     with engine.begin() as conn:
         conn.execute(
             text(

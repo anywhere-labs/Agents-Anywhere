@@ -6,17 +6,22 @@ import asyncio
 import base64
 import datetime as dt
 import hashlib
+import time
 from urllib.parse import parse_qs, urlparse
 
-from agent_server.app import create_app
-from agent_server.core.auth import hash_password
+import pytest
+from agent_server.core.auth import (
+    create_signed_token,
+    hash_password,
+)
 from agent_server.core.setup_token import SetupToken
 from agent_server.services.oauth import OAuthIdentity, create_pending_token
-from conftest import ApiV2TestClient as TestClient, make_test_client
+from conftest import ApiV2TestClient as TestClient
+from conftest import make_test_client
 
 
 def make_client(tmp_path) -> TestClient:
-    return make_test_client(tmp_path / "test.sqlite3")
+    return make_test_client()
 
 
 # ---------- helpers ----------------------------------------------------------
@@ -959,7 +964,7 @@ def test_fs_preview_token_is_consumed_once(tmp_path):
 # ---------- mobile QR login --------------------------------------------------
 
 
-def test_mobile_login_qr_requires_phone_request_and_web_confirm(tmp_path):
+def test_mobile_login_qr_requires_phone_request_and_web_confirm(tmp_path, monkeypatch):
     client = make_client(tmp_path)
     token = admin_token(client)
     qr = client.post("/auth/mobile-login/qr", headers=bearer(token))
@@ -1023,6 +1028,82 @@ def test_mobile_login_qr_requires_phone_request_and_web_confirm(tmp_path):
         json={"userId": user_id(client, "user1"), "loginToken": qr_body["loginToken"]},
     )
     assert replay.status_code == 401
+
+    issued_at = time.time()
+    with monkeypatch.context() as clock:
+        clock.setattr(time, "time", lambda: issued_at + 8 * 24 * 60 * 60)
+        assert client.get("/auth/me", headers=bearer(body["auth"]["accessToken"])).status_code == 401
+        refreshed = client.post(
+            "/auth/mobile-login/refresh", json={"refreshToken": body["refreshToken"]},
+        )
+        assert refreshed.status_code == 200, refreshed.text
+        auth = refreshed.json()
+        assert auth["userId"] == body["auth"]["userId"]
+        assert auth["accessToken"] != body["auth"]["accessToken"]
+        assert client.get("/auth/me", headers=bearer(auth["accessToken"])).status_code == 200
+        assert client.get("/sessions", headers=bearer(auth["accessToken"])).status_code == 200
+        assert "refreshToken" not in auth
+
+    with monkeypatch.context() as clock:
+        clock.setattr(time, "time", lambda: issued_at + 31 * 24 * 60 * 60)
+        expired = client.post(
+            "/auth/mobile-login/refresh", json={"refreshToken": body["refreshToken"]},
+        )
+        assert expired.status_code == 401
+
+
+@pytest.mark.parametrize(
+    ("kind", "claims", "expires_in"),
+    [
+        ("mobile_login", {"sub": "user", "aud": "agents-anywhere-mobile"}, 60),
+        ("mobile_refresh", {"sub": "user", "aud": "other-client"}, 60),
+        ("mobile_refresh", {"aud": "agents-anywhere-mobile"}, 60),
+        ("mobile_refresh", {"sub": 123, "aud": "agents-anywhere-mobile"}, 60),
+        ("mobile_refresh", {"sub": "user", "aud": "agents-anywhere-mobile"}, -1),
+    ],
+)
+def test_mobile_login_refresh_rejects_invalid_claims(tmp_path, kind, claims, expires_in):
+    client = make_client(tmp_path)
+    admin_token(client)
+    if claims.get("sub") == "user":
+        claims = {**claims, "sub": user_id(client, "user1")}
+    token = create_signed_token(kind, claims, expires_in)
+    response = client.post("/auth/mobile-login/refresh", json={"refreshToken": token})
+    assert response.status_code == 401
+    assert response.json()["detail"] == "invalid or expired mobile refresh token"
+
+
+@pytest.mark.parametrize("token", ["", "not.a.valid.token"])
+def test_mobile_login_refresh_rejects_invalid_signature(tmp_path, token):
+    client = make_client(tmp_path)
+    assert client.post("/auth/mobile-login/refresh", json={"refreshToken": token}).status_code == 401
+
+
+def test_mobile_login_refresh_rejects_missing_user(tmp_path):
+    client = make_client(tmp_path)
+    token = create_signed_token(
+        "mobile_refresh", {"sub": "deleted-user", "aud": "agents-anywhere-mobile"}, 60,
+    )
+    response = client.post("/auth/mobile-login/refresh", json={"refreshToken": token})
+    assert response.status_code == 401
+    assert response.json()["detail"] == "user no longer exists"
+
+
+def test_mobile_login_refresh_rejects_disabled_user(tmp_path):
+    client = make_client(tmp_path)
+    admin = admin_token(client)
+    created = client.post(
+        "/admin/users", headers=bearer(admin),
+        json={"email": "mobile@example.test", "displayName": "Mobile", "password": "secret", "role": "member"},
+    )
+    subject = created.json()["userId"]
+    token = create_signed_token(
+        "mobile_refresh", {"sub": subject, "aud": "agents-anywhere-mobile"}, 60,
+    )
+    client.patch(f"/admin/users/{subject}", headers=bearer(admin), json={"disabled": True})
+    response = client.post("/auth/mobile-login/refresh", json={"refreshToken": token})
+    assert response.status_code == 403
+    assert response.json()["detail"] == "account disabled"
 
 
 def test_mobile_login_reject_flow_blocks_exchange(tmp_path):

@@ -4,12 +4,6 @@
 
 更新时间：2026-09-06
 
-后续运行数量规则（2026-09-28）：`instancePolicy` / `maxInstances` 仅限制同时启动的
-runtime 数量，不限制保存的配置数量。Web 与 `desktop-workbench/renderer` 的添加入口
-已同步取消配置数量筛选；Connector 在启动锁内检查运行数量，Server 将超限返回为
-HTTP 409。停止后保留配置并释放名额，手动删除后的新 ID 也不会被旧停止记录阻挡。
-协议字段和数据库结构不变，下文的早期单实例基线按此规则理解。
-
 当前 Desktop 状态：本文记录的 Web 配对、剪贴板、项目选择与创建、项目侧栏、
 设置页和工具侧栏修复已同步到 `desktop-workbench/renderer`。Desktop 原生
 标题栏、导航与 Connector 控制保留；终端改用与 Web 一致的查询和回收规则，

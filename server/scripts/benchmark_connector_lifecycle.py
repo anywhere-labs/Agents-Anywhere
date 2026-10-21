@@ -1,8 +1,11 @@
 """Headless measurements of unchanged scans and a deleted-connector backlog.
 
-Uses a private SQLite database, or an explicitly supplied empty local PostgreSQL
-test database, and production service/pump code. Does not start app listeners or
-contact native runtimes. PostgreSQL replay retains the production connection pool.
+Replays against the disposable PostgreSQL test database named by
+``AGENT_SERVER_TEST_DB_URL`` (emptied first, NullPool like the test suite), or
+copies the synthetic seed into an explicitly supplied empty local PostgreSQL
+database to measure with the production connection pool and capture plans. Uses
+production service/pump code; does not start app listeners or contact native
+runtimes.
 """
 
 from __future__ import annotations
@@ -22,9 +25,19 @@ from urllib.parse import urlsplit
 
 REPO = Path(__file__).resolve().parents[2]
 for key in tuple(os.environ):
-    if key.startswith(("AGENT_SERVER_", "AGENT_CONNECTOR_")):
+    if (
+        key.startswith(("AGENT_SERVER_", "AGENT_CONNECTOR_"))
+        and key != "AGENT_SERVER_TEST_DB_URL"
+    ):
         os.environ.pop(key)
+# Keep attachment scratch out of the working directory.
+os.environ["AGENT_SERVER_FILES_LOCAL_ROOT"] = tempfile.mkdtemp(prefix="aa-lifecycle-")
 sys.path[:0] = [str(REPO / "server"), str(REPO / "server/tests")]
+
+from conftest import make_test_client, reset_shared_database
+from loguru import logger
+from sqlalchemy import event, insert, select, text, update
+from test_backend_mvp import create_connector_and_session
 
 from agent_server.api.connector_ingress import _ConnectorNotificationPump
 from agent_server.api.connectors import delete_connector
@@ -38,9 +51,6 @@ from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.effective_capabilities import (
     publish_connector_session_capabilities,
 )
-from loguru import logger
-from sqlalchemy import event, insert, select, text, update
-from test_backend_mvp import create_connector_and_session, make_client
 
 logger.remove()
 
@@ -142,7 +152,7 @@ async def postgres_plans(store, rows, connector_id, runtime_id, scan):
     return {"session_rows": 10_000, "plans": plans}
 
 
-async def audit(app, connector_id, session_id, *, postgres=False):
+async def audit(app, connector_id, session_id, *, pooled=False):
     state, count = app.state, 200
     store = state.store
     async with store.engine.begin() as conn:
@@ -260,7 +270,16 @@ async def audit(app, connector_id, session_id, *, postgres=False):
             ]
 
     results = {
-        "scope": f"local {'PostgreSQL' if postgres else 'SQLite'}, real services, synthetic 200 unchanged imported sessions; no app listeners",
+        "scope": (
+            "local PostgreSQL ("
+            + (
+                "production pool, empty database"
+                if pooled
+                else "NullPool, shared test database"
+            )
+            + "), real services, synthetic 200 unchanged imported sessions; "
+            "no app listeners"
+        ),
         "scan_sessions": count,
         "samples": {},
     }
@@ -326,7 +345,7 @@ async def audit(app, connector_id, session_id, *, postgres=False):
     )
     results["capability_batch"]["calls"] = dict(capability_counts)
 
-    if postgres:
+    if pooled:
         results["postgres_plans"] = await postgres_plans(
             store, rows, connector_id, runtime_id, scan
         )
@@ -442,9 +461,12 @@ async def audit(app, connector_id, session_id, *, postgres=False):
     return results
 
 
-async def prepare_postgres(source_store, url):
+async def prepare_replay_app(source_store, url):
     """Copy only the synthetic seed into a verified empty disposable database."""
     os.environ["AGENT_SERVER_DB_URL"] = url
+    # conftest asked for NullPool on the shared test database; the pooled
+    # replay keeps the production pool.
+    os.environ.pop("AGENT_SERVER_DB_NULL_POOL", None)
     app = create_app(migrate_database=False)
     store = app.state.store
     copied_tables = {
@@ -478,11 +500,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path)
     parser.add_argument(
-        "--postgres-url", help="Empty local test database named aa_session_* only"
+        "--replay-db-url",
+        help=(
+            "Empty loopback database named aa_session_*; replays with the "
+            "production pool and captures plans"
+        ),
     )
     args = parser.parse_args()
-    if args.postgres_url:
-        parsed = urlsplit(args.postgres_url)
+    if args.replay_db_url:
+        parsed = urlsplit(args.replay_db_url)
         if (
             parsed.scheme != "postgresql+asyncpg"
             or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
@@ -491,21 +517,21 @@ def main():
             or parsed.fragment
         ):
             parser.error(
-                "--postgres-url must be a loopback postgresql+asyncpg URL with database aa_session_*"
+                "--replay-db-url must be a loopback postgresql+asyncpg URL with database aa_session_*"
             )
-    with tempfile.TemporaryDirectory(prefix="aa-source-queue-audit-") as directory:
-        client = make_client(Path(directory))
-        connector_id, _, session_id, _ = create_connector_and_session(client)
-        if args.postgres_url:
-            upgrade_database(db_url=args.postgres_url)
+    reset_shared_database()
+    client = make_test_client()
+    connector_id, _, session_id, _ = create_connector_and_session(client)
+    if args.replay_db_url:
+        upgrade_database(db_url=args.replay_db_url)
 
-            async def run_postgres():
-                app = await prepare_postgres(client.app.state.store, args.postgres_url)
-                return await audit(app, connector_id, session_id, postgres=True)
+        async def run_pooled():
+            app = await prepare_replay_app(client.app.state.store, args.replay_db_url)
+            return await audit(app, connector_id, session_id, pooled=True)
 
-            result = asyncio.run(run_postgres())
-        else:
-            result = asyncio.run(audit(client.app, connector_id, session_id))
+        result = asyncio.run(run_pooled())
+    else:
+        result = asyncio.run(audit(client.app, connector_id, session_id))
     if args.output is not None:
         args.output.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))

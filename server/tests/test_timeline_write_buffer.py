@@ -14,7 +14,6 @@ from sqlalchemy import event, select, update
 from agent_server.core.models import TimelineItemIn
 from agent_server.core.protocol import PROTOCOL_MAX_REVISION
 from agent_server.infra.db import sessions as sessions_t
-from agent_server.infra.db.migrations import upgrade_database
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
@@ -55,9 +54,7 @@ def timeline_input(
 
 
 async def create_buffer(tmp_path, *, presence=None, **buffer_kwargs):
-    db_path = tmp_path / "timeline-buffer.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(store, connector_id=connector.id)
     coordinator = RedisCoordinator()
@@ -384,9 +381,7 @@ async def test_successful_live_publish_is_not_repeated_on_flush(
 async def test_failed_live_publish_is_repaired_before_next_revision(
     tmp_path,
 ) -> None:
-    db_path = tmp_path / "timeline-buffer-publish-repair.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
@@ -466,9 +461,7 @@ async def test_failed_live_publish_is_repaired_before_next_revision(
 async def test_distributed_read_barrier_flushes_another_instance_pending(
     tmp_path,
 ) -> None:
-    db_path = tmp_path / "timeline-buffer-distributed.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
@@ -514,9 +507,7 @@ async def test_distributed_read_barrier_flushes_another_instance_pending(
 async def test_redis_revision_lease_avoids_per_upsert_database_allocation(
     tmp_path,
 ) -> None:
-    db_path = tmp_path / "timeline-buffer-lease-reuse.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
@@ -564,9 +555,7 @@ async def test_redis_revision_lease_avoids_per_upsert_database_allocation(
 
 @pytest.mark.anyio
 async def test_redis_revision_lease_is_shared_by_server_instances(tmp_path) -> None:
-    db_path = tmp_path / "timeline-buffer-shared-lease.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
@@ -607,9 +596,7 @@ async def test_redis_revision_lease_is_shared_by_server_instances(tmp_path) -> N
 async def test_unchanged_session_inventory_uses_one_batch_without_publication(
     tmp_path,
 ) -> None:
-    db_path = tmp_path / "timeline-buffer-inventory-batch.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     await ensure_user(store)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session_ids = [f"sess_inventory_{index}" for index in range(6)]
@@ -743,9 +730,7 @@ async def test_unchanged_session_inventory_uses_one_batch_without_publication(
 async def test_unchanged_session_inventory_chunks_maximum_payload_bind_count(
     tmp_path,
 ) -> None:
-    db_path = tmp_path / "timeline-buffer-inventory-max-payload.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     await ensure_user(store)
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     sample_indexes = (0, 3_999, 4_000, 7_999, 8_000, 9_999)
@@ -844,9 +829,7 @@ async def test_unchanged_session_inventory_chunks_maximum_payload_bind_count(
 async def test_distributed_dedupe_refreshes_another_instance_pending_item(
     tmp_path,
 ) -> None:
-    db_path = tmp_path / "timeline-buffer-distributed-dedupe.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
@@ -913,9 +896,7 @@ async def test_distributed_dedupe_refreshes_another_instance_pending_item(
 
 @pytest.mark.anyio
 async def test_distributed_accept_uses_redis_head_until_flush(tmp_path) -> None:
-    db_path = tmp_path / "timeline-buffer-redis-head.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
@@ -970,9 +951,7 @@ async def test_distributed_accept_uses_redis_head_until_flush(tmp_path) -> None:
 async def test_redis_loss_abandons_lease_without_reusing_live_sequence(
     tmp_path,
 ) -> None:
-    db_path = tmp_path / "timeline-buffer-redis-restart.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
@@ -1030,9 +1009,7 @@ async def test_redis_loss_abandons_lease_without_reusing_live_sequence(
 
 @pytest.mark.anyio
 async def test_redis_loss_then_durable_writer_skips_the_lost_lease(tmp_path) -> None:
-    db_path = tmp_path / "timeline-buffer-redis-loss-durable.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
@@ -1091,9 +1068,7 @@ async def test_redis_loss_then_durable_writer_skips_the_lost_lease(tmp_path) -> 
 
 @pytest.mark.anyio
 async def test_durable_writer_floors_redis_head_inside_session_fence(tmp_path) -> None:
-    db_path = tmp_path / "timeline-buffer-durable-floor.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
@@ -1141,16 +1116,18 @@ async def test_durable_writer_floors_redis_head_inside_session_fence(tmp_path) -
 async def test_stale_durable_writer_is_ordered_before_replacement_lease(
     tmp_path,
 ) -> None:
-    """Model PostgreSQL's row-lock wait because SQLite ignores FOR UPDATE."""
+    """Order the replacement lease behind the stale writer's commit.
 
-    db_path = tmp_path / "timeline-buffer-stale-durable-writer.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    first_store = Store(db_path)
+    The paused store hooks make the interleaving deterministic; in production
+    the ``sessions`` row lock provides the same ordering.
+    """
+
+    first_store = Store()
     connector, _, _ = await first_store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(
         first_store, connector_id=connector.id
     )
-    second_store = Store(db_path)
+    second_store = Store()
     fake_server = FakeServer()
     first_redis = FakeAsyncRedis(server=fake_server, decode_responses=True)
     second_redis = FakeAsyncRedis(server=fake_server, decode_responses=True)
@@ -1281,14 +1258,12 @@ async def test_stale_durable_writer_is_ordered_before_replacement_lease(
 
 @pytest.mark.anyio
 async def test_stale_snapshot_cleanup_cannot_delete_new_owner_flags(tmp_path) -> None:
-    db_path = tmp_path / "timeline-buffer-stale-cleanup.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    first_store = Store(db_path)
+    first_store = Store()
     connector, _, _ = await first_store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(
         first_store, connector_id=connector.id
     )
-    second_store = Store(db_path)
+    second_store = Store()
     fake_server = FakeServer()
     first_redis = FakeAsyncRedis(server=fake_server, decode_responses=True)
     second_redis = FakeAsyncRedis(server=fake_server, decode_responses=True)
@@ -1368,9 +1343,7 @@ async def test_durable_writer_rejects_revision_past_protocol_limit(tmp_path) -> 
 
 @pytest.mark.anyio
 async def test_distributed_accept_holds_fence_through_live_publish(tmp_path) -> None:
-    db_path = tmp_path / "timeline-buffer-publish-order.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
@@ -1445,9 +1418,7 @@ async def test_redis_epoch_change_abandons_a_stale_restored_head(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db_path = tmp_path / "timeline-buffer-stale-aof.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
@@ -1514,9 +1485,7 @@ async def test_redis_epoch_change_during_allocation_fails_before_publish(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db_path = tmp_path / "timeline-buffer-epoch-allocation-race.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
@@ -1612,9 +1581,7 @@ async def test_redis_epoch_change_invalidates_stale_lane_dedupe(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db_path = tmp_path / "timeline-buffer-stale-lane.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
@@ -1659,9 +1626,7 @@ async def test_redis_epoch_change_invalidates_stale_lane_dedupe(
 
 @pytest.mark.anyio
 async def test_alias_upsert_fences_the_canonical_session(tmp_path) -> None:
-    db_path = tmp_path / "timeline-buffer-canonical-fence.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)
@@ -1714,9 +1679,7 @@ async def test_alias_upsert_fences_the_canonical_session(tmp_path) -> None:
 async def test_low_frequency_writer_publishes_before_next_timeline_revision(
     tmp_path,
 ) -> None:
-    db_path = tmp_path / "timeline-buffer-durable-publish.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     connector, _, _ = await store.create_connector(name="dev", user_id="user_1")
     session = await create_session_with_project(store, connector_id=connector.id)
     redis = FakeAsyncRedis(decode_responses=True)

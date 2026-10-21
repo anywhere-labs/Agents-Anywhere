@@ -1,18 +1,18 @@
 import Foundation
 
-struct V2SessionCatalogs: Hashable {
+nonisolated struct V2SessionCatalogs: Hashable {
     let model: V2ModelCatalog
     let permission: V2PermissionCatalog
 }
 
-struct V2SessionLiveState: Hashable {
+nonisolated struct V2SessionLiveState: Hashable {
     let state: V2RuntimeState
     let capabilities: V2RuntimeCapabilitySnapshot
     let notices: [V2RuntimeNotice]
 }
 
 /// Cached content is readable while disconnected; live controls require fresh runtime facts.
-enum V2SessionConnectionState: Hashable {
+nonisolated enum V2SessionConnectionState: Hashable {
     case inactive
     case connecting
     case connected
@@ -21,7 +21,7 @@ enum V2SessionConnectionState: Hashable {
     case failed(String)
 }
 
-struct V2SessionData: Hashable {
+nonisolated struct V2SessionData: Hashable {
     var session: V2SessionMeta
     var items: [V2TimelineItem]
     var hasOlderItems: Bool
@@ -44,7 +44,7 @@ struct V2SessionData: Hashable {
     }
 }
 
-struct V2SessionObservation: Hashable {
+nonisolated struct V2SessionObservation: Hashable {
     let sessionId: V2SessionID
     let data: V2SessionData?
     let connection: V2SessionConnectionState

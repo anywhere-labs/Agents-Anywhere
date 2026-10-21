@@ -21,11 +21,13 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def test_catalog_exposes_only_compact_without_ipc():
+def test_catalog_exposes_compact_and_kill_chatgpt_without_ipc():
     async def check():
         runtime, client, _ = await runtime_fixture()
         catalog = {c.id: c for c in await runtime.list_commands("sess_1", "thread_1")}
-        assert set(catalog) == {"compact"}
+        # kill-chatgpt does not need IPC: it frees threads for the native path.
+        assert set(catalog) == {"compact", "kill-chatgpt"}
+        assert "open-in-codex-app" not in catalog
         assert all(c.enabled for c in catalog.values())
         assert catalog["compact"].metadata["ui"] == {
             "kind": "execute",

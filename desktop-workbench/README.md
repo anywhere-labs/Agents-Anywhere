@@ -3,7 +3,7 @@
 Agents Anywhere Desktop combines the web workbench and a locally managed
 Connector in one Electron application.
 
-The Connector, its logs, the Desktop settings and the local binding live in an
+The Connector supervisor, Desktop startup logs, settings and local binding live in an
 independent backend process (`child_process.fork` with `ELECTRON_RUN_AS_NODE`).
 It never touches the window, so a blocked or crashed backend cannot freeze the
 user interface. The backend serves a loopback HTTP + SSE API; Electron Main
@@ -287,6 +287,9 @@ ownership. Every accepted start, including CLI and reconnection, appends a missi
 ID once. Desktop writes installation metadata under the same short file transaction
 as Python, preserving IDs, runtime ownership and unknown fields. Hosts read legacy
 records without migrating them; Python performs the migration on a successful write.
+When the OS refuses the transaction's loopback port and nobody listens on it (for
+example a Windows excluded port range), both writers log a warning and write
+without the lease instead of failing startup; see the shared record contract.
 
 Desktop and the DSH plugin match local IDs against the signed-in user's server
 device list. First-login provisioning and pairing after a deleted device reuse the
@@ -333,6 +336,17 @@ Desktop displays a retryable conflict and stops automatic restart attempts. The 
 channel remains usable, and retry asks Python again. `connector.stop` stops the
 backend connection; ownership remains while that Python process is alive. Explicit
 Quit terminates it. The next start can replace records left by a crashed process.
+
+Until the first probe answers, ownership is `checking`, which the renderer shows
+as progress rather than as a failure. Any other failure opens a blocking dialog
+that quotes the underlying error and offers to copy it or open the logs folder.
+When the RPC process exits or times out before answering, the error includes its
+last stderr lines, where uv and Python explain a failed launch; stderr is logged
+in whole lines. Every failed acquisition, including a retry, is logged. If the
+backend stops before the Connector is owned, the dialog quotes the backend's exit
+code, last reported error and output. The backend owns the log, so Main appends
+to it directly whenever no ready backend is running. A launch whose backend never
+becomes ready shows a native error box with the log directory before quitting.
 
 - Successful Desktop login reuses a matching local device or provisions a
   `connectorKind: "desktop"` device with the user-authenticated Connector API.
@@ -417,3 +431,11 @@ dependencies for universal packaging.
 
 For an offline packaging retry, set `WORKBENCH_ELECTRON_DIST` to a directory
 containing the matching Electron ZIPs for both macOS architectures.
+
+Runtime logs are persisted by Connector under `~/.agents-anywhere/logs/` as rotating
+JSONL segments. Desktop reads, follows, clears and exports them through the local
+`aa.local.v2.Logs` service; receiving a runtime log never writes another Desktop
+copy. Log storage settings apply to Desktop startup diagnostics only. When no
+Connector channel is available, the log view and export use those local startup
+diagnostics. Runtime retention and RPC semantics are documented in
+[the log contract](../contracts/dsh-bridge/2.0/logs.md).

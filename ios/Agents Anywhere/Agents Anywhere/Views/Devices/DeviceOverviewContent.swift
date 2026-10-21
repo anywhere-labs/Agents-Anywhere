@@ -296,9 +296,7 @@ struct DeviceSessionList: View {
         return (session.cwd ?? project?.workspacePath).map(ProjectWorkspacePath.name)
     }
     private func activityDate(_ session: V2SessionMeta) -> Date? {
-        guard let raw = session.sortAt ?? session.lastActivityAt ?? session.lastItemAt else { return nil }
-        return (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(raw)) ??
-            (try? Date.ISO8601FormatStyle().parse(raw))
+        V2Timestamp.date(session.sortAt ?? session.lastActivityAt ?? session.lastItemAt)
     }
 }
 

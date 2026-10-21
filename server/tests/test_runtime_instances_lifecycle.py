@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
+
 from agent_server.app import create_app
 from agent_server.infra.db import device_runtimes
 from agent_server.services.device_runtimes import (
+    DeviceRuntimeStartingError,
     DeviceRuntimeService,
 )
 from conftest import ApiV2TestClient as TestClient
@@ -103,7 +106,7 @@ def _make_client(
     tmp_path: Any,
     discovery: dict[str, Any],
 ) -> tuple[TestClient, FakeRuntimeRpc, str, dict[str, str]]:
-    app = create_app(tmp_path / "runtime-instances.sqlite3")
+    app = create_app()
     client = TestClient(app)
     headers = _auth_headers(client)
     created = client.post("/connectors", headers=headers, json={"name": "dev"})
@@ -537,7 +540,7 @@ def test_v2_named_instance_enforces_discovered_required_fields(
     assert rpc.requests == []
 
 
-def test_v2_codex_single_runtime_policy_allows_multiple_saved_configs_with_optional_home(
+def test_v2_codex_named_instance_allows_optional_home_and_enforces_single_policy(
     tmp_path: Any,
 ) -> None:
     discovery = _v2_discovery(instance_policy="single", max_instances=1)
@@ -579,12 +582,12 @@ def test_v2_codex_single_runtime_policy_allows_multiple_saved_configs_with_optio
             "active": False,
         },
     )
-    assert second.status_code == 201, second.text
-    assert second.json()["runtimeId"] != created.json()["runtimeId"]
-    assert second.json()["config"] == {}
+    assert second.status_code == 409, second.text
+    assert second.json()["detail"]["code"] == "runtime_conflict"
+    assert second.json()["detail"]["message"] == "runtime instance limit reached"
 
 
-def test_v2_create_does_not_apply_running_instance_limit_to_saved_configs(tmp_path: Any) -> None:
+def test_v2_create_enforces_runtime_type_instance_limit(tmp_path: Any) -> None:
     client, _, connector_id, headers = _make_client(
         tmp_path,
         _v2_discovery(max_instances=2),
@@ -604,7 +607,7 @@ def test_v2_create_does_not_apply_running_instance_limit_to_saved_configs(tmp_pa
         )
         assert response.status_code == 201, response.text
 
-    third = client.post(
+    rejected = client.post(
         f"/connectors/{connector_id}/runtimes",
         headers=headers,
         json={
@@ -614,9 +617,11 @@ def test_v2_create_does_not_apply_running_instance_limit_to_saved_configs(tmp_pa
             "active": False,
         },
     )
-    assert third.status_code == 201, third.text
-    assert third.json()["configured"] is True
-    assert third.json()["active"] is False
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()["detail"] == {
+        "code": "runtime_conflict",
+        "message": "runtime instance limit reached",
+    }
 
 
 def test_v2_lifecycle_sends_instance_identity_and_manual_delete_retires_it(
@@ -675,35 +680,25 @@ def test_v2_lifecycle_sends_instance_identity_and_manual_delete_retires_it(
         )
     ]
     cleared_runtime = cleared.json()
-    replacement_id = cleared_runtime["runtimeId"]
-    assert replacement_id != runtime_id
-    assert replacement_id.startswith("rti_")
+    assert cleared_runtime["runtimeId"] == runtime_id
     assert cleared_runtime["name"] == "Renamed Codex"
     assert cleared_runtime["configured"] is False
     assert cleared_runtime["config"] is None
     assert cleared_runtime["active"] is False
     assert cleared_runtime["status"] == "stopped"
     assert cleared_runtime["error"] is None
-    assert cleared_runtime["createdAt"] >= runtime["createdAt"]
 
-    still_present = client.get(
-        f"/connectors/{connector_id}/runtimes/{replacement_id}",
+    gone = client.get(
+        f"/connectors/{connector_id}/runtimes/{runtime_id}",
         headers=headers,
     )
-    assert still_present.status_code == 200, still_present.text
-    assert still_present.json()["name"] == "Renamed Codex"
+    assert gone.status_code == 404, gone.text
+    listed = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
+    assert listed.status_code == 200
+    assert listed.json()["runtimes"] == []
 
     rpc.discovery = {"runtimeTypes": []}
     _discover_types(client, connector_id, headers)
-    listed_after_type_disappears = client.get(
-        f"/connectors/{connector_id}/runtimes",
-        headers=headers,
-    )
-    assert listed_after_type_disappears.status_code == 200
-    assert [
-        item["runtimeId"] for item in listed_after_type_disappears.json()["runtimes"]
-    ] == [replacement_id]
-    assert listed_after_type_disappears.json()["runtimes"][0]["present"] is False
     rejected = client.post(
         f"/connectors/{connector_id}/runtimes",
         headers=headers,
@@ -1062,9 +1057,84 @@ def test_active_runtime_preserves_waiting_status_until_bridge_recovers(tmp_path)
     assert waiting["active"] is True
     assert waiting["status"] == "starting"
     assert waiting["error"]["retryable"] is True
+    assert waiting["phase"] is None
     recovered = asyncio.run(client.app.state.device_runtime_service.apply_status(
         connector_id, waiting["runtimeId"], "running",
     ))
     assert recovered.status == "running"
     assert recovered.active is True
     assert recovered.error is None
+
+
+def test_starting_phase_is_exposed_and_blocks_restart_until_running(tmp_path):
+    client, rpc, connector_id, headers = _make_client(
+        tmp_path, _v2_discovery(runtime_type="dsh"),
+    )
+    _discover_types(client, connector_id, headers)
+    phase = {"code": "syncing", "message": "正在同步 DSH 会话…", "retryable": True}
+    rpc.start_result = {"status": "starting", "phase": phase}
+    created = client.post(
+        f"/connectors/{connector_id}/runtimes", headers=headers,
+        json={"runtimeType": "dsh", "name": "DSH", "config": {"home": "/dsh"}, "active": True},
+    )
+    assert created.status_code == 201, created.text
+    syncing = created.json()
+    assert syncing["status"] == "starting"
+    assert syncing["error"] is None
+    assert syncing["phase"] == phase
+    assert syncing["reason"] == phase["message"]
+    assert syncing["available"] is False
+    runtime_id = syncing["runtimeId"]
+    starts_before = sum(1 for _, method, _ in rpc.requests if method == "runtime.start")
+
+    # A session operation while syncing must not restart the runtime.
+    service = client.app.state.device_runtime_service
+    with pytest.raises(DeviceRuntimeStartingError) as excinfo:
+        asyncio.run(service.ensure_active_running(connector_id, runtime_id, user_id=None))
+    assert excinfo.value.status_code == 409
+    assert excinfo.value.detail["code"] == "runtime_starting"
+    assert excinfo.value.detail["retryable"] is True
+    assert excinfo.value.detail["phase"] == phase
+    assert sum(1 for _, method, _ in rpc.requests if method == "runtime.start") == starts_before
+
+    # The connector keeps reporting progress, then finishes.
+    later = asyncio.run(service.apply_status(
+        connector_id, runtime_id, "starting",
+        phase={"code": "sync_interrupted", "message": "重试中", "retryable": True},
+    ))
+    assert later.phase["code"] == "sync_interrupted" and later.error is None
+    running = asyncio.run(service.apply_status(connector_id, runtime_id, "running"))
+    assert running.status == "running" and running.phase is None
+    listed = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
+    assert listed.status_code == 200, listed.text
+    item = next(r for r in listed.json()["runtimes"] if r["runtimeId"] == runtime_id)
+    assert item["phase"] is None and item["reason"] is None and item["available"] is True
+    assert asyncio.run(service.ensure_active_running(connector_id, runtime_id, user_id=None)).status == "running"
+
+    # Malformed phases are dropped rather than stored.
+    odd = asyncio.run(service.apply_status(
+        connector_id, runtime_id, "starting", phase={"code": "syncing"},
+    ))
+    assert odd.phase is None
+
+
+def test_starting_without_phase_still_retries_start(tmp_path):
+    """Older connectors report a bare `starting`; keep re-issuing runtime.start for them."""
+
+    client, rpc, connector_id, headers = _make_client(
+        tmp_path, _v2_discovery(runtime_type="dsh"),
+    )
+    _discover_types(client, connector_id, headers)
+    rpc.start_result = {"status": "starting"}
+    created = client.post(
+        f"/connectors/{connector_id}/runtimes", headers=headers,
+        json={"runtimeType": "dsh", "name": "DSH", "config": {"home": "/dsh"}, "active": True},
+    )
+    assert created.status_code == 201, created.text
+    runtime_id = created.json()["runtimeId"]
+    starts_before = sum(1 for _, method, _ in rpc.requests if method == "runtime.start")
+    rpc.start_result = {"status": "running"}
+    service = client.app.state.device_runtime_service
+    result = asyncio.run(service.ensure_active_running(connector_id, runtime_id, user_id=None))
+    assert result.status == "running"
+    assert sum(1 for _, method, _ in rpc.requests if method == "runtime.start") == starts_before + 1

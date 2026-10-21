@@ -26,6 +26,8 @@ final class V2DashboardRepository {
     @ObservationIgnored private var projectRefreshID: UUID?
     @ObservationIgnored private var projectRefreshGeneration: Int?
     @ObservationIgnored private var checkedMissingProjects: Set<String> = []
+    /// Set by list mutations; loading-flag changes republish without a disk write.
+    @ObservationIgnored private var isDirty = false
 
     init(service: V2DashboardService, localStore: V2LocalStore? = nil, scope: V2ClientScope? = nil, defaults: UserDefaults = .standard) {
         self.service = service; self.localStore = localStore
@@ -38,13 +40,15 @@ final class V2DashboardRepository {
     }
     func flushCache() async {
         persistenceTask?.cancel(); persistenceTask = nil
-        guard isValid, hasLoaded, let localStore else { return }
+        guard isValid, hasLoaded, isDirty, let localStore else { return }
+        isDirty = false
         await localStore.saveDashboard(.init(connectors: connectors, projects: projects, sessions: sessions,
             pages: []))
     }
-    private func changed() {
+    private func changed(persist: Bool = true) {
         onChange?()
-        guard isValid, hasLoaded, localStore != nil, persistenceTask == nil else { return }
+        if persist { isDirty = true }
+        guard isValid, hasLoaded, isDirty, localStore != nil, persistenceTask == nil else { return }
         persistenceTask = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
             await self?.flushCache()
@@ -57,8 +61,8 @@ final class V2DashboardRepository {
         guard isValid, network.availability != .offline, !isLoading else { return }
         generation += 1
         let revision = generation
-        isLoading = true; error = nil; changed()
-        defer { isLoading = false; changed() }
+        isLoading = true; error = nil; changed(persist: false)
+        defer { isLoading = false; changed(persist: false) }
         do {
             let data = try await service.load()
             guard isValid, revision == generation, !Task.isCancelled else { return }
@@ -75,14 +79,18 @@ final class V2DashboardRepository {
 
     private func apply(connectors: [V2Connector], projects: [V2Project], sessions incoming: [V2SessionMeta]) {
         generation += 1; projectGeneration += 1
-        self.connectors = connectors
-        self.projects = projects
+        var mutated = !hasLoaded
+        if self.connectors != connectors { self.connectors = connectors; mutated = true }
+        if self.projects != projects { self.projects = projects; mutated = true }
         let current = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
         let validDevices = Set(connectors.map(\.id))
         let pending = sessions.filter { $0.id.hasPrefix("local:") && validDevices.contains($0.connectorId) }
-        self.sessions = unique(pending + incoming.map { merge(current[$0.id], $0) })
-        hasLoaded = true; isFresh = true; error = nil
-        changed(); refreshMissingProjects()
+        let merged = unique(pending + incoming.map { merge(current[$0.id], $0) })
+        if sessions != merged { sessions = merged; mutated = true }
+        if !hasLoaded { hasLoaded = true }
+        if !isFresh { isFresh = true }
+        if error != nil { error = nil }
+        changed(persist: mutated); refreshMissingProjects()
     }
 
     /// The project list is shared by all expanded groups and refreshed independently

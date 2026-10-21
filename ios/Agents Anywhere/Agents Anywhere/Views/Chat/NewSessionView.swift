@@ -15,7 +15,7 @@ struct NewSessionView: View, Equatable {
     @State private var showsTarget = false
     @State private var showsWorkspace = false
     @State private var showsFiles = false
-    @EnvironmentObject private var appState: AppState
+    @Environment(AppState.self) private var appState
     @State private var confirmsRetry = false
     @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
     @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
@@ -64,7 +64,7 @@ struct NewSessionView: View, Equatable {
                     isBusy: model.isCreating, isLoadingSettings: model.isPreparing,
                     onSend: { text in if let session = await model.create(text: text) { onCreated(session) } },
                     onApplySettings: { model.saveSelections(); return true },
-                    onDraftChange: { model.saveDraft() })
+                    onDraftChange: { model.scheduleDraftSave() })
                 }
                 .frame(maxWidth: ChatControlMetrics.maximumContentWidth).frame(maxWidth: .infinity)
             }

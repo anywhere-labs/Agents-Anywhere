@@ -100,6 +100,52 @@ def codex_config_schema() -> dict[str, Any]:
                 },
                 "maxLength": MAX_CODEX_HOME_LENGTH,
             },
+            "ipcEnabled": {
+                "type": "boolean",
+                "title": "Follow Codex App / IDE sessions (IPC)",
+                "description": (
+                    "Join the Codex desktop app / IDE extension IPC router so "
+                    "threads open in a Codex window are followed and operated "
+                    "through that window instead of a second app-server. Turn "
+                    "this off to always run threads in the connector's own "
+                    "app-server."
+                ),
+                "metadata": {
+                    "i18n": {
+                        "labelKey": (
+                            "dashboard.device.runtimeConfigFields.ipcEnabled.label"
+                        ),
+                        "descriptionKey": (
+                            "dashboard.device.runtimeConfigFields."
+                            "ipcEnabled.description"
+                        ),
+                    }
+                },
+                "default": True,
+            },
+            "ipcDeeplinkHandoff": {
+                "type": "boolean",
+                "title": "Hand locked threads to the Codex App",
+                "description": (
+                    "When a thread is locked by the running Codex desktop app "
+                    "but no window shows it, open codex://threads/<id> in the "
+                    "app so it becomes the owner the connector follows. Only "
+                    "used while IPC is on."
+                ),
+                "metadata": {
+                    "i18n": {
+                        "labelKey": (
+                            "dashboard.device.runtimeConfigFields."
+                            "ipcDeeplinkHandoff.label"
+                        ),
+                        "descriptionKey": (
+                            "dashboard.device.runtimeConfigFields."
+                            "ipcDeeplinkHandoff.description"
+                        ),
+                    }
+                },
+                "default": True,
+            },
             "modelGateway": model_gateway_schema(),
             "customModels": custom_models_schema(),
         },
@@ -164,11 +210,15 @@ def runtime_binary_mode_for_system_preference(
 def normalize_system_codex_preference(
     use_system_codex: Any,
 ) -> bool:
-    if isinstance(use_system_codex, bool):
-        return use_system_codex
-    if use_system_codex is None:
-        return True
-    raise RuntimeInvalidRequestError("useSystemCodex must be a boolean")
+    return normalize_boolean_preference("useSystemCodex", use_system_codex, True)
+
+
+def normalize_boolean_preference(name: str, raw: Any, default: bool) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if raw is None:
+        return default
+    raise RuntimeInvalidRequestError(f"{name} must be a boolean")
 
 
 def normalize_codex_executable_path(raw: Any) -> str | None:

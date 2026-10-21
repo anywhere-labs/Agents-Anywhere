@@ -1,7 +1,10 @@
 import SwiftUI
 
 struct ChatSidebarView: View {
-    @EnvironmentObject private var appState: AppState
+    /// Passed as plain values: the sidebar must not re-evaluate for every
+    /// published AppState change, only for the inputs it actually renders.
+    let appState: AppState
+    let agentSetup: AgentSetupCoordinator?
     let safeAreaInsets: EdgeInsets
     let devices: [ChatSidebarDevice]
     let pinnedSessions: [ChatSidebarSession]
@@ -42,11 +45,11 @@ struct ChatSidebarView: View {
                     onCopyId: onCopyDeviceId
                 )
                 ChatSidebarPairDeviceButton {
-                    appState.nativeChatServices?.agentSetup.pairingFormPresented = true
+                    agentSetup?.pairingFormPresented = true
                     isShowingPairing = true
                 }
 
-                if let setup = appState.nativeChatServices?.agentSetup {
+                if let setup = agentSetup {
                     ForEach(setup.requests) { request in
                         HStack {
                             if request.ready { AppSymbol("checkmark.circle") }
@@ -139,7 +142,7 @@ struct ChatSidebarView: View {
             if let repository { ArchivedSessionsSheet(repository: repository, onOpen: onOpenSession, onRestore: onRestoreSession) }
         }
         .sheet(isPresented: $isShowingPairing, onDismiss: {
-            appState.nativeChatServices?.agentSetup.pairingFormPresented = false
+            agentSetup?.pairingFormPresented = false
         }) {
             PairDeviceSheet()
         }

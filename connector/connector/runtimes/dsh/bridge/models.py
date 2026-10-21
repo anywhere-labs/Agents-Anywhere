@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, cast
 
+from connector.core.unicode import replace_lone_surrogates
 from connector.runtime_protocol import (
     RuntimeCapability,
     RuntimeCapabilitySet,
@@ -230,6 +231,10 @@ def timeline_item(
     computed_hash = timeline_content_hash(item_type, status, role, content)  # type: ignore[arg-type]
     if data.get("contentHash") != computed_hash:
         raise ValueError("DSH timeline contentHash does not match canonical content")
+    # Plugins since 2.1.0 normalize lone surrogates before hashing; older ones
+    # hash the raw text. The hash is checked above either way; what gets
+    # stored and forwarded must be encodable.
+    content = replace_lone_surrogates(content)
     return RuntimeTimelineItem(
         id=_required_string(data.get("id"), "timeline id"),
         session_id=default_session_id
@@ -241,9 +246,9 @@ def timeline_item(
         role=role,
         turn_id=_optional_string(data.get("turnId")),
         content=content,
-        source=_mapping(data.get("source"), "timeline source"),
+        source=replace_lone_surrogates(_mapping(data.get("source"), "timeline source")),
         revision=max(1, _nonnegative_int(data.get("revision"), "revision")),
-        metadata=_dict(data.get("metadata")),
+        metadata=replace_lone_surrogates(_dict(data.get("metadata"))),
     )
 
 

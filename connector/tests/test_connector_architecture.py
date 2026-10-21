@@ -22,7 +22,6 @@ FORBIDDEN_ACTIVE_IMPORTS = {
     "connector.claude",
     "connector.codex",
     "connector.interactions",
-    "connector.json_rpc",
     "connector.local_ops",
     "connector.local_runtime",
     "connector.protocol",
@@ -49,13 +48,14 @@ FORBIDDEN_ACTIVE_CODEX_TOKENS = {
     "app_server_client",
     "CodexAppServerClient",
     "JsonRpcStdioClient",
-    "CodexIpcClient",
     "CodexIpcPublisher",
-    "thread-follower-start-turn",
-    "thread-follower-interrupt-turn",
-    "ipcEnabled",
     "sdkMode",
 }
+# ``CodexIpcClient``, the ``thread-follower-*`` method names and the
+# ``ipcEnabled`` config switch belong to the active IPC router client in
+# ``connector/runtimes/codex/ipc`` (see docs/codex-ipc-takeover.md); the
+# deprecated reference implementation stays excluded through the remaining
+# tokens.
 
 
 def _active_python_files() -> list[Path]:
@@ -206,7 +206,6 @@ def test_active_codex_provider_is_sdk_only() -> None:
     assert "sdk_client_from_config" in provider_source
     assert "app_server_client" not in provider_source
     assert "sdkMode" not in provider_source
-    assert "ipcEnabled" not in provider_source
     assert "executablePath" not in provider_source
 
 

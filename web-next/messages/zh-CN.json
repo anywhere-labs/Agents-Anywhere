@@ -246,7 +246,8 @@
     "mobileStatus": {
       "approved": "已批准",
       "waiting": "等待扫码"
-    }
+    },
+    "backHome": "返回主页"
   },
   "dashboard": {
     "actions": {
@@ -305,10 +306,7 @@
       "title": "无法加载主界面"
     },
     "nav": {
-      "dashboard": "看板",
-      "service": "服务",
-      "settings": "设置",
-      "team": "团队"
+      "settings": "设置"
     },
     "filters": {
       "deviceAgentAria": "按设备与 Agent 筛选项目",
@@ -675,6 +673,14 @@
         "useSystemCodex": {
           "label": "使用系统 Codex",
           "description": "优先使用登录 Shell PATH 中的 Codex；如果找不到，则自动使用捆绑的 Codex。关闭后将始终只使用捆绑的 Codex。"
+        },
+        "ipcEnabled": {
+          "label": "跟随 Codex App / IDE 会话（IPC）",
+          "description": "接入 Codex 桌面 App / IDE 插件的 IPC 路由：在 Codex 窗口里打开的线程会被跟随，并通过该窗口代为操作。关闭后所有线程始终在 Connector 自己的 Codex app-server 中运行。"
+        },
+        "ipcDeeplinkHandoff": {
+          "label": "把被锁定的线程交给 Codex App",
+          "description": "当线程被正在运行的 Codex 桌面 App 锁定、但没有窗口显示它时，通过 codex://threads/… 让 App 打开该线程，使其成为 Connector 跟随的持有者。仅在 IPC 开启时生效。"
         },
         "modelGatewayBaseUrl": {
           "label": "Gateway 地址",
@@ -1624,63 +1630,168 @@
     },
     "opsDashboard": {
       "title": "看板",
-      "description": "查看用户、消息、会话、设备和 Agent 的运营数据。",
-      "from": "开始",
-      "to": "结束",
-      "load": "加载",
-      "refreshToday": "刷新今天",
-      "refreshSaved": "今天的快照已刷新。",
-      "refreshFailed": "刷新今天快照失败。",
+      "description": "按用户活跃、使用量、设备与 Runtime、运行质量查看这个实例的使用情况。",
+      "dataSince": "统计自 {date} 起按事件记录；日期按浏览器时区划分。",
+      "noDataYet": "还没有统计数据，升级后产生的活动会出现在这里。",
       "loadFailed": "加载看板失败。",
-      "settingsSaved": "看板设置已保存。",
-      "settingsFailed": "保存看板设置失败。",
-      "trend": "指标趋势",
-      "userTrend": "用户趋势",
-      "deviceBreakdown": "设备占比",
-      "agentBreakdown": "Agent 占比",
-      "sessionAgentBreakdown": "活跃会话 Agent 占比",
-      "messageHistogram": "每个用户的消息数分布",
-      "sessionHistogram": "每个用户的活跃会话数分布",
-      "axes": {
-        "messageHistogram": "横轴：消息数区间 · 纵轴：用户数",
-        "sessionHistogram": "横轴：活跃会话数区间 · 纵轴：用户数"
+      "retry": "重试",
+      "refresh": "刷新",
+      "range": {
+        "7d": "最近 7 天",
+        "30d": "最近 30 天",
+        "90d": "最近 90 天",
+        "custom": "自定义",
+        "from": "开始日期",
+        "to": "结束日期",
+        "apply": "应用",
+        "invalid": "日期范围无效，最多 366 天。"
       },
-      "userSegments": "用户强度",
-      "intensitySettings": "强度阈值",
-      "intensityDescription": "按所选时间范围内的消息数划分用户。",
-      "saveSettings": "保存设置",
-      "lightMax": "低度用户上限",
-      "mediumMax": "中度用户上限",
-      "messageBins": "消息分桶",
-      "sessionBins": "会话分桶",
-      "breakdown": "明细",
-      "name": "名称",
-      "value": "数量",
-      "percent": "占比",
+      "live": {
+        "title": "实时",
+        "onlineConnectors": "在线设备",
+        "runningTurns": "运行中回合",
+        "activeUsers15m": "15 分钟内活跃"
+      },
       "tabs": {
         "overview": "概览",
-        "usage": "使用",
         "users": "用户",
-        "devices": "设备",
-        "agents": "Agent"
+        "usage": "使用量",
+        "devices": "设备与 Runtime",
+        "quality": "运行质量"
       },
       "metrics": {
-        "dau": "DAU",
-        "totalUsers": "总用户",
+        "activeUsers": "活跃用户",
+        "avgDau": "日均 DAU {value}",
+        "avgDauLabel": "日均 DAU",
         "newUsers": "新增用户",
+        "wau": "WAU",
+        "mau": "MAU",
+        "totalUsers": "总用户",
+        "messages": "消息",
+        "messagesPerActiveUser": "人均消息",
+        "messagesPerActiveUserHelper": "人均 {value} 条",
+        "activeSessions": "活跃会话",
+        "readOnlySessions": "只读会话",
+        "readOnlySessionsHelper": "另有 {count} 个只读",
+        "sessionsViewedHelper": "共读过 {count} 个会话",
+        "sessionViews": "读取次数",
+        "turns": "回合",
+        "failureRateHelper": "失败率 {value}",
+        "ofTurns": "共 {count} 个回合",
+        "turnFailureRate": "回合失败率",
+        "turnDurationP50": "回合时长 P50",
+        "turnDurationP90": "回合时长 P90",
+        "approvalsRequested": "审批请求",
+        "approvalsResolved": "审批完成",
+        "approvalWaitHelper": "等待 P50 {value}",
+        "approvalWaitP50": "审批等待 P50",
+        "runtimeErrors": "Runtime 错误",
+        "connectorsOnline": "上线设备",
+        "connectorsOnlineHint": "区间内至少连接过一次的设备",
+        "totalConnectors": "设备总数",
+        "connectorsSeen7d": "7 天内连接过",
+        "connectorsSeen30d": "30 天内连接过",
+        "ofTotal": "共 {total} 台",
+        "samples": "{count} 个样本"
+      },
+      "charts": {
+        "userTrend": "用户趋势",
+        "volumeTrend": "使用量趋势",
+        "rollingWindows": "活跃用户与滚动窗口",
+        "rollingWindowsHint": "WAU / MAU 为截至当天的 7 天 / 30 天去重活跃用户。",
+        "messagesDaily": "每日消息",
+        "sessionsDaily": "每日会话",
+        "sessionsDailyHint": "活跃：当天发过消息；只读：当天只打开过。",
+        "hourOfDay": "按小时分布",
+        "hourOfDayHint": "按 {timezone} 的本地小时统计区间内的消息数。",
+        "histogram": "每用户消息数分布",
+        "histogramHint": "横轴：消息数区间 · 纵轴：用户数",
+        "runtimeMessages": "按 Runtime 的消息数",
+        "turnOutcomesDaily": "每日回合结果",
+        "turnDurations": "回合时长（秒）",
+        "turnDurationsHint": "从平台发出消息到 Runtime 报告回合结束，只统计完成的回合。",
+        "approvalsDaily": "每日审批",
+        "inventory": "用户与设备存量",
+        "inventoryHint": "每个 UTC 日记录一次快照。",
+        "inventoryEmpty": "存量快照每天记录一次，积累两天以上后显示趋势。",
+        "empty": "该范围内没有数据。"
+      },
+      "series": {
+        "activeUsers": "活跃用户",
+        "newUsers": "新增用户",
+        "wau": "WAU",
         "mau": "MAU",
         "messages": "消息",
         "activeSessions": "活跃会话",
-        "activeUsers": "活跃用户",
-        "avgDevices": "人均设备",
-        "totalDevices": "总设备",
-        "userShare": "占总用户 {percent}"
+        "readOnlySessions": "只读会话",
+        "turns": "回合",
+        "turnsOther": "其他回合",
+        "turnsFailed": "失败回合",
+        "users": "用户数",
+        "p50": "P50",
+        "p90": "P90",
+        "approvalsRequested": "请求",
+        "approvalsResolved": "完成",
+        "usersTotal": "用户",
+        "connectors": "设备"
       },
       "segments": {
-        "light": "低度用户",
+        "title": "用户强度",
+        "hint": "按区间内发送的消息数划分；阈值取分布的 50% 和 80% 分位，没发过消息的用户不计入。",
+        "light": "轻度用户",
         "medium": "中度用户",
         "heavy": "重度用户",
-        "userShare": "占总用户 {percent}"
+        "messagesRange": "{range} 条消息"
+      },
+      "retention": {
+        "title": "新用户留存",
+        "hint": "按注册周分组；D1 / D7 / D30 为注册后 1 / 7 / 30 天内再次活跃的比例，窗口未满时显示 —。",
+        "cohort": "注册周",
+        "size": "人数",
+        "empty": "所选范围内没有新注册用户。"
+      },
+      "runtimes": {
+        "title": "Runtime 明细",
+        "hint": "按会话绑定的 Runtime 类型统计，显示名来自设备上报的发现结果。",
+        "runtime": "Runtime",
+        "messages": "消息",
+        "sessions": "会话",
+        "activeUsers": "活跃用户",
+        "turns": "回合",
+        "failed": "失败",
+        "p50": "时长 P50",
+        "errors": "错误",
+        "discovered": "已发现设备",
+        "configured": "已配置设备",
+        "empty": "暂无 Runtime 数据。"
+      },
+      "devices": {
+        "byOs": "按操作系统",
+        "os": "操作系统",
+        "connectors": "设备数",
+        "online": "区间内上线",
+        "unknownOs": "未知",
+        "installs": "Runtime 安装情况",
+        "installsHint": "已发现：设备上检测到该 Runtime；已配置：已在平台上完成配置。",
+        "asOfLive": "存量为当前实时值",
+        "asOfSnapshot": "存量来自 {date}（UTC）的快照"
+      },
+      "quality": {
+        "outcomes": "回合结果明细",
+        "approvalOutcomes": "审批结果明细",
+        "outcome": "结果",
+        "count": "次数",
+        "share": "占比",
+        "outcomeLabels": {
+          "completed": "完成",
+          "interrupted": "中断",
+          "cancelled": "取消",
+          "failed": "失败",
+          "resolved": "已处理",
+          "closed": "已关闭",
+          "expired": "已过期",
+          "unknown": "未知"
+        }
       }
     },
     "service": {
@@ -1724,16 +1835,10 @@
       "saveProvider": "保存提供方",
       "saving": "保存中...",
       "firstPartyClients": "第一方客户端",
-      "firstPartyClientsDescription": "上游 OAuth 提供方请使用 Web 重定向地址。内置原生客户端使用固定的标识和回调地址。",
-      "clientMode": "模式",
-      "locked": "已锁定",
+      "firstPartyClientsDescription": "内置的手机和桌面客户端使用固定的客户端 ID 和回调地址，不需要在上游提供方注册。",
       "callback": "回调地址",
       "webCallback": "Web 重定向地址",
       "nativeCallback": "原生回调地址",
-      "mobileClientId": "手机客户端 ID",
-      "mobileCallback": "手机客户端回调",
-      "desktopClientId": "桌面客户端 ID",
-      "desktopCallback": "桌面客户端回调",
       "about": "关于",
       "aboutDescription": "Agents Anywhere 是面向 AI 编程代理的开源远程控制界面。",
       "viewOnGithub": "在 GitHub 查看",
@@ -1759,7 +1864,29 @@
       },
       "passwordReset": "找回密码",
       "passwordResetDescription": "允许用户通过邮箱验证码重置忘记的密码。",
-      "passwordResetNeedsEmail": "需要先开启邮件服务，找回密码会通过邮件发送验证码。"
+      "passwordResetNeedsEmail": "需要先开启邮件服务，找回密码会通过邮件发送验证码。",
+      "sections": {
+        "general": {
+          "title": "常规",
+          "description": "谁可以注册账号、如何登录。"
+        },
+        "auth": {
+          "title": "身份认证",
+          "description": "上游 OAuth 提供方，以及内置客户端的回调地址。"
+        },
+        "email": {
+          "title": "邮件",
+          "description": "发件服务与邮箱验证码。"
+        },
+        "info": {
+          "title": "服务信息",
+          "description": "版本、运行状态与项目信息。"
+        }
+      },
+      "webCallbackHint": "在上游提供方注册应用时填写这个回调地址。",
+      "mobileClient": "手机客户端",
+      "desktopClient": "桌面客户端",
+      "callbackUrl": "回调地址"
     }
   },
   "preview": {
@@ -1813,6 +1940,17 @@
       "retry": "重新加载",
       "publishedAt": "上次发布：{time}",
       "notPublished": "尚未发布"
+    }
+  },
+  "admin": {
+    "title": "管理",
+    "groups": {
+      "data": "数据",
+      "management": "团队与公告",
+      "service": "服务"
+    },
+    "announcements": {
+      "description": "发布或更新向所有用户展示的公告。"
     }
   }
 }

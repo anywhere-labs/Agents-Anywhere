@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from connector.core.unicode import replace_lone_surrogates
 from connector.runtime_protocol import (
     RuntimeCapability,
     RuntimeCapabilitySet,
@@ -176,11 +177,18 @@ class DeferredServerPayload(dict[str, Any]):
 
 
 def server_payload_without_turn_data(value: Any) -> Any:
-    """Remove runtime-owned turn details from data crossing into Server."""
+    """Remove runtime-owned turn details from data crossing into Server.
 
+    Strings are made well-formed on the same walk: a lone surrogate from a
+    runtime would otherwise fail UTF-8 encoding at the transport or in the
+    Server's database.
+    """
+
+    if isinstance(value, str):
+        return replace_lone_surrogates(value)
     if isinstance(value, Mapping):
         return {
-            key: server_payload_without_turn_data(item)
+            replace_lone_surrogates(key): server_payload_without_turn_data(item)
             for key, item in value.items()
             if key not in {"turnId", "turn_id"}
         }

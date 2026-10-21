@@ -22,6 +22,27 @@ import Testing
         #expect(projection.data.cursor == "seq:13")
     }
 
+    @Test func singleItemEventsKeepOrderBoundsAndIdentity() throws {
+        let items = try [1, 2, 3].map { try itemObject(id: "item-\($0)", order: $0) }
+        var projection = V2SessionProjection(snapshot: try snapshot(items: items), maximumItems: 3)
+        // A created item past the window trims the oldest row and marks older history.
+        try projection.apply(event("timeline.item_created", seq: 11, payload: ["item": itemObject(id: "item-4", order: 4, seq: 11)]))
+        #expect(projection.data.items.map(\.id) == ["item-2", "item-3", "item-4"] && projection.data.hasOlderItems)
+        // Stale revisions never replace a newer row; equal revisions follow updatedSeq.
+        try projection.apply(event("timeline.item_updated", seq: 12, payload: ["item": itemObject(id: "item-3", order: 3, revision: 0, seq: 12, text: "Stale")]))
+        #expect(projection.data.items[1].displayText == "Hello")
+        try projection.apply(event("timeline.item_updated", seq: 13, payload: ["item": itemObject(id: "item-3", order: 3, revision: 1, seq: 13, text: "Fresh")]))
+        #expect(projection.data.items[1].displayText == "Fresh" && projection.data.items.count == 3)
+        // An item that moves to another orderSeq is relocated, not duplicated.
+        try projection.apply(event("timeline.item_updated", seq: 14, payload: ["item": itemObject(id: "item-2", order: 9, revision: 2, seq: 14)]))
+        #expect(projection.data.items.map(\.id) == ["item-3", "item-4", "item-2"])
+        // Equality is decided by identity fields plus the wire tree, never by hash alone.
+        let a: V2TimelineItem = try decode(itemObject(text: "A"))
+        let b: V2TimelineItem = try decode(itemObject(text: "B"))
+        let again: V2TimelineItem = try decode(itemObject(text: "A"))
+        #expect(a != b && a == again && a.hashValue == again.hashValue)
+    }
+
     @Test func allBackendSessionStatusesAndFutureStatesDecodeInMetadata() throws {
         for status in ["idle", "waiting", "pending", "running", "stopping", "waiting_approval", "error", "blocked"] {
             var raw = try fixtureObject("session")["session"] as! [String: Any]

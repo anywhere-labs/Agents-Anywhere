@@ -16,11 +16,11 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import { nativeRuntime } from '../fixtures/native-runtime.js'
 import { mountAgents, initialSelections } from '../fixtures/agent-runtime.js'
 import { RuntimeRouter } from '../../src/host/dsh-runtime/router.js'
-import { SyncFeed, type SyncBatch } from '../../src/host/dsh-runtime/sync.js'
+import { SyncFeed, type SyncOperation, type SyncTransport } from '../../src/host/dsh-runtime/sync.js'
 import { sessionId } from '../../src/host/dsh-runtime/identity.js'
 import type { Context } from '@deepseek-ai/cordis'
 import { UserQuestions } from '../../src/host/dsh-runtime/questions.js'
-import { openInteractionEvents } from '../../src/host/dsh-runtime/interaction-stream.js'
+import { interactionPeer, openInteractionEvents } from '../../src/host/dsh-runtime/interaction-stream.js'
 
 const questions = [
   { id: 'mode', question: '选择模式', options: [{ label: '标准' }, { label: '快速' }] },
@@ -69,13 +69,15 @@ async function fixture() {
   const router = new RuntimeRouter({ native: runtime, query: native.ctx.sessionQuery, status: id => runtime.status(id) }, 'test')
   const request = (method: string, params: Record<string, unknown>) => router.request(method, params, new AbortController().signal)
   return { ...native, home, adapter, runtime, router, request, close: async () => {
-    router.close(); await native.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true })
+    router.close(); await native.ctx.fiber.dispose()
+    // A Router re-registration can still be writing sockets/locks under home.
+    await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   } }
 }
 
 async function remote(ctx: Context) {
   const abort = new AbortController()
-  const stream = (await openInteractionEvents(ctx.typertGateway.wireStream, abort.signal))[Symbol.asyncIterator]()
+  const stream = (await openInteractionEvents(ctx.typertGateway.wireStream, abort.signal, interactionPeer(ctx.connection)))[Symbol.asyncIterator]()
   const ready = (await stream.next()).value as { clientId: string }
   const questions = new Set<unknown>()
   return { next: async () => {
@@ -106,17 +108,17 @@ test('published Host pauses the real ask_user_question tool, accepts platform an
     await f.runtime.send(id, '请先问我三个问题', 'message-1', f.home, true, initialSelections, 'standard')
     const agent = f.ctx.agents.get(id)!
     await until(() => f.runtime.questions.waiting(id), 'actual tool is waiting')
-    const state = await f.request('session.getState', { sessionId: platformId }) as { status: string }
+    const state = await f.request('getSessionState', { sessionId: platformId }) as { status: string }
     assert.equal(state.status, 'waiting_approval')
-    const notices = (await f.request('session.getNotices', { sessionId: platformId }) as { notices: any[] }).notices
+    const notices = (await f.request('getSessionNotices', { sessionId: platformId }) as { notices: any[] }).notices
     assert.equal(notices.length, 1)
     const notice = notices[0]!
     assert.equal(notice.actions[0].input.uiSchema.questions[1].multiple, true)
     assert.equal(notice.actions[0].input.uiSchema.component, 'inputRequest')
-    await assert.rejects(f.request('session.respondInteraction', { sessionId: platformId, noticeId: notice.noticeId, actionId: 'submit', inputData: { answers: {} } }))
+    await assert.rejects(f.request('respondInteraction', { sessionId: platformId, noticeId: notice.noticeId, actionId: 'submit', inputData: { answers: {} } }))
     assert.equal(f.runtime.questions.waiting(id), true)
-    assert.equal((await f.request('session.respondInteraction', { sessionId: sessionId('test', 'native-main'), noticeId: notice.noticeId, actionId: 'cancel' }) as { ok: boolean }).ok, false)
-    const result = await f.request('session.respondInteraction', { sessionId: platformId, noticeId: notice.noticeId, actionId: 'submit', inputData: input })
+    assert.equal((await f.request('respondInteraction', { sessionId: sessionId('test', 'native-main'), noticeId: notice.noticeId, actionId: 'cancel' }) as { ok: boolean }).ok, false)
+    const result = await f.request('respondInteraction', { sessionId: platformId, noticeId: notice.noticeId, actionId: 'submit', inputData: input })
     assert.equal((result as { ok: boolean }).ok, true)
     await until(() => agent.session.snapshotEvents().some(e => e.type === 'turn/end'), 'agent continues after answer')
     const toolResult = agent.session.snapshotEvents().find(e => e.type === 'tool/result')
@@ -127,14 +129,14 @@ test('published Host pauses the real ask_user_question tool, accepts platform an
       assert.deepEqual(JSON.parse(block.content.find(c => c.type === 'text')!.text), expected)
     }
     assert.equal(f.runtime.questions.notices('test', id)[0]?.status, 'resolved')
-    assert.equal((await f.request('session.respondInteraction', { sessionId: platformId, noticeId: notice.noticeId, actionId: 'submit', inputData: input }) as { ok: boolean }).ok, false)
+    assert.equal((await f.request('respondInteraction', { sessionId: platformId, noticeId: notice.noticeId, actionId: 'submit', inputData: input }) as { ok: boolean }).ok, false)
     const nativeRequest = await client.next()
     assert.equal(nativeRequest.event, 'user-questions/request')
     assert.deepEqual(await client.next(), { type: 'cancel', eventId: nativeRequest.eventId })
     await f.runtime.send(id, '再问一组，这次取消', 'message-2')
     await until(() => f.runtime.questions.waiting(id), 'second real tool waits')
     const cancelled = f.runtime.questions.notices('test', id).find(n => n.status === 'open')!
-    assert.equal((await f.request('session.respondInteraction', { sessionId: platformId, noticeId: cancelled.noticeId, actionId: 'cancel' }) as { ok: boolean }).ok, true)
+    assert.equal((await f.request('respondInteraction', { sessionId: platformId, noticeId: cancelled.noticeId, actionId: 'cancel' }) as { ok: boolean }).ok, true)
     await until(() => agent.session.snapshotEvents().filter(e => e.type === 'turn/end').length === 2, 'cancel follows the native tool error path')
     const cancelledResult = agent.session.snapshotEvents().findLast(e => e.type === 'tool/result')!
     if (cancelledResult.type === 'tool/result') assert.equal(cancelledResult.data.message.isError, true)
@@ -157,27 +159,39 @@ test('native answers, whole-request cancellation, pending replay and Connector f
     const event = await client.next()
     await until(() => f.runtime.questions.waiting(id), 'visible question')
     const noticeId = f.runtime.questions.notices('test', id)[0]!.noticeId
-    const batches: SyncBatch[] = []
-    const feed = new SyncFeed(f.runtime, 'test', batch => { batches.push(batch); queueMicrotask(() => feed.ack(batch.batchSeq)) }, error => assert.fail(String(error)))
+    const batches: { operations: SyncOperation[] }[] = []
+    const feed = new SyncFeed(f.runtime, 'test', 'questions-first', {
+      async ingestBatch(batch) { batches.push(batch as unknown as { operations: SyncOperation[] }) },
+      async loadCheckpoint() { return null },
+      async saveCheckpoint() {},
+      async deleteCheckpoint() {},
+      async ingestSnapshot(_request, pages) { for await (const _page of pages) { /* drain */ } return { accepted: true } },
+    }, error => assert.fail(String(error)))
     feeds.push(feed); feed.start()
     await until(() => JSON.stringify(batches).includes(noticeId), 'pending request in initial sync')
     feed.close()
     const replay = await remote(f.ctx)
     try { assert.equal((await replay.next()).eventId, event.eventId) } finally { replay.close() }
-    const recovered: SyncBatch[] = []
-    const nextFeed = new SyncFeed(f.runtime, 'test', batch => { recovered.push(batch); queueMicrotask(() => nextFeed.ack(batch.batchSeq)) }, error => assert.fail(String(error)))
+    const recovered: { operations: SyncOperation[] }[] = []
+    const nextFeed = new SyncFeed(f.runtime, 'test', 'questions-reconnect', {
+      async ingestBatch(batch) { recovered.push(batch as unknown as { operations: SyncOperation[] }) },
+      async loadCheckpoint() { return null },
+      async saveCheckpoint() {},
+      async deleteCheckpoint() {},
+      async ingestSnapshot(_request, pages) { for await (const _page of pages) { /* drain */ } return { accepted: true } },
+    }, error => assert.fail(String(error)))
     feeds.push(nextFeed); nextFeed.start()
     await until(() => JSON.stringify(recovered).includes(noticeId), 'same pending notice after Connector reconnect')
     await client.reply(event.eventId as string, { kind: 'result', value: { answers: [{ id: 'q', selected: ['好'] }] } })
     assert.deepEqual(await first, { answers: [{ id: 'q', selected: ['好'] }] })
     await until(() => !f.runtime.questions.waiting(id), 'native answer withdraws platform form')
-    assert.equal((await f.request('session.respondInteraction', { sessionId: platformId, noticeId, actionId: 'cancel' }) as { ok: boolean }).ok, false)
+    assert.equal((await f.request('respondInteraction', { sessionId: platformId, noticeId, actionId: 'cancel' }) as { ok: boolean }).ok, false)
 
     const cancelled = ask().then(() => assert.fail('must reject'), error => error)
     await client.next()
     await until(() => f.runtime.questions.waiting(id), 'next question')
     const pending = f.runtime.questions.notices('test', id).find(n => n.status === 'open')!
-    assert.equal((await f.request('session.respondInteraction', { sessionId: platformId, noticeId: pending.noticeId, actionId: 'cancel' }) as { ok: boolean }).ok, true)
+    assert.equal((await f.request('respondInteraction', { sessionId: platformId, noticeId: pending.noticeId, actionId: 'cancel' }) as { ok: boolean }).ok, true)
     assert.equal((await cancelled).code, 'ASK_CANCELLED')
     await client.next() // cancellation of the native UI's pending form
 
@@ -227,7 +241,8 @@ test('a question survives plugin consumer disposal and is replayed with the same
   } finally { await replacement?.close(); await f.close() }
 })
 
-test('questions cross the Python adapter and existing backend notice/respond endpoints with takeover enforced', { timeout: 60_000 }, async () => {
+// The Python probe builds the Server in-process, so it needs a throwaway PostgreSQL database.
+test('questions cross the Python adapter and existing backend notice/respond endpoints with takeover enforced', { timeout: 60_000, skip: !process.env.AGENT_SERVER_TEST_DB_URL && 'AGENT_SERVER_TEST_DB_URL is not set' }, async () => {
   const f = await fixture()
   try {
     const result = await promisify(execFile)('uv', ['run', '--with-editable', '../connector', 'python', '../connector/tests/dsh_question_probe.py', f.home], {
@@ -258,13 +273,13 @@ test('plan review accepts approval, revision feedback and cancellation through t
       const notice = f.runtime.questions.notices('test', id).find(item => item.status === 'open')!
       assert.equal(notice.title, '请审阅计划')
       assert.ok(notice.actions[0]!.input!.uiSchema.questions[0]!.prompt.includes(detail))
-      assert.equal((await f.request('session.respondInteraction', { sessionId: platformId, noticeId: notice.noticeId, actionId: 'submit', inputData: { answers: { plan: input } } }) as { ok: boolean }).ok, true)
+      assert.equal((await f.request('respondInteraction', { sessionId: platformId, noticeId: notice.noticeId, actionId: 'submit', inputData: { answers: { plan: input } } }) as { ok: boolean }).ok, true)
       assert.deepEqual(await pending, { answers: [answer] })
     }
     const pending = ask().then(() => assert.fail('cancelled review must reject'), error => error)
     await until(() => f.runtime.questions.waiting(id), 'cancelable plan')
     const notice = f.runtime.questions.notices('test', id).find(item => item.status === 'open')!
-    assert.equal((await f.request('session.respondInteraction', { sessionId: platformId, noticeId: notice.noticeId, actionId: 'cancel' }) as { ok: boolean }).ok, true)
+    assert.equal((await f.request('respondInteraction', { sessionId: platformId, noticeId: notice.noticeId, actionId: 'cancel' }) as { ok: boolean }).ok, true)
     assert.equal((await pending).code, 'ASK_CANCELLED')
     await handle.dispose()
   } finally { await f.close() }

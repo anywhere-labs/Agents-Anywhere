@@ -19,6 +19,15 @@ from agent_server.core.timeline import (
     TimelineBatchWriteResult,
     TimelineItemWriteResult,
 )
+from agent_server.core.usage import (
+    InventoryRow,
+    InventorySnapshotRow,
+    UsageConnectorRow,
+    UsageCountRow,
+    UsageDurationRow,
+    UsageSessionRow,
+    UsageUserRow,
+)
 
 
 class InstanceSettingsRepository(Protocol):
@@ -393,7 +402,7 @@ class DeviceRuntimeRepository(
         runtime_id: str,
         *,
         cleanup_files: bool = True,
-        replacement_runtime_id: str | None = None,
+        retire: bool = False,
     ) -> list[str]: ...
 
     async def create_device_runtime(
@@ -485,6 +494,7 @@ class DeviceRuntimeRepository(
         runtime_id: str,
         status: str,
         error: dict[str, Any] | None = None,
+        phase: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
 
 
@@ -564,10 +574,76 @@ class OAuthRepository(Protocol):
     async def user_exists(self, user_id: str) -> bool: ...
 
 
-class AdminDashboardRepository(Protocol):
-    engine: Any
+class UsageEventRepository(Protocol):
+    async def insert_usage_events(self, rows: list[dict[str, Any]]) -> int: ...
+
+    async def latest_usage_event_at(
+        self, *, session_id: str, event_type: str
+    ) -> str | None: ...
+
+
+class UsageReportRepository(Protocol):
+    async def usage_event_counts(
+        self, *, start_hour: str, end_hour: str
+    ) -> list[UsageCountRow]: ...
+
+    async def usage_user_activity(
+        self, *, start_hour: str, end_hour: str
+    ) -> list[UsageUserRow]: ...
+
+    async def usage_session_activity(
+        self, *, start_hour: str, end_hour: str
+    ) -> list[UsageSessionRow]: ...
+
+    async def usage_connector_online(
+        self, *, start_hour: str, end_hour: str
+    ) -> list[UsageConnectorRow]: ...
+
+    async def usage_durations(
+        self,
+        *,
+        start_hour: str,
+        end_hour: str,
+        event_type: str,
+        outcomes: tuple[str, ...] | None = None,
+        limit: int = 200_000,
+    ) -> list[UsageDurationRow]: ...
+
+    async def usage_first_event_date(self) -> str | None: ...
+
+    async def users_created_between(
+        self, *, start: str, end: str
+    ) -> list[tuple[str, str]]: ...
+
+    async def runtime_display_names(self) -> dict[str, str]: ...
+
+    async def usage_inventory_live(self, *, now: str) -> list[InventoryRow]: ...
+
+    async def usage_inventory_snapshots(
+        self, *, from_date: str, to_date: str
+    ) -> list[InventorySnapshotRow]: ...
+
+    async def count_active_runs(self) -> int: ...
+
+    async def count_active_usage_users(self, *, since: str) -> int: ...
 
     async def list_connectors(self, *, user_id: str | None = None) -> list[ConnectorView]: ...
+
+
+class UsageMaintenanceRepository(Protocol):
+    async def usage_inventory_live(self, *, now: str) -> list[InventoryRow]: ...
+
+    async def usage_inventory_snapshot_exists(self, snapshot_date: str) -> bool: ...
+
+    async def replace_usage_inventory_snapshot(
+        self,
+        snapshot_date: str,
+        rows: list[InventoryRow],
+        *,
+        computed_at: str,
+    ) -> None: ...
+
+    async def delete_usage_events_before(self, cutoff_hour_bucket: str) -> int: ...
 
 
 class ConnectorTerminalRepository(Protocol):

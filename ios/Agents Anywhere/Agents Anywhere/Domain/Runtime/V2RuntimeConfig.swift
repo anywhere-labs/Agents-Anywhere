@@ -1,6 +1,6 @@
 import Foundation
 
-struct V2RuntimeConfigSchema: Hashable {
+nonisolated struct V2RuntimeConfigSchema: Hashable {
     let fields: [V2RuntimeConfigField]
     let defaults: [String: JSONValue]
     let source: JSONValue
@@ -57,7 +57,7 @@ struct V2RuntimeConfigSchema: Hashable {
     }
 }
 
-struct V2RuntimeConfigField: Identifiable, Hashable {
+nonisolated struct V2RuntimeConfigField: Identifiable, Hashable {
     let id: String
     let title: String
     let description: String?
@@ -72,7 +72,7 @@ struct V2RuntimeConfigField: Identifiable, Hashable {
     }
 }
 
-enum V2RuntimeConfigFieldKind: Hashable {
+nonisolated enum V2RuntimeConfigFieldKind: Hashable {
     case text(minLength: Int?, maxLength: Int?, secure: Bool)
     case boolean
     case number(integer: Bool, minimum: Double?, maximum: Double?)
@@ -120,7 +120,7 @@ enum V2RuntimeConfigFieldKind: Hashable {
     }
 }
 
-struct V2RuntimeConfigOption: Identifiable, Hashable {
+nonisolated struct V2RuntimeConfigOption: Identifiable, Hashable {
     let value: JSONValue
 
     var id: String {
@@ -138,39 +138,39 @@ struct V2RuntimeConfigOption: Identifiable, Hashable {
 }
 
 private extension JSONValue {
-    var objectValue: [String: JSONValue]? {
+    nonisolated var objectValue: [String: JSONValue]? {
         guard case let .object(value) = self else { return nil }
         return value
     }
 }
 
 private extension Dictionary where Key == String, Value == JSONValue {
-    func string(for key: String) -> String? {
+    nonisolated func string(for key: String) -> String? {
         guard case let .string(value) = self[key] else { return nil }
         return value
     }
 
-    func number(for key: String) -> Double? {
+    nonisolated func number(for key: String) -> Double? {
         guard case let .number(value) = self[key] else { return nil }
         return value
     }
 
-    func integer(for key: String) -> Int? {
+    nonisolated func integer(for key: String) -> Int? {
         guard let value = number(for: key) else { return nil }
         return Int(value)
     }
 
-    func object(for key: String) -> [String: JSONValue]? {
+    nonisolated func object(for key: String) -> [String: JSONValue]? {
         guard case let .object(value) = self[key] else { return nil }
         return value
     }
 
-    func array(for key: String) -> [JSONValue]? {
+    nonisolated func array(for key: String) -> [JSONValue]? {
         guard case let .array(value) = self[key] else { return nil }
         return value
     }
 
-    func stringArray(for key: String) -> [String] {
+    nonisolated func stringArray(for key: String) -> [String] {
         array(for: key)?.compactMap { value in
             guard case let .string(string) = value else { return nil }
             return string

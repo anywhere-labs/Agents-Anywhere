@@ -126,20 +126,23 @@ struct DeviceAgentSection: View {
         runtime.configured && !runtime.active ? String(localized: "dashboard.device.runtimeNotStarted") : runtime.status.displayName
     }
 
-    /// Same tones as Web's runtime-status-presentation: a runtime that simply
-    /// is not running yet is a warning, other failures are errors.
+    /// Same tones as Web's runtime-status-presentation: the lifecycle status
+    /// decides first, so a starting runtime (e.g. DSH syncing its sessions,
+    /// reported as `phase`) is progress even when an error payload is present;
+    /// a runtime that simply is not running yet is a warning, other failures
+    /// are errors.
     private func tone(_ runtime: V2DeviceRuntime) -> DeviceStatusTone {
+        switch runtime.status {
+        case .running: return .ok
+        case .starting, .stopping: return .progress
+        default: break
+        }
         if let error = runtime.error, error != .null {
             let code = error["code"]?.stringValue ?? ""
             let notRunning = ["runtime_unavailable", "runtime_not_started", "runtime_not_configured", "connector_offline"]
             return notRunning.contains(code) ? .warning : .error
         }
-        switch runtime.status {
-        case .running: return .ok
-        case .starting, .stopping: return .progress
-        case .error: return .error
-        default: return .neutral
-        }
+        return runtime.status == .error ? .error : .neutral
     }
 
     private var currentError: String? {

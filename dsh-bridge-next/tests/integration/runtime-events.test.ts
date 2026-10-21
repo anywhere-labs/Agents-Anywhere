@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, rm, readFile, realpath, writeFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { mkdir, mkdtemp, rm, readFile, realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -8,14 +9,15 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { createAssistantMessage, createToolResultMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
+import { LocalRouter, Mesh, Router } from 'meshcall'
 import { bridgePath, nativeRuntime } from '../fixtures/native-runtime.js'
 import { corruptHistory } from '../fixtures/corrupt-history.js'
 import { mountAgents, TextAdapter, initialSelections } from '../fixtures/agent-runtime.js'
-import { SyncFeed, SYNC_FLUSH_MS, type SyncBatch, type SyncOperation } from '../../src/host/dsh-runtime/sync.js'
+import { SyncFeed, SYNC_FLUSH_MS, type SyncOperation, type SyncTransport } from '../../src/host/dsh-runtime/sync.js'
+import type { SnapshotRequest, SnapshotResult } from '../../src/host/generated/dsh-sync.js'
 import { projectHistory } from '../../src/host/dsh-runtime/history.js'
 import { nativeSessionId, sessionId } from '../../src/host/dsh-runtime/identity.js'
-import { createConnection } from 'node:net'
-import { createInterface } from 'node:readline'
+import { RuntimeRouter } from '../../src/host/dsh-runtime/router.js'
 
 async function until(check: () => boolean, label: string) {
   for (let n = 0; n < 400; n++) { if (check()) return; await delay(10) }
@@ -27,23 +29,76 @@ function notifications(operations: SyncOperation[]) {
     ? op.notifications as { method: string, params: Record<string, unknown> }[] : [])
 }
 
-function follow(native: ReturnType<typeof nativeRuntime> extends Promise<infer T> ? T['ctx']['agentsAnywhereRuntime']['native'] : never,
-  checkpoints?: Map<string, unknown>) {
-  const batches: SyncBatch[] = [], errors: unknown[] = []
-  const feed = new SyncFeed(native, 'test', batch => {
-    batches.push(batch)
-    let loaded: unknown
-    for (const op of batch.operations) {
-      const id = String(op.externalSessionId)
-      if (op.kind === 'checkpoint.load') loaded = checkpoints?.get(id)
-      if (op.kind === 'checkpoint.save') checkpoints?.set(id, op.checkpoint)
-      if (op.kind === 'checkpoint.delete') checkpoints?.delete(id)
-    }
-    queueMicrotask(() => feed.ack(batch.batchSeq, loaded))
-  }, error => errors.push(error), 60_000, checkpoints !== undefined)
-  feed.start()
-  return { feed, batches, errors, ops: () => batches.flatMap(b => b.operations) }
+interface Batch { subscriptionId: string, batchSeq: number, projectionVersion: number, operations: SyncOperation[] }
+interface Capture { request: SnapshotRequest, items: Record<string, unknown>[], result: SnapshotResult }
+interface FollowOptions {
+  namespace?: string
+  checkpoints?: Map<string, unknown>
+  onBatch?: (batch: Batch) => void
+  /** Runs when a capture starts, before its pages are consumed. */
+  snapshot?: (capture: Capture) => Promise<void> | void
 }
+
+function follow(native: ReturnType<typeof nativeRuntime> extends Promise<infer T> ? T['ctx']['agentsAnywhereRuntime']['native'] : never,
+  options: FollowOptions = {}) {
+  const batches: Batch[] = [], errors: unknown[] = [], captures: Capture[] = []
+  const checkpoints = options.checkpoints
+  const transport: SyncTransport = {
+    async ingestBatch(batch) {
+      const recorded = batch as unknown as Batch
+      batches.push(recorded)
+      options.onBatch?.(recorded)
+    },
+    async loadCheckpoint(id) { return (checkpoints?.get(id) as Record<string, unknown> | undefined) ?? null },
+    async saveCheckpoint(id, checkpoint) { checkpoints?.set(id, checkpoint) },
+    async deleteCheckpoint(id) { checkpoints?.delete(id) },
+    async ingestSnapshot(request, pages) {
+      const capture: Capture = { request, items: [], result: { accepted: true } }
+      captures.push(capture)
+      await options.snapshot?.(capture)
+      for await (const page of pages) capture.items.push(...page.items)
+      return capture.result
+    },
+  }
+  const feed = new SyncFeed(native, options.namespace ?? 'test', randomUUID(), transport,
+    error => errors.push(error), checkpoints !== undefined)
+  feed.start()
+  return { feed, batches, errors, captures, ops: () => batches.flatMap(b => b.operations) }
+}
+
+test('startup invalidation bursts stay bounded and state reads and messaging remain usable', { timeout: 30_000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-startup-invalidations-'))
+  const adapter = new TextAdapter()
+  const fixture = await nativeRuntime(home, ctx => mountAgents(ctx, adapter))
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  const stream = follow(native)
+  const router = new RuntimeRouter({ native, query: fixture.ctx.sessionQuery, status: id => native.status(id) }, 'test')
+  const request = (method: string, params: Record<string, unknown>) => router.request(method, params, AbortSignal.timeout(5_000))
+  const notes = () => notifications(stream.ops())
+  try {
+    // Reconnects and service registration can invalidate the same facts many
+    // times while the feed is still uploading its first session snapshots.
+    for (let i = 0; i < 12_000; i++) native.commands.invalidate()
+    await until(() => notes().some(n => n.method === 'session.inventory.complete'), 'inventory completes despite duplicate invalidations')
+    assert.deepEqual(stream.errors, [])
+    assert.equal(notes().filter(n => n.method === 'runtime.capability.updated').length, 1)
+    assert.equal(notes().filter(n => n.method === 'session.capability.updated').length, 2)
+    const completedBatch = stream.batches.find(b => notifications(b.operations).some(n => n.method === 'session.inventory.complete'))!
+    assert.equal(notifications(completedBatch.operations).filter(n => n.method === 'session.capability.updated').length, 2,
+      'startup state changes and inventory completion share a bounded transport batch')
+    const params = { sessionId: sessionId('test', 'persisted-only'), externalSessionId: 'persisted-only' }
+    assert.equal((await request('getSessionState', params) as { status: string }).status, 'idle')
+    const sent = await request('startTurn', { ...params, content: '继续对话', clientMessageId: 'startup-send' })
+    assert.equal((sent as { accepted: boolean }).accepted, true, JSON.stringify(sent))
+    await until(() => !!adapter.release, 'message reaches the official Agent loop')
+    adapter.release!()
+    await until(() => notes().some(n => n.method === 'session.turnEnded'), 'reply and turn completion reach the sync feed')
+    // A live projection can recalibrate with a capture (for example when DSH
+    // appends a session marker only at restore time); either path delivers the reply.
+    assert.ok(JSON.stringify([notes(), stream.captures]).includes('你好'))
+    assert.deepEqual(stream.errors, [])
+  } finally { router.close(); stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
 
 test('one corrupt persisted session does not break inventory, healthy streaming or explicit recovery', { timeout: 30_000 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'dsh-unreadable-'))
@@ -63,8 +118,8 @@ test('one corrupt persisted session does not break inventory, healthy streaming 
     const notes = () => notifications(stream!.ops())
     await until(() => notes().some(note => note.method === 'session.inventory.complete'), 'healthy inventory completes despite the unreadable session')
     assert.equal((await native.source.state(id)).reason, 'read_failed')
-    assert.ok(stream.ops().some(op => op.kind === 'snapshot.commit' && op.sessionId === sessionId('test', 'native-main')))
-    assert.ok(!stream.ops().some(op => op.kind === 'snapshot.begin' && op.sessionId === sessionId('test', id)))
+    assert.ok(stream.captures.some(capture => capture.request.sessionId === sessionId('test', 'native-main')))
+    assert.ok(!stream.captures.some(capture => capture.request.sessionId === sessionId('test', id)))
     const inventory = notes().find(note => note.method === 'session.inventory.complete')!
     const failed = (inventory.params.sessions as { externalSessionId: string, sourceState: { availability: string, reason: string } }[]).find(item => item.externalSessionId === id)!
     assert.equal(failed.sourceState.availability, 'unavailable')
@@ -73,12 +128,12 @@ test('one corrupt persisted session does not break inventory, healthy streaming 
     await until(() => notes().some(note => note.method === 'timeline.itemUpsert' && JSON.stringify(note.params).includes('healthy feedback survives')), 'healthy live feedback reaches the same stream')
     await writeFile(path, original)
     native.refresh(id)
-    await until(() => stream!.ops().some(op => op.kind === 'snapshot.commit' && op.sessionId === sessionId('test', id)), 'explicit refresh retries the repaired session')
-    const committed = stream.ops().filter(op => op.kind === 'snapshot.commit' && op.sessionId === sessionId('test', id)).length
+    await until(() => stream!.captures.some(capture => capture.request.sessionId === sessionId('test', id)), 'explicit refresh retries the repaired session')
+    const committed = stream!.captures.filter(capture => capture.request.sessionId === sessionId('test', id)).length
     await writeFile(path, corrupt)
     native.refresh(id)
     await until(() => notes().some(note => note.method === 'session.source.updated' && note.params.externalSessionId === id && note.params.reason === 'read_failed'), 'a later snapshot failure is isolated as well')
-    assert.equal(stream.ops().filter(op => op.kind === 'snapshot.commit' && op.sessionId === sessionId('test', id)).length, committed, 'no empty or partial snapshot replaces the accepted history')
+    assert.equal(stream!.captures.filter(capture => capture.request.sessionId === sessionId('test', id)).length, committed, 'no empty or partial snapshot replaces the accepted history')
     assert.deepEqual(stream.errors, [])
     assert.equal(Buffer.compare(await readFile(path), corrupt), 0, 'the bridge never repairs or rewrites native history')
   } finally { stream?.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
@@ -88,14 +143,11 @@ test('fast mixed native events flush at 30 Hz with complete final text, tool res
   const home = await mkdtemp(join(tmpdir(), 'dsh-flush-'))
   const fixture = await nativeRuntime(home)
   const native = fixture.ctx.agentsAnywhereRuntime.native
-  const batches: SyncBatch[] = [], times: number[] = [], errors: unknown[] = []
-  const feed = new SyncFeed(native, 'test', batch => {
-    times.push(performance.now()); batches.push(batch)
-    queueMicrotask(() => feed.ack(batch.batchSeq))
-  }, error => errors.push(error))
+  const times: number[] = []
+  const stream = follow(native, { onBatch: () => times.push(performance.now()) })
+  const { batches, errors, feed } = stream
   const notes = () => notifications(batches.flatMap(batch => batch.operations))
   try {
-    feed.start()
     await until(() => notes().some(note => note.method === 'session.inventory.complete'), 'baseline')
     const firstLive = batches.length
     const start = fixture.session.append('turn/start', { turn: 2 })
@@ -151,24 +203,23 @@ test('baseline buffers native changes and archive events without syncing native 
   const home = await mkdtemp(join(tmpdir(), 'dsh-sync-'))
   const fixture = await nativeRuntime(home)
   const native = fixture.ctx.agentsAnywhereRuntime.native
-  const batches: SyncBatch[] = [], errors: unknown[] = []
-  let held: SyncBatch | undefined
-  let amended = false
-  const feed = new SyncFeed(native, 'test', batch => {
-    batches.push(batch)
-    if (!amended && batch.operations[0]?.kind === 'snapshot.items') {
-      amended = true; held = batch
-      fixture.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'baseline race' }] }), { surfaceOp: 'append' })
-      fixture.session.append('session/title', { title: 'New title', source: { kind: 'user' }, messageSeqs: [] })
-    } else queueMicrotask(() => feed.ack(batch.batchSeq))
-  }, error => errors.push(error))
-  const ops = () => batches.flatMap(b => b.operations)
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  let held = false
+  const stream = follow(native, { snapshot: async () => {
+    if (held) return
+    held = true
+    await gate
+  } })
+  const { batches, errors, captures } = stream
+  const ops = stream.ops
   try {
-    feed.start()
-    await until(() => !!held, 'first page was held')
+    await until(() => held, 'first capture was held')
     const count = batches.length
     await delay(40)
-    assert.equal(batches.length, count, 'No next batch before Connector acknowledgement')
+    assert.equal(batches.length, count, 'No next batch before the Connector acknowledges the capture')
+    fixture.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'baseline race' }] }), { surfaceOp: 'append' })
+    fixture.session.append('session/title', { title: 'New title', source: { kind: 'user' }, messageSeqs: [] })
     const brief = fixture.ctx.sessions.prepare(SessionId('brief-session'), { meta: { cwd: home } })
     const detach = fixture.ctx.sessions.enter(brief)
     fixture.ctx.sessions.announce(brief)
@@ -177,11 +228,11 @@ test('baseline buffers native changes and archive events without syncing native 
     brief.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
     await fixture.ctx.sessions.flush(brief)
     detach()
-    feed.ack(held!.batchSeq)
+    release()
     await until(() => notifications(ops()).some(n => n.method === 'session.inventory.complete'), 'initial complete')
-    const starts = ops().filter(op => op.kind === 'snapshot.begin')
-    assert.equal(starts.length, 3, 'blank session is not imported headlessly')
-    assert.ok(starts.some(op => op.sessionId === sessionId('test', brief.id)), 'A new session disposed during ACK wait still imports its persisted history')
+    const starts = new Set(captures.map(capture => capture.request.sessionId))
+    assert.equal(starts.size, 3, 'blank session is not imported headlessly')
+    assert.ok(starts.has(sessionId('test', brief.id)), 'A new session disposed while a capture is in flight still imports its persisted history')
     assert.ok(notifications(ops()).some(n => n.method === 'session.meta.upsert' && n.params.title === 'New title'))
     assert.ok(notifications(ops()).some(n => n.method === 'timeline.itemUpsert' && JSON.stringify(n.params.item).includes('baseline race')))
     const workspace = await fixture.ctx.workspaceRegistry.create(home)
@@ -190,16 +241,16 @@ test('baseline buffers native changes and archive events without syncing native 
     await fixture.ctx.workspaceRegistry.delete(workspace.id)
     native.presence.report('test-client', 1, 'empty-native')
     await delay(SYNC_FLUSH_MS * 3)
-    assert.ok(!ops().some(op => op.kind === 'snapshot.begin' && op.sessionId === sessionId('test', 'empty-native')), 'Selecting a draft must not import it')
+    assert.ok(!captures.some(capture => capture.request.sessionId === sessionId('test', 'empty-native')), 'Selecting a draft must not import it')
     native.presence.report('test-client', 2, null)
     await fixture.ctx.workspaceRegistry.archiveSession(fixture.session.id)
     await until(() => notifications(ops()).some(n => n.method === 'session.source.updated' && n.params.sessionId === sessionId('test', fixture.session.id) && n.params.availability === 'archived'), 'explicit archive event')
-    assert.ok(!ops().some(op => op.kind === 'workspace.inventory'), 'native projects are not synchronized')
+    assert.ok(!notifications(ops()).some(n => n.method.startsWith('workspace.')), 'native projects are not synchronized')
     assert.ok(!JSON.stringify(ops()).includes('DSH 项目名称'))
     assert.ok(!notifications(ops()).some(n => n.method === 'session.source.updated' && n.params.sessionId === sessionId('test', 'empty-native')), 'Draft source notifications must not create empty AA sessions either')
     assert.deepEqual(errors, [])
     assert.deepEqual(batches.map(b => b.batchSeq), batches.map((_, n) => n + 1))
-  } finally { feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+  } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })
 
 test('new native drafts sync once after their first real user message, including attachment-only messages', { timeout: 30_000 }, async () => {
@@ -209,7 +260,7 @@ test('new native drafts sync once after their first real user message, including
   const stream = follow(native)
   const id = SessionId('new-native-draft')
   const platformId = sessionId('test', id)
-  const snapshots = () => stream.ops().filter(op => op.kind === 'snapshot.begin' && op.sessionId === platformId)
+  const snapshots = () => stream.captures.filter(capture => capture.request.sessionId === platformId)
   try {
     await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'baseline')
     const draft = fixture.ctx.sessions.create(id, { meta: { cwd: home } })
@@ -224,9 +275,9 @@ test('new native drafts sync once after their first real user message, including
     assert.equal(await native.visible(id), false)
 
     const message = draft.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'image', attachment: { id: 'native-image' } }] }), { surfaceOp: 'append' })
-    await until(() => stream.ops().some(op => op.kind === 'snapshot.commit' && op.sessionId === platformId), 'first user message imports the session without waiting for an assistant')
+    await until(() => snapshots().length === 1 && stream.captures.find(capture => capture.request.sessionId === platformId)!.items.length > 0, 'first user message imports the session without waiting for an assistant')
     assert.equal(snapshots().length, 1)
-    const items = stream.ops().filter(op => op.kind === 'snapshot.items' && op.sessionId === platformId).flatMap(op => op.items as { role: string, source: { nativeMessageId?: string } }[])
+    const items = snapshots().flatMap(capture => capture.items) as unknown as { role: string, source: { nativeMessageId?: string } }[]
     assert.equal(items.filter(item => item.role === 'user').length, 1)
     assert.ok(JSON.stringify(items).includes('native-image'))
     assert.ok(!JSON.stringify(items).includes('injected context'))
@@ -258,7 +309,7 @@ test('startup and reconnect exclude persisted drafts and import messages sent th
   })
   const native = fixture.ctx.agentsAnywhereRuntime.native
   let stream = follow(native)
-  const imported = () => stream.ops().filter(op => op.kind === 'snapshot.begin').map(op => op.sessionId)
+  const imported = () => stream.captures.map(capture => capture.request.sessionId)
   const drafts = ['empty-native', 'persisted-draft', 'turn-only', 'injected-only', 'discarded-draft']
   let handle: Awaited<ReturnType<typeof fixture.ctx.agents.create>> | undefined
   try {
@@ -275,7 +326,7 @@ test('startup and reconnect exclude persisted drafts and import messages sent th
     assert.ok(!imported().includes(sessionId('test', handle.agent.id)))
     handle.agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'first message from DSH' }] }))
     await until(() => !!adapter.release, 'native model is running')
-    await until(() => stream.ops().some(op => op.kind === 'snapshot.commit' && op.sessionId === sessionId('test', handle!.agent.id)), 'native first message is synchronized live')
+    await until(() => stream.captures.some(capture => capture.request.sessionId === sessionId('test', handle!.agent.id)), 'native first message is synchronized live')
     assert.deepEqual(stream.errors, [])
     // Disconnect before the turn's tail events reach the first feed. Whether that
     // feed has already checkpointed the tail is a timing accident; closing here
@@ -320,8 +371,8 @@ test('a stale inventory cannot erase a new session that sends its first message 
     detach()
     release()
     await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'baseline completes')
-    assert.ok(stream.ops().some(op => op.kind === 'snapshot.commit' && op.sessionId === sessionId('test', session.id)), 'An older catalog must preserve the newly observed session')
-    assert.ok(JSON.stringify(stream.ops()).includes('first message during scan'))
+    assert.ok(stream.captures.some(capture => capture.request.sessionId === sessionId('test', session.id)), 'An older catalog must preserve the newly observed session')
+    assert.ok(JSON.stringify([stream.ops(), stream.captures]).includes('first message during scan'))
     assert.deepEqual(stream.errors, [])
   } finally {
     release(); query.listSessions = list; stream.feed.close()
@@ -329,54 +380,78 @@ test('a stale inventory cannot erase a new session that sends its first message 
   }
 })
 
+/** A test-owned Connector side: its own Router, published rendezvous and a Bridge caller. */
+async function connectorSide(home: string) {
+  const directory = bridgePath(home)
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  const key = `mk_test_${randomUUID().replaceAll('-', '')}`
+  const authFile = join(home, 'router-auth.json')
+  await writeFile(authFile, JSON.stringify({ api_keys: [{
+    id: 'test', key_hash: createHash('sha256').update(key).digest('hex'), roles: ['client', 'server'],
+    register: ['aa.dsh.v2.Bridge', 'aa.dsh.v2.Sync'],
+    call: ['aa.dsh.v2.Bridge/*', 'aa.dsh.v2.Sync/*', 'meshcall.router.v1.Registry/*'],
+  }] }), { mode: 0o600 })
+  const endpoint = process.platform === 'win32'
+    ? { pipe: `agents-anywhere-test-${randomUUID().replaceAll('-', '')}` }
+    // Keep the Unix socket short enough for the portable 103-byte limit.
+    : { unixPath: join(tmpdir(), `aa-${randomUUID().slice(0, 8)}.sock`) }
+  const router = new LocalRouter(endpoint)
+  await router.start()
+  await writeFile(join(directory, 'connector.json'), JSON.stringify({
+    version: 2, protocol: 'meshcall', instanceId: `test-${randomUUID()}`, pid: process.pid, endpoint, key,
+  }), { mode: 0o600 })
+  const mesh = new Mesh(new Router(endpoint), { token: key, peerId: 'test-connector' })
+  const call = async (method: string, params: Record<string, unknown> = {}) =>
+    mesh.unary('aa.dsh.v2.Bridge', method, params, { metadata: { 'aa-session-namespace': 'test' }, timeoutMs: 10_000 })
+  return { call,
+    ready: async () => {
+      for (let attempt = 0; attempt < 500; attempt++) {
+        try { await call('initialize', { protocolVersion: '2.0', runtime: 'dsh' }); return }
+        catch { await delay(10) }
+      }
+      assert.fail('the plugin did not register aa.dsh.v2.Bridge on the test Router')
+    },
+    close: async () => { await mesh.close(); await router.stop() } }
+}
+
 test('fresh detail and send checks distinguish archives from persisted and blank sessions', { timeout: 30_000 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'dsh-source-'))
+  const connector = await connectorSide(home)
   const adapter = new TextAdapter()
-  const fixture = await nativeRuntime(home, ctx => mountAgents(ctx, adapter))
-  const native = fixture.ctx.agentsAnywhereRuntime.native
-  let endpoint: { port: number, host: string, token: string } | undefined
-  for (let attempt = 0; attempt < 100; attempt++) {
-    try { endpoint = JSON.parse(await readFile(bridgePath(home, 'endpoint.json'), 'utf8')); break }
-    catch { await delay(10) }
-  }
-  assert.ok(endpoint, 'published runtime endpoint')
-  const socket = createConnection(endpoint.port, endpoint.host)
-  const lines = createInterface({ input: socket })[Symbol.asyncIterator]()
-  let sequence = 0
-  const rpc = async (method: string, params: Record<string, unknown>) => {
-    socket.write(`${JSON.stringify({ jsonrpc: '2.0', id: ++sequence, method, params })}\n`)
-    const line = await lines.next()
-    assert.equal(line.done, false)
-    const response = JSON.parse(line.value)
-    assert.equal(response.error, undefined, JSON.stringify(response.error))
-    return response.result
-  }
-  await rpc('initialize', { authToken: endpoint.token, protocolVersion: '1.0', runtime: 'dsh', connectorId: 'test', sessionNamespace: 'test' })
-  const params = (id: string) => ({ sessionId: sessionId('test', id), externalSessionId: id })
-  const request = (method: string, id: string) => rpc(method, params(id)) as Promise<{ sourceState: { availability: string }, status: string }>
+  let fixture: Awaited<ReturnType<typeof nativeRuntime>> | undefined
   let stream: ReturnType<typeof follow> | undefined
   try {
+    fixture = await nativeRuntime(home, ctx => mountAgents(ctx, adapter))
+    const native = fixture.ctx.agentsAnywhereRuntime.native
+    await connector.ready()
+    const rpc = connector.call
+    const params = (id: string) => ({ sessionId: sessionId('test', id), externalSessionId: id })
+    const request = (method: string, id: string) => rpc(method, params(id)) as Promise<{ sourceState: { availability: string }, status: string }>
     assert.equal(fixture.ctx.sessions.get(SessionId('persisted-only')), undefined)
-    assert.equal((await request('session.getState', 'persisted-only')).sourceState.availability, 'available')
-    assert.equal((await request('session.getState', 'empty-native')).sourceState.availability, 'unavailable')
+    assert.equal((await request('getSessionState', 'persisted-only')).sourceState.availability, 'available')
+    assert.equal((await request('getSessionState', 'empty-native')).sourceState.availability, 'unavailable')
     // No sync subscription exists: detail must consult the current official catalog itself.
     await fixture.ctx.workspaceRegistry.archiveSession(fixture.session.id)
-    const archived = await request('session.getState', fixture.session.id)
+    const archived = await request('getSessionState', fixture.session.id)
     assert.equal(archived.sourceState.availability, 'archived')
     assert.equal(archived.status, 'blocked')
-    const sent = await rpc('session.startTurn', { ...params(fixture.session.id), content: '不可发送', clientMessageId: 'blocked-send' }) as { ok: boolean, code: string }
+    const sent = await rpc('startTurn', { ...params(fixture.session.id), content: '不可发送', clientMessageId: 'blocked-send' }) as { ok: boolean, code: string }
     assert.equal(sent.ok, false)
     assert.equal(sent.code, 'session_archived')
     assert.equal(adapter.requests.length, 0)
     stream = follow(native)
     await until(() => notifications(stream!.ops()).some(n => n.method === 'session.inventory.complete'), 'offline calibration')
     const operations = stream.ops()
-    assert.ok(!operations.some(op => op.kind === 'workspace.inventory'))
+    assert.ok(!notifications(operations).some(n => n.method.startsWith('workspace.')))
     const complete = notifications(operations).find(n => n.method === 'session.inventory.complete')!
     assert.ok(JSON.stringify(complete.params.sessions).includes('archived'))
-    assert.ok(!operations.some(op => op.kind === 'snapshot.begin' && op.sessionId === sessionId('test', fixture.session.id)))
+    assert.ok(!stream.captures.some(capture => capture.request.sessionId === sessionId('test', fixture!.session.id)))
     assert.deepEqual(stream.errors, [])
-  } finally { stream?.feed.close(); socket.destroy(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+  } finally {
+    stream?.feed.close()
+    await fixture?.ctx.fiber.dispose(); await connector.close()
+    await rm(home, { recursive: true, force: true })
+  }
 })
 
 test('real AgentLoop sends text once, streams before idle, queues followups and resumes persisted history', { timeout: 40_000 }, async () => {
@@ -394,10 +469,8 @@ test('real AgentLoop sends text once, streams before idle, queues followups and 
     await until(() => {
       const operations = stream.ops()
       const platformId = sessionId('test', id)
-      const committed = new Set(operations.filter(op => op.kind === 'snapshot.commit' && op.sessionId === platformId).map(op => op.snapshotId))
       // A newly visible session may capture its first streaming text in its baseline.
-      return operations.some(op => op.kind === 'snapshot.items' && op.sessionId === platformId &&
-        committed.has(op.snapshotId) && JSON.stringify(op.items).includes('你')) ||
+      return stream.captures.some(capture => capture.request.sessionId === platformId && JSON.stringify(capture.items).includes('你')) ||
         notifications(operations).some(n => n.method === 'timeline.itemUpsert' && n.params.sessionId === platformId && JSON.stringify(n.params.item).includes('你'))
     }, 'text pushed while running')
     assert.equal(fixture.ctx.agents.get(id)?.status, 'running')
@@ -421,7 +494,8 @@ test('real AgentLoop sends text once, streams before idle, queues followups and 
   } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })
 
-test('official native loop crosses Python and backend despite corrupt history, including two turns, lost ACK and reconnect', { timeout: 75_000 }, async () => {
+// The Python probe builds the Server in-process, so it needs a throwaway PostgreSQL database.
+test('official native loop crosses Python and backend despite corrupt history, including two turns, lost ACK and reconnect', { timeout: 75_000, skip: !process.env.AGENT_SERVER_TEST_DB_URL && 'AGENT_SERVER_TEST_DB_URL is not set' }, async () => {
   const home = await realpath(await mkdtemp(join(tmpdir(), 'dsh-pipeline-')))
   const adapter = new TextAdapter()
   const fixture = await nativeRuntime(home, async ctx => {
@@ -478,20 +552,20 @@ test('a replacement feed uses Connector checkpoints and uploads only offline del
   const fixture = await nativeRuntime(home)
   const native = fixture.ctx.agentsAnywhereRuntime.native
   const checkpoints = new Map<string, unknown>()
-  let stream = follow(native, checkpoints)
+  let stream = follow(native, { checkpoints })
   try {
     await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'first inventory')
-    assert.equal(stream.ops().filter(op => op.kind === 'snapshot.commit').length, 2)
+    assert.equal(stream.captures.length, 2)
     stream.feed.close()
-    stream = follow(native, checkpoints)
+    stream = follow(native, { checkpoints })
     await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'unchanged reconnect')
-    assert.equal(stream.ops().filter(op => op.kind === 'snapshot.begin').length, 0)
+    assert.equal(stream.captures.length, 0)
     stream.feed.close()
     fixture.session.append('session/title', { title: 'changed offline', source: { kind: 'user' }, messageSeqs: [] })
     fixture.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'offline delta' }] }), { surfaceOp: 'append' })
-    stream = follow(native, checkpoints)
+    stream = follow(native, { checkpoints })
     await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'changed reconnect')
-    assert.equal(stream.ops().filter(op => op.kind === 'snapshot.begin').length, 0)
+    assert.equal(stream.captures.length, 0)
     const delta = notifications(stream.ops()).filter(n => n.method === 'timeline.itemUpsert')
     assert.equal(delta.length, 1)
     assert.ok(JSON.stringify(delta[0]).includes('offline delta'))
@@ -505,20 +579,20 @@ test('a replacement feed uses Connector checkpoints and uploads only offline del
     const host = await import('../../lib/index.js')
     await fixture.ctx.plugin(host, { dshHome: home, stateRoot: join(home, 'account'), connectorSourceDir: home }).await()
     const restored = new Map<string, unknown>(JSON.parse(saved))
-    stream = follow(fixture.ctx.agentsAnywhereRuntime.native, restored)
+    stream = follow(fixture.ctx.agentsAnywhereRuntime.native, { checkpoints: restored })
     await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'new Host restores Connector checkpoints')
-    assert.equal(stream.ops().filter(op => op.kind === 'snapshot.begin').length, 0)
+    assert.equal(stream.captures.length, 0)
     const restartDelta = notifications(stream.ops()).filter(n => n.method === 'timeline.itemUpsert')
     assert.equal(restartDelta.length, 1)
     assert.ok(JSON.stringify(restartDelta[0]).includes('changed while Host destroyed'))
     fixture.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'incremental after Host restart' }] }), { surfaceOp: 'append' })
     await until(() => notifications(stream.ops()).some(n => n.method === 'timeline.itemUpsert' && JSON.stringify(n).includes('incremental after Host restart')), 'restored projection handles the next event incrementally')
-    assert.equal(stream.ops().filter(op => op.kind === 'snapshot.begin').length, 0)
+    assert.equal(stream.captures.length, 0)
     await until(() => (restored.get('native-main') as { throughSeq: number }).throughSeq === Number(fixture.session.seq) - 1, 'live event checkpoint is committed')
     stream.feed.close()
-    stream = follow(fixture.ctx.agentsAnywhereRuntime.native, restored)
+    stream = follow(fixture.ctx.agentsAnywhereRuntime.native, { checkpoints: restored })
     await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'live and replay fingerprints agree')
-    assert.equal(stream.ops().filter(op => op.kind === 'snapshot.begin').length, 0)
+    assert.equal(stream.captures.length, 0)
     assert.deepEqual(stream.errors, [])
   } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })
@@ -528,26 +602,26 @@ test('checkpoint mismatches and active turns recalibrate only the affected sessi
   const fixture = await nativeRuntime(home)
   const native = fixture.ctx.agentsAnywhereRuntime.native
   const checkpoints = new Map<string, unknown>()
-  let stream = follow(native, checkpoints)
+  let stream = follow(native, { checkpoints })
   const complete = () => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete')
   try {
     await until(complete, 'initial checkpoints')
     for (const mutation of [{ historyHash: '0'.repeat(64) }, { projectionVersion: 2 }, { projectionVersion: 99 }, { settled: false }]) {
       stream.feed.close()
       checkpoints.set('native-main', { ...checkpoints.get('native-main') as object, ...mutation })
-      stream = follow(native, checkpoints)
+      stream = follow(native, { checkpoints })
       await until(complete, 'incompatible checkpoint recalibrates')
-      assert.deepEqual(stream.ops().filter(op => op.kind === 'snapshot.commit').map(op => op.sessionId), [sessionId('test', 'native-main')])
+      assert.deepEqual(stream.captures.map(capture => capture.request.sessionId), [sessionId('test', 'native-main')])
       assert.deepEqual(stream.errors, [])
     }
     fixture.session.append('turn/start', { turn: 2 })
     await until(() => (checkpoints.get('native-main') as { settled: boolean }).settled === false, 'active turn never claims a settled checkpoint')
     stream.feed.close()
-    stream = follow(native, checkpoints)
+    stream = follow(native, { checkpoints })
     await until(complete, 'active reconnect')
-    assert.deepEqual(stream.ops().filter(op => op.kind === 'snapshot.commit').map(op => op.sessionId), [sessionId('test', 'native-main')])
+    assert.deepEqual(stream.captures.map(capture => capture.request.sessionId), [sessionId('test', 'native-main')])
     native.refresh('persisted-only')
-    await until(() => stream.ops().some(op => op.kind === 'snapshot.commit' && op.sessionId === sessionId('test', 'persisted-only')), 'manual refresh bypasses a matching checkpoint')
+    await until(() => stream.captures.some(capture => capture.request.sessionId === sessionId('test', 'persisted-only')), 'manual refresh bypasses a matching checkpoint')
     assert.deepEqual(stream.errors, [])
   } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })

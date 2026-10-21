@@ -18,7 +18,7 @@ nonisolated enum V2RuntimeStatus: String, Codable, Hashable {
     }
 }
 
-struct V2RuntimeSelectionScope: RawRepresentable, Codable, Hashable, ExpressibleByStringLiteral {
+nonisolated struct V2RuntimeSelectionScope: RawRepresentable, Codable, Hashable, ExpressibleByStringLiteral {
     let rawValue: String
 
     init(rawValue: String) {
@@ -34,7 +34,7 @@ struct V2RuntimeSelectionScope: RawRepresentable, Codable, Hashable, Expressible
     static let effort = V2RuntimeSelectionScope(rawValue: "effort")
 }
 
-struct V2RuntimeState: Codable, Hashable {
+nonisolated struct V2RuntimeState: Codable, Hashable {
     let sessionId: V2SessionID
     let runtime: V2RuntimeID
     let runtimeId: V2RuntimeID?
@@ -142,26 +142,26 @@ struct V2RuntimeState: Codable, Hashable {
     }
 }
 
-struct V2RuntimeStateResponse: Decodable, Hashable {
+nonisolated struct V2RuntimeStateResponse: Decodable, Hashable {
     let state: V2RuntimeState
     let serverTime: String?
 }
 
-struct V2RuntimeSelectionUpdateResponse: Decodable, Hashable {
+nonisolated struct V2RuntimeSelectionUpdateResponse: Decodable, Hashable {
     let ok: Bool
     let state: V2RuntimeState?
     let connectorResult: JSONValue?
     let serverTime: String
 }
 
-struct V2RuntimeError: Codable, Hashable, LocalizedError {
+nonisolated struct V2RuntimeError: Codable, Hashable, LocalizedError {
     let code: String?
     let message: String
 
     var errorDescription: String? { message }
 }
 
-struct V2RuntimeSelectionUpdateRequest: Encodable, Hashable {
+nonisolated struct V2RuntimeSelectionUpdateRequest: Encodable, Hashable {
     let selections: [V2RuntimeSelectionScope: V2SelectionID?]
 
     enum CodingKeys: String, CodingKey {

@@ -10,18 +10,21 @@ nonisolated enum JSONValue: Codable, Hashable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
+        // Each failed probe allocates a DecodingError with its coding path, so
+        // probe in the order wire payloads actually use: strings and objects
+        // dominate timeline items, numbers follow, arrays and booleans are rare.
         if container.decodeNil() {
             self = .null
-        } else if let value = try? container.decode(Bool.self) {
-            self = .bool(value)
-        } else if let value = try? container.decode(Double.self) {
-            self = .number(value)
         } else if let value = try? container.decode(String.self) {
             self = .string(value)
+        } else if let value = try? container.decode([String: JSONValue].self) {
+            self = .object(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
         } else if let value = try? container.decode([JSONValue].self) {
             self = .array(value)
         } else {
-            self = .object(try container.decode([String: JSONValue].self))
+            self = .bool(try container.decode(Bool.self))
         }
     }
 
@@ -54,6 +57,12 @@ nonisolated enum JSONValue: Codable, Hashable {
         default:
             return nil
         }
+    }
+
+    /// Whole numbers only, matching `Decodable` `Int` semantics for wire sequences.
+    nonisolated var intValue: Int? {
+        if case let .number(value) = self { return Int(exactly: value) }
+        return nil
     }
 
     nonisolated var displayString: String {

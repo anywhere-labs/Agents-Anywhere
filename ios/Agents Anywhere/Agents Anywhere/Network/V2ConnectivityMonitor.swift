@@ -26,7 +26,7 @@ final class V2ConnectivityMonitor {
                 isExpensive: path.isExpensive, isConstrained: path.isConstrained
             )
             Task { @MainActor [weak self, weak monitor] in
-                guard let self, let monitor, self.monitor === monitor else { return }
+                guard let self, let monitor, self.monitor === monitor, self.status != status else { return }
                 self.status = status
                 self.onChange?(status)
             }

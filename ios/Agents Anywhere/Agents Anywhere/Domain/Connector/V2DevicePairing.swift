@@ -1,6 +1,6 @@
 import Foundation
 
-struct V2PairingClaimRequest: Encodable, Hashable {
+nonisolated struct V2PairingClaimRequest: Encodable, Hashable {
     let code: String
     let name: String
     let serverUrl: String
@@ -8,12 +8,12 @@ struct V2PairingClaimRequest: Encodable, Hashable {
     let connectorToken: String
 }
 
-struct V2PairingClaimResponse: Decodable, Hashable {
+nonisolated struct V2PairingClaimResponse: Decodable, Hashable {
     let status: String
     let connector: V2Connector?
 }
 
-enum V2DeviceRuntimeStatus: String, Decodable, Hashable {
+nonisolated enum V2DeviceRuntimeStatus: String, Decodable, Hashable {
     case stopped
     case discovering
     case available
@@ -26,7 +26,7 @@ enum V2DeviceRuntimeStatus: String, Decodable, Hashable {
     case unknown
 }
 
-struct V2DeviceRuntime: Decodable, Identifiable, Hashable {
+nonisolated struct V2DeviceRuntime: Decodable, Identifiable, Hashable {
     let connectorId: V2ConnectorID
     let runtimeId: V2RuntimeID
     let runtimeType: String
@@ -47,6 +47,8 @@ struct V2DeviceRuntime: Decodable, Identifiable, Hashable {
     let capabilities: [String: Bool]
     let config: JSONValue?
     let error: JSONValue?
+    /// Step inside a non-error status (e.g. syncing while starting). Informational only.
+    let phase: JSONValue?
     let lastDiscoveredAt: String
     let createdAt: String
     let updatedAt: String
@@ -54,16 +56,16 @@ struct V2DeviceRuntime: Decodable, Identifiable, Hashable {
     var id: V2RuntimeID { runtimeId }
 }
 
-struct V2DeviceRuntimeListResponse: Decodable, Hashable {
+nonisolated struct V2DeviceRuntimeListResponse: Decodable, Hashable {
     let connectorId: V2ConnectorID
     let runtimes: [V2DeviceRuntime]
     let serverTime: String
 }
 
-struct V2RuntimeConfigUpdateRequest: Encodable, Hashable {
+nonisolated struct V2RuntimeConfigUpdateRequest: Encodable, Hashable {
     let config: [String: JSONValue]
 }
 
-struct V2RuntimeActiveUpdateRequest: Encodable, Hashable {
+nonisolated struct V2RuntimeActiveUpdateRequest: Encodable, Hashable {
     let active: Bool
 }

@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from connector.core import runtime_owner
 from connector.runtime_protocol import RuntimeConfig
 from connector.runtimes.dsh.bridge.client import BridgeClient
-from connector.runtimes.dsh.discovery import load_endpoint
+from connector.runtimes.dsh.bridge.host import bridge_host
 from connector.runtimes.dsh.runtime import DshRuntime
 from connector.runtimes.session_identity import stable_runtime_session_id
 
@@ -19,9 +19,9 @@ async def main(home: Path) -> None:
         return None
 
     client = BridgeClient(
-        endpoint=load_endpoint({"dshHome": str(home)}), connector_id="commands-probe",
-        session_namespace="wire", client_version="test", startup_timeout=5, request_timeout=5,
-        notification_handler=ignore, exit_handler=ignore,
+        await bridge_host(), connector_id="commands-probe",
+        session_namespace="wire", client_version="2.0", startup_timeout=5, request_timeout=5,
+        exit_handler=ignore,
     )
     runtime = DshRuntime(RuntimeConfig("dsh", 2), SimpleNamespace(connector_id="commands-probe"))
     await client.start()

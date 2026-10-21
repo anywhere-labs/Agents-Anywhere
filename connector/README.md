@@ -15,11 +15,11 @@ connector/
   runtime_protocol/  AgentRuntime, RuntimeProvider, RuntimeHostClient contracts
   runtimes/          Codex, Claude and DSH RuntimeProvider/AgentRuntime packages
   server/            Backend auth, ingest, RPC channel, request dispatch, host mapping
-  core/              Connector config, JSON-RPC, runtime owner, runtime config storage
+  core/              Connector config, runtime owner, runtime config storage
   local/             Local filesystem, shell, and terminal backends
   _reference/        Old adapter implementations retained only as migration references
   cli.py             anywhere-cli CLI
-  control.py         Local desktop/control JSON-RPC entrypoint
+  control.py         Connector controller shared by the CLI and the local control service
 tests/          Connector tests
 pyproject.toml  Connector dependencies and console script
 run.sh          Local helper for saved-config startup
@@ -123,7 +123,7 @@ record at normal shutdown. A crash leaves a record that the next start checks ag
 the actual process. Stopping the backend connection through `connector.stop` retains
 ownership while the RPC process is alive.
 
-RPC callers receive `-32009` with `data.reason = connector_already_running` on a
+Local control callers receive the MeshCall application error `connector_already_running` on a
 conflict. `connector.acquireOwnership` supports preflight before credentials exist;
 a rejected request keeps the RPC channel alive for `connector.getState` and retry.
 Direct CLI startup reports the conflict and exits with code `2`.
@@ -137,8 +137,22 @@ atomic file transactions and legacy migration.
 
 The default providers are Codex, Claude and DSH. The connector reports attached runtime
 capabilities to the server. Codex is discovered through the official
-`openai-codex` SDK package; the connector does not use a Codex CLI/app-server
-path or IPC switch as an active runtime surface. If Claude Code is not on
+`openai-codex` SDK package for sessions the connector starts itself. In addition,
+the Codex runtime joins the Codex IDE/desktop IPC router at `$CODEX_HOME/ipc/ipc.sock`
+and follows threads that are open in the Codex desktop app or the VS Code
+extension: their state, approvals and timeline are mirrored, and messages,
+steering, interrupts and approval replies are forwarded to the owning window.
+Threads nobody holds keep using the connector's own app-server; for those the
+connector acts as the IPC owner, so a Codex window that opens the same thread
+follows the connector instead of failing on the writer lock. When a thread is
+locked by the desktop app but no window shows it, the connector opens
+`codex://threads/<id>` in the running desktop app so it becomes the owner; the
+`/open-in-codex-app` session command does the same on demand, and
+`/kill-chatgpt` stops the desktop app so its threads can run in the connector's
+own app-server. Both IPC following (`ipcEnabled`) and the deep-link handoff
+(`ipcDeeplinkHandoff`) are switches in the Codex runtime config; the IPC
+router is scanned once at start and afterwards only on window activity. See
+[Codex IPC takeover](../docs/codex-ipc-takeover.md). If Claude Code is not on
 `PATH`, set:
 
 ```bash

@@ -48,7 +48,7 @@ export class BackendState {
   private readonly machineState: MachineStateStore;
   private readonly connector: ConnectorSupervisor;
   private readonly devices: DesktopDeviceService;
-  private ownership: OwnershipState = { status: "error", message: "正在检查本机 Connector…" };
+  private ownership: OwnershipState = { status: "checking" };
   /** The server this backend talks to. Main pushes changes after a sign-in. */
   private server: { serverUrl: string; apiNamespace: string };
   private readonly logBatcher = new LogBatcher((batch) => this.emit("logs", batch));
@@ -57,7 +57,7 @@ export class BackendState {
 
   constructor(private readonly init: BackendInit, fetcher: BackendFetcher) {
     this.server = { serverUrl: init.defaultServerUrl, apiNamespace: init.apiNamespace };
-    this.machineState = new MachineStateStore();
+    this.machineState = new MachineStateStore(undefined, (message) => this.appendLog({ level: "WARNING", message }));
     this.settings = new DesktopSettingsStore(init.settingsPath, init.preferredLanguages);
     this.logs = new ConnectorLogStore(init.logsPath, () => this.settings.get());
     this.binding = new DesktopBindingStore(init.bindingPath);
@@ -79,7 +79,9 @@ export class BackendState {
       binding: this.binding,
       logs: this.logs,
       onState: (state) => this.emit("state", state),
-      onLog: (entry) => this.bufferLog(entry),
+      onLog: (entry) => { if (!this.connector.hasRuntimeLogs()) this.bufferLog(entry); },
+      onRuntimeLog: (entry) => this.bufferLog(entry),
+      onLogSourceChanged: () => { this.logBatcher.flush(); this.emit("logsCleared", undefined); },
     });
     this.devices = new DesktopDeviceService({
       requireOwnership: () => this.requireOwnership(),
@@ -111,12 +113,8 @@ export class BackendState {
     const shellEnvironment = await readShellEnvironment().catch(() => ({} as NodeJS.ProcessEnv));
     if (this.closed) return;
     this.connector.setShellEnvironment(shellEnvironment);
-    // A failed probe reaches the renderer only as `error`; the reason itself
-    // exists nowhere else, so keep it in the log instead of discarding it.
-    await this.acquireOwnership().catch((error) => this.appendLog({
-      level: "ERROR",
-      message: `Could not acquire Connector ownership: ${errorMessage(error)}`,
-    }));
+    // The supervisor logs a failed probe and reports it as the `error` state.
+    await this.acquireOwnership().catch(() => undefined);
     await this.recordInstallation().catch((error) => this.appendLog({
       level: "ERROR",
       message: `Could not record Desktop installation: ${errorMessage(error)}`,
@@ -225,22 +223,23 @@ export class BackendState {
     return this.connector.restart();
   }
 
-  readLogs(query: ConnectorLogQuery): ConnectorLogPage {
-    return this.logs.read(query ?? {});
+  readLogs(query: ConnectorLogQuery): Promise<ConnectorLogPage> {
+    return this.connector.readLogs(query ?? {});
   }
 
-  clearLogs(): ConnectorLogPage {
-    const page = this.logs.clear();
+  async clearLogs(): Promise<ConnectorLogPage> {
+    const page = await this.connector.clearLogs();
     this.emit("logsCleared", undefined);
     return page;
   }
 
-  exportLogs(filePath: string): number {
-    return this.logs.exportTo(filePath);
+  exportLogs(filePath: string): Promise<number> {
+    return this.connector.exportLogs(filePath);
   }
 
   appendLog(entry: string | Partial<ConnectorLogEntry>): void {
-    this.bufferLog(this.logs.append(entry));
+    const stored = this.logs.append(entry);
+    if (!this.connector?.hasRuntimeLogs()) this.bufferLog(stored);
   }
 
   getLocalBinding(): PublicLocalDesktopBinding | null {

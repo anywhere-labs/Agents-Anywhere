@@ -68,15 +68,15 @@ def upgrade() -> None:
         column["name"] for column in sa.inspect(op.get_bind()).get_columns("sessions")
     }
     if "project_id" not in session_columns:
-        with op.batch_alter_table("sessions") as batch_op:
-            batch_op.add_column(sa.Column("project_id", sa.Text(), nullable=True))
-            batch_op.create_foreign_key(
-                "fk_sessions_project_id_projects",
-                "projects",
-                ["project_id"],
-                ["id"],
-                ondelete="SET NULL",
-            )
+        op.add_column("sessions", sa.Column("project_id", sa.Text(), nullable=True))
+        op.create_foreign_key(
+            "fk_sessions_project_id_projects",
+            "sessions",
+            "projects",
+            ["project_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
     session_indexes = {
         index["name"] for index in sa.inspect(op.get_bind()).get_indexes("sessions")
     }
@@ -102,11 +102,11 @@ def downgrade() -> None:
             column["name"] for column in inspector.get_columns("sessions")
         }
         if "project_id" in session_columns:
-            with op.batch_alter_table("sessions") as batch_op:
-                batch_op.drop_constraint(
-                    "fk_sessions_project_id_projects",
-                    type_="foreignkey",
-                )
-                batch_op.drop_column("project_id")
+            op.drop_constraint(
+                "fk_sessions_project_id_projects",
+                "sessions",
+                type_="foreignkey",
+            )
+            op.drop_column("sessions", "project_id")
     if "projects" in sa.inspect(op.get_bind()).get_table_names():
         op.drop_table("projects")

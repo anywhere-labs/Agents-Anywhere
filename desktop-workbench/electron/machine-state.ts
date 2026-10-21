@@ -37,7 +37,7 @@ function readOnboardingRecord(state: Record<string, unknown>): DesktopOnboarding
 
 /** Desktop owns installation metadata and its own onboarding flag; Connector alone appends IDs and owns startup. */
 export class MachineStateStore {
-  constructor(readonly filePath = machineStatePath()) {}
+  constructor(readonly filePath = machineStatePath(), private readonly warn?: (message: string) => void) {}
 
   readConnectorIds(): string[] {
     return readMachineStateFile(this.filePath).connectorIds;
@@ -103,7 +103,7 @@ export class MachineStateStore {
         fs.renameSync(temporary, this.filePath);
       } finally { fs.rmSync(temporary, { force: true }); }
       return value;
-    });
+    }, { warn: this.warn });
   }
 }
 

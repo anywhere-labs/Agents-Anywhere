@@ -28,10 +28,10 @@ final class DeviceManagementModel {
     }
 
     func updateSessions(connectorId: V2ConnectorID, allSessions: [V2SessionMeta]) {
-        sessions = V2DeviceProjection.sessions(
+        sessions = SessionSidebarPresentation.sorted(V2DeviceProjection.sessions(
             connectorId: connectorId,
             allSessions: allSessions
-        ).sorted { SessionSidebarPresentation($0).precedes(SessionSidebarPresentation($1), id: $0.id, otherID: $1.id) }
+        ))
         selectedSessionIds.formIntersection(Set(filteredSessions.map(\.id)))
     }
 

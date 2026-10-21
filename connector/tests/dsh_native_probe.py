@@ -19,7 +19,7 @@ from connector.server.runtime_sync import session_requires_timeline_sync
 
 
 class Host:
-    async def runtime_health_update(self, status, error=None):
+    async def runtime_health_update(self, status, error=None, phase=None):
         pass
 
     connector_id = "connector-native-test"

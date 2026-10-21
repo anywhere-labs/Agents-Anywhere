@@ -49,6 +49,12 @@ from agent_server.services.effective_capabilities import (
     read_session_capability_facts,
 )
 from agent_server.services.repository_ports import SessionRunRepository
+from agent_server.services.usage_events import (
+    NullUsageRecorder,
+    UsageRecorder,
+    message_sent_event,
+    session_created_event,
+)
 
 
 class SessionRunError(RuntimeError):
@@ -102,10 +108,13 @@ class SessionRunService:
         store: SessionRunRepository,
         manager: ConnectorRpcManager,
         device_runtimes: DeviceRuntimeService,
+        *,
+        usage_recorder: UsageRecorder | NullUsageRecorder | None = None,
     ) -> None:
         self._store = store
         self._manager = manager
         self._device_runtimes = device_runtimes
+        self._usage = usage_recorder or NullUsageRecorder()
 
     async def create_session(
         self,
@@ -310,6 +319,14 @@ class SessionRunService:
             last_synced_at=utc_now(),
             origin="platform",
         )
+        await self._usage.record(session_created_event(session, user_id=user_id))
+        await self._usage.record(
+            message_sent_event(
+                session,
+                user_id=user_id,
+                client_message_id=payload.clientMessageId,
+            )
+        )
         return {
             "session": session,
             "connectorResult": connector_result,
@@ -467,6 +484,13 @@ class SessionRunService:
                     ),
                 }
             )
+        await self._usage.record(
+            message_sent_event(
+                session,
+                user_id=user_id,
+                client_message_id=payload.clientMessageId,
+            )
+        )
         return RpcResponsePayload(ok=True, result=result)
 
     async def _persist_operation_source_state(
@@ -672,6 +696,13 @@ class SessionRunService:
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
+        await self._usage.record(
+            message_sent_event(
+                session,
+                user_id=user_id,
+                client_message_id=payload.clientMessageId,
+            )
+        )
         return RpcResponsePayload(ok=True, result=result)
 
     async def _require_runtime_capability(

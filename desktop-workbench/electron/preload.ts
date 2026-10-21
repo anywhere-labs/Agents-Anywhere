@@ -204,6 +204,7 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
     restart: (): Promise<ConnectorState> => api<ConnectorState>("/restart", { method: "POST", body: "{}" }),
     getLogs: (query?: ConnectorLogQuery): Promise<ConnectorLogPage> => {
       const search = new URLSearchParams();
+      if (query?.source !== undefined) search.set("source", query.source);
       if (query?.pageSize !== undefined) search.set("pageSize", String(query.pageSize));
       if (query?.beforeSeq !== undefined) search.set("beforeSeq", String(query.beforeSeq));
       if (query?.afterSeq !== undefined) search.set("afterSeq", String(query.afterSeq));

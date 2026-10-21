@@ -341,8 +341,12 @@ private struct ChatTimelineContent: View, Equatable {
             && lhs.keepsOlderPrompt == rhs.keepsOlderPrompt && lhs.historyAnchor == rhs.historyAnchor
     }
     var body: some View {
+        let visibleNotices = model.session.notices.notices.filter { $0.isVisible && !$0.blocks(model.session.id) }
         let groups = TimelineGrouping.groups(model.timeline.rows, interactionTargets: Set(model.session.notices.notices
             .filter(\.isVisible).compactMap(\.timelineTargetID)))
+        // Resolve notice targets once per body instead of once per row.
+        let rowIDs = Set(model.timeline.rows.map(\.id))
+        let noticesByTarget = Dictionary(grouping: visibleNotices.filter { $0.timelineTargetID != nil }) { $0.timelineTargetID! }
         let actions = TimelineTurnActions.build(groups: groups, suppressLatest: model.isRunning || model.session.hasNewerItems,
             hasPendingUserMessage: !model.session.hasNewerItems && (!model.timeline.pendingMessages.isEmpty || !model.session.pendingMessages.isEmpty))
         // Prefer a message whose start cannot move into a prefixed tool group.
@@ -377,7 +381,9 @@ private struct ChatTimelineContent: View, Equatable {
             }
             ForEach(groups) { group in
                 SessionTimelineGroupView(group: group, chat: model, onAttachment: onAttachment, onFile: onFile,
-                    turnAction: actions[group.id])
+                    turnAction: actions[group.id],
+                    inlineNotices: group.rows.flatMap { noticesByTarget[$0.id] ?? [] })
+                    .equatable()
                     .id(group.id)
                     .background {
                         if group.id == anchorGroup?.id, let firstRowID = model.timeline.rows.first?.id {
@@ -390,9 +396,8 @@ private struct ChatTimelineContent: View, Equatable {
                         }
                     }
             }
-            ForEach(model.session.notices.notices.filter { notice in
-                notice.isVisible && !notice.blocks(model.session.id)
-                    && !model.timeline.rows.contains(where: { $0.id == notice.timelineTargetID })
+            ForEach(visibleNotices.filter { notice in
+                notice.timelineTargetID.map { !rowIDs.contains($0) } ?? true
             }) { item in SessionInteractionCard(item: item, chat: model) }
             ForEach(model.timeline.pendingMessages) { pending in
                 PendingMessageRow(pending: pending, chat: model, onAttachment: onAttachment,

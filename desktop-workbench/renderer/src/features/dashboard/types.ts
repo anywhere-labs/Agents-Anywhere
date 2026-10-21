@@ -73,6 +73,8 @@ export type DeviceRuntimeView = {
   capabilities?: Record<string, boolean>;
   config: Record<string, unknown> | null;
   error: Record<string, unknown> | null;
+  /** Step inside a non-error status, e.g. syncing while starting. Informational only. */
+  phase?: Record<string, unknown> | null;
   lastDiscoveredAt: string;
   createdAt?: string;
   updatedAt: string;
@@ -780,93 +782,167 @@ export type AttachmentUploadResponse = {
   serverTime: string;
 };
 
-export type DashboardSegment = "light" | "medium" | "heavy";
+export type UsageSegmentKey = "light" | "medium" | "heavy";
 
-export type AdminDashboardIntensitySettings = {
-  basis: "messages";
-  lightMax: number;
-  mediumMax: number;
+export type UsageRange = {
+  fromDate: string;
+  toDate: string;
+  timezone: string;
+  dataSince: string | null;
+  generatedAt: string;
 };
 
-export type AdminDashboardHistogramSettings = {
-  messages: number[];
-  sessions: number[];
+export type UsagePercentiles = {
+  p50: number | null;
+  p90: number | null;
+  p99: number | null;
+  samples: number;
 };
 
-export type AdminDashboardSettings = {
-  intensity: AdminDashboardIntensitySettings;
-  histogramBins: AdminDashboardHistogramSettings;
-  serverTime?: string | null;
-};
-
-export type AdminDashboardSettingsUpdate = {
-  intensity?: AdminDashboardIntensitySettings;
-  histogramBins?: AdminDashboardHistogramSettings;
-};
-
-export type AdminDashboardSummary = {
-  totalUsers: number;
-  newUsers: number;
-  dau: number;
+export type UsageSummary = {
   activeUsers: number;
+  newUsers: number;
+  avgDau: number;
   wau: number;
   mau: number;
-  totalMessages: number;
-  activeSessions: number;
-  avgMessagesPerActiveUser: number;
-  avgActiveSessionsPerActiveUser: number;
-  totalDevices: number;
-  avgDevicesPerUser: number;
+  totalUsers: number;
+  messages: number;
+  sessions: number;
+  sessionViews: number;
+  sessionsViewed: number;
+  sessionsReadOnly: number;
+  turns: number;
+  turnFailureRate: number | null;
+  turnDurationMs: UsagePercentiles;
+  approvalsRequested: number;
+  approvalsResolved: number;
+  approvalWaitMs: UsagePercentiles;
+  runtimeErrors: number;
+  connectorsOnline: number;
+  totalConnectors: number;
 };
 
-export type AdminDashboardSeriesPoint = AdminDashboardSummary & {
+export type UsageDailyPoint = {
   date: string;
+  activeUsers: number;
+  newUsers: number;
+  wau: number;
+  mau: number;
+  messages: number;
+  sessions: number;
+  sessionViews: number;
+  sessionsViewed: number;
+  sessionsReadOnly: number;
+  turns: number;
+  turnsFailed: number;
+  turnDurationP50Ms: number | null;
+  turnDurationP90Ms: number | null;
+  approvalsRequested: number;
+  approvalsResolved: number;
+  runtimeErrors: number;
+  connectorsOnline: number;
 };
 
-export type AdminDashboardBreakdownItem = {
-  key: string;
-  label: string;
-  value: number;
-  percent: number;
+export type UsageHourPoint = {
+  hour: number;
+  messages: number;
+  activeUsers: number;
 };
 
-export type AdminDashboardHistogramBucket = {
-  key: string;
+export type UsageBucket = {
   label: string;
-  count: number;
-  min: number | null;
+  min: number;
   max: number | null;
-};
-
-export type AdminDashboardUserSegmentItem = {
-  segment: DashboardSegment;
-  label: string;
   count: number;
 };
 
-export type AdminDashboardOverviewResponse = {
-  range: {
-    fromDate: string;
-    toDate: string;
-    timezone: string;
-  };
-  summary: AdminDashboardSummary;
-  series: AdminDashboardSeriesPoint[];
-  messageHistogram: AdminDashboardHistogramBucket[];
-  sessionHistogram: AdminDashboardHistogramBucket[];
-  userSegments: AdminDashboardUserSegmentItem[];
-  deviceBreakdown: AdminDashboardBreakdownItem[];
-  agentBreakdown: AdminDashboardBreakdownItem[];
-  sessionAgentBreakdown: AdminDashboardBreakdownItem[];
-  settings: AdminDashboardSettings;
+export type UsageSegment = {
+  segment: UsageSegmentKey;
+  min: number;
+  max: number | null;
+  count: number;
+};
+
+export type UsageRetentionCohort = {
+  cohortStart: string;
+  cohortEnd: string;
+  cohortSize: number;
+  d1: number | null;
+  d7: number | null;
+  d30: number | null;
+};
+
+export type UsageUsersSection = {
+  segments: UsageSegment[];
+  messageHistogram: UsageBucket[];
+  retention: UsageRetentionCohort[];
+};
+
+export type UsageRuntimeRow = {
+  runtimeType: string;
+  displayName: string;
+  messages: number;
+  sessions: number;
+  activeUsers: number;
+  turns: number;
+  turnsFailed: number;
+  turnDurationP50Ms: number | null;
+  runtimeErrors: number;
+  configuredConnectors: number;
+  discoveredConnectors: number;
+};
+
+export type UsageOsRow = {
+  os: string;
+  connectors: number;
+  connectorsOnline: number;
+};
+
+export type UsageInventoryPoint = {
+  date: string;
+  users: number;
+  connectors: number;
+};
+
+export type UsageDevicesSection = {
+  totalConnectors: number;
+  connectorsSeen7d: number;
+  connectorsSeen30d: number;
+  byOs: UsageOsRow[];
+  inventoryDaily: UsageInventoryPoint[];
+  inventoryAsOf: string;
+};
+
+export type UsageOutcomeRow = {
+  outcome: string;
+  count: number;
+};
+
+export type UsageQualitySection = {
+  turnOutcomes: UsageOutcomeRow[];
+  turnDurationMs: UsagePercentiles;
+  approvalOutcomes: UsageOutcomeRow[];
+  approvalWaitMs: UsagePercentiles;
+  runtimeErrors: number;
+};
+
+export type UsageReportResponse = {
+  range: UsageRange;
+  summary: UsageSummary;
+  daily: UsageDailyPoint[];
+  hourOfDay: UsageHourPoint[];
+  users: UsageUsersSection;
+  runtimes: UsageRuntimeRow[];
+  devices: UsageDevicesSection;
+  quality: UsageQualitySection;
   serverTime: string;
 };
 
-export type AdminDashboardSnapshotResponse = {
-  date: string;
-  computedAt: string;
-  metrics: number;
-  users: number;
+export type UsageLiveResponse = {
+  onlineConnectors: number;
+  totalConnectors: number;
+  runningTurns: number;
+  activeUsers15m: number;
   serverTime: string;
 };
 

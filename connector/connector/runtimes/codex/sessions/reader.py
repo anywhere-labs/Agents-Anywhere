@@ -644,12 +644,23 @@ def reconcile_native_activity(
 
 
 def thread_state_from_sdk_thread(thread: Thread) -> dict[str, Any]:
+    """Project the SDK thread into the keys selection derivation reads.
+
+    ``thread/read`` reports the model and reasoning effort as soon as the thread
+    exists, so selections do not have to wait for a completed turn.
+    """
+
     state: dict[str, Any] = {
         "id": thread.id,
         "modelProvider": thread.model_provider,
     }
     if thread.name is not None:
         state["name"] = thread.name
+    if thread.model:
+        state["model"] = thread.model
+    effort = thread.reasoning_effort
+    if effort is not None:
+        state["reasoningEffort"] = getattr(effort, "value", effort)
     return state
 
 

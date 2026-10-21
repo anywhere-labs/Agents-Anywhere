@@ -32,4 +32,9 @@ nonisolated struct MarkdownBlockSnapshot: Identifiable, Equatable {
         }
         return parts.map { Self(id: $0.id, content: $0.content) }
     }
+
+    /// Re-identify blocks sequentially from `startID`, in document order.
+    static func split(_ document: AttributedString, startingAt startID: Int) -> [Self] {
+        split(document).enumerated().map { Self(id: startID + $0.offset, content: $0.element.content) }
+    }
 }

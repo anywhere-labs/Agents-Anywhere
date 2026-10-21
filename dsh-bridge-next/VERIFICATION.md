@@ -78,7 +78,7 @@ Windows 实机报告「本机连接被占用，无法启动」。`<DSH_HOME>/age
 
 实际回传验证包含：原生已保存 session 自动进入 AA；原生新会话首条用户消息触发导入；AA 发起创建和续聊后，模型保持运行时 AA 已收到部分文本；最终结果持久化；响应丢失与重连后恢复完整历史。使用官方 DSH AgentLoop、真实 Python 适配器和原有 AA ASGI app 的临时测试环境。保留流式结果验证，没有退回只检查 RPC 成功的测试。
 
-本地检查：插件 92 项、Connector 81 项、Server 相关 76 项通过；插件类型检查、构建和产物检查通过。远程结果见 [回退分支的 CI](https://github.com/anywhere-labs/Agents-Anywhere/actions/workflows/dsh-bridge-next.yml?query=branch%3Acodex%2Fdsh-before-images)。本地未自动重启用户的 DSH、CLI 或开发服务，真实环境是否恢复仍需加载回退构建后确认。
+本地检查：插件 92 项、Connector 81 项、Server 相关 76 项通过；插件类型检查、构建和产物检查通过。远程结果见 [回退分支的 CI](https://github.com/anywhere-labs/Agents-Anywhere/actions/workflows/ci.yml?query=branch%3Acodex%2Fdsh-before-images)。本地未自动重启用户的 DSH、CLI 或开发服务，真实环境是否恢复仍需加载回退构建后确认。
 
 当时的手动验收顺序：重新加载 DSH Host 和 CLI（已有配对用 `uv run anywhere-cli start`），确认原生 session 自动出现在 AA，再从 AA 新建/续聊，检查运行中增量及结束状态，最后检查断线重连。当时图片、AA 侧 DSH 模型/effort/权限切换暂停提供，现已恢复。
 
@@ -101,7 +101,7 @@ Windows 实机报告「本机连接被占用，无法启动」。`<DSH_HOME>/age
 
 合计 763 项测试。Server 测试有一条 Starlette/httpx TestClient 弃用提示，不影响本次结果。此记录是上述提交的验证快照；后续职责调整需要重新检查，不能沿用本表宣称新代码已经通过。
 
-插件事件与问答探针通过 ASGI 调用原有 Server，在各自的临时目录创建 SQLite 数据库；正常启动 Server 仍要求 PostgreSQL。测试请求一旦进入后端，不随客户端取消而被直接取消，测试关闭时等待后端请求完成。生产数据库和连接池没有因本轮测试修复而修改。
+插件事件与问答探针通过 ASGI 调用原有 Server，各自从 `AGENT_SERVER_TEST_DB_URL` 派生一个一次性 PostgreSQL 数据库（2.1.0 起 Server 不再支持 SQLite）；正常启动 Server 同样要求 PostgreSQL。测试请求一旦进入后端，不随客户端取消而被直接取消，测试关闭时等待后端请求完成。生产数据库和连接池没有因本轮测试修复而修改。
 
 ## Python Connector 职责调整
 
@@ -113,7 +113,7 @@ Windows 实机报告「本机连接被占用，无法启动」。`<DSH_HOME>/age
 
 首次 Linux CI [34192099034](https://github.com/anywhere-labs/Agents-Anywhere/actions/runs/34192099034) 针对 `7c841c2e`：Web/Desktop 通过，插件/Python 任务失败，原因是旧共享写锁测试竞争和 SQLite 测试迁移使用 `ALTER COLUMN`。前者已由 Python 进程测试替代；后者改用 Alembic batch 迁移，并检查迁移后 `runtime_id` 非空及原数据保留。Server 的 76 项相关测试加完整迁移测试，共 175 项本地通过，仍有一条 TestClient 弃用提示。生产运行继续要求 PostgreSQL。
 
-当前分支的 Linux CI 将上述新范围纳入检查，同时重新检查 Web 219 项和 Desktop renderer 205 项。远程结论以 [该分支的工作流记录](https://github.com/anywhere-labs/Agents-Anywhere/actions/workflows/dsh-bridge-next.yml?query=branch%3Acodex%2Fconnector-owned-lifecycle)为准；本地通过不代表远程已经通过。
+当前分支的 Linux CI 将上述新范围纳入检查，同时重新检查 Web 219 项和 Desktop renderer 205 项。远程结论以 [该分支的工作流记录](https://github.com/anywhere-labs/Agents-Anywhere/actions/workflows/ci.yml?query=branch%3Acodex%2Fconnector-owned-lifecycle)为准；本地通过不代表远程已经通过。
 
 ## 复现命令
 
@@ -162,7 +162,7 @@ corepack yarn workspace agents-anywhere-desktop-renderer protocol:check
 corepack yarn test:main
 ```
 
-[DSH Bridge Next CI](../.github/workflows/dsh-bridge-next.yml) 在 Linux 上运行这些检查，不启动真实 DSH、开发服务器、Docker 或 Electron。GitHub 中的对应 run 才是远程检查结果，不能用本地通过代替。
+[CI](../.github/workflows/ci.yml) 在 Linux 上运行这些检查，不启动真实 DSH、开发服务器、Docker 或 Electron。GitHub 中的对应 run 才是远程检查结果，不能用本地通过代替。
 
 ## 图片与配置扩展的手动验收清单
 
@@ -196,8 +196,8 @@ Connector 全量检查有 720 项通过、1 项旧参数签名约束失败；随
 依赖约束失败。代表性失败已在修改前的 `5180078d` 上复现。本次没有将这些
 既有失败改为跳过；上面的通过数字只代表所列验证范围。
 
-当前 CI 的完整命令见 [工作流](../.github/workflows/dsh-bridge-next.yml)。本地
-迁移测试使用临时 SQLite，实际运行仍要求 PostgreSQL。重启现有 `local-up.sh`
+当前 CI 的完整命令见 [工作流](../.github/workflows/ci.yml)。本地
+测试与实际运行都要求 PostgreSQL（`AGENT_SERVER_TEST_DB_URL`）。重启现有 `local-up.sh`
 会自动应用 `v2_33`，然后需完全重启 DSH 以加载新的插件 Python 进程。本轮
 未启动或重启真实服务，也未宣称已完成原环境的 409 实测验收。
 

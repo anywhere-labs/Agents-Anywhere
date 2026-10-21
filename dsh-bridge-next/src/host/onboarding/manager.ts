@@ -16,10 +16,13 @@ import { acquireManagerLock, readJson, writeJson } from '../storage/files.js'
 import { migrateStateRoot } from '../storage/migration.js'
 import { LoopbackFlow } from './loopback.js'
 import type { ConnectorAction, ConnectorFolder, ConnectorSettings } from '../../contracts/connector.js'
+import type { RuntimeLogPage, RuntimeLogQuery } from '../../contracts/logs.js'
 import { ConnectorSettingsStore, validateConnectorSettings } from '../connector/settings.js'
 import { canOpenFolders, openFolder, resolveUv } from '../connector/environment.js'
 import { MobileLogin } from '../account/mobile.js'
 import type { MobileLoginSnapshot } from '../../contracts/mobile.js'
+import { RuntimeDiagnostics } from '../dsh-runtime/diagnostics.js'
+import { RpcLogOutput } from '../dsh-runtime/log-output.js'
 
 interface Dependencies {
   rolePollIntervalMs?: number
@@ -33,6 +36,8 @@ interface Dependencies {
   pollIntervalMs?: number
   openFolder?: (path: string) => Promise<void>
   systemLanguages?: () => Promise<string[]>
+  diagnostics?: RuntimeDiagnostics
+  logOutput?: RpcLogOutput
 }
 
 export class OnboardingManager {
@@ -63,6 +68,8 @@ export class OnboardingManager {
   private readonly apiFactory: (base: string) => AccountApi
   private readonly connectorSettings: ConnectorSettingsStore
   private readonly mobile = new MobileLogin()
+  private readonly logOutput: RpcLogOutput
+  private readonly diagnostics: RuntimeDiagnostics
   private roleCheck: Promise<void> | null = null
   private roleTimer: ReturnType<typeof setInterval> | null = null
   private resolvedUvPath: string | null = null
@@ -70,7 +77,17 @@ export class OnboardingManager {
   constructor(private readonly config: ResolvedConfig, private readonly dependencies: Dependencies = {}) {
     this.settings = { apiBaseUrl: config.apiBaseUrl }
     this.connectorSettings = new ConnectorSettingsStore(config, dependencies.systemLanguages)
-    this.connector = dependencies.connector ?? new SourceConnector(config, undefined, () => this.connectorSettings.get())
+    this.logOutput = dependencies.logOutput ?? new RpcLogOutput(512, 'plugin')
+    this.diagnostics = dependencies.diagnostics ?? new RuntimeDiagnostics(this.logOutput, {}, 'dsh-plugin')
+    this.connector = dependencies.connector ?? new SourceConnector(
+      config,
+      undefined,
+      () => this.connectorSettings.get(),
+      undefined,
+      undefined,
+      this.diagnostics,
+      this.logOutput,
+    )
     this.detect = dependencies.detect ?? detectDesktop
     this.launchDesktop = dependencies.launchDesktop ?? launchDesktop
     this.apiFactory = dependencies.api ?? (base => new AccountApi(base))
@@ -79,6 +96,27 @@ export class OnboardingManager {
         void this.checkDeviceRecovery(this.binding.connectorId)
       }
     })
+  }
+
+  hasRuntimeLogs(): boolean { return this.connector.hasRuntimeLogs?.() ?? false }
+  get logsPath(): string | null { return this.connector.logsPath ?? null }
+  get pluginLogOutput(): RpcLogOutput { return this.logOutput }
+
+  async readRuntimeLogs(query?: RuntimeLogQuery): Promise<RuntimeLogPage> {
+    if (this.connector.readRuntimeLogs && this.connector.hasRuntimeLogs?.()) {
+      return this.connector.readRuntimeLogs(query)
+    }
+    return {
+      available: false,
+      items: [],
+      firstSeq: null,
+      lastSeq: null,
+      total: 0,
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+      logsPath: this.connector.logsPath ?? null,
+      updatedAt: new Date().toISOString(),
+    }
   }
 
   initialize(): Promise<void> {
@@ -207,6 +245,7 @@ export class OnboardingManager {
     if (this.disposed) throw new Error('插件已关闭。')
     await this.connector.prepare()
     if (this.disposed) throw new Error('插件已关闭。')
+    await this.requireStandalone()
     if (next.apiBaseUrl !== this.settings.apiBaseUrl) await this.logoutFlow()
     else await this.cancelFlow()
     await writeJson(join(this.config.stateRoot, 'settings.json'), next)
@@ -223,13 +262,17 @@ export class OnboardingManager {
     if (this.account && this.account.expiresAt > Date.now() + 30_000) {
       try {
         const user = await this.apiFactory(this.settings.apiBaseUrl).me(this.account.accessToken, controller.signal)
+        controller.signal.throwIfAborted()
         if (user.userId !== this.account.userId) throw new Error('账号发生变化，请重新登录。')
         this.account = { ...this.account, ...publicProfile(user) }
         this.profileCheckedAt = Date.now()
         await writeJson(join(this.config.stateRoot, 'account.json'), this.account)
+        await this.requireStandalone()
+        controller.signal.throwIfAborted()
         this.launch(flow, controller)
         return { url: flow.progressUrl }
       } catch (error) {
+        if (this.desktop.status !== 'absent') throw new Error(this.desktop.message)
         if (!(error instanceof ApiError) || error.status !== 401) {
           this.setProgress('error', safeMessage(error)); throw error
         }
@@ -268,6 +311,7 @@ export class OnboardingManager {
       renew: Boolean(code),
     })
     this.recovery = null
+    await this.requireStandalone()
     signal.throwIfAborted()
     this.setProgress('starting', '正在启动本机连接，首次准备运行环境可能需要几分钟…')
     await this.connector.start(this.binding, this.settings.apiBaseUrl, signal)
@@ -351,11 +395,14 @@ export class OnboardingManager {
       try {
         await this.connector.prepare()
         await this.connector.stop()
+        await this.requireStandalone()
         controller.signal.throwIfAborted()
         this.setProgress('pairing', action === 'recreate' ? '正在重新创建设备…' : '正在恢复设备连接…')
         this.binding = await recoverBinding(this.config.stateRoot, account, this.apiFactory(account.apiBaseUrl), controller.signal,
           recovery.connectorId, action)
         this.recovery = null
+        await this.requireStandalone()
+        controller.signal.throwIfAborted()
         this.setProgress('starting', '正在启动本机连接…')
         await this.connector.start(this.binding, account.apiBaseUrl, controller.signal)
         await this.waitOnline(this.apiFactory(account.apiBaseUrl), account, this.binding.connectorId, controller.signal)
@@ -385,6 +432,7 @@ export class OnboardingManager {
   private async requireStandalone(): Promise<void> {
     await this.initialize()
     if (this.disposed) throw new Error('插件已关闭。')
+    if (this.roleCheck) await this.roleCheck
     await this.refreshRole()
     if (this.disposed) throw new Error('插件已关闭。')
     if (this.desktop.status !== 'absent') { this.mobile.clear(); throw new Error(this.desktop.message) }
@@ -397,6 +445,9 @@ export class OnboardingManager {
   }
 
   controlConnector(action: ConnectorAction): Promise<null> {
+    if (action === 'stop' && !this.disposed && this.desktop.status === 'absent') {
+      this.controller?.abort()
+    }
     return this.serial(async () => {
       await this.requireStandalone()
       if (!['start', 'stop', 'restart'].includes(action)) throw new Error('不支持的 Connector 操作。')
@@ -429,6 +480,7 @@ export class OnboardingManager {
         : await ensureBinding(this.config.stateRoot, account, api, controller.signal, {
           ...(this.dependencies.machineState ? { machineState: this.dependencies.machineState } : {}),
         })
+      await this.requireStandalone()
       controller.signal.throwIfAborted()
       if (this.disposed) throw new Error('插件已关闭。')
       this.setProgress('starting', '正在启动 Connector…')
@@ -436,9 +488,13 @@ export class OnboardingManager {
       await this.waitOnline(api, account, this.binding.connectorId, controller.signal)
       this.setProgress('ready', '本机设备已连接。')
     } catch (error) {
-      await this.connectionFailed(error)
+      if (!controller.signal.aborted) {
+        await this.connectionFailed(error)
+        await this.connector.stop()
+        throw error
+      }
       await this.connector.stop()
-      throw error
+      if (this.desktop.status !== 'absent') throw new Error(this.desktop.message)
     } finally { if (this.controller === controller) this.controller = null }
   }
 
@@ -464,13 +520,17 @@ export class OnboardingManager {
     })
   }
 
-  openConnectorFolder(folder: ConnectorFolder): Promise<null> {
-    return this.serial(async () => {
-      await this.requireStandalone()
-      if (folder !== 'data' && folder !== 'logs') throw new Error('不支持的目录。')
-      await (this.dependencies.openFolder ?? openFolder)(join(this.config.stateRoot, folder === 'data' ? 'connector' : 'logs'))
+  async openConnectorFolder(folder: ConnectorFolder, fallbackLogsPath?: string | null): Promise<null> {
+    await this.requireStandalone()
+    if (folder !== 'data' && folder !== 'logs') throw new Error('不支持的目录。')
+    if (folder === 'data') {
+      await (this.dependencies.openFolder ?? openFolder)(join(this.config.stateRoot, 'connector'))
       return null
-    })
+    }
+    const logsPath = (await this.connector.resolveLogsPath?.()) ?? this.connector.logsPath ?? fallbackLogsPath ?? null
+    if (!logsPath) throw new Error('Connector 尚未就绪，暂未获取到日志目录。')
+    await (this.dependencies.openFolder ?? openFolder)(logsPath)
+    return null
   }
 
   resetConnector(forceLocal: boolean): Promise<null> {
@@ -594,11 +654,13 @@ export class OnboardingManager {
       this.controller?.abort()
       this.recoveryController?.abort()
       this.mobile.clear()
-      if (this.connector.running || this.flow || this.stage !== 'idle') {
-        await this.connector.stop()
-        const flow = this.flow
-        this.flow = null
-        if (flow) await flow.close()
+      const shouldStopConnector = this.connector.running || Boolean(this.controller) || this.stage === 'starting'
+      const wasActive = shouldStopConnector || Boolean(this.flow) || this.stage !== 'idle'
+      if (shouldStopConnector) await this.connector.stop()
+      const flow = this.flow
+      this.flow = null
+      if (flow) await flow.close()
+      if (wasActive || this.message !== desktop.message) {
         this.setProgress('idle', desktop.message)
       }
     })().finally(() => { this.roleCheck = null })
@@ -616,8 +678,12 @@ export class OnboardingManager {
   }
 
   private setProgress(stage: FlowStage, message: string): void {
+    const changed = this.stage !== stage || this.message !== message
     this.stage = stage
     this.message = message
+    if (changed) {
+      this.diagnostics.log(stage === 'error' ? 'warn' : 'info', 'onboarding.stage', { stage })
+    }
     this.flow?.update({ stage, message })
   }
 
@@ -630,7 +696,7 @@ export class OnboardingManager {
       deviceRecovery: this.recovery ? { ...this.recovery } : null,
       connector: {
         settings: this.connectorSettings.get(), resolvedUvPath: this.resolvedUvPath,
-        dataPath: join(this.config.stateRoot, 'connector'), logsPath: join(this.config.stateRoot, 'logs'),
+        dataPath: join(this.config.stateRoot, 'connector'), logsPath: this.connector.logsPath ?? '',
         canOpenFolders: canOpenFolders(), deviceName: this.binding?.name ?? null,
         lastError: this.connector.lastError ?? null,
       },

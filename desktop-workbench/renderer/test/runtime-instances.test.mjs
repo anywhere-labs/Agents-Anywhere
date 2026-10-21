@@ -27,15 +27,16 @@ import {
   sessionRuntimeType,
 } from "../src/features/dashboard/runtime-instances.ts"
 
-test("manual deletion replaces the retired ID without duplicating a refreshed successor", () => {
+test("manual deletion removes the instance from the list", () => {
   const old = { runtimeId: "rti_old", configured: true }
-  const successor = { runtimeId: "rti_new", configured: false }
   const other = { runtimeId: "rti_other", configured: true }
+  const deleted = { ...old, configured: false }
+  assert.deepEqual(runtimeInstancesAfterDeletion([old, other], old.runtimeId, deleted), [other])
+  assert.deepEqual(runtimeInstancesAfterDeletion([other], old.runtimeId, deleted), [other])
+  // A server that still returns a successor under a new ID keeps it once.
+  const successor = { runtimeId: "rti_new", configured: false }
   assert.deepEqual(runtimeInstancesAfterDeletion([old, other], old.runtimeId, successor), [other, successor])
   assert.deepEqual(runtimeInstancesAfterDeletion([old, other, successor], old.runtimeId, successor), [other, successor])
-  // Remains compatible with a server that has not yet been upgraded.
-  assert.deepEqual(runtimeInstancesAfterDeletion([old, other], old.runtimeId, { ...old, configured: false }),
-    [other, { ...old, configured: false }])
 })
 
 const legacyRuntime = {
@@ -96,16 +97,16 @@ test("an unconfigured compatibility instance is offered as addable without displ
   assert.deepEqual(addableRuntimeTypes([runtimeType], [legacyRuntime]), [runtimeType])
 })
 
-test("configured instances do not hide addable runtime types", () => {
+test("configured instances and addable types are mutually scoped", () => {
   const configured = { ...legacyRuntime, configured: true, config: {} }
   const [runtimeType] = mergeRuntimeTypes([], [configured])
 
   assert.deepEqual(configuredRuntimeInstances([configured]), [configured])
-  assert.equal(runtimeTypeCanCreateInstance(runtimeType, [configured]), true)
-  assert.deepEqual(addableRuntimeTypes([runtimeType], [configured]), [runtimeType])
+  assert.equal(runtimeTypeCanCreateInstance(runtimeType, [configured]), false)
+  assert.deepEqual(addableRuntimeTypes([runtimeType], [configured]), [])
 })
 
-test("running instance limits do not prevent saving another configuration", () => {
+test("instance availability follows the runtime descriptor policy", () => {
   const [baseType] = mergeRuntimeTypes([], [legacyRuntime])
   const singleType = {
     ...baseType,
@@ -123,13 +124,7 @@ test("running instance limits do not prevent saving another configuration", () =
   }
 
   assert.equal(runtimeTypeCanCreateInstance(singleType, []), true)
-  assert.equal(runtimeTypeCanCreateInstance(singleType, [configured]), true)
-  const running = { ...configured, active: true, status: "running" }
-  assert.equal(runtimeTypeCanCreateInstance(singleType, [running]), true)
-  const multipleType = { ...singleType, instancePolicy: "multiple", maxInstances: 2 }
-  assert.equal(runtimeTypeCanCreateInstance(multipleType, [running, running]), true)
-  assert.equal(runtimeTypeCanCreateInstance({ ...singleType, present: false }, []), false)
-  assert.equal(runtimeTypeCanCreateInstance({ ...singleType, schema: null }, []), false)
+  assert.equal(runtimeTypeCanCreateInstance(singleType, [configured]), false)
 })
 
 test("creation defaults and required fields come only from the descriptor", () => {
