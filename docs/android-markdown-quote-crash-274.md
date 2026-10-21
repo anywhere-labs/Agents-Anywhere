@@ -56,6 +56,19 @@ AgentMarkdownText
 模拟器上的组件验证不能替代原用户 Redmi K70E、原版 2.0.3 release APK 或原私有会话的验收。
 发布前仍应使用最终签名 APK 在原会话上确认打开和滚动正常。
 
+## 已完成的验证（2026-10-21）
+
+- Android Debug APK 编译及 `checkLegacyRoutes` 通过。
+- 在 Android 16 的 Redmi 真机上覆盖安装本分支 APK，安装包校验和与本地构建产物一致。
+- 通过实际登录与项目列表进入专用本地验证会话，引用内代码块、块级公式、嵌套引用内 Bash、
+  中文多段引用与表格、展开 reasoning 内的引用代码均正常显示，验证期间进程稳定且无目标异常。
+- 重启 App 后重新打开引用代码块会话正常，登录状态保留。
+
+真机会话采用通过 Store 写入的专用 Timeline 夹具，未执行真实 Runtime，也未验证原报告的私有会话。
+RTL 已在绘制逻辑中适配，但尚未完成真机方向验收。
+`lintDebug` 报告现有 `remember(context)` 返回 `Unit` 的 `RememberReturnType` 错误；
+该代码块与上游 `main` 相同，本次未修改，Lint 整体未通过。
+
 ## 风险与回滚
 
 改动局限于引用块的装饰绘制与布局，主要关注竖线高度、嵌套缩进和 RTL 起始侧的位置。
