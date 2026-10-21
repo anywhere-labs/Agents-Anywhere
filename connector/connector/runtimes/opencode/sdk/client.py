@@ -686,18 +686,20 @@ class OpenCodeClient:
         self,
         session_id: str,
         question_id: str,
-        reply: str,
+        reply: str | Mapping[str, Any] | Sequence[Any],
         directory: str | None = None,
     ) -> None:
         """Answer a form the model asked mid-turn.
 
         V2 answers a form with ``{"answer": {fieldId: value}}`` — one entry per
-        form field — so the field ids are read from the form itself and the
-        reply is submitted for each of them (opencode's own UI does the same for
-        its free-text answer option).
+        form field. A mapping is used as-is when its keys are field ids; question
+        notices that only know the question order fall back to matching the
+        mapping values against the form's visible fields in order. A plain
+        string remains supported for legacy free-text callers and is submitted
+        for every field, as before.
         """
 
-        fields: list[str] = []
+        fields: list[Mapping[str, Any]] = []
         try:
             detail = _unwrap(
                 await self._request(
@@ -708,15 +710,49 @@ class OpenCodeClient:
             detail = None
         if isinstance(detail, Mapping):
             for field in detail.get("fields") or ():
-                if not isinstance(field, Mapping):
-                    continue
-                # V2 form fields are keyed by ``key`` (``id`` on older builds).
-                field_id = str(field.get("key") or field.get("id") or "")
-                if field_id:
-                    fields.append(field_id)
-        if not fields:
+                if isinstance(field, Mapping):
+                    fields.append(field)
+        field_ids: list[str] = []
+        visible_ids: list[str] = []
+        for field in fields:
+            # V2 form fields are keyed by ``key`` (``id`` on older builds).
+            field_id = str(field.get("key") or field.get("id") or "")
+            if not field_id:
+                continue
+            field_ids.append(field_id)
+            if not field.get("hidden"):
+                visible_ids.append(field_id)
+        if not field_ids:
             raise OpenCodeClientError(f"form {question_id} has no answerable field")
-        answer = {field_id: reply for field_id in fields}
+        if isinstance(reply, str):
+            answer = {field_id: reply for field_id in field_ids}
+        elif isinstance(reply, Mapping):
+            answer = {
+                field_id: reply[field_id]
+                for field_id in field_ids
+                if field_id in reply
+            }
+            if not answer:
+                values = list(reply.values())
+                if len(values) == len(visible_ids):
+                    answer = dict(zip(visible_ids, values, strict=True))
+                elif len(values) == 1 and visible_ids:
+                    answer = {field_id: values[0] for field_id in visible_ids}
+                else:
+                    raise OpenCodeClientError(
+                        f"form {question_id} answers do not match its fields"
+                    )
+        elif isinstance(reply, Sequence):
+            values = list(reply)
+            if len(values) != len(visible_ids):
+                raise OpenCodeClientError(
+                    f"form {question_id} expected {len(visible_ids)} answers, got {len(values)}"
+                )
+            answer = dict(zip(visible_ids, values, strict=True))
+        else:
+            raise OpenCodeClientError(
+                f"form {question_id} answer has unsupported type {type(reply).__name__}"
+            )
         await self._request(
             "POST",
             f"/api/session/{session_id}/form/{question_id}/reply",

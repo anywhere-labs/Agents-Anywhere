@@ -238,7 +238,7 @@ class FakeClient:
         self.command_directories: list[str | None] = []
         # Interaction replies.
         self.permission_replies: list[tuple[str, str, str, str | None]] = []
-        self.question_replies: list[tuple[str, str, str, str | None]] = []
+        self.question_replies: list[tuple[str, str, Any, str | None]] = []
         self.question_rejects: list[tuple[str, str, str | None]] = []
         # Pollable pending interaction lists keyed by native session id.
         self.pending_permissions: dict[str, list[dict[str, Any]]] = {}
@@ -392,7 +392,7 @@ class FakeClient:
         self,
         session_id: str,
         question_id: str,
-        reply: str,
+        reply: Any,
         directory: str | None = None,
     ) -> None:
         self.question_replies.append((session_id, question_id, reply, directory))
@@ -2871,18 +2871,86 @@ def test_question_notice_lists_options_and_blocks_the_turn() -> None:
         # only says "OpenCode 向你提问" and cannot be answered sensibly.
         # "input_request" is the Server's accepted kind; a "question" literal
         # would be rejected by the notice whitelist and never reach the client.
-        assert "PostgreSQL" in (notice.message or "")
-        assert "SQLite" in (notice.message or "")
+        submit = next(action for action in notice.actions if action["actionId"] == "submit")
+        questions = submit["input"]["uiSchema"]["questions"]
+        assert questions[0]["id"] == "q_0"
+        assert [option["label"] for option in questions[0]["options"]] == [
+            "PostgreSQL",
+            "SQLite",
+        ]
+        assert [option["id"] for option in questions[0]["options"]] == [
+            "PostgreSQL",
+            "SQLite",
+        ]
         assert notice.context.get("options") == ["PostgreSQL", "SQLite"]
+        assert notice.context.get("fieldTypes") == {"q_0": "string"}
+        assert any(action["actionId"] == "cancel" for action in notice.actions)
 
         result = await runtime.respond_interaction(
-            "plat_1", notice.notice_id, "reply", {"reply": "PostgreSQL"}
+            "plat_1",
+            notice.notice_id,
+            "submit",
+            {"answers": {"q_0": {"optionIds": ["SQLite"]}}},
         )
         assert result.ok, result.message
         assert client.question_replies == [
-            (native_id, "que_1", "PostgreSQL", "/work")
+            (native_id, "que_1", {"q_0": "SQLite"}, "/work")
         ]
         assert host.state_updates[-1] == ("plat_1", "running")
+
+    asyncio.run(run())
+
+
+def test_form_question_uses_field_keys_and_option_values() -> None:
+    """A V2 form field key is the answer key; option values are the payload."""
+
+    client, host = FakeClient(), FakeHost()
+    runtime = _make_runtime(client, host)
+
+    async def run() -> None:
+        await runtime.create_and_start_session("plat_1", "hi", cwd="/work")
+        native_id = next(iter(client.sessions))
+        client.pending_forms[native_id] = [
+            {
+                "id": "frm_1",
+                "title": "Which database should I use?",
+                "fields": [
+                    {
+                        "key": "db",
+                        "type": "string",
+                        "title": "Database",
+                        "options": [
+                            {"value": "postgres", "label": "PostgreSQL"},
+                            {"value": "sqlite", "label": "SQLite"},
+                        ],
+                    },
+                    {"key": "note", "type": "string", "title": "Note", "hidden": True},
+                ],
+            }
+        ]
+        await runtime._sync_pending_forms(native_id)
+        notice = next(
+            n
+            for n in await runtime.get_session_notices("plat_1", native_id)
+            if n.interaction_type == "input_request"
+        )
+        submit = next(action for action in notice.actions if action["actionId"] == "submit")
+        question = submit["input"]["uiSchema"]["questions"][0]
+        assert question["id"] == "db"
+        assert [option["id"] for option in question["options"]] == ["postgres", "sqlite"]
+        assert notice.context["options"] == ["PostgreSQL", "SQLite"]
+        assert notice.context["fieldTypes"] == {"db": "string"}
+
+        result = await runtime.respond_interaction(
+            "plat_1",
+            notice.notice_id,
+            "submit",
+            {"answers": {"db": {"optionIds": ["sqlite"]}}},
+        )
+        assert result.ok, result.message
+        assert client.question_replies == [
+            (native_id, "frm_1", {"db": "sqlite"}, "/work")
+        ]
 
     asyncio.run(run())
 
@@ -3106,6 +3174,57 @@ def test_client_question_reply_answers_the_form_fields() -> None:
         await client.reject_question("ses_x", "frm_1", directory="/work")
         assert calls[2][0] == "DELETE"
         assert calls[2][1] == "/api/session/ses_x/form/frm_1"
+        await client.close()
+
+    asyncio.run(run())
+
+
+def test_client_question_reply_accepts_structured_answers() -> None:
+    """Field-keyed answers pass through; unknown keys map by visible order."""
+
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "id": "frm_1",
+                        "sessionID": "ses_x",
+                        "title": "Pick a database",
+                        "fields": [
+                            {"key": "db", "type": "string", "title": "Database"},
+                            {"key": "tags", "type": "multiselect", "title": "Tags"},
+                            {"key": "note", "type": "string", "hidden": True},
+                        ],
+                    }
+                },
+            )
+        return httpx.Response(204)
+
+    client, calls = _mock_client(handler)
+
+    async def run() -> None:
+        await client.reply_question(
+            "ses_x",
+            "frm_1",
+            {"db": "postgres", "tags": ["a", "b"]},
+            directory="/work",
+        )
+        assert json.loads(calls[1][2]) == {
+            "answer": {"db": "postgres", "tags": ["a", "b"]}
+        }
+        # Legacy SSE question ids are positional; the visible fields keep order.
+        await client.reply_question(
+            "ses_x",
+            "frm_1",
+            {"q_0": "postgres", "q_1": ["a", "b"]},
+            directory="/work",
+        )
+        assert json.loads(calls[3][2]) == {
+            "answer": {"db": "postgres", "tags": ["a", "b"]}
+        }
         await client.close()
 
     asyncio.run(run())

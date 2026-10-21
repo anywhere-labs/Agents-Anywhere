@@ -44,6 +44,10 @@ from connector.runtime_protocol import (
     CAPABILITY_SESSION_SEND_MESSAGE,
     CAPABILITY_SESSION_STEER,
     AgentRuntime,
+    InputRequestForm,
+    InputRequestOption,
+    InputRequestQuestion,
+    InputRequestValidationError,
     PreparedSessionTimelineSync,
     RuntimeCapability,
     RuntimeCapabilitySet,
@@ -243,53 +247,267 @@ def _session_directory(session: Mapping[str, Any]) -> str | None:
     return str(nested or session.get("directory") or "") or None
 
 
-def _option_labels(options: Any) -> list[str]:
-    """Normalize option entries to labels.
+_QUESTION_CANCEL_ACTIONS = frozenset({"cancel", "dismiss", "reject"})
+_LEGACY_CANCEL_REPLIES = frozenset({"cancel", "dismiss", "reject", "-"})
 
-    The SSE path delivers options as ``[{label: ...}]`` mappings while the form
-    poll already flattens them to plain strings; both must render, and calling
-    ``.get`` on a string used to raise and silently drop the whole card.
+
+def _option_pair(option: Any) -> tuple[str, str] | None:
+    """Return ``(answer value, display label)`` for one opencode option."""
+
+    if isinstance(option, Mapping):
+        label = option.get("label") or option.get("title") or option.get("value")
+        value = option.get("value") or option.get("id") or label
+    elif isinstance(option, str):
+        value = label = option
+    elif isinstance(option, (tuple, list)) and len(option) == 2:
+        value, label = option
+    else:
+        return None
+    if value is None or label is None:
+        return None
+    value_text = str(value)
+    label_text = str(label).strip()
+    if not value_text.strip() or not label_text:
+        return None
+    return value_text, label_text
+
+
+def _normalise_questions(raw_questions: Any) -> list[dict[str, Any]]:
+    """Normalise opencode question and form-field shapes to one internal shape.
+
+    The SSE payload uses ``{question, options}`` while a V2 form uses
+    ``{key, type, title, options}``. A question here keeps the answer key (the
+    form field key when one exists), the prompt and option pairs, so the notice
+    can be rendered as a real input-request form instead of a free-text reply.
     """
 
-    return [
-        str(option.get("label") or option) if isinstance(option, Mapping) else str(option)
-        for option in (options or ())
-        if isinstance(option, (Mapping, str)) and (option or option == 0)
-    ]
+    questions: list[dict[str, Any]] = []
+    used_ids: set[str] = set()
+    for index, raw in enumerate(raw_questions or ()):
+        if isinstance(raw, Mapping):
+            raw_id = raw.get("id") if raw.get("id") is not None else raw.get("key")
+            question_id = str(raw_id) if raw_id not in (None, "") else f"q_{index}"
+            prompt = str(
+                raw.get("question")
+                or raw.get("prompt")
+                or raw.get("text")
+                or raw.get("title")
+                or question_id
+            ).strip()
+            field_type = str(raw.get("fieldType") or raw.get("type") or "string")
+            multiple = raw.get("multiple") is True or field_type == "multiselect"
+            if multiple and field_type != "multiselect":
+                # Legacy question events only said ``multiple``; keep the
+                # answer array shape during the typed-answer conversion.
+                field_type = "multiselect"
+            raw_options = raw.get("options") or ()
+            header = str(raw.get("header") or "").strip() or None
+            if "allowCustom" in raw:
+                allow_custom = raw.get("allowCustom") is True
+            elif "custom" in raw:
+                allow_custom = raw.get("custom") is True
+            elif "fieldType" in raw:
+                # A V2 form field without ``custom`` is a closed list.
+                allow_custom = not raw_options and field_type != "boolean"
+            else:
+                # Legacy question events offered a free-text reply even when
+                # they also carried options; keep that escape hatch.
+                allow_custom = True
+        else:
+            question_id = f"q_{index}"
+            prompt = str(raw).strip() or question_id
+            field_type = "string"
+            multiple = False
+            raw_options = ()
+            header = None
+            allow_custom = True
+        if field_type == "boolean" and not raw_options:
+            raw_options = (
+                {"value": "true", "label": "True"},
+                {"value": "false", "label": "False"},
+            )
+            allow_custom = False
+        options: list[tuple[str, str]] = []
+        seen_options: set[str] = set()
+        for option in raw_options:
+            pair = _option_pair(option)
+            if pair is None or pair[0] in seen_options:
+                continue
+            seen_options.add(pair[0])
+            options.append(pair)
+        base_id = question_id
+        suffix = 2
+        while question_id in used_ids:
+            question_id = f"{base_id}_{suffix}"
+            suffix += 1
+        used_ids.add(question_id)
+        questions.append(
+            {
+                "id": question_id,
+                "question": prompt or question_id,
+                "options": options,
+                "multiple": multiple,
+                "allowCustom": allow_custom,
+                "fieldType": field_type,
+                **({"header": header} if header else {}),
+            }
+        )
+    return questions
+
+
+def _option_labels(options: Any) -> list[str]:
+    """Normalize option entries to labels for the fallback notice body."""
+
+    labels: list[str] = []
+    for option in options or ():
+        pair = _option_pair(option)
+        if pair is not None:
+            labels.append(pair[1])
+    return labels
 
 
 def _form_to_question_props(form: Mapping[str, Any]) -> dict[str, Any]:
     """Project a V2 form into the question-notice props.
 
     opencode 2.x replaced 1.x's ``question`` events with forms: a titled set of
-    typed fields (``{key, type, title?, options?}``). The notice builder already
-    renders "one question with selectable options", so each visible field
-    becomes one question and the form title becomes the prompt.
+    typed fields (``{key, type, title?, options?}``). The form field keys are
+    kept as question ids so a submitted answer maps straight back onto
+    opencode's ``{answer: {fieldKey: value}}`` payload.
     """
 
-    questions: list[dict[str, Any]] = []
+    raw_questions: list[dict[str, Any]] = []
     for form_field in form.get("fields") or ():
         if not isinstance(form_field, Mapping) or form_field.get("hidden"):
             continue
-        options: list[str] = []
-        for option in form_field.get("options") or ():
-            if isinstance(option, Mapping):
-                label = option.get("label") or option.get("title") or option.get("value")
-            else:
-                label = option
-            if label:
-                options.append(str(label))
-        questions.append(
+        field_type = str(form_field.get("type") or "string")
+        # External fields are a URL the user has to open elsewhere; rendering
+        # them as a text answer would submit a value opencode never expects.
+        if field_type == "external":
+            continue
+        field_key = str(form_field.get("key") or form_field.get("id") or "")
+        if not field_key:
+            continue
+        raw_questions.append(
             {
-                "question": str(form_field.get("title") or form_field.get("key") or ""),
-                "options": options,
+                "id": field_key,
+                "question": str(form_field.get("title") or field_key),
+                "options": form_field.get("options") or (),
+                "fieldType": field_type,
+                "multiple": field_type == "multiselect",
+                **(
+                    {"custom": form_field.get("custom")}
+                    if "custom" in form_field
+                    else {}
+                ),
             }
         )
     return {
         "id": str(form.get("id") or ""),
         "question": str(form.get("title") or ""),
-        "questions": questions,
+        "questions": _normalise_questions(raw_questions),
     }
+
+
+def _input_request_form(
+    questions: list[dict[str, Any]],
+) -> tuple[InputRequestForm | None, dict[str, str]]:
+    """Build the platform input-request form and its field-type map."""
+
+    if not questions:
+        return None, {}
+    input_questions: list[InputRequestQuestion] = []
+    field_types: dict[str, str] = {}
+    for question in questions:
+        question_id = str(question.get("id") or "")
+        options = tuple(
+            InputRequestOption(option_id=value, label=label)
+            for value, label in question.get("options") or ()
+        )
+        input_questions.append(
+            InputRequestQuestion(
+                question_id=question_id,
+                prompt=str(question.get("question") or question_id),
+                options=options,
+                header=str(question.get("header") or "") or None,
+                multiple=question.get("multiple") is True,
+                allow_custom=question.get("allowCustom") is not False,
+            )
+        )
+        field_types[question_id] = str(question.get("fieldType") or "string")
+    try:
+        return InputRequestForm(questions=tuple(input_questions)), field_types
+    except InputRequestValidationError as exc:
+        logger.warning("opencode question form rejected: {}", exc)
+        return None, field_types
+
+
+def _input_request_form_from_notice(notice: SessionNotice) -> InputRequestForm | None:
+    """Rebuild the form from the notice action so replies survive a restart."""
+
+    for action in notice.actions:
+        if not isinstance(action, Mapping):
+            continue
+        input_spec = action.get("input")
+        if not isinstance(input_spec, Mapping):
+            continue
+        ui_schema = input_spec.get("uiSchema")
+        if not isinstance(ui_schema, Mapping):
+            continue
+        if ui_schema.get("component") != "inputRequest":
+            continue
+        raw_questions = ui_schema.get("questions")
+        if not isinstance(raw_questions, list):
+            continue
+        form, _ = _input_request_form(_normalise_questions(raw_questions))
+        if form is not None:
+            return form
+    return None
+
+
+def _opencode_answer(
+    parsed_answers: Mapping[str, Any],
+    field_types: Mapping[str, str],
+) -> dict[str, Any]:
+    """Convert platform answer objects into opencode form values.
+
+    Option ids are already opencode option values (``Form.Option.value``), so a
+    single-select string answer needs no label lookup. Multiselect answers stay
+    arrays, and boolean/number fields are coerced back to their typed values.
+    """
+
+    answer: dict[str, Any] = {}
+    for question_id, parsed in parsed_answers.items():
+        field_type = field_types.get(question_id, "string")
+        option_values = list(parsed.option_ids)
+        custom_text = parsed.custom_text
+        if field_type == "multiselect":
+            values = list(option_values)
+            if custom_text:
+                values.append(custom_text)
+            answer[question_id] = values
+            continue
+        raw_value = (
+            custom_text
+            if custom_text is not None
+            else (option_values[0] if option_values else "")
+        )
+        if field_type == "boolean":
+            lowered = str(raw_value).strip().lower()
+            if lowered in {"true", "1", "yes", "y", "是"}:
+                answer[question_id] = True
+            elif lowered in {"false", "0", "no", "n", "否"}:
+                answer[question_id] = False
+            else:
+                raise InputRequestValidationError(
+                    f"boolean answer expected for {question_id}"
+                )
+        elif field_type == "integer":
+            answer[question_id] = int(str(raw_value))
+        elif field_type == "number":
+            answer[question_id] = float(str(raw_value))
+        else:
+            answer[question_id] = raw_value
+    return answer
 
 
 def _capability_flag(capabilities: Mapping[str, Any] | None, name: str) -> bool:
@@ -2354,27 +2572,63 @@ class OpenCodeRuntime(AgentRuntime):
                 # as (the Server's accepted kinds); ``question`` stays accepted
                 # for notices raised by older builds.
                 question_id = str(context.get("questionId") or "")
-                reply = str((input_data or {}).get("reply") or "").strip()
                 if not question_id:
                     return RuntimeOperationResult(
                         ok=False, code="invalid_question", message="question id missing"
                     )
+                reply = ""
+                if isinstance(input_data, Mapping):
+                    raw_reply = input_data.get("reply")
+                    if isinstance(raw_reply, str):
+                        reply = raw_reply.strip()
+                cancel = action_id in _QUESTION_CANCEL_ACTIONS or (
+                    reply in _LEGACY_CANCEL_REPLIES
+                )
                 # Dismissing the card is a real opencode action; answering with
                 # an empty string is not (opencode rejects an empty label).
-                if reply in {"cancel", "dismiss", "reject", "-"}:
+                if cancel:
                     await self._client.reject_question(
                         native_id, question_id, directory=directory
                     )
                 else:
-                    if not reply:
-                        return RuntimeOperationResult(
-                            ok=False,
-                            code="empty_reply",
-                            message="a question reply cannot be empty",
-                        )
-                    await self._client.reply_question(
-                        native_id, question_id, reply, directory=directory
+                    form = _input_request_form_from_notice(notice)
+                    raw_answers = (
+                        input_data.get("answers")
+                        if isinstance(input_data, Mapping)
+                        else None
                     )
+                    if form is not None and isinstance(raw_answers, Mapping):
+                        try:
+                            parsed = form.parse_answers(input_data)
+                            raw_field_types = context.get("fieldTypes")
+                            field_types = (
+                                {
+                                    str(key): str(value)
+                                    for key, value in raw_field_types.items()
+                                }
+                                if isinstance(raw_field_types, Mapping)
+                                else {}
+                            )
+                            answer = _opencode_answer(parsed, field_types)
+                        except (InputRequestValidationError, TypeError, ValueError) as exc:
+                            return RuntimeOperationResult(
+                                ok=False,
+                                code="invalid_question",
+                                message=str(exc),
+                            )
+                        await self._client.reply_question(
+                            native_id, question_id, answer, directory=directory
+                        )
+                    else:
+                        if not reply:
+                            return RuntimeOperationResult(
+                                ok=False,
+                                code="empty_reply",
+                                message="a question reply cannot be empty",
+                            )
+                        await self._client.reply_question(
+                            native_id, question_id, reply, directory=directory
+                        )
             else:
                 return RuntimeOperationResult(
                     ok=False,
@@ -3594,36 +3848,42 @@ class OpenCodeRuntime(AgentRuntime):
     ) -> None:
         """Surface a question the model asked mid-turn as a blocking notice.
 
-        opencode asks with a list of questions, each carrying selectable
-        ``options``. The platform notice offers a free-text reply (which
-        opencode accepts as a one-label answer), so the option labels go into
-        the notice body — otherwise the user cannot tell what they are being
-        asked to pick.
+        opencode questions carry selectable options. Publish them as the
+        platform's input-request form so every option is a real selection
+        instead of a single free-text reply button; the form field keys are
+        also what opencode expects back in ``{answer: {fieldKey: value}}``.
         """
 
         question_id = str(props.get("id") or "")
         if not question_id:
             return
-        questions = props.get("questions") or []
-        text = str(props.get("question") or "")
+        questions = _normalise_questions(props.get("questions") or ())
+        if not questions and isinstance(props.get("fields"), (list, tuple)):
+            questions = _form_to_question_props(props)["questions"]
+        text = str(props.get("question") or "").strip()
+        form, field_types = _input_request_form(questions)
         options: list[str] = []
-        first_options: list[str] = []
-        if isinstance(questions, list) and questions:
-            first = questions[0]
-            if isinstance(first, Mapping):
-                text = str(
-                    first.get("question") or first.get("text") or first.get("prompt") or text
-                )
-                first_options = _option_labels(first.get("options"))
-            else:
-                text = str(first)
-        if isinstance(questions, list):
-            for question in questions:
-                if isinstance(question, Mapping):
-                    options.extend(_option_labels(question.get("options")))
-        body = text
-        if first_options:
-            body = f"{text}\n可选回复: {' / '.join(first_options)}"
+        for question in questions:
+            options.extend(
+                label for _value, label in question.get("options") or ()
+            )
+        if form is not None:
+            actions: tuple[Mapping[str, Any], ...] = (
+                form.action(action_id="submit", label="Submit"),
+                {"actionId": "cancel", "label": "Cancel", "style": "secondary"},
+            )
+            prompts = {str(question.get("question") or "") for question in questions}
+            # The form already renders every prompt; only keep a body when the
+            # event carried a form title that is not one of those prompts.
+            message = text if text and text not in prompts else None
+        else:
+            body = text
+            if options:
+                body = f"{text}\n可选回复: {' / '.join(options)}"
+            message = body.strip() or None
+            actions = (
+                {"actionId": "reply", "label": "回复", "style": "primary"},
+            )
         notice_id = f"notice_opencode_que_{question_id}"
         notice = SessionNotice(
             notice_id=notice_id,
@@ -3631,7 +3891,7 @@ class OpenCodeRuntime(AgentRuntime):
             runtime="opencode",
             type="interaction",
             title="OpenCode 向你提问",
-            message=body or None,
+            message=message,
             severity="info",
             # The Server only accepts the shared interaction kinds; "question"
             # would be rejected and the card would never reach the client.
@@ -3643,10 +3903,9 @@ class OpenCodeRuntime(AgentRuntime):
                 "questionId": question_id,
                 "externalSessionId": native_id,
                 "options": options,
+                "fieldTypes": field_types,
             },
-            actions=(
-                {"actionId": "reply", "label": "回复", "style": "primary"},
-            ),
+            actions=actions,
             metadata={"source": "opencode.question"},
         )
         # Record only after the Server accepted the notice: a notice stored
