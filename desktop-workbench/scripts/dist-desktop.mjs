@@ -51,7 +51,10 @@ function run(command, args, env) {
     cwd: PROJECT_ROOT,
     env,
     stdio: "inherit",
-    shell: process.platform === "win32",
+    // Only `.cmd` shims such as yarn.cmd need cmd.exe. It joins the command
+    // line unquoted, so Node, electron-builder and any path containing a
+    // space (C:\Program Files\nodejs\node.exe) must be spawned directly.
+    shell: process.platform === "win32" && command.endsWith(".cmd"),
   });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} exited with ${result.status ?? "null"}`);
