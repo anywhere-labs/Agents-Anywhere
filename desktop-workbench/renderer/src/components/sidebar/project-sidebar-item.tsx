@@ -38,13 +38,23 @@ import {
 import type { WorkspaceSessionView } from "@/components/workspace-context"
 import { SessionSidebarItem } from "@/components/sidebar/session-sidebar-item"
 import { OverflowMarquee } from "@/components/sidebar/overflow-marquee"
+import {
+  projectIdentityLabel,
+  type IdentityParts,
+  type ProjectIdentity,
+} from "@/components/sidebar/project-identity"
 import type { ProjectView } from "@/features/dashboard/types"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 
+/** Sessions shown per expanded project before "show more". */
+const PROJECT_SESSION_PREVIEW = 8
+
 export function ProjectSidebarItem({
   project,
   sessions,
+  identity,
+  identityParts,
   expanded,
   activeSessionId,
   onExpandedChange,
@@ -59,6 +69,8 @@ export function ProjectSidebarItem({
 }: {
   project: ProjectView
   sessions: WorkspaceSessionView[]
+  identity: ProjectIdentity
+  identityParts: IdentityParts
   expanded: boolean
   activeSessionId: string | null
   onExpandedChange: (open: boolean) => void
@@ -74,11 +86,24 @@ export function ProjectSidebarItem({
   const t = useTranslations("dashboard")
   const [nameHovered, setNameHovered] = React.useState(false)
   const [optionsOpen, setOptionsOpen] = React.useState(false)
+  const [showsAllSessions, setShowsAllSessions] = React.useState(false)
+  const collapsesSessions = !showsAllSessions && sessions.length > PROJECT_SESSION_PREVIEW
+  // Keep the open session visible even when it sorts past the preview.
+  const visibleSessions = collapsesSessions
+    ? sessions.filter((session, index) => index < PROJECT_SESSION_PREVIEW || session.id === activeSessionId)
+    : sessions
   const containsActiveSession = sessions.some((session) => session.id === activeSessionId)
+  // The identity line is the second row and only carries the dimensions that
+  // are filtered right now; `null` keeps the row exactly as it was before.
+  const identityLine = projectIdentityLabel(identity, identityParts)
+  const agentSummary = identity.agents
+    .map((agent) => agent.sessionCount > 1 ? `${agent.label} ×${agent.sessionCount}` : agent.label)
+    .join(", ")
 
   return (
     <SidebarMenuItem>
       <Collapsible open={expanded} onOpenChange={onExpandedChange}>
+        <TooltipProvider delayDuration={300}>
         <div
           className="group/project relative"
           onPointerEnter={() => setNameHovered(true)}
@@ -88,11 +113,42 @@ export function ProjectSidebarItem({
             <SidebarMenuButton
               className={cn(
                 "pr-[4.75rem] text-muted-foreground",
+                identityLine && "h-auto",
                 containsActiveSession && "text-foreground",
               )}
             >
               {expanded ? <FolderOpen /> : <Folder />}
-              <OverflowMarquee text={project.name} active={nameHovered} />
+              {identityLine ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <OverflowMarquee
+                        text={project.name}
+                        active={nameHovered}
+                        className="w-full flex-none"
+                      />
+                      <span className="block min-w-0 truncate text-[11px] leading-4 text-muted-foreground/80">
+                        {identityLine}
+                      </span>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="right"
+                    sideOffset={6}
+                    className="w-64 flex-col items-start gap-0.5"
+                  >
+                    <span className="truncate font-medium">{identity.deviceName}</span>
+                    <span className="code-mono break-all text-[11px] opacity-80">
+                      {identity.workspacePath}
+                    </span>
+                    {agentSummary ? (
+                      <span className="text-[11px] opacity-80">{agentSummary}</span>
+                    ) : null}
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <OverflowMarquee text={project.name} active={nameHovered} />
+              )}
             </SidebarMenuButton>
           </CollapsibleTrigger>
 
@@ -161,13 +217,14 @@ export function ProjectSidebarItem({
             </div>
           </TooltipProvider>
         </div>
+        </TooltipProvider>
 
         <CollapsibleContent>
           <SidebarMenu>
             {sessions.length === 0 ? (
-              <li className="py-2 pl-6 pr-3 text-xs text-muted-foreground">{t("projects.noSessions")}</li>
+              <li className="py-2 pl-4.5 pr-3 text-xs text-muted-foreground">{t("projects.noSessions")}</li>
             ) : (
-              sessions.map((session) => (
+              visibleSessions.map((session) => (
                 <SessionSidebarItem
                   key={session.id}
                   item={session}
@@ -180,6 +237,19 @@ export function ProjectSidebarItem({
                 />
               ))
             )}
+            {sessions.length > PROJECT_SESSION_PREVIEW ? (
+              <li>
+                <button
+                  type="button"
+                  onClick={() => setShowsAllSessions((value) => !value)}
+                  className="w-full rounded-xl py-1.5 pl-4.5 pr-3 text-left text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                >
+                  {showsAllSessions
+                    ? t("projects.showFewerSessions")
+                    : t("projects.showMoreSessions", { count: sessions.length - visibleSessions.length })}
+                </button>
+              </li>
+            ) : null}
           </SidebarMenu>
         </CollapsibleContent>
       </Collapsible>

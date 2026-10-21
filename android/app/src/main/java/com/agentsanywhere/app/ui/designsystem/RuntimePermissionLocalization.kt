@@ -43,6 +43,10 @@ internal fun runtimePermissionLocalizer(): RuntimePermissionLocalizer {
                 stringResource(R.string.runtime_permission_dsh_full_access),
                 null,
             ),
+            RuntimePermissionTranslation.DshAutoReview to LocalizedRuntimePermission(
+                stringResource(R.string.runtime_permission_auto_review),
+                null,
+            ),
             RuntimePermissionTranslation.RequestApproval to LocalizedRuntimePermission(
                 stringResource(R.string.runtime_permission_request_approval),
                 stringResource(R.string.runtime_permission_desc_request_approval),

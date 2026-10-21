@@ -9,8 +9,11 @@ import {
   withNewSessionSelectionPreference,
 } from "../src/features/dashboard/new-session-preferences.ts"
 import {
+  isDshAutoReviewPermission,
   modelIdsForSelectionId,
+  permissionCatalogI18nText,
   permissionIdForSelectionId,
+  permissionSelectionForNewSessionPreference,
 } from "../src/components/session/catalog-selection.ts"
 
 const source = readFileSync(
@@ -213,7 +216,7 @@ test("device, agent, permission, model, and reasoning changes use immediate pers
   assert.equal(handlers.match(/persistTargetPreference\(/g)?.length, 4)
   assert.match(handlers, /setSelectedReasoning\(reasoning\)/)
   assert.match(handlers, /model: selectionIdForModelCatalog\(/)
-  assert.match(handlers, /permission: selectionIdForPermissionCatalog\(/)
+  assert.match(handlers, /permission: permissionSelectionForNewSessionPreference\(/)
 
   assert.match(source, /onDeviceChange=\{handleDeviceChange\}/)
   assert.match(source, /onAgentChange=\{handleAgentChange\}/)
@@ -224,6 +227,24 @@ test("device, agent, permission, model, and reasoning changes use immediate pers
   assert.match(source, /onSelect=\{\(\) => handlePermissionChange\(item\.id\)\}/)
   assert.match(source, /handleModelChange\(modelItem\.id, ""\)/)
   assert.match(source, /handleModelChange\(modelItem\.id, item\.id\)/)
+})
+
+test("DSH Auto review uses its display label and is not remembered for new sessions", () => {
+  const catalog = {
+    runtime: "dsh",
+    revision: 1,
+    permissions: [
+      { id: "auto-id", displayName: "auto", selectionId: "dsh:permission:auto", metadata: {} },
+    ],
+  }
+  assert.equal(isDshAutoReviewPermission(catalog, "auto-id"), true)
+  assert.equal(permissionCatalogI18nText(
+    (key) => key === "permissionModes.dsh.auto.label" ? "Auto review" : key,
+    catalog,
+    catalog.permissions[0],
+    "labelKey",
+  ), "Auto review")
+  assert.equal(permissionSelectionForNewSessionPreference(catalog, "auto-id"), null)
 })
 
 test("session creation retains preference persistence as a final fallback", () => {
@@ -268,4 +289,3 @@ test("the composer footers keep the send button on the option row", () => {
   assert.match(sessionFooter, /<span className="min-w-0 max-w-40 truncate text-foreground">\{modelLabel\}<\/span>/)
   assert.match(sessionFooter, /"ml-auto flex h-8 shrink-0 items-center gap-2 rounded-xl/)
 })
-

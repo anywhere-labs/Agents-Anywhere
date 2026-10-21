@@ -9,6 +9,7 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
+from connector.core import runtime_owner
 from connector.runtime_protocol import RuntimeUnsupportedError, timeline_content_hash
 from connector.runtimes.dsh.discovery import discover
 from connector.runtimes.dsh.provider import DshProvider
@@ -18,7 +19,7 @@ from connector.server.runtime_sync import session_requires_timeline_sync
 
 
 class Host:
-    async def runtime_health_update(self, status, error=None):
+    async def runtime_health_update(self, status, error=None, phase=None):
         pass
 
     connector_id = "connector-native-test"
@@ -133,4 +134,6 @@ async def main(home: Path) -> None:
 
 
 if __name__ == "__main__":
+    # The Host fixture uses this directory as the user home for the bridge endpoint.
+    runtime_owner.system_home = lambda: Path(sys.argv[1])
     asyncio.run(main(Path(sys.argv[1])))

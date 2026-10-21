@@ -1,6 +1,6 @@
 import Foundation
 
-enum V2TimelineItemType: String, Codable, Hashable {
+nonisolated enum V2TimelineItemType: String, Codable, Hashable {
     case turnStart = "turn.start"
     case turnEnd = "turn.end"
     case message
@@ -14,7 +14,7 @@ enum V2TimelineItemType: String, Codable, Hashable {
     case unknown
 }
 
-enum V2TimelineItemStatus: String, Codable, Hashable {
+nonisolated enum V2TimelineItemStatus: String, Codable, Hashable {
     case pending
     case running
     case waitingApproval = "waiting_approval"
@@ -26,7 +26,7 @@ enum V2TimelineItemStatus: String, Codable, Hashable {
     case unknown
 }
 
-enum V2MessageRole: String, Codable, Hashable {
+nonisolated enum V2MessageRole: String, Codable, Hashable {
     case user
     case assistant
     case system
@@ -34,7 +34,7 @@ enum V2MessageRole: String, Codable, Hashable {
     case unknown
 }
 
-struct V2TimelineItem: Decodable, Identifiable, Hashable {
+nonisolated struct V2TimelineItem: Decodable, Identifiable, Hashable {
     /// Preserve extension fields and unknown wire kinds for diagnostic exports.
     let raw: JSONValue
     let id: V2TimelineItemID
@@ -52,6 +52,10 @@ struct V2TimelineItem: Decodable, Identifiable, Hashable {
     let createdAt: String
     let updatedAt: String
     let completedAt: String?
+    /// Chat text for this item version: the message body without attachment
+    /// markers, or the joined reasoning summaries. Derived once per decode so
+    /// presentation ticks never rescan every reply.
+    let displayText: String
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -72,36 +76,65 @@ struct V2TimelineItem: Decodable, Identifiable, Hashable {
     }
 
     init(from decoder: Decoder) throws {
-        raw = try JSONValue(from: decoder)
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(V2TimelineItemID.self, forKey: .id)
-        sessionId = try container.decode(V2SessionID.self, forKey: .sessionId)
-        turnId = try container.decodeIfPresent(V2TurnID.self, forKey: .turnId)
-        let rawType = try container.decodeIfPresent(String.self, forKey: .type) ?? V2TimelineItemType.unknown.rawValue
-        type = V2TimelineItemType(rawValue: rawType) ?? .unknown
-        let rawStatus = try container.decodeIfPresent(String.self, forKey: .status) ?? V2TimelineItemStatus.unknown.rawValue
-        status = V2TimelineItemStatus(rawValue: rawStatus) ?? .unknown
-        if let rawRole = try container.decodeIfPresent(String.self, forKey: .role) {
-            role = V2MessageRole(rawValue: rawRole) ?? .unknown
-        } else {
-            role = nil
+        try self.init(json: JSONValue(from: decoder))
+    }
+
+    /// Builds an item from an already parsed wire tree. `content` and `source`
+    /// share that tree's storage; nothing is re-encoded or parsed twice.
+    init(json raw: JSONValue) throws {
+        guard case .object = raw else {
+            throw DecodingError.typeMismatch(Self.self, .init(codingPath: [], debugDescription: "Timeline item must be an object."))
         }
-        let rawContent = try container.decodeIfPresent(JSONValue.self, forKey: .content) ?? .object([:])
+        func required(_ key: CodingKeys) throws -> String {
+            guard let value = raw[key.rawValue]?.stringValue else {
+                throw DecodingError.keyNotFound(key, .init(codingPath: [], debugDescription: "Missing '\(key.rawValue)' in timeline item."))
+            }
+            return value
+        }
+        self.raw = raw
+        id = try required(.id)
+        sessionId = try required(.sessionId)
+        turnId = raw["turnId"]?.stringValue
+        type = raw["type"]?.stringValue.flatMap(V2TimelineItemType.init(rawValue:)) ?? .unknown
+        status = raw["status"]?.stringValue.flatMap(V2TimelineItemStatus.init(rawValue:)) ?? .unknown
+        role = raw["role"]?.stringValue.map { V2MessageRole(rawValue: $0) ?? .unknown }
+        let rawContent = raw["content"].flatMap { $0 == .null ? nil : $0 } ?? .object([:])
         content = V2TimelineItemContent(type: type, rawContent: rawContent)
-        source = try container.decodeIfPresent(JSONValue.self, forKey: .source) ?? .object([:])
-        orderSeq = try container.decodeIfPresent(Int.self, forKey: .orderSeq)
-            ?? container.decodeIfPresent(Int.self, forKey: .updatedSeq)
-            ?? 0
-        revision = try container.decodeIfPresent(Int.self, forKey: .revision) ?? 1
-        contentHash = try container.decodeIfPresent(String.self, forKey: .contentHash) ?? ""
-        updatedSeq = try container.decodeIfPresent(Int.self, forKey: .updatedSeq) ?? 0
-        createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
-        updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt) ?? createdAt
-        completedAt = try container.decodeIfPresent(String.self, forKey: .completedAt)
+        source = raw["source"].flatMap { $0 == .null ? nil : $0 } ?? .object([:])
+        orderSeq = raw["orderSeq"]?.intValue ?? raw["updatedSeq"]?.intValue ?? 0
+        revision = raw["revision"]?.intValue ?? 1
+        contentHash = raw["contentHash"]?.stringValue ?? ""
+        updatedSeq = raw["updatedSeq"]?.intValue ?? 0
+        createdAt = raw["createdAt"]?.stringValue ?? ""
+        updatedAt = raw["updatedAt"]?.stringValue ?? createdAt
+        completedAt = raw["completedAt"]?.stringValue
+        let reasoning = type == .reasoning || type == .system && rawContent["kind"] == .string("reasoning")
+        switch content {
+        case let .message(value): displayText = TimelineText.message(value.text)
+        case let .reasoning(value): displayText = TimelineText.reasoning(value.raw)
+        case let .marker(value): displayText = reasoning ? TimelineText.reasoning(value.raw) : ""
+        default: displayText = ""
+        }
+    }
+
+    /// Identity fields reject a changed item before any tree walk. Unchanged
+    /// items carried between projections share their wire tree's storage, so
+    /// the final `raw` comparison is an identity check rather than a deep walk.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.id == rhs.id && lhs.revision == rhs.revision && lhs.updatedSeq == rhs.updatedSeq
+            && lhs.contentHash == rhs.contentHash && lhs.status == rhs.status && lhs.orderSeq == rhs.orderSeq
+            && lhs.raw == rhs.raw
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(revision)
+        hasher.combine(updatedSeq)
+        hasher.combine(contentHash)
     }
 }
 
-enum V2TimelineItemContent: Hashable {
+nonisolated enum V2TimelineItemContent: Hashable {
     case message(V2MessageContent)
     case reasoning(V2ReasoningContent)
     case tool(V2ToolContent)
@@ -135,7 +168,7 @@ enum V2TimelineItemContent: Hashable {
     }
 }
 
-struct V2MessageContent: Hashable {
+nonisolated struct V2MessageContent: Hashable {
     let text: String
     let format: String?
     let attachments: [V2AttachmentContent]
@@ -149,7 +182,7 @@ struct V2MessageContent: Hashable {
     }
 }
 
-struct V2ReasoningContent: Hashable {
+nonisolated struct V2ReasoningContent: Hashable {
     let text: String
     let summary: String?
     let raw: JSONValue
@@ -161,7 +194,7 @@ struct V2ReasoningContent: Hashable {
     }
 }
 
-struct V2ToolContent: Hashable {
+nonisolated struct V2ToolContent: Hashable {
     let name: String?
     let input: JSONValue?
     let output: JSONValue?
@@ -175,7 +208,7 @@ struct V2ToolContent: Hashable {
     }
 }
 
-struct V2FileChangeContent: Hashable {
+nonisolated struct V2FileChangeContent: Hashable {
     let path: String?
     let action: String?
     let patch: String?
@@ -191,7 +224,7 @@ struct V2FileChangeContent: Hashable {
     }
 }
 
-struct V2MarkerContent: Hashable {
+nonisolated struct V2MarkerContent: Hashable {
     let title: String
     let subtitle: String?
     let variant: String?
@@ -205,7 +238,7 @@ struct V2MarkerContent: Hashable {
     }
 }
 
-struct V2ArtifactContent: Hashable {
+nonisolated struct V2ArtifactContent: Hashable {
     let title: String?
     let mediaType: String?
     let url: String?
@@ -219,7 +252,7 @@ struct V2ArtifactContent: Hashable {
     }
 }
 
-extension JSONValue {
+nonisolated extension JSONValue {
     nonisolated var arrayValue: [JSONValue]? {
         if case let .array(value) = self {
             return value

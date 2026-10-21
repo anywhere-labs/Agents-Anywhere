@@ -94,7 +94,13 @@ import Testing
         #expect(chat.headerStatus == nil)
         try update(chat, status: .running)
         #expect(chat.headerStatus == nil)
-        #expect(chat.sendingPlaceholder == "Agent 正在处理任务…")
+        #expect(chat.sendingPlaceholder == "\(chat.agentName) 正在处理任务…")
+        try update(chat, status: .running, runtimeName: "  ", runtimeType: "Claude Code")
+        #expect(chat.sendingPlaceholder == "Claude Code 正在处理任务…")
+        try update(chat, status: .running, runtimeName: "Work Codex", runtimeType: "Codex")
+        #expect(chat.sendingPlaceholder == "Work Codex 正在处理任务…")
+        try update(chat, status: .pending, runtimeName: "Work Codex")
+        #expect(chat.sendingPlaceholder == "等待 Work Codex 回应…")
         try update(chat, status: .stopping)
         #expect(chat.headerStatus == .stopping)
         try update(chat, status: .waitingApproval)
@@ -131,7 +137,8 @@ import Testing
 
     private func update(_ chat: SessionChatModel, status: V2RuntimeStatus, fresh: Bool = true,
         networkOffline: Bool = false, deviceOffline: Bool = false,
-        connection: V2SessionConnectionState = .connected, failure: V2ClientFailure? = nil, reason: String? = nil) throws {
+        connection: V2SessionConnectionState = .connected, failure: V2ClientFailure? = nil, reason: String? = nil,
+        runtimeName: String? = nil, runtimeType: String? = nil) throws {
         var raw = try fixtureObject("snapshot")
         var state = raw["state"] as! [String: Any]
         state["status"] = status.rawValue
@@ -139,6 +146,8 @@ import Testing
         raw["state"] = state
         var meta = raw["session"] as! [String: Any]
         meta["connectorStatus"] = deviceOffline ? "offline" : "online"
+        if let runtimeName { meta["runtimeName"] = runtimeName }
+        if let runtimeType { meta["runtimeTypeDisplayName"] = runtimeType }
         raw["session"] = meta
         var data = V2SessionData(snapshot: try decode(raw))
         data.liveStateIsFresh = fresh

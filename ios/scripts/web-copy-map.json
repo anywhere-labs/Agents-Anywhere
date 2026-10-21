@@ -41,6 +41,7 @@
     "All projects": "pages.settings.archivedAllProjects",
     "Always use the dark appearance.": "pages.settings.darkDescription",
     "Always use the light appearance.": "pages.settings.lightDescription",
+    "Announcement": "announcement.title",
     "Appearance": "pages.settings.appearance",
     "Archive": "dashboard.actions.archive",
     "Archive all in scope": "dashboard.device.archiveAll",
@@ -95,6 +96,7 @@
     "Files": "dashboard.panels.files.title",
     "Gateway API key": "dashboard.device.modelGatewayApiKey",
     "Gateway URL": "dashboard.device.modelGatewayBaseUrl",
+    "Got it": "announcement.acknowledge",
     "Home 目录": "dashboard.workspacePicker.home",
     "Instance name": "dashboard.device.runtimeName",
     "Language": "pages.settings.language",
@@ -128,6 +130,12 @@
     "Profile photo": "pages.settings.changeAvatar",
     "Project actions": "dashboard.projects.options",
     "Projects": "dashboard.device.projects",
+    "Published %@": {
+      "source": "announcement.publishedAt",
+      "arguments": {
+        "time": "@"
+      }
+    },
     "QR Code Login": "dashboard.mobileConnections.scanTitle",
     "Reasoning efforts": "dashboard.device.customModelEfforts",
     "Recent": "common.sections.recents",
@@ -161,9 +169,15 @@
     "Server": "common.server",
     "Server URL": "dashboard.pairDevice.serverAddress",
     "Session ID": "dashboard.session.sessionId",
-    "Session actions": "dashboard.actions.sessionOptions",
     "Sessions": "common.sessions",
     "Settings": "pages.settings.title",
+    "Show all %lld more": {
+      "source": "dashboard.device.showAllMore",
+      "arguments": {
+        "count": "lld"
+      }
+    },
+    "Show less": "dashboard.device.showLess",
     "Sign out": "common.actions.signOut",
     "Sign out?": "common.signOut.title",
     "System": "pages.settings.autoDescription",
@@ -201,6 +215,7 @@
     "dashboard.device.customEffortDisplayName": "dashboard.device.customEffortDisplayName",
     "dashboard.device.hideModelGatewayApiKey": "dashboard.device.hideModelGatewayApiKey",
     "dashboard.device.runtimeNamePlaceholder": "dashboard.device.runtimeNamePlaceholder",
+    "dashboard.device.runtimeNotStarted": "dashboard.device.runtimeNotStarted",
     "dashboard.device.runtimeStatus.available": "dashboard.device.runtimeStatus.available",
     "dashboard.device.runtimeStatus.discovering": "dashboard.device.runtimeStatus.discovering",
     "dashboard.device.runtimeStatus.error": "dashboard.device.runtimeStatus.error",
@@ -314,6 +329,7 @@
     "思考强度": "common.reasoningEffort",
     "思考过程": "dashboard.session.reasoning",
     "恢复会话": "pages.settings.archivedUnarchive",
+    "所有盘符": "dashboard.panels.files.allDrives",
     "打开侧栏": "dashboard.actions.expand",
     "按目录自动填写名称，重名时添加数字后缀。也可以自行修改。": "dashboard.projects.nameDescription",
     "接管": "dashboard.session.takeover",

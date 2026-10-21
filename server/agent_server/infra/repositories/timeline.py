@@ -23,7 +23,6 @@ from agent_server.core.timeline import (
 from agent_server.core.utc import utc_now
 from agent_server.infra.db import sessions as sessions_t
 from agent_server.infra.db import timeline_items as timeline_items_t
-from agent_server.infra.db.engine import SQLITE_BACKEND
 from agent_server.infra.repositories.store_support import session_revision_fenced
 
 
@@ -590,12 +589,6 @@ class TimelineRepositoryMixin:
     @asynccontextmanager
     async def _timeline_lock(self, session_id: str) -> AsyncIterator[None]:
         """Serialize concurrent writers for one session timeline."""
-
-        if self.backend == SQLITE_BACKEND:
-            lock = await self.timeline_lock(session_id)
-            async with lock:
-                yield
-            return
 
         lock_key = session_timeline_lock_key(session_id)
         async with self._engine.connect() as conn:

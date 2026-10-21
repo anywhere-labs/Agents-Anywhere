@@ -20,6 +20,15 @@ final class SessionChatModel {
     var isOpeningReady: Bool { isOpeningPrepared && timeline.hasPresentedSnapshot }
     private(set) var openingError: String?
     private(set) var responseRevision = 0
+    private(set) var commands: [V2RuntimeCommand] = []
+    private(set) var isLoadingCommands = false
+    private(set) var commandsError: String?
+    private(set) var isRunningCommand = false
+    /// Success is transient; failures stay until the user dismisses them.
+    var commandSuccess: CommandFeedback?
+    var commandFailure: CommandFeedback?
+    /// Selector commands (model, permission, …) open the existing options sheet.
+    private(set) var optionsRequest = 0
     @ObservationIgnored var onEditCreation: ((V2PendingMessage) -> Void)?
     @ObservationIgnored var onDiscardCreation: (() -> Void)?
     @ObservationIgnored let repository: V2SessionRepository
@@ -37,13 +46,26 @@ final class SessionChatModel {
         guard let status = session.runtime.state?.status else { return false }
         return [.running, .pending, .waiting, .waitingApproval, .stopping, .blocked].contains(status)
     }
+    /// The configured instance name, like Web, then its runtime type. Status
+    /// copy names the Agent the user chose instead of a generic "Agent".
+    var agentName: String {
+        let meta = session.metadata
+        for name in [meta?.runtimeName, meta?.runtimeTypeDisplayName] {
+            if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty { return name }
+        }
+        return String(localized: "Agent")
+    }
+    var isDsh: Bool {
+        guard let meta = session.metadata else { return false }
+        return (meta.runtimeType ?? meta.runtime) == "dsh"
+    }
     var sendingPlaceholder: String? {
         let submitting = session.pendingMessages.contains { $0.delivery == .sending || $0.delivery == .accepted }
-        if submitting || session.awaitingReplyID != nil { return session.isLocalCreation ? String(localized: "正在创建会话…") : String(localized: "等待 Agent 回应…") }
+        if submitting || session.awaitingReplyID != nil { return session.isLocalCreation ? String(localized: "正在创建会话…") : String(localized: "等待 \(agentName) 回应…") }
         guard session.runtime.isFresh, let status = session.runtime.state?.status else { return nil }
         switch status {
-        case .waiting, .pending: return String(localized: "等待 Agent 回应…")
-        case .running: return String(localized: "Agent 正在处理任务…")
+        case .waiting, .pending: return String(localized: "等待 \(agentName) 回应…")
+        case .running: return String(localized: "\(agentName) 正在处理任务…")
         default: return nil
         }
     }
@@ -64,6 +86,123 @@ final class SessionChatModel {
     var canBrowseFiles: Bool {
         session.isValid && session.metadata?.connectorStatus == .online && session.network.availability != .offline
             && session.metadata?.cwd?.isEmpty == false
+    }
+
+    // MARK: Commands
+
+    private var connectorOnline: Bool {
+        session.metadata?.connectorStatus == .online && session.network.availability != .offline
+    }
+    /// The runtime advertises commands at all, even when they cannot run now.
+    var offersCommands: Bool { session.isValid && session.runtime.capabilities?.capability(id: "session.commands") != nil }
+    var canUseCommands: Bool { session.runtime.allows("session.commands") && connectorOnline }
+    var commandsUnavailableReason: String? {
+        guard let capability = session.runtime.capabilities?.capability(id: "session.commands"), !canUseCommands else { return nil }
+        if !connectorOnline { return String(localized: "设备离线") }
+        if !capability.supported { return String(localized: "当前 Runtime 版本还不支持指令，升级后可用") }
+        if let reason = capability.unavailableReason, !reason.isEmpty { return reason }
+        return String(localized: "此会话暂时无法使用指令")
+    }
+
+    func loadCommands(force: Bool = false) async {
+        guard canUseCommands, !isLoadingCommands else { return }
+        isLoadingCommands = true
+        commandsError = nil
+        defer { isLoadingCommands = false }
+        do {
+            let loaded = try await repository.commands(sessionId: session.id, force: force)
+            guard session.isValid else { return }
+            commands = loaded
+        } catch {
+            if session.isValid, !Task.isCancelled { commandsError = error.localizedDescription }
+        }
+    }
+
+    func commandBlock(_ command: V2RuntimeCommand) -> RuntimeCommandBlock? {
+        if isRunningCommand || isWorking { return .busy }
+        return command.block(status: session.runtime.state?.status, capability: canUseCommands,
+            writable: session.metadata?.takeover == true, online: connectorOnline)
+    }
+
+    func commandBlockMessage(_ command: V2RuntimeCommand, _ block: RuntimeCommandBlock) -> String {
+        switch block {
+        case .busy: return String(localized: "Agent 忙碌中，暂时不能执行")
+        case .readOnly: return String(localized: "开启接管后才能执行指令")
+        case .offline: return String(localized: "设备离线")
+        case .unavailable: return String(localized: "此会话暂时无法使用指令")
+        case .disabled:
+            switch command.disabledReason {
+            case "session_unloaded": return String(localized: "请先打开此会话，再运行指令。")
+            case "native_commands_unavailable": return String(localized: "此 Codex 版本尚不支持所需的指令操作。")
+            case "codex_unavailable": return String(localized: "Codex 当前不可用。")
+            case let reason?: return reason
+            case nil: return String(localized: "此会话暂时无法使用指令")
+            }
+        }
+    }
+
+    /// Catalog commands matching the draft's slash token, or nil when the draft
+    /// is not a command-like slash (e.g. a path or prose).
+    func commandSuggestions(for text: String) -> [V2RuntimeCommand]? {
+        guard let intent = SlashIntent(text), intent.isCommandLike, intent.suffix.isEmpty, !intent.multiline else { return nil }
+        return commands.filter { $0.matches(intent.command) }
+    }
+
+    /// Only drafts naming a catalog command run as commands; the catalog is read
+    /// first when needed so an intended command is never sent to the model.
+    private func catalogCommand(for text: String) async -> V2RuntimeCommand? {
+        guard let intent = SlashIntent(text), !intent.command.isEmpty, intent.isCommandLike, canUseCommands else { return nil }
+        if commands.isEmpty { await loadCommands() }
+        return commands.exact(intent)
+    }
+
+    /// Menu choice: commands with arguments are completed into the draft.
+    func choose(_ command: V2RuntimeCommand) async {
+        if let block = commandBlock(command) { fail(commandBlockMessage(command, block)); return }
+        let draft = session.composer
+        let current = SlashIntent(draft.text).flatMap { [command].exact($0) } != nil ? draft.text : "/\(command.id)"
+        // Prose typed before opening the ⌘ menu is kept; a partial "/comp" is replaced.
+        let prose = SlashIntent(draft.text) == nil ? draft.text : ""
+        if command.takesArguments {
+            draft.text = current == "/\(command.id)" ? current + " " + prose : current
+            draft.isFocused = true
+            repository.draftDidChange(sessionID: session.id)
+            return
+        }
+        await runCommand(command, raw: current, clearing: prose.isEmpty ? draft.text : nil)
+    }
+
+    /// `source` is the draft to clear on success (defaults to `raw`).
+    func runCommand(_ command: V2RuntimeCommand, raw: String, clearing source: String? = nil) async {
+        guard !isRunningCommand, session.isValid else { return }
+        if let block = commandBlock(command) { fail(commandBlockMessage(command, block)); return }
+        guard session.composer.attachments.isEmpty else { fail(String(localized: "运行指令前请移除附件；草稿会保留。")); return }
+        guard let intent = SlashIntent(raw), let request = command.request(for: intent) else {
+            fail(SlashIntent(raw)?.multiline == true ? String(localized: "此指令不支持多行输入。") : String(localized: "此指令不接受这些参数。"))
+            return
+        }
+        if case .selector? = command.ui { optionsRequest += 1; return }
+        isRunningCommand = true
+        commandFailure = nil
+        defer { isRunningCommand = false }
+        let outcome: RuntimeCommandOutcome
+        do { outcome = RuntimeCommandOutcome(try await repository.executeCommand(sessionId: session.id, request: request)) }
+        catch { outcome = RuntimeCommandOutcome(transportFailure: error) }
+        guard session.isValid else { return }
+        if outcome.ok {
+            let message = outcome.message.map { $0.count > 200 ? String($0.prefix(200)) + "…" : $0 }
+            commandSuccess = CommandFeedback(title: outcome.state == .completed ? String(localized: "指令已完成。") : String(localized: "指令已接受，后台任务可能仍在进行。"), message: message)
+            if let source = source ?? raw as String?, !source.isEmpty, session.composer.text == source { session.composer.text = ""; repository.draftDidChange(sessionID: session.id) }
+        } else if outcome.state == .unknown {
+            commandFailure = CommandFeedback(title: String(localized: "指令结果尚不确定"),
+                message: [String(localized: "结果尚不确定，请先检查会话状态再决定是否重试。"), outcome.message].compactMap { $0 }.joined(separator: "\n"))
+        } else {
+            fail(outcome.message ?? String(localized: "无法执行指令。"))
+        }
+    }
+
+    private func fail(_ message: String) {
+        commandFailure = CommandFeedback(title: String(localized: "无法执行指令"), message: message)
     }
 
     func prepareOpening() async {
@@ -139,6 +278,11 @@ final class SessionChatModel {
     }
 
     func send(_ text: String) async {
+        if let command = await catalogCommand(for: text) {
+            session.composer.text = text
+            await runCommand(command, raw: text)
+            return
+        }
         guard !isWorking, session.canSend, !session.composer.isComposing else { return }
         let draft = session.composer
         draft.text = text
@@ -154,7 +298,7 @@ final class SessionChatModel {
                     guard let file = uploaded.first else { throw HTTPError.invalidResponse }
                     pending.bindUpload(file, localID: attachment.id)
                     self.session.attachmentPreviews.remember(pending.attachments, clientID: pending.id)
-                    self.repository.draftDidChange()
+                    self.repository.draftDidChange(sessionID: self.session.id)
                 }
         }
     }
@@ -211,4 +355,10 @@ final class SessionChatModel {
         if let preview { session.attachmentPreviews.cache(preview, for: file) }
         return preview
     }
+}
+
+struct CommandFeedback: Identifiable, Equatable {
+    let id = UUID()
+    let title: String
+    let message: String?
 }

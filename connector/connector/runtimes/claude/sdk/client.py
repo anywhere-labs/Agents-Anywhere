@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import Any
 
 from connector.runtimes.claude.domain.models import model_selection_from_selection_id
@@ -33,6 +33,7 @@ def new_sdk_client(
     can_use_tool: Any | None = None,
     stderr: Callable[[str], None] | None = None,
     settings_path: str | None = None,
+    cli_models: Sequence[Mapping[str, Any]] = (),
     on_tool_result: Any | None = None,
     before_tool: Any | None = None,
 ) -> Any:
@@ -43,6 +44,7 @@ def new_sdk_client(
         can_use_tool=can_use_tool,
         stderr=stderr,
         settings_path=settings_path,
+        cli_models=cli_models,
         on_tool_result=on_tool_result,
         before_tool=before_tool,
     )
@@ -64,6 +66,7 @@ def build_sdk_options(
     can_use_tool: Any | None = None,
     stderr: Callable[[str], None] | None = None,
     settings_path: str | None = None,
+    cli_models: Sequence[Mapping[str, Any]] = (),
     on_tool_result: Any | None = None,
     before_tool: Any | None = None,
 ) -> Any:
@@ -80,9 +83,11 @@ def build_sdk_options(
     model_selection = model_selection_from_selection_id(
         session.selections.get("model"),
         values.get("customModels"),
+        cli_models,
     )
     if model_selection is not None:
-        kwargs["model"] = model_selection.model_id
+        if model_selection.cli_model is not None:
+            kwargs["model"] = model_selection.cli_model
         if model_selection.effort_id is not None:
             kwargs["effort"] = model_selection.effort_id
     permission_mode = permission_mode_from_selection_id(

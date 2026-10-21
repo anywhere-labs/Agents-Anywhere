@@ -188,8 +188,16 @@ reuse the old branch's `v2_11` migration.
    catalogs.
 7. Rewrite DSH filters and dashboard facts to use runtime type, not a concrete
    runtime ID string.
-8. Keep `DELETE .../config`: stop/deactivate, clear config, and preserve the
-   instance/session identity. Hard instance deletion remains a separate design.
+8. `DELETE .../config` is the manual runtime deletion action: stop/deactivate,
+   remove its sessions and configuration, delete the instance row and
+   permanently retire its ID. The deleted runtime no longer exists: it holds no
+   configured-instance slot and no name, and a new instance of the same type is
+   added through create. The response is the instance's final, unconfigured state
+   under the deleted ID; clients remove that entry from their list. Requests to
+   the old ID return 404. Schema `v2_36` persists retired IDs to reject late
+   ingestion after reconnects, and `v2_42` drops the unconfigured successors
+   that earlier deletions left behind. Normal disconnects, reconnects,
+   start/stop, rename and config updates retain identity.
 9. Add create and rename APIs without removing existing list/config/active
    behavior.
 10. Correct unversioned-database detection so `v2_10` through `v2_14` are
@@ -330,8 +338,8 @@ unchanged.
 ## Verification gates
 
 - Connector full tests, focused supervisor/provider tests, Ruff, and Pyright.
-- Server full tests, SQLite migration coverage, PostgreSQL-compatible DDL, and
-  upgrade tests from current `v2_13` data.
+- Server full tests, migration coverage on PostgreSQL, and upgrade tests from
+  current `v2_13` data.
 - DSH source-state and archive behavior with dynamic runtime IDs.
 - Multiple Codex instances with distinct Homes and conflict rejection for the
   same Home.

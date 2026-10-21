@@ -1,7 +1,5 @@
-"""Verify that the per-session timeline lock actually serializes concurrent
-writers across both sqlite (asyncio.Lock) and postgres (pg_advisory_lock)
-backends. Runs against whatever AGENT_SERVER_DB_URL points at, so the CI/dev
-matrix covers both."""
+"""Verify that the per-session timeline lock (pg_advisory_lock) actually
+serializes concurrent writers against the PostgreSQL test database."""
 
 from __future__ import annotations
 
@@ -10,7 +8,6 @@ import asyncio
 import pytest
 
 from agent_server.core.models import TimelineItemIn
-from agent_server.infra.db.migrations import upgrade_database
 from agent_server.infra.repositories.facade import Store
 from session_fixtures import create_session_with_project
 
@@ -34,9 +31,7 @@ def _make_item(session_id: str, item_id: str, order: int) -> TimelineItemIn:
 
 @pytest.mark.anyio
 async def test_timeline_lock_serializes_concurrent_upserts(tmp_path):
-    db_path = tmp_path / "lock.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     try:
         # seed a connector + session through the store directly
         connector, _, _ = await store.create_connector(name="dev", user_id="user_1")

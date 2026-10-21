@@ -21,6 +21,15 @@ class InstanceSettingsRepositoryMixin:
         await self.set_setting(SETTING_REGISTRATION_OPEN, "true" if value else "false")
 
 
+    async def is_password_reset_enabled(self) -> bool:
+        value = await self.get_setting(SETTING_PASSWORD_RESET_ENABLED)
+        return value == "true"
+
+
+    async def set_password_reset_enabled(self, value: bool) -> None:
+        await self.set_setting(SETTING_PASSWORD_RESET_ENABLED, "true" if value else "false")
+
+
     async def is_oauth_registration_open(self) -> bool:
         value = await self.get_setting(SETTING_OAUTH_REGISTRATION_OPEN)
         return value == "true"

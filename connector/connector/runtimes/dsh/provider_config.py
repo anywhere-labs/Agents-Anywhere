@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from connector.core import runtime_owner
 from connector.runtime_protocol import RuntimeInvalidRequestError
 from connector.runtime_protocol.filesystem import canonical_path
 
@@ -28,7 +29,7 @@ def dsh_config_schema() -> dict[str, Any]:
                 "type": "string",
                 "minLength": 1,
                 "title": "DSH home",
-                "description": "Optional absolute DSH_HOME used by the running DSH plugin host.",
+                "description": "Optional absolute DSH_HOME of the DSH host; it identifies its sessions. The bridge endpoint is always read from ~/.agents-anywhere/dsh-bridge.",
             },
             "startupTimeoutMs": {
                 **positive_timeout,
@@ -110,7 +111,18 @@ def dsh_home(values: dict[str, Any]) -> Path:
     return Path(canonical_path(path))
 
 
-def endpoint_path(values: dict[str, Any]) -> Path:
+def bridge_directory() -> Path:
+    """Fixed per-user rendezvous shared with the plugin; DSH_HOME does not move it."""
+    return Path(canonical_path(runtime_owner.system_home() / ".agents-anywhere" / "dsh-bridge"))
+
+
+def endpoint_path() -> Path:
+    """Where this Connector publishes its Router for the plugin (the 2.0 rendezvous)."""
+    return bridge_directory() / "connector.json"
+
+
+def legacy_endpoint_path(values: dict[str, Any]) -> Path:
+    """Endpoint location of 1.x plugins under DSH_HOME, kept only as the session identity."""
     return Path(
         canonical_path(
             dsh_home(values) / "agents-anywhere" / "bridge" / "endpoint.json"
@@ -134,7 +146,7 @@ def dsh_capabilities(reported: dict[str, Any] | None = None) -> dict[str, bool]:
         "startTurn": "session.send_message" in enabled,
         "steerTurn": False,
         "interruptTurn": "session.interrupt" in enabled,
-        "commands": False,
+        "commands": "session.commands" in enabled,
         "interactions": False,
         "attachments": "runtime.attachment" in enabled,
         "ipc": True,

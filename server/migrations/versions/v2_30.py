@@ -22,7 +22,7 @@ _WORKSPACE_UNIQUE_CONSTRAINT = "uq_projects_user_connector_workspace"
 _NAME_UNIQUE_CONSTRAINT = "uq_projects_user_name"
 
 
-def _unique_constraint_names() -> set[str | None]:
+def _unique_constraint_names() -> set[str]:
     inspector = sa.inspect(op.get_bind())
     if "projects" not in inspector.get_table_names():
         return set()
@@ -140,26 +140,23 @@ def upgrade() -> None:
     _merge_duplicate_workspaces()
     _deduplicate_project_names()
     existing = _unique_constraint_names()
-    with op.batch_alter_table("projects") as batch_op:
-        if _WORKSPACE_UNIQUE_CONSTRAINT not in existing:
-            batch_op.create_unique_constraint(
-                _WORKSPACE_UNIQUE_CONSTRAINT,
-                ["user_id", "connector_id", "workspace_key"],
-            )
-        if _NAME_UNIQUE_CONSTRAINT not in existing:
-            batch_op.create_unique_constraint(
-                _NAME_UNIQUE_CONSTRAINT,
-                ["user_id", "name"],
-            )
+    if _WORKSPACE_UNIQUE_CONSTRAINT not in existing:
+        op.create_unique_constraint(
+            _WORKSPACE_UNIQUE_CONSTRAINT,
+            "projects",
+            ["user_id", "connector_id", "workspace_key"],
+        )
+    if _NAME_UNIQUE_CONSTRAINT not in existing:
+        op.create_unique_constraint(
+            _NAME_UNIQUE_CONSTRAINT,
+            "projects",
+            ["user_id", "name"],
+        )
 
 
 def downgrade() -> None:
     existing = _unique_constraint_names()
-    with op.batch_alter_table("projects") as batch_op:
-        if _NAME_UNIQUE_CONSTRAINT in existing:
-            batch_op.drop_constraint(_NAME_UNIQUE_CONSTRAINT, type_="unique")
-        if _WORKSPACE_UNIQUE_CONSTRAINT in existing:
-            batch_op.drop_constraint(
-                _WORKSPACE_UNIQUE_CONSTRAINT,
-                type_="unique",
-            )
+    if _NAME_UNIQUE_CONSTRAINT in existing:
+        op.drop_constraint(_NAME_UNIQUE_CONSTRAINT, "projects", type_="unique")
+    if _WORKSPACE_UNIQUE_CONSTRAINT in existing:
+        op.drop_constraint(_WORKSPACE_UNIQUE_CONSTRAINT, "projects", type_="unique")

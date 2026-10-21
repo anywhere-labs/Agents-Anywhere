@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from "./auth-context"
 import { BootstrapScreen } from "./bootstrap-screen"
 import { LoginScreen } from "./login-screen"
 import { RegisterScreen } from "./register-screen"
+import { ForgotPasswordScreen } from "./forgot-password-screen"
 import { OAuthNewUserScreen } from "./oauth-new-user-screen"
 import { OAuthLinkExistingScreen } from "./oauth-link-existing-screen"
 import { SignedOutScreen } from "./signed-out-screen"
@@ -27,6 +28,7 @@ function AuthRouterInner() {
   if (screen === "app") return isAuthenticated ? <Demo /> : <LoginScreen />
   if (screen === "signed-out") return <SignedOutScreen />
   if (screen === "register") return <RegisterScreen />
+  if (screen === "forgot-password") return <ForgotPasswordScreen />
   if (screen === "oauth-new-user") return <OAuthNewUserScreen />
   if (screen === "oauth-link-existing") return <OAuthLinkExistingScreen />
   if (screen === "mobile-oauth") return <MobileOAuthFlow />

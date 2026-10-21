@@ -37,6 +37,8 @@ data class RemoteDeviceRuntime(
     val uiSchema: Map<String, Any?>,
     val config: Map<String, Any?>?,
     val error: Map<String, Any?>?,
+    /** Step inside a non-error status (e.g. syncing while starting). Informational only. */
+    val phase: Map<String, Any?>? = null,
     val lastDiscoveredAt: String?,
     val updatedAt: String?,
 ) {

@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/2.0.0.md"><img src="https://img.shields.io/badge/release-2.0.0-222222?style=flat" alt="Release 2.0.0"></a>
+  <a href="docs/releases/2.0.3.md"><img src="https://img.shields.io/badge/release-2.0.3-222222?style=flat" alt="Release 2.0.3"></a>
   <a href="#开源许可"><img src="https://img.shields.io/badge/license-MIT-222222?style=flat" alt="MIT"></a>
   <a href="docker/README.md"><img src="https://img.shields.io/badge/self--hosted-Docker-222222?style=flat" alt="Self-host with Docker"></a>
 </p>
@@ -31,10 +31,10 @@
 
 | 平台 | 获取客户端 |
 | --- | --- |
-| **macOS** | [Universal DMG · 2.0.0](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/Agents%20Anywhere-2.0.0-universal.dmg) |
-| **Windows** | [x64 安装包 · 2.0.0](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/Agents%20Anywhere%20Setup%202.0.0-x64.exe) |
-| **iOS / iPadOS** | [加入 TestFlight](https://testflight.apple.com/join/GKGaut99) |
-| **Android** | [APK · 2.0.0](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/agents-anywhere-2.0.0-release.apk) |
+| **macOS** | [Universal DMG · 2.0.3](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/Agents%20Anywhere-2.0.3-universal.dmg) |
+| **Windows** | [x64 安装包 · 2.0.3](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/Agents%20Anywhere%20Setup%202.0.3.exe) |
+| **iOS / iPadOS** | [在 App Store 下载](https://apps.apple.com/cn/app/agents-anywhere/id6787125178) · [加入 TestFlight](https://testflight.apple.com/join/GKGaut99) |
+| **Android** | [APK · 2.0.3](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/agents-anywhere-2.0.3-release.apk) |
 | **Web** | [立即打开 Web](https://web.agents-anywhere.com) |
 | **Linux / headless** | [运行 Connector CLI](connector/README.md) |
 
@@ -43,15 +43,25 @@
 <details>
 <summary>平台要求、安装包与更新说明</summary>
 
-- macOS：Apple Silicon / Intel 通用，已签名、公证。
+- macOS：Apple Silicon / Intel 通用，已签名、公证；需要 macOS 12 及以上。
 - Windows：x64 桌面工作台，含本机 Connector；当前安装包未做代码签名。
 - Android：Android 8.0 及以上。
-- iOS / iPadOS：通过 TestFlight 安装测试版，以邀请页显示的可用状态为准。
+- iOS / iPadOS：在 App Store 下载安装；也可以通过 TestFlight 安装测试版，以邀请页显示的可用状态为准。
 - Linux / headless：运行 Connector 接入工作设备，通过其他客户端操作。
 
-macOS、Windows 和 Android 的下载文件均为 **Agents Anywhere** 安装包，托管在 ModelScope 的 `t4wefan/deepseek-harness-desktop` 仓库中。历史 GitHub Releases 中的 0.1.x 安装包不作为 2.0 下载入口。当前发布客户端的应用内更新地址仍是占位配置，请通过上面的链接手动下载。
+macOS、Windows 和 Android 的下载文件均为 **Agents Anywhere** 安装包，托管在 ModelScope 的 `t4wefan/deepseek-harness-desktop` 仓库中，同样的文件也发布在 GitHub 的 [v2.0.3 Release](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v2.0.3)。历史 GitHub Releases 中的 0.1.x 安装包不作为 2.0 下载入口。当前发布客户端的应用内更新地址仍是占位配置，请通过上面的链接手动下载。
 
-`main` 是当前开发主线。源码中的新修复不一定已进入上面的 2.0.0 安装包；产品、Connector 包和数据库 schema 的版本分别管理。发布范围见 [2.0.0 发布说明](docs/releases/2.0.0.md)。
+`main` 是当前开发主线。源码中的新修复不一定已进入上面的 2.0.3 安装包；各端的 PATCH 版本独立发布，数据库 schema revision 单独编号，见[版本号规则](docs/versioning.md)。发布范围见 [2.0.3 发布说明](docs/releases/2.0.3.md)。
+
+</details>
+
+<details open>
+<summary>❤️ 赞助商</summary>
+
+| Logo | 简介 |
+| --- | --- |
+| <a href="https://dshdesktop.cn/sponsors/wuying"><img src="docs/images/sponsors/wuying-cloud-computer-logo.png" alt="阿里云无影云电脑" width="96"></a> | [**阿里云 · 无影云电脑**](https://dshdesktop.cn/sponsors/wuying)<br>感谢 **阿里云** 无影云电脑赞助本项目！无影云电脑个人版面向个人用户提供云上电脑服务，将计算、存储和桌面环境放在云端，支持在多类终端上接入使用，并可按需选择不同规格，适合远程办公、学习、开发和轻量创作等场景。<br><br>[**打开微信注册 →**](https://dshdesktop.cn/sponsors/wuying) |
+| <a href="https://88api.ai/sign-up?aff=vQMT"><img src="docs/images/sponsors/88api-logo.png" alt="88API" width="120"></a> | [**88API Token 聚合平台**](https://88api.ai/sign-up?aff=vQMT)<br><br>🧠 聚合 GPT、Claude、Gemini、Grok、DeepSeek、Kimi、GLM 等语言与编程模型；<br>🎨 图片模型：GPT-Image、Gemini、Grok 等；<br>🎬 视频模型：Seedance、Veo、MiniMax H3、Kling、Grok 等；<br>🎙️ 语音能力：Whisper、TTS 等。从文案、出图、改图，到视频生成与配音<br>🎁新用户注册送体验额度，可以检测模型能力。站内有人工客服值守！<br>👉香港正规企业运营 稳定供应 全绿满血 不降智 提供发票<br><br>[**立即注册 →**](https://88api.ai/sign-up?aff=vQMT) |
 
 </details>
 

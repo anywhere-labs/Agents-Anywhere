@@ -8,6 +8,7 @@ export function useOnboardingState(host: OnboardingHostApi, active: boolean) {
   const [readError, setReadError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const running = useRef(false)
+  const activeRuns = useRef(0)
   const request = useRef(0)
 
   const prepareOpen = useCallback(() => {
@@ -35,16 +36,28 @@ export function useOnboardingState(host: OnboardingHostApi, active: boolean) {
     return () => { stopped = true; request.current++; clearTimeout(timer) }
   }, [active, refresh])
 
-  const run = async (action: () => Promise<unknown>) => {
-    if (running.current) return false
+  const run = async (action: () => Promise<unknown>, options?: { interrupt?: boolean }) => {
+    if (running.current && !options?.interrupt) return false
     running.current = true
+    activeRuns.current++
     setBusy(true); setError(null)
     try { await action(); await refresh(); return true }
     catch (error) { setError(error instanceof Error ? error.message : '操作失败，请重试。'); return false }
-    finally { running.current = false; setBusy(false) }
+    finally {
+      activeRuns.current = Math.max(0, activeRuns.current - 1)
+      const stillRunning = activeRuns.current > 0
+      running.current = stillRunning
+      setBusy(stillRunning)
+    }
   }
 
-  return { snapshot, error, readError, busy, run, refresh, prepareOpen, clearError: () => setError(null) }
+  const runBackground = async (action: () => Promise<unknown>) => {
+    setError(null)
+    try { await action(); return true }
+    catch (error) { setError(error instanceof Error ? error.message : '操作失败，请重试。'); return false }
+  }
+
+  return { snapshot, error, readError, busy, run, runBackground, refresh, prepareOpen, clearError: () => setError(null) }
 }
 
 export type OnboardingState = ReturnType<typeof useOnboardingState>

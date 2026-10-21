@@ -212,20 +212,9 @@ function MessageCard({
 }
 
 function SystemCard({ token, session, item }: { token: string; session: SessionView; item: TimelineItem }) {
-  const tSession = useTranslations("dashboard.session")
   const kind = textOf(item.content.kind) || "system"
   if (kind === "reasoning") return <ReasoningEntry token={token} session={session} item={item} />
-  if (kind === "compact") {
-    const compactState = compactTimelineState(item)
-    const active = compactState === "started"
-    return (
-      <Marker variant="separator" className="w-full normal-case">
-        <MarkerContent className={cn("flex-none text-sm font-normal", active && "shimmer")}>
-          {active ? tSession("conversationCompacting") : tSession("conversationCompacted")}
-        </MarkerContent>
-      </Marker>
-    )
-  }
+  if (kind === "compact") return <CompactMarker item={item} />
   const text = textOf(item.content.text) || textOf(item.content.message) || textOf(item.content.rawText)
   const failed = item.status === "failed" || kind === "error"
   const title = text ? `${kind}: ${text}` : `${kind}: ${item.status}`
@@ -241,19 +230,8 @@ function SystemCard({ token, session, item }: { token: string; session: SessionV
 }
 
 function MarkerCard({ item }: { item: TimelineItem }) {
-  const tSession = useTranslations("dashboard.session")
   const kind = textOf(item.content.kind) || "system"
-  if (kind === "compact") {
-    const compactState = compactTimelineState(item)
-    const active = compactState === "started"
-    return (
-      <Marker variant="separator" className="w-full normal-case">
-        <MarkerContent className={cn("flex-none text-sm font-normal", active && "shimmer")}>
-          {active ? tSession("conversationCompacting") : tSession("conversationCompacted")}
-        </MarkerContent>
-      </Marker>
-    )
-  }
+  if (kind === "compact") return <CompactMarker item={item} />
 
   const label = textOf(item.content.label) || textOf(item.content.title) || kind
   const failed = item.status === "failed" || kind === "error"
@@ -268,12 +246,28 @@ function MarkerCard({ item }: { item: TimelineItem }) {
   )
 }
 
+function CompactMarker({ item }: { item: TimelineItem }) {
+  const tSession = useTranslations("dashboard.session")
+  const state = compactTimelineState(item)
+  const label = state === "started" ? "conversationCompacting"
+    : state === "failed" ? "conversationCompactionFailed" : "conversationCompacted"
+  return (
+    <Marker variant="separator" role="status" className="w-full normal-case">
+      <MarkerContent className={cn("flex-none text-sm font-normal", state === "started" && "shimmer", state === "failed" && "text-destructive")}>
+        {tSession(label)}
+      </MarkerContent>
+    </Marker>
+  )
+}
+
 function compactTimelineState(item: TimelineItem): "started" | "completed" | "failed" {
   const contentState = textOf(item.content.state)
+  if ([contentState, item.status].some(state => state === "failed" || state === "interrupted" || state === "cancelled")) {
+    return "failed"
+  }
   if (contentState === "started" || contentState === "running" || contentState === "inProgress") {
     return "started"
   }
-  if (contentState === "failed" || item.status === "failed") return "failed"
   if (item.status === "running" || item.status === "pending") {
     return "started"
   }

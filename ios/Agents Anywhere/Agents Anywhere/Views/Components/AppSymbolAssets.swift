@@ -33,6 +33,7 @@ enum AppSymbolAssets {
         "circle.lefthalf.filled": "aa-SunMoon",
         "clock": "aa-Clock",
         "cloud": "aa-Cloud",
+        "command": "aa-Command",
         "curlybraces": "aa-Braces",
         "desktopcomputer": "aa-Monitor",
         "desktopcomputer.and.arrow.down": "aa-MonitorDown",

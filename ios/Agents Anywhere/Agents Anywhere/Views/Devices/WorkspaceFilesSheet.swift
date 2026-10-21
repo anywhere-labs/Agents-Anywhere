@@ -233,14 +233,14 @@ private struct WorkspaceDirectoryView: View {
                             .labelStyle(.iconOnly).frame(width: 44, height: 44).disabled(!canRead)
                     }.padding(.horizontal, 12)
                 }
-                Text(currentDirectoryPath)
+                Text(currentDirectoryLabel)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 20).padding(.vertical, 12)
-                    .accessibilityLabel(String(localized: "当前目录：\(currentDirectoryPath)"))
+                    .accessibilityLabel(String(localized: "当前目录：\(currentDirectoryLabel)"))
                     .contextMenu {
                         Button(String(localized: "复制路径"), systemImage: "doc.on.doc") {
                             UIPasteboard.general.string = currentDirectoryPath
@@ -274,10 +274,17 @@ private struct WorkspaceDirectoryView: View {
         return effectivePath == "." ? root : effectivePath
     }
 
+    /// Connector fs/list answers an empty Windows path with its drive list.
+    private var currentDirectoryLabel: String {
+        currentDirectoryPath.isEmpty ? String(localized: "所有盘符") : currentDirectoryPath
+    }
+
     private struct DirectoryRequest: Equatable { let connector: String; let root: String; let path: String; let canRead: Bool }
     private func navigate(_ path: String) {
         guard canRead else { return }
-        let value = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        var value = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A bare "D:" is relative to that drive's current directory; open its root.
+        if value.range(of: "^[A-Za-z]:$", options: .regularExpression) != nil { value += "\\" }
         let reloadsCurrent = effectivePath == value
         address = value; requestedPath = value
         if reloadsCurrent { Task { await loadDirectory() } }

@@ -21,6 +21,7 @@ from agent_server.infra.repositories.sessions import SessionRepositoryMixin
 from agent_server.infra.repositories.shares import SessionShareRepositoryMixin
 from agent_server.infra.repositories.store_support import *
 from agent_server.infra.repositories.timeline import TimelineRepositoryMixin
+from agent_server.infra.repositories.usage import UsageRepositoryMixin
 from agent_server.infra.repositories.users import UserRepositoryMixin
 
 _MAX_TRACKED_LOCKS = 4096
@@ -40,21 +41,19 @@ class Store(
     AttachmentRepositoryMixin,
     ActiveRunRepositoryMixin,
     TimelineRepositoryMixin,
+    UsageRepositoryMixin,
 ):
     def __init__(
         self,
-        path: str | Path | None = None,
         *,
         db_url: str | None = None,
-        backend: str | None = None,
         file_storage: FileStorage | None = None,
     ) -> None:
-        resolved_backend, engine = build_engine(backend=backend, url=db_url, sqlite_path=path)
-        self.backend: str = resolved_backend
+        engine = build_engine(db_url)
         self._engine: AsyncEngine = engine
-        self.timeline: SqlTimelineStore = SqlTimelineStore(engine, backend=resolved_backend)
+        self.timeline: SqlTimelineStore = SqlTimelineStore(engine)
         self.files: FileStorage = file_storage or build_file_storage(
-            default_local_root=_default_files_root(engine, path)
+            default_local_root=_default_files_root(engine)
         )
         self.instance_settings = InstanceSettingsRepository(engine)
         self.active_runs = ActiveRunRepository(engine)
@@ -127,11 +126,11 @@ class Store(
         return self._engine
 
     async def timeline_lock(self, session_id: str) -> asyncio.Lock:
-        """Return this session's SQLite writer lock, keeping the registry bounded.
+        """Return this session's in-process writer lock, keeping the registry bounded.
 
-        Only the SQLite backend uses these locks, but a long-lived dev or test
-        process still touches many sessions, so the registry evicts idle,
-        unlocked entries instead of growing without bound.
+        Connector lifecycle guards use these locks; a long-lived process still
+        touches many sessions, so the registry evicts idle, unlocked entries
+        instead of growing without bound.
         """
 
         async with self._timeline_locks_guard:

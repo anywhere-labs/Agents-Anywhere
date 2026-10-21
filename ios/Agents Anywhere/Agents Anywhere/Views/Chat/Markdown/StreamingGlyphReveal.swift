@@ -3,6 +3,9 @@ import Foundation
 
 extension EnvironmentValues {
     @Entry var streamingGlyphAnimation = false
+    /// The clock stops here even while the reply streams. Streamed Markdown
+    /// moves it forward whenever a block's text changes.
+    @Entry var streamingRevealDeadline = Date.distantFuture
 }
 
 /// Known copy can reserve its final centered layout while phrases become
@@ -10,11 +13,23 @@ extension EnvironmentValues {
 nonisolated struct StreamingTextPhrase: TextAttribute {
     let index: Int
 
-    @MainActor static func text(_ value: String) -> Text {
+    /// `underlined` marks a tappable name. Its characters keep the underline
+    /// even when a phrase boundary splits them.
+    @MainActor static func text(_ value: String, underlined: Range<String.Index>? = nil) -> Text {
         let phrases = TextPhraseSequence.chunks(in: value)
         var interpolation = LocalizedStringKey.StringInterpolation(literalCapacity: 0, interpolationCount: phrases.count)
+        var start = value.startIndex
         for (index, phrase) in phrases.enumerated() {
-            interpolation.appendInterpolation(Text(verbatim: phrase).customAttribute(Self(index: index)))
+            let end = value.index(start, offsetBy: phrase.count)
+            var text = Text(verbatim: phrase)
+            if let underlined, underlined.overlaps(start..<end) {
+                let lower = max(underlined.lowerBound, start), upper = min(underlined.upperBound, end)
+                text = Text(verbatim: String(value[start..<lower]))
+                    + Text(verbatim: String(value[lower..<upper])).underline()
+                    + Text(verbatim: String(value[upper..<end]))
+            }
+            interpolation.appendInterpolation(text.customAttribute(Self(index: index)))
+            start = end
         }
         return Text(LocalizedStringKey(stringInterpolation: interpolation))
     }
@@ -25,7 +40,13 @@ nonisolated struct StreamingTextPhrase: TextAttribute {
 struct StreamingGlyphReveal: ViewModifier {
     @Environment(\.streamingGlyphAnimation) private var isStreaming
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.streamingRevealDeadline) private var deadline
+    @AppStorage(ReplyPresentation.plainFadeKey) private var plainFade = false
     @State private var ledger: GlyphRevealLedger
+    @State private var stoppedDeadline: Date?
+    /// A tool wait or thinking pause flips `isStreaming` off and on again. The
+    /// block stays on the renderer branch so each flip does not rebuild its Text.
+    @State private var hasStreamed = false
     private let revealedPhraseCount: Int?
 
     init(ledger: GlyphRevealLedger = GlyphRevealLedger(), revealedPhraseCount: Int? = nil) {
@@ -35,15 +56,26 @@ struct StreamingGlyphReveal: ViewModifier {
 
     func body(content: Content) -> some View {
         let enabled = isStreaming && !reduceMotion
-        // Text flushes at 30 Hz. Drawing can use the display's refresh cadence
-        // to interpolate between flushes without reparsing or appending text.
-        if !enabled && revealedPhraseCount == nil {
+        // Text arrives in batches, one after the previous reveal ends. Drawing
+        // interpolates each batch without reparsing or appending text.
+        if !enabled && !hasStreamed && revealedPhraseCount == nil {
             // Settled history uses native Text drawing with no clock or glyph walk.
-            content
+            content.onChange(of: enabled) { _, next in if next { hasStreamed = true } }
         } else {
-            TimelineView(.animation(paused: !enabled)) { timeline in
+            // Every running clock re-evaluates its text each frame, so an idle
+            // block pauses and draws its glyphs settled. 60 fps is enough for a
+            // 0.24 s fade and halves the work on 120 Hz displays.
+            let running = enabled && stoppedDeadline != deadline && deadline > .now
+            TimelineView(.animation(minimumInterval: 1 / 60, paused: !running)) { timeline in
                 content.textRenderer(GlyphRevealRenderer(ledger: ledger, now: timeline.date.timeIntervalSinceReferenceDate,
-                    enabled: enabled, revealedPhraseCount: revealedPhraseCount))
+                    enabled: running, revealedPhraseCount: revealedPhraseCount, rises: !plainFade))
+            }
+            .onChange(of: enabled, initial: true) { _, next in if next { hasStreamed = true } }
+            .task(id: deadline) {
+                let delay = deadline.timeIntervalSinceNow
+                guard delay > 0, delay < 60 else { return }
+                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                stoppedDeadline = deadline
             }
         }
     }
@@ -55,9 +87,10 @@ nonisolated struct GlyphRevealRenderer: TextRenderer {
     let now: TimeInterval
     let enabled: Bool
     var revealedPhraseCount: Int? = nil
+    var rises = true
 
     // Extend raster bounds for the blur and slight rise, not layout bounds.
-    var displayPadding: EdgeInsets { .init(top: 6, leading: 6, bottom: 9, trailing: 6) }
+    var displayPadding: EdgeInsets { rises ? .init(top: 6, leading: 6, bottom: 9, trailing: 6) : .init() }
 
     func draw(layout: Text.Layout, in context: inout GraphicsContext) {
         let count = layout.reduce(0) { total, line in
@@ -73,25 +106,46 @@ nonisolated struct GlyphRevealRenderer: TextRenderer {
             }
             return
         }
+        guard let progress else { return }
+        // Glyphs from one flush share a birth time and so share one effect.
+        // Settled text keeps the system's line/run drawing; only the revealing
+        // suffix is split into per-batch slices. Each batch rasterizes into one
+        // layer with one blur, instead of an offscreen blur per glyph.
+        let batches = progress.batches
+        var slices = [[Text.Layout.RunSlice]](repeating: [], count: batches.count)
         var index = 0
+        var batch = 0
         for line in layout {
+            let lineCount = line.reduce(0) { $0 + (isRevealed($1) ? $1.count : 0) }
+            if index + lineCount <= progress.settledCount && line.allSatisfy(isRevealed) {
+                context.draw(line)
+                index += lineCount
+                continue
+            }
             for run in line where isRevealed(run) {
-                guard let progress else { context.draw(run); continue }
-                // Already settled runs keep the system's efficient drawing path.
-                if progress[index..<(index + run.count)].allSatisfy({ $0 >= 1 }) {
-                    context.draw(run)
-                    index += run.count
-                } else {
-                    for glyph in run {
-                        var copy = context
-                        let effect = GlyphRevealEffect(progress: progress[index])
-                        copy.opacity *= effect.opacity
-                        copy.translateBy(x: 0, y: effect.offsetY)
-                        copy.addFilter(.blur(radius: effect.blurRadius))
-                        copy.draw(glyph, options: .disablesSubpixelQuantization)
-                        index += 1
-                    }
+                let settled = min(run.count, max(0, progress.settledCount - index))
+                if settled == run.count { context.draw(run) } else if settled > 0 { context.draw(run[0..<settled]) }
+                var start = settled
+                while start < run.count {
+                    while batch < batches.count && batches[batch].range.upperBound <= index + start { batch += 1 }
+                    guard batch < batches.count else { context.draw(run[start..<run.count]); break }
+                    let end = min(run.count, batches[batch].range.upperBound - index)
+                    slices[batch].append(run[start..<end])
+                    start = end
                 }
+                index += run.count
+            }
+        }
+        for (batch, batchSlices) in zip(batches, slices) where !batchSlices.isEmpty {
+            var copy = context
+            let effect = GlyphRevealEffect(progress: batch.progress, rises: rises)
+            copy.opacity *= effect.opacity
+            if rises {
+                copy.translateBy(x: 0, y: effect.offsetY)
+                copy.addFilter(.blur(radius: effect.blurRadius))
+            }
+            copy.drawLayer { layer in
+                for slice in batchSlices { layer.draw(slice, options: .disablesSubpixelQuantization) }
             }
         }
     }

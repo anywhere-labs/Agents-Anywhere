@@ -32,6 +32,17 @@ enum class ProjectSessionStatusFilter(val archiveStates: List<Boolean>) {
 
 data class ProjectSessionLoadKey(val projectId: String, val archived: Boolean)
 
+data class ProjectDeviceAgentFilter(
+    val connectorId: String? = null,
+    val runtime: String? = null,
+) {
+    val active: Boolean get() = connectorId != null || runtime != null
+
+    fun matches(session: AgentSession): Boolean =
+        (connectorId == null || session.connectorId == connectorId) &&
+            (runtime == null || session.runtime == runtime)
+}
+
 fun projectSessionMatchesStatus(session: AgentSession, status: ProjectSessionStatusFilter): Boolean = when (status) {
     ProjectSessionStatusFilter.Active -> !session.archived && !session.pinned
     ProjectSessionStatusFilter.Archived -> session.archived
@@ -42,13 +53,22 @@ fun projectHasVisibleSessions(
     project: AgentProject,
     sessions: Collection<AgentSession>,
     status: ProjectSessionStatusFilter,
-): Boolean = project.manuallyCreated || (project.sidebarSessionCounts?.let { counts ->
-    when (status) {
-        ProjectSessionStatusFilter.Active -> counts.active > 0
-        ProjectSessionStatusFilter.Archived -> counts.archived > 0
-        ProjectSessionStatusFilter.All -> counts.active + counts.archived > 0
+    filter: ProjectDeviceAgentFilter = ProjectDeviceAgentFilter(),
+): Boolean {
+    if (filter.active) {
+        if (filter.connectorId != null && project.connectorId != filter.connectorId) return false
+        return sessions.any { session ->
+            session.projectId == project.id && projectSessionMatchesStatus(session, status) && filter.matches(session)
+        }
     }
-} ?: sessions.any { it.projectId == project.id && projectSessionMatchesStatus(it, status) })
+    return project.manuallyCreated || (project.sidebarSessionCounts?.let { counts ->
+        when (status) {
+            ProjectSessionStatusFilter.Active -> counts.active > 0
+            ProjectSessionStatusFilter.Archived -> counts.archived > 0
+            ProjectSessionStatusFilter.All -> counts.active + counts.archived > 0
+        }
+    } ?: sessions.any { it.projectId == project.id && projectSessionMatchesStatus(it, status) })
+}
 
 fun projectHasActiveSessions(project: AgentProject, sessions: Collection<AgentSession>): Boolean =
     projectHasVisibleSessions(project, sessions, ProjectSessionStatusFilter.Active)

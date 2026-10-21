@@ -57,6 +57,7 @@ import com.agentsanywhere.app.feature.devices.DeviceAgentPreviews
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.feature.sessions.projectHasVisibleSessions
 import com.agentsanywhere.app.feature.sessions.projectSessionMatchesStatus
+import com.agentsanywhere.app.feature.sessions.ProjectDeviceAgentFilter
 import com.agentsanywhere.app.feature.sessions.ProjectSessionLoadKey
 import com.agentsanywhere.app.feature.sessions.ProjectSessionStatusFilter
 import com.agentsanywhere.app.feature.sessions.sessionListComparator
@@ -66,6 +67,7 @@ import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
+import com.agentsanywhere.app.model.runtimeTypeLabel
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.AAToastHost
 import com.agentsanywhere.app.ui.designsystem.AAToastVisuals
@@ -217,7 +219,17 @@ fun HomeScreen(
                 onTabSelected = onTabSelected,
                 onProfile = { onProfileOpenChange(true) },
                 onSearch = { showToast(context.getString(R.string.home_search_coming_soon)) },
-                onSessionLongPress = { session, bounds -> actionMenu = HomeSessionActionMenu(session, bounds, projectView = sidebarViewMode == HomeSidebarViewMode.Project) },
+                onSessionLongPress = { session, bounds ->
+                    actionMenu = HomeSessionActionMenu(
+                        session = session,
+                        rowBounds = bounds,
+                        projectView = sidebarViewMode == HomeSidebarViewMode.Project,
+                        contextLabel = session.sidebarContextLabel(
+                            projectName = state.projects.firstOrNull { it.id == session.projectId }?.name,
+                            deviceName = state.devices.firstOrNull { it.id == session.connectorId }?.name,
+                        ),
+                    )
+                },
                 onProjectMenu = { projectActionMenu = it },
                 onProjectExpandedChange = { project, expanded ->
                     projectPreferences.setProjectExpanded(project.id, expanded)
@@ -592,13 +604,24 @@ private fun HomeProjectModeList(
                 (projectSessionsById.values.flatten() + state.sessions + state.archivedSessions)
                     .associateBy { it.id }.values.toList()
             }
-            val visibleSessions = remember(allSessions, projectSessionStatus) {
-                allSessions.filter { it.projectId != null && projectSessionMatchesStatus(it, projectSessionStatus) }
+            val deviceAgentFilter = ProjectDeviceAgentFilter(
+                connectorId = projectPreferences.selectedDeviceId,
+                runtime = projectPreferences.selectedAgentRuntime,
+            )
+            val visibleSessions = remember(allSessions, projectSessionStatus, deviceAgentFilter) {
+                allSessions.filter {
+                    it.projectId != null && projectSessionMatchesStatus(it, projectSessionStatus) && deviceAgentFilter.matches(it)
+                }
                     .groupBy { it.projectId.orEmpty() }
                     .mapValues { (_, sessions) -> sessions.sortedWith(sessionListComparator()) }
             }
             HomeProjectList(
-                projects = state.projects.filter { projectHasVisibleSessions(it, allSessions, projectSessionStatus) },
+                projects = state.projects.filter { projectHasVisibleSessions(it, allSessions, projectSessionStatus, deviceAgentFilter) },
+                devices = state.devices,
+                agentRuntimes = remember(allSessions) {
+                    allSessions.map(AgentSession::runtime).filter(String::isNotBlank).distinct().sortedBy(String::runtimeTypeLabel)
+                },
+                deviceAgentFilter = deviceAgentFilter,
                 hasProjectsInOtherStatuses = state.projects.any { projectHasVisibleSessions(it, allSessions, ProjectSessionStatusFilter.All) },
                 allSessions = allSessions,
                 projectPreferences = projectPreferences,
@@ -607,7 +630,7 @@ private fun HomeProjectModeList(
                 projectErrors = projectErrors,
                 onRetryProject = onRetryProject,
                 onCreateProject = onCreateProject,
-                pinnedSessions = allSessions.filter { it.pinned && !it.archived }
+                pinnedSessions = allSessions.filter { it.pinned && !it.archived && deviceAgentFilter.matches(it) }
                     .sortedWith(sessionListComparator()),
                 sessionsByProject = visibleSessions,
                 loadingProjectIds = loadingProjectIds,

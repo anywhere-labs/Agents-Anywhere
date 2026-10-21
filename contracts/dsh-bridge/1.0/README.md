@@ -1,5 +1,7 @@
 # DSH Bridge Protocol 1.0
 
+> **Superseded by [2.0](../2.0/README.md).** 1.0 describes the hand-written JSON-RPC transport used in Agents Anywhere 2.0.x; the schemas and fixtures stay for reference and for old-Connector session identities.
+
 These schemas and fixtures define the line-level JSON-RPC contract shared by the
 Agents Anywhere Connector and `@agents-anywhere/dsh-bridge-next` (and the legacy bridge). Transport tests own
 UTF-8 framing, newline handling, and the 8 MiB frame limit.
@@ -26,6 +28,9 @@ canonical platform session IDs directly. This retains the existing hash algorith
 Feature flags add `readOnly` and `snapshotPagination`; these are optional 1.x fields.
 
 The canonical Timeline schema already defines `type/status/content/source/contentHash`.
+Strings must be well-formed UTF-16 by the time `contentHash` is computed: plugins (2.1.0+) replace lone surrogates with U+FFFD before hashing. The Connector hashes a lone surrogate the way `JSON.stringify` writes it (`\udXXX`), so items from older plugins still verify, and replaces it before forwarding to the Server.
+
+When the Server refuses a complete snapshot for good (HTTP 413, another 4xx, or a 200 whose `rejected` list names it), the Connector still acknowledges the `snapshot.commit` so the feed moves on to the other sessions, but does not save that session's checkpoint, reports it as `unavailable` (reason `history_too_large` or `history_rejected`), withholds its live `timeline.itemUpsert` / `session.turnEnded` and asks for a fresh capture with `runtime.sync.refresh` after a growing delay. Transient failures (network, 5xx) still fail the subscription as before.
 Legacy native `payload` envelopes are not part of that schema and are no longer
 projected by Python. The plugin is the sole native-log projection owner.
 
@@ -99,9 +104,9 @@ composition test also reads persisted sessions through the real Python adapter.
 
 ## Event subscription (additive 1.x)
 
-The handshake advertises `features.syncMode = events` and `projectionVersion = 2`.
+The handshake advertises `features.syncMode = events` and `projectionVersion = 3`.
 `runtime.sync.subscribe` replaces this connection's previous subscription and returns
-`streamId` plus the projection version. `runtime.sync.batch` notifications follow
+`streamId` plus the projection version. Connector accepts v2 and v3, and each batch must match the subscribed version. v3 reads rc.7 tool-role results and PTC sub-dispatches; a v2 checkpoint triggers a complete recalibration so previously omitted results are restored. Update Connector together with the v3 Host. `runtime.sync.batch` notifications follow
 `sync-batch.schema.json`, with monotonic `batchSeq`. The Connector acknowledges each
 batch via `runtime.sync.ack {streamId,batchSeq}` before the next batch is sent.
 
@@ -120,6 +125,26 @@ the asynchronous notification/coalescing queue. Native changes are still batched
 at the Bridge's bounded cadence. Snapshot page ACK only means page receipt;
 snapshot.commit waits for ingestion of the assembled complete snapshot.
 
+### Slow uploads (negotiated upload progress v1)
+
+Connector requests `uploadProgressVersion:1` alongside `checkpointVersion:1`;
+Bridge echoes it only when supported. The Connector may then call
+`runtime.sync.progress {streamId,batchSeq,bytesSent}` while ingesting that batch.
+`bytesSent` is a positive safe integer counting cumulative request-body bytes
+handed to the HTTP transport, including retransmissions within the batch.
+An increasing count renews the pending batch's 60-second inactivity deadline.
+Repeated or decreasing counts do not renew it; invalid identities/counts fail.
+Progress does not ACK a batch, send the next one, or advance a checkpoint.
+The final ACK still follows cloud acceptance. HTTP connect/write/read/pool
+inactivity timeouts remain active. A slow but advancing upload can therefore
+finish without a fixed 60-second total limit; a stalled upload still expires.
+
+Only negotiated peers send progress. Existing peers retain their ACK behavior.
+This extension affects the local Bridge transport, not the Server/client API.
+HTTP ingestion still submits one complete snapshot, preserving atomic history
+replacement. It does not add resumable cloud chunks; an actual failed upload
+may retransmit the full snapshot on recovery.
+
 Without the negotiated extension, live notifications retain the typed Host
 publishers and their WebSocket/coalescing/HTTP fallback queue. Their ACK does not
 mean server persistence. No resumable checkpoint is inferred from legacy ACKs;
@@ -135,7 +160,7 @@ Connector state, which uses the existing periodic and shutdown flush. A crash
 before that flush permits retransmission, never skipping uncommitted history.
 `checkpoint.delete {externalSessionId}` invalidates an unavailable session.
 
-Checkpoint fields are `version:1`, `projectionVersion:2`, `throughSeq`,
+Checkpoint fields are `version:1`, `projectionVersion:3`, `throughSeq`,
 `historyHash` (SHA-256 of durable native events and attachment receipts, seeded
 with native/platform identity), and `settled`. The Host locally replays history
 and compares this fingerprint, independent of live/persisted SDK revision formats.

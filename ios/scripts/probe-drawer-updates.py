@@ -12,11 +12,13 @@ def main() -> None:
     components = app / "Views/Components"
     source = (components / "SidebarDrawer.swift").read_text()
     substitutions = {
-        "@State private var progress: CGFloat": "@Binding private var progress: CGFloat",
-        "_progress = State(initialValue: isOpen.wrappedValue ? 1 : 0)": "_progress = DrawerProbeControl.progress",
+        "_motion = State(initialValue: SidebarDrawerMotion(progress: isOpen.wrappedValue ? 1 : 0))":
+            "_motion = State(initialValue: DrawerProbeControl.motion)",
+        "GeometryReader { fullScreenGeometry in":
+            "GeometryReader { fullScreenGeometry in\n            let _ = { DrawerProbeControl.containerBodies += 1 }()",
     }
-    # Only replace the progress driver in a disposable copy; all layout, page
-    # factories and motion modifiers remain the application's real code.
+    # Only replace the progress driver and add a counter in a disposable copy;
+    # all layout, page factories and motion modifiers remain the real code.
     for old, new in substitutions.items():
         assert source.count(old) == 1, f"Update the probe's progress hook: {old}"
         source = source.replace(old, new)

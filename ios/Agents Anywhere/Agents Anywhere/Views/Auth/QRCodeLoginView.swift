@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct QRCodeLoginView: View {
-    @ObservedObject var appState: AppState
+    let appState: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var path: [QRLoginRoute] = []
     @State private var isClosing = false
@@ -66,7 +66,7 @@ private enum QRLoginRoute: Hashable {
 }
 
 private struct QRScanStepView: View {
-    @ObservedObject var appState: AppState
+    let appState: AppState
     @Environment(\.colorScheme) private var colorScheme
 
     let onCancel: () -> Void
@@ -140,7 +140,7 @@ private struct QRScanStepView: View {
 }
 
 private struct QRConfirmStepView: View {
-    @ObservedObject var appState: AppState
+    let appState: AppState
     @Environment(\.colorScheme) private var colorScheme
 
     let payload: MobileLoginPayload
@@ -209,7 +209,7 @@ private struct QRConfirmStepView: View {
 }
 
 private struct QRWaitingStepView: View {
-    @ObservedObject var appState: AppState
+    let appState: AppState
     @Environment(\.colorScheme) private var colorScheme
 
     let payload: MobileLoginPayload

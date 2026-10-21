@@ -46,7 +46,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -54,7 +53,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.agentsanywhere.app.R
-import com.agentsanywhere.app.feature.sessions.listIndicator
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import kotlin.math.roundToInt
@@ -63,6 +61,7 @@ internal data class HomeSessionActionMenu(
     val session: AgentSession,
     val rowBounds: Rect,
     val projectView: Boolean = false,
+    val contextLabel: String = "",
 )
 
 private const val SESSION_TITLE_DISPLAY_MAX_CHARS = 15
@@ -124,7 +123,7 @@ internal fun HomeSessionActionOverlay(
                     onLongPress = {},
                 )
             } else {
-                HomeSessionHighlightRow(session = menu.session, darkMode = darkMode)
+                HomeSessionHighlightRow(session = menu.session, contextLabel = menu.contextLabel, darkMode = darkMode)
             }
         }
         HomeSessionActionMenuCard(
@@ -138,11 +137,7 @@ internal fun HomeSessionActionOverlay(
 }
 
 @Composable
-internal fun HomeSessionHighlightRow(session: AgentSession, darkMode: Boolean) {
-    val indicator = session.listIndicator()
-    val subtitle = listOf(session.runtimeContextLabel, session.workspaceLabel)
-        .filter { it.isNotBlank() }
-        .joinToString("  ·  ")
+internal fun HomeSessionHighlightRow(session: AgentSession, contextLabel: String, darkMode: Boolean) {
     val title = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF1F201D)
     val meta = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF8E918A)
 
@@ -153,43 +148,12 @@ internal fun HomeSessionHighlightRow(session: AgentSession, darkMode: Boolean) {
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SessionRowLeading(indicator = indicator)
-        if (session.pinned) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text(
-                    text = session.title.sessionDisplayTitle(),
-                    color = title,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    lineHeight = 20.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = subtitle,
-                    color = meta,
-                    fontSize = 11.2.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        } else {
-            Text(
-                text = session.title.sessionDisplayTitle(),
-                modifier = Modifier.weight(1f),
-                color = title,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                lineHeight = 20.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        SessionRowTrailing(session = session, indicator = indicator, timeColor = meta)
+        HomeSessionRowContent(
+            session = session,
+            contextLabel = contextLabel,
+            titleColor = title,
+            metaColor = meta,
+        )
     }
 }
 

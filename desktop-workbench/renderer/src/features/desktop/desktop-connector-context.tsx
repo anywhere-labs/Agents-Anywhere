@@ -555,7 +555,9 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     if (!bridge?.connector || busy) return false
     setBusy(true)
     const restartsConnector = Boolean(
-      state?.running && ("uvPath" in settings || "uvPypiIndexUrl" in settings),
+      state?.running && (
+        "uvPath" in settings || "pythonPath" in settings || "uvPypiIndexUrl" in settings || "uvPythonInstallMirror" in settings
+      ),
     )
     if (restartsConnector) setConnectionStatus("connecting")
     const previous = state

@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import "./session-tool-sidebar.css"
 import { createPortal } from "react-dom"
 import type { LucideIcon } from "lucide-react"
 import {
@@ -24,6 +25,8 @@ import { useDiscardFileChanges } from "@/components/discard-file-changes-dialog"
 import { useAuth } from "@/components/auth/auth-context"
 import { useWorkspace, type PanelId } from "@/components/workspace-context"
 import { Button } from "@/components/ui/button"
+import { SessionToolTabStrip } from "@/components/session-tool-tab-strip"
+import { SessionFilesWorkspace } from "@/components/session-files-workspace"
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   DropdownMenu,
@@ -38,6 +41,7 @@ import {
   type SessionToolKind,
   type SessionToolTabsAction,
   type SessionToolTabsState,
+  type SessionToolTab,
 } from "@/components/session-tool-tabs"
 import {
   useSessionToolSidebarStore,
@@ -47,7 +51,7 @@ import {
   useStoredSessionToolSidebarState,
 } from "@/components/session-tool-sidebar-state"
 import { SessionFilePreviewProvider } from "@/components/session/session-file-preview-context"
-import type { SessionFilePreviewTarget } from "@/components/session/session-file-preview-context"
+import type { SessionFilePreviewTarget, OpenSessionFilePreview, SessionFileOpenOptions } from "@/components/session/session-file-preview-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { isApiError } from "@/lib/api/errors"
@@ -84,7 +88,8 @@ export type SessionToolSidebarController = SessionToolTabsState & {
   toggleExpanded: () => void
   openTool: (kind: SessionToolKind) => void
   openReview: (target?: SessionReviewTarget) => void
-  openFilePreview: (target: SessionFilePreviewTarget) => void
+  openFilePreview: OpenSessionFilePreview
+  pinTab: (id: string) => void
   activateTab: (id: string) => void
   closeTab: (id: string) => Promise<boolean>
   setTabDirty: (id: string, dirty: boolean) => void
@@ -173,11 +178,12 @@ export function useSessionToolSidebar({
       if (!store.isShuttingDown()) onTerminalError?.(error instanceof Error ? error.message : String(error))
     })
   }, [dispatch, onTerminalError, openTerminal, sessionId, store])
-  const openFilePreview = React.useCallback((target: SessionFilePreviewTarget) => {
+  const openFilePreview = React.useCallback((target: SessionFilePreviewTarget, options?: SessionFileOpenOptions) => {
     if (!sessionId || store.isShuttingDown()) return
     const tabId = createClientId("files_preview")
-    dispatch({ type: "open-tool", tab: createSessionFilePreviewTab(tabId, target) })
+    dispatch({ type: "open-tool", tab: createSessionFilePreviewTab(tabId, target), preview: options?.preview, sourceTabId: options?.sourceTabId })
   }, [dispatch, sessionId, store])
+  const pinTab = React.useCallback((id: string) => dispatch({ type: "pin-tab", id }), [dispatch])
   const activateTab = React.useCallback(
     (id: string) => dispatch({ type: "activate-tab", id }),
     [dispatch],
@@ -232,6 +238,7 @@ export function useSessionToolSidebar({
       openTool,
       openReview,
       openFilePreview,
+      pinTab,
       activateTab,
       closeTab,
       setTabTitle,
@@ -244,6 +251,7 @@ export function useSessionToolSidebar({
       closeTab,
       collapseSidebar,
       openFilePreview,
+      pinTab,
       openTool,
       openReview,
       setTabTitle,
@@ -481,6 +489,16 @@ export function SessionToolSidebar({
   const { confirmDiscard, discardDialog } = useDiscardFileChanges()
   const domIdPrefix = React.useId()
   const tabButtonRefs = React.useRef(new Map<string, HTMLButtonElement>())
+  const fileWorkspaceGroups = React.useMemo(() => {
+    const groups = new Map<string, SessionToolTab[]>()
+    for (const tab of controller.tabs) {
+      if (tab.kind !== "files" || tab.filePreview?.source !== "workspace") continue
+      const group = groups.get(tab.filePreview.root) ?? []
+      group.push(tab)
+      groups.set(tab.filePreview.root, group)
+    }
+    return groups
+  }, [controller.tabs])
   const newTabButtonRef = React.useRef<HTMLButtonElement | null>(null)
   const launcherButtonRef = React.useRef<HTMLButtonElement | null>(null)
   const resizeStateRef = React.useRef<{
@@ -657,12 +675,7 @@ export function SessionToolSidebar({
             />
           </>
         ) : null}
-        <div
-          role="tablist"
-          aria-label={t("tabsLabel")}
-          className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
-          onKeyDown={handleTabKeyDown}
-        >
+        <SessionToolTabStrip label={t("tabsLabel")} onKeyDown={handleTabKeyDown}>
           {controller.tabs.map((tab) => {
             const meta = TOOL_META[tab.kind]
             const Icon = meta.icon
@@ -672,6 +685,14 @@ export function SessionToolSidebar({
             return (
               <div
                 key={tab.id}
+                onMouseDown={(event) => {
+                  if (event.button === 1) event.preventDefault()
+                }}
+                onAuxClick={(event) => {
+                  if (event.button !== 1) return
+                  event.preventDefault()
+                  void closeTabAndRestoreFocus(tab.id)
+                }}
                 className={cn(
                   "aa-window-no-drag group flex min-w-24 max-w-48 shrink-0 items-center overflow-hidden rounded-xl transition-colors hover:bg-secondary focus-within:bg-secondary",
                   active && "bg-secondary text-secondary-foreground",
@@ -691,10 +712,11 @@ export function SessionToolSidebar({
                   aria-controls={`${domIdPrefix}-panel-${tab.id}`}
                   tabIndex={active ? 0 : -1}
                   onClick={() => controller.activateTab(tab.id)}
+                  onDoubleClick={() => controller.pinTab(tab.id)}
                   className="h-8 min-w-0 flex-1 justify-start rounded-xl px-2 hover:bg-transparent"
                 >
                   <Icon data-icon="inline-start" />
-                  <span className="truncate">{label}{tab.dirty ? " •" : ""}</span>
+                  <span className={cn("truncate", tab.preview && "italic")}>{label}{tab.dirty ? " •" : ""}</span>
                 </Button>
                 <Button
                   type="button"
@@ -715,7 +737,7 @@ export function SessionToolSidebar({
               </div>
             )
           })}
-        </div>
+        </SessionToolTabStrip>
 
         <ToolMenu
           triggerRef={newTabButtonRef}
@@ -748,19 +770,26 @@ export function SessionToolSidebar({
             onOpenTool={onOpenTool}
           />
         ) : (
-          controller.tabs.map((tab) => {
+          controller.tabs.map((listedTab) => {
+            const emptyWorkspaceBrowser = listedTab.kind === "files" && !listedTab.filePreview
+              && !fileWorkspaceGroups.has(root)
+            const workspaceRoot = listedTab.filePreview?.source === "workspace"
+              ? listedTab.filePreview.root : emptyWorkspaceBrowser ? root : null
+            const fileTabs = workspaceRoot === null ? [] : fileWorkspaceGroups.get(workspaceRoot) ?? [listedTab]
+            if (fileTabs.length && fileTabs[0]!.id !== listedTab.id) return null
+            const tab = fileTabs.find(item => item.id === controller.activeTabId) ?? listedTab
             const active = controller.activeTabId === tab.id
             const panelActive = presented && controller.open && active
             return (
               <section
-                key={tab.id}
+                key={workspaceRoot === null ? tab.id : `files-workspace:${workspaceRoot}`}
                 id={`${domIdPrefix}-panel-${tab.id}`}
                 role="tabpanel"
                 aria-labelledby={`${domIdPrefix}-tab-${tab.id}`}
                 aria-hidden={!panelActive}
                 inert={!panelActive || undefined}
                 className={cn(
-                  "absolute inset-0 min-h-0 overflow-hidden",
+                  "aa-session-tool-panel absolute inset-0 min-h-0 overflow-hidden",
                   panelActive ? "visible pointer-events-auto" : "invisible pointer-events-none",
                 )}
               >
@@ -787,7 +816,12 @@ export function SessionToolSidebar({
                     creationError={tab.error}
                   />
                 ) : null}
-                {tab.kind === "files" ? (
+                {tab.kind === "files" && fileTabs.length > 0 ? (
+                  <SessionFilesWorkspace tabs={fileTabs} activeTabId={controller.activeTabId ?? tab.id}
+                    token={token} connectorId={connectorId} connectorDeviceOs={connectorDeviceOs} root={root}
+                    onDirtyChange={controller.setTabDirty}
+                    onOpenFilePreview={controller.openFilePreview} onPinTab={controller.pinTab} />
+                ) : tab.kind === "files" ? (
                   <SessionFilesToolPanel
                     tabId={tab.id}
                     filePreview={tab.filePreview}
@@ -797,6 +831,8 @@ export function SessionToolSidebar({
                     root={root}
                     onTitleChange={controller.setTabTitle}
                     onDirtyChange={controller.setTabDirty}
+                    onOpenFilePreview={controller.openFilePreview}
+                    onPinTab={controller.pinTab}
                   />
                 ) : null}
               </section>
@@ -818,6 +854,8 @@ function SessionFilesToolPanel({
   root,
   onTitleChange,
   onDirtyChange,
+  onOpenFilePreview,
+  onPinTab,
 }: {
   tabId: string
   filePreview: SessionFilePreviewTarget | null
@@ -827,6 +865,8 @@ function SessionFilesToolPanel({
   root: string
   onDirtyChange: (id: string, dirty: boolean) => void
   onTitleChange: (id: string, title: string | null) => void
+  onOpenFilePreview: OpenSessionFilePreview
+  onPinTab: (id: string) => void
 }) {
   const handleDirtyChange = React.useCallback(
     (dirty: boolean) => onDirtyChange(tabId, dirty), [onDirtyChange, tabId],
@@ -834,6 +874,10 @@ function SessionFilesToolPanel({
   const handleTitleChange = React.useCallback(
     (title: string | null) => onTitleChange(tabId, title),
     [onTitleChange, tabId],
+  )
+  const handleOpenFilePreview: OpenSessionFilePreview = React.useCallback(
+    (file, options) => onOpenFilePreview(file, { ...options, sourceTabId: tabId }),
+    [onOpenFilePreview, tabId],
   )
 
   return (
@@ -846,6 +890,8 @@ function SessionFilesToolPanel({
       initialFile={filePreview}
       onSelectedFileNameChange={handleTitleChange}
       onDirtyChange={handleDirtyChange}
+      onOpenFilePreview={handleOpenFilePreview}
+      onKeepFileOpen={() => onPinTab(tabId)}
     />
   )
 }

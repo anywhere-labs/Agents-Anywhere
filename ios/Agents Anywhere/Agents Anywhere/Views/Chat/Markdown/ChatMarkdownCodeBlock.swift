@@ -42,14 +42,14 @@ struct ChatMarkdownCodeBlock<Code: View>: View {
                 highlightedCode()
                     .textual.textSelectionScope()
                     .fixedSize(horizontal: true, vertical: false)
-                    .padding(14)
+                    .padding(12)
             }
             .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
             .fixedSize(horizontal: false, vertical: true)
         }
         .background(Color(uiColor: .secondarySystemBackground))
-        .clipShape(.rect(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(.primary.opacity(0.07), lineWidth: 0.5).allowsHitTesting(false))
+        .clipShape(.rect(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.primary.opacity(0.07), lineWidth: 0.5).allowsHitTesting(false))
     }
 
     private func copyLabel(copied: Bool) -> some View {

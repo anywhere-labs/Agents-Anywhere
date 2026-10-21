@@ -47,6 +47,7 @@ from connector.runtime_protocol import (
     ArtifactTimelineItem,
     CommandToolContent,
     CompactMarkerContent,
+    InputRequestValidationError,
     MarkdownMessageContent,
     MarkerTimelineItem,
     MessageTimelineContent,
@@ -56,6 +57,7 @@ from connector.runtime_protocol import (
     RuntimeCapabilitySet,
     RuntimeConfig,
     RuntimeInvalidRequestError,
+    RuntimeUnsupportedError,
     SessionNotice,
     SessionSourceObservation,
     SystemTimelineItem,
@@ -68,6 +70,10 @@ from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain.catalogs import (
     model_catalog_from_codex_items,
     permission_catalog_from_codex_items,
+)
+from connector.runtimes.codex.domain.input_requests import (
+    codex_input_request,
+    user_input_response_from_interaction,
 )
 from connector.runtimes.codex.domain.pending_messages import (
     CLIENT_MESSAGE_BINDINGS_VERSION,
@@ -1822,9 +1828,9 @@ async def _test_codex_runtime_reports_idle_session_capabilities() -> None:
 
     assert capability_set.session_id == "sess_1"
     assert capabilities[CAPABILITY_SESSION_SEND_MESSAGE].available is True
-    assert capabilities[CAPABILITY_SESSION_COMMANDS].supported is False
-    assert capabilities[CAPABILITY_SESSION_COMMANDS].available is False
-    assert capabilities[CAPABILITY_SESSION_COMMANDS].unavailable_reason == "unsupported"
+    assert capabilities[CAPABILITY_SESSION_COMMANDS].supported is True
+    assert capabilities[CAPABILITY_SESSION_COMMANDS].available is True
+    assert capabilities[CAPABILITY_SESSION_COMMANDS].unavailable_reason is None
     assert capabilities[CAPABILITY_RUNTIME_ATTACHMENT].available is True
     assert capabilities[CAPABILITY_SESSION_INTERRUPT].available is False
     assert capabilities[CAPABILITY_SESSION_INTERRUPT].unavailable_reason == (
@@ -1899,7 +1905,7 @@ async def _test_codex_runtime_reports_running_session_capabilities() -> None:
     assert capabilities[CAPABILITY_SESSION_SEND_MESSAGE].unavailable_reason == (
         "session_running"
     )
-    assert capabilities[CAPABILITY_SESSION_COMMANDS].available is False
+    assert capabilities[CAPABILITY_SESSION_COMMANDS].available is True
     assert capabilities[CAPABILITY_SESSION_INTERRUPT].available is True
     assert capabilities[CAPABILITY_SESSION_STEER].available is True
 
@@ -2179,6 +2185,7 @@ def test_codex_runtime_session_sync_force_requires_timeline() -> None:
 
 def test_codex_recovery_uploads_only_changed_items_after_committed_json_restart(tmp_path):
     from unittest.mock import AsyncMock
+
     from connector.server.runtime_host import ConnectorRuntimeHost
     from connector.server.sync_state import JsonSyncStateStore
 
@@ -3729,6 +3736,126 @@ async def _test_codex_runtime_materializes_attachments_for_turn_start() -> None:
     assert attachment["byteSize"] == 5
 
 
+@pytest.mark.parametrize("operation", ["start", "steer"])
+@pytest.mark.parametrize(
+    "files", [(), ("good",), ("missing",), ("missing", "good", "unnamed")]
+)
+def test_codex_attachment_delivery_notices(
+    tmp_path, monkeypatch, operation, files
+) -> None:
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(tmp_path))
+
+    async def run() -> None:
+        host = FakeHost()
+        client = FakeCodexClient()
+        runtime = CodexRuntime(config=_config(), host=host, client=client)
+        attempted = []
+
+        async def download(session_id, file_id):
+            attempted.append(file_id)
+            if file_id != "good":
+                raise OSError("download unavailable")
+            return RuntimeAttachmentContent(
+                file_id=file_id, name="good.txt", media_type="text/plain", content=b"ok"
+            )
+
+        monkeypatch.setattr(host, "attachment_download", download)
+        if operation == "steer":
+            await runtime.start_turn("sess_1", "thread_1", "hello")
+        attachments = tuple(
+            RuntimeAttachment(
+                file_id=file_id, name=None if file_id == "unnamed" else f"{file_id}.txt"
+            )
+            for file_id in files
+        )
+        send = runtime.start_turn if operation == "start" else runtime.steer_turn
+        result = await send("sess_1", "thread_1", "read this", attachments=attachments)
+
+        assert result.ok is True
+        assert attempted == list(files)
+        params = client.requests[-1][1]
+        if operation == "start":
+            assert [item["name"] for item in params.get("attachments", [])] == (
+                ["good.txt"] if "good" in files else []
+            )
+        else:
+            text = params["input"][0]["text"]
+            assert ("good.txt" in text) == ("good" in files)
+            assert "missing.txt" not in text
+        failed = [file_id for file_id in files if file_id != "good"]
+        if not failed:
+            assert host.notice_upserts == []
+            return
+        assert len(host.notice_upserts) == 1
+        notice = host.notice_upserts[0]
+        assert notice.type == "notification"
+        assert notice.severity == "warning"
+        assert notice.status == "open"
+        assert notice.blocking is None
+        assert notice.response_required is False
+        assert notice.context["failedFileIds"] == failed
+        assert "Please resend" in notice.message
+        assert "missing.txt" in notice.message
+        if "unnamed" in failed:
+            assert "- unnamed" in notice.message
+        assert await runtime.get_session_notices("sess_1") == (notice,)
+        assert await runtime.get_session_notices("other_session") == ()
+
+    asyncio.run(run())
+
+
+def test_codex_attachment_delivery_notice_reuses_id_and_resolves_on_success(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("AGENT_CONNECTOR_ATTACHMENTS_ROOT", str(tmp_path))
+
+    async def run() -> None:
+        host = FakeHost()
+        runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+        attachment = RuntimeAttachment(file_id="file_1", name="note.txt")
+        for _ in range(2):
+            await runtime.start_turn(
+                "sess_1", "thread_1", "read this", attachments=(attachment,)
+            )
+        assert len({notice.notice_id for notice in host.notice_upserts}) == 1
+        assert len(await runtime.get_session_notices("sess_1")) == 1
+        await runtime.start_turn("sess_1", "thread_1", "plain text")
+        assert len(await runtime.get_session_notices("sess_1")) == 1
+        host.attachments["file_1"] = RuntimeAttachmentContent(
+            file_id="file_1", name="note.txt", media_type="text/plain", content=b"ok"
+        )
+        await runtime.start_turn(
+            "sess_1", "thread_1", "retry", attachments=(attachment,)
+        )
+        assert host.notice_upserts[-1].status == "resolved"
+        assert await runtime.get_session_notices("sess_1") == ()
+
+    asyncio.run(run())
+
+
+def test_codex_attachment_download_cancellation_is_not_skipped(monkeypatch) -> None:
+    async def run() -> None:
+        host = FakeHost()
+        client = FakeCodexClient()
+        runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+        async def download(session_id, file_id):
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(host, "attachment_download", download)
+        with pytest.raises(asyncio.CancelledError):
+            await runtime.start_turn(
+                "sess_1",
+                "thread_1",
+                "read this",
+                attachments=(RuntimeAttachment(file_id="file_1"),),
+            )
+        assert not any(method == "turn/start" for method, _ in client.requests)
+        assert host.notice_upserts == []
+
+    asyncio.run(run())
+
+
 def test_codex_runtime_materializes_create_and_start_attachments_from_host(
     tmp_path, monkeypatch
 ) -> None:
@@ -4029,11 +4156,11 @@ async def _test_codex_runtime_start_turn_carries_cached_session_selections() -> 
     assert turn_start[1]["sandbox"] == "danger-full-access"
 
 
-def test_codex_runtime_hides_commands_for_loaded_thread() -> None:
-    asyncio.run(_test_codex_runtime_hides_commands_for_loaded_thread())
+def test_codex_runtime_lists_commands_for_loaded_thread() -> None:
+    asyncio.run(_test_codex_runtime_lists_commands_for_loaded_thread())
 
 
-async def _test_codex_runtime_hides_commands_for_loaded_thread() -> None:
+async def _test_codex_runtime_lists_commands_for_loaded_thread() -> None:
     runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
 
     commands = await runtime.list_commands(
@@ -4042,26 +4169,29 @@ async def _test_codex_runtime_hides_commands_for_loaded_thread() -> None:
         query="comp",
     )
 
-    assert commands == ()
+    assert [command.id for command in commands] == ["compact"]
+    assert commands[0].enabled is True
 
 
-def test_codex_runtime_hides_commands_without_thread() -> None:
-    asyncio.run(_test_codex_runtime_hides_commands_without_thread())
+def test_codex_runtime_disables_commands_without_thread() -> None:
+    asyncio.run(_test_codex_runtime_disables_commands_without_thread())
 
 
-async def _test_codex_runtime_hides_commands_without_thread() -> None:
+async def _test_codex_runtime_disables_commands_without_thread() -> None:
     runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
 
     commands = await runtime.list_commands("sess_1", query="compact")
 
-    assert commands == ()
+    assert [command.id for command in commands] == ["compact"]
+    assert commands[0].enabled is False
+    assert commands[0].disabled_reason == "session_unloaded"
 
 
-def test_codex_runtime_rejects_compact_command_without_sdk_request() -> None:
-    asyncio.run(_test_codex_runtime_rejects_compact_command_without_sdk_request())
+def test_codex_runtime_accepts_native_compact_command() -> None:
+    asyncio.run(_test_codex_runtime_accepts_native_compact_command())
 
 
-async def _test_codex_runtime_rejects_compact_command_without_sdk_request() -> None:
+async def _test_codex_runtime_accepts_native_compact_command() -> None:
     client = FakeCodexClient()
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
@@ -4073,15 +4203,13 @@ async def _test_codex_runtime_rejects_compact_command_without_sdk_request() -> N
         raw="/compact",
     )
 
-    assert result.ok is False
+    assert result.ok is True
     assert result.command == "compact"
-    assert result.code == "unknown_command"
-    assert result.message == "Codex runtime does not support /compact"
-    assert all(request[0] != "thread/compact/start" for request in client.requests)
+    assert result.result["executionState"] == "accepted"
+    assert client.requests[-1] == ("thread/compact/start", {"threadId": "thread_1"})
+    assert all(request[0] != "turn/start" for request in client.requests)
     assert host.notice_upserts == []
     assert host.timeline_item_upserts == []
-    assert host.state_updates == []
-    assert host.session_capability_updates == []
 
 
 def test_codex_runtime_rejects_disabled_command_without_sdk_request() -> None:
@@ -4096,8 +4224,8 @@ async def _test_codex_runtime_rejects_disabled_command_without_sdk_request() -> 
 
     assert result.ok is False
     assert result.command == "compact"
-    assert result.code == "unknown_command"
-    assert result.message == "Codex runtime does not support /compact"
+    assert result.code == "command_unavailable"
+    assert result.message == "session_unloaded"
     assert all(request[0] != "thread/compact/start" for request in client.requests)
 
 
@@ -4118,8 +4246,7 @@ async def _test_codex_runtime_rejects_command_args_without_sdk_request() -> None
 
     assert result.ok is False
     assert result.command == "compact"
-    assert result.code == "unknown_command"
-    assert result.message == "Codex runtime does not support /compact"
+    assert result.code == "invalid_command"
     assert all(request[0] != "thread/compact/start" for request in client.requests)
 
 
@@ -6299,6 +6426,415 @@ def _notification_method(message: Any) -> str:
     if isinstance(message, CodexSdkEvent):
         return message.event_type
     return str(message["method"])
+
+
+def test_codex_runtime_input_request_upserts_questionnaire_notice() -> None:
+    asyncio.run(_test_codex_runtime_input_request_upserts_questionnaire_notice())
+
+
+async def _test_codex_runtime_input_request_upserts_questionnaire_notice() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start()
+    await runtime._handle_notification(_input_request_notification())
+
+    assert len(host.notice_upserts) == 1
+    notice = host.notice_upserts[0]
+    assert notice.notice_id == "notice_codex_input_input_req_1"
+    assert notice.type == "interaction"
+    assert notice.interaction_type == "input_request"
+    assert notice.response_required is True
+    assert notice.blocking == {"scope": "session", "targetId": "sess_1"}
+    assert notice.source == {
+        "component": "codex.request_user_input",
+        "threadId": "thread_1",
+        "timelineItemId": "item_question",
+    }
+    assert notice.context["inputStatus"] == "pending"
+    assert notice.context["requestKind"] == "questionnaire"
+    assert notice.context["method"] == "item/tool/requestUserInput"
+    assert notice.context["requestId"] == "input_req_1"
+    assert notice.context["isBlocking"] is True
+    assert notice.context["turnId"] == "turn_1"
+    assert notice.context["itemId"] == "item_question"
+    assert notice.context["requestParams"]["questions"][0]["id"] == "q_lang"
+
+    assert [action["actionId"] for action in notice.actions] == ["submit", "cancel"]
+    ui_schema = notice.actions[0]["input"]["uiSchema"]
+    assert ui_schema["component"] == "inputRequest"
+    assert ui_schema["version"] == 1
+    assert ui_schema["questions"] == [
+        {
+            "id": "q_lang",
+            "prompt": "Which language should I use?",
+            "multiple": False,
+            "allowCustom": True,
+            "header": "Language",
+            "options": [
+                {"id": "o_0", "label": "Python", "description": "fast to write"},
+                {"id": "o_1", "label": "Rust", "description": "fast to run"},
+            ],
+        }
+    ]
+    assert host.state_updates[-1]["status"] == "waiting"
+    assert host.state_updates[-1]["metadata"]["notice_id"] == notice.notice_id
+
+
+def test_codex_runtime_non_blocking_input_request_keeps_session_state() -> None:
+    asyncio.run(_test_codex_runtime_non_blocking_input_request_keeps_session_state())
+
+
+async def _test_codex_runtime_non_blocking_input_request_keeps_session_state() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime.start()
+    await runtime._handle_notification(_input_request_notification(is_blocking=False))
+
+    assert len(host.notice_upserts) == 1
+    assert host.notice_upserts[0].context["isBlocking"] is False
+    assert host.notice_upserts[0].blocking is None
+    assert runtime._notices.open_blocking_for_session("sess_1") == ()
+    assert host.state_updates == []
+
+
+@pytest.mark.parametrize("is_blocking", [False, True])
+@pytest.mark.parametrize("method", ["turn/completed", "turn/cancelled", "turn/failed"])
+def test_codex_runtime_terminal_turn_closes_questionnaire(
+    is_blocking: bool, method: str
+) -> None:
+    async def run() -> None:
+        host = FakeHost()
+        runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+        await runtime.start()
+        await runtime._handle_notification(
+            _input_request_notification(is_blocking=is_blocking)
+        )
+        await runtime._handle_notification(
+            {
+                "method": method,
+                "params": {
+                    "platformSessionId": "sess_1",
+                    "threadId": "thread_1",
+                    "turnId": "turn_1",
+                },
+            }
+        )
+
+        closed = next(
+            notice
+            for notice in reversed(host.notice_upserts)
+            if notice.notice_id == "notice_codex_input_input_req_1"
+        )
+        assert closed.status == "closed"
+        assert closed.context["inputStatus"] == "closed"
+        assert closed.response_required is False
+        assert closed.actions == ()
+        assert closed.blocking is None
+        assert closed.metadata["close_reason"] == method.split("/")[1]
+        assert not any(
+            notice.notice_id == closed.notice_id
+            for notice in await runtime.get_session_notices("sess_1")
+        )
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("is_blocking", [False, True])
+def test_codex_runtime_interrupt_closes_questionnaire(is_blocking: bool) -> None:
+    async def run() -> None:
+        host = FakeHost()
+        runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+        await runtime.start()
+        await runtime._handle_notification(
+            {
+                "method": "turn/started",
+                "params": {
+                    "platformSessionId": "sess_1",
+                    "threadId": "thread_1",
+                    "turnId": "turn_1",
+                },
+            }
+        )
+        await runtime._handle_notification(
+            _input_request_notification(is_blocking=is_blocking)
+        )
+
+        result = await runtime.interrupt_session("sess_1")
+
+        assert result.ok is True
+        closed = host.notice_upserts[-1]
+        assert closed.status == "closed"
+        assert closed.context["inputStatus"] == "closed"
+        assert closed.metadata["close_reason"] == "interrupted"
+        assert closed.response_required is False
+        assert closed.actions == ()
+        assert await runtime.get_session_notices("sess_1") == ()
+
+    asyncio.run(run())
+
+
+def test_codex_runtime_rejects_secret_question_before_publishing_card() -> None:
+    async def run() -> None:
+        host = FakeHost()
+        runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+        await runtime.start()
+        notification = _input_request_notification()
+        notification["params"]["questions"][0]["isSecret"] = True
+
+        with pytest.raises(RuntimeUnsupportedError, match="secret questions"):
+            await runtime._handle_notification(notification)
+
+        assert host.notice_upserts == []
+        assert host.state_updates == []
+        assert runtime._active_turn_ids == {}
+        assert await runtime.get_session_notices("sess_1") == ()
+
+    asyncio.run(run())
+
+
+def test_codex_runtime_rejects_secret_answer_without_persisting_response() -> None:
+    async def run() -> None:
+        client = FakeCodexClient()
+        host = FakeHost()
+        runtime = CodexRuntime(config=_config(), host=host, client=client)
+        await runtime.start()
+        await runtime._handle_notification(_input_request_notification())
+        # A card restored from a connector that exposed secret questionnaires.
+        params = _input_request_params()
+        params["questions"][0]["isSecret"] = True
+        notice = replace(
+            host.notice_upserts[-1],
+            context={**host.notice_upserts[-1].context, "requestParams": params},
+        )
+        runtime._notices.upsert(notice)
+        host.notice_upserts.clear()
+
+        with pytest.raises(RuntimeUnsupportedError, match="secret questions"):
+            await runtime.respond_interaction(
+                "sess_1",
+                notice.notice_id,
+                "submit",
+                {
+                    "requestId": "input_req_1",
+                    "answers": {"q_lang": {"customText": "test-only-secret-answer"}},
+                },
+            )
+
+        assert client.responses == []
+        assert host.notice_upserts == []
+        assert "responsePayload" not in runtime._notices.get(notice.notice_id).context
+
+    asyncio.run(run())
+
+
+def test_codex_runtime_responds_to_input_request_interaction() -> None:
+    asyncio.run(_test_codex_runtime_responds_to_input_request_interaction())
+
+
+async def _test_codex_runtime_responds_to_input_request_interaction() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+    await runtime.start()
+    await runtime._handle_notification(_input_request_notification())
+
+    result = await runtime.respond_interaction(
+        "sess_1",
+        "notice_codex_input_input_req_1",
+        "submit",
+        {
+            "requestId": "input_req_1",
+            "answers": {"q_lang": {"optionIds": ["o_1"]}},
+        },
+    )
+
+    assert result.ok is True
+    assert result.result["decision"] == "answered"
+    assert client.responses == [
+        ("input_req_1", {"answers": {"q_lang": {"answers": ["Rust"]}}})
+    ]
+    resolved = host.notice_upserts[-1]
+    assert resolved.status == "resolved"
+    assert resolved.response_required is False
+    assert resolved.blocking is None
+    assert resolved.context["inputStatus"] == "resolved"
+    assert resolved.context["decision"] == "answered"
+
+
+def test_codex_runtime_cancelled_input_request_answers_empty() -> None:
+    asyncio.run(_test_codex_runtime_cancelled_input_request_answers_empty())
+
+
+async def _test_codex_runtime_cancelled_input_request_answers_empty() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+    await runtime.start()
+    await runtime._handle_notification(_input_request_notification())
+
+    result = await runtime.respond_interaction(
+        "sess_1",
+        "notice_codex_input_input_req_1",
+        "cancel",
+        {"requestId": "input_req_1"},
+    )
+
+    assert result.ok is True
+    assert result.result["decision"] == "cancelled"
+    assert client.responses == [("input_req_1", {"answers": {}})]
+
+
+def test_codex_sdk_input_request_waits_for_connector_response() -> None:
+    asyncio.run(_test_codex_sdk_input_request_waits_for_connector_response())
+
+
+async def _test_codex_sdk_input_request_waits_for_connector_response() -> None:
+    sdk_client = _ApprovalBridgeSdkClient()
+    client = CodexSdkClient(sdk_client)
+    messages: list[Any] = []
+
+    async def handler(message: Any) -> None:
+        messages.append(message)
+
+    await client.start(handler)
+
+    task = asyncio.create_task(
+        asyncio.to_thread(
+            sdk_client.approval_handler,
+            "item/tool/requestUserInput",
+            _input_request_params(),
+        )
+    )
+    while not messages:
+        await asyncio.sleep(0)
+
+    request_id = messages[0]["id"]
+    assert isinstance(request_id, str)
+    assert request_id.startswith("input_")
+    assert messages[0]["method"] == "item/tool/requestUserInput"
+    assert messages[0]["params"]["questions"][0]["id"] == "q_lang"
+
+    await client.respond(request_id, {"answers": {"q_lang": {"answers": ["Rust"]}}})
+
+    assert await task == {"answers": {"q_lang": {"answers": ["Rust"]}}}
+
+
+def test_codex_sdk_shutdown_answers_each_pending_server_request_by_kind() -> None:
+    async def run() -> None:
+        client = CodexSdkClient(_ApprovalBridgeSdkClient())
+        published: list[Any] = []
+        registered = asyncio.Event()
+
+        async def handler(message: Any) -> None:
+            published.append(message)
+            if len(published) == 2:
+                registered.set()
+
+        await client.start(handler)
+        approval = asyncio.create_task(
+            client.publish_sdk_approval_request(
+                "item/commandExecution/requestApproval",
+                {"approvalId": "approval_shutdown", "threadId": "thread_1"},
+            )
+        )
+        questionnaire = asyncio.create_task(
+            client.publish_sdk_input_request(
+                "item/tool/requestUserInput", _input_request_params()
+            )
+        )
+        async with asyncio.timeout(1):
+            await registered.wait()
+            await client.stop()
+            assert await approval == {"decision": "decline"}
+            assert await questionnaire == {"answers": {}}
+
+    asyncio.run(run())
+
+
+def test_codex_input_request_rejects_invalid_questionnaire() -> None:
+    with pytest.raises(ValueError):
+        codex_input_request({"questions": []})
+    with pytest.raises(TypeError):
+        codex_input_request({"questions": ["not-an-object"]})
+
+
+def test_codex_input_request_maps_free_text_when_codex_forbids_other() -> None:
+    request = codex_input_request(
+        {
+            "questions": [
+                {
+                    "id": "q_pick",
+                    "header": "Pick",
+                    "question": "Pick one",
+                    "isOther": False,
+                    "options": [{"label": "A", "description": ""}],
+                },
+                {
+                    "id": "q_free",
+                    "header": "Free",
+                    "question": "Anything else?",
+                    "options": None,
+                },
+            ]
+        }
+    )
+
+    assert [question.allow_custom for question in request.form.questions] == [False, True]
+    with pytest.raises(InputRequestValidationError):
+        user_input_response_from_interaction(
+            "submit",
+            {
+                "requestParams": {
+                    "questions": [
+                        {
+                            "id": "q_pick",
+                            "header": "Pick",
+                            "question": "Pick one",
+                            "isOther": False,
+                            "options": [{"label": "A", "description": ""}],
+                        }
+                    ]
+                },
+                "answers": {"q_pick": {"optionIds": [], "customText": "typed"}},
+            },
+        )
+
+
+def _input_request_params(*, is_blocking: bool = True) -> dict[str, Any]:
+    return {
+        "threadId": "thread_1",
+        "turnId": "turn_1",
+        "itemId": "item_question",
+        "isBlocking": is_blocking,
+        "questions": [
+            {
+                "id": "q_lang",
+                "header": "Language",
+                "question": "Which language should I use?",
+                "isOther": True,
+                "options": [
+                    {"label": "Python", "description": "fast to write"},
+                    {"label": "Rust", "description": "fast to run"},
+                ],
+            }
+        ],
+    }
+
+
+def _input_request_notification(*, is_blocking: bool = True) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": "input_req_1",
+        "method": "item/tool/requestUserInput",
+        "params": {
+            "platformSessionId": "sess_1",
+            **_input_request_params(is_blocking=is_blocking),
+        },
+    }
 
 
 def _config() -> RuntimeConfig:

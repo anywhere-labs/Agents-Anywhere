@@ -1,11 +1,11 @@
 import Foundation
 
-enum V2CapabilityScope: String, Codable, Hashable {
+nonisolated enum V2CapabilityScope: String, Codable, Hashable {
     case runtime
     case session
 }
 
-struct V2RuntimeCapability: Decodable, Identifiable, Hashable {
+nonisolated struct V2RuntimeCapability: Decodable, Identifiable, Hashable {
     let capabilityId: V2CapabilityID
     let version: String
     let scope: V2CapabilityScope
@@ -20,13 +20,13 @@ struct V2RuntimeCapability: Decodable, Identifiable, Hashable {
     var id: V2CapabilityID { capabilityId }
 }
 
-struct V2RuntimeCapabilityResponse: Decodable, Hashable {
+nonisolated struct V2RuntimeCapabilityResponse: Decodable, Hashable {
     let connectorId: V2ConnectorID
     let capabilitySet: V2RuntimeCapabilitySnapshot
     let serverTime: String
 }
 
-struct V2RuntimeCapabilitySnapshot: Decodable, Hashable {
+nonisolated struct V2RuntimeCapabilitySnapshot: Decodable, Hashable {
     let revision: Int
     let capabilities: [V2RuntimeCapability]
 

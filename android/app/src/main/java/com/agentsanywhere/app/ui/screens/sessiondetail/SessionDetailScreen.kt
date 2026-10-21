@@ -33,6 +33,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -62,6 +64,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -93,9 +98,19 @@ import com.agentsanywhere.app.feature.sessiondetail.failSnapshotLoad
 import com.agentsanywhere.app.feature.sessiondetail.isValidAttachmentMediaType
 import com.agentsanywhere.app.feature.sessiondetail.isInternalRuntimeError
 import com.agentsanywhere.app.feature.sessiondetail.hasPendingOptimisticSend
-import com.agentsanywhere.app.feature.sessiondetail.RuntimeMessageAction
+import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommand
+import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommandBlock
+import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommandExecutionState
+import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommandUi
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNotice
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNoticeAction
+import com.agentsanywhere.app.feature.sessiondetail.SlashIntent
+import com.agentsanywhere.app.feature.sessiondetail.allowed
+import com.agentsanywhere.app.feature.sessiondetail.block
+import com.agentsanywhere.app.feature.sessiondetail.exact
+import com.agentsanywhere.app.feature.sessiondetail.matchesPrefix
+import com.agentsanywhere.app.feature.sessiondetail.request
+import com.agentsanywhere.app.feature.sessiondetail.ui
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNoticeResponseException
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_ATTACHMENT_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_COMMANDS_CAPABILITY
@@ -105,7 +120,6 @@ import com.agentsanywhere.app.feature.sessiondetail.SESSION_MODEL_CATALOG_CAPABI
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_NOTICE_RESPONSE_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_PERMISSION_CATALOG_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_SEND_MESSAGE_CAPABILITY
-import com.agentsanywhere.app.feature.sessiondetail.SESSION_STEER_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.selectionOptions
 import com.agentsanywhere.app.feature.sessiondetail.sessionComposerEnabled
 import com.agentsanywhere.app.feature.sessiondetail.validatedSelection
@@ -167,6 +181,7 @@ fun SessionDetailScreen(
     val colors = LocalAAColors.current
     val darkMode = colors.isDark
     val context = LocalContext.current
+    val runtimeNoticeDraftStore = rememberRuntimeNoticeDraftStore()
     val clipboard = LocalClipboardManager.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -191,7 +206,6 @@ fun SessionDetailScreen(
     var streamLatestRequest by remember(sessionId) { mutableStateOf(0) }
     var attachments by remember(composerDraftSessionId) { mutableStateOf(restoredComposerDraft.attachments) }
     var retryClientMessageId by remember(composerDraftSessionId) { mutableStateOf(restoredComposerDraft.clientMessageId) }
-    var retryMessageAction by remember(composerDraftSessionId) { mutableStateOf(restoredComposerDraft.retryAction) }
     var preparedSessionCreating by remember(preparedSession) { mutableStateOf(false) }
     var preparedSelections by remember(preparedSession) { mutableStateOf(preparedSession?.selections ?: NewSessionSelections()) }
     var preparedModelOptions by remember(preparedSession) { mutableStateOf(emptyList<com.agentsanywhere.app.feature.sessiondetail.RuntimeSelectionOption>()) }
@@ -413,23 +427,20 @@ fun SessionDetailScreen(
         nextDraft: String,
         nextAttachments: List<PendingAttachment>,
         clientMessageId: String? = retryClientMessageId,
-        retryAction: RuntimeMessageAction? = retryMessageAction,
     ) {
-        composerDraftStore.save(composerDraftSessionId, nextDraft, nextAttachments, clientMessageId, retryAction)
+        composerDraftStore.save(composerDraftSessionId, nextDraft, nextAttachments, clientMessageId)
     }
 
     fun setComposerDraft(nextDraft: String) {
         draft = nextDraft
         retryClientMessageId = null
-        retryMessageAction = null
-        saveComposerDraft(nextDraft, attachments, null, null)
+        saveComposerDraft(nextDraft, attachments, null)
     }
 
     fun setComposerAttachments(nextAttachments: List<PendingAttachment>) {
         attachments = nextAttachments
         retryClientMessageId = null
-        retryMessageAction = null
-        saveComposerDraft(draft, nextAttachments, null, null)
+        saveComposerDraft(draft, nextAttachments, null)
     }
 
     fun clearComposerDraft() {
@@ -437,7 +448,6 @@ fun SessionDetailScreen(
         attachments = emptyList()
         composerDraftStore.clear(composerDraftSessionId)
         retryClientMessageId = null
-        retryMessageAction = null
     }
 
     fun updateAttachment(id: String, transform: (PendingAttachment) -> PendingAttachment) {
@@ -736,7 +746,6 @@ fun SessionDetailScreen(
                     text = message,
                     clientMessageId = clientMessageId,
                     attachments = optimisticAttachments,
-                    retryAction = RuntimeMessageAction.Send,
                 )
                 clearComposerDraft()
                 when (
@@ -765,8 +774,7 @@ fun SessionDetailScreen(
                         draft = message
                         attachments = pendingAttachments
                         retryClientMessageId = clientMessageId
-                        retryMessageAction = RuntimeMessageAction.Send
-                        saveComposerDraft(message, pendingAttachments, clientMessageId, RuntimeMessageAction.Send)
+                        saveComposerDraft(message, pendingAttachments, clientMessageId)
                         val rawMessage = outcome.error.message
                         val errorMessage = rawMessage
                             ?.takeUnless(::isInternalRuntimeError)
@@ -788,29 +796,11 @@ fun SessionDetailScreen(
         val id = sessionId ?: return
         val runtimeId = state.session?.runtimeId ?: state.runtime.runtimeId
         val runtimeType = state.session?.runtimeType ?: state.runtime.runtimeType
-        val messageAction = state.capabilities.messageAction(runtimeId, state.effectiveRuntimeStatus(), runtimeType)
-        if (messageAction == null) {
-            showError(context.getString(R.string.session_steer_unavailable))
+        if (!state.capabilities.isUsable(SESSION_SEND_MESSAGE_CAPABILITY, runtimeId, runtimeType)) {
+            showError(context.getString(R.string.session_send_unavailable))
             return
         }
         val clientMessageId = retryClientMessageId ?: "opt_${UUID.randomUUID()}"
-        val requestAction = retryMessageAction ?: messageAction
-        val actionAllowed = when (requestAction) {
-            RuntimeMessageAction.Send -> state.capabilities.isUsable(
-                SESSION_SEND_MESSAGE_CAPABILITY,
-                runtimeId,
-                runtimeType,
-            )
-            RuntimeMessageAction.Steer -> state.capabilities.isUsable(
-                SESSION_STEER_CAPABILITY,
-                runtimeId,
-                runtimeType,
-            )
-        }
-        if (!actionAllowed) {
-            showError(context.getString(R.string.session_steer_unavailable))
-            return
-        }
         val pendingAttachments = attachments
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         scope.launch {
@@ -830,27 +820,11 @@ fun SessionDetailScreen(
                 text = text,
                 clientMessageId = clientMessageId,
                 attachments = optimisticAttachments,
-                retryAction = requestAction,
             )
             unfocusComposer()
             forceLatestRequest += 1
             state.session?.let { onSessionChanged(it.copy(optimisticTopUntil = System.currentTimeMillis() + 1_000)) }
-            val request = if (requestAction == RuntimeMessageAction.Steer) {
-                controller.steer(
-                    sessionId = id,
-                    content = text,
-                    clientMessageId = clientMessageId,
-                    uploadedAttachments = uploadedAttachments,
-                )
-            } else {
-                controller.sendMessage(
-                    sessionId = id,
-                    content = text,
-                    clientMessageId = clientMessageId,
-                    uploadedAttachments = uploadedAttachments,
-                )
-            }
-            request
+            controller.sendMessage(id, text, clientMessageId, uploadedAttachments = uploadedAttachments)
                 .onSuccess { result ->
                     clearComposerDraft()
                     state = controller.markOptimisticMessage(
@@ -871,8 +845,7 @@ fun SessionDetailScreen(
                         return@onFailure
                     }
                     retryClientMessageId = clientMessageId
-                    retryMessageAction = requestAction
-                    saveComposerDraft(text, pendingAttachments, clientMessageId, requestAction)
+                    saveComposerDraft(text, pendingAttachments, clientMessageId)
                     state = controller.markOptimisticMessage(
                         sessionId = id,
                         state = state,
@@ -888,48 +861,6 @@ fun SessionDetailScreen(
     LaunchedEffect(state.messages, retryClientMessageId) {
         val retryId = retryClientMessageId ?: return@LaunchedEffect
         if (controller.hasServerEcho(state, retryId)) clearComposerDraft()
-    }
-
-    fun sendDraft() {
-        val text = draft.trim()
-        if (text.isEmpty() && attachments.isEmpty()) return
-        if (preparedSession == null && text.startsWith('/')) {
-            val id = sessionId ?: return
-            val raw = text.removePrefix("/").trim()
-            val commandName = raw.substringBefore(' ').trim()
-            val command = state.commands.commands.firstOrNull { candidate ->
-                candidate.id.equals(commandName, ignoreCase = true) ||
-                    candidate.aliases.any { it.equals(commandName, ignoreCase = true) }
-            }
-            if (command == null) {
-                showError(context.getString(R.string.session_command_unknown))
-                return
-            }
-            if (!command.enabled) {
-                showError(command.disabledReason ?: context.getString(R.string.session_command_failed))
-                return
-            }
-            if (state.commandExecuting) return
-            val args = raw.substringAfter(' ', "")
-                .trim()
-                .split(Regex("\\s+"))
-                .filter(String::isNotBlank)
-            state = state.copy(commandExecuting = true, actionError = null)
-            scope.launch {
-                controller.executeCommand(id, command.id, args, text)
-                    .onSuccess {
-                        clearComposerDraft()
-                        state = state.copy(commandExecuting = false)
-                    }
-                    .onFailure { error ->
-                        val message = error.message ?: context.getString(R.string.session_command_failed)
-                        state = state.copy(commandExecuting = false, actionError = message)
-                        showError(message)
-                    }
-            }
-            return
-        }
-        sendText(text)
     }
 
     fun applyTakeover(enabled: Boolean) {
@@ -1168,6 +1099,7 @@ fun SessionDetailScreen(
         scope.launch {
             controller.respondNotice(id, notice.noticeId, action.actionId, input)
                 .onSuccess {
+                    runtimeNoticeDraftStore.clear(notice.sessionId, notice.noticeId)
                     state = state.copy(
                         notices = state.notices.copy(
                             notices = state.notices.notices.filterNot { observed ->
@@ -1187,6 +1119,7 @@ fun SessionDetailScreen(
                             "approval_not_found",
                         )
                     ) {
+                        runtimeNoticeDraftStore.clear(notice.sessionId, notice.noticeId)
                         state = state.copy(
                             notices = state.notices.copy(
                                 notices = state.notices.notices.filterNot { it.noticeId == notice.noticeId },
@@ -1334,7 +1267,6 @@ fun SessionDetailScreen(
     val runtimeId = state.session?.runtimeId ?: state.runtime.runtimeId
     val runtimeType = state.session?.runtimeType ?: state.runtime.runtimeType
     val canUseSendMessage = state.capabilities.isUsable(SESSION_SEND_MESSAGE_CAPABILITY, runtimeId, runtimeType)
-    val canUseSteer = state.capabilities.isUsable(SESSION_STEER_CAPABILITY, runtimeId, runtimeType)
     val canUseInterrupt = state.capabilities.isUsable(SESSION_INTERRUPT_CAPABILITY, runtimeId, runtimeType)
     val canRespondToNotice = state.capabilities.isUsable(
         SESSION_NOTICE_RESPONSE_CAPABILITY,
@@ -1368,8 +1300,6 @@ fun SessionDetailScreen(
         SessionRuntimeStatus.Blocked,
         SessionRuntimeStatus.Disconnected,
     )
-    val commandRequested = takeoverEnabled && draft.trimStart().startsWith('/') && attachments.isEmpty()
-    val commandQuery = draft.trimStart().removePrefix("/").trim()
     val inputEnabled = if (isPreparedSession) {
         true
     } else {
@@ -1377,23 +1307,34 @@ fun SessionDetailScreen(
             takeoverEnabled = takeoverEnabled,
             capabilityFactsFresh = capabilityFactsFresh,
             canSendMessage = canUseSendMessage,
-            canSteer = canUseSteer,
             canUseCommands = canUseCommands,
         )
     }
-    val commandMode = commandRequested && inputEnabled
     val attachmentsReady = attachments.all { it.uploadState == AttachmentUploadState.Uploaded }
-    val canSend = inputEnabled &&
-        !runtimeBlocksSubmission &&
+    // Only drafts naming a catalog command run as commands; paths and prose stay messages.
+    val slashIntent = if (isPreparedSession) null else SlashIntent.parse(draft)?.takeIf { it.isCommandLike }
+    val exactCommand = slashIntent
+        ?.takeIf { it.command.isNotEmpty() }
+        ?.let { state.commands.commands.exact(it) }
+    val commandLookupPending = slashIntent != null && slashIntent.command.isNotEmpty() && canUseCommands &&
+        exactCommand == null && state.commands.isLoading
+    val commandMode = takeoverEnabled && inputEnabled && slashIntent != null && attachments.isEmpty()
+    val messageSendable = !runtimeBlocksSubmission &&
         blockingNotices.isEmpty() &&
+        attachmentsReady &&
+        (attachments.isEmpty() || canUseAttachments) &&
+        (isPreparedSession || canUseSendMessage)
+    val canSend = inputEnabled &&
         !state.sending &&
         !preparedSessionCreating &&
         !state.commandExecuting &&
-        attachmentsReady &&
-        (attachments.isEmpty() || canUseAttachments) &&
         (draft.isNotBlank() || attachments.isNotEmpty()) &&
-        if (isPreparedSession) true
-        else if (commandMode) canUseCommands && state.commands.isLoaded else canUseSendMessage || canUseSteer
+        when {
+            // Blocked commands still submit so the tap explains why they cannot run.
+            exactCommand != null -> true
+            commandLookupPending -> false
+            else -> messageSendable
+        }
     val modelOptions = if (isPreparedSession) preparedModelOptions else remember(state.catalogs.model) {
         state.catalogs.model?.selectionOptions().orEmpty()
     }
@@ -1446,6 +1387,134 @@ fun SessionDetailScreen(
     val permissionCapability = state.capabilities.find(SESSION_PERMISSION_CATALOG_CAPABILITY, runtimeId, runtimeType)
     val commandCapability = state.capabilities.find(SESSION_COMMANDS_CAPABILITY, runtimeId, runtimeType)
         ?: state.capabilities.find(SESSION_COMMAND_EXECUTE_CAPABILITY, runtimeId, runtimeType)
+
+    fun openRuntimeSettings() {
+        showRuntimeSettings = true
+        if (state.catalogs.model == null && !state.catalogs.modelLoading) {
+            loadModelCatalog()
+        }
+        if (state.catalogs.permission == null && !state.catalogs.permissionLoading) {
+            loadPermissionCatalog()
+        }
+    }
+
+    fun commandUnavailableMessage(): String = context.getString(
+        when {
+            !connectorOnline -> R.string.session_command_offline
+            commandCapability?.supported != true -> R.string.session_command_runtime_outdated
+            else -> R.string.session_command_unavailable
+        },
+    )
+
+    fun commandBlockMessage(command: RuntimeCommand): String? =
+        when (command.block(runtimeStatus, canUseCommands, takeoverEnabled, connectorOnline)) {
+            null -> null
+            RuntimeCommandBlock.Busy -> context.getString(R.string.session_command_busy)
+            RuntimeCommandBlock.ReadOnly -> context.getString(R.string.session_command_read_only)
+            RuntimeCommandBlock.Offline -> context.getString(R.string.session_command_offline)
+            RuntimeCommandBlock.Unavailable -> commandUnavailableMessage()
+            RuntimeCommandBlock.Disabled -> when (val reason = command.disabledReason) {
+                "session_unloaded" -> context.getString(R.string.session_command_session_unloaded)
+                "native_commands_unavailable" -> context.getString(R.string.session_command_native_unavailable)
+                "codex_unavailable" -> context.getString(R.string.session_command_codex_unavailable)
+                null -> context.getString(R.string.session_command_unavailable)
+                else -> reason
+            }
+        }
+
+    /** `clearing` is the draft to clear on success; edits made meanwhile are kept. */
+    fun runCommand(command: RuntimeCommand, raw: String, clearing: String = raw) {
+        val id = sessionId ?: return
+        if (state.commandExecuting) return
+        commandBlockMessage(command)?.let { message ->
+            showError(message)
+            return
+        }
+        if (attachments.isNotEmpty()) {
+            showError(context.getString(R.string.session_command_attachments))
+            return
+        }
+        val intent = SlashIntent.parse(raw)
+        val request = intent?.let { command.request(it) }
+        if (request == null) {
+            showError(
+                context.getString(
+                    if (intent?.multiline == true) R.string.session_command_multiline
+                    else R.string.session_command_bad_args,
+                ),
+            )
+            return
+        }
+        if (command.ui is RuntimeCommandUi.Selector) {
+            if (clearing.isNotEmpty() && draft == clearing) setComposerDraft("")
+            openRuntimeSettings()
+            return
+        }
+        state = state.copy(commandExecuting = true, actionError = null)
+        scope.launch {
+            val outcome = controller.executeCommand(id, request)
+            state = state.copy(commandExecuting = false)
+            val detail = outcome.message?.takeIf(String::isNotBlank)
+            when {
+                outcome.ok -> {
+                    val title = context.getString(
+                        if (outcome.state == RuntimeCommandExecutionState.Completed) R.string.session_command_completed
+                        else R.string.session_command_accepted,
+                    )
+                    val summary = detail?.let { if (it.length > 200) it.take(200) + "…" else it }
+                    showToast(listOfNotNull(title, summary).joinToString("\n"))
+                    if (clearing.isNotEmpty() && draft == clearing) clearComposerDraft()
+                }
+                outcome.state == RuntimeCommandExecutionState.Unknown -> showError(
+                    listOfNotNull(context.getString(R.string.session_command_outcome_unknown), detail)
+                        .joinToString("\n"),
+                )
+                else -> showError(detail ?: context.getString(R.string.session_command_failed))
+            }
+        }
+    }
+
+    /** Suggestion tap: commands with arguments are completed into the draft, the rest run directly. */
+    fun chooseCommand(command: RuntimeCommand) {
+        commandBlockMessage(command)?.let { message ->
+            showError(message)
+            return
+        }
+        val current = draft
+        val typedExact = SlashIntent.parse(current)?.let { listOf(command).exact(it) } != null
+        if (command.acceptsArgs && command.ui !is RuntimeCommandUi.Selector) {
+            if (!typedExact) setComposerDraft("/${command.id} ")
+            return
+        }
+        runCommand(command, if (typedExact) current.trimEnd() else "/${command.id}", clearing = current)
+    }
+
+    fun sendDraft() {
+        val raw = draft
+        val text = raw.trim()
+        if (text.isEmpty() && attachments.isEmpty()) return
+        val id = sessionId
+        val intent = if (isPreparedSession) null else SlashIntent.parse(raw)
+            ?.takeIf { it.isCommandLike && it.command.isNotEmpty() }
+        if (id == null || intent == null || !canUseCommands) {
+            sendText(text)
+            return
+        }
+        state.commands.commands.exact(intent)?.let { command ->
+            runCommand(command, raw.trimEnd(), clearing = raw)
+            return
+        }
+        if (state.commands.isLoaded) {
+            sendText(text)
+            return
+        }
+        // Read the catalog first so an intended command is never sent to the model.
+        scope.launch {
+            val command = controller.loadCommands(id).getOrNull()?.exact(intent)
+            if (draft != raw) return@launch
+            if (command != null) runCommand(command, raw.trimEnd(), clearing = raw) else sendText(text)
+        }
+    }
     LaunchedEffect(
         sessionId,
         state.runtime.selections["model"],
@@ -1497,6 +1566,14 @@ fun SessionDetailScreen(
         }
     }
 
+    val commandSuggestions = remember(state.commands.commands, slashIntent?.command) {
+        slashIntent?.let { intent -> state.commands.commands.filter { it.matchesPrefix(intent.command) }.take(6) }
+            .orEmpty()
+    }
+    // The unavailable reason only answers a bare "/"; other slash text may just be prose.
+    val showCommandSuggestions = commandMode && slashIntent != null &&
+        slashIntent.suffix.isEmpty() && !slashIntent.multiline &&
+        (commandSuggestions.isNotEmpty() || draft.trim() == "/" || (canUseCommands && state.commands.isLoading))
     LaunchedEffect(sessionId, commandMode, canUseCommands) {
         if (sessionId != null && commandMode && canUseCommands) loadCommands(force = false)
     }
@@ -1534,7 +1611,9 @@ fun SessionDetailScreen(
             SessionRuntimeStatus.Stopping,
             SessionRuntimeStatus.WaitingApproval,
             SessionRuntimeStatus.Blocked,
-        )
+        ) &&
+            // A command allowed mid-turn (e.g. /stop) takes the primary button.
+            exactCommand?.allowed(runtimeStatus) != true
     )
     val replyTarget = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
         ?: stringResource(R.string.session_agent_fallback)
@@ -1661,24 +1740,14 @@ fun SessionDetailScreen(
                                     canRespond = canRespondToNotice,
                                     onRespond = ::respondNotice,
                                 )
-                                if (commandMode) {
+                                if (showCommandSuggestions) {
                                     RuntimeCommandSuggestions(
-                                        commands = state.commands.commands,
-                                        query = commandQuery,
-                                        loading = state.commands.isLoading,
-                                        errorMessage = state.commands.errorMessage
-                                            ?: commandCapability?.takeUnless { it.usable }?.unavailableReason,
-                                        onRetry = { loadCommands(force = true) },
-                                        onSelect = { command ->
-                                            if (command.enabled) {
-                                                setComposerDraft("/${command.id}${if (command.acceptsArgs) " " else ""}")
-                                            } else {
-                                                showError(
-                                                    command.disabledReason
-                                                        ?: context.getString(R.string.session_command_failed),
-                                                )
-                                            }
-                                        },
+                                        commands = commandSuggestions,
+                                        loading = canUseCommands && state.commands.isLoading,
+                                        errorMessage = if (canUseCommands) state.commands.errorMessage else commandUnavailableMessage(),
+                                        onRetry = if (canUseCommands) ({ loadCommands(force = true) }) else null,
+                                        blockReason = ::commandBlockMessage,
+                                        onSelect = ::chooseCommand,
                                     )
                                 }
                                 MessageComposer(
@@ -1719,15 +1788,7 @@ fun SessionDetailScreen(
                         SessionDetailHeader(
                             title = state.session?.title ?: stringResource(R.string.session_title_fallback),
                             darkMode = darkMode,
-                            onLeftClick = {
-                                showRuntimeSettings = true
-                                if (state.catalogs.model == null && !state.catalogs.modelLoading) {
-                                    loadModelCatalog()
-                                }
-                                if (state.catalogs.permission == null && !state.catalogs.permissionLoading) {
-                                    loadPermissionCatalog()
-                                }
-                            },
+                            onLeftClick = ::openRuntimeSettings,
                             onRightClick = { scope.launch { pagerState.animateScrollToPage(1) } },
                             modifier = Modifier.align(Alignment.TopCenter),
                         )
@@ -1773,6 +1834,7 @@ fun SessionDetailScreen(
         TakeoverConfirmDialog(
             enabled = enabled,
             busy = state.takeoverInFlight,
+            isDsh = (state.session?.runtimeType ?: state.runtime.runtimeType) == "dsh",
             agentLabel = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
                 ?: stringResource(R.string.session_agent_fallback).lowercase(),
             onDismiss = { if (!state.takeoverInFlight) takeoverConfirm = null },
@@ -2048,10 +2110,14 @@ private fun DeviceOfflineDialog(
     }
 }
 
+private const val BETA_BADGE_ID = "beta"
+private const val BETA_BADGE_MARKER = "\uFFFC"
+
 @Composable
 private fun TakeoverConfirmDialog(
     enabled: Boolean,
     busy: Boolean,
+    isDsh: Boolean,
     agentLabel: String,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
@@ -2059,11 +2125,47 @@ private fun TakeoverConfirmDialog(
     val colors = LocalAAColors.current
     val shape = RoundedCornerShape(26.dp)
     val secondaryButton = colors.subtle
-    val message = if (enabled) {
-        stringResource(R.string.session_enable_takeover_body, agentLabel)
-    } else {
-        stringResource(R.string.session_disable_takeover_body, agentLabel)
+    // DSH syncs with Agents Anywhere in real time, so the restart-to-sync caveats do not apply.
+    val message = when {
+        isDsh && enabled -> {
+            val parts = stringResource(R.string.session_enable_takeover_dsh_body, BETA_BADGE_MARKER)
+                .split(BETA_BADGE_MARKER, limit = 2)
+            buildAnnotatedString {
+                append(parts.first())
+                if (parts.size > 1) {
+                    appendInlineContent(BETA_BADGE_ID, "Beta")
+                    append(parts[1])
+                }
+            }
+        }
+        isDsh -> AnnotatedString(stringResource(R.string.session_disable_takeover_dsh_body))
+        enabled -> AnnotatedString(stringResource(R.string.session_enable_takeover_body, agentLabel))
+        else -> AnnotatedString(stringResource(R.string.session_disable_takeover_body, agentLabel))
     }
+    val betaLabel = stringResource(R.string.session_beta_badge)
+    val inlineContent = mapOf(
+        BETA_BADGE_ID to InlineTextContent(
+            Placeholder(width = 44.sp, height = 20.sp, placeholderVerticalAlign = PlaceholderVerticalAlign.Center),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 3.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(colors.subtle)
+                    .border(1.dp, colors.border, RoundedCornerShape(50)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = betaLabel,
+                    color = colors.ink,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    lineHeight = 13.sp,
+                )
+            }
+        },
+    )
 
     Dialog(
         onDismissRequest = { if (!busy) onDismiss() },
@@ -2097,6 +2199,7 @@ private fun TakeoverConfirmDialog(
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
                 lineHeight = 21.sp,
+                inlineContent = inlineContent,
             )
             Row(
                 modifier = Modifier

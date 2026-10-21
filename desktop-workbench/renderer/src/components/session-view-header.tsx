@@ -15,6 +15,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { WorkspaceHeader } from "@/components/workspace-header"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useWorkspace } from "@/components/workspace-context"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -24,20 +25,6 @@ import { useTranslations } from "next-intl"
 import type { SessionView as SessionViewModel } from "@/lib/demo-api"
 import { runtimeLabel } from "@/components/session/session-utils"
 import { sessionRuntimeType } from "@/features/dashboard/runtime-instances"
-
-const HEADER_BLUR_LAYERS = buildBlurGradientLayers({
-  height: 56,
-  layerCount: 9,
-  maxBlur: 10,
-  minBlur: 0,
-  overlap: 8,
-  gamma: 1.85,
-})
-
-type BlurLayerStyle = React.CSSProperties & {
-  WebkitBackdropFilter?: string
-  WebkitMaskImage?: string
-}
 
 type SessionViewHeaderProps = {
   session: SessionViewModel
@@ -88,7 +75,6 @@ export function SessionViewHeader({
       setDesktopPortalTargets({ session: sessionTarget, actions: actionsTarget })
     }
   }, [])
-
   React.useEffect(() => {
     if (!editingTitle) setTitleDraft(session.title ?? "")
   }, [editingTitle, session.title])
@@ -218,13 +204,9 @@ export function SessionViewHeader({
   }
 
   return (
-    <header className="pointer-events-none absolute inset-x-0 top-0 z-10 h-14 overflow-hidden">
-      <div className="absolute inset-0 bg-gradient-to-b from-background/80 to-background/0" />
-      {HEADER_BLUR_LAYERS.map((layer) => (
-        <div key={layer.key} className={layer.className} style={layer.style} />
-      ))}
-      <div className="pointer-events-auto relative flex h-14 items-center gap-2 px-2">
-        <DashboardSidebarToggle />
+    <WorkspaceHeader overlay>
+      <DashboardSidebarToggle />
+      <div className="flex min-w-0 items-center">
         {editingTitle ? (
           <Input
             autoFocus
@@ -259,56 +241,13 @@ export function SessionViewHeader({
             {session.title}
           </button>
         )}
-        {metaBadge}
-        <div className="ml-auto flex items-center gap-1">
-          <MobileFilesButton />
-        </div>
       </div>
-    </header>
+      {metaBadge}
+      <div className="ml-auto flex items-center gap-1">
+        <MobileFilesButton />
+      </div>
+    </WorkspaceHeader>
   )
-}
-
-function buildBlurGradientLayers({
-  height,
-  layerCount,
-  maxBlur,
-  minBlur,
-  overlap,
-  gamma,
-}: {
-  height: number
-  layerCount: number
-  maxBlur: number
-  minBlur: number
-  overlap: number
-  gamma: number
-}) {
-  const step = height / layerCount
-  return Array.from({ length: layerCount }, (_, index) => {
-    const start = Math.max(0, Math.round(index * step - overlap * 0.5))
-    const end = Math.min(height, Math.round((index + 1) * step + overlap))
-    const progress = index / Math.max(1, layerCount - 1)
-    const blur = minBlur + (maxBlur - minBlur) * Math.pow(1 - progress, gamma)
-    const fadeIn = index === 0 ? 0 : 26
-    const fadeOut = index === layerCount - 1 ? 72 : 76
-    const mask =
-      index === 0
-        ? `linear-gradient(to bottom, black 0%, black ${fadeOut}%, transparent 100%)`
-        : `linear-gradient(to bottom, transparent 0%, black ${fadeIn}%, black ${fadeOut}%, transparent 100%)`
-
-    return {
-      key: `${index}-${start}-${end}-${blur.toFixed(2)}`,
-      className: "absolute inset-x-0",
-      style: {
-        top: `${start}px`,
-        height: `${Math.max(1, end - start)}px`,
-        backdropFilter: `blur(${blur.toFixed(2)}px)`,
-        WebkitBackdropFilter: `blur(${blur.toFixed(2)}px)`,
-        maskImage: mask,
-        WebkitMaskImage: mask,
-      } satisfies BlurLayerStyle,
-    }
-  })
 }
 
 function SessionMetaBadge({

@@ -2,7 +2,6 @@ package com.agentsanywhere.app.ui.screens.sessiondetail
 
 import android.content.Context
 import android.net.Uri
-import com.agentsanywhere.app.feature.sessiondetail.RuntimeMessageAction
 import com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment
 import org.json.JSONArray
 import org.json.JSONObject
@@ -11,7 +10,6 @@ internal data class SessionComposerDraft(
     val text: String = "",
     val attachments: List<PendingAttachment> = emptyList(),
     val clientMessageId: String? = null,
-    val retryAction: RuntimeMessageAction? = null,
 )
 
 class SessionComposerDraftStore(
@@ -46,7 +44,6 @@ class SessionComposerDraftStore(
             normalized.text,
             normalized.attachments,
             normalized.clientMessageId,
-            normalized.retryAction,
         )
         return normalized
     }
@@ -56,7 +53,6 @@ class SessionComposerDraftStore(
         text: String,
         attachments: List<PendingAttachment>,
         clientMessageId: String? = null,
-        retryAction: RuntimeMessageAction? = null,
     ) {
         if (sessionId == null) return
         if (text.isBlank() && attachments.isEmpty()) {
@@ -66,7 +62,6 @@ class SessionComposerDraftStore(
                 text = text,
                 attachments = attachments,
                 clientMessageId = clientMessageId?.takeIf(String::isNotBlank),
-                retryAction = retryAction,
             )
             drafts[sessionId] = draft
             preferences?.edit()?.putString(sessionId, encodeDraft(draft))?.apply()
@@ -83,7 +78,6 @@ class SessionComposerDraftStore(
         return JSONObject()
             .put("text", draft.text)
             .put("clientMessageId", draft.clientMessageId)
-            .put("retryAction", draft.retryAction?.name)
             .put(
                 "attachments",
                 JSONArray(
@@ -143,9 +137,6 @@ class SessionComposerDraftStore(
                 )
             },
             clientMessageId = source.optString("clientMessageId", "").takeIf(String::isNotBlank),
-            retryAction = source.optString("retryAction", "")
-                .takeIf(String::isNotBlank)
-                ?.let { runCatching { RuntimeMessageAction.valueOf(it) }.getOrNull() },
         )
     }.getOrNull()
 }

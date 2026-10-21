@@ -1,10 +1,10 @@
 """Headless integration probe called by the plugin's real SDK fixture.
 
-Uses the unchanged backend app through ASGI and a temporary SQLite database.
-No dev server, user credentials, or actual model provider is used.
+Uses the unchanged backend app through ASGI and a throwaway PostgreSQL
+database created from AGENT_SERVER_TEST_DB_URL. No dev server, user
+credentials, or actual model provider is used.
 """
 # Import the app only after isolating its database URL and local module paths.
-# ruff: noqa: E402
 from __future__ import annotations
 
 import asyncio
@@ -16,30 +16,23 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "server"), str(ROOT / "connector")]
-# The test must never resolve an inherited development database URL.
+# The probe must never touch an inherited development database; it creates its
+# own database from AGENT_SERVER_TEST_DB_URL below.
 os.environ.pop("AGENT_SERVER_DB_URL", None)
 
 import httpx
-from jsonschema import Draft202012Validator
-from dsh_probe_transport import IngestTransport
-
 from agent_server.app import create_app
 from agent_server.core.auth import create_connector_access_token
+from dsh_probe_database import fresh_server_database
+from dsh_probe_transport import IngestTransport
+
+from connector.core import runtime_owner
+from connector.runtimes.dsh.identity import model_selection_id, permission_selection_id
 from connector.runtimes.dsh.provider import DshProvider
 from connector.runtimes.dsh.runtime import DshRuntime
-from connector.runtimes.dsh.identity import model_selection_id, permission_selection_id
 from connector.server.ingest import ConnectorIngestClient
 from connector.server.runtime_host import ConnectorRuntimeHost
 from connector.server.sync_state import JsonSyncStateStore
-
-SYNC_SCHEMA = Draft202012Validator(json.loads((ROOT / "contracts/dsh-bridge/1.0/schemas/sync-batch.schema.json").read_text()))
-
-
-class CheckedRuntime(DshRuntime):
-    async def _handle_notification(self, method, params):
-        if method == "runtime.sync.batch":
-            SYNC_SCHEMA.validate(params)
-        await super()._handle_notification(method, params)
 
 
 async def until(check, label: str) -> None:
@@ -51,7 +44,7 @@ async def until(check, label: str) -> None:
 
 
 async def main(home: Path) -> None:
-    app = create_app(home / "server-test.sqlite3")
+    app = create_app()
     await app.state.store.create_user(user_id="dsh-test", password_hash="test-only")
     async with app.router.lifespan_context(app):
         store = app.state.store
@@ -75,10 +68,10 @@ async def main(home: Path) -> None:
 
             checkpoint_path = home / "connector-state.json"
             base_host = ConnectorRuntimeHost(connector.id, notify, download,
-                sync_state_store=JsonSyncStateStore(checkpoint_path), ingest_notifications=ingest.ingest_notifications)
+                sync_state_store=JsonSyncStateStore(checkpoint_path), ingest_notifications=ingest.ingest_notifications, ingest_snapshot=ingest.ingest_snapshot)
             host = await base_host.prepare_runtime_host("dsh")
             config = await DshProvider().validate_config({"dshHome": str(home), "restartBackoffMs": 100})
-            runtime = CheckedRuntime(config, host)
+            runtime = DshRuntime(config, host)
 
             def completed_inventories():
                 return sum(n["method"] == "session.inventory.complete" for n in transport.notifications)
@@ -141,9 +134,9 @@ async def main(home: Path) -> None:
                 offset = len(transport.notifications)
                 count = completed_inventories()
                 base_host = ConnectorRuntimeHost(connector.id, notify, download,
-                    sync_state_store=JsonSyncStateStore(checkpoint_path), ingest_notifications=ingest.ingest_notifications)
+                    sync_state_store=JsonSyncStateStore(checkpoint_path), ingest_notifications=ingest.ingest_notifications, ingest_snapshot=ingest.ingest_snapshot)
                 host = await base_host.prepare_runtime_host("dsh")
-                runtime = CheckedRuntime(config, host)
+                runtime = DshRuntime(config, host)
                 await runtime.start()
                 async def restart_ready():
                     return completed_inventories() > count
@@ -157,9 +150,9 @@ async def main(home: Path) -> None:
                 offset = len(transport.notifications)
                 count = completed_inventories()
                 base_host = ConnectorRuntimeHost(connector.id, notify, download,
-                    sync_state_store=JsonSyncStateStore(checkpoint_path), ingest_notifications=ingest.ingest_notifications)
+                    sync_state_store=JsonSyncStateStore(checkpoint_path), ingest_notifications=ingest.ingest_notifications, ingest_snapshot=ingest.ingest_snapshot)
                 host = await base_host.prepare_runtime_host("dsh")
-                runtime = CheckedRuntime(config, host)
+                runtime = DshRuntime(config, host)
                 await runtime.start()
                 await until(restart_ready, "changed prefix recovery failed")
                 uploaded = [n for n in transport.notifications[offset:] if n["method"] == "timeline.itemUpsert"]
@@ -234,13 +227,13 @@ async def main(home: Path) -> None:
                 assert [(i.id, i.orderSeq, i.contentHash, i.content) for i in after] == [
                     (i.id, i.orderSeq, i.contentHash, i.content) for i in before
                 ], "reconnection changed IDs, duplicated messages or retained stale rows"
-                workspaces = await runtime._request("workspace.list")
+                workspaces = await runtime._request("listWorkspaces")
                 assert any(Path(w["path"]).resolve() == home.resolve() and external_id in w["sessionIds"] for w in workspaces["workspaces"])
                 main = next(s for s in sessions if s.externalSessionId == "native-main")
                 project_id = (await store.get_session(main.id)).projectId
                 assert (await store.get_project(project_id, user_id="dsh-test")).name == Path(main.cwd).name
                 await store.update_project(project_id, user_id="dsh-test", pinned=True, name="AA only")
-                assert all(w["title"] != "AA only" for w in (await runtime._request("workspace.list"))["workspaces"])
+                assert all(w["title"] != "AA only" for w in (await runtime._request("listWorkspaces"))["workspaces"])
                 await native_action("rename")
 
                 # An explicit native archive event uses the existing ingestion path.
@@ -280,4 +273,7 @@ async def main(home: Path) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main(Path(sys.argv[1])))
+    # The Host fixture uses this directory as the user home for the bridge endpoint.
+    runtime_owner.system_home = lambda: Path(sys.argv[1])
+    with fresh_server_database():
+        asyncio.run(main(Path(sys.argv[1])))

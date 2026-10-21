@@ -160,6 +160,42 @@ struct TextSelectionTests {
         #expect(!collection.selectionRects(for: full).isEmpty)
     }
 
+    @Test func onDemandModelReadsLayoutOnlyWhileSomethingNeedsIt() {
+        let model = TextSelectionModel(readsLayoutOnDemand: true)
+        #expect(!model.readsLayout)
+        var ranWith: Bool?
+        model.withLayout { ranWith = $0.hasText }
+        #expect(model.readsLayout)
+        #expect(ranWith == nil)
+        // The pending action runs once the overlay delivers the layout.
+        let collection = SampleCollection([sampleText])
+        model.setLayoutCollection(collection)
+        #expect(ranWith == true)
+
+        model.selectedRange = TextRange(start: collection.startPosition, end: collection.endPosition)
+        model.releaseLayoutIfIdle()
+        #expect(model.readsLayout)
+        model.selectedRange = nil
+        model.releaseLayoutIfIdle()
+        #expect(!model.readsLayout)
+        #expect(!model.hasText)
+
+        // Reading again runs the action even when the same layout comes back.
+        var count = 0
+        model.withLayout { _ in count += 1 }
+        model.setLayoutCollection(collection)
+        #expect(count == 1)
+        model.withLayout { _ in count += 1 }
+        #expect(count == 2)
+    }
+
+    @Test func alwaysReadingModelNeverReleasesItsLayout() {
+        let model = TextSelectionModel(layoutCollection: SampleCollection([sampleText]))
+        #expect(model.readsLayout)
+        model.releaseLayoutIfIdle()
+        #expect(model.readsLayout && model.hasText)
+    }
+
     @Test func validTextSelectionPreservesUnicodeAndRangeBoundaries() throws {
         let collection = SampleCollection([sampleText])
         let emojiStart = try #require(collection.position(at: 0, localCharacterIndex: 1))

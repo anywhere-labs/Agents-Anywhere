@@ -1,15 +1,15 @@
 import Foundation
 
-protocol WebSocketConnection: AnyObject {
+nonisolated protocol WebSocketConnection: AnyObject {
     func messages() -> AsyncThrowingStream<Data, Error>
     nonisolated func close()
 }
 
-protocol WebSocketTransport {
+nonisolated protocol WebSocketTransport {
     func connect(url: URL) -> any WebSocketConnection
 }
 
-struct URLSessionWebSocketTransport: WebSocketTransport {
+nonisolated struct URLSessionWebSocketTransport: WebSocketTransport {
     let urlSession: URLSession
 
     init(urlSession: URLSession = .shared) {
@@ -21,7 +21,7 @@ struct URLSessionWebSocketTransport: WebSocketTransport {
     }
 }
 
-final class URLSessionWebSocketConnection: WebSocketConnection, @unchecked Sendable {
+nonisolated final class URLSessionWebSocketConnection: WebSocketConnection, @unchecked Sendable {
     private let task: URLSessionWebSocketTask
 
     init(task: URLSessionWebSocketTask) {

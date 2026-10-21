@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/2.0.0.md"><img src="https://img.shields.io/badge/release-2.0.0-222222?style=flat" alt="Release 2.0.0"></a>
+  <a href="docs/releases/2.0.3.md"><img src="https://img.shields.io/badge/release-2.0.3-222222?style=flat" alt="Release 2.0.3"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-222222?style=flat" alt="MIT"></a>
   <a href="docker/README.md"><img src="https://img.shields.io/badge/self--hosted-Docker-222222?style=flat" alt="Self-host with Docker"></a>
 </p>
@@ -31,10 +31,10 @@ Install the desktop client on your work machine, then access it from your phone,
 
 | Platform | Get the client |
 | --- | --- |
-| **macOS** | [Universal DMG · 2.0.0](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/Agents%20Anywhere-2.0.0-universal.dmg) |
-| **Windows** | [x64 installer · 2.0.0](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/Agents%20Anywhere%20Setup%202.0.0-x64.exe) |
-| **iOS / iPadOS** | [Join TestFlight](https://testflight.apple.com/join/GKGaut99) |
-| **Android** | [APK · 2.0.0](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/agents-anywhere-2.0.0-release.apk) |
+| **macOS** | [Universal DMG · 2.0.3](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/Agents%20Anywhere-2.0.3-universal.dmg) |
+| **Windows** | [x64 installer · 2.0.3](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/Agents%20Anywhere%20Setup%202.0.3.exe) |
+| **iOS / iPadOS** | [Download on the App Store](https://apps.apple.com/cn/app/agents-anywhere/id6787125178) · [Join TestFlight](https://testflight.apple.com/join/GKGaut99) |
+| **Android** | [APK · 2.0.3](https://modelscope.cn/models/t4wefan/deepseek-harness-desktop/resolve/master/agents-anywhere-2.0.3-release.apk) |
 | **Web** | [Open Web](https://web.agents-anywhere.com) |
 | **Linux / headless** | [Run the Connector CLI](connector/README.md) |
 
@@ -43,15 +43,25 @@ See the [download page](https://www.agents-anywhere.com/en/download) for platfor
 <details>
 <summary>Platform requirements, installers and updates</summary>
 
-- macOS: Universal for Apple Silicon / Intel; signed and notarized.
+- macOS: Universal for Apple Silicon / Intel; signed and notarized; requires macOS 12 or later.
 - Windows: x64 desktop workbench with a managed Connector; the current installer is not code signed.
 - Android: Android 8.0 or later.
-- iOS / iPadOS: install the beta through TestFlight; availability is shown on the invitation page.
+- iOS / iPadOS: download from the App Store, or install the beta through TestFlight; beta availability is shown on the invitation page.
 - Linux / headless: run the Connector on the work machine and control it from another client.
 
-The macOS, Windows and Android files are **Agents Anywhere** installers hosted in the ModelScope repository `t4wefan/deepseek-harness-desktop`. Historical 0.1.x GitHub Releases are not the 2.0 download channel. In-app update addresses in the current released clients are still placeholders; download manually using the links above.
+The macOS, Windows and Android files are **Agents Anywhere** installers hosted in the ModelScope repository `t4wefan/deepseek-harness-desktop`; the same files are also attached to the [v2.0.3 GitHub Release](https://github.com/anywhere-labs/Agents-Anywhere/releases/tag/v2.0.3). Historical 0.1.x GitHub Releases are not the 2.0 download channel. In-app update addresses in the current released clients are still placeholders; download manually using the links above.
 
-`main` is the current development branch. New source fixes may not yet be included in the 2.0.0 installers. Product, Connector package and database schema versions are managed separately. See the [2.0.0 release notes](docs/releases/2.0.0.md) for release scope.
+`main` is the current development branch. New source fixes may not yet be included in the 2.0.3 installers. Each client and service releases PATCH versions independently, and database schema revisions are numbered separately; see the [versioning rules](docs/versioning.md). See the [2.0.3 release notes](docs/releases/2.0.3.md) for release scope.
+
+</details>
+
+<details open>
+<summary>❤️ Sponsors</summary>
+
+| Logo | Description |
+| --- | --- |
+| <a href="https://dshdesktop.cn/sponsors/wuying"><img src="docs/images/sponsors/wuying-cloud-computer-logo.png" alt="Alibaba Cloud Wuying Cloud Computer" width="96"></a> | [**Alibaba Cloud · Wuying Cloud Computer**](https://dshdesktop.cn/sponsors/wuying)<br>Thank you to **Alibaba Cloud** Wuying Cloud Computer for sponsoring this project! Wuying Cloud Computer Personal Edition provides cloud computers for individual users, hosting computing resources, storage, and desktop environments in the cloud. Access your computer from a variety of devices and choose specifications to suit your needs, whether for remote work, learning, development, or light creative tasks.<br><br>[**Open WeChat to register →**](https://dshdesktop.cn/sponsors/wuying) |
+| <a href="https://88api.ai/sign-up?aff=vQMT"><img src="docs/images/sponsors/88api-logo.png" alt="88API" width="120"></a> | [**88API Token Aggregation Platform**](https://88api.ai/sign-up?aff=vQMT)<br><br>🧠 Access language and coding models including GPT, Claude, Gemini, Grok, DeepSeek, Kimi, and GLM;<br>🎨 Image models: GPT-Image, Gemini, Grok, and more;<br>🎬 Video models: Seedance, Veo, MiniMax H3, Kling, Grok, and more;<br>🎙️ Speech capabilities: Whisper, TTS, and more. From copywriting and image generation and editing to video generation and voiceovers.<br>🎁 New users receive trial credits upon registration to test model capabilities. Live customer support is available on the site!<br>👉 Operated by a registered Hong Kong company · Stable availability · Fully operational, full-capability service · No reduced model intelligence · Invoices available<br><br>[**Sign up now →**](https://88api.ai/sign-up?aff=vQMT) |
 
 </details>
 

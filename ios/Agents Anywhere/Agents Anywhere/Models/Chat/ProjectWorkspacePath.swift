@@ -44,6 +44,23 @@ nonisolated enum ProjectWorkspacePath {
         return (slashes.hasPrefix("//") ? "//" : "/") + parts.joined(separator: "/")
     }
 
+    /// The drive (`D:\`) or share (`\\host\share\`) that anchors an absolute Windows path.
+    static func windowsAnchor(_ value: String) -> String? {
+        let path = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if path.range(of: "^[A-Za-z]:[/\\\\]", options: .regularExpression) != nil { return String(path.prefix(2)) + "\\" }
+        guard path.hasPrefix("\\\\") else { return nil }
+        let parts = path.replacingOccurrences(of: "\\", with: "/").split(separator: "/")
+        return parts.count >= 2 ? "\\\\\(parts[0])\\\(parts[1])\\" : nil
+    }
+
+    /// The server resolves a request path with the root's path flavor, so an
+    /// absolute Windows path under a `~` root would become `~/D:\...`. Anchor it
+    /// to its own drive instead; relative paths keep the requested root.
+    static func requestRoot(_ root: String, path: String) -> String {
+        guard windowsAnchor(root) == nil, let anchor = windowsAnchor(path) else { return root }
+        return anchor
+    }
+
     static func key(_ value: String, deviceOS: String?) -> String? {
         let path = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let drive = path.range(of: "^[A-Za-z]:[/\\\\]", options: .regularExpression) != nil

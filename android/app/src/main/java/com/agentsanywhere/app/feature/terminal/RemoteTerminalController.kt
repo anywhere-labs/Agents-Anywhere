@@ -3,6 +3,7 @@ package com.agentsanywhere.app.feature.terminal
 import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
+import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.termux.terminal.KeyHandler
@@ -12,6 +13,7 @@ import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -68,6 +70,7 @@ class RemoteTerminalController(
     private val sendMutex = Mutex()
     private val groupId = "mobile_${UUID.randomUUID()}"
     private var socket: WebSocket? = null
+    private var connectionJob: Job? = null
     private var connectorId: String? = null
     private var terminalId: String? = null
     private var streamUrl: String? = null
@@ -287,6 +290,7 @@ class RemoteTerminalController(
     fun detach() {
         diag("detach requested terminal=$terminalId")
         manuallyClosed = true
+        connectionJob?.cancel()
         socket?.close(1000, "detached")
         socket = null
         reconnectScheduled = false
@@ -310,6 +314,7 @@ class RemoteTerminalController(
     private fun detachTerminalForClose(): TerminalCloseTarget? {
         diag("close requested terminal=$terminalId")
         manuallyClosed = true
+        connectionJob?.cancel()
         socket?.close(1000, "closed")
         socket = null
         val currentConnectorId = connectorId
@@ -335,7 +340,34 @@ class RemoteTerminalController(
     }
 
     private fun connectSocket(url: String) {
+        connectionJob?.cancel()
         manuallyClosed = false
+        streamUrl = url
+        state.value = RemoteTerminalState(status = RemoteTerminalStatus.Connecting)
+        connectionJob = terminalScope.launch {
+            val connection = terminalController.prepareStreamConnection(url)
+            withContext(Dispatchers.Main) {
+                if (manuallyClosed || streamUrl != url) return@withContext
+                connection.onSuccess { current ->
+                    streamUrl = current.streamUrl
+                    streamAuthorizationToken = current.authorizationToken
+                    openSocket(current.streamUrl)
+                }.onFailure { error ->
+                    state.value = RemoteTerminalState(
+                        status = RemoteTerminalStatus.Closed,
+                        message = error.message ?: "Could not connect to terminal.",
+                    )
+                    if (error is ApiException && error.statusCode == 401) {
+                        manuallyClosed = true
+                    } else {
+                        scheduleReconnect()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun openSocket(url: String) {
         diag("ws connecting terminal=$terminalId fromSeq=${url.substringAfter("fromSeq=", "0").substringBefore("&")}")
         socket = http.newWebSocket(
             Request.Builder().url(url).build(),

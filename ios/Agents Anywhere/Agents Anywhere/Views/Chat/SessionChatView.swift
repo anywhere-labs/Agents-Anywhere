@@ -22,8 +22,6 @@ struct SessionChatView: View, Equatable {
     @State private var pendingTakeover: Bool?
     @State private var hasStartedLoading = false
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.sidebarDrawerIsTransitioning) private var sidebarIsTransitioning
-    @Environment(\.sidebarDrawerObscuresDetail) private var sidebarObscuresDetail
     @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
     @ScaledMetric(relativeTo: .footnote) private var takeoverPillHeight: CGFloat = 32
 
@@ -45,7 +43,6 @@ struct SessionChatView: View, Equatable {
     }
     private var controls: ChatControlMetrics { .init(bodyLineHeight: bodyLineHeight) }
     private var session: V2SessionModel { model.session }
-    private var defersOpening: Bool { sidebarIsTransitioning || sidebarObscuresDetail }
     private var requiresTakeover: Bool { session.metadata?.takeover == false }
     // Sidebar motion changes the containing card, not the session. Observable
     // model changes and real size/environment changes still update this subtree.
@@ -86,7 +83,7 @@ struct SessionChatView: View, Equatable {
                             settingsError: model.settingsError, sessionChat: model,
                             onSend: model.send, onStop: model.interrupt, onLoadSettings: model.loadSettings,
                             onApplySettings: model.applySettings, applyError: { model.settingsError },
-                            onDraftChange: { model.repository.draftDidChange() })
+                            onDraftChange: { model.repository.draftDidChange(sessionID: model.session.id) })
                             .traceChatLayout("composer-dock")
                     }
                     .frame(maxWidth: ChatControlMetrics.maximumContentWidth).frame(maxWidth: .infinity)
@@ -101,6 +98,10 @@ struct SessionChatView: View, Equatable {
                             takeoverPill.frame(maxWidth: .infinity, alignment: .center)
                         }
                         ChatErrorToasts(store: toasts, isRetrying: session.isLoading, onRetry: { _ in await session.refresh() })
+                        if let success = model.commandSuccess {
+                            CommandSuccessToast(feedback: success) { model.commandSuccess = nil }
+                                .frame(maxWidth: .infinity, alignment: .center)
+                        }
                     }.padding(.top, 8)
                 }
         }
@@ -120,7 +121,7 @@ struct SessionChatView: View, Equatable {
                 .accessibilityLabel(String(localized: "会话菜单"))
             }
         }
-        .modifier(SessionTakeoverConfirmation(pending: $pendingTakeover) { enabled in
+        .modifier(SessionTakeoverConfirmation(pending: $pendingTakeover, isDsh: model.isDsh) { enabled in
             model.error = nil
             if !(await model.setTakeover(enabled)), let error = model.takeoverError { model.error = error }
         })
@@ -128,12 +129,12 @@ struct SessionChatView: View, Equatable {
             wasRunning && !isRunning && model.isOpeningReady && session.runtime.isFresh
                 && session.runtime.state?.status == .idle
         }
-        .task(id: defersOpening) {
-            guard !hasStartedLoading, !defersOpening else { return }
+        .sidebarDrawerSettledTask(id: hasStartedLoading) { settled in
+            guard !hasStartedLoading, settled else { return }
             // Show feedback immediately, but let the drawer's completed
             // animation and the selection's final layout leave the main thread.
             do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
-            guard !Task.isCancelled, !defersOpening else { return }
+            guard !Task.isCancelled else { return }
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) { hasStartedLoading = true }
@@ -178,6 +179,11 @@ struct SessionChatView: View, Equatable {
         }
         .onChange(of: model.error, initial: true) { _, message in
             toasts.update(source: "operation", failure: message.map { V2ClientFailure(kind: .rejected, message: $0) })
+        }
+        .onChange(of: model.commandFailure) { _, feedback in
+            // Each command failure is new, even when its text repeats a dismissed one.
+            toasts.update(source: "command", failure: nil)
+            toasts.update(source: "command", failure: feedback.map { V2ClientFailure(kind: .rejected, message: $0.message ?? "") }, title: feedback?.title)
         }
         .onChange(of: model.openingError, initial: true) { _, message in
             toasts.update(source: "opening", failure: message.map { V2ClientFailure(kind: .unavailable, message: $0) })
@@ -243,5 +249,35 @@ struct SessionChatView: View, Equatable {
     private func cleanPreview() {
         if let directory = previewDirectory { try? FileManager.default.removeItem(at: directory) }
         previewDirectory = nil
+    }
+}
+
+/// Command success is transient, like the Web/Desktop toast; failures use the
+/// dismissible error toasts instead.
+private struct CommandSuccessToast: View {
+    let feedback: CommandFeedback
+    let onDismiss: () -> Void
+
+    var body: some View {
+        Button(action: onDismiss) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                AppSymbol("checkmark.circle", size: 14).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(feedback.title).font(.subheadline.weight(.medium))
+                    if let message = feedback.message, !message.isEmpty {
+                        Text(message).font(.footnote).foregroundStyle(.secondary).lineLimit(3)
+                    }
+                }
+            }
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, ChatControlMetrics.collapsedHorizontalInset)
+        .accessibilityHint(String(localized: "轻点关闭"))
+        .task(id: feedback.id) {
+            try? await Task.sleep(for: .seconds(4))
+            if !Task.isCancelled { onDismiss() }
+        }
     }
 }

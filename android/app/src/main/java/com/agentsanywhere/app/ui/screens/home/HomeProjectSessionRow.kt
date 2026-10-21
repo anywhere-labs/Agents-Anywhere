@@ -48,10 +48,11 @@ internal fun HomeProjectSessionRow(
                         onLongPress(bounds)
                     },
                 )
-            }.padding(start = if (inset) 34.dp else 0.dp, end = 10.dp),
+            }.padding(start = if (inset) 18.dp else 0.dp, end = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        SessionAgentIcon(runtime = session.runtime, runtimeType = session.runtimeType)
         Text(
             text = session.title,
             modifier = Modifier.weight(1f),

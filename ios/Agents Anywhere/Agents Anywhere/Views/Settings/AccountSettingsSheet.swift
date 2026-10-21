@@ -1,10 +1,12 @@
 import SwiftUI
 
 struct AccountSettingsSheet: View {
-    @ObservedObject var appState: AppState
+    let appState: AppState
     @Environment(\.dismiss) private var dismiss
     @AppStorage(AppAppearance.storageKey) private var appearanceValue = AppAppearance.system.rawValue
     @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
+    @AppStorage(ProjectSidebarPreferences.compactSessionListKey) private var compactSessionList = false
+    @AppStorage(ReplyPresentation.plainFadeKey) private var plainFade = false
     @State private var confirmsSignOut = false
     @State private var signOutError: String?
     @State private var toasts = ChatToastStore()
@@ -59,7 +61,14 @@ struct AccountSettingsSheet: View {
                         Label(String(localized: "Project mode"), appSymbol: "folder")
                             .labelStyle(.titleAndIcon)
                     }.tint(.green)
+                    Toggle(isOn: $compactSessionList) {
+                        Label(String(localized: "Single-line sessions"), appSymbol: "sidebar.left")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .tint(.green)
+                    .disabled(!showsSessionList)
                 }
+                revealAnimationSection
                 Section(String(localized: "Workspace")) {
                     NavigationLink { SettingsServerView() } label: {
                         SettingsRow(title: String(localized: "Server"), symbol: "server.rack", value: appState.serverURL?.host)
@@ -108,13 +117,24 @@ struct AccountSettingsSheet: View {
         .environment(\.closeSettings, close)
         // Native sheet presentation can create a new hosting boundary on Mac.
         // Use the caller's store here and provide it to every settings subpage.
-        .environmentObject(appState)
+        .environment(appState)
         .appSheetPresentation(.expanded)
         .interactiveDismissDisabled(drafts.hasChanges || isWorking)
         .confirmDiscardChanges($confirmsDiscard) { dismiss() }
     }
 
     private var isWorking: Bool { appState.isAccountWorking || drafts.isWorking }
+
+    private var revealAnimationSection: some View {
+        Section {
+            Toggle(isOn: Binding(get: { !plainFade }, set: { plainFade = !$0 })) {
+                Label(String(localized: "Reveal animation"), appSymbol: "sparkles").labelStyle(.titleAndIcon)
+            }
+            .tint(.green)
+        } footer: {
+            Text(String(localized: "Off: new text fades in without the blur and rise."))
+        }
+    }
     private func close() {
         guard !isWorking else { return }
         if drafts.hasChanges { confirmsDiscard = true } else { dismiss() }

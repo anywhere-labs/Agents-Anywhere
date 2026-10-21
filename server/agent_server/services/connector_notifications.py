@@ -28,6 +28,13 @@ from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.repository_ports import ConnectorNotificationRepository
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
+from agent_server.services.usage_events import (
+    NullUsageRecorder,
+    UsageRecorder,
+    approval_event,
+    runtime_error_event,
+    turn_ended_event,
+)
 
 TIMELINE_SYNC_PUSH_LIMIT = 100
 SESSION_INVENTORY_LIMIT = 10_000
@@ -69,18 +76,23 @@ class ConnectorNotificationService:
         store: ConnectorNotificationRepository,
         realtime: ConnectorRealtimeService,
         timeline_write_buffer: TimelineWriteBuffer | None = None,
+        *,
+        usage_recorder: UsageRecorder | NullUsageRecorder | None = None,
     ) -> None:
         self._realtime = realtime
+        usage = usage_recorder or NullUsageRecorder()
         self._handlers = (
             ConnectorProtocolNotificationHandler(store),
             RuntimeCatalogNotificationHandler(store),
             SessionStateNotificationHandler(store),
-            SessionTurnEndedNotificationHandler(store, timeline_write_buffer),
+            SessionTurnEndedNotificationHandler(
+                store, timeline_write_buffer, usage_recorder=usage
+            ),
             SessionSourceNotificationHandler(store),
             SessionInventoryNotificationHandler(store),
             SessionNotificationHandler(store),
             TimelineNotificationHandler(store, timeline_write_buffer),
-            InteractionNotificationHandler(store),
+            InteractionNotificationHandler(store, usage_recorder=usage),
         )
 
     async def apply(
@@ -654,9 +666,12 @@ class SessionTurnEndedNotificationHandler:
         self,
         store: ConnectorNotificationRepository,
         timeline_write_buffer: TimelineWriteBuffer | None = None,
+        *,
+        usage_recorder: UsageRecorder | NullUsageRecorder | None = None,
     ) -> None:
         self._store = store
         self._timeline_write_buffer = timeline_write_buffer
+        self._usage = usage_recorder or NullUsageRecorder()
 
     async def apply(
         self,
@@ -739,6 +754,17 @@ class SessionTurnEndedNotificationHandler:
                     source_observed_at=_string_or_none(params.get("sourceObservedAt")),
                     mark_read_on_change=False,
                 )
+        if session.takeover:
+            # Only platform-driven sessions count as usage; a turn started from
+            # the local CLI in an imported session is not platform activity.
+            await self._usage.record(
+                turn_ended_event(
+                    session,
+                    outcome=outcome,
+                    turn_id=turn_id,
+                    started_at=await self._usage.last_message_sent_at(session.id),
+                )
+            )
         return IngestEffect(
             session_id=session.id,
             session_changed=True,
@@ -916,8 +942,14 @@ class InteractionNotificationHandler:
         "runtime.error",
     }
 
-    def __init__(self, store: ConnectorNotificationRepository) -> None:
+    def __init__(
+        self,
+        store: ConnectorNotificationRepository,
+        *,
+        usage_recorder: UsageRecorder | NullUsageRecorder | None = None,
+    ) -> None:
         self._store = store
+        self._usage = usage_recorder or NullUsageRecorder()
 
     async def apply(
         self,
@@ -953,6 +985,14 @@ class InteractionNotificationHandler:
             connector_id=connector_id,
         ):
             return IngestEffect()
+        usage_event = approval_event(
+            notice,
+            connector_id=connector_id,
+            runtime_type=_string_or_none(runtime),
+            runtime_id=_string_or_none(runtime_id),
+        )
+        if usage_event is not None:
+            await self._usage.record(usage_event)
         return IngestEffect(
             session_id=notice.sessionId,
             notices=[notice],
@@ -1002,6 +1042,15 @@ class InteractionNotificationHandler:
                     "reason": "runtime_error",
                 },
             }
+        )
+        await self._usage.record(
+            runtime_error_event(
+                notice_id=notice.noticeId,
+                session_id=session_id,
+                connector_id=connector_id,
+                runtime_type=_string_or_none(runtime),
+                runtime_id=_string_or_none(runtime_id),
+            )
         )
         return IngestEffect(
             session_id=session_id,

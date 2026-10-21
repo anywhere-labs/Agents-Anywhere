@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ServiceEntryView: View {
-    @EnvironmentObject private var appState: AppState
+    @Environment(AppState.self) private var appState
     @State private var showsPrivacyPolicy = false
     var onManualLogin: () -> Void = {}
     var onQRCodeLogin: () -> Void = {}
@@ -48,5 +48,5 @@ struct ServiceEntryView: View {
 
 #Preview {
     ServiceEntryView()
-        .environmentObject(AppState())
+        .environment(AppState())
 }

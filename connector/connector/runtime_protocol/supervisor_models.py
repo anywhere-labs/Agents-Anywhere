@@ -16,7 +16,7 @@ from connector.runtime_protocol.provider import RuntimeProvider
 RuntimeLifecycleStatus = RuntimeInstanceLifecycleStatus
 
 RuntimeStatusSink = Callable[
-    [str, RuntimeLifecycleStatus, Mapping[str, Any] | None],
+    [str, RuntimeLifecycleStatus, Mapping[str, Any] | None, Mapping[str, Any] | None],
     Awaitable[None],
 ]
 
@@ -38,6 +38,8 @@ class RuntimeSupervisorEntry:
     resource_claims: tuple[RuntimeResourceClaim, ...] = ()
     status: RuntimeLifecycleStatus = "stopped"
     error: Mapping[str, Any] | None = None
+    # Finer-grained step of ``status`` (e.g. ``syncing`` while ``starting``).
+    phase: Mapping[str, Any] | None = None
 
     @property
     def runtime_id(self) -> str:

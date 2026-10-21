@@ -5,6 +5,7 @@ from dataclasses import replace
 from typing import Any
 
 from connector.runtime_protocol import SessionNotice
+from connector.runtimes.codex.domain.input_requests import is_input_request_context
 
 
 class _Unchanged:
@@ -82,14 +83,19 @@ class CodexNoticeRegistry:
         source: str,
     ) -> tuple[SessionNotice, ...]:
         closed: list[SessionNotice] = []
-        for notice in tuple(self.open_blocking_for_session(session_id)):
+        for notice in self.current_for_session(session_id):
+            if notice.status not in {"open", "responding"}:
+                continue
+            is_questionnaire = is_input_request_context(notice.context)
+            if notice.blocking is None and not is_questionnaire:
+                continue
             next_notice = self.transition(
                 notice.notice_id,
                 status=status,
                 response_required=False,
                 blocking=None,
                 actions=(),
-                context={"approvalStatus": status},
+                context={"inputStatus" if is_questionnaire else "approvalStatus": status},
                 metadata={"source": source, "close_reason": reason},
             )
             if next_notice is not None:

@@ -1,10 +1,6 @@
 import { ApiClient, apiClient, apiPath } from "@/lib/api";
 import { shouldAuthorizeDownloadUrl } from "@/lib/api/download-auth";
 import type {
-  AdminDashboardOverviewResponse,
-  AdminDashboardSettings,
-  AdminDashboardSettingsUpdate,
-  AdminDashboardSnapshotResponse,
   ArchiveAllResponse,
   BulkArchiveResponse,
   ArchiveAllScope,
@@ -59,6 +55,8 @@ import type {
   TerminalListResponse,
   TerminalResponse,
   TerminalSnapshotResult,
+  UsageLiveResponse,
+  UsageReportResponse,
   WsTicketResponse,
 } from "@/features/dashboard/types";
 
@@ -76,40 +74,15 @@ export type SessionSnapshotRequestOptions = {
 export class DashboardApi {
   constructor(private readonly client: ApiClient = apiClient) {}
 
-  getAdminDashboardOverview(
+  getAdminUsageReport(
     token: string,
     query: { from?: string; to?: string; tz?: string } = {},
-  ): Promise<AdminDashboardOverviewResponse> {
-    return this.client.get<AdminDashboardOverviewResponse>(
-      "/admin/dashboard/overview",
-      { token, query },
-    );
+  ): Promise<UsageReportResponse> {
+    return this.client.get<UsageReportResponse>("/admin/usage/report", { token, query });
   }
 
-  getAdminDashboardSettings(token: string): Promise<AdminDashboardSettings> {
-    return this.client.get<AdminDashboardSettings>("/admin/dashboard/settings", { token });
-  }
-
-  updateAdminDashboardSettings(
-    token: string,
-    body: AdminDashboardSettingsUpdate,
-  ): Promise<AdminDashboardSettings> {
-    return this.client.patch<AdminDashboardSettings>(
-      "/admin/dashboard/settings",
-      body,
-      { token },
-    );
-  }
-
-  refreshAdminDashboardToday(
-    token: string,
-    tz = "Asia/Shanghai",
-  ): Promise<AdminDashboardSnapshotResponse> {
-    return this.client.post<AdminDashboardSnapshotResponse>(
-      "/admin/dashboard/snapshots/today",
-      {},
-      { token, query: { tz } },
-    );
+  getAdminUsageLive(token: string): Promise<UsageLiveResponse> {
+    return this.client.get<UsageLiveResponse>("/admin/usage/live", { token });
   }
 
   listConnectors(token: string): Promise<ConnectorListResponse> {
@@ -717,9 +690,12 @@ export class DashboardApi {
     sessionId: string,
     options: { query?: string; limit?: number } = {},
   ): Promise<SessionCommandListResponse> {
-    void options;
+    const params = new URLSearchParams();
+    if (options.query !== undefined) params.set("query", options.query);
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    const suffix = params.size ? `?${params}` : "";
     return this.client.get<SessionCommandListResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/runtime/commands`,
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/commands${suffix}`,
       { token },
     );
   }
@@ -735,7 +711,7 @@ export class DashboardApi {
       {
         command,
         ...(options.args && options.args.length > 0 ? { args: options.args } : {}),
-        ...(options.raw ? { raw: options.raw } : {}),
+        ...(options.raw !== undefined ? { raw: options.raw } : {}),
       },
       { token },
     );

@@ -158,16 +158,6 @@ class RuntimeSupervisor:
                     )
                 return self._entries[instance.runtime_id]
 
-            current_count = sum(
-                entry.runtime_type == instance.runtime_type
-                for entry in self._entries.values()
-            )
-            maximum = _provider_max_instances(provider)
-            if maximum is not None and current_count >= maximum:
-                raise RuntimeConflictError(
-                    f"runtime type {instance.runtime_type!r} allows at most "
-                    f"{maximum} configured instance(s)"
-                )
             entry = RuntimeSupervisorEntry(instance=instance, provider=provider)
             self._entries[instance.runtime_id] = entry
             self._locks[instance.runtime_id] = asyncio.Lock()
@@ -191,8 +181,9 @@ class RuntimeSupervisor:
                 config = config_with_revision(config, revision)
                 validate_provider_config_type(entry.provider, config)
                 claims = _provider_resource_claims(entry.provider, config)
-                async with self._resource_lock:
-                    self.ensure_resources_available(resolved, claims)
+                if entry.runtime is not None:
+                    async with self._resource_lock:
+                        self.ensure_resources_available(resolved, claims)
             except Exception as exc:
                 await self._set_entry(
                     resolved.runtime_id,
@@ -262,6 +253,7 @@ class RuntimeSupervisor:
             assert current_runtime is not None
             return current_runtime
 
+        self._ensure_running_capacity(instance, entry.provider)
         was_running = entry.status == "running" and entry.runtime is not None
         await self._set_entry(instance.runtime_id, status="validating", error=None)
         try:
@@ -310,18 +302,20 @@ class RuntimeSupervisor:
         # Preserve health emitted during start instead of overwriting it with running.
         startup_status: RuntimeLifecycleStatus = "running"
         startup_error: Mapping[str, Any] | None = None
+        startup_phase: Mapping[str, Any] | None = None
         startup_complete = False
 
         async def report_health(
             runtime_id: str,
             status: RuntimeLifecycleStatus,
             error: Mapping[str, Any] | None = None,
+            phase: Mapping[str, Any] | None = None,
         ) -> None:
-            nonlocal startup_status, startup_error
+            nonlocal startup_status, startup_error, startup_phase
             if not startup_complete:
-                startup_status, startup_error = status, error
+                startup_status, startup_error, startup_phase = status, error, phase
                 return
-            await self.report_status(runtime_id, status, error)
+            await self.report_status(runtime_id, status, error, phase)
 
         native_runtime: AgentRuntime | None = None
         bound_runtime: RuntimeInstance | None = None
@@ -367,6 +361,7 @@ class RuntimeSupervisor:
             resource_claims=claims,
             status=startup_status,
             error=startup_error,
+            phase=startup_phase,
         )
         return bound_runtime
 
@@ -376,11 +371,31 @@ class RuntimeSupervisor:
         async with lock, self._resource_lock:
             await self._stop_locked(runtime_id)
 
+    def _ensure_running_capacity(
+        self, instance: RuntimeInstanceSpec, provider: RuntimeProvider
+    ) -> None:
+        # Called under _resource_lock, which serializes starts and stops. A
+        # retained runtime still occupies a slot when stopping/cleanup failed;
+        # an error status alone does not prove the process has exited.
+        maximum = _provider_max_instances(provider)
+        running_count = sum(
+            entry.runtime_id != instance.runtime_id
+            and entry.runtime_type == instance.runtime_type
+            and entry.runtime is not None
+            for entry in self._entries.values()
+        )
+        if maximum is not None and running_count >= maximum:
+            raise RuntimeConflictError(
+                f"runtime type {instance.runtime_type!r} allows at most "
+                f"{maximum} running instance(s)"
+            )
+
     async def report_status(
         self,
         runtime_id: str,
         status: RuntimeLifecycleStatus,
         error: Mapping[str, Any] | None = None,
+        phase: Mapping[str, Any] | None = None,
     ) -> None:
         """Record a provider-owned health change for a live instance.
 
@@ -396,7 +411,7 @@ class RuntimeSupervisor:
             return
         if entry.status in {"stopped", "stopping"}:
             return
-        await self._set_entry(runtime_id, status=status, error=error)
+        await self._set_entry(runtime_id, status=status, error=error, phase=phase)
 
     def resolve_runtime(
         self,
@@ -489,9 +504,15 @@ class RuntimeSupervisor:
         resource_claims: tuple[RuntimeResourceClaim, ...] | object = MISSING,
         status: RuntimeLifecycleStatus | None = None,
         error: Mapping[str, Any] | None | object = MISSING,
+        phase: Mapping[str, Any] | None | object = MISSING,
     ) -> None:
         entry = self._entry(runtime_id)
         next_status = entry.status if status is None else status
+        if phase is MISSING:
+            # A phase only describes the status it was reported with.
+            next_phase = entry.phase if status is None else None
+        else:
+            next_phase = phase
         self._entries[runtime_id] = RuntimeSupervisorEntry(
             instance=entry.instance,
             provider=entry.provider,
@@ -507,12 +528,14 @@ class RuntimeSupervisor:
             ),  # type: ignore[arg-type]
             status=next_status,
             error=entry.error if error is MISSING else error,  # type: ignore[arg-type]
+            phase=next_phase,  # type: ignore[arg-type]
         )
         if status is not None and self._status_sink is not None:
             await self._status_sink(
                 runtime_id,
                 next_status,
                 self._entries[runtime_id].error,
+                self._entries[runtime_id].phase,
             )
 
     def _entry(self, runtime_id: str) -> RuntimeSupervisorEntry:

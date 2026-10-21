@@ -329,7 +329,10 @@ class CodexTimelineProjection:
 
     def context_compaction_content(self) -> Mapping[str, Any]:
         state = compact_state_from_status(self.status)
-        label = "正在压缩上下文" if state == "started" else "对话已压缩"
+        label = {
+            "started": "正在压缩上下文",
+            "completed": "对话已压缩",
+        }.get(state, "上下文压缩未完成")
         text = self.text or self.message
         return {
             "kind": "compact",

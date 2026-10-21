@@ -7,15 +7,23 @@ export type ConnectorLogLevel =
   | "ERROR"
   | "CRITICAL";
 
+export type ConnectorLogSource = "connector" | "bridge";
+
 export type ConnectorLogEntry = {
   seq: number;
   level: ConnectorLogLevel | string;
   message: string;
   time: string;
+  name?: string;
+  source?: ConnectorLogSource | string;
+  details?: string | null;
+  exception?: string | null;
+  gapBefore?: boolean;
   [key: string]: unknown;
 };
 
 export type ConnectorLogQuery = {
+  source?: ConnectorLogSource;
   pageSize?: number;
   beforeSeq?: number;
   afterSeq?: number;
@@ -26,7 +34,9 @@ export type ConnectorLogPage = {
   firstSeq: number | null;
   lastSeq: number | null;
   hasMoreBefore: boolean;
+  hasMoreAfter?: boolean;
   total: number;
+  logsPath?: string;
 };
 
 export type ConnectorPrivateConfig = {
@@ -80,11 +90,16 @@ export type ConnectorState = {
   configPath: string;
   runtimePath: string;
   dataPath: string;
+  logsPath?: string;
   connectorDir: string;
   resolvedUvPath: string;
   uvMissing: boolean;
+  /** The interpreter `uv run` is pinned to; empty when uv chooses one itself. */
+  resolvedPythonPath: string;
   uvPath: string;
+  pythonPath: string;
   uvPypiIndexUrl: string;
+  uvPythonInstallMirror: string;
   logChunkSizeKb: number;
   logRetainChunks: number;
   logRetentionDays: number;
@@ -100,7 +115,9 @@ export type DesktopSettings = {
   silentLaunch: boolean;
   notificationsEnabled: boolean;
   uvPath: string;
+  pythonPath: string;
   uvPypiIndexUrl: string;
+  uvPythonInstallMirror: string;
   logChunkSizeKb: number;
   logRetainChunks: number;
   logRetentionDays: number;

@@ -86,6 +86,7 @@ from agent_server.deps import (
     get_store,
     get_timeline_broker,
     get_timeline_write_buffer,
+    get_usage_recorder,
 )
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
@@ -117,6 +118,7 @@ from agent_server.services.session_meta_projection import (
 from agent_server.services.session_run import SessionRunError, SessionRunService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
+from agent_server.services.usage_events import UsageRecorder
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -897,6 +899,7 @@ async def session_snapshot(
     timeline_write_buffer: TimelineWriteBuffer = Depends(
         get_timeline_write_buffer
     ),
+    usage_recorder: UsageRecorder = Depends(get_usage_recorder),
 ) -> ProtocolSessionSnapshotResponse:
     snapshot_started_at = time.monotonic()
 
@@ -914,6 +917,8 @@ async def session_snapshot(
         stage_started_at = time.monotonic()
         session = await db.get_session(session_id, user_id=user_id)
         log_snapshot_stage("authorization", stage_started_at)
+        # Opening a session is platform usage; the recorder folds quick repeats.
+        await usage_recorder.touch_session_view(session, user_id=user_id)
 
         stage_started_at = time.monotonic()
         notices = await read_session_notices_for_snapshot(manager, session)
@@ -1237,6 +1242,8 @@ async def _require_session_action_capability(
 @router.get("/{session_id}/runtime/commands", response_model=SessionCommandListResponse)
 async def list_session_runtime_commands(
     session_id: str,
+    query: str | None = Query(default=None, max_length=4096),
+    limit: int = Query(default=100, ge=1, le=1000),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
@@ -1256,8 +1263,10 @@ async def list_session_runtime_commands(
         "sessionId": session.id,
         "runtime": session.runtime,
         "runtimeId": _session_runtime_id(session),
-        "limit": 100,
+        "limit": limit,
     }
+    if query is not None:
+        params["query"] = query
     if session.externalSessionId:
         params["externalSessionId"] = session.externalSessionId
     try:
@@ -1314,7 +1323,7 @@ async def execute_session_command(
     }
     if session.externalSessionId:
         params["externalSessionId"] = session.externalSessionId
-    if payload.raw:
+    if payload.raw is not None:
         params["raw"] = payload.raw
     try:
         result = await manager.request(
@@ -1323,27 +1332,48 @@ async def execute_session_command(
             params,
             timeout=30,
         )
-    except ConnectorOfflineError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (ConnectorOfflineError, TimeoutError):
+        return _unknown_command_result(payload.command)
     except ConnectorRpcError as exc:
         raise HTTPException(
             status_code=502,
             detail={"code": exc.code, "message": exc.message or exc.code},
         ) from exc
-    if not isinstance(result, dict):
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "code": "invalid_command_result",
-                "message": "connector did not return a command result",
-            },
-        )
+    if (
+        not isinstance(result, dict)
+        or result.get("command") != payload.command
+        or type(result.get("ok")) is not bool
+        or not isinstance(result.get("result"), dict)
+        or (result.get("code") is not None and not isinstance(result["code"], str))
+        or (result.get("message") is not None and not isinstance(result["message"], str))
+    ):
+        return _unknown_command_result(payload.command)
+    execution = result["result"].get("executionState")
+    retryable = result["result"].get("retryable")
+    if (
+        (execution is not None and execution not in ("accepted", "completed", "unknown"))
+        or (retryable is not None and type(retryable) is not bool)
+        or (result.get("code") == "command_outcome_unknown" and execution != "unknown")
+        or (execution == "unknown" and (result["ok"] or retryable is not False))
+    ):
+        return _unknown_command_result(payload.command)
     return SessionCommandResponse(
-        command=str(result.get("command") or payload.command),
-        ok=bool(result.get("ok", True)),
-        code=result.get("code") if isinstance(result.get("code"), str) else None,
-        message=result.get("message") if isinstance(result.get("message"), str) else None,
-        result=result.get("result"),
+        command=result["command"],
+        ok=result["ok"],
+        code=result.get("code"),
+        message=result.get("message"),
+        result=result["result"],
+        serverTime=utc_now(),
+    )
+
+
+def _unknown_command_result(command: str) -> SessionCommandResponse:
+    return SessionCommandResponse(
+        command=command,
+        ok=False,
+        code="command_outcome_unknown",
+        message="Command outcome is unknown. Refresh session state before taking further action.",
+        result={"executionState": "unknown", "retryable": False},
         serverTime=utc_now(),
     )
 

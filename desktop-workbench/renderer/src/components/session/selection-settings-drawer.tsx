@@ -4,6 +4,7 @@ import * as React from "react"
 import { Check, ChevronDown, ChevronRight, Settings2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import {
   Drawer,
   DrawerContent,
@@ -21,6 +22,7 @@ export type SelectionOption = {
   description?: string | null
   enabled?: boolean
   disabledReason?: string | null
+  badge?: string
 }
 
 export type ModelSelectionOption = SelectionOption & {
@@ -28,7 +30,9 @@ export type ModelSelectionOption = SelectionOption & {
 }
 
 export function SelectionSettingsDrawer({
+  requestOpenKey,
   disabled,
+  onOpenChange,
   permissionDisabled = false,
   modelDisabled = false,
   reasoningDisabled = false,
@@ -46,7 +50,9 @@ export function SelectionSettingsDrawer({
   selectedReasoning,
   onModelChange,
 }: {
+  requestOpenKey?: number
   disabled?: boolean
+  onOpenChange?: (open: boolean) => void
   permissionDisabled?: boolean
   modelDisabled?: boolean
   reasoningDisabled?: boolean
@@ -65,10 +71,12 @@ export function SelectionSettingsDrawer({
   onModelChange: (modelId: string, reasoningId: string) => void
 }) {
   const [open, setOpen] = React.useState(false)
+  React.useEffect(() => { if (requestOpenKey) setOpen(true) }, [requestOpenKey])
   const [expandedModelId, setExpandedModelId] = React.useState<string | null>(null)
 
   const setDrawerOpen = (nextOpen: boolean) => {
     setOpen(nextOpen)
+    onOpenChange?.(nextOpen)
     if (!nextOpen) setExpandedModelId(null)
   }
 
@@ -153,6 +161,7 @@ export function SelectionSettingsDrawer({
                   key={item.id}
                   selected={selectedPermission === item.id}
                   label={item.label}
+                  badge={item.badge}
                   helper={item.enabled === false ? item.disabledReason ?? undefined : item.description ?? undefined}
                   disabled={permissionDisabled || item.enabled === false}
                   onClick={() => {
@@ -189,6 +198,7 @@ function SelectionSection({
 function SelectionRow({
   selected,
   label,
+  badge,
   helper,
   trailing,
   disabled = false,
@@ -196,6 +206,7 @@ function SelectionRow({
 }: {
   selected: boolean
   label: string
+  badge?: string
   helper?: string
   trailing?: React.ReactNode
   disabled?: boolean
@@ -214,7 +225,10 @@ function SelectionRow({
     >
       <Check className={cn("size-4 shrink-0", selected ? "opacity-100" : "opacity-0")} />
       <span className="min-w-0 flex-1">
-        <span className="block truncate font-medium">{label}</span>
+        <span className="flex items-center gap-2 font-medium">
+          <span className="truncate">{label}</span>
+          {badge ? <Badge variant="secondary">{badge}</Badge> : null}
+        </span>
         {helper ? <span className="block truncate text-xs opacity-70">{helper}</span> : null}
       </span>
       {trailing ? <span className="shrink-0 text-muted-foreground">{trailing}</span> : null}

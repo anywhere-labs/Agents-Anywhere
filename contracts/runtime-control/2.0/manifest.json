@@ -36,7 +36,7 @@
       "direction": "egress",
       "model": "RuntimeInstanceStatus",
       "path": "schemas/runtime-instance-status.schema.json",
-      "sha256": "9554a4d06b24f00ab3c5881f7dd61d3db35becb121696fe3b6584278b71d0ade",
+      "sha256": "fb608a03bb99e44441e05b0f854991486fdcfd046f32d34376b7559d41171b1d",
       "slug": "runtime-instance-status"
     },
     {

@@ -38,7 +38,7 @@ export function OnboardingSection({ t, host, state: panel }: { t: Translate; hos
   const failed = Boolean(error || snapshot?.stage === 'error' || detected === 'error')
   const state: StateDotState = failed ? 'error' : !snapshot || busy || connecting ? 'ongoing' : snapshot.stage === 'ready' ? 'done' : 'warning'
   const statusMessage = error
-    ?? (detected === 'installed' ? t('已检测到桌面端，请在桌面端继续连接。')
+    ?? (detected === 'installed' ? t('Agents Anywhere 桌面端正在运行，请在桌面端继续连接。')
       : detected === 'error' ? snapshot?.desktop.message
         : snapshot?.account && snapshot.stage === 'ready' ? t('已登录为 {name}', { name: snapshot.account.displayName })
           : snapshot?.stage === 'authorizing' ? t('已打开登录页面，完成登录后将自动返回。')

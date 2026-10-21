@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct NewSessionView: View, Equatable {
     @Bindable var model: NewSessionModel
@@ -8,13 +9,15 @@ struct NewSessionView: View, Equatable {
     var dashboardLoading = false
     var dashboardError: String?
     let onMenu: () -> Void
+    let onOpenDevice: (V2ConnectorID) -> Void
     let onCreated: (V2SessionMeta) -> Void
     let onRefresh: () async -> [V2Connector]
     @State private var showsTarget = false
     @State private var showsWorkspace = false
+    @State private var showsFiles = false
+    @Environment(AppState.self) private var appState
     @State private var confirmsRetry = false
     @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
 
     private var controls: ChatControlMetrics { .init(bodyLineHeight: bodyLineHeight) }
@@ -30,7 +33,9 @@ struct NewSessionView: View, Equatable {
             GeometryReader { viewport in
                 ScrollView {
                     NewSessionContentLayout(viewportHeight: max(0, viewport.size.height - 48)) {
-                        NewSessionWelcomeView { workspaceButton }
+                        NewSessionWelcomeView(deviceName: model.connector?.name,
+                            agentName: model.runtime?.sessionDisplayName,
+                            onChooseTarget: chooseTarget)
                         statusContent
                     }
                         .padding(24)
@@ -43,6 +48,14 @@ struct NewSessionView: View, Equatable {
                 .refreshable { await refresh() }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    // Follows the composer's glass edge in both states, a few
+                    // points inside it and slightly apart, to sit balanced.
+                    workspaceButton
+                        .padding(.horizontal, model.draft.isExpanded
+                            ? ChatControlMetrics.expandedHorizontalInset : ChatControlMetrics.collapsedHorizontalInset)
+                        .padding(.leading, 6)
+                        .padding(.bottom, 6)
                 ChatComposerDock(draft: model.draft, settings: model.settings,
                     maximumEditorHeight: min(160, max(72, geometry.size.height * 0.30)), controls: controls,
                     canSend: model.canCreate, canAttach: model.canAttach && model.prepared != nil,
@@ -51,18 +64,34 @@ struct NewSessionView: View, Equatable {
                     isBusy: model.isCreating, isLoadingSettings: model.isPreparing,
                     onSend: { text in if let session = await model.create(text: text) { onCreated(session) } },
                     onApplySettings: { model.saveSelections(); return true },
-                    onDraftChange: { model.saveDraft() })
+                    onDraftChange: { model.scheduleDraftSave() })
+                }
+                .frame(maxWidth: ChatControlMetrics.maximumContentWidth).frame(maxWidth: .infinity)
             }
         }
         .modifier(ChatPageToolbar(title: "", onMenu: onMenu))
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) { targetButton }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { showsFiles = true } label: { AppSymbol("folder") }
+                    .disabled(!canBrowse)
+                    .accessibilityLabel(String(localized: "浏览文件"))
+                    .accessibilityIdentifier("chat.new.files")
+            }
+            ToolbarItem(placement: .topBarTrailing) { deviceMenu }
         }
         .sheet(isPresented: $showsTarget) {
             SessionTargetSheet(model: model)
         }
         .sheet(isPresented: $showsWorkspace) {
             ProjectSelectionSheet(model: model, repository: repository)
+        }
+        .sheet(isPresented: $showsFiles) {
+            if let device = model.connector, let service = appState.workspaceFilesService {
+                WorkspaceFilesSheet(connectorId: device.id, deviceName: device.name,
+                    workspace: .init(path: model.workspace.isEmpty ? "~" : model.workspace,
+                                     name: workspaceName, sessionCount: 0, lastActiveAt: nil),
+                    service: service)
+            }
         }
         .confirmationDialog(String(localized: "创建结果仍未确认，再次创建可能产生重复会话。"), isPresented: $confirmsRetry, titleVisibility: .visible) {
             Button(String(localized: "保留草稿并允许重新创建")) { model.acknowledgeUncertainCreation() }
@@ -95,6 +124,7 @@ struct NewSessionView: View, Equatable {
     private var workspaceButton: some View {
         Button { showsWorkspace = true } label: {
             HStack(spacing: 6) {
+                AppSymbol("folder", size: 14).foregroundStyle(.secondary)
                 Text(workspaceName).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
                     .lineLimit(1).layoutPriority(1)
                 if !model.workspace.isEmpty {
@@ -105,43 +135,40 @@ struct NewSessionView: View, Equatable {
                     ProgressView().controlSize(.mini)
                 } else { AppSymbol("chevron.down", size: 12).foregroundStyle(.secondary) }
             }
-            .padding(.vertical, 12)
-            .overlay(alignment: .bottom) { Rectangle().fill(.secondary.opacity(0.35)).frame(height: 1) }
+            .padding(.top, 8)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .disabled(model.connector == nil || model.isCreating)
     }
 
-    private var targetButton: some View {
-        Button {
-            model.draft.isFocused = false
-            showsTarget = true
-        } label: {
-            HStack(spacing: 8) {
-                HStack(spacing: 4) {
-                    Text(model.runtime?.sessionDisplayName ?? String(localized: "运行目标"))
-                        .fontWeight(.semibold).layoutPriority(1)
-                    if let device = model.connector {
-                        Text(verbatim: "·").foregroundStyle(.secondary)
-                        Text(verbatim: device.name).foregroundStyle(.secondary)
-                            .truncationMode(.middle)
-                    }
-                }
-                .font(.subheadline)
-                .lineLimit(1)
-                .frame(maxWidth: horizontalSizeClass == .regular ? 280 : 210, alignment: .leading)
-                .fixedSize(horizontal: true, vertical: false)
-                Group {
-                    if model.isPreparing { ProgressView().controlSize(.mini) }
-                    else { AppSymbol("chevron.down", size: 12) }
-                }.frame(width: 14, height: 14)
+    private var deviceMenu: some View {
+        // Menu rows use SF Symbols like the rest of the system menu.
+        Menu {
+            Button(String(localized: "选择设备和 Agent"), systemImage: "sparkles") { chooseTarget() }
+            Button(String(localized: "选择工作目录"), systemImage: "folder") { showsWorkspace = true }
+                .disabled(model.connector == nil)
+            if let device = model.connector {
+                Divider()
+                Button(String(localized: "设备详情"), systemImage: "info.circle") { onOpenDevice(device.id) }
+                Button(String(localized: "Copy device ID"), systemImage: "doc.on.doc") { UIPasteboard.general.string = device.id }
             }
+        } label: {
+            if model.isPreparing { ProgressView().controlSize(.mini) } else { AppSymbol("ellipsis") }
         }
         .disabled(model.isCreating)
-        .accessibilityLabel(String(localized: "选择设备和 Agent"))
-        .accessibilityValue([model.runtime?.sessionDisplayName, model.connector?.name].compactMap { $0 }.joined(separator: " · "))
+        .accessibilityLabel(String(localized: "Device actions"))
         .accessibilityIdentifier("chat.new.target")
+    }
+
+    private var canBrowse: Bool {
+        model.connector?.status == .online && model.network.availability != .offline && model.isValid && !model.isCreating
+            && appState.workspaceFilesService != nil
+    }
+
+    private func chooseTarget() {
+        model.draft.isFocused = false
+        showsTarget = true
     }
 
     @ViewBuilder private var connectionStatus: some View {

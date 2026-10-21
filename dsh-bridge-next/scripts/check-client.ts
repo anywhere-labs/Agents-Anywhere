@@ -17,7 +17,9 @@ import type { MobileLoginSnapshot } from '../src/contracts/mobile.ts'
 export async function checkClient(source: string, packageId: string): Promise<void> {
   const dom = new JSDOM('<!doctype html><html><head></head><body><main id="root"></main></body></html>', { url: 'http://localhost' })
   const { document } = dom.window
-  const globals = { window: dom.window, document, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true }
+  const globals = { window: dom.window, document, navigator: dom.window.navigator,
+    Element: dom.window.Element, Node: dom.window.Node, HTMLElement: dom.window.HTMLElement,
+    HTMLIFrameElement: dom.window.HTMLIFrameElement, MutationObserver: dom.window.MutationObserver, IS_REACT_ACT_ENVIRONMENT: true }
   const previous = Object.fromEntries(Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]))
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value })
 
@@ -103,9 +105,34 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     ctx.provide('connection', { rpc: { call: async (channel: string, endpoint: string, payload: unknown) => {
         assert.equal(channel, '/api')
         calls.push({ endpoint, payload })
+        if (endpoint.endsWith('/readStartupDiagnostics')) return { ok: true, value: [] }
         if (endpoint.endsWith('/readBridgeLogs')) return failLogs ? { ok: false, error: { message: 'read failed' } } : {
           ok: true, value: { updatedAt: new Date().toISOString(), entries: [{ id: 'fixture-read-failure', outcome: 'failed', time: new Date().toISOString(),
             level: 'error', event: 'session.visibility_read.failed', details: '{"sessionId":"native-test","errorCode":"PERSISTENCE_ERROR"}' }] },
+        }
+        if (endpoint.endsWith('/readRuntimeLogs')) return failLogs ? { ok: false, error: { message: 'read failed' } } : {
+          ok: true, value: {
+            available: true,
+            updatedAt: new Date().toISOString(),
+            firstSeq: 1,
+            lastSeq: 1,
+            total: 1,
+            hasMoreBefore: false,
+            hasMoreAfter: false,
+            logsPath: '/example/logs',
+            items: [{
+              seq: 1,
+              time: new Date().toISOString(),
+              source: 'bridge',
+              level: 'error',
+              name: 'dsh-bridge',
+              message: 'session.visibility_read.failed',
+              details: '{\n  "sessionId": "native-test",\n  "errorCode": "PERSISTENCE_ERROR"\n}',
+              exception: null,
+              method: 'session.visibility_read',
+              outcome: 'failure',
+            }],
+          },
         }
         if (endpoint.endsWith('/inspect')) {
           const inspected = snapshot
@@ -487,18 +514,18 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(dialog()!.querySelector('[role="tabpanel"]')?.getAttribute('aria-labelledby'), button('运行日志').id)
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang|benson@example/)
     await act(async () => { button('暂停刷新').click() })
-    const pausedReads = calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length
+    const pausedReads = calls.filter(call => call.endpoint.endsWith('/readRuntimeLogs')).length
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 2100)) })
-    assert.equal(calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length, pausedReads)
+    assert.equal(calls.filter(call => call.endpoint.endsWith('/readRuntimeLogs')).length, pausedReads)
     failLogs = true
     await act(async () => { button('刷新').click() })
     assert.match(dialog()!.textContent!, /运行日志读取失败/)
     assert.match(dialog()!.textContent!, /native-test/, 'Failed refresh keeps the last successful logs')
     failLogs = false
     await act(async () => { button('刷新').click(); button('继续刷新').click() })
-    const resumedReads = calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length
+    const resumedReads = calls.filter(call => call.endpoint.endsWith('/readRuntimeLogs')).length
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 2100)) })
-    assert.ok(calls.filter(call => call.endpoint.endsWith('/readBridgeLogs')).length > resumedReads)
+    assert.ok(calls.filter(call => call.endpoint.endsWith('/readRuntimeLogs')).length > resumedReads)
     failInspect = false
     await reopen()
 
@@ -511,7 +538,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       await reopen()
       assert.ok(calls.filter(call => call.endpoint.endsWith('/inspect')).length > readsBefore, 'Every opening must perform a fresh detection')
       assert.equal(dialog()!.getAttribute('aria-label'), '远程控制')
-      assert.match(dialog()!.textContent!, /已安装 Agents Anywhere 桌面端。请打开桌面端完成连接设置。/)
+      assert.match(dialog()!.textContent!, /Agents Anywhere 桌面端正在运行。请在桌面端完成连接设置。/)
       assert.equal(dialog()!.querySelector('input, img, form, a'), null)
       assert.doesNotMatch(dialog()!.textContent!, /BensonWang|账号信息|Connector|打开 Web|退出登录|登录 Agents Anywhere Cloud/)
       assert.equal(dialog()!.querySelectorAll('button').length, 8, 'Desktop handoff keeps the open action and bridge diagnostics')
@@ -536,7 +563,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang|登录 Agents Anywhere Cloud|已安装桌面端/)
     await act(async () => { releaseInspection() })
     inspectGate = null
-    assert.match(dialog()!.textContent!, /已安装 Agents Anywhere 桌面端/)
+    assert.match(dialog()!.textContent!, /Agents Anywhere 桌面端正在运行/)
 
     // A response from an earlier, closed opening must not overwrite the current mode.
     inspectGate = new Promise(resolve => { releaseInspection = resolve })
@@ -547,7 +574,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     snapshot = { ...signedInSnapshot, desktop: installed }
     await reopen()
     await act(async () => { releaseInspection() })
-    assert.match(dialog()!.textContent!, /已安装 Agents Anywhere 桌面端/)
+    assert.match(dialog()!.textContent!, /Agents Anywhere 桌面端正在运行/)
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang/)
 
     snapshot = { ...signedInSnapshot, desktop: { status: 'error', message: '安装记录无法读取。' } }

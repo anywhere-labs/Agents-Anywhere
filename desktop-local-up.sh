@@ -5,45 +5,60 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_DIR="${ROOT_DIR}/server"
 DESKTOP_DIR="${ROOT_DIR}/desktop-workbench"
+WEB_DIR="${ROOT_DIR}/web-next"
 COMPOSE_FILE="${ROOT_DIR}/docker/docker-compose.local.yml"
 LOCAL_DIR="${ROOT_DIR}/.local-dev"
 LOG_DIR="${LOCAL_DIR}/logs"
-SERVER_LOG="${LOG_DIR}/server.log"
-DESKTOP_LOG="${LOG_DIR}/desktop-workbench.log"
+RUN_DIR="${LOCAL_DIR}/run"
+PID_FILE="${RUN_DIR}/desktop-local-up.pid"
 
 ENV_FILE="${AGENTS_ANYWHERE_ENV_FILE:-${ROOT_DIR}/.env.local}"
 ENV_FILE_EXPLICIT=false
 SKIP_INSTALL=false
 ACTION=up
+SHUTTING_DOWN=false
+
+SERVICE_PIDS=()
+SERVICE_NAMES=()
+OUTPUT_PIDS=()
+INFRA_STARTED=false
 
 readonly SERVER_PORT=8000
 readonly DESKTOP_PORT=5184
+readonly WEB_PORT=5174
 readonly POSTGRES_PORT=55432
 readonly REDIS_PORT=56379
-readonly SERVER_SESSION="aa-dev-server"
-readonly DESKTOP_SESSION="aa-desktop-workbench"
 readonly SERVER_URL="http://127.0.0.1:${SERVER_PORT}"
 readonly DESKTOP_URL="http://127.0.0.1:${DESKTOP_PORT}"
+# Desktop development login opens the Web sign-in page for a local API.
+readonly WEB_URL="http://127.0.0.1:${WEB_PORT}"
+# Sessions left behind by the old detached launcher.
+readonly LEGACY_SCREEN_SESSIONS=(aa-dev-server aa-desktop-workbench)
 
 usage() {
   cat <<'EOF'
-Start the local Agents Anywhere backend and Desktop Workbench.
+Start the local Agents Anywhere backend, Web sign-in, and Desktop Workbench.
 
 Usage:
   ./desktop-local-up.sh [--env-file PATH] [--skip-install]
   ./desktop-local-up.sh down
 
 The launcher starts Docker Desktop when needed, brings up PostgreSQL and Redis,
-releases fixed ports 8000 and 5184, then starts the backend and Desktop. Desktop
-always sends API requests to the local backend at http://127.0.0.1:8000.
+releases fixed ports 8000, 5174, and 5184, then runs the backend, Web, and
+Desktop in the foreground. Desktop always sends API requests to the local
+backend at http://127.0.0.1:8000 and signs in through the Web app at
+http://127.0.0.1:5174. Press Ctrl-C to stop everything it started.
 
 Options:
   --env-file PATH  Load additional application settings from PATH
-  --skip-install   Reuse existing Server, Connector, and Desktop dependencies
+  --skip-install   Reuse existing Server, Connector, Web, and Desktop dependencies
   -h, --help       Show this help
 
+Commands:
+  down             Stop a running launcher and release ports 8000, 5174, and 5184
+
 Fixed ports:
-  Desktop 5184, Server 8000, PostgreSQL 55432, Redis 56379.
+  Desktop 5184, Web 5174, Server 8000, PostgreSQL 55432, Redis 56379.
 EOF
 }
 
@@ -87,6 +102,20 @@ if [[ "${ACTION}" == "down" && ("${SKIP_INSTALL}" == true || "${ENV_FILE_EXPLICI
   fail "down does not accept startup options"
 fi
 
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+  RESET=$'\033[0m'
+  RED=$'\033[31m'
+  GREEN=$'\033[32m'
+  YELLOW=$'\033[33m'
+  CYAN=$'\033[36m'
+else
+  RESET=""
+  RED=""
+  GREEN=""
+  YELLOW=""
+  CYAN=""
+fi
+
 listener_pids() {
   lsof -nP -t -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | sort -u || true
 }
@@ -95,16 +124,38 @@ port_is_free() {
   [[ -z "$(listener_pids "$1")" ]]
 }
 
-screen_session_exists() {
-  screen -ls 2>/dev/null | grep -q "[.]$1[[:space:]]"
+running_launcher_pid() {
+  [[ -f "${PID_FILE}" ]] || return 0
+  local pid command
+  pid="$(<"${PID_FILE}")"
+  command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+  if [[ "${pid}" =~ ^[0-9]+$ && "${pid}" != "$$" ]] && kill -0 "${pid}" >/dev/null 2>&1 &&
+    [[ "${command}" == *desktop-local-up.sh* ]]; then
+    printf '%s\n' "${pid}"
+  fi
 }
 
-stop_screen_session() {
-  local session_name="$1"
-  if screen_session_exists "${session_name}"; then
-    printf '[stop] screen session %s\n' "${session_name}"
-    screen -S "${session_name}" -X quit >/dev/null 2>&1 || true
-  fi
+stop_running_launcher() {
+  local pid tick=0
+  pid="$(running_launcher_pid)"
+  [[ -n "${pid}" ]] || return 0
+  printf '[stop] desktop-local-up.sh (PID %s)\n' "${pid}"
+  kill -TERM "${pid}" >/dev/null 2>&1 || true
+  while kill -0 "${pid}" >/dev/null 2>&1 && ((tick < 100)); do
+    tick=$((tick + 1))
+    sleep 0.1
+  done
+}
+
+stop_legacy_screen_sessions() {
+  command -v screen >/dev/null 2>&1 || return 0
+  local session_name
+  for session_name in "${LEGACY_SCREEN_SESSIONS[@]}"; do
+    if screen -ls 2>/dev/null | grep -q "[.]${session_name}[[:space:]]"; then
+      printf '[stop] screen session %s\n' "${session_name}"
+      screen -S "${session_name}" -X quit >/dev/null 2>&1 || true
+    fi
+  done
 }
 
 stop_docker_publishers() {
@@ -183,18 +234,19 @@ release_port() {
 }
 
 stop_application_services() {
-  stop_screen_session "${DESKTOP_SESSION}"
-  stop_screen_session "${SERVER_SESSION}"
+  stop_running_launcher
+  stop_legacy_screen_sessions
   release_port "${DESKTOP_PORT}" "Desktop"
+  release_port "${WEB_PORT}" "Web"
   release_port "${SERVER_PORT}" "Server"
 }
 
 if [[ "${ACTION}" == "down" ]]; then
-  for required in docker grep lsof ps screen sort; do
+  for required in docker lsof ps sort; do
     require_command "${required}"
   done
   stop_application_services
-  printf 'Local Server and Desktop stopped. PostgreSQL and Redis remain running.\n'
+  printf 'Local Server, Web, and Desktop stopped.\n'
   exit 0
 fi
 
@@ -207,7 +259,7 @@ elif [[ "${ENV_FILE_EXPLICIT}" == true ]]; then
   fail "environment file not found: ${ENV_FILE}"
 fi
 
-for required in curl docker grep lsof ps screen sort uv; do
+for required in curl docker lsof mkfifo perl pgrep ps sort tee uv; do
   require_command "${required}"
 done
 docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required"
@@ -276,49 +328,131 @@ use_desktop_node() {
   printf '[node] using %s\n' "$(node --version)"
 }
 
-start_screen_session() {
-  local session_name="$1"
-  local working_dir="$2"
-  local log_path="$3"
-  shift 3
-  local launch_line
-  local quoted_arg
+strip_ansi() {
+  perl -pe \
+    'BEGIN { $| = 1 } s/\e\[[0-?]*[ -\/]*[@-~]//g; s/\e\][^\a]*(?:\a|\e\\)//g'
+}
 
-  printf -v launch_line 'cd %q && exec' "${working_dir}"
-  for quoted_arg in "$@"; do
-    printf -v quoted_arg '%q' "${quoted_arg}"
-    launch_line+=" ${quoted_arg}"
+prefix_stream() {
+  local label="$1"
+  local color="$2"
+  local line
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    printf '%s[%s]%s %s\n' "${color}" "${label}" "${RESET}" "${line}"
   done
-  printf -v quoted_arg '%q' "${log_path}"
-  launch_line+=" >> ${quoted_arg} 2>&1"
-  : >"${log_path}"
-  screen -dmS "${session_name}" bash -c "${launch_line}"
+}
+
+start_service() {
+  local name="$1"
+  local color="$2"
+  local directory="$3"
+  shift 3
+
+  local fifo="${RUNTIME_DIR}/${name}.fifo"
+  local log_file="${LOG_DIR}/${name}.log"
+  mkfifo "${fifo}"
+  : >"${log_file}"
+
+  (
+    tee >(strip_ansi >"${log_file}") <"${fifo}" |
+      prefix_stream "${name}" "${color}"
+  ) &
+  OUTPUT_PIDS+=("$!")
+
+  (
+    cd "${directory}"
+    exec "$@"
+  ) >"${fifo}" 2>&1 &
+  SERVICE_PIDS+=("$!")
+  SERVICE_NAMES+=("${name}")
+}
+
+stop_process_tree() {
+  local pid="$1"
+  local child
+  for child in $(pgrep -P "${pid}" 2>/dev/null || true); do
+    stop_process_tree "${child}"
+  done
+  kill -TERM "${pid}" >/dev/null 2>&1 || true
+}
+
+cleanup() {
+  local status=$?
+  if [[ "${SHUTTING_DOWN}" == true ]]; then
+    return
+  fi
+  SHUTTING_DOWN=true
+  trap - EXIT INT TERM
+
+  printf '\n%s[local]%s Stopping services...\n' "${YELLOW}" "${RESET}"
+  local pid
+  for pid in "${SERVICE_PIDS[@]-}"; do
+    [[ -n "${pid}" ]] && stop_process_tree "${pid}"
+  done
+  for pid in "${SERVICE_PIDS[@]-}"; do
+    [[ -n "${pid}" ]] && wait "${pid}" >/dev/null 2>&1 || true
+  done
+  for pid in "${OUTPUT_PIDS[@]-}"; do
+    [[ -z "${pid}" ]] && continue
+    kill -TERM "${pid}" >/dev/null 2>&1 || true
+    wait "${pid}" >/dev/null 2>&1 || true
+  done
+  if [[ -n "${RUNTIME_DIR:-}" && -d "${RUNTIME_DIR}" ]]; then
+    find "${RUNTIME_DIR}" -type p -delete
+    rmdir "${RUNTIME_DIR}" >/dev/null 2>&1 || true
+  fi
+  if [[ -f "${PID_FILE}" ]] && [[ "$(<"${PID_FILE}")" == "$$" ]]; then
+    rm -f "${PID_FILE}"
+  fi
+  if [[ "${INFRA_STARTED}" == true ]] && docker info >/dev/null 2>&1; then
+    AGENTS_ANYWHERE_POSTGRES_PORT="${POSTGRES_PORT}" \
+    AGENTS_ANYWHERE_REDIS_PORT="${REDIS_PORT}" \
+      docker compose -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
+  fi
+  exit "${status}"
+}
+
+check_services() {
+  local index
+  for ((index = 0; index < ${#SERVICE_PIDS[@]}; index++)); do
+    if ! kill -0 "${SERVICE_PIDS[$index]}" >/dev/null 2>&1; then
+      local name="${SERVICE_NAMES[$index]}"
+      printf '%s[local]%s %s stopped unexpectedly. Last log lines:\n' \
+        "${RED}" "${RESET}" "${name}" >&2
+      tail -n 40 "${LOG_DIR}/${name}.log" >&2 || true
+      return 1
+    fi
+  done
 }
 
 wait_for_url() {
-  local url="$1"
-  local label="$2"
+  local name="$1"
+  local url="$2"
   local attempts="$3"
-  local tick=0
-  while ((tick < attempts)); do
-    if curl --fail --silent --show-error --max-time 1 --output /dev/null "${url}"; then
+  local attempt=0
+  while ((attempt < attempts)); do
+    check_services || fail "${name} stopped during startup"
+    if curl --fail --silent --max-time 1 --output /dev/null "${url}"; then
+      printf '%s[ready]%s %-9s %s\n' "${GREEN}" "${RESET}" "${name}" "${url}"
       return
     fi
-    tick=$((tick + 1))
-    sleep 0.5
+    attempt=$((attempt + 1))
+    sleep 1
   done
-  fail "${label} did not become ready at ${url}"
+  fail "${name} did not become ready: ${url}"
 }
 
 ensure_docker
 use_desktop_node
 
 if [[ "${SKIP_INSTALL}" != true ]]; then
-  printf '[setup] syncing Server dependencies\n'
+  printf '%s[setup]%s Syncing Server dependencies...\n' "${CYAN}" "${RESET}"
   (cd "${SERVER_DIR}" && UV_NO_PROGRESS=1 uv sync)
-  printf '[setup] syncing Connector dependencies\n'
+  printf '%s[setup]%s Syncing Connector dependencies...\n' "${CYAN}" "${RESET}"
   (cd "${ROOT_DIR}/connector" && UV_NO_PROGRESS=1 uv sync)
-  printf '[setup] syncing Desktop dependencies\n'
+  printf '%s[setup]%s Syncing Web dependencies...\n' "${CYAN}" "${RESET}"
+  (cd "${WEB_DIR}" && corepack yarn install)
+  printf '%s[setup]%s Syncing Desktop dependencies...\n' "${CYAN}" "${RESET}"
   (cd "${DESKTOP_DIR}" && corepack yarn install)
 fi
 
@@ -328,75 +462,92 @@ fi
   fail "uvicorn is missing; rerun without --skip-install"
 [[ -d "${DESKTOP_DIR}/node_modules" ]] || \
   fail "Desktop dependencies are missing; rerun without --skip-install"
+[[ -d "${WEB_DIR}/node_modules" ]] || \
+  fail "Web dependencies are missing; rerun without --skip-install"
 
-mkdir -p "${LOG_DIR}" "${LOCAL_DIR}/files"
+mkdir -p "${LOG_DIR}" "${RUN_DIR}" "${LOCAL_DIR}/files"
 chmod 700 "${LOCAL_DIR}"
 
 stop_application_services
 
-printf '[docker] starting PostgreSQL and Redis\n'
+printf '%s\n' "$$" >"${PID_FILE}"
+chmod 600 "${PID_FILE}"
+RUNTIME_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agents-anywhere-desktop.XXXXXX")"
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+printf '%s[setup]%s Starting PostgreSQL and Redis...\n' "${CYAN}" "${RESET}"
 AGENTS_ANYWHERE_POSTGRES_PORT="${POSTGRES_PORT}" \
 AGENTS_ANYWHERE_REDIS_PORT="${REDIS_PORT}" \
   docker compose -f "${COMPOSE_FILE}" up -d --wait
+INFRA_STARTED=true
 
 readonly DB_URL="postgresql+asyncpg://agents_anywhere:agents_anywhere_dev_password@127.0.0.1:${POSTGRES_PORT}/agents_anywhere"
 readonly REDIS_URL="redis://127.0.0.1:${REDIS_PORT}/0"
+readonly SERVER_CORS_ORIGINS="${DESKTOP_URL},http://localhost:${DESKTOP_PORT},${WEB_URL},http://localhost:${WEB_PORT}"
 
-printf '[server] running database migrations\n'
+printf '%s[setup]%s Applying database migrations...\n' "${CYAN}" "${RESET}"
 (
   cd "${SERVER_DIR}"
   env \
-    AGENT_SERVER_DB_BACKEND=postgres \
     AGENT_SERVER_DB_URL="${DB_URL}" \
     AGENT_SERVER_REDIS_URL="${REDIS_URL}" \
     AGENT_SERVER_FILES_LOCAL_ROOT="${LOCAL_DIR}/files" \
-    AGENT_SERVER_PUBLIC_ORIGIN="${DESKTOP_URL}" \
-    AGENT_SERVER_CORS_ORIGINS="${DESKTOP_URL},http://localhost:${DESKTOP_PORT}" \
+    AGENT_SERVER_PUBLIC_ORIGIN="${WEB_URL}" \
+    AGENT_SERVER_CORS_ORIGINS="${SERVER_CORS_ORIGINS}" \
     "${SERVER_DIR}/.venv/bin/python" -m agent_server.infra.db.migrations upgrade
 )
 
-printf '[server] starting on %s\n' "${SERVER_URL}"
-start_screen_session \
-  "${SERVER_SESSION}" \
-  "${SERVER_DIR}" \
-  "${SERVER_LOG}" \
+start_service server "${CYAN}" "${SERVER_DIR}" \
   env \
-  AGENT_SERVER_DB_BACKEND=postgres \
   AGENT_SERVER_DB_URL="${DB_URL}" \
   AGENT_SERVER_REDIS_URL="${REDIS_URL}" \
   AGENT_SERVER_FILES_LOCAL_ROOT="${LOCAL_DIR}/files" \
-  AGENT_SERVER_PUBLIC_ORIGIN="${DESKTOP_URL}" \
-  AGENT_SERVER_CORS_ORIGINS="${DESKTOP_URL},http://localhost:${DESKTOP_PORT}" \
+  AGENT_SERVER_PUBLIC_ORIGIN="${WEB_URL}" \
+  AGENT_SERVER_CORS_ORIGINS="${SERVER_CORS_ORIGINS}" \
+  LOGURU_LEVEL="${LOGURU_LEVEL:-INFO}" \
   "${SERVER_DIR}/.venv/bin/uvicorn" \
   agent_server.app:create_app \
   --factory \
   --host 127.0.0.1 \
-  --port "${SERVER_PORT}"
-wait_for_url "${SERVER_URL}/api/v2/health" "Server" 60
+  --port "${SERVER_PORT}" \
+  --no-access-log
+wait_for_url server "${SERVER_URL}/api/v2/health" 60
 
-printf '[desktop] starting on %s with local API %s\n' "${DESKTOP_URL}" "${SERVER_URL}"
-start_screen_session \
-  "${DESKTOP_SESSION}" \
-  "${DESKTOP_DIR}" \
-  "${DESKTOP_LOG}" \
+start_service web "${YELLOW}" "${WEB_DIR}" \
+  env AGENTS_ANYWHERE_API="${SERVER_URL}" \
+  corepack yarn exec next dev --hostname 127.0.0.1 --port "${WEB_PORT}"
+wait_for_url web "${WEB_URL}/" 120
+
+start_service desktop "${GREEN}" "${DESKTOP_DIR}" \
   env \
   WORKBENCH_WEB_PORT="${DESKTOP_PORT}" \
   WORKBENCH_API_ORIGIN="${SERVER_URL}" \
   WORKBENCH_API_NAMESPACE=/api/v2 \
+  WORKBENCH_OAUTH_WEB_ORIGIN="${WEB_URL}" \
   AGENTS_ANYWHERE_API="${SERVER_URL}" \
   AGENTS_ANYWHERE_API_NAMESPACE=/api/v2 \
   corepack yarn dev
-wait_for_url "${DESKTOP_URL}" "Desktop renderer" 120
-wait_for_url "${DESKTOP_URL}/api/v2/health" "Desktop API proxy" 30
+wait_for_url desktop "${DESKTOP_URL}" 120
+wait_for_url "API proxy" "${DESKTOP_URL}/api/v2/health" 30
 
 proxy_server="$(curl --silent --show-error --max-time 5 --dump-header - --output /dev/null \
   "${DESKTOP_URL}/api/v2/health" | awk 'tolower($1) == "server:" {gsub("\\r", "", $2); print tolower($2); exit}')"
 [[ "${proxy_server}" == "uvicorn" ]] || \
   fail "Desktop API proxy did not reach the local uvicorn backend (server=${proxy_server:-missing})"
 
-printf '\nLocal Desktop stack is ready.\n'
-printf '  Desktop:   %s\n' "${DESKTOP_URL}"
-printf '  Server:    %s\n' "${SERVER_URL}"
-printf '  API proxy: %s/api/v2 -> %s/api/v2\n' "${DESKTOP_URL}" "${SERVER_URL}"
-printf '  Logs:      %s\n' "${LOG_DIR}"
-printf '  Stop:      ./desktop-local-up.sh down\n'
+printf '\n%s[local]%s Desktop stack is ready.\n' "${GREEN}" "${RESET}"
+printf '  Desktop:    %s\n' "${DESKTOP_URL}"
+printf '  Web login:  %s\n' "${WEB_URL}"
+printf '  Server:     %s\n' "${SERVER_URL}"
+printf '  API proxy:  %s/api/v2 -> %s/api/v2\n' "${DESKTOP_URL}" "${SERVER_URL}"
+printf '  PostgreSQL: 127.0.0.1:%s/agents_anywhere\n' "${POSTGRES_PORT}"
+printf '  Redis:      127.0.0.1:%s\n' "${REDIS_PORT}"
+printf '  Logs:       %s\n' "${LOG_DIR}"
+printf '  Stop:       Ctrl-C\n\n'
+
+while true; do
+  check_services || fail "a service stopped unexpectedly"
+  sleep 1
+done

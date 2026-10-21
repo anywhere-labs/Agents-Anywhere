@@ -51,6 +51,14 @@ struct APIClient {
         )
     }
 
+    /// Public, unauthenticated; returns nil when the server has no enabled announcement.
+    func announcement() async throws -> PublicAnnouncement? {
+        let response: PublicAnnouncementResponse = try await request("/announcement")
+        return response.announcement.flatMap { value in
+            value.markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || value.publishedDate == nil ? nil : value
+        }
+    }
+
     func me(token: String) async throws -> AuthMe {
         try await request("/auth/me", token: token)
     }

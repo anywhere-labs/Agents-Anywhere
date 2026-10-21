@@ -35,16 +35,26 @@ struct ChatComposerDock: View {
     @State private var attachmentError: String?
     @State private var isSending = false
     @State private var importCount = 0
+    @State private var showsCommandMenu = false
 
     private enum AttachmentPicker { case photos, files }
 
     var body: some View {
-        ChatComposer(draft: draft, editor: editor, isStreaming: isStreaming,
-            canSend: canSend, canStop: canStop, isBusy: isBusy || isSending || importCount > 0,
-            placeholder: placeholder,
-            maximumEditorHeight: maximumEditorHeight, controls: controls,
-            onSend: send, onStop: { Task { await onStop() } },
-            onOptions: { showsOptions = true }, onDraftChange: onDraftChange)
+        VStack(spacing: 0) {
+            if let sessionChat {
+                CommandSuggestionPanel(chat: sessionChat, draft: draft, forced: $showsCommandMenu)
+            }
+            ChatComposer(draft: draft, editor: editor, isStreaming: isStreaming,
+                canSend: canSend, canStop: canStop, isBusy: isBusy || isSending || importCount > 0,
+                placeholder: placeholder,
+                maximumEditorHeight: maximumEditorHeight, controls: controls,
+                onSend: send, onStop: { Task { await onStop() } },
+                onOptions: { showsOptions = true },
+                showsCommands: sessionChat?.offersCommands == true, commandsActive: showsCommandMenu,
+                onCommands: { showsCommandMenu.toggle() },
+                onDraftChange: onDraftChange)
+        }
+        .onChange(of: sessionChat?.optionsRequest) { _, _ in showsOptions = true }
         .frame(maxWidth: ChatControlMetrics.maximumContentWidth)
         .frame(maxWidth: .infinity)
         .background {

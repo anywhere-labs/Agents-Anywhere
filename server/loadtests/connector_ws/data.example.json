@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "baseUrl": "http://127.0.0.1:8000",
+  "createdAt": "2026-01-01T00:00:00Z",
+  "prefix": "example",
+  "user": {
+    "email": "example@local.invalid",
+    "accessToken": "example-user-access-token"
+  },
+  "connectors": [
+    {
+      "id": "example-connector",
+      "token": "example-connector-token",
+      "sessions": [
+        {
+          "id": "example-session",
+          "externalSessionId": "example-external-session"
+        }
+      ]
+    }
+  ]
+}

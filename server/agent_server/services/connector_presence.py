@@ -37,7 +37,7 @@ async def with_effective_connector_statuses(
     presence: ConnectorPresencePort,
     connectors: list[ConnectorView],
 ) -> list[ConnectorView]:
-    statuses = await _online_statuses(
+    statuses = await connector_online_statuses(
         presence, [connector.id for connector in connectors]
     )
     result: list[ConnectorView] = []
@@ -55,7 +55,7 @@ async def with_effective_session_connector_statuses(
     presence: ConnectorPresencePort,
     sessions: list[SessionView],
 ) -> list[SessionView]:
-    statuses = await _online_statuses(
+    statuses = await connector_online_statuses(
         presence, [session.connectorId for session in sessions]
     )
     result: list[SessionView] = []
@@ -69,7 +69,7 @@ async def with_effective_session_connector_statuses(
     return result
 
 
-async def _online_statuses(
+async def connector_online_statuses(
     presence: ConnectorPresencePort, connector_ids: list[str]
 ) -> dict[str, bool]:
     batch = getattr(presence, "online_statuses", None)

@@ -11,7 +11,15 @@ from connector.runtime_protocol import (
     RuntimeUnsupportedError,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.codex.domain.approvals import approval_response_from_interaction
+from connector.runtimes.codex.domain.approvals import (
+    CodexApprovalResponse,
+    approval_response_from_interaction,
+)
+from connector.runtimes.codex.domain.input_requests import (
+    is_cancelled_input_action,
+    is_input_request_context,
+    user_input_response_from_interaction,
+)
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
 from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
 
@@ -46,10 +54,7 @@ class CodexInteractionController:
             raise TypeError("requestId is required to respond to a Codex interaction")
         notice_context = self.notice_context_for_response(notice_id)
         response_context = interaction_response_context(notice_context, data)
-        response = approval_response_from_interaction(
-            action_id,
-            response_context,
-        )
+        response = codex_interaction_response(action_id, response_context)
         logger.info(
             "codex approval respond started session_id={} notice_id={} action_id={} request_id={} decision={} payload_keys={} notice_context_found={}",
             session_id,
@@ -137,6 +142,14 @@ class CodexInteractionController:
             return {}
         return notice.context
 
+    def _notice_status_context(self, notice_id: str, status: str) -> Mapping[str, Any]:
+        """Track questionnaire notices with the platform input status key."""
+
+        notice = self.notices.get(notice_id)
+        if notice is not None and is_input_request_context(notice.context):
+            return {"inputStatus": status}
+        return {"approvalStatus": status}
+
     async def _notice_responding(
         self,
         notice_id: str,
@@ -147,7 +160,7 @@ class CodexInteractionController:
             notice_id,
             status="responding",
             context={
-                "approvalStatus": "responding",
+                **self._notice_status_context(notice_id, "responding"),
                 "responseActionId": action_id,
                 "decision": decision,
             },
@@ -170,7 +183,7 @@ class CodexInteractionController:
             blocking=None,
             actions=(),
             context={
-                "approvalStatus": "resolved",
+                **self._notice_status_context(notice_id, "resolved"),
                 "responseActionId": action_id,
                 "decision": decision,
                 "responsePayload": response_payload,
@@ -193,7 +206,7 @@ class CodexInteractionController:
             status="open",
             response_required=True,
             context={
-                "approvalStatus": "pending",
+                **self._notice_status_context(notice_id, "pending"),
                 "responseActionId": action_id,
                 "decision": decision,
             },
@@ -219,6 +232,22 @@ class CodexInteractionController:
                     "notice_id": notice_id,
                 },
             )
+
+
+def codex_interaction_response(
+    action_or_status: str,
+    context: Mapping[str, Any],
+) -> CodexApprovalResponse:
+    """Build the app-server response for approvals and `request_user_input`."""
+
+    if is_input_request_context(context):
+        return CodexApprovalResponse(
+            payload=user_input_response_from_interaction(action_or_status, context),
+            decision=(
+                "cancelled" if is_cancelled_input_action(action_or_status) else "answered"
+            ),
+        )
+    return approval_response_from_interaction(action_or_status, context)
 
 
 def interaction_response_context(

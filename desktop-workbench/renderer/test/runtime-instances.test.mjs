@@ -13,6 +13,7 @@ import { findCapability } from "../src/components/session/capabilities.ts"
 import {
   addableRuntimeTypes,
   configuredRuntimeInstances,
+  runtimeInstancesAfterDeletion,
   mergeRuntimeTypes,
   namedInstanceRequiredConfigFields,
   reconfigurableRuntimeInstance,
@@ -25,6 +26,18 @@ import {
   sessionRuntimeRequestIdentity,
   sessionRuntimeType,
 } from "../src/features/dashboard/runtime-instances.ts"
+
+test("manual deletion removes the instance from the list", () => {
+  const old = { runtimeId: "rti_old", configured: true }
+  const other = { runtimeId: "rti_other", configured: true }
+  const deleted = { ...old, configured: false }
+  assert.deepEqual(runtimeInstancesAfterDeletion([old, other], old.runtimeId, deleted), [other])
+  assert.deepEqual(runtimeInstancesAfterDeletion([other], old.runtimeId, deleted), [other])
+  // A server that still returns a successor under a new ID keeps it once.
+  const successor = { runtimeId: "rti_new", configured: false }
+  assert.deepEqual(runtimeInstancesAfterDeletion([old, other], old.runtimeId, successor), [other, successor])
+  assert.deepEqual(runtimeInstancesAfterDeletion([old, other, successor], old.runtimeId, successor), [other, successor])
+})
 
 const legacyRuntime = {
   connectorId: "connector-1",

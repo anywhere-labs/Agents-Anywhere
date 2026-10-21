@@ -6,7 +6,7 @@ from agent_server.app import create_app
 
 
 def _authenticated_client(tmp_path) -> tuple[TestClient, dict[str, str]]:
-    client = TestClient(create_app(tmp_path / "projects.sqlite3"))
+    client = TestClient(create_app())
     client.get("/auth/config")
     registered = client.post(
         "/auth/register",

@@ -82,13 +82,6 @@ def downgrade() -> None:
 
 
 def _alter_sequence_types(target_type: sa.types.TypeEngine) -> None:
-    bind = op.get_bind()
-    if bind.dialect.name == "sqlite":
-        # SQLite INTEGER storage is already a signed 64-bit value. Rebuilding
-        # these tables solely to change the declared type would add risk and no
-        # storage capability.
-        return
-
     source_type = (
         sa.Integer() if isinstance(target_type, sa.BigInteger) else sa.BigInteger()
     )
@@ -110,10 +103,8 @@ def _alter_sequence_types(target_type: sa.types.TypeEngine) -> None:
 
 
 def _backfill_sequence_watermarks() -> None:
-    bind = op.get_bind()
-    greatest = "MAX" if bind.dialect.name == "sqlite" else "GREATEST"
     high_expression = (
-        f"{greatest}(seq, updated_seq, last_read_seq, latest_turn_end_seq, "
+        "GREATEST(seq, updated_seq, last_read_seq, latest_turn_end_seq, "
         "timeline_reset_seq, COALESCE((SELECT MAX(t.updated_seq) "
         "FROM timeline_items AS t WHERE t.session_id = sessions.id), 0))"
     )

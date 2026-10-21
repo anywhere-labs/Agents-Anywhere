@@ -65,6 +65,36 @@ extension EnvironmentValues {
     }
 }
 
+/// Runs work only while the drawer rests closed over the page. The drawer
+/// flips its environment when a pan begins and ends; reading it here keeps
+/// that flip from re-evaluating the entire page body in the middle of motion.
+private struct SidebarDrawerSettledTask<ID: Equatable>: ViewModifier {
+    let id: ID
+    let action: (_ settled: Bool) async -> Void
+    @Environment(\.sidebarDrawerIsTransitioning) private var isTransitioning
+    @Environment(\.sidebarDrawerObscuresDetail) private var obscuresDetail
+
+    private struct Key: Equatable {
+        let id: ID
+        let settled: Bool
+    }
+
+    func body(content: Content) -> some View {
+        let settled = !isTransitioning && !obscuresDetail
+        content.task(id: Key(id: id, settled: settled)) { await action(settled) }
+    }
+}
+
+extension View {
+    /// Like `task(id:)`, restarted whenever the drawer settles or starts moving.
+    func sidebarDrawerSettledTask<ID: Equatable>(
+        id: ID,
+        _ action: @escaping (_ settled: Bool) async -> Void
+    ) -> some View {
+        modifier(SidebarDrawerSettledTask(id: id, action: action))
+    }
+}
+
 struct SidebarDrawer<SidebarHeader: View, SidebarContent: View, MainContent: View>: View {
     @Binding private var isOpen: Bool
 
@@ -154,7 +184,7 @@ private struct SidebarDrawerInteractive<
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @State private var progress: CGFloat
+    @State private var motion: SidebarDrawerMotion
     @State private var dragStartProgress: CGFloat?
     @State private var dragDisposition: DragDisposition?
     @State private var animationGeneration = 0
@@ -170,7 +200,7 @@ private struct SidebarDrawerInteractive<
         mainContent: MainContent
     ) {
         _isOpen = isOpen
-        _progress = State(initialValue: isOpen.wrappedValue ? 1 : 0)
+        _motion = State(initialValue: SidebarDrawerMotion(progress: isOpen.wrappedValue ? 1 : 0))
         self.configuration = configuration
         self.safeAreaInsets = safeAreaInsets
         self.sidebarHeader = sidebarHeader
@@ -185,9 +215,8 @@ private struct SidebarDrawerInteractive<
                 screenSize.width * configuration.revealFraction.clamped(to: 0.01 ... 1),
                 1
             )
-            let interaction = DrawerInteractionState(isOpen: isOpen, progress: progress,
+            let interaction = DrawerInteractionState(isOpen: isOpen, progress: motion.restingProgress,
                 isAnimating: isAnimating, isDragging: dragStartProgress != nil)
-            let closeRegion = SidebarDrawerCloseRegion(leadingEdge: revealWidth * progress)
 
             ZStack(alignment: .leading) {
                 drawerSystemBackground
@@ -195,30 +224,35 @@ private struct SidebarDrawerInteractive<
                 SidebarDrawerSidebar(
                     width: revealWidth,
                     safeAreaInsets: safeAreaInsets,
-                    scale: sidebarScale,
-                    overlayOpacity: sidebarOverlayOpacity,
                     edgeEffectStyle: configuration.sidebarHeaderEdgeEffectStyle,
                     header: sidebarHeader,
                     content: sidebarContent
                 )
+                .modifier(SidebarDrawerSidebarMotion(
+                    motion: motion,
+                    closedScale: configuration.sidebarClosedScale.clamped(to: 0 ... 1),
+                    overlayOpacity: configuration.sidebarOverlayOpacity.clamped(to: 0 ... 1)
+                ))
                 .allowsHitTesting(interaction.acceptsSidebarTouches)
                 .accessibilityHidden(!interaction.acceptsSidebarTouches)
 
                 SidebarDrawerMainCard(
                     size: screenSize,
                     isFullyClosed: interaction.acceptsContentTouches,
-                    progress: progress,
-                    offset: revealWidth * progress,
-                    overlayOpacity: contentOverlayOpacity,
                     content: mainContent
                 )
+                .modifier(SidebarDrawerCardMotion(
+                    motion: motion,
+                    isFullyClosed: interaction.acceptsContentTouches,
+                    revealWidth: revealWidth,
+                    overlayOpacity: configuration.contentOverlayOpacity.clamped(to: 0 ... 1)
+                ))
                 .allowsHitTesting(interaction.acceptsContentTouches)
                 .accessibilityHidden(!interaction.acceptsContentTouches)
 
                 // Only the screen-space strip occupied by the visible card
                 // closes the drawer. Its untranslated hit targets are disabled.
-                closeRegion.fill(.clear)
-                    .contentShape(.interaction, closeRegion)
+                SidebarDrawerCloseArea(motion: motion, revealWidth: revealWidth)
                     .onTapGesture(perform: closeFromOverlay)
                     .allowsHitTesting(interaction.acceptsSidebarTouches)
                     .accessibilityHidden(!interaction.acceptsSidebarTouches)
@@ -242,7 +276,7 @@ private struct SidebarDrawerInteractive<
 #if canImport(UIKit)
             .gesture(
                 SidebarDrawerPanGesture(
-                    progress: progress,
+                    progress: motion.restingProgress,
                     edgeActivationWidth: configuration.edgeActivationWidth,
                     onBegan: beginDirectionalPan,
                     onChanged: { translationX in
@@ -273,35 +307,22 @@ private struct SidebarDrawerInteractive<
         }
         .ignoresSafeArea()
         .environment(\.sidebarDrawerPresentation, .drawer)
-        .environment(\.sidebarDrawerObscuresDetail, isOpen || progress > 0.001)
+        .environment(\.sidebarDrawerObscuresDetail, isOpen || motion.restingProgress > 0)
         .environment(\.sidebarDrawerIsTransitioning, isAnimating || dragStartProgress != nil
-            || abs(progress - (isOpen ? 1 : 0)) > 0.001)
+            || motion.restingProgress != (isOpen ? 1 : 0))
         .sensoryFeedback(
             .impact(weight: .light, intensity: 1),
             trigger: feedbackTrigger
         )
     }
 
-    private var sidebarScale: CGFloat {
-        let closedScale = configuration.sidebarClosedScale.clamped(to: 0 ... 1)
-        return closedScale + ((1 - closedScale) * progress)
-    }
-
-    private var sidebarOverlayOpacity: CGFloat {
-        configuration.sidebarOverlayOpacity.clamped(to: 0 ... 1) * (1 - progress)
-    }
-
-    private var contentOverlayOpacity: CGFloat {
-        configuration.contentOverlayOpacity.clamped(to: 0 ... 1) * progress
-    }
-
     private var usesOpeningEdgeGestureRegion: Bool {
-        progress <= 0.001 || dragStartProgress.map { $0 <= 0.001 } == true
+        motion.restingProgress == 0 || dragStartProgress.map { $0 <= 0.001 } == true
     }
 
     private func beginDirectionalPan() {
         animationGeneration &+= 1
-        dragStartProgress = progress
+        dragStartProgress = motion.progress
     }
 
     private func updateDirectionalPan(translationX: CGFloat, revealWidth: CGFloat) {
@@ -311,7 +332,7 @@ private struct SidebarDrawerInteractive<
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            progress = nextProgress.clamped(to: 0 ... 1)
+            motion.move(to: nextProgress.clamped(to: 0 ... 1))
         }
     }
 
@@ -327,7 +348,7 @@ private struct SidebarDrawerInteractive<
         let projectedTranslation = translationX + (velocityX * 0.2)
         let projectedProgress = dragStartProgress + (projectedTranslation / revealWidth)
         let target = if cancelled {
-            progress >= 0.5 ? 1.0 : 0.0
+            motion.progress >= 0.5 ? 1.0 : 0.0
         } else {
             projectedProgress >= 0.5 ? 1.0 : 0.0
         }
@@ -355,7 +376,7 @@ private struct SidebarDrawerInteractive<
                 var transaction = Transaction(animation: nil)
                 transaction.disablesAnimations = true
                 withTransaction(transaction) {
-                    progress = nextProgress.clamped(to: 0 ... 1)
+                    motion.move(to: nextProgress.clamped(to: 0 ... 1))
                 }
             }
             .onEnded { value in
@@ -396,17 +417,17 @@ private struct SidebarDrawerInteractive<
         }
 
         animationGeneration &+= 1
-        dragStartProgress = progress
+        dragStartProgress = motion.progress
         dragDisposition = .horizontal
     }
 
     private func canBeginHorizontalDrag(_ value: DragGesture.Value) -> Bool {
-        if progress <= 0.001 {
+        if motion.progress <= 0.001 {
             return value.startLocation.x <= max(configuration.edgeActivationWidth, 0)
                 && value.translation.width > 0
         }
 
-        if progress >= 0.999 {
+        if motion.progress >= 0.999 {
             return value.translation.width < 0
         }
 
@@ -419,13 +440,13 @@ private struct SidebarDrawerInteractive<
     }
 
     private func closeFromOverlay() {
-        guard progress > 0.001 else { return }
+        guard motion.progress > 0.001 else { return }
         settle(to: 0, feedback: true)
     }
 
     private func synchronizeProgress(with open: Bool) {
         let target: CGFloat = open ? 1 : 0
-        guard abs(progress - target) > 0.001 else { return }
+        guard abs(motion.progress - target) > 0.001 else { return }
         settle(to: target, feedback: false)
     }
 
@@ -436,8 +457,8 @@ private struct SidebarDrawerInteractive<
         feedback: Bool
     ) {
         let target = rawTarget.clamped(to: 0 ... 1)
-        let shouldProvideFeedback = feedback && abs(progress - target) > 0.001
-        let remainingProgress = target - progress
+        let shouldProvideFeedback = feedback && abs(motion.progress - target) > 0.001
+        let remainingProgress = target - motion.progress
         let initialVelocity: Double = if abs(remainingProgress) > 0.001 {
             Double(progressVelocity / remainingProgress).clamped(to: -8 ... 8)
         } else {
@@ -456,7 +477,7 @@ private struct SidebarDrawerInteractive<
             guard generation == animationGeneration else { return }
 
             isAnimating = false
-            progress = target
+            motion.move(to: target)
             let targetIsOpen = target == 1
             if isOpen != targetIsOpen {
                 isOpen = targetIsOpen
@@ -467,7 +488,7 @@ private struct SidebarDrawerInteractive<
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) {
-                progress = target
+                motion.move(to: target)
             }
             completion()
         } else {
@@ -478,7 +499,7 @@ private struct SidebarDrawerInteractive<
                 ),
                 completionCriteria: .removed
             ) {
-                progress = target
+                motion.move(to: target)
             } completion: {
                 completion()
             }
@@ -617,8 +638,6 @@ private struct SidebarDrawerHeaderBar<Header: View>: View {
 private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
     let width: CGFloat
     let safeAreaInsets: EdgeInsets
-    let scale: CGFloat
-    let overlayOpacity: CGFloat
     let edgeEffectStyle: ScrollEdgeEffectStyle
     let header: Header
     let content: Content
@@ -636,28 +655,19 @@ private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
             .frame(width: width)
             .frame(maxHeight: .infinity, alignment: .leading)
             .background(drawerSystemBackground)
-            .overlay {
-                drawerSystemBackground
-                    .opacity(overlayOpacity)
-                    .allowsHitTesting(false)
-            }
-            .scaleEffect(scale, anchor: .leading)
     }
 }
 
 private struct SidebarDrawerMainCard<Content: View>: View {
     let size: CGSize
     let isFullyClosed: Bool
-    let progress: CGFloat
-    let offset: CGFloat
-    let overlayOpacity: CGFloat
     let content: Content
 
     var body: some View {
         // Once settled, cover the entire window and let the system clip its
         // outer corners. A second rounded edge can expose the sidebar beneath.
         // Keep the concentric card throughout every drag and spring frame.
-        let screenShape = ConcentricRectangle(corners: isFullyClosed ? .fixed(0) : .concentric)
+        let screenShape = SidebarDrawerCardShape.shape(isFullyClosed: isFullyClosed)
 
         content
             // The untransformed host supplies all original insets, including
@@ -667,31 +677,110 @@ private struct SidebarDrawerMainCard<Content: View>: View {
             .frame(width: size.width, height: size.height)
             .background(drawerSystemBackground, in: screenShape)
             .clipShape(screenShape)
+            .contentShape(screenShape)
+    }
+}
+
+private enum SidebarDrawerCardShape {
+    static func shape(isFullyClosed: Bool) -> ConcentricRectangle {
+        ConcentricRectangle(corners: isFullyClosed ? .fixed(0) : .concentric)
+    }
+}
+
+/// Drawer position, read only by the small render modifiers below. A pan
+/// sample then updates their effects without re-evaluating the drawer
+/// container, the page modifier chains, or anything that reads the drawer's
+/// environment. Code that only needs to know where the drawer rests reads
+/// `restingProgress`, which changes once per gesture instead of every frame.
+@MainActor @Observable final class SidebarDrawerMotion {
+    private(set) var progress: CGFloat
+    /// 0 when closed, 1 when fully open, 0.5 anywhere in between.
+    private(set) var restingProgress: CGFloat
+
+    init(progress: CGFloat) {
+        self.progress = progress
+        restingProgress = Self.resting(progress)
+    }
+
+    func move(to next: CGFloat) {
+        progress = next
+        let resting = Self.resting(next)
+        if restingProgress != resting { restingProgress = resting }
+    }
+
+    private static func resting(_ progress: CGFloat) -> CGFloat {
+        progress <= 0.001 ? 0 : progress >= 0.999 ? 1 : 0.5
+    }
+}
+
+private struct SidebarDrawerSidebarMotion: ViewModifier {
+    let motion: SidebarDrawerMotion
+    let closedScale: CGFloat
+    let overlayOpacity: CGFloat
+
+    func body(content: Content) -> some View {
+        let progress = motion.progress
+        content
+            .overlay {
+                drawerSystemBackground
+                    .opacity(overlayOpacity * (1 - progress))
+                    .allowsHitTesting(false)
+            }
+            .scaleEffect(closedScale + ((1 - closedScale) * progress), anchor: .leading)
+    }
+}
+
+private struct SidebarDrawerCardMotion: ViewModifier {
+    let motion: SidebarDrawerMotion
+    let isFullyClosed: Bool
+    let revealWidth: CGFloat
+    let overlayOpacity: CGFloat
+
+    func body(content: Content) -> some View {
+        let progress = motion.progress
+        let screenShape = SidebarDrawerCardShape.shape(isFullyClosed: isFullyClosed)
+
+        content
             .background {
                 // Shadow only the card shape. Compositing the entire conversation
                 // into an animated shadow layer repaints its text during a pan.
+                // Keep the drawn shadow constant and fade its layer: a changing
+                // radius re-blurs a full-screen shape on every frame.
                 screenShape.fill(drawerSystemBackground)
-                    .shadow(color: .black.opacity(0.28 * progress), radius: 18 * progress, x: -3 * progress, y: 0)
+                    .shadow(color: .black.opacity(0.28), radius: 18, x: -3, y: 0)
+                    .opacity(progress)
+                    .allowsHitTesting(false)
             }
-            .contentShape(screenShape)
+            // Constant fills with layer opacity composite without redrawing.
             .overlay {
                 screenShape
-                    .fill(.white.opacity(overlayOpacity))
+                    .fill(.white)
+                    .opacity(overlayOpacity * progress)
                     .allowsHitTesting(false)
             }
             .overlay {
                 screenShape
-                    .stroke(
-                        Color.primary.opacity(0.2 * progress),
-                        lineWidth: 1
-                    )
+                    .stroke(Color.primary.opacity(0.2), lineWidth: 1)
+                    .opacity(progress)
                     .allowsHitTesting(false)
             }
             // Ordinary offset still participates in descendant coordinates:
             // subpixel motion can round this 402-point column to 402 1/3 and
             // change paragraph wrapping. Keep the whole translation out of
             // layout, including every interpolated frame of the spring.
-            .modifier(SidebarDrawerTranslation(x: offset).ignoredByLayout())
+            .modifier(SidebarDrawerTranslation(x: revealWidth * progress).ignoredByLayout())
+    }
+}
+
+/// Screen-space strip occupied by the visible card while the drawer is open.
+private struct SidebarDrawerCloseArea: View {
+    let motion: SidebarDrawerMotion
+    let revealWidth: CGFloat
+
+    var body: some View {
+        let region = SidebarDrawerCloseRegion(leadingEdge: revealWidth * motion.progress)
+        region.fill(.clear)
+            .contentShape(.interaction, region)
     }
 }
 

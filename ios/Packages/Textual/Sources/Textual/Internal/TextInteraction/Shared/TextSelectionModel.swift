@@ -37,15 +37,52 @@
     @ObservationIgnored
     private weak var coordinator: TextSelectionCoordinator?
 
+    /// Whether the interaction currently reads `Text.LayoutKey`.
+    ///
+    /// Reading it makes SwiftUI re-query the text layout of every fragment whenever the text
+    /// moves, for example on each scroll or parent translation frame. On-demand models read it
+    /// only while a selection or a tap needs text positions.
+    private(set) var readsLayout: Bool
+
+    @ObservationIgnored
+    let readsLayoutOnDemand: Bool
+
+    @ObservationIgnored
+    private var pendingLayoutAction: ((TextSelectionModel) -> Void)?
+
     init(
       layoutCollection: any TextLayoutCollection = EmptyTextLayoutCollection(),
-      coordinator: TextSelectionCoordinator? = nil
+      coordinator: TextSelectionCoordinator? = nil,
+      readsLayoutOnDemand: Bool = false
     ) {
       self.layoutCollection = layoutCollection
+      self.readsLayoutOnDemand = readsLayoutOnDemand
+      self.readsLayout = !readsLayoutOnDemand
       setCoordinator(coordinator)
     }
 
+    /// Runs `action` once a layout collection is available, starting to read layouts if needed.
+    func withLayout(_ action: @escaping (TextSelectionModel) -> Void) {
+      if readsLayout && hasText {
+        action(self)
+        return
+      }
+      pendingLayoutAction = action
+      if !readsLayout {
+        readsLayout = true
+      }
+    }
+
+    /// Stops reading layouts when nothing needs text positions.
+    func releaseLayoutIfIdle() {
+      guard readsLayoutOnDemand, readsLayout, selectedRange == nil, pendingLayoutAction == nil
+      else { return }
+      readsLayout = false
+      layoutCollection = EmptyTextLayoutCollection()
+    }
+
     func setLayoutCollection(_ layoutCollection: any TextLayoutCollection) {
+      defer { performPendingLayoutAction() }
       guard !layoutCollection.isEqual(to: self.layoutCollection) else {
         return
       }
@@ -67,6 +104,12 @@
       } else if !layoutCollection.contains(selectedRange) {
         self.selectedRange = nil
       }
+    }
+
+    private func performPendingLayoutAction() {
+      guard readsLayout, let action = pendingLayoutAction else { return }
+      pendingLayoutAction = nil
+      action(self)
     }
 
     func setCoordinator(_ coordinator: TextSelectionCoordinator?) {

@@ -147,6 +147,7 @@ class RuntimeRpcHandler:
                     "runtimeId": parsed.runtime_id,
                     "status": entry.status,
                     **({"error": dict(entry.error)} if entry.error is not None else {}),
+                    **({"phase": dict(entry.phase)} if entry.phase is not None else {}),
                 },
             )
         if method == "runtime.stop":

@@ -67,6 +67,7 @@ import com.agentsanywhere.app.feature.sessions.listIndicator
 import com.agentsanywhere.app.feature.sessions.pinnedSessions
 import com.agentsanywhere.app.feature.sessions.recentSessions
 import com.agentsanywhere.app.model.AgentDevice
+import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.ui.designsystem.AuthErrorNotice
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
@@ -74,7 +75,6 @@ import com.agentsanywhere.app.ui.screens.common.AppEmptyState
 import com.agentsanywhere.app.ui.screens.devices.DeviceRow
 import com.agentsanywhere.app.ui.screens.devices.sortedForDevicesPage
 import com.composables.icons.lucide.ChevronDown
-import com.composables.icons.lucide.List as ListIcon
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Monitor
 import com.composables.icons.lucide.Plus
@@ -133,6 +133,8 @@ internal fun HomeList(
         )
         else -> SessionList(
             sessions = sessions,
+            projects = state.projects,
+            devices = state.devices,
             hasMore = if (tab == HomeTab.Active) state.activeHasMore else state.archivedHasMore,
             isLoadingMore = if (tab == HomeTab.Active) state.isLoadingMoreActive else state.isLoadingMoreArchived,
             onLoadMore = { onLoadMore(tab) },
@@ -236,6 +238,8 @@ private fun SkeletonLine(
 @Composable
 private fun SessionList(
     sessions: List<AgentSession>,
+    projects: List<AgentProject>,
+    devices: List<AgentDevice>,
     hasMore: Boolean,
     isLoadingMore: Boolean,
     onLoadMore: () -> Unit,
@@ -246,6 +250,8 @@ private fun SessionList(
     var recentExpanded by remember { mutableStateOf(true) }
     val pinned = remember(sessions) { SessionsState(sessions = sessions).pinnedSessions }
     val recent = remember(sessions) { SessionsState(sessions = sessions).recentSessions }
+    val projectsById = remember(projects) { projects.associateBy { it.id } }
+    val devicesById = remember(devices) { devices.associateBy { it.id } }
     val listState = rememberLazyListState()
     val shouldLoadMore by remember(listState, hasMore, isLoadingMore) {
         derivedStateOf {
@@ -278,8 +284,12 @@ private fun SessionList(
                 item("pinned-empty") { SectionEmptyText(stringResource(R.string.home_no_pinned_sessions)) }
             } else {
                 items(pinned, key = { "pinned-${it.id}" }) { session ->
-                    HomePinnedSessionRow(
+                    HomeSessionRow(
                         session = session,
+                        contextLabel = session.sidebarContextLabel(
+                            projectName = projectsById[session.projectId]?.name,
+                            deviceName = devicesById[session.connectorId]?.name,
+                        ),
                         showDivider = session.id != pinned.lastOrNull()?.id,
                         onClick = { onOpenSession(session) },
                         onLongPress = { bounds -> onSessionLongPress(session, bounds) },
@@ -299,8 +309,12 @@ private fun SessionList(
                 item("recent-empty") { SectionEmptyText(stringResource(R.string.home_no_recent_sessions)) }
             } else {
                 items(recent, key = { "recent-${it.id}" }) { session ->
-                    HomeRecentSessionRow(
+                    HomeSessionRow(
                         session = session,
+                        contextLabel = session.sidebarContextLabel(
+                            projectName = projectsById[session.projectId]?.name,
+                            deviceName = devicesById[session.connectorId]?.name,
+                        ),
                         onClick = { onOpenSession(session) },
                         onLongPress = { bounds -> onSessionLongPress(session, bounds) },
                     )
@@ -426,92 +440,72 @@ private fun HomeSectionHeader(
 }
 
 @Composable
-internal fun HomePinnedSessionRow(
+internal fun HomeSessionRow(
     session: AgentSession,
-    showDivider: Boolean,
+    contextLabel: String,
+    showDivider: Boolean = true,
     onClick: () -> Unit,
     onLongPress: (Rect) -> Unit,
 ) {
-    val indicator = session.listIndicator()
-    val subtitle = listOf(session.runtimeContextLabel, session.workspaceLabel)
-        .filter { it.isNotBlank() }
-        .joinToString("  ·  ")
-
     HomeSessionRowShell(
         height = 66.dp,
         showDivider = showDivider,
         onClick = onClick,
         onLongPress = onLongPress,
     ) {
-        SessionRowLeading(indicator = indicator)
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(
-                text = session.title.sessionDisplayTitle(),
-                color = LocalAAColors.current.inkSoft,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                lineHeight = 20.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = subtitle,
-                color = LocalAAColors.current.faint,
-                fontSize = 11.2.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        SessionRowTrailing(session = session, indicator = indicator, timeColor = LocalAAColors.current.faint)
+        HomeSessionRowContent(
+            session = session,
+            contextLabel = contextLabel,
+            titleColor = LocalAAColors.current.inkSoft,
+            metaColor = LocalAAColors.current.faint,
+        )
     }
 }
 
 @Composable
-internal fun HomeRecentSessionRow(
+internal fun RowScope.HomeSessionRowContent(
     session: AgentSession,
-    onClick: () -> Unit,
-    onLongPress: (Rect) -> Unit,
+    contextLabel: String,
+    titleColor: Color,
+    metaColor: Color,
 ) {
     val indicator = session.listIndicator()
-    HomeSessionRowShell(height = 52.dp, onClick = onClick, onLongPress = onLongPress) {
-        SessionRowLeading(indicator = indicator)
+    Box(modifier = Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+        SessionAgentIcon(runtime = session.runtime, runtimeType = session.runtimeType)
+    }
+    Column(
+        modifier = Modifier.weight(1f),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
         Text(
             text = session.title.sessionDisplayTitle(),
-            modifier = Modifier.weight(1f),
-            color = LocalAAColors.current.inkSoft,
+            color = titleColor,
             fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
             lineHeight = 20.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        SessionRowTrailing(session = session, indicator = indicator, timeColor = LocalAAColors.current.faint)
-    }
-}
-
-@Composable
-internal fun SessionRowLeading(indicator: SessionListIndicator) {
-    Box(
-        modifier = Modifier.size(20.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        when (indicator) {
-            SessionListIndicator.Busy,
-            SessionListIndicator.Unread -> SessionStatusIndicator(indicator = indicator)
-
-            SessionListIndicator.WaitingApproval,
-            SessionListIndicator.None -> Icon(
-                imageVector = Lucide.ListIcon,
-                contentDescription = null,
-                tint = LocalAAColors.current.faint,
-                modifier = Modifier.size(14.dp),
+        if (contextLabel.isNotBlank()) {
+            Text(
+                text = contextLabel,
+                color = metaColor,
+                fontSize = 11.2.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
+    SessionRowTrailing(session = session, indicator = indicator, timeColor = metaColor)
+}
+
+internal fun AgentSession.sidebarContextLabel(projectName: String?, deviceName: String?): String {
+    val projectLabel = projectName?.takeIf { it.isNotBlank() }
+        ?: cwd?.split('/', '\\')?.lastOrNull { it.isNotBlank() }
+        ?: workspaceLabel
+    val deviceLabel = deviceName?.takeIf { it.isNotBlank() } ?: this.deviceName
+    return listOf(deviceLabel, projectLabel).filter { it.isNotBlank() }.joinToString(" · ")
 }
 
 @Composable
@@ -524,9 +518,10 @@ internal fun SessionRowTrailing(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (indicator == SessionListIndicator.WaitingApproval) {
+        if (indicator != SessionListIndicator.None) {
             SessionStatusIndicator(indicator = indicator)
-        } else {
+        }
+        if (indicator != SessionListIndicator.WaitingApproval) {
             Text(
                 text = session.updatedAtLabel.ifBlank { "now" },
                 color = timeColor,

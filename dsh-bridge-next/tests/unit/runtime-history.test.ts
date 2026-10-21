@@ -6,6 +6,7 @@ import { contentHash, sessionId, itemId } from '../../src/host/dsh-runtime/ident
 import { RuntimeRouter } from '../../src/host/dsh-runtime/router.js'
 import { decodeModelSelection, decodePermissionSelection, modelSelectionId, permissionSelectionId } from '../../src/host/dsh-runtime/selections.js'
 import { readFile } from 'node:fs/promises'
+import { createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 
 function log(events: { type: string, data: unknown }[]): SessionLogSnapshot {
   return { session: { id: 'native', version: 0, createdAt: 0, isSeeded: false }, inheritedEventCount: 0,
@@ -17,6 +18,93 @@ const assistant = (content: unknown[], interrupted = false) => ({ type: 'assista
   turn: 1, step: 1, interrupted, message: { id: 'assistant', role: 'assistant',
     source: { kind: 'model', provider: 'test', model: 'test', replayState: { secret: 'never expose' } }, content },
 } })
+
+test('live and cold history normalize lone surrogates before hashing without changing native events', () => {
+  const text = '中文 👇 \udc47 \ud83d end'
+  const expected = '中文 👇 � � end'
+  const result = createToolResultMessage({ callId: ToolCallId(call.id),
+    content: [{ type: 'text', text }], isError: false })
+  const snapshot = log([...start, assistant([call]),
+    { type: 'tool/result', data: { turn: 1, step: 1, message: result } },
+    assistant([{ type: 'text', text }]),
+  ])
+  const original = JSON.stringify(snapshot)
+  const projection = createProjection('native', 'platform', true)
+  for (const event of snapshot.events) {
+    projection.apply(event)
+    for (const item of projection.drain().items) {
+      assert.equal(item.contentHash, contentHash(item))
+    }
+  }
+  const items = projection.snapshot()
+  const tool = items.find(item => item.type === 'tool')!
+  assert.equal(tool.content.output, expected)
+  assert.deepEqual(tool.content.result, [{ type: 'text', text: expected }])
+  assert.equal(items.find(item => item.type === 'message')?.content.text, expected)
+  assert.deepEqual(items, projectHistory(snapshot, 'platform'))
+  assert.equal(JSON.stringify(snapshot), original)
+})
+
+test('normalizing a partial streaming surrogate does not corrupt the completed emoji', () => {
+  const snapshot = log([...start,
+    { type: 'assistant/chunk', data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: '\ud83d' } } },
+    { type: 'assistant/chunk', data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: '\udc47' } } },
+    assistant([{ type: 'text', text: '👇' }]),
+  ])
+  const projection = createProjection('native', 'platform')
+  for (const event of snapshot.events.slice(0, 3)) projection.apply(event)
+  const partial = projection.drain().items.find(item => item.type === 'message')!
+  assert.equal(partial.content.text, '�')
+  projection.apply(snapshot.events[3]!)
+  const complete = projection.drain().items.find(item => item.type === 'message')!
+  assert.equal(complete.id, partial.id)
+  assert.equal(complete.content.text, '👇')
+  for (const event of snapshot.events.slice(4)) projection.apply(event)
+  assert.deepEqual(projection.snapshot(), projectHistory(snapshot, 'platform'))
+})
+
+test('rc.7 tool messages preserve call identity, all result blocks, empty output and failures in live and cold history', () => {
+  for (const content of [[], [{ type: 'text' as const, text: 'first' }, { type: 'text' as const, text: 'second' }]]) {
+    for (const isError of [false, true]) {
+      const message = createToolResultMessage({ callId: ToolCallId(call.id), content, isError })
+      const snapshot = log([...start, assistant([call]),
+        { type: 'tool/result', data: { turn: 1, step: 1, message } }])
+      const p = createProjection('native', 'platform')
+      for (const event of snapshot.events.slice(0, -1)) p.apply(event)
+      const pending = p.drain().items.find(item => item.type === 'tool')!
+      p.apply(snapshot.events.at(-1)!)
+      const completed = p.drain().items.find(item => item.type === 'tool')!
+      assert.equal(completed.id, pending.id)
+      assert.equal(completed.status, isError ? 'failed' : 'done')
+      assert.equal(completed.content.output, content.map(block => block.text).join('\n'))
+      assert.deepEqual(completed.content.result, content)
+      assert.equal(p.snapshot().filter(item => item.type === 'tool').length, 1)
+      assert.deepEqual(p.snapshot(), projectHistory(snapshot, 'platform'))
+    }
+  }
+})
+
+test('rc.7 PTC sub-calls preserve running state, parent links and structured errors', () => {
+  const data = { rootCallId: 'root', parentCallId: 'parent', subCallId: 'parent:ptc:1', name: 'bash', arguments: { command: 'pwd' } }
+  const error = { name: 'ToolError', code: 'DENIED', reason: 'restricted' }
+  const snapshot = log([...start,
+    { type: 'tool/ptc-dispatch-start', data },
+    { type: 'tool/ptc-dispatch', data: { ...data, isError: true, content: [{ type: 'text', text: 'denied' }], error } },
+  ])
+  const p = createProjection('native', 'platform')
+  for (const event of snapshot.events.slice(0, -1)) p.apply(event)
+  const pending = p.drain().items.find(item => item.type === 'tool')!
+  assert.equal(pending.status, 'running')
+  p.apply(snapshot.events.at(-1)!)
+  const completed = p.drain().items.find(item => item.type === 'tool')!
+  assert.equal(completed.id, pending.id)
+  assert.equal(completed.status, 'failed')
+  assert.equal(completed.content.output, 'denied')
+  assert.equal(completed.content.parentItemId, itemId('native', 'tool', 'parent'))
+  assert.equal(completed.content.rootCallId, 'root')
+  assert.deepEqual(completed.content.error, error)
+  assert.deepEqual(p.snapshot(), projectHistory(snapshot, 'platform'))
+})
 
 test('folds tool blocks, calls and user-role results into one canonical tool item', () => {
   const snapshot = log([...start,
@@ -162,6 +250,20 @@ test('canonical identities and hashes match the shared cross-language fixtures',
   }
   for (const entry of fixture.timelineIds) assert.equal(itemId(entry.externalSessionId, entry.projectionKind, entry.businessId), entry.itemId)
   for (const entry of fixture.contentHashes) assert.equal(contentHash(entry), entry.contentHash)
+  const rawItem = {
+    type: 'tool' as const,
+    status: 'done' as const,
+    role: 'assistant',
+    content: {
+      kind: 'tool_call',
+      title: 'bash',
+      omitted: undefined,
+      nested: { keep: 1, drop: undefined },
+      items: ['a', undefined, 'b'],
+    } as unknown as Record<string, null>,
+  }
+  const transportedItem = JSON.parse(JSON.stringify(rawItem))
+  assert.equal(contentHash(rawItem), contentHash(transportedItem))
 })
 
 test('read cursors capture one complete inventory and truncated snapshots are never marked complete', async () => {
@@ -173,11 +275,11 @@ test('read cursors capture one complete inventory and truncated snapshots are ne
     readSession: async () => snapshot,
   }, status: () => undefined }, 'instance')
   const params = { sessionId: sessionId('instance', 'native'), externalSessionId: 'native' }
-  const limited = await router.request('session.getSnapshot', { ...params, limit: 1 }, new AbortController().signal) as { complete: boolean, items: unknown[] }
+  const limited = await router.request('getSessionSnapshot', { ...params, limit: 1 }, new AbortController().signal) as { complete: boolean, items: unknown[] }
   assert.equal(limited.complete, false)
   assert.equal(limited.items.length, 1)
-  await assert.rejects(router.request('session.startTurn', params, new AbortController().signal), { code: 'UNSUPPORTED_OPERATION' })
-  await assert.rejects(router.request('session.getSnapshot', { ...params, sessionId: 'foreign' }, new AbortController().signal), /namespace/)
+  await assert.rejects(router.request('startTurn', params, new AbortController().signal), { code: 'UNSUPPORTED_OPERATION' })
+  await assert.rejects(router.request('getSessionSnapshot', { ...params, sessionId: 'foreign' }, new AbortController().signal), /namespace/)
 })
 
 

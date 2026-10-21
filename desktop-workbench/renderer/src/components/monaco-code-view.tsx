@@ -23,6 +23,7 @@ declare global {
 type MonacoCodeViewProps = {
   className?: string
   content: string
+  documentKey?: string
   editable?: boolean
   fileName?: string
   language?: string
@@ -35,6 +36,7 @@ type MonacoCodeViewProps = {
 export function MonacoCodeView({
   className,
   content,
+  documentKey,
   editable = false,
   fileName,
   language,
@@ -44,82 +46,92 @@ export function MonacoCodeView({
   style,
 }: MonacoCodeViewProps) {
   const hostRef = React.useRef<HTMLDivElement | null>(null)
-  const onChangeRef = React.useRef(onChange)
-  const onReadyRef = React.useRef(onReady)
-
-  React.useEffect(() => {
-    onChangeRef.current = onChange
-    onReadyRef.current = onReady
-  }, [onChange, onReady])
+  const latest = React.useRef({ content, documentKey, editable, fileName, language, options, onChange, onReady })
+  latest.current = { content, documentKey, editable, fileName, language, options, onChange, onReady }
+  const syncRef = React.useRef<(() => void) | null>(null)
 
   React.useEffect(() => {
     const host = hostRef.current
     if (!host) return
-    let editor: import("monaco-editor").editor.IStandaloneCodeEditor | null = null
-    let disposed = false
-    let cleanup = () => {
-      if (disposed) return
-      disposed = true
-      safeDispose(() => editor?.getModel()?.dispose())
-      safeDispose(() => editor?.dispose())
-    }
     let cancelled = false
-    ;(async () => {
+    let cleanup = () => {}
+    void (async () => {
       const monaco = await import("monaco-editor")
       await loadMonacoLanguages()
       if (cancelled) return
       configureMonacoEnvironment()
       defineMonacoThemes(monaco)
-      const model = monaco.editor.createModel(content, monacoLanguageForName(language) ?? monacoLanguageForFile(fileName ?? ""))
-      editor = monaco.editor.create(host, {
-        model,
+      const editor = monaco.editor.create(host, {
+        model: null,
         automaticLayout: true,
         contextmenu: true,
         lineNumbers: "on",
         minimap: { enabled: false },
-        readOnly: !editable,
         scrollBeyondLastLine: false,
         smoothScrolling: true,
         theme: currentMonacoTheme(),
         wordWrap: "off",
-        ...options,
+        ...latest.current.options,
+        readOnly: !latest.current.editable,
       })
-      const wheelCleanup = containMonacoWheel(host, editor)
-      const themeObserver = new MutationObserver(() => {
-        monaco.editor.setTheme(currentMonacoTheme())
-      })
-      themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] })
-      const changeDisposable = editor.onDidChangeModelContent(() => onChangeRef.current?.(editor?.getValue() ?? content))
-      cleanup = () => {
-        if (disposed) return
-        disposed = true
-        safeDispose(() => changeDisposable.dispose())
-        safeDispose(wheelCleanup)
-        safeDispose(() => themeObserver.disconnect())
-        safeDispose(() => model.dispose())
-        safeDispose(() => editor?.dispose())
-      }
-      onReadyRef.current?.({
-        getValue: () => editor?.getValue() ?? content,
-        focus: () => editor?.focus(),
-        openSearch: () => {
-          editor?.getAction("actions.find")?.run()
-        },
+      let previous: typeof latest.current | null = null
+      let switchingModel = false
+      let disposed = false
+      const api: MonacoCodeViewApi = {
+        getValue: () => editor.getValue(),
+        focus: () => editor.focus(),
+        openSearch: () => { void editor.getAction("actions.find")?.run() },
         revealPosition: (position) => {
-          if (!editor) return
-          const target = model.validatePosition(position)
+          const target = editor.getModel()?.validatePosition(position)
+          if (!target) return
           editor.setPosition(target)
           editor.revealPositionInCenter(target, monaco.editor.ScrollType.Immediate)
         },
-        destroy: cleanup,
+        destroy: () => cleanup(),
+      }
+      syncRef.current = () => {
+        if (disposed) return
+        const next = latest.current
+        const changed = !previous || previous.documentKey !== next.documentKey
+          || previous.content !== next.content || previous.fileName !== next.fileName || previous.language !== next.language
+        if (changed) {
+          const oldModel = editor.getModel()
+          const model = monaco.editor.createModel(next.content, monacoLanguageForName(next.language) ?? monacoLanguageForFile(next.fileName ?? ""))
+          switchingModel = true
+          editor.setModel(model)
+          switchingModel = false
+          oldModel?.dispose()
+        }
+        editor.updateOptions({ ...next.options, readOnly: !next.editable })
+        if (changed) next.onReady?.(api)
+        if (next.editable && !previous?.editable) editor.focus()
+        previous = next
+      }
+      const wheelCleanup = containMonacoWheel(host, editor)
+      const themeObserver = new MutationObserver(() => monaco.editor.setTheme(currentMonacoTheme()))
+      themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] })
+      const changeDisposable = editor.onDidChangeModelContent(() => {
+        if (!switchingModel) latest.current.onChange?.(editor.getValue())
       })
-      if (editable) window.setTimeout(() => editor?.focus(), 0)
+      cleanup = () => {
+        if (disposed) return
+        disposed = true
+        syncRef.current = null
+        safeDispose(() => changeDisposable.dispose())
+        safeDispose(wheelCleanup)
+        themeObserver.disconnect()
+        safeDispose(() => editor.getModel()?.dispose())
+        safeDispose(() => editor.dispose())
+      }
+      syncRef.current()
     })()
     return () => {
       cancelled = true
       cleanup()
     }
-  }, [content, editable, fileName, language, options])
+  }, [])
+
+  React.useEffect(() => { syncRef.current?.() }, [content, documentKey, editable, fileName, language, options])
 
   return <div ref={hostRef} className={cn("aa-monaco-code-view overscroll-contain", className)} style={style} />
 }

@@ -23,13 +23,16 @@ final class V2SessionRuntimeModel {
         return capability.supported && capability.available && capability.allowed
     }
 
-    func update(_ data: V2SessionData?, connected: Bool) {
+    /// Returns whether the notice list changed, so forms are rebuilt only then.
+    @discardableResult func update(_ data: V2SessionData?, connected: Bool) -> Bool {
         if state != data?.state { state = data?.state }
         if capabilities != data?.capabilities { capabilities = data?.capabilities }
         let notices = data?.notices ?? []
-        if self.notices != notices { self.notices = notices }
+        let noticesChanged = self.notices != notices
+        if noticesChanged { self.notices = notices }
         let fresh = connected && data?.liveStateIsFresh == true
         if isFresh != fresh { isFresh = fresh }
+        return noticesChanged
     }
 }
 
@@ -96,6 +99,7 @@ final class V2SessionModel: Identifiable {
     }
     var draftAttachmentIDs: [V2AttachmentID] = []
     @ObservationIgnored private weak var repository: V2SessionRepository?
+    @ObservationIgnored private var rowsByID: [V2TimelineItemID: V2TimelineItemModel] = [:]
 
     init(id: V2SessionID, scope: V2ClientScope, repository: V2SessionRepository) {
         self.id = id; self.scope = scope; self.repository = repository
@@ -175,7 +179,9 @@ final class V2SessionModel: Identifiable {
             try await upload?(pending)
             guard isValid, !Task.isCancelled else { throw CancellationError() }
             attachmentPreviews.remember(pending.attachments, clientID: pending.id)
-            await repository.flushCache()
+            // The staged bubble must be durable before the request leaves, but
+            // only this session's archive needs writing, not every cached one.
+            await repository.flushCache(sessionID: id)
             guard isValid, !Task.isCancelled else { throw CancellationError() }
             didSubmit = true
             _ = try await repository.send(sessionId: id, content: content, attachmentIDs: pending.attachmentIDs, clientMessageID: pending.id)
@@ -213,18 +219,32 @@ final class V2SessionModel: Identifiable {
         if connection != observation.connection { connection = observation.connection }
         if self.network != network { self.network = network }
         if failure != observation.error { failure = observation.error }
-        runtime.update(data, connected: connection == .connected)
-        notices.update(runtime.notices, sessionID: id)
+        if runtime.update(data, connected: connection == .connected) { notices.update(runtime.notices, sessionID: id) }
         if hasOlderItems != (data?.hasOlderItems ?? false) { hasOlderItems = data?.hasOlderItems ?? false }
         if hasNewerItems != (data?.hasNewerItems ?? false) { hasNewerItems = data?.hasNewerItems ?? false }
-        let existing = Dictionary(uniqueKeysWithValues: timeline.map { ($0.id, $0) })
-        let rows = (data?.items ?? []).map { item in
-            let row = existing[item.id] ?? V2TimelineItemModel(item)
-            row.update(item)
-            return row
+        // A streamed token updates one existing row. Keep the id index across
+        // ticks and only republish the array when membership or order changed.
+        let items = data?.items ?? []
+        var rows: [V2TimelineItemModel] = []
+        rows.reserveCapacity(items.count)
+        var orderChanged = items.count != timeline.count
+        for (index, item) in items.enumerated() {
+            let row: V2TimelineItemModel
+            if let existing = rowsByID[item.id] {
+                row = existing
+                existing.update(item)
+            } else {
+                row = V2TimelineItemModel(item)
+                rowsByID[item.id] = row
+            }
+            if !orderChanged, timeline[index] !== row { orderChanged = true }
+            rows.append(row)
         }
-        if timeline.map(\.id) != rows.map(\.id) { timeline = rows }
-        for item in data?.items ?? [] { confirmEcho(item) }
+        if orderChanged {
+            timeline = rows
+            rowsByID = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
+        }
+        if !pendingMessages.isEmpty { for item in items { confirmEcho(item) } }
         if let id = awaitingReplyID, let data {
             let agentStarted = data.liveStateIsFresh && [.running, .waiting, .pending, .error].contains(data.state?.status ?? .unknown)
             let user = data.items.first { $0.role == .user && $0.source["clientMessageId"]?.stringValue == id }
@@ -254,7 +274,7 @@ final class V2SessionModel: Identifiable {
         draft = pending.content; composer.attachments = pending.attachments; draftAttachmentIDs = pending.attachmentIDs
         pending.didRestoreDraft = true
         composer.isFocused = true
-        repository?.draftDidChange()
+        repository?.draftDidChange(sessionID: id)
         return true
     }
 
@@ -275,7 +295,7 @@ final class V2SessionModel: Identifiable {
 
     func invalidate() {
         runtime.update(nil, connected: false)
-        metadata = nil; timeline = []; pendingMessages = []; awaitingReplyID = nil; draft = ""; draftAttachmentIDs = []
+        metadata = nil; timeline = []; rowsByID = [:]; pendingMessages = []; awaitingReplyID = nil; draft = ""; draftAttachmentIDs = []
         composer.invalidate()
         attachmentPreviews.clear()
         notices.clear()

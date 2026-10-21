@@ -69,6 +69,7 @@ import {
 import {
   addableRuntimeTypes,
   configuredRuntimeInstances,
+  runtimeInstancesAfterDeletion,
   namedInstanceRequiredConfigFields,
   runtimeInstanceName,
   runtimeTypeName,
@@ -76,6 +77,8 @@ import {
 import {
   runtimeErrorCode,
   runtimeErrorReason,
+  runtimePhaseMessage,
+  runtimeShowsErrorBadge,
   runtimeIsNotStarted,
   runtimeStatusTone,
 } from "@/features/dashboard/runtime-status-presentation"
@@ -289,6 +292,7 @@ function runtimeListKey(runtimes: DeviceRuntimeView[]) {
       runtime.available,
       runtime.updatedAt,
       runtimeErrorCode(runtime) ?? "",
+      typeof runtime.phase?.code === "string" ? runtime.phase.code : "",
     ].join(":"))
     .sort()
     .join("|")
@@ -702,7 +706,7 @@ export function DevicePage() {
         connector.id,
         removeRuntime.runtimeId,
       )
-      replaceRuntime(response)
+      setRuntimes((current) => runtimeInstancesAfterDeletion(current, removeRuntime.runtimeId, response))
       setRemoveRuntime(null)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("deleteRuntimeConfigFailed"))
@@ -915,7 +919,12 @@ export function DevicePage() {
                               <Badge variant="outline" className="shrink-0 font-normal">
                                 {runtimeStatusLabel(runtime)}
                               </Badge>
-                              {runtime.error ? (
+                              {runtime.status === "starting" && runtimePhaseMessage(runtime) ? (
+                                <span className="truncate text-xs text-muted-foreground">
+                                  {runtimePhaseMessage(runtime)}
+                                </span>
+                              ) : null}
+                              {runtimeShowsErrorBadge(runtime) ? (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Badge

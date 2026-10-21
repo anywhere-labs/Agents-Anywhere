@@ -37,9 +37,27 @@ Semantic error and availability colors remain separate from the primary color.
   The app opts into iPhone ProMotion refresh rates; the system still chooses the
   actual cadence. This is not a measured 120 FPS guarantee.
 - `SessionTimelinePresentation` stages received projections separately from
-  observable rows. It publishes at 30 Hz while work is pending; static history
-  does not keep a polling clock awake. New glyphs use a 240 ms opacity, blur and
-  vertical reveal. Initial history and recovery snapshots do not replay reveals.
+  observable rows. Streamed text waits in that buffer while the previous batch
+  reveals; when the reveal ends (240 ms plus one frame) everything received
+  since goes on screen as the next batch. Text after a pause shows at once, at
+  most one batch animates, and layout lands between animations. Static history
+  does not keep a clock awake. New glyphs use a 240 ms opacity, blur and
+  vertical reveal; the Settings toggle “Reveal animation” turns that into a
+  plain opacity fade with no blur layer. Each batch's glyphs draw as one layer with one blur. A block's
+  drawing clock runs at up to 60 fps and only until its newest glyphs finish;
+  blocks compare by a digest hashed on the parse worker, not character by
+  character on the main actor. Initial history and recovery snapshots do not
+  replay reveals. A block that has streamed keeps its renderer branch (paused)
+  when a tool wait or thinking pause ends the reveal, so the pause does not
+  rebuild its Text subtree. Code blocks that are already highlighted wait
+  350 ms of quiet before Prism re-tokenizes them.
+- One socket frame is decoded once, off the main actor, and merged into the
+  projection in place; `V2SessionModel`, the presentation rows and the timeline
+  views compare items by identity fields, so an appended token touches only its
+  own row. Tool/marker rows cache their parsed presentation per item version.
+  Streamed Markdown re-parses only the text after the last safe boundary (a
+  blank line outside fences that cannot continue a list); earlier blocks keep
+  their parsed content and identity across batches.
 - Pending user-message removal and authoritative echo insertion happen in the
   same presentation tick. `MarkdownBlockLayout` measures and places each stable
   block with the parent's proposed column width. Its layout-local height cache
@@ -62,7 +80,7 @@ Semantic error and availability colors remain separate from the primary color.
   flag; recovery updates cannot reinsert rows before its pagination boundary.
   Opening reveals the window when the initial projection is
   ready, and animates to the native bottom edge. It never pages backward to
-  find a user message. Spinner dismissal and the 30 Hz presentation clock do not wait
+  find a user message. Spinner dismissal and the batch presentation clock do not wait
   for scroll/layout acknowledgements; there is no frozen opening snapshot or
   positioning retry loop. Network failures still offer Retry.
 - `TimelineScrollState` owns three navigation modes: reading, following and
@@ -72,7 +90,7 @@ Semantic error and availability colors remain separate from the primary color.
   later manual reading back down. Command IDs stop interrupted/old completions
   from releasing a newer target. Layout changes are
   coalesced for 24 ms, and offset callbacks cannot reissue the same target. The
-  30 Hz token presentation and spring scroll animation remain independent.
+  batched token presentation and spring scroll animation remain independent.
 - Two native visibility probes overlap the existing tail spacer. The 2-point end
   marker decides arrival; the 96-point region hides the small borderless “到底部”
   pill before the reader reaches the exact end. The end marker wins if callbacks
@@ -311,6 +329,14 @@ while preserving the draft. The project sheet creates/renames projects and reuse
 the existing half-height file browser to choose a directory. Canonical directory
 reuse requires confirmation before the endpoint can change the existing name.
 
+The welcome title is the target device's name, and the detail names the Agent
+("使用 Codex …"). Both names are underlined and open the target picker. The
+directory picker sits directly above the composer, aligned with its leading
+edge in both collapsed and expanded states. The
+toolbar has a file browser for the selected device and directory and a "…"
+menu to change the target or directory, open the device's details page or copy
+its ID.
+
 Project creation is available for a known device even when that device is offline
 using a typed absolute path; browsing requires it online. Starting a session also
 requires phone connectivity, a ready instance, fresh preparation and valid model/
@@ -537,7 +563,7 @@ Verified on 2026-09-06, without starting a server or simulator:
 
 - 177 headless Swift tests across 23 suites pass against production client-core
   sources. They cover API contracts, recovery/cache races, uncertain delivery,
-  30 Hz presentation, echo handoff, target preparation, preference scope, schema
+  batched presentation, echo handoff, target preparation, preference scope, schema
   payloads and interaction lifecycle/IME guards. Session-detail checks cover
   tool/diff parsing, grouping identity, file routing, export pagination/cancellation,
   OAuth callback validation, local-server classification and waiting-approval

@@ -21,11 +21,10 @@ async function until(check: () => boolean) {
 test('AA creation overrides DSH defaults before the first request; live switches and retries preserve session choices', { timeout: 30_000 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'aa-config-'))
   const adapter = new TextAdapter()
-  const f = await nativeRuntime(home, ctx => mountAgents(ctx, adapter))
+  const f = await nativeRuntime(home, ctx => mountAgents(ctx, adapter, { provider: 'test', model: 'thinking', reasoningEffort: 'high' }))
   const runtime = f.ctx.agentsAnywhereRuntime.native
   const id = SessionId('configuration-session')
   try {
-    await f.ctx.agentDefaultModel.saveSelection({ provider: 'test', model: 'thinking', reasoningEffort: 'high' })
     assert.equal(f.ctx.agentPresets.defaultId, 'minimal')
     assert.equal(f.ctx.permissionPresets.defaultPreset, 'danger-full-access')
     await runtime.send(id, 'first', 'first-id', home, true, initialSelections, 'standard')
@@ -147,10 +146,44 @@ test('catalogs omit defaults, distinguish provider routes before filtering and t
     assert.equal(modes.configField.default, 'standard')
     assert.ok(modes.presets.every(item => !('isDefault' in item) && !('path' in item)))
     const router = new RuntimeRouter({ native: runtime, query: f.ctx.sessionQuery, status: id => runtime.status(id) }, 'test')
-    const filtered = await router.request('catalog.listModels', { query: 'other', limit: 1 }, signal()) as typeof catalog
+    const filtered = await router.request('listModels', { query: 'other', limit: 1 }, signal()) as typeof catalog
     assert.equal(filtered.models[0]?.title, 'Text（other）')
-    const caps = await router.request('session.getCapabilities', { externalSessionId: f.session.id, sessionId: sessionId('test', f.session.id) }, signal()) as Awaited<ReturnType<typeof runtime.capabilities>>
+    const caps = await router.request('getSessionCapabilities', { externalSessionId: f.session.id, sessionId: sessionId('test', f.session.id) }, signal()) as Awaited<ReturnType<typeof runtime.capabilities>>
     assert.equal(caps.capabilities.find(c => c.capabilityId === 'catalog.model')?.allowed, true)
     router.close()
   } finally { await f.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+})
+
+test('Auto review contribution changes the live permission catalog and selection availability', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'aa-auto-review-catalog-'))
+  const f = await nativeRuntime(home, ctx => mountAgents(ctx, new TextAdapter()))
+  const runtime = f.ctx.agentsAnywhereRuntime.native
+  const changes: string[] = []
+  const unwatch = runtime.watch(change => {
+    if (change.type === 'catalogs') changes.push(change.catalogType)
+  })
+  try {
+    const before = runtime.catalogs.permissions()
+    assert.ok(!before.permissions.some(item => item.metadata.preset === 'auto'))
+
+    const removeAuto = f.ctx.permissionPresets.registerAuto(() => {})
+    await until(() => changes.includes('permission'))
+    const withAuto = runtime.catalogs.permissions()
+    assert.ok(withAuto.revision > before.revision)
+    assert.equal(withAuto.permissions.at(-1)?.metadata.preset, 'auto')
+    assert.equal(withAuto.permissions.at(-1)?.title, 'Auto review')
+    await runtime.configuration.validate({ permission: permissionSelectionId('auto') })
+
+    changes.length = 0
+    await removeAuto()
+    await until(() => changes.includes('permission'))
+    const after = runtime.catalogs.permissions()
+    assert.ok(after.revision > withAuto.revision)
+    assert.ok(!after.permissions.some(item => item.metadata.preset === 'auto'))
+    await assert.rejects(runtime.configuration.validate({ permission: permissionSelectionId('auto') }), /unavailable/)
+  } finally {
+    unwatch()
+    await f.ctx.fiber.dispose()
+    await rm(home, { recursive: true, force: true })
+  }
 })

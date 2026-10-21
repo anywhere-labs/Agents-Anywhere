@@ -6,7 +6,6 @@ from contextvars import Context
 import pytest
 
 from agent_server.api import sessions
-from agent_server.infra.db.migrations import upgrade_database
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
@@ -20,9 +19,7 @@ from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 async def test_session_refresh_allows_dsh_source_callback(
     tmp_path, operation, event_during_query
 ):
-    db_path = tmp_path / "session-refresh.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = Store()
     await store.create_user(user_id="user_1", password="test-password")
     connector, _, _ = await store.create_connector(name="DSH", user_id="user_1")
     project = await store.create_project(

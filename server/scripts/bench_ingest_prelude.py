@@ -5,7 +5,8 @@ it touches the timeline buffer. This script compares the merged single-connectio
 lookup with the legacy three-call sequence so a future change cannot silently
 reintroduce the extra pooled round trips.
 
-    PYTHONPATH=. .venv/bin/python scripts/bench_ingest_prelude.py
+    AGENT_SERVER_TEST_DB_URL=postgresql+asyncpg://... \
+        PYTHONPATH=. .venv/bin/python scripts/bench_ingest_prelude.py
 """
 
 from __future__ import annotations
@@ -14,12 +15,10 @@ import argparse
 import asyncio
 import statistics
 import time
-from pathlib import Path
-from tempfile import mkdtemp
+
+from _bench_db import add_db_url_argument, open_bench_store, resolve_bench_db_url
 
 from agent_server.core.models import TimelineItemIn
-from agent_server.infra.db.migrations import upgrade_database
-from agent_server.infra.repositories.facade import Store
 from agent_server.services.connector_notifications import (
     _resolve_timeline_session_id,
     _session_disabled,
@@ -61,9 +60,7 @@ def _report(name: str, samples: list[float]) -> None:
 
 
 async def run(args: argparse.Namespace) -> None:
-    db_path = Path(mkdtemp(prefix="aa-prelude-")) / "prelude.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = await open_bench_store(args.db_url)
     await store.create_user(user_id="user_1", password="bench-password")
     connector, _, _ = await store.create_connector(name="bench", user_id="user_1")
     project = await store.create_project(
@@ -127,7 +124,9 @@ async def run(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iterations", type=int, default=DEFAULT_ITERATIONS)
+    add_db_url_argument(parser)
     args = parser.parse_args()
+    args.db_url = resolve_bench_db_url(args.db_url)
     asyncio.run(run(args))
 
 

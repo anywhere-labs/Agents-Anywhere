@@ -758,7 +758,9 @@ private fun remoteTerminalViewClient(
     override fun onSingleTapUp(e: MotionEvent?) = Unit
 
     override fun shouldBackButtonBeMappedToEscape(): Boolean = false
-    override fun shouldEnforceCharBasedInput(): Boolean = true
+    // A terminal is an ordinary text field, so let the IME use the normal text input type
+    // instead of the password variation, which would put the keyboard into "secure input" mode.
+    override fun shouldEnforceCharBasedInput(): Boolean = false
     override fun shouldUseCtrlSpaceWorkaround(): Boolean = false
     override fun isTerminalViewSelected(): Boolean = true
     override fun copyModeChanged(copyMode: Boolean) = Unit

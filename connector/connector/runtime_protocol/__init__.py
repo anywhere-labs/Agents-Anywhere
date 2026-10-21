@@ -11,6 +11,7 @@ from connector.runtime_protocol.attachments import (
 from connector.runtime_protocol.errors import (
     RuntimeConflictError,
     RuntimeInvalidRequestError,
+    RuntimeNoticePublishError,
     RuntimeProtocolError,
     RuntimeUnavailableError,
     RuntimeUnsupportedError,
@@ -233,6 +234,7 @@ __all__ = [
     "RuntimeLifecycleStatus",
     "RuntimeModelCatalog",
     "RuntimeModelItem",
+    "RuntimeNoticePublishError",
     "RuntimeOperationResult",
     "RuntimePermissionCatalog",
     "RuntimePermissionItem",

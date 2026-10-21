@@ -7,13 +7,29 @@ actor V2LocalStore {
     private let directory: URL
     private var valid = true
     private var removedSessions: Set<String> = []
+    private var savesSinceTrim = 0
     private let maximumSessions: Int
 
     init(directory: URL, maximumSessions: Int = 8) { self.directory = directory; self.maximumSessions = maximumSessions }
     func dashboard() -> V2DashboardArchive? { read("dashboard", as: V2DashboardArchive.self) }
     func session(_ id: String) -> V2SessionArchive? { read(sessionKey(id), as: V2SessionArchive.self) }
+    /// Decodes the archived timeline here, off the main actor; a malformed item
+    /// is skipped instead of discarding the whole session.
+    func restoreSession(_ id: String) -> V2SessionRestore? {
+        guard let archive = session(id) else { return nil }
+        return V2SessionRestore(archive: archive, items: archive.items.compactMap { try? V2TimelineItem(json: $0) })
+    }
     func saveDashboard(_ value: V2DashboardArchive) { write(value, key: "dashboard") }
-    func saveSession(_ value: V2SessionArchive) { guard !removedSessions.contains(value.session.id) else { return }; write(value, key: sessionKey(value.session.id)); trim() }
+    func saveSession(_ value: V2SessionArchive) {
+        guard !removedSessions.contains(value.session.id) else { return }
+        let key = sessionKey(value.session.id)
+        // Rewriting an existing archive cannot exceed the session count; only a
+        // new file or a byte-limit check needs the directory scan.
+        let isNew = !FileManager.default.fileExists(atPath: url(key).path)
+        write(value, key: key)
+        savesSinceTrim += 1
+        if isNew || savesSinceTrim >= 20 { trim(); savesSinceTrim = 0 }
+    }
     func removeSession(_ id: String) { removedSessions.insert(id); try? FileManager.default.removeItem(at: url(sessionKey(id))) }
     func close(removing: Bool) {
         valid = false

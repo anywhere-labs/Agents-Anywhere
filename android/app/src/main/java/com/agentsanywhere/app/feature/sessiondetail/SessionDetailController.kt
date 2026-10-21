@@ -8,6 +8,7 @@ import com.agentsanywhere.app.api.RemoteRuntimeModelCatalog
 import com.agentsanywhere.app.api.RemoteRuntimePermissionCatalog
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.UploadFilePart
+import com.agentsanywhere.app.api.toMap
 import com.agentsanywhere.app.feature.auth.AuthSessionReader
 import com.agentsanywhere.app.feature.sessions.toAgentSession
 import com.agentsanywhere.app.model.AgentDevice
@@ -17,6 +18,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlin.math.max
+import org.json.JSONObject
 
 private const val INITIAL_TIMELINE_LIMIT = 100
 private const val TIMELINE_PAGE_LIMIT = 100
@@ -425,41 +427,6 @@ class SessionDetailController(
         attachments: List<UploadFilePart> = emptyList(),
         uploadedAttachments: List<TimelineAttachment> = emptyList(),
     ): Result<SendMessageResult> {
-        return performMessageAction(
-            sessionId = sessionId,
-            content = content,
-            clientMessageId = clientMessageId,
-            attachments = attachments,
-            uploadedAttachments = uploadedAttachments,
-            steer = false,
-        )
-    }
-
-    suspend fun steer(
-        sessionId: String,
-        content: String,
-        clientMessageId: String,
-        attachments: List<UploadFilePart> = emptyList(),
-        uploadedAttachments: List<TimelineAttachment> = emptyList(),
-    ): Result<SendMessageResult> {
-        return performMessageAction(
-            sessionId = sessionId,
-            content = content,
-            clientMessageId = clientMessageId,
-            attachments = attachments,
-            uploadedAttachments = uploadedAttachments,
-            steer = true,
-        )
-    }
-
-    private suspend fun performMessageAction(
-        sessionId: String,
-        content: String,
-        clientMessageId: String,
-        attachments: List<UploadFilePart>,
-        uploadedAttachments: List<TimelineAttachment>,
-        steer: Boolean,
-    ): Result<SendMessageResult> {
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
@@ -470,25 +437,14 @@ class SessionDetailController(
                 } else {
                     attachmentTransfer.upload(auth.serverUrl, auth.accessToken, sessionId, attachments)
                 }
-                val response = if (steer) {
-                    sessionsApi.steerSession(
-                        serverUrl = auth.serverUrl,
-                        authorizationToken = auth.accessToken,
-                        sessionId = sessionId,
-                        content = content,
-                        clientMessageId = clientMessageId,
-                        attachments = uploaded.map { it.toRemoteAttachmentRef() },
-                    )
-                } else {
-                    sessionsApi.sendSessionMessage(
-                        serverUrl = auth.serverUrl,
-                        authorizationToken = auth.accessToken,
-                        sessionId = sessionId,
-                        content = content,
-                        clientMessageId = clientMessageId,
-                        attachments = uploaded.map { it.toRemoteAttachmentRef() },
-                    )
-                }
+                val response = sessionsApi.sendSessionMessage(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    sessionId = sessionId,
+                    content = content,
+                    clientMessageId = clientMessageId,
+                    attachments = uploaded.map { it.toRemoteAttachmentRef() },
+                )
                 if (!response.ok) {
                     throw IllegalStateException(response.failureMessage("Runtime rejected the message."))
                 }
@@ -641,10 +597,8 @@ class SessionDetailController(
 
     suspend fun executeCommand(
         sessionId: String,
-        command: String,
-        args: List<String>,
-        raw: String,
-    ): Result<CommandExecutionResult> {
+        request: RuntimeCommandRequest,
+    ): RuntimeCommandOutcome {
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
@@ -652,20 +606,17 @@ class SessionDetailController(
                     auth.serverUrl,
                     auth.accessToken,
                     sessionId,
-                    command,
-                    args,
-                    raw,
+                    request.command,
+                    request.args,
+                    request.raw,
                 )
-                if (!response.ok) {
-                    throw IllegalStateException(response.message ?: response.code ?: "Command failed.")
-                }
-                CommandExecutionResult(
-                    command = response.command,
+                RuntimeCommandOutcome.fromResponse(
+                    ok = response.ok,
                     code = response.code,
                     message = response.message,
-                    result = response.result,
+                    result = (response.result as? JSONObject).toMap(),
                 )
-            }
+            }.getOrElse(RuntimeCommandOutcome::fromTransportFailure)
         }
     }
 
@@ -741,7 +692,6 @@ class SessionDetailController(
         text: String,
         clientMessageId: String,
         attachments: List<TimelineAttachment> = emptyList(),
-        retryAction: RuntimeMessageAction? = null,
     ): SessionDetailState {
         val lastOrderSeq = maxOf(
             state.timeline.orderingItems.maxOfOrNull { it.orderSeq } ?: 0,
@@ -760,7 +710,6 @@ class SessionDetailController(
             updatedSeq = optimisticOrderSeq,
             clientMessageId = clientMessageId,
             optimistic = true,
-            retryAction = retryAction,
         )
         optimisticStore.upsert(sessionId, message)
         return state.copy(
@@ -872,9 +821,3 @@ data class SendMessageResult(
     val attachments: List<TimelineAttachment>,
 )
 
-data class CommandExecutionResult(
-    val command: String,
-    val code: String?,
-    val message: String?,
-    val result: Any?,
-)

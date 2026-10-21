@@ -89,7 +89,7 @@ export function EmailCodeField({
   email: string
   value: string
   onChange: (value: string) => void
-  purpose?: "register" | "bind"
+  purpose?: "register" | "bind" | "reset"
   token?: string
   pendingToken?: string
   setupToken?: string

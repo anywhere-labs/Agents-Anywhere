@@ -446,12 +446,16 @@ class CommandExecuteParams:
 
     @classmethod
     def parse(cls, params: dict[str, Any]) -> CommandExecuteParams:
+        raw = params.get("raw")
+        if raw is not None and not isinstance(raw, str):
+            raise TypeError("raw must be a string")
+        args = params.get("args")
         return cls(
             session_id=required_session_id(params),
             external_session_id=optional_string(params.get("externalSessionId")),
             command=required_command(params),
-            raw=optional_string(params.get("raw")),
-            args=string_tuple(params.get("args") or ()),
+            raw=raw,
+            args=string_tuple(() if args is None else args),
         )
 
 

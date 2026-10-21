@@ -72,6 +72,12 @@ test('a complete snapshot supplies every project without requests on expand and 
   await view.emit(snapshot([project(), project('p2', 'Project Two')], [...rows, session('other', 'p2')]))
   for (const name of ['Project One', 'Project Two', 'Project One', 'Project One']) await act(async () => projectButton(view.container, name).click())
   assert.equal(view.state.sessions.length, 106)
+  // Expanded projects preview eight sessions; the rest stay one click away.
+  assert.doesNotMatch(view.container.textContent, /Session old-0(?!\d)/)
+  const more = [...view.container.querySelectorAll('button')].find(button => button.textContent.startsWith('显示更多'))
+  assert.ok(more, 'Missing show more button')
+  await act(async () => more.click())
+  assert.match(view.container.textContent, /Session old-0(?!\d)/)
   assert.match(view.container.textContent, /Session old-104/)
   assert.match(view.container.textContent, /Session other/)
   assert.deepEqual(view.calls, { projects: 0, inventory: 0, connectors: 0, pages: 0 })

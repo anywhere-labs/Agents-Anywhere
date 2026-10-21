@@ -15,7 +15,7 @@ agent_server/
   app.py        FastAPI app factory and local uvicorn entry helper
 tests/          Backend tests
 pyproject.toml  Server dependencies
-run.sh          Local helper for PostgreSQL-backed development
+run.sh          Local helper that migrates and starts the Server
 ```
 
 ## Run
@@ -26,8 +26,8 @@ Install dependencies:
 uv sync
 ```
 
-PostgreSQL is the v2 runtime database. Start the backend from this directory
-after provisioning PostgreSQL and Redis:
+The Server needs PostgreSQL and Redis. Start it from this directory after
+provisioning both:
 
 ```bash
 AGENT_SERVER_DB_URL=postgresql+asyncpg://agents:password@127.0.0.1:5432/agents_anywhere \
@@ -38,34 +38,14 @@ AGENT_SERVER_REDIS_URL=redis://127.0.0.1:6379/0 \
   uv run uvicorn agent_server.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-SQLite is not a supported Server runtime backend. It is retained only as a
-read-only source format for the one-time legacy v1 import tool and in isolated
-migration tests.
-
 The Server requires the database to be at its exact Alembic schema revision and
-does not mutate a production database during startup. `upgrade` fingerprints an
-unversioned v1 database, archives required legacy data, and applies every revision
-through the current schema (`v2_35`). Inspect the installed revision with:
+does not mutate a production database during startup. `upgrade` stamps an
+unversioned v2 database at the revision its columns match and applies every
+revision through the current schema. Inspect the installed revision with:
 
 ```bash
 uv run python -m agent_server.infra.db.migrations current --verbose
 ```
-
-Rehearse a v1 SQLite migration against a disposable, empty PostgreSQL database:
-
-```bash
-uv run python -m agent_server.infra.db.migrations rehearse-v1 \
-  --source-sqlite /path/to/v1.sqlite3 \
-  --target-url postgresql+asyncpg://agents:password@127.0.0.1:5432/agents_rehearsal \
-  --report migration-report.json
-```
-
-The source is opened read-only and copied with SQLite's backup API. Only the
-copy is upgraded. The PostgreSQL target must contain no product rows; the tool
-imports in one transaction and verifies every table by row count and SHA-256.
-Legacy-only rows and legacy JSON columns are retained in
-`legacy_import_archive`; their superseded source tables and columns are removed
-by `v2_3`.
 
 ### v2.24 rollout and downgrade boundary
 
@@ -109,7 +89,6 @@ curl http://127.0.0.1:8000/api/v2/health/ready
 | `AGENT_SERVER_EVENT_QUEUE_BYTES` | Maximum admitted large-event input bytes per Uvicorn worker. Defaults to `33554432` (32 MiB). This is not a limit on total process memory. |
 | `AGENT_SERVER_HOST` / `AGENT_SERVER_PORT` | Bind address/port for `agent_server.main`. Defaults to `127.0.0.1:8000`; the Docker image sets the host to `0.0.0.0`. |
 | `AGENT_SERVER_DB_URL` | Required PostgreSQL SQLAlchemy URL using the `postgresql+asyncpg` scheme. |
-| `AGENT_SERVER_DB_BACKEND` | Optional backend assertion. When set for runtime use, it must be `postgres`. |
 | `AGENT_SERVER_DB_POOL_SIZE` | PostgreSQL base connection pool size. Defaults to `10`. |
 | `AGENT_SERVER_DB_MAX_OVERFLOW` | PostgreSQL overflow connections per instance. Defaults to `20`. |
 | `AGENT_SERVER_DB_POOL_TIMEOUT` | Seconds to wait for a PostgreSQL pool checkout. Defaults to `30`. |

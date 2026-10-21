@@ -35,9 +35,6 @@ from agent_server.infra.db import (
     connector_runtime_types as connector_runtime_types_t,
     connector_terminal_roots as connector_terminal_roots_t,
     connectors as connectors_t,
-    dashboard_daily_metrics as dashboard_daily_metrics_t,
-    dashboard_settings as dashboard_settings_t,
-    dashboard_user_daily_facts as dashboard_user_daily_facts_t,
     device_runtimes as device_runtimes_t,
     fs_preview_tokens as fs_preview_tokens_t,
     mobile_login_tokens as mobile_login_tokens_t,
@@ -45,14 +42,14 @@ from agent_server.infra.db import (
     oauth_authorization_codes as oauth_authorization_codes_t,
     oauth_clients as oauth_clients_t,
     pairing_codes as pairing_codes_t,
-    platform_user_activity as platform_user_activity_t,
     projects as projects_t,
     sessions as sessions_t,
     session_shares as session_shares_t,
     timeline_items as timeline_items_t,
+    usage_events as usage_events_t,
+    usage_inventory_snapshots as usage_inventory_snapshots_t,
     users as users_t,
 )
-from agent_server.infra.db.engine import SQLITE_BACKEND
 from agent_server.infra.files import FileStorage, build_file_storage
 from agent_server.core.models import (
     ConnectorConfigBundle,
@@ -84,6 +81,7 @@ USERNAME_RE = re.compile(r"^[a-z0-9_-]{3,32}$")
 SETTING_REGISTRATION_OPEN = "registration_open"
 SETTING_OAUTH_REGISTRATION_OPEN = "oauth_registration_open"
 SETTING_OAUTH_PROVIDER = "oauth_provider"
+SETTING_PASSWORD_RESET_ENABLED = "password_reset_enabled"
 
 UserRole = str  # "admin" | "member"
 ADMIN_ROLE = "admin"
@@ -154,21 +152,13 @@ def _utc_now_plus(seconds: int) -> str:
     return (datetime.now(UTC) + timedelta(seconds=max(60, seconds))).isoformat().replace("+00:00", "Z")
 
 
-def _default_files_root(engine: AsyncEngine, path: str | Path | None) -> Path:
-    """Pick a sibling directory for uploaded file blobs.
+def _default_files_root(engine: AsyncEngine) -> Path:
+    """Pick a directory for uploaded file blobs.
 
-    For sqlite we anchor to the database file; for other backends we fall back
-    to a directory under the current working directory keyed by the database
-    name component.
+    Falls back to a directory under the current working directory keyed by the
+    database name; deployments configure the file backend explicitly.
     """
-    if path is not None:
-        db_path = Path(str(path))
-    else:
-        url = engine.url
-        if url.database and url.get_backend_name() == "sqlite":
-            db_path = Path(url.database)
-        else:
-            db_path = Path(f"agent-server-{url.database or 'db'}.files-root")
+    db_path = Path(f"agent-server-{engine.url.database or 'db'}.files-root")
     return db_path.with_suffix("").parent / f"{db_path.with_suffix('').name}.files"
 
 
@@ -203,6 +193,27 @@ def _truncate_title(text: str) -> str:
     if len(text) <= DERIVED_SESSION_TITLE_MAX_CHARS:
         return text
     return f"{text[:DERIVED_SESSION_TITLE_MAX_CHARS].rstrip()}..."
+
+
+def _client_session_title(title: str | None) -> str | None:
+    # Web / Desktop send the whole first prompt as the create-time title.
+    # Normalize it like a derived title so a pasted document never becomes a
+    # multi-kilobyte session name (Codex never reports a replacement title).
+    if title is None:
+        return None
+    collapsed = " ".join(title.split())
+    return _truncate_title(collapsed) if collapsed else None
+
+
+def _manual_archive_values(*, archived: bool | int, now: str) -> dict[str, Any]:
+    """Column values for a user-initiated session archive or unarchive."""
+
+    return {
+        "archived": int(bool(archived)),
+        "archived_at": now if archived else None,
+        "dsh_archive_legacy": 0,
+        "updated_at": now,
+    }
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

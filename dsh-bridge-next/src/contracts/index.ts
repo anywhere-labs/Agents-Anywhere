@@ -1,7 +1,7 @@
 import type { BridgeStatus } from './bridge-status.js'
 import type { ConnectorAction, ConnectorFolder, ConnectorManagement, ConnectorSettings } from './connector.js'
 import type { MobileLoginSnapshot } from './mobile.js'
-import type { ConnectorLogPage, ConnectorLogQuery, BridgeLogSnapshot } from './logs.js'
+import type { ConnectorLogPage, ConnectorLogQuery, BridgeLogSnapshot, RuntimeLogPage, RuntimeLogQuery, StartupFailureDiagnostic } from './logs.js'
 
 // The Connector bridge protocol stays in contracts/dsh-bridge.
 export const HOST_NAMESPACE = 'agentsAnywhereOnboarding'
@@ -10,6 +10,7 @@ export const CLOUD_API_BASE_URL = 'https://web.agents-anywhere.com'
 
 export type DesktopDetection =
   | { status: 'absent'; message: string }
+  /** Legacy status name: installation AND a matching live Desktop main process were verified. */
   | { status: 'installed'; message: string; executablePath: string; launchArgs: string[]; packaged: boolean }
   | { status: 'error'; message: string }
 
@@ -60,8 +61,10 @@ export interface OnboardingSnapshot {
 
 export interface OnboardingHostApi {
   restartBridge(): Promise<BridgeStatus>
+  readRuntimeLogs(query?: RuntimeLogQuery): Promise<RuntimeLogPage>
   readBridgeLogs(): Promise<BridgeLogSnapshot>
   readConnectorLogs(query?: ConnectorLogQuery): Promise<ConnectorLogPage>
+  readStartupDiagnostics(): Promise<StartupFailureDiagnostic[]>
   inspect(): Promise<OnboardingSnapshot>
   /** Opens the Desktop app on its onboarding entry; no argument is accepted. */
   openDesktop(): Promise<DesktopLaunch>

@@ -2,7 +2,7 @@
   "name": "agents-anywhere-desktop-workbench",
   "productName": "Agents Anywhere",
   "private": true,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Electron shell for the Agents Anywhere web workbench",
   "packageManager": "yarn@4.6.0",
   "workspaces": [
@@ -13,9 +13,10 @@
     "node": ">=22 <23"
   },
   "scripts": {
-    "build:main": "tsc -p tsconfig.json",
+    "build:info": "node scripts/write-build-info.mjs",
+    "build:main": "yarn build:info && tsc -p tsconfig.json",
     "renderer:typecheck": "yarn workspace agents-anywhere-desktop-renderer typecheck",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "yarn build:info && tsc -p tsconfig.json --noEmit",
     "test:main": "yarn build:main && node --test dist/electron/*.test.js dist/electron/backend/*.test.js",
     "dev": "yarn build:main && node scripts/dev.mjs",
     "start": "yarn ensure:uv && yarn build:main && electron .",
@@ -23,13 +24,15 @@
     "build": "yarn build:main && yarn build:web",
     "ensure:uv": "node scripts/ensure-uv.mjs",
     "bundle:uv": "node scripts/prepare-uv.mjs",
-    "pack": "yarn bundle:uv && yarn build && electron-builder --dir",
+    "bundle:python": "node scripts/prepare-python.mjs",
+    "pack": "yarn bundle:uv && yarn bundle:python && yarn build && electron-builder --dir",
     "dist": "node scripts/dist-desktop.mjs",
     "dist:mac": "node scripts/dist-desktop.mjs mac",
     "dist:win": "node scripts/dist-desktop.mjs win"
   },
   "devDependencies": {
     "@types/node": "^24.10.2",
+    "@types/ws": "8.18.1",
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12",
     "proxy-agent": "^8.0.2",
@@ -42,10 +45,12 @@
       "dist/electron/**",
       "dist/shared/**",
       "dist/config.json",
+      "dist/build-info.json",
       "!dist/electron/development-login.js",
       "!dist/electron/*.test.js",
       "!dist/electron/backend/*.test.js",
       "!node_modules/agents-anywhere-desktop-renderer/**",
+      "!node_modules/meshcall-router-*/**",
       "renderer/out/**",
       "package.json"
     ],
@@ -54,9 +59,12 @@
         "from": "../connector",
         "to": "connector",
         "filter": [
-          "**/*",
+          "pyproject.toml",
+          "README.md",
+          "connector/**",
           "!**/__pycache__/**",
-          "!**/.venv/**",
+          "!**/_reference/**",
+          "!**/_deprecated/**",
           "!**/*.pyc"
         ]
       },
@@ -78,6 +86,13 @@
       {
         "from": "build/uv",
         "to": "uv",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "build/python",
+        "to": "python",
         "filter": [
           "**/*"
         ]
@@ -117,14 +132,17 @@
           ]
         }
       ],
-      "x64ArchFiles": "{Contents/Resources/uv/darwin-*/uv,Contents/Resources/app.asar.unpacked/node_modules/{@img/sharp-darwin-*,@img/sharp-libvips-darwin-*,@next/swc-darwin-*,@swc/core-darwin-*,@parcel/watcher-darwin-*,@tailwindcss/oxide-darwin-*,lightningcss-darwin-*}/**}",
+      "x64ArchFiles": "{Contents/Resources/uv/darwin-*/uv,Contents/Resources/python/darwin-*/**,Contents/Resources/app.asar.unpacked/node_modules/{@img/sharp-darwin-*,@img/sharp-libvips-darwin-*,@next/swc-darwin-*,@swc/core-darwin-*,@parcel/watcher-darwin-*,@tailwindcss/oxide-darwin-*,lightningcss-darwin-*}/**}",
       "signIgnore": [
-        "\\.(?:pak|dat|wasm)$"
+        "\\.(?:pak|dat|wasm|pyc|pickle|whl)$"
       ]
     },
     "linux": {
       "icon": "build/icon-mac-source.png",
       "target": "AppImage"
     }
+  },
+  "dependencies": {
+    "meshcall": "0.3.0"
   }
 }

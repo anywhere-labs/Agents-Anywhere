@@ -25,6 +25,8 @@ type PinnedSectionProps = {
   isLoading: boolean
   projectController: ProjectListController
   projectSessionStatus: ProjectSessionStatusFilter
+  /** Optional `device · agent` identity line for pinned session rows. */
+  sessionMeta?: (session: WorkspaceSessionView) => string | null
   onOpenSession: (sessionId: string) => void
   onToggleSessionPin: (sessionId: string) => void
   onToggleSessionArchive: (sessionId: string) => void
@@ -37,6 +39,7 @@ export function PinnedSection({
   isLoading,
   projectController,
   projectSessionStatus,
+  sessionMeta,
   onOpenSession,
   onToggleSessionPin,
   onToggleSessionArchive,
@@ -61,10 +64,12 @@ export function PinnedSection({
                 controller={projectController}
                 sessionStatus={projectSessionStatus}
               />
-              {sessions.map((item) => (
+              {sessions.map((item, index) => (
                 <SessionSidebarItem
                   key={`session-${item.id}`}
                   item={item}
+                  previousConnectorId={sessions[index - 1]?.connectorId}
+                  meta={sessionMeta?.(item) ?? null}
                   isActive={projectController.activeSessionId === item.id}
                   onOpen={() => onOpenSession(item.id)}
                   onTogglePin={() => onToggleSessionPin(item.id)}

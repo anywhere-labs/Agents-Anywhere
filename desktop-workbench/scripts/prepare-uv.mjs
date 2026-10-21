@@ -31,7 +31,7 @@ const proxyAgent = PROXY_KEYS.some((key) => Boolean(process.env[key]?.trim()))
   ? new ProxyAgent()
   : undefined;
 
-async function exists(filePath) {
+export async function exists(filePath) {
   try {
     await stat(filePath);
     return true;
@@ -40,7 +40,7 @@ async function exists(filePath) {
   }
 }
 
-async function download(url, destination) {
+export async function download(url, destination) {
   await mkdir(dirname(destination), { recursive: true });
   if (await exists(destination)) return;
   await new Promise((resolveDownload, rejectDownload) => {
@@ -87,7 +87,7 @@ async function verifyChecksum(archivePath, checksumPath) {
   if (hash !== expected) throw new Error(`Checksum mismatch for ${basename(archivePath)}`);
 }
 
-async function run(command, args) {
+export async function run(command, args) {
   await new Promise((resolveRun, rejectRun) => {
     const child = spawn(command, args, { stdio: "inherit" });
     child.on("error", rejectRun);

@@ -54,6 +54,44 @@ class CodexTimelineAccumulator:
         """Release all live-item position state owned by a terminal turn."""
         self._release_turn(external_session_id, turn_id)
 
+    def finish_compaction_items(
+        self,
+        session_id: str,
+        external_session_id: str,
+        turn_id: str | None,
+        event: str,
+    ) -> tuple[RuntimeTimelineItem, ...]:
+        """Settle unfinished compaction markers before terminal turn cleanup.
+
+        Native compaction errors and interrupts do not emit item/completed.
+        Only markers still running in this physical turn need a final update.
+        """
+        state = self._active_turn_state(external_session_id, turn_id)
+        if state is None:
+            return ()
+        items = []
+        for item_id in tuple(state.platform_item_ids):
+            projection = self._projection_by_id.get(item_id)
+            if (
+                projection is None
+                or projection.raw_type != "contextCompaction"
+                or projection.status != "inProgress"
+            ):
+                continue
+            projection = projection.with_status(
+                "completed" if event == "turn/completed" else "failed"
+            )
+            self._projection_by_id[item_id] = projection
+            items.append(
+                self._runtime_item(
+                    session_id=session_id,
+                    external_session_id=external_session_id,
+                    projection=projection,
+                    event=event,
+                )
+            )
+        return tuple(items)
+
     def _release_turn(
         self,
         external_session_id: str,
@@ -217,6 +255,13 @@ class CodexTimelineAccumulator:
                 external_session_id=external_session_id,
                 fallback_index=index,
             )
+            # ContextCompaction snapshots carry only an ID, not item status.
+            # While its turn is observed live, missing status must not overwrite
+            # a running marker with the history projection's default "done".
+            if projection.raw_type == "contextCompaction" and projection.status is None:
+                observed = self._projection_by_id.get(item_id)
+                if observed is not None:
+                    projection = projection.with_status(observed.status)
             existing_index = index_by_id.get(item_id)
             if existing_index is None:
                 index_by_id[item_id] = len(prepared)

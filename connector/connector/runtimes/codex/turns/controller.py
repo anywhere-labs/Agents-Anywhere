@@ -63,7 +63,12 @@ class CodexTurnController:
             list_model_catalog=self.list_model_catalog,
             list_permission_catalog=self.list_permission_catalog,
         )
-        self.commands = CodexCommandController()
+        self.commands = CodexCommandController(
+            client=self.client,
+            states=self.session_states,
+            source_states=self.source_states,
+            ensure_started=self.ensure_started,
+        )
         self.interactions = CodexInteractionController(
             host=self.host,
             client=self.client,

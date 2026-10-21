@@ -3,7 +3,7 @@
 Agents Anywhere Desktop combines the web workbench and a locally managed
 Connector in one Electron application.
 
-The Connector, its logs, the Desktop settings and the local binding live in an
+The Connector supervisor, Desktop startup logs, settings and local binding live in an
 independent backend process (`child_process.fork` with `ELECTRON_RUN_AS_NODE`).
 It never touches the window, so a blocked or crashed backend cannot freeze the
 user interface. The backend serves a loopback HTTP + SSE API; Electron Main
@@ -28,12 +28,35 @@ Connector running. Click the tray icon or choose **打开 Agents Anywhere** to
 reopen the window. Choose **退出** from the tray menu to confirm exit and stop
 the local Connector; cancelling keeps the app running.
 
+## Add projects by dropping folders
+
+Drop one local folder anywhere over the Desktop sidebar to add it as a project
+on this computer's online local Connector. The name comes from the folder name;
+automatically discovered projects keep their existing names when added manually.
+A successful drop switches to the project list and expands it.
+
+An already-added folder displays an informational message without creating a
+second project. Ordinary files and unavailable paths display a folder-required
+message. Dropping multiple items (including a mixture of files and folders)
+displays “Drop one folder at a time” and adds none of them. The drop cue remains
+centered in the sidebar while its project list scrolls. This native drop action
+is unavailable in a browser, where local filesystem paths cannot be resolved.
+The cue appears only when drag metadata confirms a directory. If the OS hides
+that information until drop, the sidebar stays unobstructed and still accepts
+the drop for native directory validation. Cancelling a drag, leaving the window,
+or dropping elsewhere clears the cue; an idle timeout also clears it if an
+external drag ends without sending a cancellation event to the app.
+
 ## Run
 
 From the repository root, the local Desktop launcher starts Docker-backed
-PostgreSQL and Redis, the Server on fixed port `8000`, and Desktop on fixed
-port `5184`. It releases existing listeners on those two application ports and
-always points Desktop at the local Server:
+PostgreSQL and Redis, the Server on fixed port `8000`, the Web app on fixed port
+`5174` (Desktop's development sign-in page), and Desktop on fixed port `5184`.
+It releases existing listeners on those three application ports, always points
+Desktop at the local Server, and stays in the foreground like `./local-up.sh`,
+streaming prefixed Server, Web, and Desktop logs (also written to
+`.local-dev/logs/`). Press Ctrl-C to stop everything it started; `down` stops a
+launcher still running in another terminal:
 
 ```bash
 ./desktop-local-up.sh
@@ -135,15 +158,30 @@ needed:
 WORKBENCH_CONNECTOR_DIR=/absolute/path/to/connector yarn dev
 WORKBENCH_CONNECTOR_CLI=/absolute/path/to/anywhere-cli yarn dev
 WORKBENCH_UV_BUNDLE_DIR=/absolute/path/to/uv-bundle yarn dev
+WORKBENCH_PYTHON_BUNDLE_DIR=/absolute/path/to/python-bundle yarn dev
 ```
 
-The first launch after that also runs `uv sync`, which downloads Python and every
-Connector dependency. The window shows a preparing screen while the ownership
-probe waits for it; that probe alone allows up to 15 minutes, while every later
-RPC keeps its 30-second deadline. The saved `uvPypiIndexUrl` mirror covers
-package downloads through `UV_DEFAULT_INDEX`, `UV_INDEX_URL` and `PIP_INDEX_URL`;
-the Python interpreter itself comes from GitHub, so a slow network needs
-`UV_PYTHON_INSTALL_MIRROR` in the environment (it is passed through unchanged).
+The Python interpreter is resolved as the saved `pythonPath` setting, then the
+bundled CPython at `build/python/<platform>-<arch>/` (`python.exe` on Windows,
+`bin/python3` elsewhere; packaged builds read `resources/python`). The result
+is passed to `uv run --python`, so uv neither searches for nor downloads an
+interpreter. Development does not download the bundle automatically: without
+`yarn bundle:python` (or a previous `yarn pack`), uv picks an interpreter
+itself and may download one. Once the bundle exists, development uses it too,
+and uv rebuilds the repo's `connector/.venv` on it once.
+
+The first launch after that also runs `uv sync`, which downloads every
+Connector dependency (and the interpreter, without a bundled one). The window
+shows a preparing screen while the ownership probe waits for it; that probe
+alone allows up to 15 minutes, while every later RPC keeps its 30-second
+deadline. The same applies when the existing environment was created by another
+interpreter, such as the Python uv downloaded before Desktop bundled one: uv
+replaces that environment. The saved `uvPypiIndexUrl` mirror covers
+package downloads through `UV_DEFAULT_INDEX`, `UV_INDEX_URL` and `PIP_INDEX_URL`.
+The saved `uvPythonInstallMirror` sets `UV_PYTHON_INSTALL_MIRROR` for the Python
+interpreter download (GitHub python-build-standalone when empty); it only
+matters without a bundled or saved interpreter, and Settings hides it otherwise.
+`UV_HTTP_TIMEOUT` defaults to 60 seconds.
 
 Do not start a second Connector with the same Desktop config while the app is
 running. Standalone CLI devices remain supported and should use their own
@@ -167,7 +205,13 @@ checks run headlessly without starting Electron or a development server.
 
 ## Packaging
 
-The release build bundles the Connector source and a platform-specific `uv`:
+The release build bundles the Connector source (`pyproject.toml`, `README.md` and
+the `connector/` package only, like the DSH plugin; no `uv.lock`, tests or caches),
+a platform-specific `uv`, and a platform-specific CPython. Dependencies are
+installed on first run; Python is never downloaded.
+The packaged app never runs `uv` inside its own bundle: it first mirrors the
+bundled source to `userData/connector-source/<content-hash>/` (as the DSH plugin
+does), so `uv.lock` is written there and the signed bundle stays untouched:
 
 ```bash
 yarn dist:mac               # universal macOS DMG (Apple Silicon + Intel)
@@ -177,8 +221,8 @@ yarn pack                   # unpacked Electron application
 yarn dist                   # host-platform release (universal on macOS)
 ```
 
-`dist`, `dist:mac` and `dist:win` read the signing environment, run the `uv` bundle and
-the app build with those secrets stripped, and hand them to electron-builder
+`dist`, `dist:mac` and `dist:win` read the signing environment, run the `uv` and
+Python bundles and the app build with those secrets stripped, and hand them to electron-builder
 only. The signing material is therefore never visible to a build or test
 subprocess. Add `--arm64`, `--x64` or `--universal` (macOS) to select the
 architecture, or `--dir` for an unpacked build. `dist:mac` must run on macOS and
@@ -207,21 +251,40 @@ config, binding, and logs under Electron `userData`; signed resources are never
 modified at runtime. `bundle:uv` verifies the upstream archive checksum before
 copying it into `build/uv`.
 
+`bundle:python` places a python-build-standalone CPython (`install_only_stripped`,
+version pinned in `scripts/prepare-python.mjs`) under `build/python/<platform>-<arch>/`,
+verified against the release's `SHA256SUMS` and cached under `.cache/python`.
+It removes what the Connector never loads (Tk/Tcl, IDLE, turtle demos, and the
+interpreter's own pip) and ships CPython's license under `THIRD_PARTY_LICENSES`.
+`PYTHON_BUNDLE_TARGETS` selects targets like `UV_BUNDLE_TARGETS`, and
+`dist`/`dist:mac`/`dist:win` prepare the same targets as `uv`. macOS and Linux
+interpreters contain symlinks, so prepare them on macOS or Linux.
+`PYTHON_BUNDLE_VERSION` and `PYTHON_BUNDLE_RELEASE` select another build, and
+`PYTHON_BUNDLE_MIRROR` downloads from a mirror with the same release layout, e.g.
+`https://registry.npmmirror.com/-/binary/python-build-standalone`. The bundle
+adds roughly 40 MB per architecture before installer compression; the universal
+macOS app carries both architectures.
+
 ## Desktop updates
 
 After authentication finishes and the workbench opens, Main checks the saved
 server's `/api/v2/health`. The authenticated session must match the saved server;
 login screens, missing server records, and default configuration never trigger
 an update check. Signing out cancels pending work and clears the update dialog.
-The server's `version` is compared numerically with `app.getVersion()`, including
-four-part Server versions such as `0.1.7.2`. No dedicated release API is used.
+The server's `version` is compared numerically with the Server version recorded
+at build time, not with `app.getVersion()`. `yarn build:main` (and therefore
+`yarn dev`, `yarn build` and `yarn dist:*`) runs `scripts/write-build-info.mjs`,
+which copies `server/pyproject.toml`'s version into the generated
+`build-info.json`. A live Server newer than that baseline means a newer Desktop
+build exists; Desktop and Server PATCH versions may otherwise differ (see
+[versioning](../docs/versioning.md)). No dedicated release API is used.
 
-An older Desktop opens an update dialog with **Ignore this version** and
+A Desktop built against an older Server opens an update dialog with **Ignore this version** and
 **Update now**. Outside clicks and Escape do not dismiss it; there is no close
 icon. Ignoring persists the exact server version in
 `<Electron userData>/updates/state.json`, scoped to the server. A newer server
 version prompts again. The download icon beside the account avatar remains
-visible whenever Desktop is behind, including after ignoring a version.
+visible whenever the Server is ahead of the build baseline, including after ignoring a version.
 
 Set `updates.downloadUrl` in `config.json` to the fixed HTTPS installer address
 before distribution. The `.invalid` URL is an explicit placeholder and does not
@@ -243,6 +306,9 @@ ownership. Every accepted start, including CLI and reconnection, appends a missi
 ID once. Desktop writes installation metadata under the same short file transaction
 as Python, preserving IDs, runtime ownership and unknown fields. Hosts read legacy
 records without migrating them; Python performs the migration on a successful write.
+When the OS refuses the transaction's loopback port and nobody listens on it (for
+example a Windows excluded port range), both writers log a warning and write
+without the lease instead of failing startup; see the shared record contract.
 
 Desktop and the DSH plugin match local IDs against the signed-in user's server
 device list. First-login provisioning and pairing after a deleted device reuse the
@@ -290,6 +356,17 @@ channel remains usable, and retry asks Python again. `connector.stop` stops the
 backend connection; ownership remains while that Python process is alive. Explicit
 Quit terminates it. The next start can replace records left by a crashed process.
 
+Until the first probe answers, ownership is `checking`, which the renderer shows
+as progress rather than as a failure. Any other failure opens a blocking dialog
+that quotes the underlying error and offers to copy it or open the logs folder.
+When the RPC process exits or times out before answering, the error includes its
+last stderr lines, where uv and Python explain a failed launch; stderr is logged
+in whole lines. Every failed acquisition, including a retry, is logged. If the
+backend stops before the Connector is owned, the dialog quotes the backend's exit
+code, last reported error and output. The backend owns the log, so Main appends
+to it directly whenever no ready backend is running. A launch whose backend never
+becomes ready shows a native error box with the log directory before quitting.
+
 - Successful Desktop login reuses a matching local device or provisions a
   `connectorKind: "desktop"` device with the user-authenticated Connector API.
 - Successful local connection, reconnection, CLI pairing and pair-code completion
@@ -299,11 +376,13 @@ Quit terminates it. The next start can replace records left by a crashed process
 - Closing the window on macOS keeps the app and Connector running in the
   background. Explicit Quit stops the runtime and terminates the full process
   tree.
-- Open-at-login, silent launch, automatic Connector start, `uv` path, PyPI
-  mirror, and log retention are Desktop settings.
+- Open-at-login, silent launch, automatic Connector start, `uv` path, Python
+  path, PyPI mirror, Python download mirror, and log retention are Desktop
+  settings. Settings shows the resolved uv and Python, and hides the Python
+  download mirror while a bundled or saved interpreter is in use.
 - On first initialization without a saved mirror choice, Main checks the OS
-  preferred languages and selects Aliyun for Chinese systems, or official PyPI
-  otherwise. It persists the choice before any `uv` provisioning process and
+  preferred languages and selects Aliyun PyPI and npmmirror Python builds for
+  Chinese systems, or the official sources otherwise. It persists the choice before any `uv` provisioning process and
   applies it through `UV_DEFAULT_INDEX`, `UV_INDEX_URL`, and `PIP_INDEX_URL`,
   without a renderer prompt. Existing choices, including official PyPI, are
   preserved; factory reset reapplies the system default.
@@ -371,3 +450,11 @@ dependencies for universal packaging.
 
 For an offline packaging retry, set `WORKBENCH_ELECTRON_DIST` to a directory
 containing the matching Electron ZIPs for both macOS architectures.
+
+Runtime logs are persisted by Connector under `~/.agents-anywhere/logs/` as rotating
+JSONL segments. Desktop reads, follows, clears and exports them through the local
+`aa.local.v2.Logs` service; receiving a runtime log never writes another Desktop
+copy. Log storage settings apply to Desktop startup diagnostics only. When no
+Connector channel is available, the log view and export use those local startup
+diagnostics. Runtime retention and RPC semantics are documented in
+[the log contract](../contracts/dsh-bridge/2.0/logs.md).

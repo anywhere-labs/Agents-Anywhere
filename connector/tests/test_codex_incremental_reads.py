@@ -3,15 +3,17 @@ import asyncio
 import copy
 import hashlib
 import json
+import os
 import sqlite3
 from dataclasses import asdict
 from unittest.mock import AsyncMock
 
 import pytest
-
 from test_codex_runtime import FakeCodexClient, _config
+
 from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk.runtime_client import CodexThreadTurnsPage
+from connector.runtimes.codex.sessions import history_index as codex_history_index
 from connector.runtimes.codex.sessions.history_index import read_history_index
 from connector.server.runtime_host import ConnectorRuntimeHost
 from connector.server.sync_state import JsonSyncStateStore
@@ -86,13 +88,13 @@ async def prepare(runtime):
 def test_restart_reads_zero_history_and_append_reads_one_page_with_retry(tmp_path):
     async def run():
         client = NativeHistory(tmp_path / "native")
-        runtime, host, store = boot(tmp_path / "checkpoint.json", client)
+        runtime, _host, store = boot(tmp_path / "checkpoint.json", client)
         initial = await prepare(runtime)
         assert len(initial.snapshot.items) == 240
         assert len(client.pages) == 12
         await initial.commit()
         store.flush()
-        runtime, host, store = boot(tmp_path / "checkpoint.json", client)
+        runtime, _host, store = boot(tmp_path / "checkpoint.json", client)
         client.pages.clear()
         unchanged = await prepare(runtime)
         assert unchanged.snapshot is None
@@ -110,10 +112,67 @@ def test_restart_reads_zero_history_and_append_reads_one_page_with_retry(tmp_pat
         assert retry.snapshot.items == added.snapshot.items
         await retry.commit()
         store.flush()
-        runtime, host, _ = boot(tmp_path / "checkpoint.json", client)
+        runtime, _host, _ = boot(tmp_path / "checkpoint.json", client)
         client.pages.clear()
         assert (await prepare(runtime)).snapshot is None
         assert client.pages == []
+    asyncio.run(run())
+
+
+def test_owned_native_in_progress_turn_is_exposed_as_running_when_index_lags(
+    tmp_path,
+    monkeypatch,
+):
+    async def run():
+        client = NativeHistory(tmp_path / "native", count=2)
+        client.turns[-1]["status"] = "inProgress"
+        client.persist()
+        with client.path.open("a") as stream:
+            stream.write("{}\n")
+        os.utime(client.path, (1, 1))
+        monkeypatch.setattr(
+            codex_history_index,
+            "_source_is_open_by_codex",
+            lambda _source: True,
+        )
+        assert read_history_index(client.ref) is None
+
+        runtime, _, _ = boot(tmp_path / "checkpoint.json", client)
+        session = (await runtime.list_sessions())[0]
+        state = await runtime.get_session_state(
+            session.session_id,
+            external_session_id="thread_1",
+        )
+
+        assert state is not None
+        assert state.status == "running"
+        assert state.metadata["source"] == "codex.thread_history.state"
+        assert state.metadata["turn_id"] == "turn_1"
+        assert state.metadata["native_activity_evidence"] == "owner"
+
+    asyncio.run(run())
+
+
+def test_stale_unowned_native_in_progress_turn_is_exposed_as_idle(tmp_path):
+    async def run():
+        client = NativeHistory(tmp_path / "native", count=2)
+        client.turns[-1]["status"] = "inProgress"
+        client.persist()
+        os.utime(client.path, (1, 1))
+
+        runtime, _, _ = boot(tmp_path / "checkpoint.json", client)
+        session = (await runtime.list_sessions())[0]
+        state = await runtime.get_session_state(
+            session.session_id,
+            external_session_id="thread_1",
+        )
+
+        assert state is not None
+        assert state.status == "idle"
+        assert state.metadata["source"] == "codex.thread_history.state"
+        assert state.metadata["turn_id"] == "turn_1"
+        assert state.metadata["native_status"] == "inProgress"
+
     asyncio.run(run())
 
 

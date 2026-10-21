@@ -5,11 +5,45 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { DesktopBindingStore } from "./desktop-binding";
-import { DesktopSettingsStore } from "./desktop-settings";
-import { ConnectorSupervisor } from "./connector-supervisor";
+import { DesktopSettingsStore, NPMMIRROR_PYTHON_BUILDS } from "./desktop-settings";
+import { ConnectorSupervisor, type ConnectorChannel } from "./connector-supervisor";
+import { bundledPythonExecutable } from "./connector-python";
 import { ConnectorLogStore } from "./log-store";
 import { ConnectorRpcError } from "./connector-rpc-error";
 import type { OwnershipState } from "./local-runtime";
+import type { ConnectorLogEntry } from "./connector-types";
+
+/** What the supervisor needs from one Connector's control channel. */
+function fakeChannel(behavior: { conflict?: () => boolean } = {}): ConnectorChannel {
+  const state = (running: boolean) => ({ running, authFailed: false, status: running ? "running" : "stopped" });
+  const stayOpen = async function* (_since: number | null, options?: { signal?: AbortSignal }) {
+    await new Promise<void>(resolve => {
+      if (options?.signal?.aborted) resolve();
+      else options?.signal?.addEventListener("abort", () => resolve(), { once: true });
+    });
+  };
+  return {
+    control: {
+      getState: async () => state(false),
+      acquireOwnership: async () => {
+        if (behavior.conflict?.()) throw { code: "connector_already_running", details: { owner: { kind: "cli", pid: 1234 } } };
+        return state(false);
+      },
+      saveConfig: async () => state(false),
+      start: async () => {
+        if (behavior.conflict?.()) throw { code: "connector_already_running", details: { owner: { kind: "cli", pid: 1234 } } };
+        return state(true);
+      },
+      stop: async () => state(false),
+      restart: async () => state(true),
+      events: stayOpen,
+    },
+    logs: { tail: (_since, _source, options) => stayOpen(null, options),
+      read: async () => ({ items: [], firstSeq: null, lastSeq: null, total: 0, hasMoreBefore: false, hasMoreAfter: false }),
+      clear: async () => ({ items: [], firstSeq: null, lastSeq: null, total: 0, hasMoreBefore: false, hasMoreAfter: false }) },
+    close: async () => {},
+  };
+}
 
 // Exercise real stdio provisioning without downloading Python or running an AA server.
 const runtime = `
@@ -19,11 +53,11 @@ fs.writeFileSync(process.argv[2], JSON.stringify({
   defaultIndex: process.env.UV_DEFAULT_INDEX,
   indexUrl: process.env.UV_INDEX_URL,
   pipIndex: process.env.PIP_INDEX_URL,
+  pythonMirror: process.env.UV_PYTHON_INSTALL_MIRROR,
 }));
-readline.createInterface({ input: process.stdin }).on('line', line => {
-  const request = JSON.parse(line);
-  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { running: false, status: 'stopped' } }) + '\\n');
-});
+process.stdout.write(JSON.stringify({ kind: 'connector.ready', version: 1, instanceId: 'fake', pid: process.pid, endpoint: { unixPath: '/nonexistent/fake.sock' }, key: 'mk_host_fake' }) + '\\n');
+process.stdin.resume();
+process.stdin.on('end', () => process.exit(0));
 
 `;
 
@@ -52,16 +86,22 @@ test("first pre-login provisioning receives the initialized mirror and honors sa
     const supervisor = new ConnectorSupervisor({
       configPath: path.join(root, "connector.json"), dataPath: root, connectorDir: root, resourcesPath: root,
       uvBundleDir: path.join(root, "build", "uv"),
+      pythonBundleDir: path.join(root, "build", "python"),
       packaged: false, homePath: root, settings,
-      shellEnvironment: { UV_DEFAULT_INDEX: "https://inherited.example/simple", UV_INDEX_URL: "https://inherited.example/simple" },
+      shellEnvironment: {
+        UV_DEFAULT_INDEX: "https://inherited.example/simple",
+        UV_INDEX_URL: "https://inherited.example/simple",
+        UV_PYTHON_INSTALL_MIRROR: "https://inherited.example/python",
+      },
       binding: new DesktopBindingStore(path.join(root, "binding.json")),
       logs: new ConnectorLogStore(path.join(root, "logs"), () => settings.get()),
       onState: () => {}, onLog: () => {},
+      connectControl: async () => fakeChannel(),
     });
     try {
       await supervisor.preflightProvisioning();
       assert.deepEqual(JSON.parse(fs.readFileSync(captured, "utf8")), {
-        defaultIndex: expected, indexUrl: expected, pipIndex: expected,
+        defaultIndex: expected, indexUrl: expected, pipIndex: expected, pythonMirror: NPMMIRROR_PYTHON_BUILDS,
       });
     } finally { await supervisor.shutdown(); }
   }
@@ -75,15 +115,9 @@ test("Python ownership conflicts reach the Desktop gate, retain credentials and 
   const script = path.join(root, "runtime.cjs");
   const ready = path.join(root, "owner-stopped");
   fs.writeFileSync(script, `
-const fs = require('node:fs');
-require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
-  const request = JSON.parse(line);
-  const conflict = ['connector.acquireOwnership', 'connector.start'].includes(request.method) && !fs.existsSync(process.argv[2]);
-  const response = conflict
-    ? { error: { code: -32009, message: 'Another Connector is running.', data: { reason: 'connector_already_running', owner: { kind: 'cli', pid: 1234 } } } }
-    : { result: { running: request.method === 'connector.start', status: request.method === 'connector.start' ? 'running' : 'stopped' } };
-  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, ...response }) + '\\n');
-});
+process.stdout.write(JSON.stringify({ kind: 'connector.ready', version: 1, instanceId: 'fake', pid: process.pid, endpoint: { unixPath: '/nonexistent/fake.sock' }, key: 'mk_host_fake' }) + '\\n');
+process.stdin.resume();
+process.stdin.on('end', () => process.exit(0));
 `);
   const configPath = path.join(root, "connector.json");
   const credentials = { serverUrl: "https://example.test", connectorId: "desktop-id", connectorToken: "private-token" };
@@ -104,10 +138,12 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
   const supervisor = new ConnectorSupervisor({
     configPath, dataPath: root, connectorDir: root, resourcesPath: root,
     uvBundleDir: path.join(root, "build", "uv"),
+    pythonBundleDir: path.join(root, "build", "python"),
     packaged: false, homePath: root, shellEnvironment: {}, settings,
     binding: new DesktopBindingStore(path.join(root, "binding.json")),
     logs: new ConnectorLogStore(path.join(root, "logs"), () => settings.get()),
     onOwnership: state => ownership.push(state), onState: () => {}, onLog: entry => logs.push(entry.message),
+    connectControl: async () => fakeChannel({ conflict: () => !fs.existsSync(ready) }),
   });
   try {
     const isConflict = (error: unknown) => error instanceof ConnectorRpcError && error.ownershipConflict && error.code === -32009;
@@ -115,6 +151,8 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     await assert.rejects(supervisor.start(), isConflict);
     assert.equal(ownership.at(-1)?.status, "conflict");
     assert.match(ownership.at(-1)?.message ?? "", /其他 Connector/);
+    assert.match(ownership.at(-1)?.message ?? "", /cli, PID 1234/);
+    assert.deepEqual(ownership.at(-1)?.owner, { kind: "cli", pid: 1234 });
     assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf8")), credentials);
     assert.equal((await supervisor.getState()).running, false);
     assert.equal(logs.some(line => line.includes("will restart")), false);
@@ -123,6 +161,53 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     assert.equal(ownership.at(-1)?.status, "owned");
     assert.equal((await supervisor.start()).running, true);
     assert.equal(launches, 1, "A failed acquisition keeps its RPC channel available for retry");
+  } finally { await supervisor.shutdown(); }
+});
+
+test("an RPC process that exits before answering reports its exit code and last output", { timeout: 15_000 }, async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-rpc-exit-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "pyproject.toml"), "");
+  const script = path.join(root, "runtime.cjs");
+  // uv writes one message in several chunks, and its last lines explain the exit.
+  fs.writeFileSync(script, `
+process.stderr.write('Downloading claude-agent-sdk', () => setTimeout(() => {
+  process.stderr.write(' (92.9MiB)\\nerror: Failed to fetch: https://pypi.example/simple/claude-agent-sdk/\\n', () => process.exit(2));
+}, 50));
+`);
+  const settings = new DesktopSettingsStore(path.join(root, "settings.json"), ["en-US"]);
+  settings.save({ uvPath: process.execPath });
+  const spawn = childProcess.spawn;
+  t.mock.method(childProcess, "spawn", (command: string, args: readonly string[], options: childProcess.SpawnOptions) => {
+    // Windows process-tree termination is not a Connector launch.
+    if (command === "taskkill.exe") return spawn(command, args, options);
+    return spawn(process.execPath, [script], options);
+  });
+  const ownership: OwnershipState[] = [];
+  const logs: ConnectorLogEntry[] = [];
+  const supervisor = new ConnectorSupervisor({
+    configPath: path.join(root, "connector.json"), dataPath: root, connectorDir: root, resourcesPath: root,
+    uvBundleDir: path.join(root, "build", "uv"),
+    pythonBundleDir: path.join(root, "build", "python"),
+    packaged: false, homePath: root, shellEnvironment: {}, settings,
+    binding: new DesktopBindingStore(path.join(root, "binding.json")),
+    logs: new ConnectorLogStore(path.join(root, "logs"), () => settings.get()),
+    onOwnership: state => ownership.push(state), onState: () => {}, onLog: entry => logs.push(entry),
+  });
+  try {
+    const reason = [
+      "Connector RPC exited with code 2",
+      "Last output:",
+      "Downloading claude-agent-sdk (92.9MiB)",
+      "error: Failed to fetch: https://pypi.example/simple/claude-agent-sdk/",
+    ].join("\n");
+    await assert.rejects(supervisor.acquireOwnership(), { message: reason });
+    assert.deepEqual(ownership.at(-1), { status: "error", message: reason }, "the gate quotes the same reason");
+    const messages = logs.map(entry => entry.message);
+    assert.ok(messages.includes("Downloading claude-agent-sdk (92.9MiB)"), "a line split across chunks is logged whole");
+    assert.equal(messages.includes("(92.9MiB)"), false);
+    assert.ok(logs.some(entry => entry.level === "ERROR"
+      && entry.message.startsWith("Could not acquire Connector ownership: Connector RPC exited with code 2")));
   } finally { await supervisor.shutdown(); }
 });
 
@@ -140,10 +225,9 @@ test("development launches the bundled uv instead of the developer's PATH", { ti
   fs.writeFileSync(bundledUv, "");
   const script = path.join(root, "runtime.cjs");
   fs.writeFileSync(script, `
-require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
-  const request = JSON.parse(line);
-  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { running: false, status: 'stopped' } }) + '\\n');
-});
+process.stdout.write(JSON.stringify({ kind: 'connector.ready', version: 1, instanceId: 'fake', pid: process.pid, endpoint: { unixPath: '/nonexistent/fake.sock' }, key: 'mk_host_fake' }) + '\\n');
+process.stdin.resume();
+process.stdin.on('end', () => process.exit(0));
 `);
   const settings = new DesktopSettingsStore(path.join(root, "settings.json"), ["en-US"]);
   const spawn = childProcess.spawn;
@@ -154,10 +238,12 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
   });
   const supervisor = new ConnectorSupervisor({
     configPath: path.join(root, "connector.json"), dataPath: root, connectorDir: root, resourcesPath: root,
-    uvBundleDir, packaged: false, homePath: root, shellEnvironment: {}, settings,
+    uvBundleDir, pythonBundleDir: path.join(root, "build", "python"),
+    packaged: false, homePath: root, shellEnvironment: {}, settings,
     binding: new DesktopBindingStore(path.join(root, "binding.json")),
     logs: new ConnectorLogStore(path.join(root, "logs"), () => settings.get()),
     onState: () => {}, onLog: () => {},
+    connectControl: async () => fakeChannel(),
   });
   try {
     await supervisor.getState();
@@ -167,5 +253,140 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       [...(launches[0]?.args ?? [])],
       ["run", "--project", root, "anywhere-cli", "rpc", "--config", path.join(root, "connector.json")],
     );
+  } finally { await supervisor.shutdown(); }
+});
+
+test("the bundled Python pins the Connector environment, and replacing another interpreter's is provisioning", { timeout: 15_000 }, async (t) => {
+  if (process.env.WORKBENCH_CONNECTOR_CLI?.trim() || process.env.UV_PROJECT_ENVIRONMENT?.trim()) {
+    t.skip("the environment overrides launcher or project environment resolution");
+    return;
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-python-bundle-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "pyproject.toml"), "");
+  const pythonBundleDir = path.join(root, "build", "python");
+  const bundledPython = bundledPythonExecutable(pythonBundleDir);
+  const savedPython = path.join(root, "custom-python", process.platform === "win32" ? "python.exe" : "python3");
+  for (const interpreter of [bundledPython, savedPython]) {
+    fs.mkdirSync(path.dirname(interpreter), { recursive: true });
+    fs.writeFileSync(interpreter, "");
+  }
+  const script = path.join(root, "runtime.cjs");
+  fs.writeFileSync(script, `
+process.stdout.write(JSON.stringify({ kind: 'connector.ready', version: 1, instanceId: 'fake', pid: process.pid, endpoint: { unixPath: '/nonexistent/fake.sock' }, key: 'mk_host_fake' }) + '\\n');
+process.stdin.resume();
+process.stdin.on('end', () => process.exit(0));
+`);
+  const configPath = path.join(root, "connector.json");
+  const settings = new DesktopSettingsStore(path.join(root, "settings.json"), ["en-US"]);
+  settings.save({ uvPath: process.execPath });
+  const spawn = childProcess.spawn;
+  const launches: Array<readonly string[]> = [];
+  t.mock.method(childProcess, "spawn", (command: string, args: readonly string[], options: childProcess.SpawnOptions) => {
+    // Windows process-tree termination is not a Connector launch.
+    if (command === "taskkill.exe") return spawn(command, args, options);
+    launches.push(args);
+    return spawn(process.execPath, [script], options);
+  });
+  const ownership: OwnershipState[] = [];
+  const supervisor = new ConnectorSupervisor({
+    configPath, dataPath: root, connectorDir: root, resourcesPath: root,
+    uvBundleDir: path.join(root, "build", "uv"), pythonBundleDir,
+    packaged: false, homePath: root, shellEnvironment: {}, settings,
+    binding: new DesktopBindingStore(path.join(root, "binding.json")),
+    logs: new ConnectorLogStore(path.join(root, "logs"), () => settings.get()),
+    onOwnership: state => ownership.push(state), onState: () => {}, onLog: () => {},
+    connectControl: async () => fakeChannel(),
+  });
+  // Acquire ownership over a project environment whose pyvenv.cfg records
+  // `home` (none when null) and report whether that counted as provisioning.
+  const environment = path.join(root, ".venv");
+  const provisions = async (home: string | null) => {
+    fs.rmSync(environment, { recursive: true, force: true });
+    if (home !== null) {
+      fs.mkdirSync(environment);
+      fs.writeFileSync(path.join(environment, "pyvenv.cfg"), `home = ${home}\nimplementation = CPython\nversion_info = 3.12.14\n`);
+    }
+    ownership.length = 0;
+    await supervisor.acquireOwnership();
+    assert.equal(ownership.at(-1)?.status, "owned");
+    return ownership[0]?.status === "preparing";
+  };
+  try {
+    assert.equal(await provisions(null), true, "a missing environment is built first");
+    assert.deepEqual(
+      [...(launches[0] ?? [])],
+      ["run", "--project", root, "--python", bundledPython, "anywhere-cli", "rpc", "--config", configPath],
+    );
+    assert.equal(supervisor.publicState().resolvedPythonPath, bundledPython);
+    assert.equal(
+      await provisions(path.join(root, "uv", "python", "cpython-3.14-windows-x86_64-none")),
+      true,
+      "uv rebuilds an environment another interpreter created",
+    );
+    assert.equal(await provisions(path.dirname(bundledPython)), false, "the bundled interpreter's environment is ready");
+
+    const previous = settings.get();
+    settings.save({ pythonPath: savedPython });
+    await supervisor.applySettings(previous);
+    assert.equal(supervisor.publicState().resolvedPythonPath, savedPython, "a saved pythonPath wins over the bundle");
+    assert.equal(await provisions(path.dirname(bundledPython)), true);
+    assert.deepEqual([...(launches.at(-1) ?? [])].slice(3, 5), ["--python", savedPython]);
+  } finally { await supervisor.shutdown(); }
+});
+
+test("runtime logs retain central sequences, paginate and export without a second Desktop copy", { timeout: 15_000 }, async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-central-logs-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "pyproject.toml"), "");
+  const script = path.join(root, "runtime.cjs");
+  fs.writeFileSync(script, runtime);
+  const spawn = childProcess.spawn;
+  t.mock.method(childProcess, "spawn", (command: string, args: readonly string[], options: childProcess.SpawnOptions) => {
+    if (command === "taskkill.exe") return spawn(command, args, options);
+    return spawn(process.execPath, [script, path.join(root, "environment.json")], options);
+  });
+  const settings = new DesktopSettingsStore(path.join(root, "settings.json"), ["en-US"]);
+  settings.save({ uvPath: process.execPath });
+  const store = new ConnectorLogStore(path.join(root, "logs"), () => settings.get());
+  const entries = Array.from({ length: 1205 }, (_, i) => ({ seq: 9000 + i, time: "now", name: "connector", level: "INFO", message: `runtime-${i}` }));
+  const channel = fakeChannel();
+  const originalTail = channel.logs.tail;
+  channel.logs.tail = async function* (since, source, options) {
+    yield entries[0]!;
+    yield* originalTail(since, source, options);
+  };
+  const seenSources: Array<string | null | undefined> = [];
+  channel.logs.read = async (source, before, after, limit = 200) => {
+    seenSources.push(source);
+    const rows = entries.filter(e => (before == null || e.seq < before) && (after == null || e.seq > after));
+    const items = after == null ? rows.slice(-limit) : rows.slice(0, limit);
+    return { items, firstSeq: entries[0]!.seq, lastSeq: entries.at(-1)!.seq, total: entries.length,
+      hasMoreBefore: Boolean(items.length && items[0]!.seq > entries[0]!.seq),
+      hasMoreAfter: Boolean(items.length && items.at(-1)!.seq < entries.at(-1)!.seq),
+      logsPath: path.join(root, "central-logs") };
+  };
+  const live: ConnectorLogEntry[] = [];
+  const supervisor = new ConnectorSupervisor({
+    configPath: path.join(root, "connector.json"), dataPath: root, connectorDir: root, resourcesPath: root,
+    uvBundleDir: path.join(root, "uv"), pythonBundleDir: path.join(root, "python"),
+    packaged: false, homePath: root, shellEnvironment: {}, settings,
+    binding: new DesktopBindingStore(path.join(root, "binding.json")), logs: store,
+    onState: () => {}, onLog: () => {}, onRuntimeLog: e => live.push(e), connectControl: async () => channel,
+  });
+  try {
+    await supervisor.preflightProvisioning();
+    assert.equal(live[0]!.seq, 9000);
+    assert.ok(!store.read({ pageSize: 5000 }).items.some(e => e.message.startsWith("runtime-")));
+    const page = await supervisor.readLogs({ beforeSeq: 9100, pageSize: 30, source: "bridge" });
+    assert.equal(seenSources[0], "bridge");
+    assert.equal(page.logsPath, path.join(root, "central-logs"));
+    assert.equal(supervisor.publicState().logsPath, path.join(root, "central-logs"));
+    assert.equal(page.items.length, 30);
+    assert.equal(page.items.at(-1)!.seq, 9099);
+    const exported = path.join(root, "export.jsonl");
+    assert.equal(await supervisor.exportLogs(exported), entries.length);
+    assert.deepEqual(fs.readFileSync(exported, "utf8").trim().split("\n").map(line => JSON.parse(line).seq), entries.map(e => e.seq));
+    assert.equal((await supervisor.clearLogs()).total, 0);
   } finally { await supervisor.shutdown(); }
 });

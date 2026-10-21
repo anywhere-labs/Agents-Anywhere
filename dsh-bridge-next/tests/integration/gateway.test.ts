@@ -28,7 +28,7 @@ test('published Host is callable through the actual rc.1 Gateway and disposes it
     await mkdir(join(root, 'logs'), { recursive: true })
     await writeFile(join(root, 'logs', 'dsh-runtime.jsonl'), JSON.stringify({ time: new Date().toISOString(), level: 'error', event: 'sync.failed', errorCode: 'PERSISTENCE_ERROR' }) + '\n')
     const logs = await ctx.typertGateway.invoke({ namespace: 'agentsAnywhereOnboarding', method: 'readBridgeLogs', args: {} }) as { entries: { event: string }[] }
-    assert.equal(logs.entries[0]?.event, 'sync.failed', 'Bridge logs remain readable without runtime services or a Connector')
+    assert.deepEqual(logs.entries, [], 'Legacy runtime files are no longer read outside Connector')
     const connectorLogs = await ctx.typertGateway.invoke({ namespace: 'agentsAnywhereOnboarding', method: 'readConnectorLogs', args: { query: {} } }) as { entries: unknown[] }
     assert.deepEqual(connectorLogs.entries, [], 'Connector logs are available through the Host RPC even before startup')
     await assert.rejects(ctx.typertGateway.invoke({ namespace: 'agentsAnywhereOnboarding', method: 'begin', args: {

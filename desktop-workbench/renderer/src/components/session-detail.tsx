@@ -5,6 +5,7 @@ import { ArrowDown, ChevronDown, CircleAlert, Loader2, WifiOff } from "lucide-re
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -27,7 +28,6 @@ import type {
   ProtocolEventEnvelope,
   ProtocolModelCatalog,
   ProtocolPermissionCatalog,
-  RuntimeCommand,
   RuntimeStatusValue,
   SessionLocalTimelineState,
   SessionSnapshotResponse,
@@ -49,8 +49,10 @@ import { timelineRunCounts } from "@/components/session/timeline-summary"
 import { needsOlderTimelinePage } from "@/components/session/timeline-autofill"
 import { createTimelineScrollFollow } from "@/components/session/timeline-scroll-follow"
 import { createSessionEventBuffer } from "@/components/session/session-event-buffer"
-import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
+import { CAPABILITY, capabilityIsUsable, findCapability } from "@/components/session/capabilities"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
+import { commandResult, commandTransportFailure, type CommandOutcome } from "@/components/session/runtime-command-model"
+import { createRecoveredSubscriptionTracker, useRuntimeCommands } from "@/components/session/use-runtime-commands"
 import {
   acceptSessionEventId,
   bufferedEventsAfterLiveCapabilityRead,
@@ -138,7 +140,6 @@ const SCROLL_TO_BOTTOM_PRUNE_DISTANCE = 180
 const INITIAL_SCROLL_LAYOUT_QUIET_MS = 120
 const INITIAL_SCROLL_LAYOUT_FALLBACK_MS = 900
 const SCROLL_TO_BOTTOM_PRUNE_CHECK_MS = 120
-const COMMAND_QUERY_DEBOUNCE_MS = 120
 const COMPOSER_DRAFT_STORAGE_PREFIX = "agents-anywhere.sessionComposerDraft.v1."
 type ComposerDraftState = {
   sessionId: string
@@ -358,8 +359,7 @@ export function SessionDetail({
   } | null>(null)
   const [sourceErrorCode, setSourceErrorCode] = React.useState<SessionSourceErrorCode | null>(null)
   const [commandQuery, setCommandQuery] = React.useState<string | null>(null)
-  const [runtimeCommands, setRuntimeCommands] = React.useState<RuntimeCommand[]>([])
-  const [commandsLoading, setCommandsLoading] = React.useState(false)
+  const [catalogRecoveryGeneration, setCatalogRecoveryGeneration] = React.useState(0)
   const [blockingInteractionStackHeight, setBlockingInteractionStackHeight] = React.useState(0)
   const [composerHeight, setComposerHeight] = React.useState(144)
   const [timelineGroupOpenByKey, setTimelineGroupOpenByKey] = React.useState<Record<string, boolean>>({})
@@ -391,6 +391,12 @@ export function SessionDetail({
   const catalogFetchKeyRef = React.useRef<string | null>(null)
   const selectionUpdateSeqRef = React.useRef(0)
   const selectionWritesRef = React.useRef(new Map<string, Promise<unknown>>())
+  const commandVisitRef = React.useRef({ sessionId, sequence: 0 })
+  if (commandVisitRef.current.sessionId !== sessionId) {
+    commandVisitRef.current = { sessionId, sequence: commandVisitRef.current.sequence + 1 }
+  }
+  const commandRequestSeqRef = React.useRef(0)
+  const activeCommandRequestRef = React.useRef<number | null>(null)
 
   const session = state?.session ?? fallbackSession
   const runtimeState = state?.state ?? null
@@ -421,7 +427,15 @@ export function SessionDetail({
       effectiveCapabilities &&
       capabilityIsUsable(effectiveCapabilities, CAPABILITY.permissionCatalog, sessionRuntimeScope),
   )
-  const commandSessionId = session?.id ?? null
+  const commandSessionId = session?.id === sessionId ? sessionId : null
+  const commandCapability = session ? findCapability(effectiveCapabilities, CAPABILITY.commands, sessionRuntimeScope) : null
+  const catalogMetadata = commandCapability?.metadata as Record<string, unknown> | undefined
+  const catalogRevision = typeof catalogMetadata?.catalogRevision === "string" ? catalogMetadata.catalogRevision : ""
+  const commandAvailable = Boolean(commandCapability?.supported && commandCapability.available && commandCapability.allowed && session?.connectorStatus === "online")
+  const { commands: runtimeCommands, loading: commandsLoading, error: commandsError } = useRuntimeCommands({
+    token, sessionId: commandSessionId, open: commandQuery !== null,
+    available: commandAvailable, catalogRevision, runtimeStatus, recoveryGeneration: catalogRecoveryGeneration,
+  })
 
   React.useEffect(() => {
     if (!session) return
@@ -460,6 +474,8 @@ export function SessionDetail({
 
   React.useEffect(() => {
     setSourceErrorCode(null)
+    activeCommandRequestRef.current = null
+    return () => { activeCommandRequestRef.current = null }
   }, [sessionId])
 
   React.useEffect(() => {
@@ -582,33 +598,6 @@ export function SessionDetail({
     setTimelineItemOpenById({})
     catalogFetchKeyRef.current = null
   }, [sessionId])
-
-  React.useEffect(() => {
-    const commandMenuOpen = commandQuery !== null
-    if (!commandMenuOpen || !commandSessionId) {
-      setRuntimeCommands([])
-      setCommandsLoading(false)
-      return
-    }
-    let cancelled = false
-    setCommandsLoading(true)
-    const timer = window.setTimeout(() => {
-      void dashboardApi.getSessionCommands(token, commandSessionId).then((response) => {
-        if (cancelled) return
-        setRuntimeCommands(response.commands)
-      }).catch(() => {
-        if (cancelled) return
-        setRuntimeCommands([])
-      }).finally(() => {
-        if (cancelled) return
-        setCommandsLoading(false)
-      })
-    }, COMMAND_QUERY_DEBOUNCE_MS)
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-    }
-  }, [commandQuery !== null, commandSessionId, token])
 
   React.useEffect(() => {
     const runtime = sessionRuntime
@@ -877,6 +866,10 @@ export function SessionDetail({
     let recoveryStarting = false
     let snapshotReady = false
     let socketSubscribed = false
+    let connectionSequence = 0
+    const recoveredSubscriptions = createRecoveredSubscriptionTracker(() => {
+      if (!cancelled) setCatalogRecoveryGeneration((generation) => generation + 1)
+    })
     let bufferedEvents: ProtocolEventEnvelope[] = []
     let processedEventIds = new Set<string>()
     const renderBuffer = createSessionEventBuffer((events) => {
@@ -1071,14 +1064,17 @@ export function SessionDetail({
       }
     }
 
-    const recoverAfterSubscription = async (reason: string) => {
+    const recoverAfterSubscription = async (reason: string, connection: number) => {
       const pendingRecovery = recoveryPromise
       if (pendingRecovery) await pendingRecovery
       if (cancelled || !snapshotReady || !socketSubscribed) return
       await recoverEvents(eventSequenceCursor.current(sessionId), reason)
+      if (!cancelled && socketSubscribed && connection === connectionSequence) recoveredSubscriptions.recovered(connection)
     }
 
     const connect = async () => {
+      const connection = ++connectionSequence
+      recoveredSubscriptions.observed(connection)
       try {
         const ticket = await dashboardApi.createWsTicket(token, createClientId("web"), sessionId)
         if (cancelled) return
@@ -1097,7 +1093,7 @@ export function SessionDetail({
             // projection cannot fall between recovery and socket registration.
             socketSubscribed = true
             if (snapshotReady) {
-              void recoverAfterSubscription("websocket.subscribed")
+              void recoverAfterSubscription("websocket.subscribed", connection)
             }
             return
           }
@@ -1143,7 +1139,7 @@ export function SessionDetail({
         onSessionUpdatedRef.current?.(next.session)
         snapshotReady = true
         if (socketSubscribed) {
-          void recoverAfterSubscription("websocket.initial-subscription")
+          void recoverAfterSubscription("websocket.initial-subscription", connectionSequence)
         } else {
           drainBufferedEvents()
         }
@@ -1154,7 +1150,7 @@ export function SessionDetail({
           setError(err instanceof Error ? err.message : tSessionRef.current("loadFailed"))
           setLoading(false)
           if (socketSubscribed) {
-            void recoverAfterSubscription("websocket.initial-subscription")
+            void recoverAfterSubscription("websocket.initial-subscription", connectionSequence)
           } else {
             drainBufferedEvents()
           }
@@ -1323,24 +1319,25 @@ export function SessionDetail({
   const handleSessionCommand = async (
     command: string,
     options: { args: string[]; raw: string },
-  ) => {
-    if (!session) return
+  ): Promise<CommandOutcome> => {
+    const visit = commandVisitRef.current
+    if (!session || session.id !== visit.sessionId) {
+      return { ok: false, state: "completed", code: "session_unavailable", message: tSession("commandUnavailable"), result: null }
+    }
+    const request = ++commandRequestSeqRef.current
+    activeCommandRequestRef.current = request
+    const isCurrentRequest = () => commandVisitRef.current === visit && activeCommandRequestRef.current === request
     try {
-      const response = await dashboardApi.sendSessionCommand(
-        token,
-        session.id,
-        command,
-        options,
-      )
-      if (response.session) {
-        setState((current) => current ? { ...current, session: response.session! } : current)
+      const response = await dashboardApi.sendSessionCommand(token, visit.sessionId, command, options)
+      if (isCurrentRequest() && response.session?.id === visit.sessionId) {
+        setState((current) => current?.session.id === visit.sessionId ? { ...current, session: response.session! } : current)
         onSessionUpdated?.(response.session)
       }
-      if (response.message) {
-        toast.message(response.message)
-      }
+      return commandResult(response)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : tSession("commandFailed"))
+      return commandTransportFailure(err, tSession("commandFailed"))
+    } finally {
+      if (isCurrentRequest()) activeCommandRequestRef.current = null
     }
   }
 
@@ -1643,6 +1640,8 @@ export function SessionDetail({
   const takeoverDescription = (tSession.raw(
     takeoverTarget ? "takeoverEnableDescription" : "takeoverDisableDescription",
   ) as string[]).map((line) => line.replaceAll("{agent}", takeoverAgent))
+  // DSH syncs with Agents Anywhere in real time, so the restart-to-sync caveats do not apply.
+  const takeoverIsDsh = sessionRuntimeType(session) === "dsh"
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden overscroll-none">
@@ -1790,6 +1789,7 @@ export function SessionDetail({
             permissionCatalog={state?.catalogs.permission ?? null}
             runtimeCommands={runtimeCommands}
             commandsLoading={commandsLoading}
+            commandsError={commandsError}
             onCommandQueryChange={handleCommandQueryChange}
             onValueChange={setComposerDraft}
             onSelectionChange={handleSelectionChange}
@@ -1811,13 +1811,25 @@ export function SessionDetail({
             <DialogTitle>
               {takeoverTarget ? tSession("takeoverEnableTitle") : tSession("takeoverDisableTitle")}
             </DialogTitle>
-            <DialogDescription asChild>
-              <ul className="flex list-disc flex-col gap-1 pl-5">
-                {takeoverDescription.map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
-              </ul>
-            </DialogDescription>
+            {takeoverIsDsh && takeoverTarget ? (
+              <DialogDescription>
+                {tSession.rich("takeoverEnableDshDescription", {
+                  beta: (chunks) => (
+                    <Badge variant="secondary" className="mx-1 align-middle">
+                      {chunks}
+                    </Badge>
+                  ),
+                })}
+              </DialogDescription>
+            ) : (
+              <DialogDescription asChild>
+                <ul className="flex list-disc flex-col gap-1 pl-5">
+                  {(takeoverIsDsh ? takeoverDescription.slice(0, 1) : takeoverDescription).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </DialogDescription>
+            )}
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={handleDismissTakeover} disabled={takeoverBusy}>

@@ -49,7 +49,10 @@ nonisolated struct V2SessionArchive: Codable {
     }
 
     @MainActor func projection(maximumItems: Int) throws -> V2SessionProjection {
-        let decoded = try items.map { try JSONDecoder().decode(V2TimelineItem.self, from: JSONEncoder().encode($0)) }
+        projection(items: try items.map { try V2TimelineItem(json: $0) }, maximumItems: maximumItems)
+    }
+
+    @MainActor func projection(items decoded: [V2TimelineItem], maximumItems: Int) -> V2SessionProjection {
         let empty = V2RuntimeCapabilitySnapshot(revision: 0, capabilities: [])
         let snapshot = V2SessionSnapshot(session: session, state: nil,
             timeline: .init(items: decoded, nextSeq: V2SessionProjection.sequence(cursor), hasMore: hasOlderItems),
@@ -57,6 +60,12 @@ nonisolated struct V2SessionArchive: Codable {
             catalogs: [:], eventCursor: cursor, serverTime: "")
         return V2SessionProjection(archive: snapshot, hasNewerItems: hasNewerItems, maximumItems: maximumItems)
     }
+}
+
+/// An archive plus its timeline already decoded by the store actor.
+nonisolated struct V2SessionRestore {
+    let archive: V2SessionArchive
+    let items: [V2TimelineItem]
 }
 
 extension ChatAttachment {

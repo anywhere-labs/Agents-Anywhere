@@ -419,11 +419,10 @@ def test_oauth_binding_conflict_rolls_back_new_account(tmp_path):
     assert asyncio.run(store.user_for_email("second@example.test")) is None
 
 
-def test_schema_upgrade_preserves_old_identifiers_without_backfill(tmp_path):
-    path = tmp_path / "old.sqlite3"
-    url = f"sqlite+aiosqlite:///{path}"
+def test_schema_upgrade_preserves_old_identifiers_without_backfill(fresh_database_url):
+    url = fresh_database_url
     upgrade_database(db_url=url, revision="v2_24")
-    engine = create_engine(f"sqlite:///{path}")
+    engine = create_engine(url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1))
     with engine.begin() as conn:
         conn.execute(
             text(
@@ -481,3 +480,128 @@ def test_concurrent_code_consumption_allows_only_one_binding(email_env):
         == 1
     )
     assert client.get("/auth/me", headers=bearer(admin)).json()["email"] == email
+
+
+def email_login(client, email, password):
+    return client.post("/auth/login", json={"email": email, "password": password})
+
+
+def test_password_reset_is_off_by_default_and_uses_reset_codes(email_env):
+    client, admin, sent, _clock = email_env
+    email = "forgetful@example.test"
+    assert code_request(client, email).status_code == 200
+    assert email_register(client, email, code=sent[-1][1]).status_code == 200
+
+    config = client.get("/auth/config").json()
+    assert config["passwordResetEnabled"] is False
+    settings = client.get("/admin/settings", headers=bearer(admin)).json()
+    assert settings["passwordResetEnabled"] is False
+    assert code_request(client, email, purpose="reset").status_code == 409
+    reset_body = {"email": email, "code": "123456", "newPassword": "renewed"}
+    assert client.post("/auth/change-password", json=reset_body).status_code == 409
+
+    updated = client.patch(
+        "/admin/settings", headers=bearer(admin), json={"passwordResetEnabled": True}
+    )
+    assert updated.status_code == 200
+    assert updated.json()["passwordResetEnabled"] is True
+    assert client.get("/auth/config").json()["passwordResetEnabled"] is True
+
+    # Unknown addresses get the same answer but no mail.
+    before = len(sent)
+    assert code_request(client, "nobody@example.test", purpose="reset").status_code == 200
+    assert len(sent) == before
+
+    assert code_request(client, email, purpose="reset").status_code == 200
+    reset_code = sent[-1][1]
+    wrong = client.post("/auth/change-password", json={**reset_body, "code": "000000"})
+    assert wrong.status_code == 422
+    ok = client.post("/auth/change-password", json={**reset_body, "code": reset_code})
+    assert ok.status_code == 204, ok.text
+    assert email_login(client, email, "secret").status_code == 401
+    assert email_login(client, email, "renewed").status_code == 200
+    # Codes are single use.
+    again = client.post(
+        "/auth/change-password",
+        json={**reset_body, "code": reset_code, "newPassword": "third"},
+    )
+    assert again.status_code == 422
+
+    # A register code cannot reset a password.
+    assert code_request(client, "fresh@example.test").status_code == 200
+    assert (
+        client.post(
+            "/auth/change-password",
+            json={"email": "fresh@example.test", "code": sent[-1][1], "newPassword": "x"},
+        ).status_code
+        == 422
+    )
+
+    # Without a token and without email + code the old 401 still applies.
+    assert (
+        client.post("/auth/change-password", json={"newPassword": "x"}).status_code
+        == 401
+    )
+    # Authenticated change-password is unchanged.
+    token = email_login(client, email, "renewed").json()["accessToken"]
+    assert (
+        client.post(
+            "/auth/change-password", headers=bearer(token), json={"newPassword": "mine"}
+        ).status_code
+        == 204
+    )
+    assert email_login(client, email, "mine").status_code == 200
+
+
+def test_admin_can_skip_email_verification_for_one_user(email_env):
+    client, admin, sent, _clock = email_env
+    before = len(sent)
+    created = client.post(
+        "/admin/users",
+        headers=bearer(admin),
+        json={
+            "email": "trusted@example.test",
+            "displayName": "Trusted",
+            "password": "secret",
+            "skipEmailVerification": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["emailVerified"] is True
+    assert len(sent) == before
+    assert email_login(client, "trusted@example.test", "secret").status_code == 200
+    # The switch does not change the instance policy for the next user.
+    other = client.post(
+        "/admin/users",
+        headers=bearer(admin),
+        json={"email": "other@example.test", "displayName": "Other", "password": "secret"},
+    )
+    assert other.status_code == 422
+    assert client.get("/auth/config").json()["emailVerificationRequired"] is True
+
+
+def test_admin_user_list_supports_paging(email_env):
+    client, admin, _sent, _clock = email_env
+    for index in range(4):
+        response = client.post(
+            "/admin/users",
+            headers=bearer(admin),
+            json={
+                "email": f"page{index}@example.test",
+                "displayName": f"Page {index}",
+                "password": "secret",
+                "skipEmailVerification": True,
+            },
+        )
+        assert response.status_code == 201, response.text
+
+    full = client.get("/admin/users", headers=bearer(admin)).json()
+    assert full["total"] == 5
+    assert len(full["users"]) == 5
+    first = client.get("/admin/users?limit=2", headers=bearer(admin)).json()
+    second = client.get("/admin/users?limit=2&offset=2", headers=bearer(admin)).json()
+    last = client.get("/admin/users?limit=2&offset=4", headers=bearer(admin)).json()
+    assert first["total"] == second["total"] == last["total"] == 5
+    ids = [u["userId"] for page in (first, second, last) for u in page["users"]]
+    assert ids == [u["userId"] for u in full["users"]]
+    assert client.get("/admin/users?limit=0", headers=bearer(admin)).status_code == 422

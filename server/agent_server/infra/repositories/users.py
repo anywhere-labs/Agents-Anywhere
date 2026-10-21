@@ -17,43 +17,6 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
             )
         return normalized
 
-
-    async def record_platform_activity(self, user_id: str, *, occurred_at: str | None = None) -> None:
-        now = occurred_at or utc_now()
-        activity_date = now[:10]
-        async with self._engine.begin() as conn:
-            existing = (
-                await conn.execute(
-                    select(platform_user_activity_t.c.user_id).where(
-                        platform_user_activity_t.c.user_id == user_id,
-                        platform_user_activity_t.c.activity_date == activity_date,
-                    )
-                )
-            ).first()
-            if existing is None:
-                await conn.execute(
-                    insert(platform_user_activity_t).values(
-                        user_id=user_id,
-                        activity_date=activity_date,
-                        first_seen_at=now,
-                        last_seen_at=now,
-                        event_count=1,
-                    )
-                )
-                return
-            await conn.execute(
-                update(platform_user_activity_t)
-                .where(
-                    platform_user_activity_t.c.user_id == user_id,
-                    platform_user_activity_t.c.activity_date == activity_date,
-                )
-                .values(
-                    last_seen_at=now,
-                    event_count=platform_user_activity_t.c.event_count + 1,
-                )
-            )
-
-
     async def create_user(
         self,
         *,
@@ -280,11 +243,16 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
         return int(row[0]) if row else 0
 
 
-    async def list_users(self) -> list[UserView]:
+    async def list_users(
+        self, *, limit: int | None = None, offset: int = 0
+    ) -> list[UserView]:
+        query = select(users_t).order_by(users_t.c.created_at.asc(), users_t.c.id.asc())
+        if offset:
+            query = query.offset(offset)
+        if limit is not None:
+            query = query.limit(limit)
         async with self._engine.connect() as conn:
-            rows = (
-                await conn.execute(select(users_t).order_by(users_t.c.created_at.asc()))
-            ).mappings().all()
+            rows = (await conn.execute(query)).mappings().all()
         return [_user_from_row(row) for row in rows]
 
 

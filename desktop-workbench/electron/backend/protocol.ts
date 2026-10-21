@@ -47,6 +47,12 @@ export type BackendInit = {
    * uv the installer ships instead of whatever is on the developer's PATH.
    */
   uvBundleDir: string;
+  /**
+   * Directory holding `<platform>-<arch>/`, the CPython that packaging
+   * bundles so a packaged Connector never waits on uv downloading Python.
+   * Development uses `build/python` once `yarn bundle:python` created it.
+   */
+  pythonBundleDir: string;
   homePath: string;
   documentsPath: string;
   packaged: boolean;

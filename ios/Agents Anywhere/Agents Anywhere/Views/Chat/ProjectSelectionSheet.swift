@@ -7,7 +7,7 @@ struct ProjectSelectionSheet: View {
     @State private var createsProject = false
     @State private var showsFiles = false
     @State private var selectionCompleted = false
-    @EnvironmentObject private var appState: AppState
+    @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
 
     private var canBrowse: Bool {

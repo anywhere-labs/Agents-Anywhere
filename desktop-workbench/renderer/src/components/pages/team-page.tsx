@@ -3,6 +3,8 @@
 import * as React from "react"
 import {
   Ban,
+  ChevronLeft,
+  ChevronRight,
   KeyRound,
   MoreHorizontal,
   Pencil,
@@ -77,12 +79,12 @@ import { useAuth } from "@/components/auth/auth-context"
 import { EmailCodeField, DisplayNameField } from "@/components/auth/account-identity-fields"
 import { accountDisplayName, isValidEmail, isValidDisplayName } from "@/features/auth/account-profile"
 import { LoadingState } from "@/components/loading-state"
-import { useWorkspace } from "@/components/workspace-context"
 import { authApi } from "@/features/auth/api"
 import type { AdminUser, UserRole } from "@/features/auth/types"
 import { cn } from "@/lib/utils"
 
 type FilterTab = "all" | "admins" | "members"
+const USERS_PAGE_SIZE = 200
 type UserDraft = {
   email: string
   displayName: string
@@ -104,7 +106,6 @@ function initialDraft(): UserDraft {
 }
 
 export function TeamPage() {
-  const { navigate } = useWorkspace()
   const { session, me } = useAuth()
   const t = useTranslations("pages.team")
   const [users, setUsers] = React.useState<AdminUser[]>([])
@@ -116,6 +117,9 @@ export function TeamPage() {
   const [editingUser, setEditingUser] = React.useState<AdminUser | null>(null)
   const [deleteUser, setDeleteUser] = React.useState<AdminUser | null>(null)
   const [rowBusyUserId, setRowBusyUserId] = React.useState<string | null>(null)
+  const [page, setPage] = React.useState(0)
+  // Undefined when the server predates paging and returned every user.
+  const [total, setTotal] = React.useState<number | undefined>(undefined)
   const isAdmin = me?.role === "admin"
 
   const loadUsers = React.useCallback(() => {
@@ -129,9 +133,15 @@ export function TeamPage() {
     setLoading(true)
     setError(null)
     authApi
-      .listUsers(session.accessToken)
+      .listUsers(session.accessToken, { limit: USERS_PAGE_SIZE, offset: page * USERS_PAGE_SIZE })
       .then((res) => {
-        if (!cancelled) setUsers(res.users)
+        if (cancelled) return
+        setUsers(res.users)
+        setTotal(res.total)
+        // Step back when the current page emptied, e.g. after deletions.
+        if (res.users.length === 0 && page > 0 && typeof res.total === "number") {
+          setPage(Math.max(0, Math.ceil(res.total / USERS_PAGE_SIZE) - 1))
+        }
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : t("loadFailed"))
@@ -143,9 +153,11 @@ export function TeamPage() {
     return () => {
       cancelled = true
     }
-  }, [session?.accessToken, t])
+  }, [page, session?.accessToken, t])
 
   React.useEffect(() => loadUsers(), [loadUsers])
+
+  const pageCount = typeof total === "number" ? Math.max(1, Math.ceil(total / USERS_PAGE_SIZE)) : 1
 
   const filtered = React.useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -203,6 +215,7 @@ export function TeamPage() {
 
   const handleDeleted = (userId: string) => {
     setUsers((current) => current.filter((user) => user.userId !== userId))
+    setTotal((current) => (typeof current === "number" ? Math.max(0, current - 1) : current))
     setDeleteUser(null)
     if (editingUser?.userId === userId) setEditingUser(null)
   }
@@ -216,7 +229,7 @@ export function TeamPage() {
   return (
     <ScrollArea className="@container/page h-full w-full bg-background">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-8 pb-16 pt-14 @min-[68rem]/page:pt-8">
-        <PageHeader title={t("title")} description={t("description")} onBack={() => navigate("home")}>
+        <PageHeader title={t("title")} description={t("description")}>
           <Button size="sm" disabled={!isAdmin} onClick={() => setCreateOpen(true)}>
             <Plus data-icon="inline-start" />
             {t("newUser")}
@@ -252,7 +265,10 @@ export function TeamPage() {
             {filterItems.map((item) => (
               <ToggleGroupItem key={item.id} value={item.id} className="gap-1.5">
                 {item.label}
-                <span className="text-xs text-muted-foreground">{counts[item.id]}</span>
+                {/* Role counts only cover the loaded page, so show them when everything fits on one page. */}
+                {item.id === "all" || pageCount <= 1 ? (
+                  <span className="text-xs text-muted-foreground">{item.id === "all" ? (total ?? counts.all) : counts[item.id]}</span>
+                ) : null}
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
@@ -353,13 +369,39 @@ export function TeamPage() {
             </Table>
           )}
         </div>
+
+        {pageCount > 1 ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+            <span>
+              {t("pageRange", {
+                from: page * USERS_PAGE_SIZE + 1,
+                to: Math.min((page + 1) * USERS_PAGE_SIZE, total ?? 0),
+                total: total ?? 0,
+              })}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={loading || page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>
+                <ChevronLeft data-icon="inline-start" />
+                {t("previousPage")}
+              </Button>
+              <span className="code-mono text-xs">{t("pageOf", { page: page + 1, pages: pageCount })}</span>
+              <Button variant="outline" size="sm" disabled={loading || page + 1 >= pageCount} onClick={() => setPage((value) => value + 1)}>
+                {t("nextPage")}
+                <ChevronRight data-icon="inline-end" />
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <CreateUserDialog
         open={createOpen}
         token={session?.accessToken ?? ""}
         onOpenChange={setCreateOpen}
-        onCreated={upsertUser}
+        onCreated={(user) => {
+          upsertUser(user)
+          setTotal((current) => (typeof current === "number" ? current + 1 : current))
+        }}
       />
       <EditUserDialog
         user={editingUser}
@@ -453,6 +495,8 @@ function CreateUserDialog({
   const t = useTranslations("pages.team")
   const { emailVerificationRequired, refreshConfig } = useAuth()
   const [draft, setDraft] = React.useState<UserDraft>(() => initialDraft())
+  const [skipEmailVerification, setSkipEmailVerification] = React.useState(false)
+  const needsCode = emailVerificationRequired && !skipEmailVerification
   React.useEffect(() => { if (open) void refreshConfig().catch(() => undefined) }, [open, refreshConfig])
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -460,6 +504,7 @@ function CreateUserDialog({
   React.useEffect(() => {
     if (!open) {
       setDraft(initialDraft())
+      setSkipEmailVerification(false)
       setSaving(false)
       setError(null)
     }
@@ -468,7 +513,7 @@ function CreateUserDialog({
   const validation = validateUserDraft(draft, true)
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!token || saving || validation || (emailVerificationRequired && draft.code.length !== 6)) {
+    if (!token || saving || validation || (needsCode && draft.code.length !== 6)) {
       if (validation) setError(t(validation))
       return
     }
@@ -478,9 +523,10 @@ function CreateUserDialog({
       const created = await authApi.createUser(token, {
         email: draft.email,
         displayName: draft.displayName,
-        code: draft.code || undefined,
+        code: needsCode ? draft.code || undefined : undefined,
         role: draft.role,
         password: draft.password,
+        skipEmailVerification: emailVerificationRequired && skipEmailVerification,
       })
       onCreated(created)
       onOpenChange(false)
@@ -500,13 +546,27 @@ function CreateUserDialog({
         </DialogHeader>
         <form onSubmit={submit} className="flex flex-col gap-6">
           <UserFormFields draft={draft} onDraftChange={setDraft} requirePassword />
-          {emailVerificationRequired ? <EmailCodeField email={draft.email} value={draft.code} onChange={(code) => setDraft((current) => ({ ...current, code }))} token={token} disabled={saving} id="team-email-code" /> : null}
+          {emailVerificationRequired ? (
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="team-skip-email-verification">{t("skipEmailVerification")}</FieldLabel>
+                <FieldDescription>{t("skipEmailVerificationDescription")}</FieldDescription>
+              </FieldContent>
+              <Switch
+                id="team-skip-email-verification"
+                checked={skipEmailVerification}
+                disabled={saving}
+                onCheckedChange={setSkipEmailVerification}
+              />
+            </Field>
+          ) : null}
+          {needsCode ? <EmailCodeField email={draft.email} value={draft.code} onChange={(code) => setDraft((current) => ({ ...current, code }))} token={token} disabled={saving} id="team-email-code" /> : null}
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               {t("cancel")}
             </Button>
-            <Button type="submit" disabled={saving || Boolean(validation) || (emailVerificationRequired && draft.code.length !== 6)}>
+            <Button type="submit" disabled={saving || Boolean(validation) || (needsCode && draft.code.length !== 6)}>
               {saving ? <Spinner /> : <Plus data-icon="inline-start" />}
               {t("createUser")}
             </Button>

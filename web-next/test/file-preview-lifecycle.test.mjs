@@ -6,7 +6,7 @@ import { JSDOM } from "jsdom"
 import { registerSource } from "./helpers/onboarding-source.mjs"
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://fixture.example/", pretendToBeVisual: true })
-for (const name of ["DOMRect", "window", "document", "navigator", "HTMLElement", "HTMLInputElement", "HTMLButtonElement", "Element", "Node", "NodeFilter", "Event", "CustomEvent", "MutationObserver", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame"]) {
+for (const name of ["DOMRect", "window", "document", "navigator", "HTMLElement", "HTMLInputElement", "HTMLButtonElement", "HTMLFormElement", "Element", "Node", "NodeFilter", "Event", "CustomEvent", "MutationObserver", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame"]) {
   Object.defineProperty(globalThis, name, { configurable: true, value: dom.window[name] })
 }
 HTMLElement.prototype.scrollIntoView = () => {}

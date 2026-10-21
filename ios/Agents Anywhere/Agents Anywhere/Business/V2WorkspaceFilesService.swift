@@ -12,7 +12,7 @@ struct V2WorkspaceFilesService {
     ) async throws -> V2WorkspaceDirectory {
         let response = try await connectorAPI.listWorkspaceFiles(
             connectorId: connectorId,
-            request: V2WorkspaceFilesListRequest(root: root, path: path)
+            request: V2WorkspaceFilesListRequest(root: ProjectWorkspacePath.requestRoot(root, path: path), path: path)
         )
         if let error = response.error, !response.ok { throw error }
         guard response.ok, let directory = response.result else {
@@ -26,7 +26,7 @@ struct V2WorkspaceFilesService {
     func readText(connectorId: V2ConnectorID, root: String, path: String, maxBytes: Int = 1_048_576) async throws -> V2WorkspaceTextResponse {
         guard (1...4_194_304).contains(maxBytes) else { throw V2BusinessError.invalidPageSize }
         return try await connectorAPI.readWorkspaceText(
-            connectorId: connectorId, root: root,
+            connectorId: connectorId, root: ProjectWorkspacePath.requestRoot(root, path: path),
             request: V2WorkspaceTextRequest(path: path, maxBytes: maxBytes)
         )
     }
@@ -35,7 +35,8 @@ struct V2WorkspaceFilesService {
     /// text files. The size-limited Web text preview is never used as a download.
     func download(connectorId: V2ConnectorID, root: String, entry: V2WorkspaceEntry) async throws -> WorkspaceDownloadedFile {
         guard entry.isFile else { throw V2BusinessError.workspaceEntryNotPreviewable }
-        return try await connectorAPI.downloadWorkspaceFile(connectorId: connectorId, root: root, path: entry.path)
+        return try await connectorAPI.downloadWorkspaceFile(
+            connectorId: connectorId, root: ProjectWorkspacePath.requestRoot(root, path: entry.path), path: entry.path)
     }
 
     /// Creates a one-use scoped token and returns the existing Web file-preview route.
@@ -48,7 +49,7 @@ struct V2WorkspaceFilesService {
         guard entry.isFile else { throw V2BusinessError.workspaceEntryNotPreviewable }
         let token = try await connectorAPI.createWorkspaceFilePreviewToken(
             connectorId: connectorId,
-            root: root,
+            root: ProjectWorkspacePath.requestRoot(root, path: entry.path),
             request: V2WorkspaceFileReadRequest(path: entry.path)
         )
         return try makePreviewURL(previewToken: token.previewToken, name: entry.name, location: location)

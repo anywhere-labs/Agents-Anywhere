@@ -13,6 +13,14 @@
   typealias PlatformTextSelectionInteraction = UIKitTextSelectionInteraction
 
   struct UIKitTextSelectionInteraction: ViewModifier {
+    // Touch selection reads text layouts only after a touch lands on the text. Mac Catalyst keeps
+    // reading them because pointer drags and hover start without a prior touch.
+    #if targetEnvironment(macCatalyst)
+      static let readsLayoutOnDemand = false
+    #else
+      static let readsLayoutOnDemand = true
+    #endif
+
     private let model: TextSelectionModel
 
     init(model: TextSelectionModel) {

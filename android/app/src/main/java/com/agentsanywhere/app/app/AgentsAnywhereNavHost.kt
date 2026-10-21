@@ -289,7 +289,6 @@ internal fun AgentsAnywhereNavHost(
                     onRenameDevice = onRenameDevice,
                     onDeleteDevice = onDeleteDevice,
                     onPrepareDeviceSetup = onPrepareDeviceSetup,
-                    onClaimDevicePairCode = onClaimDevicePairCode,
                     onListDeviceRuntimes = onListDeviceRuntimes,
                     onSetDeviceRuntimeActive = { connectorId, runtime, active ->
                         onSetDeviceRuntimeActive(connectorId, runtime, active).onSuccess {

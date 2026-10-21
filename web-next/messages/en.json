@@ -246,7 +246,8 @@
     "mobileStatus": {
       "approved": "Approved",
       "waiting": "Waiting for scan"
-    }
+    },
+    "backHome": "Back to home"
   },
   "dashboard": {
     "actions": {
@@ -263,6 +264,7 @@
       "expand": "Expand sidebar",
       "markAllRead": "Mark all read",
       "filter": "Filter recents",
+      "showMoreSessions": "Show {count} more",
       "mobileConnections": "Mobile connection",
       "newSession": "New session",
       "open": "Open",
@@ -304,6 +306,7 @@
       "title": "Couldn't load dashboard"
     },
     "filters": {
+      "deviceAgentAria": "Filter projects by device and agent",
       "active": "Active",
       "all": "All",
       "allActive": "Active sessions",
@@ -320,10 +323,7 @@
       "clear": "Clear filters"
     },
     "nav": {
-      "dashboard": "Dashboard",
-      "service": "Service",
-      "settings": "Settings",
-      "team": "Team"
+      "settings": "Settings"
     },
     "new": {
       "askApproval": "Ask approval",
@@ -345,9 +345,18 @@
       "permissionMode": "Permission mode",
       "permissionModes": {
         "dsh": {
-          "readOnly": { "label": "read-only" },
-          "workspaceWrite": { "label": "workspace-write" },
-          "fullAccess": { "label": "danger-full-access" }
+          "readOnly": {
+            "label": "Read Only"
+          },
+          "workspaceWrite": {
+            "label": "Workspace Write"
+          },
+          "fullAccess": {
+            "label": "Full access"
+          },
+          "auto": {
+            "label": "Auto review"
+          }
         },
         "requestApproval": {
           "label": "Request approval",
@@ -489,6 +498,7 @@
       "editDescription": "You can rename this project. Its device and workspace cannot be changed.",
       "editTitle": "Edit project",
       "empty": "No projects yet.",
+      "emptyFiltered": "No projects match the current device or agent filter.",
       "filterSessions": "Filter project sessions",
       "name": "Project name",
       "nameConflict": "A project named “{name}” already exists. Choose another name.",
@@ -513,7 +523,9 @@
       "workspaceConflictConfirm": "Continue and rename",
       "workspaceConflictDescription": "The workspace “{path}” already belongs to “{currentName}”. Continuing will rename that project to “{name}” instead of creating a duplicate. Its sessions and settings will be preserved.",
       "workspaceConflictTitle": "This workspace already has a project",
-      "workspaceImmutable": "The workspace is fixed after the project is created."
+      "workspaceImmutable": "The workspace is fixed after the project is created.",
+      "showMoreSessions": "Show {count} more",
+      "showFewerSessions": "Show less"
     },
     "mobileConnections": {
       "accountUnavailable": "Your account is unavailable. Sign in again and retry.",
@@ -661,6 +673,14 @@
         "useSystemCodex": {
           "label": "Use System Codex",
           "description": "Use the Codex executable from your login shell PATH. If it is unavailable, the bundled Codex is used automatically. Turn this off to always use the bundled Codex."
+        },
+        "ipcEnabled": {
+          "label": "Follow Codex App / IDE sessions (IPC)",
+          "description": "Join the Codex desktop app / IDE extension IPC router so threads open in a Codex window are followed and operated through that window. Turn this off to always run threads in the connector's own Codex app-server."
+        },
+        "ipcDeeplinkHandoff": {
+          "label": "Hand locked threads to the Codex App",
+          "description": "When a thread is locked by the running Codex desktop app but no window shows it, open it in the app (codex://threads/…) so the app becomes the owner the connector follows. Only used while IPC is on."
         },
         "modelGatewayBaseUrl": {
           "label": "Gateway URL",
@@ -863,6 +883,7 @@
         "Messages may not sync to the {agent} client immediately. Restarting it usually refreshes the sync.",
         "If you operate this session in both Agents Anywhere and the {agent} client at the same time, unexpected results may occur."
       ],
+      "takeoverEnableDshDescription": "DSH now syncs in real time <beta>Beta</beta> with Agents Anywhere. Enable Takeover to send messages.",
       "takeoverDisableTitle": "Disable Takeover?",
       "takeoverDisableDescription": [
         "After disabling Takeover, the session returns to read-only mode and you cannot send more messages.",
@@ -914,6 +935,7 @@
       "reasoningSummary": "Reasoning · {count} notes",
       "conversationCompacting": "Compacting context",
       "conversationCompacted": "Conversation compacted",
+      "conversationCompactionFailed": "Context compaction did not complete",
       "loadOlder": "Load earlier messages",
       "expandMessage": "Show more",
       "collapseMessage": "Show less",
@@ -966,6 +988,27 @@
       "commandNoMatches": "No matching commands",
       "commandLoading": "Loading commands...",
       "commandFailed": "Failed to run command.",
+      "commandUnavailable": "Commands are unavailable for this session.",
+      "commandCatalogError": "Could not load commands. Try opening the menu again.",
+      "commandUnknown": "Unknown command. Choose one from the menu.",
+      "commandAttachments": "Remove attachments before running a command; your draft is preserved.",
+      "commandMultiline": "This command does not accept multiple lines.",
+      "commandInvalidArgs": "This command does not accept these arguments.",
+      "commandAccepted": "Command accepted; background work may still be running.",
+      "commandCompleted": "Command completed.",
+      "commandUnknownOutcome": "The result is unknown. Check the session before trying again.",
+      "commandReason_session_unloaded": "Open this session before running the command.",
+      "commandReason_native_commands_unavailable": "This Codex version does not expose the required command controls.",
+      "commandReason_codex_unavailable": "Codex is currently unavailable.",
+      "commandDetails": "Details",
+      "commandLess": "Show less",
+      "commandMenu": "Commands",
+      "commandDismiss": "Dismiss",
+      "commandBlocked_busy": "Not available while the agent is busy",
+      "commandBlocked_readOnly": "Turn on takeover to run commands",
+      "commandBlocked_offline": "The device is offline",
+      "commandBlocked_unavailable": "Commands are unavailable for this session",
+      "commandUnsupported": "This runtime version does not support commands yet. Upgrade it to use them.",
       "approvalPending": "{count} approval request pending",
       "approvalPendingPlural": "{count} approval requests pending",
       "interactionPending": "{count} interaction pending",
@@ -1260,9 +1303,11 @@
       "passwordPlaceholder": "••••••••",
       "submit": "Sign in",
       "titlePrefix": "Sign in to",
+      "invalidEmail": "Enter an email address.",
       "userPlaceholder": "name@example.com",
       "signingIn": "Signing in...",
-      "submitWithEnter": "Sign in ↵"
+      "submitWithEnter": "Sign in ↵",
+      "resetPassword": "Forgot password?"
     },
     "signedOut": {
       "description": "Your local credentials have been cleared. You can safely close this page, or open the sign-in page to continue.",
@@ -1356,6 +1401,17 @@
       "retry": "Resend in {seconds}s",
       "sent": "Code sent. Check your inbox.",
       "failed": "Failed to send verification code."
+    },
+    "forgotPassword": {
+      "title": "Reset password",
+      "description": "Enter your account email. We'll send a verification code so you can set a new password.",
+      "done": "Your password has been reset. Sign in with the new password.",
+      "signIn": "Sign in",
+      "backToLogin": "Back to sign in",
+      "newPassword": "New password",
+      "submit": "Reset password",
+      "submitting": "Resetting...",
+      "failed": "Could not reset the password."
     }
   },
   "pages": {
@@ -1455,6 +1511,8 @@
       "desktopSidebarDescription": "Choose how sessions are organized in the sidebar.",
       "desktopSidebarShowSessions": "Show sessions in the sidebar",
       "desktopSidebarShowSessionsDescription": "Show sessions directly instead of grouping them under projects.",
+      "desktopSidebarCompactSessions": "Single-line sessions",
+      "desktopSidebarCompactSessionsDescription": "Show only the session title, without the project and device line. Available when sessions are shown in the sidebar.",
       "language": "Language",
       "languageDescription": "Choose the interface language for this browser.",
       "english": "English",
@@ -1562,67 +1620,178 @@
       "emailDescription": "This address is used to sign in.",
       "invalidEmail": "Enter a valid email address.",
       "invalidDisplayName": "Nickname must be 1–64 characters.",
-      "typeEmail": "Type the account email to confirm"
+      "typeEmail": "Type the account email to confirm",
+      "skipEmailVerification": "Skip email verification",
+      "skipEmailVerificationDescription": "Only for this user. No code is needed and the email is treated as verified.",
+      "previousPage": "Previous",
+      "nextPage": "Next",
+      "pageOf": "{page} / {pages}",
+      "pageRange": "{from}-{to} of {total}"
     },
     "opsDashboard": {
       "title": "Dashboard",
-      "description": "Operational metrics for users, messages, sessions, devices, and agents.",
-      "from": "From",
-      "to": "To",
-      "load": "Load",
-      "refreshToday": "Refresh today",
-      "refreshSaved": "Today's snapshot refreshed.",
-      "refreshFailed": "Failed to refresh today's snapshot.",
-      "loadFailed": "Failed to load dashboard.",
-      "settingsSaved": "Dashboard settings saved.",
-      "settingsFailed": "Failed to save dashboard settings.",
-      "trend": "Metric trend",
-      "userTrend": "User trend",
-      "deviceBreakdown": "Device mix",
-      "agentBreakdown": "Agent mix",
-      "sessionAgentBreakdown": "Active session agent mix",
-      "messageHistogram": "Messages per user distribution",
-      "sessionHistogram": "Active sessions per user distribution",
-      "axes": {
-        "messageHistogram": "X-axis: message count range · Y-axis: users",
-        "sessionHistogram": "X-axis: active session count range · Y-axis: users"
+      "description": "How this instance is used: user activity, volume, devices and runtimes, and run quality.",
+      "dataSince": "Recorded from events since {date}; days follow your browser timezone.",
+      "noDataYet": "No usage recorded yet. Activity after the upgrade will show up here.",
+      "loadFailed": "Failed to load the dashboard.",
+      "retry": "Retry",
+      "refresh": "Refresh",
+      "range": {
+        "7d": "Last 7 days",
+        "30d": "Last 30 days",
+        "90d": "Last 90 days",
+        "custom": "Custom",
+        "from": "From",
+        "to": "To",
+        "apply": "Apply",
+        "invalid": "Invalid range; at most 366 days."
       },
-      "userSegments": "User intensity",
-      "intensitySettings": "Intensity thresholds",
-      "intensityDescription": "Classify users by messages in the selected range.",
-      "saveSettings": "Save settings",
-      "lightMax": "Light max messages",
-      "mediumMax": "Medium max messages",
-      "messageBins": "Message buckets",
-      "sessionBins": "Session buckets",
-      "breakdown": "Breakdown",
-      "name": "Name",
-      "value": "Value",
-      "percent": "Share",
+      "live": {
+        "title": "Live",
+        "onlineConnectors": "Online devices",
+        "runningTurns": "Running turns",
+        "activeUsers15m": "Active in 15 min"
+      },
       "tabs": {
         "overview": "Overview",
-        "usage": "Usage",
         "users": "Users",
-        "devices": "Devices",
-        "agents": "Agents"
+        "usage": "Usage",
+        "devices": "Devices & runtimes",
+        "quality": "Run quality"
       },
       "metrics": {
-        "dau": "DAU",
-        "totalUsers": "Total users",
+        "activeUsers": "Active users",
+        "avgDau": "Avg. DAU {value}",
+        "avgDauLabel": "Avg. DAU",
         "newUsers": "New users",
+        "wau": "WAU",
+        "mau": "MAU",
+        "totalUsers": "Total users",
+        "messages": "Messages",
+        "messagesPerActiveUser": "Messages per user",
+        "messagesPerActiveUserHelper": "{value} per active user",
+        "activeSessions": "Active sessions",
+        "readOnlySessions": "Read-only sessions",
+        "readOnlySessionsHelper": "plus {count} read-only",
+        "sessionsViewedHelper": "{count} sessions opened",
+        "sessionViews": "Session opens",
+        "turns": "Turns",
+        "failureRateHelper": "{value} failed",
+        "ofTurns": "of {count} turns",
+        "turnFailureRate": "Turn failure rate",
+        "turnDurationP50": "Turn duration P50",
+        "turnDurationP90": "Turn duration P90",
+        "approvalsRequested": "Approvals requested",
+        "approvalsResolved": "Approvals resolved",
+        "approvalWaitHelper": "P50 wait {value}",
+        "approvalWaitP50": "Approval wait P50",
+        "runtimeErrors": "Runtime errors",
+        "connectorsOnline": "Devices online",
+        "connectorsOnlineHint": "Devices that connected at least once in the range",
+        "totalConnectors": "Total devices",
+        "connectorsSeen7d": "Seen in 7 days",
+        "connectorsSeen30d": "Seen in 30 days",
+        "ofTotal": "of {total} devices",
+        "samples": "{count} samples"
+      },
+      "charts": {
+        "userTrend": "User trend",
+        "volumeTrend": "Volume trend",
+        "rollingWindows": "Active users and rolling windows",
+        "rollingWindowsHint": "WAU / MAU count distinct users in the trailing 7 / 30 days ending on each day.",
+        "messagesDaily": "Messages per day",
+        "sessionsDaily": "Sessions per day",
+        "sessionsDailyHint": "Active: received a message that day; read-only: only opened.",
+        "hourOfDay": "By hour of day",
+        "hourOfDayHint": "Messages in the range by local hour in {timezone}.",
+        "histogram": "Messages per user",
+        "histogramHint": "X-axis: message count range · Y-axis: users",
+        "runtimeMessages": "Messages by runtime",
+        "turnOutcomesDaily": "Turn outcomes per day",
+        "turnDurations": "Turn duration (seconds)",
+        "turnDurationsHint": "From the platform message to the runtime's turn end; completed turns only.",
+        "approvalsDaily": "Approvals per day",
+        "inventory": "Users and devices over time",
+        "inventoryHint": "One snapshot is recorded per UTC day.",
+        "inventoryEmpty": "Inventory snapshots are recorded daily; the trend appears after two days.",
+        "empty": "No data in this range."
+      },
+      "series": {
+        "activeUsers": "Active users",
+        "newUsers": "New users",
+        "wau": "WAU",
         "mau": "MAU",
         "messages": "Messages",
         "activeSessions": "Active sessions",
-        "activeUsers": "Active users",
-        "avgDevices": "Avg. devices/user",
-        "totalDevices": "Total devices",
-        "userShare": "{percent} of users"
+        "readOnlySessions": "Read-only",
+        "turns": "Turns",
+        "turnsOther": "Other turns",
+        "turnsFailed": "Failed turns",
+        "users": "Users",
+        "p50": "P50",
+        "p90": "P90",
+        "approvalsRequested": "Requested",
+        "approvalsResolved": "Resolved",
+        "usersTotal": "Users",
+        "connectors": "Devices"
       },
       "segments": {
+        "title": "User intensity",
+        "hint": "By messages sent in the range; thresholds are the 50th and 80th percentiles. Users without messages are not counted.",
         "light": "Light users",
         "medium": "Medium users",
         "heavy": "Heavy users",
-        "userShare": "{percent} of users"
+        "messagesRange": "{range} messages"
+      },
+      "retention": {
+        "title": "New user retention",
+        "hint": "Grouped by signup week; D1 / D7 / D30 is the share active again within 1 / 7 / 30 days. Shows — until the window has elapsed.",
+        "cohort": "Signup week",
+        "size": "Users",
+        "empty": "No users signed up in the selected range."
+      },
+      "runtimes": {
+        "title": "Runtimes",
+        "hint": "By the runtime type bound to each session; display names come from device discovery.",
+        "runtime": "Runtime",
+        "messages": "Messages",
+        "sessions": "Sessions",
+        "activeUsers": "Active users",
+        "turns": "Turns",
+        "failed": "Failed",
+        "p50": "Duration P50",
+        "errors": "Errors",
+        "discovered": "Discovered on",
+        "configured": "Configured on",
+        "empty": "No runtime data yet."
+      },
+      "devices": {
+        "byOs": "By operating system",
+        "os": "OS",
+        "connectors": "Devices",
+        "online": "Online in range",
+        "unknownOs": "Unknown",
+        "installs": "Runtime installs",
+        "installsHint": "Discovered: detected on the device. Configured: set up on the platform.",
+        "asOfLive": "Inventory is live",
+        "asOfSnapshot": "Inventory from the {date} (UTC) snapshot"
+      },
+      "quality": {
+        "outcomes": "Turn outcomes",
+        "approvalOutcomes": "Approval outcomes",
+        "outcome": "Outcome",
+        "count": "Count",
+        "share": "Share",
+        "outcomeLabels": {
+          "completed": "Completed",
+          "interrupted": "Interrupted",
+          "cancelled": "Cancelled",
+          "failed": "Failed",
+          "resolved": "Resolved",
+          "closed": "Closed",
+          "expired": "Expired",
+          "unknown": "Unknown"
+        }
       }
     },
     "service": {
@@ -1666,16 +1835,10 @@
       "saveProvider": "Save provider",
       "saving": "Saving...",
       "firstPartyClients": "First-party Clients",
-      "firstPartyClientsDescription": "Use the Web redirect URL for upstream OAuth providers. Built-in native clients use fixed identifiers and callbacks.",
-      "clientMode": "Mode",
-      "locked": "locked",
+      "firstPartyClientsDescription": "The built-in mobile and desktop apps use fixed client IDs and callbacks; there is nothing to register with the upstream provider.",
       "callback": "Callback",
       "webCallback": "Web redirect URL",
       "nativeCallback": "Native callback",
-      "mobileClientId": "Mobile client ID",
-      "mobileCallback": "Mobile callback",
-      "desktopClientId": "Desktop client ID",
-      "desktopCallback": "Desktop callback",
       "about": "About",
       "aboutDescription": "Agents Anywhere is an open-source remote control surface for AI coding agents.",
       "viewOnGithub": "View on GitHub",
@@ -1698,7 +1861,32 @@
         "save": "Save email settings",
         "saved": "Email settings saved.",
         "failed": "Failed to save email settings."
-      }
+      },
+      "passwordReset": "Password reset",
+      "passwordResetDescription": "Let users reset a forgotten password with an email verification code.",
+      "passwordResetNeedsEmail": "Turn on email first. Password reset sends a verification code by email.",
+      "sections": {
+        "general": {
+          "title": "General",
+          "description": "Who can create accounts and how they sign in."
+        },
+        "auth": {
+          "title": "Authentication",
+          "description": "The upstream OAuth provider and the callbacks built-in clients use."
+        },
+        "email": {
+          "title": "Email",
+          "description": "Outgoing mail and email verification codes."
+        },
+        "info": {
+          "title": "About this server",
+          "description": "Version, runtime status and project links."
+        }
+      },
+      "webCallbackHint": "Register this callback URL when creating the app at the upstream provider.",
+      "mobileClient": "Mobile app",
+      "desktopClient": "Desktop app",
+      "callbackUrl": "Callback URL"
     }
   },
   "preview": {
@@ -1752,6 +1940,17 @@
       "retry": "Reload",
       "publishedAt": "Last published: {time}",
       "notPublished": "Not published yet"
+    }
+  },
+  "admin": {
+    "title": "Administration",
+    "groups": {
+      "data": "Data",
+      "management": "Team & announcements",
+      "service": "Service"
+    },
+    "announcements": {
+      "description": "Publish or update the announcement shown to every user."
     }
   }
 }

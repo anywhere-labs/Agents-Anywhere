@@ -68,6 +68,10 @@ class CodexTurnLifecycleHandler:
             or codex_sessions.turn_id_from_result(event.params)
             or self.active_turn_ids.get(session_id)
         )
+        if await self._finish_superseded_turn(
+            session_id, thread_id, turn_id, event.event_type
+        ):
+            return
         self.active_turn_ids.pop(session_id, None)
         method = event.event_type
         self.timeline.end_turn(thread_id, turn_id)
@@ -114,6 +118,10 @@ class CodexTurnLifecycleHandler:
             or codex_sessions.turn_id_from_result(params)
             or self.active_turn_ids.get(session_id)
         )
+        if await self._finish_superseded_turn(
+            session_id, thread_id, turn_id, event.event_type
+        ):
+            return
         self.active_turn_ids.pop(session_id, None)
         self.timeline.end_turn(thread_id, turn_id)
         notice = self.notice_handler.execution_error_notice(
@@ -148,3 +156,22 @@ class CodexTurnLifecycleHandler:
                 **({"turn_id": turn_id} if turn_id else {}),
             },
         )
+
+    async def _finish_superseded_turn(
+        self, session_id: str, thread_id: str, turn_id: str | None, method: str
+    ) -> bool:
+        # Native command turns and ordinary SDK streams can deliver independently.
+        # A late terminal event belongs to its physical turn, not a newer goal turn.
+        active = self.active_turn_ids.get(session_id)
+        if turn_id is None or active is None or active == turn_id:
+            return False
+        self.timeline.end_turn(thread_id, turn_id)
+        await self.host.session_turn_ended(
+            session_id=session_id,
+            runtime="codex",
+            external_session_id=thread_id,
+            turn_id=turn_id,
+            outcome=method.rsplit("/", maxsplit=1)[-1],
+            metadata={"source": f"codex.{method}"},
+        )
+        return True

@@ -17,51 +17,25 @@ struct DeviceAgentSection: View {
         var id: String { runtime.id }
     }
     var body: some View {
-        Section {
+        DeviceSection(String(localized: "dashboard.device.agentRuntimes")) {
+            AgentRediscoveryButton(model: model)
+        } content: {
             if showsConnectionNotice && !model.connected {
                 Label(String(localized: "设备或网络已离线，连接恢复后可继续。"), appSymbol: "wifi.slash")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(.secondary).padding(.bottom, 6)
             }
-            ForEach(model.inventory.configuredInstances) { runtime in
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(runtime.sessionDisplayName).font(.headline)
-                        Text(String(localized: "\(runtime.typeDisplayName) · \(runtime.status.displayName)"))
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                    HStack(spacing: 10) {
-                        AppGlassButton(systemImage: "slider.horizontal.3", isLoading: model.busyID == runtime.id,
-                            disabled: !model.connected || model.busyID != nil, maxWidth: nil) {
-                            do { configuration = .init(runtime: runtime, schema: try model.schema(runtime)) }
-                            catch { schemaError = error.localizedDescription }
-                        }
-                        .accessibilityLabel(Text(String(localized: "配置 \(runtime.sessionDisplayName)")))
-                        Toggle(String(localized: "启用 \(runtime.sessionDisplayName)"), isOn: Binding(get: { runtime.active }, set: { active in
-                            Task { try? await model.setActive(runtime, active) }
-                        }))
-                        .labelsHidden().toggleStyle(.switch).tint(.green).fixedSize()
-                        .disabled(!model.connected || model.busyID != nil)
+            DeviceRows {
+                ForEach(model.inventory.configuredInstances) { runtime in row(runtime) }
+                Button { showsAddAgents = true } label: {
+                    HStack(spacing: 12) {
+                        AppSymbol("plus", size: 14).frame(width: 14)
+                        Text(String(localized: "添加更多 Agent")).font(.body.weight(.medium))
+                        Spacer(minLength: 0)
                     }
+                    .frame(minHeight: 52).contentShape(.rect)
                 }
-                .padding(.vertical, 6)
-                .contextMenu {
-                    Button(String(localized: "重命名"), systemImage: "pencil") { proposedName = runtime.name; renaming = runtime }
-                        .disabled(!model.connected || model.busyID != nil)
-                    Button(String(localized: "删除配置"), systemImage: "trash", role: .destructive) { deleting = runtime }
-                        .disabled(!model.connected || model.busyID != nil)
-                }
+                .buttonStyle(.plain)
             }
-        } header: {
-            HStack {
-                Text(String(localized: "dashboard.device.agentRuntimes"))
-                Spacer()
-                AgentRediscoveryButton(model: model)
-            }
-        } footer: {
-            AppGlassButton(String(localized: "添加更多 Agent"), systemImage: "plus", style: .prominent) {
-                showsAddAgents = true
-            }
-            .font(.body).textCase(nil).padding(.top, 8)
         }
         .task(id: model.connected) { await model.refresh() }
         .sheet(isPresented: $showsAddAgents) { AddDeviceAgentSheet(model: model) }
@@ -95,6 +69,82 @@ struct DeviceAgentSection: View {
         } message: { Text(schemaError ?? model.error ?? "") }
         .onChange(of: currentError, initial: true) { _, error in onError?(error) }
     }
+    private var canChange: Bool { model.connected && model.busyID == nil }
+
+    private func row(_ runtime: V2DeviceRuntime) -> some View {
+        HStack(spacing: 12) {
+            Button { configure(runtime) } label: {
+                HStack(spacing: 12) {
+                    DeviceStatusDot(tone: tone(runtime), isLoading: model.busyID == runtime.id)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(runtime.sessionDisplayName).font(.body.weight(.semibold)).lineLimit(1)
+                        Text(verbatim: "\(runtime.typeDisplayName) · \(statusLabel(runtime))")
+                            .font(.footnote).lineLimit(1)
+                            .foregroundStyle(tone(runtime) == .error ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain).disabled(!canChange)
+            .accessibilityLabel(Text(String(localized: "配置 \(runtime.sessionDisplayName)")))
+            Menu {
+                actions(runtime)
+            } label: {
+                AppSymbol("ellipsis", size: 18).foregroundStyle(.secondary)
+                    .frame(width: 36, height: 44).contentShape(.rect)
+            }
+            .buttonStyle(.plain).disabled(!canChange)
+            .accessibilityLabel(Text(runtime.sessionDisplayName))
+            Toggle(String(localized: "启用 \(runtime.sessionDisplayName)"), isOn: Binding(get: { runtime.active }, set: { active in
+                Task { try? await model.setActive(runtime, active) }
+            }))
+            .labelsHidden().toggleStyle(.switch).tint(.green).fixedSize()
+            .disabled(!canChange)
+        }
+        .frame(minHeight: 60)
+        .contextMenu { actions(runtime) }
+    }
+
+    @ViewBuilder
+    private func actions(_ runtime: V2DeviceRuntime) -> some View {
+        Button(String(localized: "dashboard.device.configure"), systemImage: "slider.horizontal.3") { configure(runtime) }
+            .disabled(!canChange)
+        Button(String(localized: "重命名"), systemImage: "pencil") { proposedName = runtime.name; renaming = runtime }
+            .disabled(!canChange)
+        Divider()
+        Button(String(localized: "删除配置"), systemImage: "trash", role: .destructive) { deleting = runtime }
+            .disabled(!canChange)
+    }
+
+    private func configure(_ runtime: V2DeviceRuntime) {
+        do { configuration = .init(runtime: runtime, schema: try model.schema(runtime)) }
+        catch { schemaError = error.localizedDescription }
+    }
+
+    private func statusLabel(_ runtime: V2DeviceRuntime) -> String {
+        runtime.configured && !runtime.active ? String(localized: "dashboard.device.runtimeNotStarted") : runtime.status.displayName
+    }
+
+    /// Same tones as Web's runtime-status-presentation: the lifecycle status
+    /// decides first, so a starting runtime (e.g. DSH syncing its sessions,
+    /// reported as `phase`) is progress even when an error payload is present;
+    /// a runtime that simply is not running yet is a warning, other failures
+    /// are errors.
+    private func tone(_ runtime: V2DeviceRuntime) -> DeviceStatusTone {
+        switch runtime.status {
+        case .running: return .ok
+        case .starting, .stopping: return .progress
+        default: break
+        }
+        if let error = runtime.error, error != .null {
+            let code = error["code"]?.stringValue ?? ""
+            let notRunning = ["runtime_unavailable", "runtime_not_started", "runtime_not_configured", "connector_offline"]
+            return notRunning.contains(code) ? .warning : .error
+        }
+        return runtime.status == .error ? .error : .neutral
+    }
+
     private var currentError: String? {
         !showsAddAgents && configuration == nil ? schemaError ?? model.error : nil
     }
@@ -131,7 +181,7 @@ struct AgentSetupSheet: View {
                         Text(String(localized: "设备已连接。选择 Agent 后，就可以在项目中开始任务。"))
                             .foregroundStyle(.secondary)
                     }
-                    DeviceOverviewSections { DeviceAgentSection(model: model) }
+                    DeviceAgentSection(model: model)
                 }
                 .padding(22).frame(maxWidth: 560).frame(maxWidth: .infinity)
             }

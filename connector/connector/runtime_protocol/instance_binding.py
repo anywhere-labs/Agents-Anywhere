@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
-from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtime_protocol.host import RuntimeHostClient, UploadProgress
 from connector.runtime_protocol.instance_models import (
     RuntimeInstanceSpec,
     RuntimeSourceKey,
@@ -177,7 +177,11 @@ class RuntimeInstanceHost(RuntimeHostClient):
     instance: RuntimeInstanceSpec
     source_key: RuntimeSourceKey | None = None
     status_reporter: (
-        Callable[[str, str, Mapping[str, Any] | None], Awaitable[None]] | None
+        Callable[
+            [str, str, Mapping[str, Any] | None, Mapping[str, Any] | None],
+            Awaitable[None],
+        ]
+        | None
     ) = None
 
     @property
@@ -193,11 +197,22 @@ class RuntimeInstanceHost(RuntimeHostClient):
             namespace = f"{namespace}:{_source_key_digest(self.source_key)}"
         return f"{self.connector_id}:{self.instance.runtime_type}:{namespace}"
 
-    async def publish_runtime_notifications(
-        self, runtime: str, notifications: list[dict[str, Any]], *, runtime_id: str | None = None
+    async def publish_runtime_snapshot(
+        self, runtime: str, session_id: str, meta: dict[str, Any], items: Iterable[dict[str, Any]],
+        *, runtime_id: str | None = None, on_progress: UploadProgress | None = None,
     ) -> None:
         self._validate_native_runtime(runtime)
-        await self.base.publish_runtime_notifications(runtime, notifications, runtime_id=self.instance.runtime_id)
+        await self.base.publish_runtime_snapshot(
+            runtime, session_id, meta, items, runtime_id=self.instance.runtime_id, on_progress=on_progress,
+        )
+
+    async def publish_runtime_notifications(
+        self, runtime: str, notifications: list[dict[str, Any]], *, runtime_id: str | None = None,
+        on_progress: UploadProgress | None = None,
+    ) -> None:
+        self._validate_native_runtime(runtime)
+        kwargs = {"on_progress": on_progress} if on_progress is not None else {}
+        await self.base.publish_runtime_notifications(runtime, notifications, runtime_id=self.instance.runtime_id, **kwargs)
 
     async def session_meta_upsert(
         self,
@@ -362,10 +377,11 @@ class RuntimeInstanceHost(RuntimeHostClient):
         self,
         status: str,
         error: Mapping[str, Any] | None = None,
+        phase: Mapping[str, Any] | None = None,
     ) -> None:
         if self.status_reporter is None:
             return
-        await self.status_reporter(self.instance.runtime_id, status, error)
+        await self.status_reporter(self.instance.runtime_id, status, error, phase)
 
     async def attachment_download(
         self,

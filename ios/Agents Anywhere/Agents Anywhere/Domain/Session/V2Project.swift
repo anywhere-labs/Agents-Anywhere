@@ -21,22 +21,22 @@ nonisolated struct V2ProjectSessionCounts: Codable, Hashable {
     let archived: Int
 }
 
-struct V2ProjectListResponse: Decodable { let projects: [V2Project]; let serverTime: String }
-struct V2ProjectResponse: Decodable { let project: V2Project; let serverTime: String }
-struct V2ProjectDeleteResponse: Decodable { let projectId: String; let detachedSessions: Int }
-struct V2ProjectCreateRequest: Encodable {
+nonisolated struct V2ProjectListResponse: Decodable { let projects: [V2Project]; let serverTime: String }
+nonisolated struct V2ProjectResponse: Decodable { let project: V2Project; let serverTime: String }
+nonisolated struct V2ProjectDeleteResponse: Decodable { let projectId: String; let detachedSessions: Int }
+nonisolated struct V2ProjectCreateRequest: Encodable {
     let name: String
     let connectorId: V2ConnectorID
     let workspacePath: String
     var manuallyCreated = true
 }
-struct V2ProjectPatchRequest: Encodable { let name: String?; let pinned: Bool? }
+nonisolated struct V2ProjectPatchRequest: Encodable { let name: String?; let pinned: Bool? }
 
 nonisolated struct V2SessionPageInfo: Codable, Hashable {
     var hasMore = false
     var nextCursor: String? = nil
 }
-struct V2DashboardSessionPages: Codable, Hashable {
+nonisolated struct V2DashboardSessionPages: Codable, Hashable {
     var active = V2SessionPageInfo()
     var archived = V2SessionPageInfo()
 }

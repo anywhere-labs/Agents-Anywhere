@@ -171,16 +171,17 @@
 
 .aa-fs-tree-resize-handle {
   flex: none;
-  background: transparent;
+  background: var(--border);
   box-shadow: none;
   outline: none;
 }
 
 .aa-fs-tree-resize-handle:hover,
 .aa-fs-tree-resize-handle:focus-visible,
-.aa-fs-tree-resize-handle[data-resize-handle-active] {
-  background: transparent;
-  box-shadow: none;
+.aa-fs-tree-resize-handle[data-separator="active"],
+.aa-fs-workspace.is-resizing > .aa-fs-tree-resize-handle {
+  background: var(--ring);
+  box-shadow: 0 0 0 1px var(--ring);
   outline: none;
 }
 
@@ -221,31 +222,19 @@
 .aa-file-preview-breadcrumb-viewport {
   position: relative;
   height: 32px;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   white-space: nowrap;
 }
 
-.aa-file-preview-breadcrumb-viewport[data-overflowed="true"] {
-  -webkit-mask-image: linear-gradient(to right, transparent 0, black 24px, black 100%);
-  mask-image: linear-gradient(to right, transparent 0, black 24px, black 100%);
-}
-
-.aa-file-preview-breadcrumb-viewport[data-overflowed="true"] .aa-file-preview-breadcrumb {
-  right: 0;
-  left: auto;
-}
-
 .aa-file-preview-breadcrumb {
-  position: absolute;
-  top: 50%;
-  right: auto;
-  left: 0;
   display: inline-flex;
+  height: 100%;
   width: max-content;
   max-width: none;
   align-items: center;
   gap: 5px;
-  transform: translateY(-50%);
   color: var(--muted-foreground);
   font-size: 13px;
   line-height: 1;

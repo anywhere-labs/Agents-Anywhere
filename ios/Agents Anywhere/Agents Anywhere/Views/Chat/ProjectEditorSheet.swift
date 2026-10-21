@@ -3,7 +3,7 @@ import SwiftUI
 struct ProjectEditorSheet: View {
     @Bindable var repository: V2DashboardRepository
     var onSaved: (V2Project) -> Void
-    @EnvironmentObject private var appState: AppState
+    @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     @State private var draft: ProjectEditorDraft
     @State private var saving = false

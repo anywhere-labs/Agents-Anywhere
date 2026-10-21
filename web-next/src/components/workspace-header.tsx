@@ -33,14 +33,23 @@ export function WorkspaceHeader({
         overlay ? "absolute inset-x-0 top-0" : "relative",
       )}
     >
-      <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-b from-background/80 to-background/0" />
-      {HEADER_BLUR_LAYERS.map((layer) => (
-        <div aria-hidden="true" key={layer.key} className={layer.className} style={layer.style} />
-      ))}
+      <WorkspaceHeaderBackdrop />
       <div className="pointer-events-auto relative flex h-14 items-center gap-3 px-3">
         {children}
       </div>
     </header>
+  )
+}
+
+// The gradient blur behind a header that overlays scrolling content.
+export function WorkspaceHeaderBackdrop() {
+  return (
+    <>
+      <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-b from-background/80 to-background/0" />
+      {HEADER_BLUR_LAYERS.map((layer) => (
+        <div aria-hidden="true" key={layer.key} className={layer.className} style={layer.style} />
+      ))}
+    </>
   )
 }
 

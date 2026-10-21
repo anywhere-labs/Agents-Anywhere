@@ -11,15 +11,15 @@ nonisolated struct TimelineDiff {
         var sign: String { kind == .add ? "+" : kind == .delete ? "−" : "" }
     }
     let lines: [Line]
+    private static let hunkHeader = try? NSRegularExpression(pattern: "^@@\\s+-(\\d+)(?:,\\d+)?\\s+\\+(\\d+)(?:,\\d+)?\\s+@@")
     init(_ code: String) {
         var oldLine: Int?, newLine: Int?
         lines = code.components(separatedBy: "\n").enumerated().map { index, text in
             let kind: Line.Kind
             if text.hasPrefix("@@") {
                 kind = .hunk
-                let regex = try? NSRegularExpression(pattern: "^@@\\s+-(\\d+)(?:,\\d+)?\\s+\\+(\\d+)(?:,\\d+)?\\s+@@")
                 let ns = text as NSString
-                let match = regex?.firstMatch(in: text, range: NSRange(location: 0, length: ns.length))
+                let match = Self.hunkHeader?.firstMatch(in: text, range: NSRange(location: 0, length: ns.length))
                 oldLine = match.flatMap { Int(ns.substring(with: $0.range(at: 1))) }
                 newLine = match.flatMap { Int(ns.substring(with: $0.range(at: 2))) }
             } else if ["diff --git", "index ", "--- ", "+++ "].contains(where: text.hasPrefix) {

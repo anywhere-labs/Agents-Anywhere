@@ -16,7 +16,7 @@ struct SessionInteractionCard: View {
     var metrics = SessionInteractionMetrics()
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+        TimelineView(NoticeExpiryClock(expiresAt: item.expiresAt)) { timeline in
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .center, spacing: 8) {
                     AppSymbol(item.form == nil ? "checkmark.shield" : "text.bubble")
@@ -83,7 +83,7 @@ struct SessionInteractionCard: View {
     private func status(at now: Date) -> String {
         switch item.submission {
         case .sending: return String(localized: "正在提交…")
-        case .accepted: return String(localized: "已提交，等待 Agent")
+        case .accepted: return String(localized: "已提交，等待 \(chat.agentName)")
         case .uncertain: return String(localized: "结果未确认 · 查看详情")
         case .unavailable: return String(localized: "此交互已结束")
         case .idle: break
@@ -91,7 +91,7 @@ struct SessionInteractionCard: View {
         if item.isExpired(at: now) { return String(localized: "此交互已过期") }
         if item.responseError != nil || item.notice.status == .failed { return String(localized: "回应失败 · 查看详情") }
         if chat.responseUnavailableReason != nil { return String(localized: "连接不可用 · 查看详情") }
-        if [.responding, .responseAccepted, .resolving].contains(item.notice.status) { return String(localized: "Agent 正在处理…") }
+        if [.responding, .responseAccepted, .resolving].contains(item.notice.status) { return String(localized: "\(chat.agentName) 正在处理…") }
         if let form = item.form { return String(localized: "\(form.questions.count) 个问题") }
         return ""
     }
@@ -167,4 +167,18 @@ struct SessionInteractionMetrics: DynamicProperty {
     var titleHeight: CGFloat { max(44, lineHeight * 2) }
     var minimumHeight: CGFloat { titleHeight + actionHeight + 32 }
     var compactHeight: CGFloat { minimumHeight + lineHeight * 2 }
+}
+
+/// Ticks once per second only while a notice can still expire. Cards without an
+/// expiry, and expired ones, render once instead of re-evaluating every second.
+struct NoticeExpiryClock: TimelineSchedule {
+    let expiresAt: Date?
+    func entries(from start: Date, mode: Mode) -> AnySequence<Date> {
+        guard let expiresAt, expiresAt > start else { return AnySequence([start]) }
+        let last = expiresAt.addingTimeInterval(1)
+        return AnySequence(sequence(first: start) { previous in
+            let next = previous.addingTimeInterval(1)
+            return next <= last ? next : nil
+        })
+    }
 }

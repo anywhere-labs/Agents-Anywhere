@@ -5,16 +5,19 @@ from collections.abc import Mapping
 from contextlib import suppress
 from typing import Any
 
+from connector.logging import logger
 from connector.runtime_protocol import (
     AgentRuntime,
+    RuntimeAttachment,
     RuntimeCapabilitySet,
+    RuntimeCommand,
+    RuntimeCommandResult,
     RuntimeConfig,
     RuntimeIdentity,
-    RuntimeAttachment,
-    RuntimeOperationResult,
-    RuntimeModelCatalog,
-    RuntimePermissionCatalog,
     RuntimeInvalidRequestError,
+    RuntimeModelCatalog,
+    RuntimeOperationResult,
+    RuntimePermissionCatalog,
     RuntimeTimelineSnapshot,
     RuntimeUnavailableError,
     RuntimeUnsupportedError,
@@ -24,15 +27,20 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.logging import logger
-from connector.runtimes.dsh import discovery, provider_config
+from connector.runtimes.dsh import provider_config
 from connector.runtimes.dsh.attachments import staged_attachments
 from connector.runtimes.dsh.bridge import models
-from connector.runtimes.dsh.bridge.client import BridgeClient, BridgeRpcError
+from connector.runtimes.dsh.bridge.client import (
+    BridgeClient,
+    BridgeRpcError,
+    BridgeUnavailableError,
+)
+from connector.runtimes.dsh.bridge.host import bridge_host
 from connector.runtimes.dsh.bridge.sync import SyncRelay
 
-
 BRIDGE_POLL_INTERVAL_SECONDS = 5.0
+# A relay that died from a bug is rebuilt after this pause, not in a tight loop.
+RELAY_RESTART_DELAY_SECONDS = 2.0
 
 
 class DshRuntime(AgentRuntime):
@@ -42,7 +50,7 @@ class DshRuntime(AgentRuntime):
         self,
         config: RuntimeConfig,
         host: RuntimeHostClient,
-        client_version: str = "1.0",
+        client_version: str = "2.0",
     ) -> None:
         self.config = config
         self.host = host
@@ -55,6 +63,7 @@ class DshRuntime(AgentRuntime):
         self._stopping = False
         self._restart_task: asyncio.Task[None] | None = None
         self._sync: SyncRelay | None = None
+        self._relay_restart_task: asyncio.Task[None] | None = None
         self._sync_mode = "events"
 
     @property
@@ -63,14 +72,14 @@ class DshRuntime(AgentRuntime):
 
     async def resynchronize(self, session_id: str | None = None, external_session_id: str | None = None) -> None:
         if session_id:
-            await self._request("runtime.sync.refresh", _session_params(session_id, external_session_id))
+            await self._request("refreshSync", _session_params(session_id, external_session_id))
             return
         await self._ensure_client()
         async with self._connect_lock:
             if self._sync is not None:
                 await self._sync.close()
             if not self._stopping and self._client is not None and self.sync_mode == "events":
-                self._sync = SyncRelay(self._client, self.host)
+                self._sync = SyncRelay(self._client, self.host, on_exit=self._relay_exited)
                 self._sync.start()
 
     @property
@@ -79,17 +88,17 @@ class DshRuntime(AgentRuntime):
 
     async def start(self) -> None:
         self._stopping = False
-        await self.host.runtime_health_update("starting", {
-            "code": "runtime_initializing", "message": "正在连接 DSH 并同步会话…", "retryable": True,
+        await self.host.runtime_health_update("starting", phase={
+            "code": "connecting", "message": "正在连接 DSH 并同步会话…", "retryable": True,
         })
         try:
             await self._ensure_client()
-        except (OSError, RuntimeError, ValueError):
+        except (OSError, RuntimeError, ValueError, RuntimeUnavailableError):
             with suppress(Exception):
                 await self.host.runtime_health_update(
                     "starting",
-                    {
-                        "code": "runtime_unavailable",
+                    phase={
+                        "code": "waiting_bridge",
                         "message": "正在等待本地 DSH Bridge；请启动 DSH 并启用手机连接插件。",
                         "retryable": True,
                     },
@@ -105,6 +114,10 @@ class DshRuntime(AgentRuntime):
             self._restart_task.cancel()
             await asyncio.gather(self._restart_task, return_exceptions=True)
             self._restart_task = None
+        if self._relay_restart_task is not None:
+            self._relay_restart_task.cancel()
+            await asyncio.gather(self._relay_restart_task, return_exceptions=True)
+            self._relay_restart_task = None
         async with self._connect_lock:
             client, self._client = self._client, None
             if client is not None:
@@ -115,20 +128,71 @@ class DshRuntime(AgentRuntime):
 
     async def get_runtime_capabilities(self) -> RuntimeCapabilitySet:
         return models.capability_set(
-            await self._request("runtime.getCapabilities"),
+            await self._request("getRuntimeCapabilities"),
             connector_id=self.host.connector_id,
         )
 
     async def list_model_catalog(self, query: str | None = None, limit: int = 100) -> RuntimeModelCatalog:
-        return models.model_catalog(await self._request("catalog.listModels", {"query": query, "limit": limit}))
+        return models.model_catalog(await self._request("listModels", {"query": query, "limit": limit}))
 
     async def list_permission_catalog(self, query: str | None = None, limit: int = 100) -> RuntimePermissionCatalog:
-        return models.permission_catalog(await self._request("catalog.listPermissions", {"query": query, "limit": limit}))
+        return models.permission_catalog(await self._request("listPermissions", {"query": query, "limit": limit}))
+
+    async def _commands_unavailable(self, session_id: str, external_session_id: str | None) -> tuple[str, str] | None:
+        capabilities = await self.get_session_capabilities(session_id, external_session_id)
+        capability = next(item for item in capabilities.capabilities if item.capability_id == "session.commands")
+        if capability.supported and capability.available and capability.allowed:
+            return None
+        upgrade = not capability.supported and not capability.metadata.get("catalogRevision")
+        return (
+            "bridge_upgrade_required" if upgrade else "commands_unavailable",
+            models.COMMAND_BRIDGE_UPGRADE_REASON if upgrade else capability.unavailable_reason or "Native DSH commands are unavailable for this session.",
+        )
+
+    async def list_commands(
+        self, session_id: str, external_session_id: str | None = None,
+        query: str | None = None, limit: int = 50,
+    ) -> tuple[RuntimeCommand, ...]:
+        unavailable = await self._commands_unavailable(session_id, external_session_id)
+        if unavailable:
+            raise RuntimeUnsupportedError(unavailable[1])
+        commands = models.commands(await self._request("listCommands", {
+            **_session_params(session_id, external_session_id), "query": query, "limit": limit,
+        }))
+        return tuple(command for command in commands if command.id == "compact")
+
+    async def execute_command(
+        self, session_id: str, command: str, external_session_id: str | None = None,
+        raw: str | None = None, args: tuple[str, ...] = (),
+    ) -> RuntimeCommandResult:
+        if command != "compact":
+            return RuntimeCommandResult(command=command, ok=False, code="unknown_command", message="AA supports only /compact for DSH.")
+        unavailable = await self._commands_unavailable(session_id, external_session_id)
+        if unavailable:
+            return RuntimeCommandResult(command=command, ok=False, code=unavailable[0], message=unavailable[1])
+        # Ensure transport before dispatch. Once dispatched, losing the response
+        # cannot prove native effects did not occur; never reconnect and retry it.
+        await self._ensure_client()
+        if self._client is None:
+            raise RuntimeUnavailableError("DSH bridge is not running")
+        params = {**_session_params(session_id, external_session_id), "command": command, "args": list(args)}
+        if raw is not None:
+            params["raw"] = raw
+        try:
+            return models.command_result(await self._client.request("executeCommand", params), command)
+        except BridgeRpcError as exc:
+            if exc.bridge_code in {"UNSUPPORTED_OPERATION", "METHOD_NOT_FOUND"}:
+                return RuntimeCommandResult(command=command, ok=False, code="bridge_upgrade_required", message=models.COMMAND_BRIDGE_UPGRADE_REASON)
+            if exc.bridge_code in {"INVALID_REQUEST", "INVALID_PARAMS", "SESSION_NOT_FOUND", "SESSION_ARCHIVED"}:
+                return RuntimeCommandResult(command=command, ok=False, code="invalid_command", message=str(exc))
+            return _unknown_command_result(command)
+        except (OSError, TimeoutError, ConnectionError, RuntimeError, ValueError):
+            return _unknown_command_result(command)
 
     async def update_session_selections(
         self, session_id: str, external_session_id: str | None, selections: Mapping[str, str | None],
     ) -> RuntimeOperationResult:
-        result = _object(await self._request("session.updateSelections", {
+        result = _object(await self._request("updateSelections", {
             **_session_params(session_id, external_session_id), "selections": dict(selections),
         }))
         return RuntimeOperationResult(
@@ -144,7 +208,7 @@ class DshRuntime(AgentRuntime):
     ) -> tuple[SessionMeta, ...]:
         async with self._read_lock:
             result = await self._request(
-                "session.list", {"limit": limit, "cursor": cursor, "force": force}
+                "listSessions", {"limit": limit, "cursor": cursor, "force": force}
             )
             return tuple(
                 models.session_meta(item) for item in _array(result, "sessions")
@@ -162,7 +226,7 @@ class DshRuntime(AgentRuntime):
             cursor: str | None = None
             while True:
                 result = await self._request(
-                    "session.list",
+                    "listSessions",
                     {"limit": page_size, "cursor": cursor, "force": force},
                 )
                 for item in _array(result, "sessions"):
@@ -190,7 +254,7 @@ class DshRuntime(AgentRuntime):
             cursors: set[str] = set()
             first: dict[str, Any] | None = None
             while True:
-                result = _object(await self._request("session.getSnapshot", params))
+                result = _object(await self._request("getSessionSnapshot", params))
                 if result.get("sessionId") != session_id:
                     raise RuntimeUpstreamError(
                         "DSH snapshot returned a different session"
@@ -243,7 +307,7 @@ class DshRuntime(AgentRuntime):
         external_session_id: str | None = None,
     ) -> SessionState:
         payload = _object(await self._request(
-            "session.getState", _session_params(session_id, external_session_id)
+            "getSessionState", _session_params(session_id, external_session_id)
         ))
         state = models.session_state(payload)
         source = payload.get("sourceState")
@@ -269,7 +333,7 @@ class DshRuntime(AgentRuntime):
     ) -> RuntimeCapabilitySet:
         return models.capability_set(
             await self._request(
-                "session.getCapabilities",
+                "getSessionCapabilities",
                 _session_params(session_id, external_session_id),
             ),
             connector_id=self.host.connector_id,
@@ -279,7 +343,7 @@ class DshRuntime(AgentRuntime):
         self, session_id: str, external_session_id: str | None = None,
     ) -> tuple[SessionNotice, ...]:
         result = await self._request(
-            "session.getNotices", _session_params(session_id, external_session_id)
+            "getSessionNotices", _session_params(session_id, external_session_id)
         )
         return tuple(models.notice(item) for item in _array(result, "notices"))
 
@@ -287,7 +351,7 @@ class DshRuntime(AgentRuntime):
         self, session_id: str, notice_id: str, action_id: str,
         input_data: Mapping[str, Any] | None = None,
     ) -> RuntimeOperationResult:
-        result = _object(await self._request("session.respondInteraction", {
+        result = _object(await self._request("respondInteraction", {
             "sessionId": session_id, "noticeId": notice_id,
             "actionId": action_id, "inputData": dict(input_data or {}),
         }))
@@ -307,7 +371,7 @@ class DshRuntime(AgentRuntime):
         if set(options) - {"agentPreset"}:
             raise RuntimeInvalidRequestError("Unsupported DSH creation option")
         preset = options.get("agentPreset", self.config.values.get("defaultAgentPreset"))
-        return await self._send_text("session.createAndStart", session_id, None, content, cwd, attachments, client_message_id,
+        return await self._send_text("createAndStartSession", session_id, None, content, cwd, attachments, client_message_id,
                                      selections=selections, agent_preset=preset)
 
     async def start_turn(
@@ -316,7 +380,7 @@ class DshRuntime(AgentRuntime):
         attachments: tuple[RuntimeAttachment, ...] = (), client_message_id: str | None = None,
         cwd: str | None = None,
     ) -> RuntimeOperationResult:
-        return await self._send_text("session.startTurn", session_id, external_session_id, content, cwd, attachments, client_message_id,
+        return await self._send_text("startTurn", session_id, external_session_id, content, cwd, attachments, client_message_id,
                                      selections=selections)
 
     async def _send_text(
@@ -329,14 +393,13 @@ class DshRuntime(AgentRuntime):
         params = {**_session_params(session_id, external_id), "content": content,
                   "clientMessageId": client_message_id, "cwd": cwd,
                   "selections": dict(selections or {})}
-        if method == "session.createAndStart":
+        if method == "createAndStartSession":
             params["agentPreset"] = agent_preset
         if attachments:
-            capability_set = _object(await self._request("runtime.getCapabilities"))
+            capability_set = _object(await self._request("getRuntimeCapabilities"))
             if not provider_config.dsh_capabilities(capability_set)["attachments"]:
                 raise RuntimeUnsupportedError("This DSH Bridge does not support attachments")
-        directory = provider_config.endpoint_path(dict(self.config.values)).parent
-        async with staged_attachments(self.host, session_id, attachments, directory) as images:
+        async with staged_attachments(self.host, session_id, attachments, provider_config.bridge_directory()) as images:
             if images:
                 params["attachments"] = images
             payload = _object(await self._request(method, params))
@@ -346,30 +409,25 @@ class DshRuntime(AgentRuntime):
         return RuntimeOperationResult(result=payload)
 
     async def interrupt_session(self, session_id: str, reason: str | None = None) -> RuntimeOperationResult:
-        return RuntimeOperationResult(result=_object(await self._request("session.interrupt", {"sessionId": session_id})))
+        return RuntimeOperationResult(result=_object(await self._request("interruptSession", {"sessionId": session_id})))
 
     async def _start_client(self) -> None:
         values = provider_config.normalized_config_values(dict(self.config.values))
-        try:
-            endpoint = discovery.load_endpoint(values)
-        except (OSError, ValueError) as exc:
-            raise RuntimeUnavailableError(
-                "请启动 DSH，并启用手机连接插件。"
-            ) from exc
         client = BridgeClient(
-            endpoint=endpoint,
+            await bridge_host(),
             connector_id=self.host.connector_id,
-            session_namespace=getattr(
-                self.host, "session_namespace", self.host.connector_id
-            ),
+            session_namespace=getattr(self.host, "session_namespace", self.host.connector_id),
             client_version=self.client_version,
             startup_timeout=int(values["startupTimeoutMs"]) / 1000,
             request_timeout=int(values["requestTimeoutMs"]) / 1000,
-            notification_handler=self._handle_notification,
             exit_handler=self._handle_exit,
         )
         try:
             result = await client.start()
+        except BridgeUnavailableError as exc:
+            await client.close()
+            raise RuntimeUnavailableError("请启动 DSH，并启用手机连接插件。") from exc
+        try:
             identity = result["identity"]
             self._identity = RuntimeIdentity(
                 runtime="dsh",
@@ -379,14 +437,14 @@ class DshRuntime(AgentRuntime):
             )
             # Bootstrap only declared capabilities; read-only startup needs no model catalog.
             capabilities = models.capability_set(
-                await client.request("runtime.getCapabilities"),
+                await client.request("getRuntimeCapabilities"),
                 connector_id=self.host.connector_id,
             )
             await self.host.runtime_capabilities_update(capabilities)
             supported = {item.capability_id for item in capabilities.capabilities if item.available and item.supported}
             for capability, method, decode, publish in (
-                ("catalog.model", "catalog.listModels", models.model_catalog, "model_catalog_update"),
-                ("catalog.permission", "catalog.listPermissions", models.permission_catalog, "permission_catalog_update"),
+                ("catalog.model", "listModels", models.model_catalog, "model_catalog_update"),
+                ("catalog.permission", "listPermissions", models.permission_catalog, "permission_catalog_update"),
             ):
                 if capability not in supported:
                     continue
@@ -399,10 +457,10 @@ class DshRuntime(AgentRuntime):
             self._client = client
             self._sync_mode = "events" if result.get("features", {}).get("syncMode") == "events" else "polling"
             if self._sync_mode == "events":
-                await self.host.runtime_health_update("starting", {
-                    "code": "runtime_initializing", "message": "正在同步 DSH 会话…", "retryable": True,
+                await self.host.runtime_health_update("starting", phase={
+                    "code": "syncing", "message": "正在同步 DSH 会话…", "retryable": True,
                 })
-                self._sync = SyncRelay(client, self.host)
+                self._sync = SyncRelay(client, self.host, on_exit=self._relay_exited)
                 self._sync.start()
             else:
                 with suppress(Exception):
@@ -451,26 +509,32 @@ class DshRuntime(AgentRuntime):
         except ValueError as exc:
             raise RuntimeUpstreamError(str(exc)) from exc
 
-    async def _handle_notification(
-        self, method: str, params: Mapping[str, Any]
-    ) -> None:
-        # Additive 1.x notification support stays mechanical; never interpret native DSH events here.
-        if method == "runtime.capabilities.update":
-            await self.host.runtime_capabilities_update(
-                models.capability_set(params, connector_id=self.host.connector_id)
-            )
-        elif method == "timeline.item.upsert" and self.sync_mode != "events":
-            await self.host.timeline_item_upsert(
-                models.timeline_item(params.get("item", params))
-            )
-        elif method == "runtime.sync.batch" and self._sync is not None:
-            self._sync.accept(params)
-        elif method == "runtime.error" and self._sync is not None:
-            data = params.get("data")
-            stream_id = data.get("streamId") if isinstance(data, dict) else None
-            self._sync.restart(stream_id if isinstance(stream_id, str) else None)
+    def _relay_exited(self, relay: SyncRelay, error: BaseException | None) -> None:
+        # The relay only returns on its own when the plugin left the Router, and
+        # _handle_exit rebuilds it after the reconnect. Anything else is a bug
+        # in the relay; keep syncing rather than leaving the runtime "starting"
+        # until the Connector is restarted (#293).
+        if error is None or self._stopping or self._sync is not relay:
+            return
+        if self._client is None or not self._client.connected:
+            return
+        if self._relay_restart_task is None or self._relay_restart_task.done():
+            self._relay_restart_task = asyncio.create_task(self._restart_relay(relay), name="dsh-event-sync-restart")
 
-    async def _handle_exit(self, return_code: int | None) -> None:
+    async def _restart_relay(self, failed: SyncRelay) -> None:
+        await asyncio.sleep(RELAY_RESTART_DELAY_SECONDS)
+        async with self._connect_lock:
+            client = self._client
+            if self._stopping or self._sync is not failed or client is None or not client.connected:
+                return
+            with suppress(Exception):
+                await self.host.runtime_health_update("starting", phase={
+                    "code": "sync_interrupted", "message": "DSH 会话同步中断，正在重试…", "retryable": True,
+                })
+            self._sync = SyncRelay(client, self.host, on_exit=self._relay_exited)
+            self._sync.start()
+
+    async def _handle_exit(self, error: BaseException | None) -> None:
         self._client = None
         if self._sync is not None:
             await self._sync.close()
@@ -515,13 +579,21 @@ class DshRuntime(AgentRuntime):
             if self._stopping:
                 return
             try:
-                # Re-read endpoint.json on every attempt: DSH can restart on a new port.
+                # The plugin re-registers on the Router whenever DSH restarts.
                 await self._ensure_client()
                 return
             except Exception:
                 attempt = min(attempt + 1, fast_attempts)
                 # Stay quiet while offline; the exit handler already published health.
                 continue
+
+
+def _unknown_command_result(command: str) -> RuntimeCommandResult:
+    return RuntimeCommandResult(
+        command=command, ok=False, code="command_outcome_unknown",
+        message="DSH command execution could not be confirmed. Refresh session state before deciding whether to submit again.",
+        result={"executionState": "unknown", "retryable": False},
+    )
 
 
 def _object(value: Any) -> dict[str, Any]:

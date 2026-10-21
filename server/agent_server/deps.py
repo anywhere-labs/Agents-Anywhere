@@ -25,6 +25,7 @@ from agent_server.services.session_runtime_state_cache import SessionRuntimeStat
 from agent_server.services.terminal import TerminalService
 from agent_server.services.terminal_relay import TerminalRelayService
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
+from agent_server.services.usage_events import UsageRecorder
 
 
 def get_store(conn: HTTPConnection) -> Store:
@@ -55,12 +56,17 @@ def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService
             conn.app.state.store,
             realtime,
             conn.app.state.timeline_write_buffer,
+            usage_recorder=get_usage_recorder(conn),
         ),
         conn.app.state.timeline_broker,
         conn.app.state.device_runtime_service,
         conn.app.state.rpc,
         conn.app.state.session_runtime_state_cache,
     )
+
+
+def get_usage_recorder(conn: HTTPConnection) -> UsageRecorder:
+    return conn.app.state.usage_recorder
 
 
 def get_connector_realtime_service(conn: HTTPConnection) -> ConnectorRealtimeService:
@@ -90,6 +96,7 @@ def get_session_run_service(conn: HTTPConnection) -> SessionRunService:
         conn.app.state.store,
         conn.app.state.rpc,
         conn.app.state.device_runtime_service,
+        usage_recorder=get_usage_recorder(conn),
     )
 
 
@@ -139,20 +146,32 @@ def get_session_runtime_state_cache(
     return conn.app.state.session_runtime_state_cache
 
 
-def current_user_id(
-    authorization: str | None = Header(None, alias="Authorization"),
-) -> str:
-    """Lightweight: returns user id from the bearer token without DB lookup.
-
-    Use this for endpoints that only need to know who the caller is. For
-    endpoints that need role / disabled, use current_user instead.
-    """
+def user_id_from_authorization(authorization: str | None) -> str:
+    """Return the user id carried by a bearer token header, without DB lookup."""
     prefix = "Bearer "
     if authorization is None or not authorization.startswith(prefix):
         raise HTTPException(status_code=401, detail="missing user access token")
     user_id = verify_user_access_token(authorization[len(prefix) :])
     if user_id is None:
         raise HTTPException(status_code=401, detail="invalid user access token")
+    return user_id
+
+
+async def current_user_id(
+    conn: HTTPConnection,
+    authorization: str | None = Header(None, alias="Authorization"),
+) -> str:
+    """Lightweight: returns user id from the bearer token without DB lookup.
+
+    Use this for endpoints that only need to know who the caller is. For
+    endpoints that need role / disabled, use current_user instead. Every
+    authenticated call also counts as platform presence for usage statistics;
+    the recorder throttles that per user so it stays off the hot path.
+    """
+    user_id = user_id_from_authorization(authorization)
+    recorder = getattr(conn.app.state, "usage_recorder", None)
+    if recorder is not None:
+        await recorder.touch_user(user_id)
     return user_id
 
 
@@ -169,7 +188,6 @@ async def current_user(
         raise HTTPException(status_code=401, detail="user no longer exists") from None
     if user.disabled:
         raise HTTPException(status_code=403, detail="account disabled")
-    await db.record_platform_activity(user.userId)
     return user
 
 

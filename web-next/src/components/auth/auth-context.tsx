@@ -17,6 +17,7 @@ export type AuthScreen =
   | "login"
   | "register"
   | "signed-out"
+  | "forgot-password"
   | "oauth-new-user"
   | "oauth-link-existing"
   | "mobile-oauth"
@@ -45,6 +46,7 @@ type AuthState = {
   oauthProviderLabel: string | null
   oauthPending: OAuthPending | null
   emailVerificationRequired: boolean
+  passwordResetEnabled: boolean
   refreshConfig: () => Promise<void>
   registrationOpen: boolean
   navigate: (screen: AuthScreen) => void
@@ -70,6 +72,7 @@ function hashToScreen(hash: string): AuthScreen {
   const exactMap: Record<string, AuthScreen> = {
     login: "login",
     register: "register",
+    "forgot-password": "forgot-password",
     "signed-out": "signed-out",
     "oauth/new": "oauth-new-user",
     "oauth/link": "oauth-link-existing",
@@ -88,6 +91,8 @@ function hashToScreen(hash: string): AuthScreen {
     path.startsWith("session/") ||
     path.startsWith("new-session/") ||
     path.startsWith("settings") ||
+    path === "admin" ||
+    path.startsWith("admin/") ||
     path === "dashboard" ||
     path === "team" ||
     path === "service" ||
@@ -104,6 +109,7 @@ function screenToHash(s: AuthScreen): string {
     bootstrap: "#/bootstrap",
     login: "#/login",
     register: "#/register",
+    "forgot-password": "#/forgot-password",
     "signed-out": "#/signed-out",
     "oauth-new-user": "#/oauth/new",
     "oauth-link-existing": "#/oauth/link",
@@ -166,9 +172,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [oauthProviderLabel, setOauthProviderLabel] = React.useState<string | null>(null)
   const [oauthPending, setOauthPending] = React.useState<OAuthPending | null>(null)
   const [emailVerificationRequired, setEmailVerificationRequired] = React.useState(false)
+  const [passwordResetEnabled, setPasswordResetEnabled] = React.useState(false)
   const refreshConfig = React.useCallback(async () => {
     const config = await authApi.config()
     setEmailVerificationRequired(config.emailVerificationRequired)
+    setPasswordResetEnabled(config.passwordResetEnabled === true)
     setRegistrationOpen(config.registrationOpen)
     setOauthEnabled(config.oauthEnabled)
     setOauthProviderLabel(config.oauthProviderLabel)
@@ -195,6 +203,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setOauthProviderLabel(config.oauthProviderLabel)
           setRegistrationOpen(config.registrationOpen)
           setEmailVerificationRequired(config.emailVerificationRequired)
+          setPasswordResetEnabled(config.passwordResetEnabled === true)
         }
         if (config.needsBootstrap && !cancelled) {
           setScreenState("bootstrap")
@@ -224,7 +233,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const currentUser = await authApi.me(stored.accessToken)
         if (cancelled) return
         setMe(currentUser)
-        setScreenState(nextScreen === "login" || nextScreen === "register" ? "app" : nextScreen)
+        setScreenState(nextScreen === "login" || nextScreen === "register" || nextScreen === "forgot-password" ? "app" : nextScreen)
       } catch {
         clearStoredSession()
         if (cancelled) return
@@ -412,6 +421,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         oauthPending,
         registrationOpen,
         emailVerificationRequired,
+        passwordResetEnabled,
         refreshConfig,
         navigate,
 

@@ -89,7 +89,7 @@ struct ComposerOptionsSheet: View {
         .appSheetPresentation(.compact)
         .disabled(isApplying)
         .interactiveDismissDisabled(isApplying)
-        .modifier(SessionTakeoverConfirmation(pending: $pendingTakeover) { enabled in
+        .modifier(SessionTakeoverConfirmation(pending: $pendingTakeover, isDsh: sessionChat?.isDsh ?? false) { enabled in
             if let chat = sessionChat { _ = await chat.setTakeover(enabled) }
         })
         .alert(String(localized: "无法更改设置"), isPresented: $showsApplyError) {

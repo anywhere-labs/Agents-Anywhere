@@ -20,6 +20,11 @@ const stubs = {
   "@/lib/code-highlight": { highlightCode: code => code },
   "@/lib/file-preview-window": { openNativeFilePreviewWindow() {} },
   "@/components/ui/badge": { Badge: passthrough },
+  "@/components/ui/dialog": {
+    Dialog: ({ open, children }) => open ? children : null,
+    DialogContent: passthrough,
+    DialogTitle: passthrough,
+  },
   "@/components/ui/scroll-area": { ScrollArea: passthrough, ScrollBar: () => null },
   "@/components/session/session-file-preview-context": { useSessionFilePreviewOpener: () => null },
   "next-intl": { useTranslations: () => key => key },

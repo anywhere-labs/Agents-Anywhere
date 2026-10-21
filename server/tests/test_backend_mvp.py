@@ -33,7 +33,7 @@ from starlette.websockets import WebSocketDisconnect
 
 
 def make_client(tmp_path):
-    return make_test_client(tmp_path / "test.sqlite3")
+    return make_test_client()
 
 
 ADMIN_USER = "user1"
@@ -395,7 +395,7 @@ def _seed_running_runtime(
 
 
 def test_revoke_connector_rotates_token_and_disconnects(tmp_path):
-    app = create_app(tmp_path / "test.sqlite3")
+    app = create_app()
     client = TestClient(app)
     headers = auth_headers(client)
     created = client.post("/connectors", headers=headers, json={"name": "dev"})
@@ -492,7 +492,7 @@ def wait_for_sessions_order(
 
 
 def test_platform_session_create_without_external_session_is_rejected(tmp_path):
-    app = create_app(tmp_path / "test.sqlite3")
+    app = create_app()
     client = TestClient(app)
     headers = auth_headers(client)
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
@@ -513,7 +513,7 @@ def test_platform_session_create_without_external_session_is_rejected(tmp_path):
 
 
 def test_session_create_does_not_persist_external_session_model_selection(tmp_path):
-    app = create_app(tmp_path / "test.sqlite3")
+    app = create_app()
     client = TestClient(app)
     headers = auth_headers(client)
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
@@ -545,7 +545,7 @@ def test_session_create_does_not_persist_external_session_model_selection(tmp_pa
 
 
 def test_session_create_does_not_persist_external_session_permission_selection(tmp_path):
-    app = create_app(tmp_path / "test.sqlite3")
+    app = create_app()
     client = TestClient(app)
     headers = auth_headers(client)
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
@@ -577,7 +577,7 @@ def test_session_create_does_not_persist_external_session_permission_selection(t
 
 
 def test_session_create_and_start_preallocates_session_and_passes_selections(tmp_path):
-    app = create_app(tmp_path / "test.sqlite3")
+    app = create_app()
     client = TestClient(app)
     headers = auth_headers(client)
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
@@ -761,7 +761,7 @@ def test_session_state_reads_runtime_status_over_stale_db_status(tmp_path):
 
 
 def test_session_create_rejects_legacy_runtime_settings_model_fields(tmp_path):
-    app = create_app(tmp_path / "test.sqlite3")
+    app = create_app()
     client = TestClient(app)
     headers = auth_headers(client)
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
@@ -788,7 +788,7 @@ def test_session_create_rejects_legacy_runtime_settings_model_fields(tmp_path):
 
 
 def test_claude_session_create_without_external_session_uses_create_and_start(tmp_path):
-    app = create_app(tmp_path / "test.sqlite3")
+    app = create_app()
     client = TestClient(app)
     headers = auth_headers(client)
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
@@ -2701,7 +2701,7 @@ def test_terminal_ws_error_send_ignores_already_closed_socket():
 
 
 def test_connector_crud_updates_and_revokes_devices(tmp_path):
-    app = create_app(tmp_path / "test.sqlite3")
+    app = create_app()
     client = TestClient(app)
     headers = auth_headers(client)
     created = client.post("/connectors", headers=headers, json={"name": "dev"}).json()

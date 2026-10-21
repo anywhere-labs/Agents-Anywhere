@@ -20,20 +20,25 @@ struct ComposerLayout: Layout {
         let buttonY = expanded ? bounds.maxY - inset - button : bounds.midY - button / 2
         subviews[0].place(at: CGPoint(x: bounds.minX + inset, y: buttonY), proposal: .init(width: button, height: button))
         subviews[2].place(at: CGPoint(x: bounds.maxX - inset - button, y: buttonY), proposal: .init(width: button, height: button))
+        // An optional fourth control (the command menu) sits just left of send.
+        if subviews.count > 3 {
+            subviews[3].place(at: CGPoint(x: bounds.maxX - inset - button * 2, y: buttonY), proposal: .init(width: button, height: button))
+        }
         let textHeight = editorHeight(width: bounds.width, subviews: subviews)
         let textX = expanded ? controls.textInset : inset + button + controls.collapsedTextGap
         subviews[1].place(
             at: CGPoint(x: bounds.minX + textX, y: expanded ? bounds.minY + controls.textInset : bounds.midY - textHeight / 2),
-            proposal: .init(width: editorWidth(in: bounds.width), height: textHeight)
+            proposal: .init(width: editorWidth(in: bounds.width, subviews: subviews), height: textHeight)
         )
     }
 
-    private func editorWidth(in width: CGFloat) -> CGFloat {
-        max(1, expanded ? width - controls.textInset * 2
-            : width - (controls.touchTarget + controls.collapsedInset + controls.collapsedTextGap) * 2)
+    private func editorWidth(in width: CGFloat, subviews: Subviews) -> CGFloat {
+        let extra = subviews.count > 3 ? controls.touchTarget : 0
+        return max(1, expanded ? width - controls.textInset * 2
+            : width - (controls.touchTarget + controls.collapsedInset + controls.collapsedTextGap) * 2 - extra)
     }
 
     private func editorHeight(width: CGFloat, subviews: Subviews) -> CGFloat {
-        min(maximumEditorHeight, subviews[1].sizeThatFits(.init(width: editorWidth(in: width), height: nil)).height)
+        min(maximumEditorHeight, subviews[1].sizeThatFits(.init(width: editorWidth(in: width, subviews: subviews), height: nil)).height)
     }
 }

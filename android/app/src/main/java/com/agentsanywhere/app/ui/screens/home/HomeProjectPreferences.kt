@@ -20,10 +20,36 @@ internal class HomeProjectPreferences(private val storage: SharedPreferences, pr
             ?: ProjectSessionStatusFilter.Active,
     )
         private set
+    var selectedDeviceId by mutableStateOf(storage.getString("$key:device", null)?.takeIf(String::isNotBlank))
+        private set
+    var selectedAgentRuntime by mutableStateOf(storage.getString("$key:agent", null)?.takeIf(String::isNotBlank))
+        private set
 
     fun selectSessionStatus(status: ProjectSessionStatusFilter) {
         sessionStatus = status
         storage.edit().putString("$key:status", status.name).apply()
+    }
+
+    fun selectDevice(id: String?) {
+        selectedDeviceId = id
+        storage.edit().apply {
+            if (id == null) remove("$key:device") else putString("$key:device", id)
+        }.apply()
+    }
+
+    fun selectAgent(runtime: String?) {
+        selectedAgentRuntime = runtime
+        storage.edit().apply {
+            if (runtime == null) remove("$key:agent") else putString("$key:agent", runtime)
+        }.apply()
+    }
+
+    fun clearFilters() {
+        sessionStatus = ProjectSessionStatusFilter.Active
+        selectedDeviceId = null
+        selectedAgentRuntime = null
+        storage.edit().putString("$key:status", ProjectSessionStatusFilter.Active.name)
+            .remove("$key:device").remove("$key:agent").apply()
     }
 
     fun setProjectExpanded(id: String, expanded: Boolean) {

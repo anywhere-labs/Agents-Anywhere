@@ -93,7 +93,6 @@ fun DeviceDetailScreen(
     onRenameDevice: suspend (String, String) -> Result<AgentDevice>,
     onDeleteDevice: suspend (String) -> Result<Unit>,
     onPrepareDeviceSetup: suspend (String) -> Result<DeviceSetupCredential>,
-    onClaimDevicePairCode: suspend (DeviceSetupCredential, String) -> Result<AgentDevice>,
     onListDeviceRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
     onSetDeviceRuntimeActive: suspend (String, String, Boolean) -> Result<DeviceRuntime>,
     onDeleteDeviceRuntimeConfig: suspend (String, String) -> Result<DeviceRuntime>,
@@ -107,10 +106,6 @@ fun DeviceDetailScreen(
     var confirmAction by remember { mutableStateOf<DeviceConfirmAction?>(null) }
     var actionBusy by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
-    var setupSheetOpen by remember { mutableStateOf(false) }
-    var setupCredential by remember { mutableStateOf<DeviceSetupCredential?>(null) }
-    var setupBusy by remember { mutableStateOf(false) }
-    var setupError by remember { mutableStateOf<String?>(null) }
     var actionsSheetOpen by remember { mutableStateOf(false) }
     var runtimeState by remember(selectedDeviceId) {
         mutableStateOf(
@@ -200,24 +195,6 @@ fun DeviceDetailScreen(
         }
     }
 
-    fun startSetup(device: AgentDevice) {
-        if (setupBusy) return
-        setupSheetOpen = true
-        setupCredential = null
-        setupError = null
-        setupBusy = true
-        scope.launch {
-            onPrepareDeviceSetup(device.id)
-                .onSuccess { credential ->
-                    setupCredential = credential
-                }
-                .onFailure { error ->
-                    setupError = error.message ?: context.getString(R.string.device_detail_prepare_setup_failed)
-                }
-            setupBusy = false
-        }
-    }
-
     fun confirmCurrentAction() {
         val action = confirmAction ?: return
         val device = detail.device ?: return
@@ -249,7 +226,8 @@ fun DeviceDetailScreen(
                 is DeviceConfirmAction.DeleteRuntimeConfig -> {
                     onDeleteDeviceRuntimeConfig(device.id, action.runtime.id)
                         .onSuccess { updated ->
-                            runtimeState = runtimeState.replace(updated).copy(pendingRuntimeId = null)
+                            runtimeState = runtimeState.afterDeletion(action.runtime.id, updated)
+                                .copy(pendingRuntimeId = null)
                             confirmAction = null
                             actionError = null
                         }
@@ -442,34 +420,16 @@ fun DeviceDetailScreen(
             device = detail.device,
             onDismiss = { actionsSheetOpen = false },
             onRenameDevice = onRenameDevice,
-            onTokenAction = {
+            onRevokeDevice = {
                 actionsSheetOpen = false
-                if (detail.device.online) {
-                    actionError = null
-                    confirmAction = DeviceConfirmAction.RevokeDevice(detail.device.name)
-                } else {
-                    startSetup(detail.device)
-                }
+                actionError = null
+                confirmAction = DeviceConfirmAction.RevokeDevice(detail.device.name)
             },
             onDeleteDevice = {
                 actionsSheetOpen = false
                 actionError = null
                 confirmAction = DeviceConfirmAction.DeleteDevice
             },
-        )
-    }
-
-    if (setupSheetOpen) {
-        DeviceSetupSheet(
-            device = detail.device ?: setupCredential?.device,
-            credential = setupCredential,
-            busy = setupBusy,
-            errorMessage = setupError,
-            onDismiss = {
-                setupSheetOpen = false
-                setupError = null
-            },
-            onClaimPairCode = onClaimDevicePairCode,
         )
     }
 

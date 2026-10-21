@@ -16,6 +16,7 @@ import org.json.JSONException
 
 class ApiClient(
     private val onUnauthorized: (accessToken: String) -> Unit = {},
+    private val refreshAccessToken: (serverUrl: String, accessToken: String) -> String? = { _, _ -> null },
 ) {
     fun requireHtmlDocument(
         serverUrl: String,
@@ -179,6 +180,17 @@ class ApiClient(
         files: List<UploadFilePart>,
         authorizationToken: String? = null,
     ): JSONObject {
+        return withTokenRefresh(serverUrl, authorizationToken) { token ->
+            postMultipartOnce(serverUrl, path, files, token)
+        }
+    }
+
+    private fun postMultipartOnce(
+        serverUrl: String,
+        path: String,
+        files: List<UploadFilePart>,
+        authorizationToken: String?,
+    ): JSONObject {
         return try {
             val endpoint = URL(apiUrl(serverUrl, path))
             val boundary = "AA-${System.currentTimeMillis()}"
@@ -211,7 +223,6 @@ class ApiClient(
                 val responseCode = connection.responseCode
                 val responseText = readResponseText(connection, responseCode)
                 if (responseCode !in 200..299) {
-                    notifyUnauthorized(responseCode, authorizationToken)
                     throw ApiException(
                         message = parseErrorMessage(responseText) ?: defaultErrorMessage(responseCode),
                         statusCode = responseCode,
@@ -237,6 +248,20 @@ class ApiClient(
         authorizationToken: String?,
         readTimeoutSeconds: Long? = null,
         requestBody: RequestBody? = null,
+    ): JSONObject {
+        return withTokenRefresh(serverUrl, authorizationToken) { token ->
+            requestJsonOnce(serverUrl, path, method, bodyText, token, readTimeoutSeconds, requestBody)
+        }
+    }
+
+    private fun requestJsonOnce(
+        serverUrl: String,
+        path: String,
+        method: String,
+        bodyText: String?,
+        authorizationToken: String?,
+        readTimeoutSeconds: Long?,
+        requestBody: RequestBody?,
     ): JSONObject {
         return try {
             val resolvedRequestBody = requestBody ?: when {
@@ -274,7 +299,6 @@ class ApiClient(
                     if (canTryLegacy) return@forEachIndexed
 
                     if (!response.isSuccessful) {
-                        notifyUnauthorized(response.code, authorizationToken)
                         throw ApiException(
                             message = parseErrorMessage(responseText) ?: defaultErrorMessage(response.code),
                             statusCode = response.code,
@@ -294,6 +318,29 @@ class ApiClient(
             throw ApiException("The server URL is invalid.", cause = exc)
         } catch (exc: IOException) {
             throw ApiException("Could not reach the server. Check the URL and network.", cause = exc)
+        }
+    }
+
+    private fun withTokenRefresh(
+        serverUrl: String,
+        authorizationToken: String?,
+        request: (String?) -> JSONObject,
+    ): JSONObject {
+        try {
+            return request(authorizationToken)
+        } catch (exc: ApiException) {
+            if (!shouldNotifyUnauthorized(exc.statusCode ?: 0, authorizationToken)) throw exc
+            val refreshedToken = refreshAccessToken(serverUrl, authorizationToken.orEmpty())
+            if (refreshedToken.isNullOrBlank()) {
+                notifyUnauthorized(401, authorizationToken)
+                throw exc
+            }
+            try {
+                return request(refreshedToken)
+            } catch (retry: ApiException) {
+                notifyUnauthorized(retry.statusCode ?: 0, refreshedToken)
+                throw retry
+            }
         }
     }
 

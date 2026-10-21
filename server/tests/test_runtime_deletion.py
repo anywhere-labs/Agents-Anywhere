@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -23,7 +24,7 @@ from agent_server.infra.db import schema as db
 
 @pytest.fixture
 def api(tmp_path, monkeypatch):
-    app = create_app(tmp_path / "runtime-deletion.sqlite3")
+    app = create_app()
     rpc = FakeRuntimeRpc(_v2_discovery())
     # Keep the production service and its cleanup dependencies wired by create_app.
     for method in ("is_online", "request", "request_bound", "is_connection_id_current"):
@@ -217,7 +218,10 @@ def test_runtime_deletion_removes_only_its_sessions_and_related_data(api):
             == 404
         )
         assert client.get(f"/public/shares/{session.id}").status_code == 404
-    assert client.get(f"{runtime_url}", headers=headers).status_code == 200
+    assert response.json()["runtimeId"] == runtime
+    assert client.get(f"{runtime_url}", headers=headers).status_code == 404
+    listed = client.get(f"/connectors/{device}/runtimes", headers=headers).json()["runtimes"]
+    assert runtime not in {item["runtimeId"] for item in listed}
     assert (
         client.get(
             f"/connectors/{device}/runtimes/{other_runtime}", headers=headers
@@ -250,7 +254,8 @@ def test_runtime_deletion_removes_only_its_sessions_and_related_data(api):
             assert await store.timeline.read(session.id) == []
 
     asyncio.run(check())
-    assert client.delete(f"{runtime_url}/config", headers=headers).status_code == 200
+    # A stale retry must not delete the successor, even after it is configured.
+    assert client.delete(f"{runtime_url}/config", headers=headers).status_code == 404
     asyncio.run(assert_session_data(client.app, {session.id for session in kept}))
 
 
@@ -312,6 +317,35 @@ def test_stopped_runtime_can_be_deleted_while_connector_is_offline(api):
     asyncio.run(assert_session_data(client.app, set()))
 
 
+def test_only_manual_delete_retires_identity_and_stale_retries_cannot_touch_new_instance(api):
+    client, rpc, headers, device, runtime = api
+    url = f"/connectors/{device}/runtimes/{runtime}"
+    for active in (True, False, True, False):
+        result = client.put(f"{url}/active", headers=headers, json={"active": active})
+        assert result.status_code == 200, result.text
+        assert result.json()["runtimeId"] == runtime
+    # Reconfiguration and an offline period both keep the configured identity.
+    config = client.get(url, headers=headers).json()["config"]
+    result = client.put(f"{url}/config", headers=headers, json={"config": config})
+    assert result.status_code == 200, result.text
+    assert result.json()["runtimeId"] == runtime
+    rpc.online = False
+    assert client.get(url, headers=headers).json()["runtimeId"] == runtime
+    rpc.online = True
+    removed = client.delete(f"{url}/config", headers=headers)
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["runtimeId"] == runtime
+    assert client.get(url, headers=headers).status_code == 404
+    replacement = create_runtime(client, headers, device, "Work")
+    assert replacement != runtime
+    replacement_url = f"/connectors/{device}/runtimes/{replacement}"
+    assert client.delete(f"{url}/config", headers=headers).status_code == 404
+    assert client.put(f"{url}/config", headers=headers, json={"config": config}).status_code == 404
+    assert client.get(replacement_url, headers=headers).json()["configured"] is True
+    denied = asyncio.run(client.app.state.store.get_unconfigured_runtime_ids(device))
+    assert runtime in denied and replacement not in denied
+
+
 def test_failed_runtime_attachment_cleanup_rolls_back_and_can_retry(api, monkeypatch):
     client, _, headers, device, runtime = api
     session = asyncio.run(add_session(client.app, device, runtime, "retry"))
@@ -360,3 +394,119 @@ def test_unowned_or_missing_runtime_deletion_preserves_sessions(api):
         is True
     )
     asyncio.run(assert_session_data(client.app, {session.id}))
+
+
+@pytest.fixture
+def connector_api(api, monkeypatch):
+    """Use the real Connector registry so a fake RPC cannot hide leaked slots."""
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "connector"))
+    from connector.runtime_protocol import (
+        AgentRuntime,
+        RuntimeConfig,
+        RuntimeHostClient,
+        RuntimeIdentity,
+        RuntimeProvider,
+        RuntimeSupervisor,
+    )
+    from connector.server.runtime_rpc import RuntimeRpcHandler
+
+    class Host(RuntimeHostClient):
+        connector_id = "conn_test"
+
+    class Runtime(AgentRuntime):
+        identity = RuntimeIdentity(runtime="codex", runtime_version="test")
+
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+    class Provider(RuntimeProvider):
+        runtime_type = "codex"
+        display_name = "Codex"
+
+        async def validate_config(self, values):
+            return RuntimeConfig(runtime="codex", revision=1, values=dict(values))
+
+        async def create_runtime(self, config, host):
+            return Runtime()
+
+    client, rpc, headers, device, runtime_id = api
+    rpc.discovery = _v2_discovery(instance_policy="single", max_instances=1)
+    _discover_types(client, device, headers)
+    supervisor = RuntimeSupervisor((Provider(),), Host())
+    handler = RuntimeRpcHandler(supervisor, Host())
+    old_request = rpc.request
+
+    async def request(connector_id, method, params, **kwargs):
+        if method == "runtime.discover":
+            return await old_request(connector_id, method, params, **kwargs)
+        rpc.requests.append((connector_id, method, params))
+        try:
+            return await handler.dispatch(method, params)
+        except Exception as exc:
+            raise ConnectorRpcError(getattr(exc, "code", "runtime_error"), str(exc)) from exc
+
+    monkeypatch.setattr(client.app.state.rpc, "request", request)
+    # Reconstruct the existing configured instance in the long-lived Connector.
+    config = client.get(
+        f"/connectors/{device}/runtimes/{runtime_id}", headers=headers
+    ).json()["config"]
+    configured = client.put(
+        f"/connectors/{device}/runtimes/{runtime_id}/config",
+        headers=headers,
+        json={"config": config},
+    )
+    assert configured.status_code == 200, configured.text
+    yield client, rpc, headers, device, runtime_id, supervisor
+
+
+@pytest.mark.parametrize("state", ["running", "stopped", "offline"])
+def test_deleted_single_instance_can_be_added_again_without_connector_restart(
+    connector_api, state
+):
+    client, rpc, headers, device, runtime_id, supervisor = connector_api
+    for _ in range(2):
+        url = f"/connectors/{device}/runtimes/{runtime_id}"
+        if state == "running":
+            activated = client.put(f"{url}/active", headers=headers, json={"active": True})
+            assert activated.status_code == 200, activated.text
+        rpc.online = state != "offline"
+        removed = client.delete(f"{url}/config", headers=headers)
+        assert removed.status_code == 200, removed.text
+        assert removed.json()["runtimeId"] == runtime_id
+        assert removed.json()["configured"] is False
+        rpc.online = True
+        assert client.get(url, headers=headers).status_code == 404
+        # The deleted instance no longer holds the single slot or its name.
+        replacement = create_runtime(client, headers, device, "Work")
+        assert replacement != runtime_id
+        assert supervisor.entry(runtime_id).runtime is None
+        runtime_id = replacement
+
+
+def test_single_runtime_limit_only_rejects_start_and_releases_after_stop(connector_api):
+    client, rpc, headers, device, first_id, supervisor = connector_api
+    # Server allows two saved configurations; the Connector provider still runs one.
+    rpc.discovery = _v2_discovery(instance_policy="multiple", max_instances=2)
+    _discover_types(client, device, headers)
+    first_url = f"/connectors/{device}/runtimes/{first_id}"
+    first = client.put(f"{first_url}/active", headers=headers, json={"active": True})
+    assert first.status_code == 200, first.text
+
+    second_id = create_runtime(client, headers, device, "Other")
+    second_url = f"/connectors/{device}/runtimes/{second_id}"
+    rejected = client.put(f"{second_url}/active", headers=headers, json={"active": True})
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()["detail"]["code"] == "runtime_conflict"
+    assert "running instance" in rejected.json()["detail"]["message"]
+    assert supervisor.entry(first_id).status == "running"
+    assert supervisor.entry(second_id).runtime is None
+
+    stopped = client.put(f"{first_url}/active", headers=headers, json={"active": False})
+    assert stopped.status_code == 200, stopped.text
+    started = client.put(f"{second_url}/active", headers=headers, json={"active": True})
+    assert started.status_code == 200, started.text
+    assert supervisor.entry(second_id).status == "running"
+    assert client.get(first_url, headers=headers).json()["configured"] is True

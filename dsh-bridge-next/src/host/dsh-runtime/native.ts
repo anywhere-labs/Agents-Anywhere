@@ -5,6 +5,7 @@ import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionRecord } from '@deepseek-ai/dsh-session-query'
 import type {} from '@deepseek-ai/dsh-workspace'
 import type {} from '@deepseek-ai/dsh-storage-domain'
+import type {} from '@deepseek-ai/dsh-permission-presets'
 import { realpath, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { canonicalJson, digest, userMessageId } from './identity.js'
@@ -17,6 +18,7 @@ import { UserQuestions } from './questions.js'
 import { RuntimeDiagnostics } from './diagnostics.js'
 import { RuntimeCatalogs } from './catalogs.js'
 import { RuntimeConfiguration } from './configuration.js'
+import { RuntimeCommands } from './commands.js'
 import type { Selections } from './selections.js'
 import { capabilities } from './capabilities.js'
 import { CreationIntents } from './creation-intents.js'
@@ -30,7 +32,7 @@ export type NativeChange = { type: 'stream', id: string, turn: number, step: num
   | { type: 'session', id: string } | { type: 'status', id: string }
   | { type: 'refresh', id: string }
   | { type: 'question', id: string } | { type: 'approval', id: string } | { type: 'capabilities' }
-  | { type: 'visibility' } | { type: 'catalogs' }
+  | { type: 'visibility' } | { type: 'catalogs', catalogType: 'model' | 'permission' } | { type: 'commands' }
 export interface NativeWorkspace { id: string, title: string, path: string, sessionIds: string[] }
 
 /** Configuration facts a session state read needs, without retaining the event log. */
@@ -54,6 +56,7 @@ export class NativeRuntime {
   readonly source: NativeSessionSource
   readonly catalogs: RuntimeCatalogs
   readonly configuration: RuntimeConfiguration
+  readonly commands: RuntimeCommands
   private writes = new Map<string, Promise<unknown>>()
   private closed = false
   private creations: CreationIntents
@@ -61,22 +64,29 @@ export class NativeRuntime {
   private readonly facts = new Map<string, { revision: string, value: SessionFacts }>()
 
   constructor(readonly ctx: Context, creationDirectory: string,
-    readonly diagnostics = new RuntimeDiagnostics(ctx.logger('agents-anywhere-runtime'))) {
+    readonly diagnostics = new RuntimeDiagnostics(),
+    legacyAttachmentStaging?: string) {
     this.creations = new CreationIntents(creationDirectory)
-    this.attachments = new RuntimeAttachments(join(dirname(creationDirectory), 'attachments'))
-    this.catalogs = new RuntimeCatalogs(ctx, () => this.emit({ type: 'catalogs' }))
+    this.attachments = new RuntimeAttachments(join(dirname(creationDirectory), 'attachments'), legacyAttachmentStaging)
+    this.catalogs = new RuntimeCatalogs(ctx, () => this.emit({ type: 'catalogs', catalogType: 'model' }))
     this.configuration = new RuntimeConfiguration(ctx)
+    this.source = new NativeSessionSource(ctx, diagnostics)
+    this.commands = new RuntimeCommands(ctx, this.configuration, this.source, () => this.emit({ type: 'commands' }))
     ctx.on('llm/adapters-updated', () => this.catalogs.invalidate(), { global: true })
+    ctx.on('permission-presets/catalog-changed', () => this.emit({ type: 'catalogs', catalogType: 'permission' }), { global: true })
     for (const key of ['sessionController', 'permissionPresets', 'commands', 'agentPresets', 'attachments', 'fileUploads'] as const) {
       ctx.inject([key], child => {
+        if (key === 'commands' || key === 'sessionController') this.commands.invalidate()
         this.emit({ type: 'capabilities' })
-        child.effect(() => () => this.emit({ type: 'capabilities' }), 'runtime.configuration-capabilities')
+        child.effect(() => () => {
+          if (key === 'commands' || key === 'sessionController') this.commands.invalidate()
+          this.emit({ type: 'capabilities' })
+        }, 'runtime.configuration-capabilities')
       })
     }
     this.presence = new ClientPresence(() => {})
-    this.source = new NativeSessionSource(ctx, diagnostics)
-    this.approvals = new UserApprovals(ctx, id => this.visible(id), id => this.emit(id ? { type: 'approval', id } : { type: 'capabilities' }))
-    this.questions = new UserQuestions(ctx, id => this.visible(id), id => this.emit(id ? { type: 'question', id } : { type: 'capabilities' }))
+    this.approvals = new UserApprovals(ctx, id => this.visible(id), id => this.emit(id ? { type: 'approval', id } : { type: 'capabilities' }), this.diagnostics)
+    this.questions = new UserQuestions(ctx, id => this.visible(id), id => this.emit(id ? { type: 'question', id } : { type: 'capabilities' }), this.diagnostics)
     ctx.on('session/created', session => {
       this.source.observe(session)
       this.emit({ type: 'session', id: session.id })
@@ -146,7 +156,8 @@ export class NativeRuntime {
     const effort = Boolean(catalog?.models.some(item => item.enabled && item.reasoningItems.some(option => option.enabled)))
     const result = capabilities(platformId, Boolean(this.ctx.get('sessionController')), this.questions.available,
       { model, effort, approval: this.approvals.available, attachments: Boolean(this.ctx.get('attachments')), files: Boolean(this.ctx.get('fileUploads')),
-        permission: this.configuration.canSelectPermission && (!id || !this.ctx.get('agents')?.get(id) || Boolean(this.ctx.get('commands')!.find(this.ctx.get('agents')!.get(id)!, 'permission'))) })
+        permission: this.configuration.canSelectPermission && (!id || !this.ctx.get('agents')?.get(id) || Boolean(this.ctx.get('commands')!.find(this.ctx.get('agents')!.get(id)!, 'permission'))),
+        commands: await this.commands.capability(id) })
     return { ...result, metadata: { ...result.metadata,
       ...(catalog ? { modelCatalogFailures: catalog.metadata.failures } : {}) } }
   }
@@ -315,6 +326,7 @@ export class NativeRuntime {
     this.closed = true
     this.presence.close()
     this.source.close()
+    this.commands.close()
     await this.questions.close()
     await this.approvals.close()
     this.listeners.clear()

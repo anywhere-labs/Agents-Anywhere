@@ -30,6 +30,21 @@ import Testing
         #expect(!row.isRevealing)
     }
 
+    @Test func runningReplyStopsRevealingWhenTextPauses() throws {
+        let timeline = SessionTimelinePresentation()
+        timeline.stage([try item("Hello")], animate: false); timeline.flush(now: 0)
+        let row = try #require(timeline.rows.first)
+        timeline.stage([try item("Hello world", revision: 2)], animate: true)
+        timeline.flush(now: 1)
+        #expect(row.isRevealing)
+        // Still running (e.g. waiting on a tool), but no new glyphs to draw.
+        timeline.flush(now: 2)
+        #expect(!row.isRevealing)
+        timeline.stage([try item("Hello world again", revision: 3)], animate: true)
+        timeline.flush(now: 3)
+        #expect(row.isRevealing)
+    }
+
     @Test func completedShortReplyStillRevealsAndRecoveryNeverReplaysHistory() throws {
         let timeline = SessionTimelinePresentation()
         timeline.stage([], animate: false); timeline.flush(now: 0)
@@ -71,13 +86,24 @@ import Testing
         #expect(timeline.rows.count == 1)
     }
 
-    @Test func thirtyHzDeadlinesAndGlyphBirthsRemainIndependent() throws {
+    @Test func nextBatchWaitsForThePreviousRevealToEnd() throws {
+        let timeline = SessionTimelinePresentation()
+        timeline.stage([try item("Hello")], animate: false); timeline.flush(now: 0)
+        #expect(timeline.nextBatchAt == 0)
+        timeline.stage([try item("Hello world", revision: 2)], animate: true); timeline.flush(now: 1)
+        #expect(timeline.nextBatchAt == 1 + ReplyPresentation.batchInterval)
+        #expect(ReplyPresentation.batchInterval > ReplyPresentation.revealSeconds)
+        // A flush without new text doesn't start a batch or move the gate.
+        timeline.stage([try item("Hello world", revision: 2)], animate: true); timeline.flush(now: 1.1)
+        #expect(timeline.nextBatchAt == 1 + ReplyPresentation.batchInterval)
+    }
+
+    @Test func glyphBirthsRemainIndependent() throws {
         let start = ContinuousClock.now
-        var schedule = ReplyFlushSchedule(start: start)
-        #expect(schedule.interval == .seconds(1.0 / 30))
+        var schedule = ReplyFlushSchedule(start: start, interval: .milliseconds(200))
         let first = schedule.deadline
         schedule.advance(after: first.advanced(by: .milliseconds(4)))
-        #expect(schedule.deadline == first.advanced(by: .seconds(1.0 / 30)))
+        #expect(schedule.deadline == first.advanced(by: .milliseconds(200)))
         let late = start.advanced(by: .seconds(2))
         schedule.advance(after: late)
         #expect(schedule.deadline > late)
@@ -86,8 +112,21 @@ import Testing
         let firstProgress = try #require(ledger.progress(count: 2, now: 0.1, enabled: true))
         _ = ledger.progress(count: 0, now: 0.1, enabled: true)
         let appended = try #require(ledger.progress(count: 4, now: 0.1, enabled: true))
-        #expect(Array(appended.prefix(2)) == firstProgress)
-        #expect(Array(appended.suffix(2)) == [0, 0])
+        #expect(appended.value(at: 0) == firstProgress.value(at: 0))
+        #expect(appended.value(at: 1) == firstProgress.value(at: 1))
+        #expect(appended.value(at: 2) == 0 && appended.value(at: 3) == 0)
+        #expect(appended.batches.count == 2)
+    }
+
+    @Test func finishedRevealBatchesJoinTheSettledPrefix() throws {
+        let ledger = GlyphRevealLedger()
+        _ = ledger.progress(count: 3, now: 0, enabled: true)
+        let both = try #require(ledger.progress(count: 5, now: 0.2, enabled: true))
+        #expect(both.settledCount == 0 && both.batches.map(\.range) == [0..<3, 3..<5])
+        let later = try #require(ledger.progress(count: 5, now: 0.3, enabled: true))
+        #expect(later.settledCount == 3 && later.batches.map(\.range) == [3..<5])
+        #expect(later.value(at: 1) == 1)
+        #expect(ledger.progress(count: 5, now: 0.5, enabled: true) == nil)
     }
 
     @Test func longerWelcomeRevealKeepsTheStreamingCurveAndDefaultDuration() throws {
@@ -97,7 +136,7 @@ import Testing
         _ = welcome.progress(count: 4, now: 0, enabled: true)
         let streamed = try #require(streaming.progress(count: 4, now: 0.06, enabled: true))
         let slower = try #require(welcome.progress(count: 4, now: 0.1, enabled: true))
-        #expect(abs(streamed[0] - slower[0]) < 0.000001)
+        #expect(abs(streamed.value(at: 0) - slower.value(at: 0)) < 0.000001)
         #expect(streaming.progress(count: 4, now: 0.25, enabled: true) == nil)
         #expect(welcome.progress(count: 4, now: 0.25, enabled: true) != nil)
         #expect(welcome.progress(count: 4, now: 0.4, enabled: true) == nil)

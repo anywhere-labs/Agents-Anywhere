@@ -8,8 +8,24 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import time
+from collections.abc import Mapping
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Literal
+
+import psutil
+
+_NATIVE_ACTIVITY_STARTUP_GRACE_SECONDS = 30
+
+
+@dataclass(frozen=True, slots=True)
+class NativeThreadActivity:
+    status: Literal["idle", "running"]
+    turn_id: str
+    native_status: str
+    evidence: Literal["terminal", "owner", "recent", "stale"]
 
 
 def source_signature(thread: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -24,25 +40,126 @@ def source_signature(thread: Mapping[str, Any]) -> dict[str, Any] | None:
         return None
 
 
-def read_history_index(thread: Mapping[str, Any]) -> dict[str, Any] | None:
-    source = source_signature(thread)
-    thread_id = thread.get("id")
-    if source is None or not isinstance(thread_id, str) or thread.get("forkedFromId"):
+def read_native_thread_activity(
+    thread: Mapping[str, Any],
+) -> NativeThreadActivity | None:
+    """Read the latest native turn state without requiring a settled projection.
+
+    Codex app-server reports desktop-owned threads as ``notLoaded``. The native
+    history database is the shared read-only source that the desktop itself
+    updates while such a turn is running.
+    """
+
+    native_source = _native_history_source(thread)
+    if native_source is None:
         return None
-    path = Path(source["path"])
-    # A custom CODEX_HOME is supported; never guess an index from another home.
-    root = next((p.parent for p in list(path.parents)[:5] if p.name in {"sessions", "archived_sessions"}), None)
-    if root is None:
-        return None
+    source, thread_id, database_path = native_source
     try:
-        with path.open("rb") as stream:
-            header = json.loads(stream.readline(1024 * 1024))
-        meta = header.get("payload", {})
-        if (header.get("type") != "session_meta" or meta.get("id") != thread_id
-                or meta.get("history_mode") != "paginated" or meta.get("history_base")
-                or meta.get("forked_from_id")):
+        database_uri = database_path.as_uri() + "?mode=ro"
+        with sqlite3.connect(database_uri, uri=True, timeout=0.1) as database:
+            row = database.execute(
+                "SELECT turn_id, status FROM thread_turns "
+                "WHERE thread_id=? ORDER BY rollout_ordinal DESC LIMIT 1",
+                (thread_id,),
+            ).fetchone()
+        if row is None or not isinstance(row[0], str) or not isinstance(row[1], str):
             return None
-        db = sqlite3.connect((root / "thread_history_1.sqlite").as_uri() + "?mode=ro", uri=True, timeout=0.1)
+        normalized_status = row[1].replace("_", "").lower()
+        if normalized_status in {"inprogress", "running"}:
+            if _source_is_open_by_codex(source):
+                status: Literal["idle", "running"] = "running"
+                evidence: Literal["terminal", "owner", "recent", "stale"] = (
+                    "owner"
+                )
+            elif _source_is_recent(source):
+                status = "running"
+                evidence = "recent"
+            else:
+                # Codex can leave an inProgress row behind when a desktop-owned
+                # task is unloaded without a terminal event. Once no Codex
+                # process owns the rollout and the short startup race has
+                # elapsed, that row is historical rather than live activity.
+                status = "idle"
+                evidence = "stale"
+        elif normalized_status in {"completed", "interrupted", "failed"}:
+            status = "idle"
+            evidence = "terminal"
+        else:
+            return None
+        current_source = source_signature(thread)
+        if current_source is None or any(
+            current_source[key] != source[key] for key in ("path", "device", "inode")
+        ):
+            return None
+        return NativeThreadActivity(
+            status=status,
+            turn_id=row[0],
+            native_status=row[1],
+            evidence=evidence,
+        )
+    except (OSError, sqlite3.Error, ValueError, TypeError, AttributeError):
+        return None
+
+
+def _source_is_recent(source: Mapping[str, Any]) -> bool:
+    mtime_ns = source.get("mtime")
+    if not isinstance(mtime_ns, int):
+        return False
+    age_ns = time.time_ns() - mtime_ns
+    return age_ns <= _NATIVE_ACTIVITY_STARTUP_GRACE_SECONDS * 1_000_000_000
+
+
+def _source_is_open_by_codex(source: Mapping[str, Any]) -> bool:
+    device = source.get("device")
+    inode = source.get("inode")
+    if not isinstance(device, int) or not isinstance(inode, int):
+        return False
+    return (device, inode) in _open_codex_file_identities(int(time.monotonic()))
+
+
+@lru_cache(maxsize=2)
+def _open_codex_file_identities(
+    _cache_second: int,
+) -> frozenset[tuple[int, int]]:
+    identities: set[tuple[int, int]] = set()
+    for process in psutil.process_iter(["name", "exe", "cmdline"]):
+        try:
+            if not _is_codex_process(process.info):
+                continue
+            for opened_file in process.open_files():
+                try:
+                    stat = Path(opened_file.path).stat()
+                except OSError:
+                    continue
+                identities.add((stat.st_dev, stat.st_ino))
+        except (psutil.Error, OSError):
+            continue
+    return frozenset(identities)
+
+
+def _is_codex_process(info: Mapping[str, Any]) -> bool:
+    cmdline = info.get("cmdline")
+    executable_candidates = [info.get("name"), info.get("exe")]
+    if isinstance(cmdline, list) and cmdline:
+        executable_candidates.append(cmdline[0])
+    for candidate in executable_candidates:
+        if not isinstance(candidate, str) or not candidate:
+            continue
+        executable_name = Path(candidate).name.casefold()
+        if executable_name in {"codex", "codex.exe"} or executable_name.startswith(
+            "codex-"
+        ):
+            return True
+    return False
+
+
+def read_history_index(thread: Mapping[str, Any]) -> dict[str, Any] | None:
+    native_source = _native_history_source(thread)
+    if native_source is None:
+        return None
+    source, thread_id, database_path = native_source
+    try:
+        db = sqlite3.connect(database_path.as_uri() + "?mode=ro", uri=True, timeout=0.1)
         try:
             db.execute("BEGIN")
             projection = db.execute("SELECT next_rollout_byte_offset FROM thread_history_projection_state WHERE thread_id=?", (thread_id,)).fetchone()
@@ -65,6 +182,42 @@ def read_history_index(thread: Mapping[str, Any]) -> dict[str, Any] | None:
         return result if source_signature(thread) == source else None
     except (OSError, sqlite3.Error, ValueError, TypeError, AttributeError):
         return None
+
+
+def _native_history_source(
+    thread: Mapping[str, Any],
+) -> tuple[dict[str, Any], str, Path] | None:
+    source = source_signature(thread)
+    thread_id = thread.get("id")
+    if source is None or not isinstance(thread_id, str) or thread.get("forkedFromId"):
+        return None
+    path = Path(source["path"])
+    # A custom CODEX_HOME is supported; never guess an index from another home.
+    root = next(
+        (
+            parent.parent
+            for parent in list(path.parents)[:5]
+            if parent.name in {"sessions", "archived_sessions"}
+        ),
+        None,
+    )
+    if root is None:
+        return None
+    try:
+        with path.open("rb") as stream:
+            header = json.loads(stream.readline(1024 * 1024))
+        metadata = header.get("payload", {})
+        if (
+            header.get("type") != "session_meta"
+            or metadata.get("id") != thread_id
+            or metadata.get("history_mode") != "paginated"
+            or metadata.get("history_base")
+            or metadata.get("forked_from_id")
+        ):
+            return None
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    return source, thread_id, root / "thread_history_1.sqlite"
 
 
 def valid_read_state(value: Any, items: Mapping[str, Any]) -> bool:

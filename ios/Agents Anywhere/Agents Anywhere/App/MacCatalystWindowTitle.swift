@@ -5,7 +5,7 @@ import UIKit
 /// Retain a useful title for the Window menu while hiding Catalyst's separate
 /// title bar. Page controls continue to use their native navigation bars.
 struct MacCatalystWindowTitle: View {
-    @ObservedObject var appState: AppState
+    let appState: AppState
     @Environment(\.locale) private var locale
 
     var body: some View {

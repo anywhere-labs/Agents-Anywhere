@@ -124,8 +124,9 @@ export function capabilitySetsSemanticallyEqual(
 }
 
 function capabilitySetSemanticValue(value: ProtocolCapabilitySet) {
-  return [...value.capabilities]
-    .sort((left, right) => stableStringify(left).localeCompare(stableStringify(right)))
+  // Canonicalize each record once. A sort comparator runs repeatedly and
+  // otherwise traverses the same parameters/metadata on every comparison.
+  return value.capabilities.map((capability) => stableStringify(capability)).sort()
 }
 
 export function stableStringify(value: unknown): string {

@@ -1,13 +1,14 @@
 """Connector-owned, per-user startup exclusion and local identity history."""
 from __future__ import annotations
 
-import errno
-import hashlib
+import contextlib
 import json
 import os
+import secrets
 import socket
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from collections.abc import Iterator
@@ -18,11 +19,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import psutil
+from meshcall import MeshCallError
 
-from connector.core.json_rpc import JsonRpcError
+from connector.logging import logger
 
 if TYPE_CHECKING:
     from connector.core.config import ConnectorConfig
+
+
+CONNECTOR_ALREADY_RUNNING = "connector_already_running"
 
 
 def system_home() -> Path:
@@ -38,46 +43,164 @@ def runtime_path(config_path: str | Path | None = None) -> Path:
     return system_home() / ".agents-anywhere" / "connector-runtime.json"
 
 
-def state_lock_port(path: str | Path) -> int:
-    """The per-user TCP port that represents this record's cross-process mutex."""
-    file = Path(path)
-    identity = str(file.parent.resolve() / file.name)
-    if sys.platform == "win32":
-        identity = identity.lower()
-    digest = hashlib.sha256(f"aa-machine-state-v1\n{identity}".encode()).digest()
-    return 49152 + int.from_bytes(digest[:2], "big") % 16384
+_LOCK_PROBE_TIMEOUT_SECONDS = 0.2
+_LOCK_RETRY_INTERVAL_SECONDS = 0.02
+_LOCK_UNREADABLE_RETRIES = 5
 
 
-def _claim_state_lock(port: int, deadline: float) -> socket.socket:
-    """Binding alone claims the port, so a failed attempt must never reuse its socket.
+def state_lock_record_path(path: str | Path) -> Path:
+    """Where the writer holding the record's transaction publishes its lease."""
+    return Path(f"{path}.lock.json")
 
-    SO_REUSEADDR is deliberately not set on POSIX: Linux then lets a second process bind
-    the same port while the owner sits between bind() and listen(), which both breaks the
-    exclusion and makes the next bind() fail with EINVAL.
-    """
-    while True:
-        lease = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+def _lock_record(path: Path) -> dict[str, Any] | None | str:
+    """The published lease: ``None`` when absent, ``"unreadable"`` while being written."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return "unreadable"
+    if (isinstance(value, dict) and value.get("version") == 1 and type(value.get("port")) is int
+            and 0 < value["port"] < 65536 and type(value.get("pid")) is int
+            and isinstance(value.get("token"), str) and value["token"]):
+        return value
+    return "unreadable"
+
+
+def _lock_record_settled(path: Path) -> dict[str, Any] | None | str:
+    current = _lock_record(path)
+    for _ in range(_LOCK_UNREADABLE_RETRIES):
+        if current != "unreadable":
+            break
+        time.sleep(0.01)
+        current = _lock_record(path)
+    return current
+
+
+def _lock_owner_alive(record: dict[str, Any]) -> bool:
+    """Whether the writer named by a record still holds its lease: it must answer with the token."""
+    try:
+        with socket.create_connection(("127.0.0.1", record["port"]), timeout=_LOCK_PROBE_TIMEOUT_SECONDS) as probe:
+            probe.settimeout(_LOCK_PROBE_TIMEOUT_SECONDS)
+            received = b""
+            while b"\n" not in received and len(received) < 512:
+                chunk = probe.recv(256)
+                if not chunk:
+                    break
+                received += chunk
+    except OSError:
+        return False
+    return received.split(b"\n", 1)[0].decode("utf-8", "replace") == record["token"]
+
+
+def _write_lock_record(path: Path, record: dict[str, Any], *, exclusive: bool) -> bool:
+    """Publish ``record``; with ``exclusive`` the first writer wins and others get ``False``."""
+    text = json.dumps(record, indent=2) + "\n"
+    if exclusive:
         try:
-            if sys.platform == "win32":
-                lease.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-            lease.bind(("127.0.0.1", port))
-            lease.listen()
-            return lease
-        except OSError as exc:
-            lease.close()
-            if exc.errno not in {errno.EADDRINUSE, errno.EACCES}:
-                raise
-            if time.monotonic() >= deadline:
-                raise RuntimeError("The local Connector record is busy. Please retry.") from exc
-            time.sleep(0.02)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            return False
+        with os.fdopen(fd, "w", encoding="utf-8") as file:
+            file.write(text)
+            file.flush()
+            os.fsync(file.fileno())
+        return True
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+    try:
+        with open(temporary, "w", encoding="utf-8", opener=lambda p, f: os.open(p, f, 0o600)) as file:
+            file.write(text)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary, path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
+    return True
+
+
+class _LockLease:
+    """A loopback listener that answers probes with the lease token for as long as it is held."""
+
+    def __init__(self) -> None:
+        self.token = secrets.token_urlsafe(18)
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        if sys.platform == "win32":
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        # Port 0: the OS picks a free port, so no reserved range can refuse the lease.
+        self.socket.bind(("127.0.0.1", 0))
+        self.socket.listen()
+        self.socket.settimeout(0.05)
+        self.port = self.socket.getsockname()[1]
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._serve, name="aa-state-lock", daemon=True)
+        self._thread.start()
+
+    def _serve(self) -> None:
+        while not self._stop.is_set():
+            try:
+                connection, _ = self.socket.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                return
+            with contextlib.suppress(OSError), connection:
+                connection.sendall(f"{self.token}\n".encode())
+
+    def record(self) -> dict[str, Any]:
+        return {"version": 1, "port": self.port, "pid": os.getpid(), "token": self.token,
+                "startedAt": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")}
+
+    def close(self) -> None:
+        self._stop.set()
+        with contextlib.suppress(OSError):
+            self.socket.close()
+        self._thread.join(timeout=1)
 
 
 @contextmanager
 def state_lock(path: Path, timeout: float = 5) -> Iterator[None]:
+    """Short cross-process transaction on ``path``: contracts/local-machine/2.0.
+
+    The holder listens on a loopback port the OS picked and publishes
+    ``{port, pid, token}`` next to the record; a contender connects to that
+    port and expects the token back. A dead holder's record is taken over once
+    the probe fails, never on the strength of a pid alone.
+    """
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    lease = _claim_state_lock(state_lock_port(path), time.monotonic() + timeout)
+    record_path = state_lock_record_path(path)
+    lease = _LockLease()
     try:
-        yield
+        record = lease.record()
+        deadline = time.monotonic() + timeout
+        while True:
+            if not _write_lock_record(record_path, record, exclusive=True):
+                current = _lock_record_settled(record_path)
+                if isinstance(current, dict) and current["token"] != record["token"] and _lock_owner_alive(current):
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("The local Connector record is busy. Please retry.")
+                    time.sleep(_LOCK_RETRY_INTERVAL_SECONDS)
+                    continue
+                # Absent, unreadable for good, or a dead holder: take it over.
+                if isinstance(current, dict):
+                    logger.warning("stale local Connector record lock taken over path={} pid={}", record_path, current["pid"])
+                _write_lock_record(record_path, record, exclusive=False)
+            published = _lock_record_settled(record_path)
+            if isinstance(published, dict) and published["token"] == record["token"]:
+                break
+            if isinstance(published, dict) and _lock_owner_alive(published):
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("The local Connector record is busy. Please retry.")
+                time.sleep(_LOCK_RETRY_INTERVAL_SECONDS)
+            # Otherwise another contender's dead record won the race; retry the takeover.
+        try:
+            yield
+        finally:
+            current = _lock_record(record_path)
+            if isinstance(current, dict) and current["token"] == record["token"]:
+                with contextlib.suppress(OSError):
+                    record_path.unlink()
     finally:
         lease.close()
 
@@ -148,12 +271,15 @@ def state_transaction(path: str | Path) -> Iterator[dict[str, Any]]:
     file = Path(path)
     with state_lock(file):
         state = read_state(file)
-        if state.get("legacyMachineMigrated") is True:
+        legacy = file.parent.parent / ".agentsanywhere" / "machine.json"
+        installation = legacy.parent / "desktop" / "install.json"
+        # Only a record with legacy files left to fold in needs the second lock;
+        # locking a path that does not exist would also create its directory.
+        if state.get("legacyMachineMigrated") is True or not (legacy.exists() or installation.exists()):
+            state["legacyMachineMigrated"] = True
             yield state
             _write(file, state)
             return
-        legacy = file.parent.parent / ".agentsanywhere" / "machine.json"
-        installation = legacy.parent / "desktop" / "install.json"
         with state_lock(legacy):
             machine, desktop = _json(legacy), _json(installation)
             if machine and machine.get("version") != 1:
@@ -259,12 +385,18 @@ class RuntimeOwner:
         return cls(pid, value["kind"], value.get("connectorId", ""), value.get("serverUrl", ""), value.get("startedAt"))
 
 
-class ConnectorAlreadyRunningError(JsonRpcError):
+class ConnectorAlreadyRunningError(MeshCallError, RuntimeError):
+    """Another live process owns this machine's Connector runtime.
+
+    Over ``aa.local.v2.Control`` it is the application error code
+    ``connector_already_running`` with the owner in ``details``.
+    """
+
     def __init__(self, owner: RuntimeOwner) -> None:
         super().__init__(
-            -32009,
+            CONNECTOR_ALREADY_RUNNING,
             f"Another Connector is running ({owner.kind}, PID {owner.pid}). Stop that Connector process, then retry.",
-            {"reason": "connector_already_running", "owner": {"kind": owner.kind, "pid": owner.pid}},
+            details={"reason": CONNECTOR_ALREADY_RUNNING, "owner": {"kind": owner.kind, "pid": owner.pid}},
         )
         self.owner = owner
 

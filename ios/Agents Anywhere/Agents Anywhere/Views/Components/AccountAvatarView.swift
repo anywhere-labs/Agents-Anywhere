@@ -16,7 +16,7 @@ struct AccountAvatarView: View {
     private var avatarContent: some View {
         switch source {
         case let .data(data):
-            if let image = UIImage(data: data) {
+            if let image = AccountAvatarImageCache.image(for: data) {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
@@ -54,5 +54,18 @@ private struct AccountAvatarFallback: View {
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(red: 0.12, green: 0.66, blue: 0.38))
+    }
+}
+
+/// The sidebar footer re-renders with the shell; decode the inline avatar once
+/// per payload instead of on every body evaluation.
+enum AccountAvatarImageCache {
+    private static let cache = NSCache<NSData, UIImage>()
+    static func image(for data: Data) -> UIImage? {
+        let key = data as NSData
+        if let cached = cache.object(forKey: key) { return cached }
+        guard let image = UIImage(data: data) else { return nil }
+        cache.setObject(image, forKey: key)
+        return image
     }
 }

@@ -415,19 +415,12 @@ private fun AttachmentUploadOverlay(
             )
         }
         AttachmentUploadState.Uploaded -> Box(modifier = modifier) {
-            Box(
+            AttachmentRemoveButton(
+                onRemove = onRemove,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(6.dp)
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xD9262628))
-                    .border(1.dp, Color(0x22FFFFFF), CircleShape)
-                    .noRippleClickable(onClick = onRemove),
-                contentAlignment = Alignment.Center,
-            ) {
-                XGlyph(Color.White, sizeDp = 22)
-            }
+                    .padding(6.dp),
+            )
         }
         AttachmentUploadState.Failed -> Box(
             modifier = modifier.background(Color.Black.copy(alpha = 0.48f)),
@@ -444,19 +437,35 @@ private fun AttachmentUploadOverlay(
                     .noRippleClickable(onClick = onRetry)
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             )
-            Box(
+            AttachmentRemoveButton(
+                onRemove = onRemove,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(6.dp)
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xD9262628))
-                    .border(1.dp, Color(0x22FFFFFF), CircleShape)
-                    .noRippleClickable(onClick = onRemove),
-                contentAlignment = Alignment.Center,
-            ) {
-                XGlyph(Color.White, sizeDp = 22)
-            }
+                    .padding(6.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun AttachmentRemoveButton(
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(36.dp)
+            .noRippleClickable(onClick = onRemove),
+        contentAlignment = Alignment.TopEnd,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF5A5A5E)),
+            contentAlignment = Alignment.Center,
+        ) {
+            XGlyph(Color.White, sizeDp = 14)
         }
     }
 }

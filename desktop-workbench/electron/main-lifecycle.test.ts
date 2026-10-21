@@ -83,7 +83,10 @@ test("quit still completes if the window is already gone or local shutdown fails
 test("Windows close hides the window without confirming quit, and reopening restores it", () => {
   const calls: string[] = [];
   class Window extends EventEmitter {
-    webContents = Object.assign(new EventEmitter(), { setWindowOpenHandler: () => {} });
+    openHandler?: (details: { url: string }) => unknown;
+    webContents = Object.assign(new EventEmitter(), {
+      setWindowOpenHandler: (handler: (details: { url: string }) => unknown) => { this.openHandler = handler; },
+    });
     loadURL = async () => {};
     hide = () => calls.push("hide");
     isDestroyed = () => false;
@@ -106,11 +109,26 @@ test("Windows close hides the window without confirming quit, and reopening rest
     windowMaterialOptions: () => ({}),
     appWindowIcon: () => "icon.png",
     staticWorkbenchUrl: () => "aa-workbench://web/",
+    isWorkbenchUrl: (url: string) => url.startsWith("aa-workbench://web/"),
+    shell: { openExternal: (url: string) => calls.push(`external:${url}`) },
     showDockForWindow: () => {},
     requestQuit: () => assert.fail("Closing the Windows window must not request quit"),
   };
   const { createMainWindow, showMainWindow } = loadFunctions(["createMainWindow", "showMainWindow"], globals);
   const window = createMainWindow(false) as Window;
+  const previewOptions = window.openHandler!({ url: "aa-workbench://web/#/preview?path=main.ts" }) as {
+    action: string;
+    overrideBrowserWindowOptions: { webPreferences: { preload: string; contextIsolation: boolean; nodeIntegration: boolean; sandbox: boolean } };
+  };
+  assert.equal(previewOptions.action, "allow");
+  const previewPreferences = previewOptions.overrideBrowserWindowOptions.webPreferences;
+  assert.equal(previewPreferences.preload, path.join(__dirname, "preload.js"));
+  assert.equal(previewPreferences.contextIsolation, true);
+  assert.equal(previewPreferences.nodeIntegration, false);
+  assert.equal(previewPreferences.sandbox, false);
+  assert.equal((window.openHandler!({ url: "https://example.com/" }) as { action: string }).action, "deny");
+  assert.deepEqual(calls, ["external:https://example.com/"]);
+  calls.length = 0;
   window.emit("ready-to-show");
   assert.equal(calls.length, 0, "silent launch leaves the window hidden");
   window.emit("close", { preventDefault: () => calls.push("prevent-close") });

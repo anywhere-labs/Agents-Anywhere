@@ -287,6 +287,31 @@ The protocol does not include `autocomplete`, command source, platform commands,
 
 Commands may accept arguments, but most commands should not. If command catalog lookup or command execution fails, `/xxx` input must not fall back to a normal user message.
 
+The command's `metadata.ui` optionally describes its interaction:
+
+- `{kind: "execute", argumentHint?, acceptsMultiline?, allowedStatuses?}` executes
+  a native command. Selecting an argument-taking command prepares an editable
+  draft. `raw` is authoritative and must preserve whitespace, newlines and explicit
+  empty strings through every transport layer; adapters must not reconstruct it
+  by joining tokenized arguments.
+- `{kind: "selector", target: "model" | "reasoning" | "permission" | "collaborationMode"}`
+  opens an existing selection control when the client supports that target.
+
+Legacy commands without `metadata.ui` retain single-line execution in idle/error
+states. Malformed UI metadata is not equivalent to missing metadata. The runtime
+enforces native preconditions even when a caller bypasses the Web menu.
+
+`result.executionState` is `accepted`, `completed` or `unknown`. Acceptance does
+not imply that asynchronous work finished. Native failures remain `ok: false`,
+including successful HTTP responses. A lost or malformed acknowledgement after
+dispatch is `unknown` with `retryable: false`; callers must not automatically
+repeat a possibly applied mutation. Optional `result.text` exposes native output.
+
+The `session.commands` capability can carry `metadata.catalogRevision`. A
+runtime-wide revision update is projected into each affected session's effective
+capability event. Clients refetch the live catalog rather than treating it as a
+durable or globally uniform list.
+
 ## Attachments, timeline, and operation result
 
 ```py

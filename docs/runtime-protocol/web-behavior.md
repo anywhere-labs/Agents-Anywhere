@@ -32,6 +32,12 @@ Runtime types and runtime instances carry different facts; Web must not mix them
   the connector's reason, not as a fault.
 - `starting` and `stopping` are real states. Web shows the transition instead of
   jumping from stopped straight to running.
+- `instancePolicy` and `maxInstances` limit configured instances on Server and
+  running instances on Connector. A type at its configured limit is not offered
+  as addable; it is shown only as its configured instance, so each type appears
+  once. Deleting a runtime removes it entirely, so it releases its slot and
+  name and disappears from the list. The Connector's running
+  limit returns HTTP 409 `runtime_conflict` on start.
 
 ## New session
 
@@ -133,6 +139,24 @@ POST /sessions/{id}/runtime/commands
 Command execution returns a normal RPC result. If the runtime changes timeline, state, selection, or notices, those changes arrive through normal runtime events.
 
 If command catalog lookup or execution fails, Web must show an error and must not send the `/xxx` input as a normal message.
+
+Selecting a command with arguments inserts an editable draft; explicit submission
+preserves the full `raw` input. A command's `metadata.ui` selects native execution
+or a supported model/reasoning/permission selector. Commands without that metadata
+retain legacy single-line execution in idle/error states. Multiline input is
+allowed only when advertised. Attachments stay in the draft.
+
+Web distinguishes accepted, completed and unknown execution results, displays
+native text and treats `ok: false` as a failure even with HTTP 200. Failures and
+uncertain outcomes preserve input; unknown outcomes are never retried
+automatically. Late responses cannot clear newer drafts or change another
+session, including when the user leaves and revisits the original session.
+
+Refetch the catalog on session changes, command-menu reopening, reconnect,
+runtime status/availability changes and `session.commands` catalog revision
+changes. Hide a previous session's catalog immediately during navigation. Command
+availability still requires effective capabilities, an online writable session
+and the command's native status restrictions.
 
 ## Session RuntimeLive UI
 

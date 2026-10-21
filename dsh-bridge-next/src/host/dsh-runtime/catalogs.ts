@@ -1,5 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-agent-presets'
+import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-permission-presets'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import { modelSelectionId, permissionSelectionId } from './selections.js'
@@ -22,6 +22,8 @@ export class RuntimeCatalogs {
   private pending: Promise<ModelCatalog> | undefined
   private cached: ModelCatalog | undefined
   private fingerprint = ''
+  private permissionFingerprint = ''
+  private permissionRevision = 0
   constructor(private ctx: Context, private changed: () => void) {}
 
   invalidate(): void { this.loadedAt = 0; this.generation++; this.changed() }
@@ -84,11 +86,17 @@ export class RuntimeCatalogs {
   permissions() {
     const service = this.ctx.get('permissionPresets')
     if (!service) throw new BridgeError('UNSUPPORTED_OPERATION', 'This DSH deployment does not provide permission presets.')
-    return { runtime: 'dsh', revision: 3, permissions: service.names.map(preset => {
-      const option = service.optionOf(preset)
-      return { id: permissionSelectionId(preset), title: option.name, selectionId: permissionSelectionId(preset),
+    const permissions = service.catalog().options.map(option => {
+      const preset = option.value
+      return { id: permissionSelectionId(preset), title: preset === 'auto' ? 'Auto review' : option.name, selectionId: permissionSelectionId(preset),
         description: option.description, enabled: true, metadata: { preset } }
-    }) }
+    })
+    const fingerprint = JSON.stringify(permissions)
+    if (fingerprint !== this.permissionFingerprint) {
+      this.permissionFingerprint = fingerprint
+      this.permissionRevision = Math.max(Date.now(), this.permissionRevision + 1)
+    }
+    return { runtime: 'dsh', revision: this.permissionRevision, permissions }
   }
 
   async agentPresets() {

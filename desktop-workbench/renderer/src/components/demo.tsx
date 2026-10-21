@@ -10,11 +10,13 @@ import { DesktopShellHeader } from "@/components/desktop/desktop-shell-header"
 import { DesktopSessionNotifications } from "@/components/desktop/desktop-session-notifications"
 import { TaskComposer } from "@/components/task-composer"
 import { SessionView } from "@/components/session-view"
+import { WorkspaceHeaderBackdrop } from "@/components/workspace-header"
 import { SessionToolSidebarsHost } from "@/components/session-tool-sidebar"
 import { SettingsPage } from "@/components/pages/settings-page"
-import { DashboardPage } from "@/components/pages/dashboard-page"
-import { TeamPage } from "@/components/pages/team-page"
-import { ServicePage } from "@/components/pages/service-page"
+import { SettingsSidebar } from "@/components/settings/settings-sidebar"
+import { SidebarSwitch } from "@/components/sidebar-switch"
+import { AdminPage } from "@/components/admin/admin-page"
+import { AdminSidebar } from "@/components/admin/admin-sidebar"
 import { DevicePage } from "@/components/pages/device-page"
 import { MobileConnectionsPage } from "@/components/pages/mobile-connections-page"
 import { WorkspaceProvider, useWorkspace } from "@/components/workspace-context"
@@ -64,13 +66,41 @@ export function Demo() {
   )
 }
 
+/** The sidebar slot: workspace by default, section navigation on standalone pages. */
+type SidebarKind = "home" | "admin" | "settings"
+
+// Administration and settings sit one level below the session list, so moving
+// into them pushes their sidebar in and returning home pops it off again.
+const SIDEBAR_DEPTH: Record<SidebarKind, number> = { home: 0, admin: 1, settings: 1 }
+
+function renderSidebar(kind: string, contained: boolean) {
+  if (kind === "admin") return <AdminSidebar contained={contained} />
+  if (kind === "settings") return <SettingsSidebar contained={contained} />
+  return <AppSidebar contained={contained} />
+}
+
+function WorkspaceNavigation({ contained = false }: { contained?: boolean }) {
+  const { page } = useWorkspace()
+  const { me } = useAuth()
+  const kind: SidebarKind =
+    page === "admin" && me?.role === "admin" ? "admin" : page === "settings" ? "settings" : "home"
+  // The mobile sidebar is a sheet that closes on navigation; only the docked
+  // sidebar switches in place.
+  if (!contained) return renderSidebar(kind, false)
+  return (
+    <SidebarSwitch id={kind} depth={SIDEBAR_DEPTH[kind]}>
+      {(layer) => renderSidebar(layer, true)}
+    </SidebarSwitch>
+  )
+}
+
 function DashboardShell() {
   const isMobile = useIsMobile()
 
   if (isMobile) {
     return (
       <>
-        <AppSidebar />
+        <WorkspaceNavigation />
         <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-none bg-background">
           <WorkspaceMain />
         </SidebarInset>
@@ -237,11 +267,12 @@ function DesktopResizableShell() {
               className="aa-desktop-sidebar h-full shrink-0 overflow-hidden"
               style={{ width: Math.max(sidebarWidth, DESKTOP_SIDEBAR_MIN_WIDTH) }}
             >
-              <AppSidebar contained />
+              <WorkspaceNavigation contained />
             </div>
           </ResizablePanel>
           <ResizableHandle
-            className="bg-transparent"
+            showSeparator={false}
+            className="w-0 bg-transparent focus-visible:after:bg-ring/30"
             onPointerDown={(event) => {
               event.currentTarget.setPointerCapture(event.pointerId)
               setSidebarResizeActive(true)
@@ -259,10 +290,18 @@ function DesktopResizableShell() {
             <SidebarInset data-page={page} className="aa-desktop-main h-full min-h-0 overflow-hidden overscroll-none bg-background">
               <div className="aa-desktop-drag-region" aria-hidden="true" />
               {page === "session" ? (
-                <header className="aa-window-drag flex h-11 shrink-0 items-center gap-2 px-3">
-                  <div data-slot="desktop-shell-header-session" className="flex min-w-0 flex-1 items-center overflow-hidden" />
-                  <div data-slot="desktop-shell-header-session-actions" className="aa-window-no-drag flex shrink-0 items-center" />
-                </header>
+                // Overlays the timeline like the web session header so content scrolls under the blur.
+                <>
+                  <header className="pointer-events-none absolute inset-x-0 top-0 z-10 h-14 overflow-hidden">
+                    <WorkspaceHeaderBackdrop />
+                    <div className="aa-desktop-session-header aa-window-drag pointer-events-auto relative flex h-11 items-center gap-2 px-3">
+                      <div data-slot="desktop-shell-header-session" className="flex min-w-0 flex-1 items-center overflow-hidden" />
+                      <div className="size-8 shrink-0" aria-hidden="true" />
+                    </div>
+                  </header>
+                  {/* Outside the header's stacking context so the tool sidebar toggle stays above the open tool sidebar. */}
+                  <div data-slot="desktop-shell-header-session-actions" className="aa-window-no-drag absolute right-3 top-0 z-50 flex h-11 items-center" />
+                </>
               ) : null}
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                 <WorkspaceMain />
@@ -290,22 +329,27 @@ function WorkspaceMain() {
     openPairDeviceDialog,
     closePairDeviceDialog,
     refreshData,
+    replaceHome,
   } = useWorkspace()
   const t = useTranslations("dashboard.firstDevice")
-  const canRenderBeforeDataLoad = page === "home" && newSessionProjectId === null
   const isAdmin = me?.role === "admin"
-  if (!routeReady || (!canRenderBeforeDataLoad && isLoading)) {
+  // Members who land on an administration route go home instead of seeing
+  // an empty admin shell; the hash is replaced so Back does not loop.
+  React.useEffect(() => {
+    if (routeReady && page === "admin" && me && !isAdmin) replaceHome()
+  }, [isAdmin, me, page, replaceHome, routeReady])
+  // Administration and personal settings render without the workspace inventory.
+  const canRenderBeforeDataLoad =
+    (page === "home" && newSessionProjectId === null) || page === "admin" || page === "settings"
+  if (!routeReady || (page === "admin" && !isAdmin) || (!canRenderBeforeDataLoad && isLoading)) {
     return <LoadingState className="h-full bg-background" />
   }
-  const effectivePage = !isAdmin && (page === "dashboard" || page === "team" || page === "service") ? "home" : page
   const content =
-    effectivePage === "settings" ? <SettingsPage /> :
-    effectivePage === "dashboard" ? <DashboardPage /> :
-    effectivePage === "team" ? <TeamPage /> :
-    effectivePage === "service" ? <ServicePage /> :
-    effectivePage === "mobile-connections" ? <MobileConnectionsPage /> :
-    effectivePage === "session" ? <SessionView /> :
-    effectivePage === "device" ? <DevicePage /> :
+    page === "settings" ? <SettingsPage /> :
+    page === "admin" ? <AdminPage /> :
+    page === "mobile-connections" ? <MobileConnectionsPage /> :
+    page === "session" ? <SessionView /> :
+    page === "device" ? <DevicePage /> :
     <TaskComposer />
   return (
     <>

@@ -13,6 +13,7 @@ export type SessionToolTab = {
   reviewTarget?: SessionReviewTarget | null
   error: string | null
   dirty?: boolean
+  preview?: boolean
 }
 
 export type SessionToolTabsState = {
@@ -30,7 +31,8 @@ export type SessionToolTabsAction =
   | { type: "toggle-expanded" }
   | { type: "set-preferred-width"; width: number }
   | { type: "set-resizing"; resizing: boolean }
-  | { type: "open-tool"; tab: SessionToolTab }
+  | { type: "open-tool"; tab: SessionToolTab; preview?: boolean; sourceTabId?: string }
+  | { type: "pin-tab"; id: string }
   | { type: "activate-tab"; id: string }
   | { type: "close-tab"; id: string }
   | { type: "set-tab-dirty"; id: string; dirty: boolean }
@@ -137,6 +139,50 @@ export function sessionToolTabsReducer(
     return { ...state, resizing: action.resizing }
   }
   if (action.type === "open-tool") {
+    const file = action.tab.filePreview
+    if (action.tab.kind === "files" && file) {
+      const fileTabs = state.tabs.filter((tab) => tab.kind === "files" && tab.filePreview)
+      const existing = fileTabs.find((tab) => {
+        const target = tab.filePreview!
+        return target.source === file.source && target.root === file.root
+          && target.path.replaceAll("\\", "/") === file.path.replaceAll("\\", "/")
+          && target.sourceUrl === file.sourceUrl
+      })
+      if (existing) return {
+        ...state, open: true, activeTabId: existing.id,
+        tabs: state.tabs.map((tab) => tab.id === existing.id ? {
+          ...tab,
+          preview: action.preview === true ? tab.preview : false,
+          // An explicit tree/breadcrumb selection carries the new browse context.
+          // Keep the editor target and dirty state when activating an existing file.
+          filePreview: file.browsePath !== undefined ? {
+            ...tab.filePreview!,
+            browsePath: file.browsePath,
+            browseExpandedPaths: file.browseExpandedPaths,
+            browseScroll: file.browseScroll,
+          } : tab.filePreview,
+        } : tab),
+      }
+      // Opening a file from an empty browser turns that same tab into a kept file.
+      const browser = state.tabs.find((tab) => tab.id === action.sourceTabId
+        && tab.kind === "files" && !tab.filePreview && !tab.dirty)
+      if (browser) return {
+        ...state, open: true, activeTabId: browser.id,
+        tabs: state.tabs.map((tab) => tab.id === browser.id
+          ? { ...action.tab, id: browser.id, preview: false }
+          : tab),
+      }
+      // The first file is kept open. Later single-clicks reuse one clean preview.
+      const preview = action.preview === true && fileTabs.length > 0 && !action.tab.dirty
+      const replace = preview ? fileTabs.find((tab) => tab.preview && !tab.dirty) : undefined
+      const nextTab = { ...action.tab, id: replace?.id ?? action.tab.id, preview }
+      return {
+        ...state, open: true, activeTabId: nextTab.id,
+        tabs: replace
+          ? state.tabs.map((tab) => tab.id === replace.id ? nextTab : tab)
+          : [...state.tabs, nextTab],
+      }
+    }
     const singleton = action.tab.kind === "review"
       || (action.tab.kind === "files" && !action.tab.filePreview)
     if (singleton) {
@@ -162,6 +208,9 @@ export function sessionToolTabsReducer(
       activeTabId: action.tab.id,
     }
   }
+  if (action.type === "pin-tab") {
+    return { ...state, tabs: state.tabs.map((tab) => tab.id === action.id && tab.preview ? { ...tab, preview: false } : tab) }
+  }
   if (action.type === "activate-tab") {
     if (!state.tabs.some((tab) => tab.id === action.id)) return state
     return { ...state, activeTabId: action.id }
@@ -177,7 +226,9 @@ export function sessionToolTabsReducer(
   }
   if (action.type === "set-tab-dirty") {
     if (!state.tabs.some((tab) => tab.id === action.id && Boolean(tab.dirty) !== action.dirty)) return state
-    return { ...state, tabs: state.tabs.map((tab) => tab.id === action.id ? { ...tab, dirty: action.dirty } : tab) }
+    return { ...state, tabs: state.tabs.map((tab) => tab.id === action.id
+      ? { ...tab, dirty: action.dirty, preview: action.dirty ? false : tab.preview }
+      : tab) }
   }
   if (action.type === "set-tab-title") {
     const tab = state.tabs.find((item) => item.id === action.id)

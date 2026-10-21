@@ -125,9 +125,17 @@ internal fun webLoginApiOriginBridgeScript(webOrigin: String): String {
              }
 
              const style = document.createElement("style");
+             // Viewport units can resolve to zero in WebView even when innerHeight is valid.
+             // Cover the login form and OAuth/loading containers as well as the document.
              style.textContent = `
                html, body {
                  height: var(${'$'}{viewportHeightProperty}) !important;
+                 min-height: var(${'$'}{viewportHeightProperty}) !important;
+               }
+               .h-dvh {
+                 height: var(${'$'}{viewportHeightProperty}) !important;
+               }
+               .min-h-screen {
                  min-height: var(${'$'}{viewportHeightProperty}) !important;
                }
              `;

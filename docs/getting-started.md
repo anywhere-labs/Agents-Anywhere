@@ -8,7 +8,7 @@
 
 桌面客户端（Desktop）包含 Connector，用于将本机连接到服务。Linux 和无图形界面的服务器可单独运行 Connector，通过其他客户端操作。Runtime 是运行或连接具体 Agent 的组件，其状态和支持的能力决定哪些操作可用。
 
-本文适用于当前 2.0 产品线。`main` 中的新修复可能尚未包含在 2.0.0 安装包中，发布范围见 [2.0.0 发布说明](releases/2.0.0.md)。
+本文适用于当前 2.0 产品线。`main` 中的新修复可能尚未包含在 2.0.3 安装包中，发布范围见 [2.0.3 发布说明](releases/2.0.3.md)。
 
 ## 1. 选择客户端
 
@@ -17,7 +17,7 @@
 - **macOS：** 安装 Universal DMG，适用于 Apple Silicon 和 Intel。
 - **Windows：** 安装 x64 桌面客户端。
 - **Android：** 安装 APK。
-- **iOS / iPadOS：** 通过 [TestFlight](https://testflight.apple.com/join/GKGaut99) 安装测试版，以邀请页的可用状态为准。
+- **iOS / iPadOS：** 在 [App Store](https://apps.apple.com/cn/app/agents-anywhere/id6787125178) 下载安装；也可以通过 [TestFlight](https://testflight.apple.com/join/GKGaut99) 安装测试版，以邀请页的可用状态为准。
 - **Web：** 打开 [web.agents-anywhere.com](https://web.agents-anywhere.com)。
 
 在工作设备上使用桌面客户端，或按 [Connector CLI 说明](../connector/README.md#run)接入无图形界面的机器。手机、平板和 Web 用于访问已连接的工作设备。
@@ -72,6 +72,16 @@ curl -i https://web.agents-anywhere.com/api/v2/health
 桌面客户端默认要求 Web 与 API 同源。分离部署的开发配置见 [Desktop 文档](../desktop-workbench/README.md#login-and-server-configuration)。健康检查由 Electron 主进程发起，网页开发者工具的 Network 面板可能看不到该请求。2.0.0 桌面客户端已禁用登录健康检查的 HTTP 缓存。
 
 排查连接问题时保留用户数据目录，其中包含账号绑定和 Connector 数据。
+
+### 桌面端提示“暂时无法检查 Connector 状态”
+
+桌面端启动时会先检查本机 Connector，弹窗中显示的是检查失败的具体错误。点击“复制错误信息”可以复制这段内容，点击“打开日志文件夹”可以查看完整日志。日志目录：
+
+- macOS：`~/Library/Application Support/Agents Anywhere/logs`
+- Windows：`%APPDATA%\Agents Anywhere\logs`
+- Linux：`~/.config/Agents Anywhere/logs`
+
+如果错误中有 `timed out`，且最后的输出是 `Downloading …`，说明 Connector 仍在下载运行依赖，稍等后点击“重新检查”。反馈问题时，请附上错误信息和日志。
 
 ### 设备在线，但某个操作不可用
 

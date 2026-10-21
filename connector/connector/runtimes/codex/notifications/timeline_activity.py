@@ -5,7 +5,9 @@ from typing import Any
 
 from connector.runtime_protocol import RuntimeSessionStateCache, RuntimeTimelineItem
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtimes.codex.domain import sessions as codex_sessions
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
+from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
 
 
 @dataclass(slots=True)
@@ -13,6 +15,20 @@ class CodexTimelineActivityHandler:
     host: RuntimeHostClient
     session_states: RuntimeSessionStateCache
     active_turn_ids: dict[str, str]
+    timeline: CodexTimelineAccumulator
+
+    async def publish_compaction_outcome(
+        self, session_id: str, thread_id: str, event: CodexSdkEvent
+    ) -> None:
+        turn_id = (
+            event.turn_id
+            or codex_sessions.turn_id_from_result(event.params)
+            or self.active_turn_ids.get(session_id)
+        )
+        for item in self.timeline.finish_compaction_items(
+            session_id, thread_id, turn_id, event.event_type
+        ):
+            await self.host.timeline_item_upsert(item)
 
     async def publish_item_activity(
         self,

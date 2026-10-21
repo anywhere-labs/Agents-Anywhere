@@ -224,6 +224,16 @@ it is running. Config mutation still flows through `runtime.validateConfig` and
 `runtime.start`; running `AgentRuntime` instances do not accept direct config
 updates.
 
+The `runtime.start` reply and the `runtime.statusChanged` notification carry
+the instance lifecycle `status` plus an optional `error` (only meaningful for
+`error`) and an optional `phase` (`{code, message, retryable?}`) that names the
+step a non-error status is in, for example `syncing` while a DSH instance is
+`starting`. A phase is progress, not a fault: the Server stores it on the
+runtime instance (`phase` in `RuntimeInstanceStatus`), does not re-issue
+`runtime.start` while an instance reports a starting phase (session operations
+get a retryable `409 runtime_starting` instead), and clients render it as
+progress text next to the `starting` badge.
+
 `runtime.discover` includes runtime-native capability inputs. They are not the
 primary frontend contract. The frontend contract is effective capability:
 

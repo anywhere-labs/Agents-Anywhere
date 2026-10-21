@@ -13,6 +13,9 @@
   typealias PlatformTextSelectionInteraction = AppKitTextSelectionInteraction
 
   struct AppKitTextSelectionInteraction: ViewModifier {
+    // Hover and cursor updates need text layouts before any click.
+    static let readsLayoutOnDemand = false
+
     @State private var cursorPushed = false
 
     private let model: TextSelectionModel

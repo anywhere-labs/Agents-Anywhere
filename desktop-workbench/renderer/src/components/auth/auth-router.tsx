@@ -11,6 +11,7 @@ import { LoadingState } from "@/components/loading-state"
 import { DesktopOnboardingPage } from "@/components/onboarding/desktop-onboarding-page"
 import { SessionToolSidebarStateProvider } from "@/components/session-tool-sidebar-state"
 import { DesktopUpdateProvider } from "@/features/desktop/desktop-update-provider"
+import { AnnouncementGate } from "@/components/announcements/announcement-gate"
 
 function AuthRouterInner() {
   const { screen, loading, isAuthenticated } = useAuth()
@@ -39,10 +40,15 @@ export function AuthRouter() {
       <AuthProvider>
         <DesktopUpdateProvider>
           <SessionToolSidebarStateProvider>
-            <AuthRouterInner />
+            <AuthRouterContent />
           </SessionToolSidebarStateProvider>
         </DesktopUpdateProvider>
       </AuthProvider>
     </LocalOwnershipGate>
   )
+}
+
+function AuthRouterContent() {
+  const { screen, loading } = useAuth()
+  return <><AuthRouterInner /><AnnouncementGate page={loading ? null : screen} /></>
 }

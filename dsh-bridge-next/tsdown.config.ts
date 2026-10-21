@@ -18,13 +18,13 @@ export default defineConfig([
     clean: false,
     sourcemap: true,
     dts: true,
-    // Oxc currently preserves standard decorators. Lower only the Remote
-    // service with TypeScript so the published Host runs in plain Node.js.
+    // Oxc currently preserves standard decorators. Lower the decorated
+    // services with TypeScript so the published Host runs in plain Node.js.
     plugins: [{
-      name: 'standard-remote-decorators',
+      name: 'standard-decorators',
       transform(code, id) {
         // Module ids keep the platform separator, so compare a normalized path.
-        if (!id.replaceAll('\\', '/').endsWith('/rpc/service.ts')) return
+        if (!/(?:^|\/)(?:rpc\/service|dsh-runtime\/bridge-service)\.ts$/.test(id.replaceAll('\\', '/'))) return
         const output = ts.transpileModule(code, {
           fileName: id,
           compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, sourceMap: true, experimentalDecorators: false },

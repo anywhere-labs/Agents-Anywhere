@@ -22,7 +22,7 @@ struct DeviceManagementView: View {
 
     @State private var model = DeviceManagementModel()
     @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
-    @State private var tab = DeviceOverviewTab.projects
+    @State private var showsToolbarTitle = false
     @State private var toasts = ChatToastStore()
     @State private var isRenaming = false
     @State private var proposedName = ""
@@ -51,50 +51,49 @@ struct DeviceManagementView: View {
         WorkspaceDirectoryChoice.recent(connectorID: connector.id, deviceOS: connector.deviceOs,
             home: nil, projects: deviceProjects, sessions: model.sessions)
     }
-    private var collectionTitle: String {
-        showsSessionList ? String(localized: "工作目录") : String(localized: "Projects")
-    }
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                DeviceOverviewSections {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 32) {
+                    header
                     DeviceAgentSection(model: agents, showsConnectionNotice: false) { report($0, source: "agents") }
-                }
-                contentSwitcher
-                if tab == .projects {
-                    DeviceOverviewSections {
-                        if showsSessionList {
-                            DeviceWorkspaceList(workspaces: workspaceChoices, canReadFiles: canReadFiles,
-                                onBrowse: { choosesDirectory = true }, onOpen: openWorkspace,
-                                onNewSession: { onNewSession($0.path) })
-                        } else {
-                            DeviceProjectList(projects: deviceProjects, canManage: canManage, canReadFiles: canReadFiles,
-                                onCreate: { createsProject = true }, onOpen: openProjectSessions,
-                                onNewSession: { onNewProjectSession($0.id) }, onFiles: openProjectFiles,
-                                onEdit: { editingProject = $0 },
-                                onPin: { project in perform { try await dashboard.updateProject(project.id, pinned: !project.pinned) } },
-                                onArchive: { pendingProject = $0; projectActionIsDeletion = false },
-                                onDelete: { pendingProject = $0; projectActionIsDeletion = true })
-                        }
+                    if showsSessionList {
+                        DeviceWorkspaceList(workspaces: workspaceChoices, canReadFiles: canReadFiles,
+                            onBrowse: { choosesDirectory = true }, onOpen: openWorkspace,
+                            onNewSession: { onNewSession($0.path) })
+                    } else {
+                        DeviceProjectList(projects: deviceProjects, canManage: canManage, canReadFiles: canReadFiles,
+                            onCreate: { createsProject = true },
+                            onOpen: { project in
+                                openProjectSessions(project)
+                                withAnimation(.snappy) { proxy.scrollTo(DeviceSessionAnchor.id, anchor: .top) }
+                            },
+                            onNewSession: { onNewProjectSession($0.id) }, onFiles: openProjectFiles,
+                            onEdit: { editingProject = $0 },
+                            onPin: { project in perform { try await dashboard.updateProject(project.id, pinned: !project.pinned) } },
+                            onArchive: { pendingProject = $0; projectActionIsDeletion = false },
+                            onDelete: { pendingProject = $0; projectActionIsDeletion = true })
                     }
-                } else {
-                    DeviceOverviewSections {
-                        DeviceSessionList(model: model, projects: deviceProjects, showsProjectNames: !showsSessionList, canManage: canManage,
-                            isWorking: busy || model.isArchiveActionRunning, onNewSession: { onNewSession(nil) },
-                            onOpen: selectSession,
-                            onArchive: { performArchive([$0.id], archived: !$0.archived) },
-                            onArchiveAll: { confirmsArchiveAll = true })
-                    }
+                    DeviceSessionList(model: model, projects: deviceProjects, showsProjectNames: !showsSessionList, canManage: canManage,
+                        isWorking: busy || model.isArchiveActionRunning, onNewSession: { onNewSession(nil) },
+                        onOpen: selectSession,
+                        onArchive: { performArchive([$0.id], archived: !$0.archived) },
+                        onArchiveAll: { confirmsArchiveAll = true })
+                    .id(DeviceSessionAnchor.id)
                 }
+                .padding(.top, 8).padding(.bottom, 24)
+                .modifier(ChatPageContentColumn())
+                .background { ChatPageScrollEdge() }
             }
-            .padding(.bottom, 24)
-            .modifier(ChatPageContentColumn())
-            .background { ChatPageScrollEdge() }
+            .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 56 } action: { _, scrolled in
+                withAnimation(.easeOut(duration: 0.15)) { showsToolbarTitle = scrolled }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .scrollIndicators(.hidden).scrollEdgeEffectStyle(.soft, for: .all)
         .refreshable { await dashboard.refresh(); await agents.refresh() }
-        .modifier(ChatPageToolbar(title: connector.name, subtitle: connectionDescription, onMenu: onMenu))
+        .modifier(ChatPageToolbar(title: showsToolbarTitle ? connector.name : "",
+            subtitle: showsToolbarTitle ? connectionDescription : nil, onMenu: onMenu))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -110,7 +109,7 @@ struct DeviceManagementView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if tab == .sessions && model.isSelectingSessions {
+            if model.isSelectingSessions {
                 DeviceSessionSelectionDock(count: model.selectedSessionIds.count,
                     restores: model.sessionFilter == .archived, isWorking: busy, disabled: !canManage,
                     onCancel: model.stopSelectingSessions,
@@ -175,28 +174,22 @@ struct DeviceManagementView: View {
         }
     }
 
-    private var contentPicker: some View {
-        Picker(String(localized: "Device content"), selection: $tab) {
-            Text(collectionTitle).tag(DeviceOverviewTab.projects)
-            Text(String(localized: "Sessions")).tag(DeviceOverviewTab.sessions)
-        }.pickerStyle(.segmented)
-        .labelsHidden()
-        .accessibilityLabel(String(localized: "Device content"))
-        .accessibilityIdentifier("device.content")
-    }
-
-    private var contentSwitcher: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 16) {
-                Text(String(localized: "Device content")).font(.headline).fixedSize()
-                Spacer(minLength: 0)
-                contentPicker.fixedSize(horizontal: true, vertical: false)
+    /// Large name with the connection state beside it, like Web and Android.
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(connector.name).font(.largeTitle.weight(.bold)).lineLimit(2)
+                .accessibilityAddTraits(.isHeader)
+            HStack(spacing: 6) {
+                if connector.status == .online {
+                    AppSymbol("checkmark.circle.fill", size: 15).foregroundStyle(.green)
+                } else {
+                    Circle().fill(.secondary.opacity(0.4)).frame(width: 9, height: 9).frame(width: 15)
+                }
+                Text(connectionDescription)
             }
-            VStack(alignment: .leading, spacing: 12) {
-                Text(String(localized: "Device content")).font(.headline)
-                contentPicker
-            }
-        }.padding(.vertical, 4)
+            .font(.subheadline).foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     private var connectionDescription: String {
@@ -208,7 +201,7 @@ struct DeviceManagementView: View {
         toasts.update(source: source, failure: message.map { .init(kind: .rejected, message: $0) })
     }
     private func openProjectSessions(_ project: V2Project) {
-        model.selectProject(project.id); model.setSessionFilter(.active); tab = .sessions
+        model.selectProject(project.id); model.setSessionFilter(.active)
     }
     private func openProjectFiles(_ project: V2Project) {
         selectedWorkspace = .init(path: project.workspacePath, name: project.name,
@@ -267,3 +260,5 @@ struct DeviceManagementView: View {
         if await model.deleteConnector(connectorId: connector.id, service: service) { onConnectorDeleted(connector.id) }
     }
 }
+
+private enum DeviceSessionAnchor { static let id = "device.sessions" }

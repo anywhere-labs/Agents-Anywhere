@@ -17,6 +17,9 @@ struct ChatSidebarProjects: View {
     @State private var action: ProjectAction?
     @State private var busy: Set<String> = []
     @State private var error: String?
+    @State private var expandedSessionLists: Set<String> = []
+    /// Sessions shown per expanded project before "show more", matching Web.
+    private static let sessionPreview = 8
 
     private struct ProjectAction: Identifiable {
         let project: V2Project
@@ -134,7 +137,7 @@ struct ChatSidebarProjects: View {
             Button(String(localized: "新建会话"), systemImage: "square.and.pencil") { onNewSession(project.id) }
             Button(String(localized: "编辑项目"), systemImage: "pencil") { editing = project }
                 .disabled(!repository.canWrite || isBusy)
-            Button(project.pinned ? String(localized: "取消置顶") : String(localized: "置顶"), systemImage: project.pinned ? "pin.slash" : "pin") {
+            Button(project.pinned ? String(localized: "取消置顶") : String(localized: "置顶"), systemImage: "pin") {
                 perform(project.id) { try await repository.updateProject(project.id, pinned: !project.pinned) }
             }.disabled(!repository.canWrite || isBusy)
         }
@@ -146,8 +149,25 @@ struct ChatSidebarProjects: View {
         }
     }
 
+    @ViewBuilder
     private func projectSessions(_ project: V2Project) -> some View {
-        sessionRows(ProjectSidebarPresentation.sessions(repository.sessions, projectID: project.id, filter: filter), inset: true)
+        let sessions = ProjectSidebarPresentation.sessions(repository.sessions, projectID: project.id, filter: filter)
+        let showsAll = expandedSessionLists.contains(project.id)
+        // Keep the open session visible even when it sorts past the preview.
+        let visible = showsAll || sessions.count <= Self.sessionPreview ? sessions
+            : sessions.enumerated().filter { $0.offset < Self.sessionPreview || $0.element.id == selectedSessionID }.map(\.element)
+        sessionRows(visible, inset: true)
+        if sessions.count > Self.sessionPreview {
+            Button {
+                if showsAll { expandedSessionLists.remove(project.id) } else { expandedSessionLists.insert(project.id) }
+            } label: {
+                Text(showsAll ? String(localized: "收起") : String(localized: "显示更多（\(sessions.count - visible.count)）"))
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .padding(.leading, 19)
+                    .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading).contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+        }
     }
     private func sessionRows(_ sessions: [V2SessionMeta], inset: Bool) -> some View {
         LazyVStack(alignment: .leading, spacing: 2) {

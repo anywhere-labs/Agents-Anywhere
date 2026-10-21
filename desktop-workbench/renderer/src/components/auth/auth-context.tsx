@@ -54,6 +54,8 @@ function hashToScreen(hash: string): AuthScreen {
     path.startsWith("session/") ||
     path.startsWith("new-session/") ||
     path.startsWith("settings") ||
+    path === "admin" ||
+    path.startsWith("admin/") ||
     path === "dashboard" ||
     path === "team" ||
     path === "service" ||
@@ -102,12 +104,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (bridge) setDesktopServerConnection(await bridge.getServer())
       } catch {
         if (!cancelled) {
-          setError(t("errors.config", { detail: "" }))
+          if (nextScreen === "preview") setScreenState("preview")
+          else setError(t("errors.config", { detail: "" }))
           setLoading(false)
         }
         return
       }
       if (cancelled) return
+      if (nextScreen === "preview") {
+        setScreenState("preview")
+        setLoading(false)
+        return
+      }
       if (!stored) {
         if (!cancelled) {
           setScreenState(nextScreen === "app" ? "login" : nextScreen)
@@ -172,7 +180,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   React.useEffect(() => {
-    if (!desktopAuthBridge || loading) return
+    if (!desktopAuthBridge || loading || screen === "preview") return
     let cancelled = false
     let consuming = false
 
@@ -213,7 +221,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       cancelled = true
       if (typeof unsubscribe === "function") unsubscribe()
     }
-  }, [desktopAuthBridge, finishDesktopOAuth, loading, t])
+  }, [desktopAuthBridge, finishDesktopOAuth, loading, screen, t])
 
   // A plugin deep link that arrives while the app is already running must start
   // a new flow instead of being ignored by the current screen.

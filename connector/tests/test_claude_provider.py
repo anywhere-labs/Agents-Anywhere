@@ -6,9 +6,11 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from connector.launch import LaunchTarget
-from connector.runtime_protocol import RuntimeInvalidRequestError, RuntimeUnavailableError
+from connector.runtime_protocol import (
+    RuntimeInvalidRequestError,
+    RuntimeUnavailableError,
+)
 from connector.runtimes.claude.provider import ClaudeProvider
 from connector.runtimes.claude.runtime import ClaudeRuntime
 
@@ -99,13 +101,16 @@ async def _test_claude_provider_schema_and_config_validation() -> None:
         }
     )
 
-    assert schema.defaults == {"environment": {}, "customModels": []}
+    assert schema.defaults == {
+        "environment": {}, "customModels": [], "idleTimeoutSeconds": 600,
+    }
     assert schema.ui_schema["customModels"]["component"] == "customModels"
     assert schema.ui_schema["modelGateway"]["component"] == "modelGateway"
     assert set(schema.schema["properties"]) == {
         "customModels",
         "environment",
         "executablePath",
+        "idleTimeoutSeconds",
         "modelGateway",
     }
     assert schema.schema["properties"]["executablePath"]["metadata"] == {
@@ -121,6 +126,7 @@ async def _test_claude_provider_schema_and_config_validation() -> None:
     assert config.runtime == "claude"
     assert config.values["executablePath"] == "/opt/claude"
     assert config.values["environment"] == {"EXAMPLE": "1"}
+    assert config.values["idleTimeoutSeconds"] == 600
     assert config.values["customModels"] == [
         {
             "modelId": "claude-local-test",
@@ -134,6 +140,12 @@ async def _test_claude_provider_schema_and_config_validation() -> None:
         }
     ]
     assert config.metadata["launchTarget"]["path"] == "/opt/claude"
+
+    custom_timeout = await provider.validate_config({"idleTimeoutSeconds": 120})
+    assert custom_timeout.values["idleTimeoutSeconds"] == 120
+    for invalid_timeout in (0, 30, 1.5, 86401):
+        with pytest.raises(RuntimeInvalidRequestError):
+            await provider.validate_config({"idleTimeoutSeconds": invalid_timeout})
 
 
 def test_claude_provider_preserves_model_gateway_config() -> None:

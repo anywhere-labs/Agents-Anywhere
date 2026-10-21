@@ -52,7 +52,7 @@ internal fun DeviceActionsSheet(
     device: AgentDevice,
     onDismiss: () -> Unit,
     onRenameDevice: suspend (String, String) -> Result<AgentDevice>,
-    onTokenAction: () -> Unit,
+    onRevokeDevice: () -> Unit,
     onDeleteDevice: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -164,11 +164,9 @@ internal fun DeviceActionsSheet(
                 }
             } else {
                 AABottomSheetItem(icon = Lucide.Pencil, text = stringResource(R.string.device_actions_rename), onClick = { renaming = true })
-                AABottomSheetItem(
-                    icon = Lucide.KeyRound,
-                    text = if (device.online) stringResource(R.string.common_revoke) else stringResource(R.string.device_actions_setup),
-                    onClick = onTokenAction,
-                )
+                if (device.online) {
+                    AABottomSheetItem(icon = Lucide.KeyRound, text = stringResource(R.string.common_revoke), onClick = onRevokeDevice)
+                }
                 AABottomSheetItem(icon = Lucide.Trash2, text = stringResource(R.string.common_delete), danger = true, onClick = onDeleteDevice)
             }
         }

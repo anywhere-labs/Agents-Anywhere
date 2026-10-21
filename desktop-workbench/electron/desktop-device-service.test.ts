@@ -396,7 +396,28 @@ test("account-switch provisioning failure preserves and resumes the previous Con
   harness.cleanup();
 });
 
-test("disconnectLocal discards the rotated token and keeps the local binding", async () => {
+test("disconnect and reconnect keep a valid credential without a revoke request", async (t) => {
+  const harness = createHarness(async () => { throw new Error("transport recovery must not revoke credentials"); });
+  t.after(harness.cleanup);
+  seedLocalConnector(harness);
+  harness.mock.authFailed = false;
+  harness.mock.running = true;
+  const saved = { ...harness.mock.credential! };
+  const input = { userId: "user-1", userToken: "user-secret" };
+  const disconnected = await harness.service.disconnectLocal(input);
+  assert.equal(disconnected.manualDisconnected, true);
+  assert.equal(disconnected.hasCredential, true);
+  assert.equal(harness.mock.stopCalls, 1);
+  assert.equal(harness.mock.clearCalls, 0);
+  assert.deepEqual(harness.mock.credential, saved);
+  const connected = await harness.service.reconnectAndConnect(input);
+  assert.equal(connected.manualDisconnected, false);
+  assert.equal(harness.mock.restartCalls, 1);
+  assert.equal(harness.mock.saveCalls.length, 0);
+  assert.deepEqual(harness.mock.credential, saved);
+});
+
+test("revokeLocal discards the rotated token and keeps the local binding", async () => {
   const harness = createHarness(async () => Response.json({
     connector: { id: "connector-1", name: "Office Mac" },
     connectorToken: "discard-me",
@@ -409,7 +430,7 @@ test("disconnectLocal discards the rotated token and keeps the local binding", a
     manualDisconnected: false,
   });
 
-  const result = await harness.service.disconnectLocal({
+  const result = await harness.service.revokeLocal({
     userId: "user-1",
     userToken: "user-secret",
   });

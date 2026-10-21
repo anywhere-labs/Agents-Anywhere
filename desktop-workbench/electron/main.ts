@@ -37,7 +37,11 @@ import { DesktopUpdateService } from "./desktop-updates";
 import { validateTitleBarColors } from "./title-bar";
 import type { BackendInit } from "./backend/protocol";
 import { DesktopBackendClient } from "./backend-client";
+import { readDesktopSettings } from "./desktop-settings";
+import { ConnectorLogStore } from "./log-store";
 import { windowMaterialOptions } from "./window-material";
+import buildInfo from "../build-info.json";
+import { droppedFolderPath } from "./dropped-folder";
 import config from "../config.json";
 import { proxyDesktopApi } from "./api-proxy";
 import {
@@ -51,6 +55,8 @@ import {
 } from "./desktop-server";
 import type {
   ConnectorLogEntry,
+  ConnectorLogPage,
+  ConnectorState,
   DesktopFactoryResetInput,
   DesktopNotificationInput,
   DesktopNotificationResult,
@@ -61,8 +67,6 @@ const APP_ID = "dev.agentsanywhere.workbench";
 const WEB_PROTOCOL = "aa-workbench";
 const WEB_HOST = "web";
 const LOGIN_ITEM_HIDDEN_ARG = "--hidden";
-/** A backend that never reports ownership must not block the renderer forever. */
-const OWNERSHIP_FIRST_RESULT_TIMEOUT_MS = 15_000;
 const API_ROUTE_PREFIXES = [
   "/admin",
   "/agents",
@@ -77,11 +81,9 @@ const API_ROUTE_PREFIXES = [
   "/.well-known",
 ];
 
-let ownership: OwnershipState = { status: "error", message: "正在检查本机 Connector…" };
+/** `checking` until the backend's first probe answers; the renderer shows it as progress. */
+let ownership: OwnershipState = { status: "checking" };
 let recheckingOwnership: Promise<OwnershipState> | null = null;
-/** Resolves with the backend's first real ownership result. */
-let ownershipReady: Promise<OwnershipState> | null = null;
-let ownershipSettled = false;
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -399,7 +401,19 @@ function createMainWindow(showOnReady = true, route = "/"): BrowserWindow {
     if (showOnReady) showMainWindow();
   });
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (isWorkbenchUrl(url)) return { action: "allow" };
+    if (isWorkbenchUrl(url)) {
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          webPreferences: {
+            preload: path.join(__dirname, "preload.js"),
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: false,
+          },
+        },
+      };
+    }
     void shell.openExternal(url);
     return { action: "deny" };
   });
@@ -526,6 +540,19 @@ function resolveUvBundleDir(): string {
   return path.join(app.getAppPath(), "build", "uv");
 }
 
+/**
+ * The CPython that packaging bundles, so the Connector never waits on uv
+ * downloading an interpreter. Development uses the same build output once
+ * `yarn bundle:python` has created it; until then uv picks an interpreter.
+ */
+function resolvePythonBundleDir(): string {
+  if (process.env.WORKBENCH_PYTHON_BUNDLE_DIR?.trim()) {
+    return path.resolve(process.env.WORKBENCH_PYTHON_BUNDLE_DIR.trim());
+  }
+  if (app.isPackaged) return path.join(process.resourcesPath, "python");
+  return path.join(app.getAppPath(), "build", "python");
+}
+
 function appWindowIcon(): string {
   if (app.isPackaged) return path.join(process.resourcesPath, "build", "icon-mac-source.png");
   return path.join(app.getAppPath(), "build", "icon-mac-source.png");
@@ -562,11 +589,18 @@ function applyLoginItemSettings(): void {
 
 /** Main-process messages join the same log stream the renderer already reads. */
 function appendMainLog(entry: string | Partial<ConnectorLogEntry>): void {
-  if (!backend) return;
   const payload = typeof entry === "string"
     ? { level: "INFO", message: entry }
     : { level: entry.level ?? "INFO", message: String(entry.message ?? "") };
-  void backend.request("/logs/append", { method: "POST", body: JSON.stringify(payload) }).catch(() => undefined);
+  if (backend?.running) {
+    void backend.request("/logs/append", { method: "POST", body: JSON.stringify(payload) }).catch(() => undefined);
+    return;
+  }
+  // The running backend owns the log. Before it is ready or after it stopped,
+  // Main appends to the same files, so a failed launch or a crash still leaves
+  // its reason there. A fresh store continues the sequence the backend wrote.
+  new ConnectorLogStore(connectorLogsPath(), () => backend?.getSettings() ?? readDesktopSettings(desktopSettingsPath()))
+    .append(payload);
 }
 
 function syncDesktopUpdateSession(serverUrl: unknown) {
@@ -589,12 +623,13 @@ async function requireLocalOwnership(): Promise<void> {
 }
 
 function registerIpcHandlers(): void {
+  ipcMain.handle("workbench:files:droppedFolderPath", (event, value: unknown) => {
+    assertTrustedRenderer(event);
+    return droppedFolderPath(value);
+  });
   ipcMain.handle("workbench:ownership:getState", event => {
     assertTrustedRenderer(event);
-    // The backend probes ownership asynchronously. Reporting the placeholder
-    // would make the renderer show its conflict dialog on every launch, so the
-    // first read waits for the real result.
-    return ownershipSettled ? ownership : (ownershipReady ?? ownership);
+    return ownership;
   });
   ipcMain.handle("workbench:ownership:recheck", event => {
     assertTrustedRenderer(event);
@@ -743,8 +778,13 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("workbench:connector:openLogsFolder", async (event) => {
     assertTrustedRenderer(event);
-    fs.mkdirSync(connectorLogsPath(), { recursive: true, mode: 0o700 });
-    return shell.openPath(connectorLogsPath());
+    const state = await backend?.request<ConnectorState>("/state").catch(() => null);
+    const page = !state?.logsPath?.trim()
+      ? await backend?.request<ConnectorLogPage>("/logs?pageSize=1").catch(() => null)
+      : null;
+    const logsDir = state?.logsPath?.trim() || page?.logsPath?.trim() || connectorLogsPath();
+    fs.mkdirSync(logsDir, { recursive: true, mode: 0o700 });
+    return shell.openPath(logsDir);
   });
   ipcMain.handle("workbench:connector:exportLogs", async (event) => {
     assertTrustedRenderer(event);
@@ -772,7 +812,7 @@ function registerIpcHandlers(): void {
     if (binding && !forceLocal) {
       // Server revoke happens first. If it fails, local credentials and binding
       // remain untouched so the user can retry instead of creating an orphan.
-      await client.request("/device/disconnect", {
+      await client.request("/device/revoke", {
         method: "POST",
         body: JSON.stringify({
           userToken: input?.userToken ?? "",
@@ -818,6 +858,7 @@ function backendInit(): BackendInit {
     connectorDir: resolveConnectorDir(),
     resourcesPath: process.resourcesPath,
     uvBundleDir: resolveUvBundleDir(),
+    pythonBundleDir: resolvePythonBundleDir(),
     homePath: app.getPath("home"),
     documentsPath: app.getPath("documents"),
     packaged: app.isPackaged,
@@ -838,36 +879,32 @@ function backendInit(): BackendInit {
  */
 async function initializeDesktopServices(): Promise<void> {
   serverStore = new DesktopServerStore(path.join(app.getPath("userData"), "desktop-server.json"), activeDesktopServer());
-  let settleOwnership: (state: OwnershipState) => void = () => undefined;
-  ownershipReady = new Promise<OwnershipState>((resolve) => {
-    const timer = setTimeout(() => resolve(ownership), OWNERSHIP_FIRST_RESULT_TIMEOUT_MS);
-    timer.unref?.();
-    settleOwnership = (state) => {
-      clearTimeout(timer);
-      ownershipSettled = true;
-      resolve(state);
-    };
-  });
   const client = new DesktopBackendClient({
     fetcher: (input, init) => net.fetch(String(input), init),
     onEvent: (event) => {
       if (event.event === "ownership") {
-        ownership = event.data as OwnershipState;
-        settleOwnership(ownership);
-        sendToRenderer("workbench:ownership:state", ownership);
-        if (ownership.status === "owned" && app.isPackaged) void drainDesktopOAuthCallbacks();
+        publishOwnership(event.data as OwnershipState);
         return;
       }
       if (event.event === "settings") applyLoginItemSettings();
     },
-    onExit: (reason) => {
-      appendMainLog({ level: "ERROR", message: `Desktop backend stopped unexpectedly (${reason}).` });
+    onExit: (message) => {
+      appendMainLog({ level: "ERROR", message });
+      // Nothing answers a recheck without the backend, so a launch that is
+      // still checking would otherwise wait forever.
+      if (ownership.status !== "owned") publishOwnership({ status: "error", message });
     },
   });
   backend = client;
   await client.start(backendInit());
   ownership = client.getOwnership();
   applyLoginItemSettings();
+}
+
+function publishOwnership(state: OwnershipState): void {
+  ownership = state;
+  sendToRenderer("workbench:ownership:state", ownership);
+  if (ownership.status === "owned" && app.isPackaged) void drainDesktopOAuthCallbacks();
 }
 
 /** Only a silent login-item launch has to wait for the first ownership result. */
@@ -962,6 +999,7 @@ if (hasSingleInstanceLock) {
     updates = new DesktopUpdateService({
       directory: path.join(app.getPath("userData"), "updates"),
       currentVersion: app.getVersion(),
+      serverVersion: buildInfo.serverVersion,
       downloadUrl: config.updates.downloadUrl,
       platform: process.platform,
       healthTimeoutMs: config.healthTimeoutMs,
@@ -990,6 +1028,9 @@ if (hasSingleInstanceLock) {
     if (!showOnLaunch) hideDockIfIdle();
   }).catch((error) => {
     console.error("Failed to initialize Desktop Workbench", error);
+    appendMainLog({ level: "ERROR", message: `Desktop failed to start: ${errorMessage(error)}` });
+    // No window may exist yet, so this box is the only place the reason shows.
+    dialog.showErrorBox("Agents Anywhere 无法启动", `${errorMessage(error)}\n\n日志目录：${connectorLogsPath()}`);
     void requestQuit();
   });
 

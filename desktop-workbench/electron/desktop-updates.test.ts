@@ -17,7 +17,7 @@ function harness(t: TestContext, overrides: Partial<ConstructorParameters<typeof
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   let version = "0.1.7.2";
   const options: ConstructorParameters<typeof DesktopUpdateService>[0] = {
-    directory, currentVersion: "0.1.0", downloadUrl: "https://download.test/desktop", platform: "darwin",
+    directory, currentVersion: "0.1.0", serverVersion: "0.1.0", downloadUrl: "https://download.test/desktop", platform: "darwin",
     fetcher: async (input, init) => {
       requests.push({ url: String(input), init });
       return String(input).endsWith("/health") ? healthy(version) : new Response("installer", { headers: { "content-length": "9", "content-type": "application/octet-stream" } });
@@ -58,10 +58,20 @@ test("startup checks only health; ignored versions survive restart and newer ver
   restarted.ignoreVersion();
   h.setVersion("0.1.8");
   assert.equal((await h.make().check(server)).dialogOpen, true);
-  const upToDate = await h.make({ currentVersion: "0.1.8" }).check(server);
+  const upToDate = await h.make({ serverVersion: "0.1.8" }).check(server);
   assert.equal(upToDate.available, false);
   assert.equal(upToDate.dialogOpen, false);
   assert.ok(h.states.every((state) => !JSON.stringify(state).includes("token")));
+});
+
+test("updates compare the live Server with the build-time Server version, not the Desktop version", async (t) => {
+  const h = harness(t, { currentVersion: "2.0.0", serverVersion: "2.0.3" });
+  for (const [live, available] of [["2.0.3", false], ["2.0.1", false], ["2.0.4", true], ["2.1.0", true]] as const) {
+    h.setVersion(live);
+    const state = await h.make().check(server);
+    assert.equal(state.available, available, live);
+    assert.equal(state.currentVersion, "2.0.0", "the dialog still shows the installed Desktop version");
+  }
 });
 
 test("ignoring a version on one server does not hide updates on another server", async (t) => {

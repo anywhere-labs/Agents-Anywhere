@@ -15,6 +15,11 @@ struct ChatSidebarDevice: Identifiable, Equatable {
 struct ChatSidebarSession: Identifiable, Equatable {
     let id: V2SessionID
     let title: String?
+    let connectorId: V2ConnectorID
+    let projectId: String?
+    let cwd: String?
+    let runtime: String
+    let runtimeType: String?
     let status: V2RuntimeStatus
     let unread: Bool
     let archived: Bool
@@ -24,6 +29,11 @@ struct ChatSidebarSession: Identifiable, Equatable {
     init(session: V2SessionMeta) {
         id = session.id
         title = session.title
+        connectorId = session.connectorId
+        projectId = session.projectId
+        cwd = session.cwd
+        runtime = session.runtime
+        runtimeType = session.runtimeType
         status = session.status
         unread = session.unread
         archived = session.archived

@@ -13,6 +13,10 @@ struct ChatComposer: View {
     let onSend: () -> Void
     let onStop: () -> Void
     let onOptions: () -> Void
+    /// Shown beside send when the session's runtime offers slash commands.
+    var showsCommands = false
+    var commandsActive = false
+    var onCommands: () -> Void = {}
     /// Reports draft mutations from this subtree only. Persisting the draft
     /// must not make the page root observe the editor's text.
     var onDraftChange: () -> Void = {}
@@ -59,6 +63,19 @@ struct ChatComposer: View {
                     .accessibilityLabel(isStreaming ? String(localized: "停止生成") : String(localized: "发送消息"))
                     .accessibilityHint(draft.isComposing ? String(localized: "请先确认输入法候选文字") : "")
                     .accessibilityIdentifier("chat.composer.send")
+
+                    if showsCommands {
+                        Button(action: onCommands) {
+                            AppSymbol("command", size: 18)
+                                .foregroundStyle(commandsActive ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                                .frame(width: controls.touchTarget, height: controls.touchTarget)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(String(localized: "指令"))
+                        .accessibilityAddTraits(commandsActive ? .isSelected : [])
+                        .accessibilityIdentifier("chat.composer.commands")
+                    }
                 }
             }
             .glassEffect(.regular.interactive(), in: .rect(cornerRadius: draft.isExpanded ? controls.expandedCornerRadius : controls.collapsedCornerRadius))

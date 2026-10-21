@@ -27,6 +27,30 @@
         "message"
       ],
       "type": "object"
+    },
+    "RuntimePhase": {
+      "additionalProperties": true,
+      "description": "A sub-step of a lifecycle status, e.g. an instance that is `starting` while it synchronizes sessions. It is informational: the status itself still decides what the instance can do.",
+      "properties": {
+        "code": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
     }
   },
   "$id": "https://agents-anywhere.dev/contracts/runtime-control/2.0/schemas/runtime-instance-status.schema.json",
@@ -88,6 +112,17 @@
       "minLength": 1,
       "pattern": ".*\\S.*",
       "type": "string"
+    },
+    "phase": {
+      "description": "Present while a lifecycle status has a finer-grained step the user should see (for example `syncing` during `starting`). Null or absent otherwise.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RuntimePhase"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "runtimeId": {
       "maxLength": 128,

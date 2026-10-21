@@ -357,7 +357,14 @@ public final class RemoteTerminalView extends View {
                 if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) mClient.logInfo(LOG_TAG, "IME: finishComposingText()");
                 mImeComposing = false;
                 super.finishComposingText();
-                getEditable().clear();
+                // With the normal text input type the IME commonly commits text by ending the
+                // composition instead of calling commitText(), so the pending text has to be sent
+                // to the terminal before the editable is cleared, otherwise it would be lost.
+                Editable content = getEditable();
+                if (mEmulator != null && content.length() > 0) {
+                    sendTextToTerminal(content);
+                }
+                content.clear();
                 return true;
             }
 

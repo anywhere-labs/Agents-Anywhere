@@ -3,6 +3,7 @@ import Observation
 
 @MainActor @Observable final class ProjectSidebarPreferences {
     static let sessionListKey = "aa.native.sidebar.session-list"
+    static let compactSessionListKey = "aa.native.sidebar.session-list.compact"
     var expandedProjects: Set<String> { didSet { persist() } }
     var projectsExpanded: Bool { didSet { persist() } }
     @ObservationIgnored private let defaults: UserDefaults

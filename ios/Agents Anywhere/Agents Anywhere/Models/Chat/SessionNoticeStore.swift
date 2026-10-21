@@ -32,12 +32,9 @@ final class SessionNoticeModel: Identifiable {
         isVisible && notice.type == "interaction"
             && notice.blocking?.scope == "session" && notice.blocking?.targetId == sessionID
     }
+    var expiresAt: Date? { V2Timestamp.date(notice.expiresAt) }
     func isExpired(at now: Date) -> Bool {
-        guard let raw = notice.expiresAt else { return false }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let date = formatter.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
-        return date.map { $0 <= now } ?? false
+        expiresAt.map { $0 <= now } ?? false
     }
     func canRespond(fresh: Bool, at now: Date = Date()) -> Bool {
         fresh && notice.type == "interaction" && [.open, .failed].contains(notice.status)
@@ -45,7 +42,7 @@ final class SessionNoticeModel: Identifiable {
     }
 
     func update(_ next: V2RuntimeNotice) {
-        guard next.revision >= notice.revision else { return }
+        guard next.revision >= notice.revision, next != notice else { return }
         let nextForm = NoticeInputForm(next)
         // Status revisions keep draft answers; changing the action/schema cannot
         // accidentally submit values collected for an obsolete question set.

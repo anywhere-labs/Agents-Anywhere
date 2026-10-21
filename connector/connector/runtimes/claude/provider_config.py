@@ -53,6 +53,17 @@ def claude_config_schema() -> dict[str, Any]:
             },
             "modelGateway": model_gateway_schema(),
             "customModels": custom_models_schema(),
+            "idleTimeoutSeconds": {
+                "type": "integer",
+                "minimum": 60,
+                "maximum": 86400,
+                "default": 600,
+                "title": "Idle Claude session timeout (seconds)",
+                "description": (
+                    "Reclaim a Claude session process after this much time without "
+                    "active work. Scheduled jobs and background tasks keep it alive."
+                ),
+            },
         },
         "additionalProperties": False,
     }

@@ -7,6 +7,8 @@ export type AuthConfig = {
   oauthRegistrationOpen: boolean;
   oauthEnabled: boolean;
   oauthProviderLabel: string | null;
+  /** Missing on servers older than 2.0.1. */
+  passwordResetEnabled?: boolean;
   setupTokenExpiresAt: string | null;
   serverTime: string;
 };
@@ -123,6 +125,8 @@ export type AdminUser = {
 
 export type AdminUserListResponse = {
   users: AdminUser[];
+  /** Total users regardless of paging; missing on servers older than 2.0.1. */
+  total?: number;
   serverTime: string;
 };
 
@@ -143,6 +147,8 @@ export type InstanceSettings = {
   email: EmailSettings;
   registrationOpen: boolean;
   oauthRegistrationOpen: boolean;
+  /** Missing on servers older than 2.0.1. */
+  passwordResetEnabled?: boolean;
   oauth: OAuthProviderConfig | null;
 };
 

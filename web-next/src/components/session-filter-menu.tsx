@@ -23,8 +23,12 @@ import { runtimeLabel } from "@/components/session/session-utils"
 
 export function SessionFilterMenu({
   onMarkAllRead,
+  ariaLabel,
 }: {
   onMarkAllRead?: () => void | Promise<void>
+  /** Overrides the trigger's accessible name when the menu is reused outside the
+   *  recent-sessions header (e.g. in the projects section). */
+  ariaLabel?: string
 }) {
   const { filter, setFilter, connectors, sessions } = useWorkspace()
   const t = useTranslations("dashboard")
@@ -47,7 +51,7 @@ export function SessionFilterMenu({
           type="button"
           variant="ghost"
           size="icon"
-          aria-label={t("actions.filter")}
+          aria-label={ariaLabel ?? t("actions.filter")}
           className={cn(
             "size-6 rounded-md p-0",
             active ? "text-foreground" : "text-sidebar-foreground/60",

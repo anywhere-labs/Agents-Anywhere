@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, cast
 
+from connector.core.unicode import replace_lone_surrogates
 from connector.runtime_protocol import (
     RuntimeCapability,
     RuntimeCapabilitySet,
@@ -34,6 +35,9 @@ _STATUSES = {
 }
 
 
+COMMAND_BRIDGE_UPGRADE_REASON = "Upgrade the DSH Bridge to enable native session commands."
+
+
 def capability_set(value: Any, *, connector_id: str) -> RuntimeCapabilitySet:
     data = _mapping(value, "capability set")
     runtime = _runtime(data)
@@ -41,6 +45,12 @@ def capability_set(value: Any, *, connector_id: str) -> RuntimeCapabilitySet:
     capabilities: list[RuntimeCapability] = []
     for raw in _list(data.get("capabilities"), "capabilities"):
         item = _mapping(raw, "capability")
+        if item.get("capabilityId") == "session.commands":
+            # Command support requires negotiated facts, not the name alone.
+            for flag in ("supported", "available", "allowed"):
+                item.setdefault(flag, False)
+            if not item["supported"] and not _dict(item.get("metadata")).get("catalogRevision"):
+                item["unavailableReason"] = COMMAND_BRIDGE_UPGRADE_REASON
         scope = item.get("scope", "session" if session_id else "runtime")
         if scope not in {"runtime", "session"}:
             raise ValueError("DSH capability scope is invalid")
@@ -61,6 +71,12 @@ def capability_set(value: Any, *, connector_id: str) -> RuntimeCapabilitySet:
                 metadata=_dict(item.get("metadata")),
             )
         )
+    if not any(capability.capability_id == "session.commands" for capability in capabilities):
+        capabilities.append(RuntimeCapability(
+            capability_id="session.commands", scope="session" if session_id else "runtime", runtime=runtime,
+            session_id=session_id, connector_id=connector_id, supported=False, available=False, allowed=False,
+            unavailable_reason=COMMAND_BRIDGE_UPGRADE_REASON,
+        ))
     return RuntimeCapabilitySet(
         runtime=runtime,
         revision=_revision(data.get("revision")),
@@ -215,6 +231,10 @@ def timeline_item(
     computed_hash = timeline_content_hash(item_type, status, role, content)  # type: ignore[arg-type]
     if data.get("contentHash") != computed_hash:
         raise ValueError("DSH timeline contentHash does not match canonical content")
+    # Plugins since 2.1.0 normalize lone surrogates before hashing; older ones
+    # hash the raw text. The hash is checked above either way; what gets
+    # stored and forwarded must be encodable.
+    content = replace_lone_surrogates(content)
     return RuntimeTimelineItem(
         id=_required_string(data.get("id"), "timeline id"),
         session_id=default_session_id
@@ -226,9 +246,9 @@ def timeline_item(
         role=role,
         turn_id=_optional_string(data.get("turnId")),
         content=content,
-        source=_mapping(data.get("source"), "timeline source"),
+        source=replace_lone_surrogates(_mapping(data.get("source"), "timeline source")),
         revision=max(1, _nonnegative_int(data.get("revision"), "revision")),
-        metadata=_dict(data.get("metadata")),
+        metadata=replace_lone_surrogates(_dict(data.get("metadata"))),
     )
 
 
@@ -294,12 +314,81 @@ def commands(value: Any) -> tuple[RuntimeCommand, ...]:
 
 def command_result(value: Any, command: str) -> RuntimeCommandResult:
     data = _mapping(value, "command result")
+    returned_command = _required_string(data.get("command"), "command identity")
+    if returned_command != command:
+        raise ValueError("DSH returned a different command identity")
+    ok = data.get("ok")
+    if not isinstance(ok, bool):
+        # Wire decode failures consistently use ValueError.
+        raise ValueError("DSH command acknowledgement must include a boolean ok")  # noqa: TRY004
+    result = _mapping(data.get("result"), "command result details")
+    kind = result.get("kind")
+    if "kind" in result and (
+        not isinstance(kind, str) or kind not in {"success", "error"}
+    ):
+        raise ValueError("DSH command result kind is invalid")
+    command_id = result.get("commandId")
+    if "commandId" in result:
+        _required_string(command_id, "command ID")
+    if "text" in result and not isinstance(result["text"], str):
+        raise ValueError("DSH command result text is invalid")
+    if "sourceEventSeq" in result:
+        _nonnegative_int(result["sourceEventSeq"], "source event sequence")
+        if kind != "success":
+            raise ValueError("Only a successful DSH command can have a source event")
+    state = result.get("executionState")
+    if "executionState" in result and (
+        not isinstance(state, str)
+        or state not in {"accepted", "completed", "unknown"}
+    ):
+        raise ValueError("DSH command execution state is invalid")
+    if "retryable" in result and (
+        result["retryable"] is not False or state != "unknown"
+    ):
+        raise ValueError("An uncertain DSH command may not be retried automatically")
+    if ok:
+        if (
+            kind != "success"
+            or command_id is None
+            or state != "accepted"
+            or "retryable" in result
+            or "code" in data
+        ):
+            raise ValueError("DSH successful command acknowledgement is incomplete or inconsistent")
+    elif (
+        kind == "success"
+        or kind == "error" and (command_id is None or state != "completed")
+        or kind is None and (command_id is not None or state not in {None, "unknown"})
+    ):
+        raise ValueError("DSH failed command acknowledgement is inconsistent")
+    code = data.get("code")
+    if not ok:
+        _required_string(code, "command failure code")
+        if kind == "error" and code != "command_error":
+            raise ValueError("DSH native command error has an inconsistent failure code")
+        if kind is None and code == "command_error":
+            raise ValueError("DSH native command error is missing its result identity")
+        if code in {"command_failed", "command_outcome_unknown"}:
+            if kind is not None or state != "unknown" or result.get("retryable") is not False:
+                raise ValueError("DSH unknown command outcome has incomplete no-retry details")
+        elif kind is None and (
+            code not in {
+                "invalid_command", "command_attachments_unsupported", "unknown_command"
+            }
+            or state is not None
+            or "retryable" in result
+        ):
+            raise ValueError("DSH pre-dispatch validation has inconsistent execution details")
+    elif code is not None:
+        raise ValueError("DSH successful command acknowledgement has an error code")
+    if "message" in data and not isinstance(data["message"], str):
+        raise ValueError("DSH command message is invalid")
     return RuntimeCommandResult(
-        command=_optional_string(data.get("command")) or command,
-        ok=_boolean(data.get("ok"), True),
-        code=_optional_string(data.get("code")),
+        command=returned_command,
+        ok=ok,
+        code=code,
         message=_optional_string(data.get("message")),
-        result=_dict(data.get("result")),
+        result=result,
     )
 
 

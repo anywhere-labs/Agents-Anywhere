@@ -180,7 +180,7 @@ def _inventory(*, status: str = "stopped") -> dict[str, Any]:
 
 
 def _make_client(tmp_path) -> tuple[TestClient, FakeRpc, str, dict[str, str]]:
-    app = create_app(tmp_path / "test.sqlite3")
+    app = create_app()
     client = TestClient(app)
     headers = _auth_headers(client)
     created = client.post("/connectors", headers=headers, json={"name": "dev"})
@@ -253,7 +253,7 @@ def test_runtime_lifecycle_discovery_status_is_accepted(tmp_path):
 
 
 def test_pre_inventory_runtime_status_does_not_disconnect_connector(tmp_path):
-    app = create_app(tmp_path / "test.sqlite3")
+    app = create_app()
     client = TestClient(app)
     headers = _auth_headers(client)
     created = client.post("/connectors", headers=headers, json={"name": "dev"})

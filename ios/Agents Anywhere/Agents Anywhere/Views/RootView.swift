@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct RootView: View {
-    @EnvironmentObject private var appState: AppState
+    @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
     @State private var showingManualLogin = false
     @State private var showingQRCodeLogin = false
@@ -32,6 +32,11 @@ struct RootView: View {
                 showingQRCodeLogin = false
             }
         }
+        .announcementGate(
+            server: appState.serverURL,
+            route: appState.route,
+            blocked: showingManualLogin || showingQRCodeLogin
+        )
         .overlay(alignment: .top) {
             if appState.route == .signedIn, let error = appState.restoreConnectionError {
                 HStack(spacing: 12) {
@@ -62,5 +67,5 @@ struct RootView: View {
 
 #Preview {
     RootView()
-        .environmentObject(AppState())
+        .environment(AppState())
 }

@@ -218,10 +218,6 @@ html[data-desktop-platform="darwin"][data-window-material="transparent"] .aa-des
   background: color-mix(in oklch, var(--sidebar) 65%, transparent);
 }
 
-.aa-desktop-main {
-  border-left: 1px solid var(--sidebar-border);
-}
-
 .aa-desktop-drag-region {
   display: none;
 }
@@ -245,15 +241,21 @@ html[data-windows-title-bar] .aa-desktop-main {
   border-top-left-radius: 12px;
 }
 
-.aa-desktop-shell[data-sidebar-open="false"] .aa-desktop-main {
+/* With the sidebar collapsed, the shell navigation floats over the top-left
+ * corner. Other pages move below it; the session header shares its row. */
+.aa-desktop-shell[data-sidebar-open="false"] .aa-desktop-main:not([data-page="session"]) {
   padding-top: 44px;
 }
 
-html[data-desktop-platform="darwin"] .aa-desktop-shell[data-sidebar-open="false"] .aa-desktop-main {
-  padding-top: 44px;
+.aa-desktop-session-header {
+  transition: padding-left 220ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-html[data-desktop-platform="darwin"] .aa-desktop-shell[data-sidebar-open="false"] .aa-desktop-drag-region {
+html:not([data-windows-title-bar]) .aa-desktop-shell[data-sidebar-open="false"] .aa-desktop-session-header {
+  padding-left: 224px;
+}
+
+html[data-desktop-platform="darwin"] .aa-desktop-shell[data-sidebar-open="false"] .aa-desktop-main:not([data-page="session"]) .aa-desktop-drag-region {
   display: block;
   position: absolute;
   inset: 0 12px auto 224px;
@@ -268,10 +270,6 @@ html[data-windows-title-bar] .aa-desktop-shell[data-sidebar-open="false"] .aa-de
 
 html[data-desktop-platform="linux"] .aa-traffic-light-spacer {
   width: 12px;
-}
-
-html:not([data-windows-title-bar]):has(.aa-desktop-shell[data-sidebar-open="false"]) [data-slot="session-tool-sidebar"] {
-  top: 44px;
 }
 
 html[data-windows-title-bar] {

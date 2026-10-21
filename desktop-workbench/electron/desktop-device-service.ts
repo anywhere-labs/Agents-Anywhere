@@ -182,6 +182,16 @@ export class DesktopDeviceService {
       throw new Error("A different Desktop can only be reconnected on that Desktop.");
     }
     const serverUrl = this.resolveServerUrl(input.serverUrl || binding.serverUrl);
+    const saved = this.options.connector.loadPrivateConfig();
+    if (saved?.connectorId === binding.connectorId && saved.serverUrl === serverUrl &&
+      saved.connectorToken && !this.options.connector.publicState().authFailed) {
+      // Transport recovery is not credential revocation. The Connector will
+      // authenticate with the saved credential when the connection restarts.
+      this.options.binding.save({ ...binding, serverUrl, manualDisconnected: false });
+      this.options.connector.bindingChanged();
+      await this.options.connector.restart();
+      return this.requirePublicBinding();
+    }
     let credential: ConnectorCredentialResponse;
     try {
       credential = await this.requestCredential(
@@ -222,19 +232,30 @@ export class DesktopDeviceService {
   async disconnectLocal(
     input: DesktopDeviceAuthInput,
   ): Promise<PublicLocalDesktopBinding> {
+    return this.disconnect(input, false);
+  }
+
+  async revokeLocal(input: DesktopDeviceAuthInput): Promise<PublicLocalDesktopBinding> {
+    return this.disconnect(input, true);
+  }
+
+  private async disconnect(input: DesktopDeviceAuthInput, revoke: boolean): Promise<PublicLocalDesktopBinding> {
     await this.options.requireOwnership?.();
     const binding = this.requireBinding();
     this.assertOwner(input, binding.ownerUserId);
     const serverUrl = this.resolveServerUrl(input.serverUrl || binding.serverUrl);
 
-    // The existing revoke endpoint rotates the server-side credential. The new
-    // token is deliberately discarded so this Desktop remains disconnected.
-    await this.requestCredential(
-      serverUrl,
-      `/connectors/${encodeURIComponent(binding.connectorId)}/revoke`,
-      input.userToken,
-    );
-    await this.options.connector.clearCredentials();
+    if (revoke) {
+      // Explicit security/reset actions still revoke before discarding secrets.
+      await this.requestCredential(
+        serverUrl,
+        `/connectors/${encodeURIComponent(binding.connectorId)}/revoke`,
+        input.userToken,
+      );
+      await this.options.connector.clearCredentials();
+    } else {
+      await this.options.connector.stop();
+    }
     this.options.binding.save({
       ...binding,
       serverUrl,

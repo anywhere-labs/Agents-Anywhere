@@ -9,6 +9,8 @@ import type { DesktopUpdateState } from "../shared/desktop-updates";
 type Options = {
   directory: string;
   currentVersion: string;
+  /** Server version recorded at build time; a newer live Server means a newer Desktop exists. */
+  serverVersion: string;
   downloadUrl: string;
   platform: string;
   fetcher: typeof fetch;
@@ -72,7 +74,7 @@ export class DesktopUpdateService {
         const payload = await readHealth(response, controller.signal);
         if (payload?.status !== "ok" || typeof payload.version !== "string") throw new Error("Health response has no version.");
         const latestVersion = payload.version.trim();
-        const comparison = compareUpdateVersions(latestVersion, this.options.currentVersion);
+        const comparison = compareUpdateVersions(latestVersion, this.options.serverVersion);
         if (comparison === null) throw new Error("Unsupported version format.");
         if (generation !== this.generation) return this.getState();
         const available = comparison > 0;

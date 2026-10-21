@@ -536,12 +536,7 @@ class ProjectRepositoryMixin:
                 await conn.execute(
                     update(sessions_t)
                     .where(sessions_t.c.id.in_(session_ids))
-                    .values(
-                        archived=int(archived),
-                        archived_at=now if archived else None,
-                        dsh_archive_legacy=0,
-                        updated_at=now,
-                    )
+                    .values(**_manual_archive_values(archived=archived, now=now))
                 )
             if archived:
                 await conn.execute(

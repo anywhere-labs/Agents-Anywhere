@@ -84,7 +84,7 @@ export async function ensureBinding(root: string, account: Account, api: Account
   if (matchedId) {
     const device = owned.get(matchedId)!
     const cached = binding?.connectorId === matchedId ? binding : null
-    const connectorToken = !options.renew && cached?.connectorToken && verified
+    const connectorToken = cached?.connectorToken && verified
       ? cached.connectorToken : await api.renewConnector(account.accessToken, matchedId, signal)
     signal.throwIfAborted()
     const complete = {
@@ -112,7 +112,10 @@ export async function recoverBinding(root: string, account: Account, api: Accoun
   if (action === 'reconnect') {
     if (!device) throw new DeviceRecoveryRequired(id, 'deleted')
     let connectorToken: string
-    try { connectorToken = await api.renewConnector(account.accessToken, id, signal) }
+    try {
+      connectorToken = binding.connectorToken && await api.verifyConnector(id, binding.connectorToken, signal)
+        ? binding.connectorToken : await api.renewConnector(account.accessToken, id, signal)
+    }
     catch (error) {
       if (error instanceof ApiError && error.status === 404) throw new DeviceRecoveryRequired(id, 'deleted')
       throw error

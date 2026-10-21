@@ -112,6 +112,7 @@ async def dashboard_ws(
         return
 
     await websocket.accept()
+    await websocket.app.state.usage_recorder.touch_user(ticket.user_id)
     queue = await broker.register_dashboard(ticket.user_id)
     recovery_signal = broker.recovery_signal
 

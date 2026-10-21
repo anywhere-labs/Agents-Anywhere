@@ -5,7 +5,8 @@ distributed accept path: session fence, revision lease, pending projection and
 live publish, with a real Redis round trip for every command.
 
     docker run -d --rm --name aa-bench-redis -p 56379:6379 redis:8-alpine
-    PYTHONPATH=. .venv/bin/python scripts/bench_accept_hotpath.py --deltas 200
+    AGENT_SERVER_TEST_DB_URL=postgresql+asyncpg://... \
+        PYTHONPATH=. .venv/bin/python scripts/bench_accept_hotpath.py --deltas 200
 
 It also reports how many Redis commands one accepted delta issues, which is the
 metric the fence-script change targets. The script only passes constructor
@@ -20,14 +21,12 @@ import asyncio
 import inspect
 import statistics
 import time
-from pathlib import Path
-from tempfile import mkdtemp
 from typing import Any
 
+from _bench_db import add_db_url_argument, open_bench_store, resolve_bench_db_url
+
 from agent_server.core.models import TimelineItemIn
-from agent_server.infra.db.migrations import upgrade_database
 from agent_server.infra.redis_coordinator import RedisCoordinator
-from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
@@ -68,10 +67,7 @@ async def command_counts(client: Any) -> dict[str, int]:
 
 
 async def run(args: argparse.Namespace) -> None:
-    workdir = Path(mkdtemp(prefix="aa-bench-"))
-    db_path = workdir / "bench.sqlite3"
-    upgrade_database(sqlite_path=db_path)
-    store = Store(db_path)
+    store = await open_bench_store(args.db_url)
     coordinator = RedisCoordinator(
         args.redis_url,
         prefix=args.prefix,
@@ -168,7 +164,9 @@ def main() -> None:
     parser.add_argument("--deltas", type=int, default=200)
     parser.add_argument("--payload-bytes", type=int, default=2000)
     parser.add_argument("--single-instance", action="store_true")
+    add_db_url_argument(parser)
     args = parser.parse_args()
+    args.db_url = resolve_bench_db_url(args.db_url)
     asyncio.run(run(args))
 
 

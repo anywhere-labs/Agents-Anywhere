@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agent_server.core.auth import hash_password_verifier
 from agent_server.core.models import (
@@ -28,12 +28,7 @@ router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(requir
 
 @router.get("/settings", response_model=InstanceSettingsView)
 async def get_settings(db: Store = Depends(get_store)) -> InstanceSettingsView:
-    return InstanceSettingsView(
-        registrationOpen=await db.is_registration_open(),
-        oauthRegistrationOpen=await db.is_oauth_registration_open(),
-        oauth=await db.get_oauth_provider_public_config(),
-        email=public_email_settings(await get_email_settings(db)),
-    )
+    return await _settings_view(db)
 
 
 @router.patch("/settings", response_model=InstanceSettingsView)
@@ -50,22 +45,28 @@ async def update_settings(
         await db.set_registration_open(payload.registrationOpen)
     if payload.oauthRegistrationOpen is not None:
         await db.set_oauth_registration_open(payload.oauthRegistrationOpen)
+    if payload.passwordResetEnabled is not None:
+        await db.set_password_reset_enabled(payload.passwordResetEnabled)
     if payload.oauth is not None:
         await db.set_oauth_provider_config(payload.oauth.model_dump(exclude_none=True))
-    return InstanceSettingsView(
-        registrationOpen=await db.is_registration_open(),
-        oauthRegistrationOpen=await db.is_oauth_registration_open(),
-        oauth=await db.get_oauth_provider_public_config(),
-        email=public_email_settings(await get_email_settings(db)),
-    )
+    return await _settings_view(db)
 
 
 # --- user management ---------------------------------------------------------
 
 
 @router.get("/users", response_model=AdminUserListResponse)
-async def list_users(db: Store = Depends(get_store)) -> AdminUserListResponse:
-    return AdminUserListResponse(users=await db.list_users(), serverTime=utc_now())
+async def list_users(
+    limit: int | None = Query(default=None, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    db: Store = Depends(get_store),
+) -> AdminUserListResponse:
+    """List users oldest first. Without ``limit`` every user is returned."""
+    return AdminUserListResponse(
+        users=await db.list_users(limit=limit, offset=offset),
+        total=await db.count_users(),
+        serverTime=utc_now(),
+    )
 
 
 @router.post("/users", response_model=UserView, status_code=201)
@@ -82,7 +83,7 @@ async def create_user(
             password_hash=_password_hash_from_create(payload),
             role=payload.role,
             verification_code=payload.code,
-            require_verification=email_settings["enabled"],
+            require_verification=email_settings["enabled"] and not payload.skipEmailVerification,
         )
     except ValueError as exc:
         detail = str(exc)
@@ -143,6 +144,16 @@ async def delete_user(
         raise HTTPException(status_code=404, detail="user not found") from None
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+async def _settings_view(db: Store) -> InstanceSettingsView:
+    return InstanceSettingsView(
+        registrationOpen=await db.is_registration_open(),
+        oauthRegistrationOpen=await db.is_oauth_registration_open(),
+        passwordResetEnabled=await db.is_password_reset_enabled(),
+        oauth=await db.get_oauth_provider_public_config(),
+        email=public_email_settings(await get_email_settings(db)),
+    )
 
 
 async def _safe_get_user(db: Store, user_id: str) -> UserView:

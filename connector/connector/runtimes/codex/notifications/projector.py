@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
+from weakref import WeakValueDictionary
 
 from connector.runtime_protocol import (
     RuntimeSessionSourceStateCache,
@@ -9,6 +11,7 @@ from connector.runtime_protocol import (
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain import sessions as codex_sessions
 from connector.runtimes.codex.domain.approvals import is_approval_request
+from connector.runtimes.codex.domain.input_requests import is_user_input_request
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
 from connector.runtimes.codex.notifications.notices import CodexNoticeHandler
 from connector.runtimes.codex.notifications.timeline_activity import (
@@ -35,6 +38,9 @@ class CodexNotificationProjector:
     notice_handler: CodexNoticeHandler = field(init=False)
     turn_lifecycle: CodexTurnLifecycleHandler = field(init=False)
     timeline_activity: CodexTimelineActivityHandler = field(init=False)
+    _session_locks: WeakValueDictionary[str, asyncio.Lock] = field(
+        default_factory=WeakValueDictionary, init=False
+    )
 
     def __post_init__(self) -> None:
         self.notice_handler = CodexNoticeHandler(
@@ -54,6 +60,7 @@ class CodexNotificationProjector:
             host=self.host,
             session_states=self.session_states,
             active_turn_ids=self.active_turn_ids,
+            timeline=self.timeline,
         )
 
     async def handle(self, message: CodexNotificationMessage) -> None:
@@ -88,6 +95,15 @@ class CodexNotificationProjector:
                 )
         if session_id is None or thread_id is None:
             return
+        # Ordinary SDK streams and native command turns share session state.
+        # Finish each projection before a different stream updates that session.
+        lock = self._session_locks.setdefault(session_id, asyncio.Lock())
+        async with lock:
+            await self._project_event(session_id, thread_id, event)
+
+    async def _project_event(
+        self, session_id: str, thread_id: str, event: CodexSdkEvent
+    ) -> None:
         source_availability = {
             "thread/archived": "archived",
             "thread/unarchived": "available",
@@ -110,6 +126,15 @@ class CodexNotificationProjector:
                 metadata={"source": f"codex.{event.event_type}"},
             )
             return
+        if is_user_input_request(event.event_type):
+            await self.notice_handler.handle_user_input_request(
+                session_id=session_id,
+                thread_id=thread_id,
+                method=event.event_type,
+                params=event.params,
+                request_id=event.request_id,
+            )
+            return
         if is_approval_request(event.event_type):
             await self.notice_handler.handle_approval_request(
                 session_id=session_id,
@@ -119,6 +144,10 @@ class CodexNotificationProjector:
                 request_id=event.request_id,
             )
             return
+        if event.is_terminal_turn or event.is_failed_turn:
+            await self.timeline_activity.publish_compaction_outcome(
+                session_id, thread_id, event
+            )
         if event.is_turn_started:
             await self.turn_lifecycle.handle_turn_started(
                 session_id=session_id,

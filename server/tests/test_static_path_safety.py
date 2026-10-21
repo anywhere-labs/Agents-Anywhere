@@ -21,7 +21,7 @@ def static_client(tmp_path, monkeypatch):
     (root / "en" / "localized").mkdir()
     (root / "en" / "localized" / "index.html").symlink_to(secret)
     monkeypatch.setenv("AGENT_SERVER_STATIC_DIR", str(root))
-    return TestClient(create_app(tmp_path / "test.sqlite3"))
+    return TestClient(create_app())
 
 
 @pytest.mark.parametrize("path", [

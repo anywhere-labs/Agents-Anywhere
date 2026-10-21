@@ -64,11 +64,13 @@ export function DesktopShellHeader({
 
   if (titleBarControls) return createPortal(navigationControls, titleBarControls)
 
+  // Above the blurred session header (z-10), below the tool sidebar (z-40),
+  // which renders its own sidebar toggle when it fills the main area.
   return (
     <header
       data-slot="desktop-shell-header"
       className={cn(
-        "aa-desktop-navigation aa-window-drag absolute left-0 top-0 flex h-11 items-center text-sidebar-foreground",
+        "aa-desktop-navigation aa-window-drag absolute left-0 top-0 z-20 flex h-11 items-center text-sidebar-foreground",
         sidebarResizing ? "transition-none" : "transition-[width] duration-[220ms] motion-reduce:transition-none",
       )}
       style={{ width: sidebarOpen ? "var(--desktop-sidebar-width)" : HEADER_SIDEBAR_MIN_WIDTH }}

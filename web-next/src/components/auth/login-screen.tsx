@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { Globe, User, Lock, Eye, EyeOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Field, FieldGroup, FieldLabel as Label } from "@/components/ui/field"
+import { Field, FieldError, FieldGroup, FieldLabel as Label } from "@/components/ui/field"
 import { isValidEmail } from "@/features/auth/account-profile"
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupButton } from "@/components/ui/input-group"
 import { AuthShell } from "./auth-shell"
@@ -12,11 +12,12 @@ import { PrivacyNotice } from "./privacy-notice"
 import { useTranslations } from "next-intl"
 
 export function LoginScreen() {
-  const { navigate, login, loading, error, oauthEnabled, oauthProviderLabel, registrationOpen, startOAuth } = useAuth()
+  const { navigate, login, loading, error, oauthEnabled, oauthProviderLabel, registrationOpen, passwordResetEnabled, startOAuth } = useAuth()
   const t = useTranslations("auth")
   const [showPassword, setShowPassword] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const emailInvalid = Boolean(email && !isValidEmail(email))
 
   const submit = async () => {
     if (!isValidEmail(email) || !password) return
@@ -36,7 +37,7 @@ export function LoginScreen() {
       </div>
 
       <FieldGroup>
-        <Field>
+        <Field data-invalid={emailInvalid}>
           <Label htmlFor="login-email">{t("fields.email")}</Label>
           <InputGroup className="h-11 rounded-lg">
             <InputGroupAddon><User className="size-4" /></InputGroupAddon>
@@ -49,8 +50,11 @@ export function LoginScreen() {
               autoComplete="email"
               spellCheck={false}
               className="code-mono"
+              aria-invalid={emailInvalid}
+              aria-describedby={emailInvalid ? "login-email-error" : undefined}
             />
           </InputGroup>
+          {emailInvalid ? <FieldError id="login-email-error">{t("login.invalidEmail")}</FieldError> : null}
         </Field>
 
         <Field>
@@ -100,19 +104,31 @@ export function LoginScreen() {
           </Button>
         ) : null}
 
-        {registrationOpen ? (
+        {registrationOpen || passwordResetEnabled ? (
           <div className="flex flex-col items-center gap-1 text-sm text-muted-foreground">
-            <p>
-              {t("login.newHere")}{" "}
+            {registrationOpen ? (
+              <p>
+                {t("login.newHere")}{" "}
+                <button
+                  type="button"
+                  className="font-medium text-foreground underline-offset-4 hover:underline"
+                  onClick={() => navigate("register")}
+                >
+                  {t("login.createAccount")}
+                </button>
+              </p>
+            ) : null}
+            {passwordResetEnabled ? (
               <button
                 type="button"
                 className="font-medium text-foreground underline-offset-4 hover:underline"
-                onClick={() => navigate("register")}
+                onClick={() => navigate("forgot-password")}
               >
-                {t("login.createAccount")}
+                {t("login.resetPassword")}
               </button>
-            </p>
-            <p>{t("login.forgot")}</p>
+            ) : (
+              <p>{t("login.forgot")}</p>
+            )}
           </div>
         ) : null}
 

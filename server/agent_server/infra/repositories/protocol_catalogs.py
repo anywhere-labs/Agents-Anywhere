@@ -27,8 +27,7 @@ class ProtocolCatalogRepositoryMixin:
                 connectors_t.c.id == connector_id,
                 connectors_t.c.revoked == 0,
             )
-            if self.backend != SQLITE_BACKEND:
-                connector_statement = connector_statement.with_for_update()
+            connector_statement = connector_statement.with_for_update()
             row = (await conn.execute(connector_statement)).first()
             if row is None:
                 raise KeyError(connector_id)

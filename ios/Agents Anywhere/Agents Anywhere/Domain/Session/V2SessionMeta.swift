@@ -51,30 +51,30 @@ nonisolated struct V2SessionMeta: Codable, Identifiable, Hashable {
     var effectiveRuntimeId: V2RuntimeID { runtimeId ?? runtime }
 }
 
-struct V2SessionListResponse: Decodable, Hashable {
+nonisolated struct V2SessionListResponse: Decodable, Hashable {
     let sessions: [V2SessionMeta]
     var hasMore: Bool
     var nextCursor: String?
     let serverTime: String
 }
 
-struct V2SessionInventoryResponse: Decodable, Hashable {
+nonisolated struct V2SessionInventoryResponse: Decodable, Hashable {
     let sessions: [V2SessionMeta]
     let serverTime: String
 }
 
-struct V2SessionMetaResponse: Decodable, Hashable {
+nonisolated struct V2SessionMetaResponse: Decodable, Hashable {
     let session: V2SessionMeta
     let serverTime: String
 }
 
-struct V2SessionMetaPatchRequest: Encodable, Hashable {
+nonisolated struct V2SessionMetaPatchRequest: Encodable, Hashable {
     let title: String?
     let pinned: Bool?
     let archived: Bool?
 }
 
-struct V2SessionCreateRequest: Encodable, Hashable {
+nonisolated struct V2SessionCreateRequest: Encodable, Hashable {
     let connectorId: V2ConnectorID
     let projectId: String
     let runtime: V2RuntimeID
@@ -111,7 +111,7 @@ struct V2SessionCreateRequest: Encodable, Hashable {
     }
 }
 
-struct V2InlineAttachment: Encodable, Hashable {
+nonisolated struct V2InlineAttachment: Encodable, Hashable {
     let fileId: V2AttachmentID
     let name: String
     let mediaType: String
@@ -120,7 +120,7 @@ struct V2InlineAttachment: Encodable, Hashable {
     let contentBase64: String
 }
 
-struct V2SessionCreateAndStartRequest: Encodable, Hashable {
+nonisolated struct V2SessionCreateAndStartRequest: Encodable, Hashable {
     let connectorId: V2ConnectorID
     let projectId: String
     let runtime: V2RuntimeID
@@ -166,19 +166,19 @@ struct V2SessionCreateAndStartRequest: Encodable, Hashable {
     }
 }
 
-struct V2SessionCreateResponse: Decodable, Hashable {
+nonisolated struct V2SessionCreateResponse: Decodable, Hashable {
     let session: V2SessionMeta
     var attachments: [V2CreatedAttachment]? = nil
     let connectorResult: JSONValue?
     let serverTime: String?
 }
 
-struct V2SessionBulkActionResponse: Decodable, Hashable {
+nonisolated struct V2SessionBulkActionResponse: Decodable, Hashable {
     let sessions: [V2SessionMeta]
     let notFound: [V2SessionID]
     let serverTime: String
 }
 
-struct V2SessionTakeoverResponse: Decodable, Hashable {
+nonisolated struct V2SessionTakeoverResponse: Decodable, Hashable {
     let session: V2SessionMeta
 }

@@ -56,7 +56,7 @@ def _make_connector(
     *,
     websocket_completed: threading.Event | None = None,
 ) -> tuple[TestClient, str, str]:
-    app: Any = create_app(tmp_path / "runtime-control-connection.sqlite3")
+    app: Any = create_app()
     if websocket_completed is not None:
         app = WebSocketCompletionProbe(app, websocket_completed)
     client = TestClient(app)

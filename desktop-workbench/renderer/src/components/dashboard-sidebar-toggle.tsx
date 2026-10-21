@@ -1,13 +1,11 @@
 "use client"
 
 import * as React from "react"
-import { PanelLeft } from "lucide-react"
 import { useTranslations } from "next-intl"
 
 import { useDashboardSidebarControls } from "@/components/dashboard-sidebar-controls"
-import { Button } from "@/components/ui/button"
+import { WorkspaceSidebarToggleButton } from "@/components/workspace-sidebar-toggle-button"
 import { useSidebar } from "@/components/ui/sidebar"
-import { cn } from "@/lib/utils"
 
 export function DashboardSidebarToggle({
   className,
@@ -32,15 +30,13 @@ export function DashboardSidebarToggle({
   if (!isMobile && !showOnDesktop) return null
 
   return (
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      type="button"
+    <WorkspaceSidebarToggleButton
+      side="left"
       aria-label={isExpanded ? tActions("collapse") : tActions("expand")}
+      aria-expanded={isExpanded}
+      data-slot="workspace-sidebar-toggle"
       onClick={toggleDashboardSidebar}
-      className={cn("shrink-0 text-muted-foreground hover:text-foreground", className)}
-    >
-      <PanelLeft data-icon="inline-start" />
-    </Button>
+      className={className}
+    />
   )
 }

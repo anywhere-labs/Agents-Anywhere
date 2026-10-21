@@ -60,10 +60,12 @@ class RuntimeProvider(ABC):
 
     @property
     def instance_policy(self) -> RuntimeInstancePolicy:
+        """Concurrency policy for running runtimes, not saved configurations."""
         return "single"
 
     @property
     def max_instances(self) -> int | None:
+        """Maximum simultaneously running instances, or None for no fixed cap."""
         return 1 if self.instance_policy == "single" else None
 
     async def discover(self) -> RuntimeTypeDescriptor:

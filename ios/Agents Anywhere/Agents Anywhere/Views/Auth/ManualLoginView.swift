@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 struct ManualLoginView: View {
-    @ObservedObject var appState: AppState
+    let appState: AppState
     @Environment(\.dismiss) private var dismiss
     @StateObject private var oauthLogin = OAuthLoginCoordinator()
     @State private var path: [ServerLoginRoute] = []
@@ -12,7 +12,7 @@ struct ManualLoginView: View {
     @State private var alertMessage: String?
     @State private var alertTitle = String(localized: "Sign In Failed")
 
-    private static let cloudServer = "https://web.agents-anywhere.com"
+    static let cloudServer = "https://web.agents-anywhere.com"
 
     var onDashboardRequested: () -> Void = {}
 

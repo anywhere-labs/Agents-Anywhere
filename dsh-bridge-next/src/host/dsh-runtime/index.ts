@@ -1,14 +1,16 @@
 import type { BridgeStatus } from '../../contracts/bridge-status.js'
-import { startupFailure } from './startup-status.js'
+import { startupFailure, startupFailureDiagnostic } from './startup-status.js'
 import { foldSessionTitle } from '@deepseek-ai/dsh-session-title'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session-query'
-import { homedir } from 'node:os'
-import { isAbsolute, join } from 'node:path'
-import { Config, stateRoot } from '../config.js'
-import { RuntimeServer } from './server.js'
+import { join } from 'node:path'
+import { bridgeDirectory, Config, legacyBridgeDirectory } from '../config.js'
+import { BridgeConnection } from './connection.js'
 import { NativeRuntime } from './native.js'
+import { RpcLogOutput } from './log-output.js'
+import { readBridgeLogs, readConnectorRuntimeLogs } from './log-reader.js'
+import type { ConnectorLogQuery, RuntimeLogPage, RuntimeLogQuery, StartupFailureDiagnostic } from '../../contracts/logs.js'
 import { RuntimeDiagnostics } from './diagnostics.js'
 
 declare module '@deepseek-ai/cordis' {
@@ -19,22 +21,29 @@ declare module '@deepseek-ai/cordis' {
 export class DshRuntimeService extends Service {
   static inject = ['sessions', 'sessionQuery', 'workspaceRegistry']
   static Config = Config
-  private server: RuntimeServer
-  private readonly makeServer: () => RuntimeServer
+  private server: BridgeConnection
+  private readonly makeServer: () => BridgeConnection
   private restartTask: Promise<BridgeStatus> | undefined
   private disposed = false
   private currentStatus: BridgeStatus = { state: 'starting', message: '正在启动本机连接…', hint: '', canRetry: false }
   status(): BridgeStatus { return { ...this.currentStatus } }
+  private startupFailureSnapshot: StartupFailureDiagnostic | null = null
+  startupDiagnostic(): StartupFailureDiagnostic | null {
+    return this.startupFailureSnapshot && { ...this.startupFailureSnapshot }
+  }
   private readonly diagnostics: RuntimeDiagnostics
+  private readonly logOutput = new RpcLogOutput()
   readonly native: NativeRuntime
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'agentsAnywhereRuntime')
-    const home = config.dshHome ?? process.env['DSH_HOME'] ?? join(homedir(), '.dsh')
-    if (!isAbsolute(home)) throw new Error('DSH_HOME must be an absolute path')
-    this.diagnostics = new RuntimeDiagnostics(ctx.logger('agents-anywhere-runtime'), join(stateRoot(config), 'logs'))
-    this.native = new NativeRuntime(ctx, join(home, 'agents-anywhere', 'bridge', 'create-intents'), this.diagnostics)
-    this.makeServer = () => new RuntimeServer(join(home, 'agents-anywhere', 'bridge', 'endpoint.json'), {
+    const bridge = bridgeDirectory()
+    const legacy = legacyBridgeDirectory(config)
+    this.diagnostics = new RuntimeDiagnostics(this.logOutput)
+    this.native = new NativeRuntime(ctx, join(bridge, 'create-intents'), this.diagnostics,
+      legacy && join(legacy, 'attachments', 'staging'))
+    // The Connector publishes its Router in connector.json; the plugin registers the Bridge on it.
+    this.makeServer = () => new BridgeConnection(join(bridge, 'connector.json'), {
       native: this.native,
       query: { listSessions: signal => this.native.inventory(signal), readSession: id => this.native.read(id),
         readTitleSnapshots: async (ids, signal) => {
@@ -51,18 +60,46 @@ export class DshRuntimeService extends Service {
           return results
         } },
       status: id => this.native.status(id),
-    }, this.diagnostics)
+    }, this.diagnostics, 1000, this.logOutput)
     this.server = this.makeServer()
     ctx.effect(() => async () => {
       this.disposed = true
       await this.restartTask
-      try { await this.server.close(); await this.native.close() }
-      finally { await this.diagnostics.flush() }
+      try { await this.native.close() }
+      finally { await this.server.close(); await this.diagnostics.flush() }
     }, 'agentsAnywhereRuntime.close')
   }
 
   async [Service.init](): Promise<void> {
     await this.restart()
+  }
+
+  hasLogConnection(): boolean { return Boolean(this.server.connectorInstance) }
+  get logsPath(): string | null { return this.server.logsPath }
+
+  async readRuntimeLogs(query?: RuntimeLogQuery, extraOutput?: RpcLogOutput): Promise<RuntimeLogPage> {
+    if (!this.hasLogConnection()) {
+      return {
+        available: false,
+        items: [],
+        firstSeq: null,
+        lastSeq: null,
+        total: 0,
+        hasMoreBefore: false,
+        hasMoreAfter: false,
+        logsPath: this.server.logsPath,
+        updatedAt: new Date().toISOString(),
+      }
+    }
+    return this.server.readRuntimeLogs(query, extraOutput)
+  }
+
+  async readBridgeLogs() {
+    if (!this.hasLogConnection()) return { entries: [], updatedAt: new Date().toISOString() }
+    return readBridgeLogs(await this.server.readLogs('bridge'))
+  }
+  async readConnectorLogs(query?: ConnectorLogQuery) {
+    return readConnectorRuntimeLogs(await this.server.readLogs('connector', query?.before, query?.after))
   }
 
   restart(): Promise<BridgeStatus> {
@@ -78,8 +115,10 @@ export class DshRuntimeService extends Service {
         await this.native.attachments.initialize()
         await this.server.start()
         this.currentStatus = { state: 'ready', message: '本机连接已就绪', hint: '', canRetry: false }
+        this.startupFailureSnapshot = null
       } catch (error) {
         this.currentStatus = startupFailure(error)
+        this.startupFailureSnapshot = startupFailureDiagnostic(error, 'bridge', 'bridge.restart_failed', this.currentStatus)
         this.diagnostics.log('error', 'bridge.restart_failed', { code: this.currentStatus.code }, error)
       }
       return this.status()

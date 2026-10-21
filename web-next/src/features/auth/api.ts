@@ -153,8 +153,23 @@ export class AuthApi {
     );
   }
 
-  sendEmailCode(email: string, purpose: "register" | "bind", token?: string, pendingToken?: string, setupToken?: string): Promise<{ expiresIn: number; retryAfter: number }> {
+  sendEmailCode(email: string, purpose: "register" | "bind" | "reset", token?: string, pendingToken?: string, setupToken?: string): Promise<{ expiresIn: number; retryAfter: number }> {
     return this.client.post("/auth/email-code", { email: normalizeEmail(email), purpose, ...(pendingToken ? { pendingToken } : {}), ...(setupToken ? { setupToken } : {}) }, { auth: false, token });
+  }
+
+  /** Resets a forgotten password with a code sent for purpose "reset". */
+  async resetPassword(body: { email: string; code: string; newPassword: string }): Promise<void> {
+    const created = await createPasswordVerifier(body.newPassword);
+    return this.client.post<void>(
+      "/auth/change-password",
+      {
+        email: normalizeEmail(body.email),
+        code: body.code,
+        newPasswordVerifier: created.passwordVerifier,
+        newPasswordSalt: created.passwordSalt,
+      },
+      { auth: false },
+    );
   }
 
   updateEmail(token: string, email: string, code?: string): Promise<AuthMe> {
@@ -173,8 +188,11 @@ export class AuthApi {
     return this.client.delete<AuthMe>("/auth/me/avatar", { token });
   }
 
-  listUsers(token: string): Promise<AdminUserListResponse> {
-    return this.client.get<AdminUserListResponse>("/admin/users", { token });
+  listUsers(token: string, page?: { limit: number; offset: number }): Promise<AdminUserListResponse> {
+    return this.client.get<AdminUserListResponse>("/admin/users", {
+      token,
+      ...(page ? { query: { limit: String(page.limit), offset: String(page.offset) } } : {}),
+    });
   }
 
   async createUser(
@@ -187,6 +205,7 @@ export class AuthApi {
       password?: string;
       passwordVerifier?: string;
       passwordSalt?: string;
+      skipEmailVerification?: boolean;
     },
   ): Promise<AdminUser> {
     const verifier =
@@ -203,6 +222,7 @@ export class AuthApi {
         ...(body.code ? { code: body.code } : {}),
         role: body.role,
         ...verifier,
+        ...(body.skipEmailVerification ? { skipEmailVerification: true } : {}),
       },
       { token },
     );
@@ -251,6 +271,7 @@ export class AuthApi {
     body: {
       registrationOpen?: boolean;
       oauthRegistrationOpen?: boolean;
+      passwordResetEnabled?: boolean;
       oauth?: OAuthProviderConfigUpdate;
       email?: EmailSettingsUpdate;
     },

@@ -88,7 +88,7 @@ class DshProvider(RuntimeProvider):
         )
         metadata.update(
             {
-                "protocolVersion": "1.0",
+                "protocolVersion": "2.0",
                 "storageMode": "dsh-native",
                 "sameSessionWriterLimit": 1,
                 "crossProcessWriterExclusion": False,
@@ -193,7 +193,7 @@ class DshProvider(RuntimeProvider):
         metadata = dict(result.metadata or {})
         metadata.update(
             {
-                "protocolVersion": "1.0",
+                "protocolVersion": "2.0",
                 "readOnly": not provider_config.dsh_capabilities(metadata.get("runtimeCapabilities"))["startTurn"],
                 "storageMode": "dsh-native",
                 "sameSessionWriterLimit": 1,
@@ -223,7 +223,7 @@ class DshProvider(RuntimeProvider):
     ) -> tuple[RuntimeResourceClaim, ...]:
         values = dict(config.values)
         dsh_home = str(provider_config.dsh_home(values))
-        endpoint = str(provider_config.endpoint_path(values))
+        endpoint = str(provider_config.endpoint_path())
         return (
             RuntimeResourceClaim(
                 kind="dsh_home",
@@ -240,7 +240,8 @@ class DshProvider(RuntimeProvider):
     def session_source_key(self, config: RuntimeConfig) -> RuntimeSourceKey:
         return RuntimeSourceKey(
             kind="dsh_bridge_endpoint",
+            # Keyed by the former endpoint path so existing session IDs stay stable.
             key=filesystem_resource_key(
-                provider_config.endpoint_path(dict(config.values))
+                provider_config.legacy_endpoint_path(dict(config.values))
             ),
         )

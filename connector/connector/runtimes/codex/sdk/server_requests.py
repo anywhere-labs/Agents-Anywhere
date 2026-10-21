@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from typing import Any
 
 from connector.logging import logger
@@ -9,8 +10,13 @@ from connector.logging import logger
 class DeferredServerRequestReader:
     """Keep Codex responses flowing while a server request waits for user input."""
 
-    def __init__(self, sync_client: Any) -> None:
+    def __init__(
+        self,
+        sync_client: Any,
+        notification_handler: Callable[[Any], bool] | None = None,
+    ) -> None:
         self._client = sync_client
+        self._notification_handler = notification_handler
 
     def run(self) -> None:
         try:
@@ -26,12 +32,14 @@ class DeferredServerRequestReader:
                 if "method" in message:
                     method = message["method"]
                     if isinstance(method, str):
-                        self._client._router.route_notification(
-                            self._client._coerce_notification(
-                                method,
-                                message.get("params"),
-                            )
+                        notification = self._client._coerce_notification(
+                            method, message.get("params")
                         )
+                        if (
+                            self._notification_handler is None
+                            or not self._notification_handler(notification)
+                        ):
+                            self._client._router.route_notification(notification)
                     continue
                 self._client._router.route_response(message)
         except BaseException as exc:
@@ -68,7 +76,9 @@ class DeferredServerRequestReader:
                 )
 
 
-def install_deferred_server_request_reader(client: Any) -> bool:
+def install_deferred_server_request_reader(
+    client: Any, notification_handler: Callable[[Any], bool] | None = None
+) -> bool:
     nested_client = getattr(client, "_client", None)
     sync_client = getattr(nested_client, "_sync", None)
     if sync_client is None:
@@ -82,5 +92,7 @@ def install_deferred_server_request_reader(client: Any) -> bool:
     )
     if any(not hasattr(sync_client, name) for name in required):
         return False
-    sync_client._reader_loop = DeferredServerRequestReader(sync_client).run
+    sync_client._reader_loop = DeferredServerRequestReader(
+        sync_client, notification_handler
+    ).run
     return True

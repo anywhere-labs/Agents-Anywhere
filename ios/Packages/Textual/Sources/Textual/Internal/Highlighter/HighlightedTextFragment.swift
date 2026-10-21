@@ -32,6 +32,12 @@ struct HighlightedTextFragment: View {
     TextFragment(model.highlightedCode ?? AttributedString(content))
       .foregroundStyle(theme.foregroundColor)
       .task(id: content) {
+        // A streaming code block changes with every published batch. Tokenizing
+        // the whole block through JavaScriptCore each time is wasted when the
+        // next batch cancels it; wait for the text to rest before re-highlighting.
+        if model.highlightedCode != nil {
+          do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+        }
         await model.tokenize(
           content: content,
           languageHint: languageHint

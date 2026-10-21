@@ -1,6 +1,6 @@
 import { windowMaterial } from "./window-material";
 import type { OwnershipState } from "./local-runtime";
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { DesktopUpdateState } from "../shared/desktop-updates";
 import { BACKEND_API_PREFIX, BACKEND_TOKEN_HEADER } from "./backend/protocol";
 import type {
@@ -146,6 +146,16 @@ function onEvent(name: string, listener: (data: unknown) => void): () => void {
 
 contextBridge.exposeInMainWorld("desktopWorkbench", {
   platform: process.platform,
+  files: {
+    droppedFolderPath: (file: File): Promise<string | null> => {
+      try {
+        const value = webUtils.getPathForFile(file);
+        return value ? ipcRenderer.invoke("workbench:files:droppedFolderPath", value) : Promise.resolve(null);
+      } catch {
+        return Promise.resolve(null);
+      }
+    },
+  },
   windowMaterial: windowMaterial(),
   window: {
     setTheme: (theme: "light" | "dark"): Promise<void> => ipcRenderer.invoke("workbench:window:setTheme", theme),
@@ -204,6 +214,7 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
     restart: (): Promise<ConnectorState> => api<ConnectorState>("/restart", { method: "POST", body: "{}" }),
     getLogs: (query?: ConnectorLogQuery): Promise<ConnectorLogPage> => {
       const search = new URLSearchParams();
+      if (query?.source !== undefined) search.set("source", query.source);
       if (query?.pageSize !== undefined) search.set("pageSize", String(query.pageSize));
       if (query?.beforeSeq !== undefined) search.set("beforeSeq", String(query.beforeSeq));
       if (query?.afterSeq !== undefined) search.set("afterSeq", String(query.afterSeq));

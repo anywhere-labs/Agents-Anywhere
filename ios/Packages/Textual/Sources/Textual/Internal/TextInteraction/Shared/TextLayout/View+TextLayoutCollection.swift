@@ -11,12 +11,17 @@
   // testing, position mapping, and selection rectangle computation.
 
   extension View {
+    /// When `isEnabled` is false the overlay stays in place but skips the geometry reader, so
+    /// moving text does not rebuild its layout collection every frame.
     func overlayTextLayoutCollection(
+      isEnabled: Bool = true,
       @ViewBuilder content: @escaping (any TextLayoutCollection) -> some View
     ) -> some View {
       overlayPreferenceValue(Text.LayoutKey.self) { value in
-        GeometryReader { geometry in
-          content(LiveTextLayoutCollection(base: value, geometry: geometry))
+        if isEnabled {
+          GeometryReader { geometry in
+            content(LiveTextLayoutCollection(base: value, geometry: geometry))
+          }
         }
       }
     }
