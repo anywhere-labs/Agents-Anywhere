@@ -56,13 +56,13 @@ test("projects with running sessions ignore high-frequency sortAt churn and use 
     { projectId: "proj-a", sortAt: aSortAt, status: "running" },
   ]
   assert.deepEqual(ids(sortProjectsBySessionActivity(projects, streams(time(11), time(20)))), ["proj-a", "proj-b", "older"])
-  assert.deepEqual(ids(sortProjectsBySessionActivity(projects, streams(time(32), time(31)))), ["proj-a", "proj-b", "older"])
+  assert.deepEqual(ids(sortProjectsBySessionActivity(projects, streams(time(22), time(21)))), ["proj-a", "proj-b", "older"])
 })
 
 test("a project leaves the running top group once none of its sessions is running", () => {
   const projects = [project("proj-a", time(10)), project("proj-b", time(9))]
   const sessions = [
-    { projectId: "proj-a", sortAt: time(30), status: "idle" },
+    { projectId: "proj-a", sortAt: time(20), status: "idle" },
     { projectId: "proj-b", sortAt: time(9), status: "running" },
   ]
   assert.deepEqual(ids(sortProjectsBySessionActivity(projects, sessions)), ["proj-b", "proj-a"])
