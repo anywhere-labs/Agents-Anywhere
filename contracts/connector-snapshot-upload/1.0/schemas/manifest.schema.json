@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "uploadId",
+    "sessionId",
+    "runtimeId",
+    "throughSeq",
+    "totalBytes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "uploadId": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "runtimeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "throughSeq": {
+      "type": "integer",
+      "minimum": -1,
+      "maximum": 9007199254740991
+    },
+    "totalBytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 268435456
+    }
+  }
+}

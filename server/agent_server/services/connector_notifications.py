@@ -310,7 +310,7 @@ class SessionNotificationHandler:
         session_id = params["sessionId"]
         external_session_id = params.get("externalSessionId")
         runtime, runtime_id = runtime_identity_from_params(params)
-        source_observation = _session_meta_source_observation(params, runtime)
+        source_observation = session_meta_source_observation(params, runtime)
         previous_session: SessionView | None = None
         try:
             if isinstance(external_session_id, str):
@@ -1359,7 +1359,7 @@ def _validated_session_source_observation(params: dict[str, Any]) -> dict[str, A
     }
 
 
-def _session_meta_source_observation(
+def session_meta_source_observation(
     params: dict[str, Any],
     runtime: str,
 ) -> dict[str, Any] | None:

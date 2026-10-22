@@ -34,10 +34,10 @@ def item(item_id="one", session_id="session"):
 
 def host():
     receiver = SimpleNamespace(publish_runtime_notifications=AsyncMock(), sync_state_write=AsyncMock(), runtime_health_update=AsyncMock())
-    async def snapshot(runtime, session_id, meta, items, **kwargs):
+    async def snapshot(runtime, session_id, meta, items, through_seq, **kwargs):
         await receiver.publish_runtime_notifications(runtime, [
             {"method": "session.meta.upsert", "params": {"sessionId": session_id, **meta}},
-            {"method": "timeline.sync", "params": {"sessionId": session_id, "externalSessionId": meta["externalSessionId"], "items": list(items), "complete": True}},
+            {"method": "timeline.sync", "params": {"sessionId": session_id, "externalSessionId": meta["externalSessionId"], "items": list(items), "complete": True, "snapshotSeq": through_seq}},
         ], **kwargs)
     receiver.publish_runtime_snapshot = snapshot
     return receiver
@@ -60,6 +60,7 @@ def test_snapshot_replacement_waits_for_complete_capture_and_preserves_empty_sna
             notices = receiver.publish_runtime_notifications.call_args.args[1]
             assert [n["method"] for n in notices] == ["session.meta.upsert", "timeline.sync"]
             assert notices[1]["params"]["complete"] is True
+            assert notices[1]["params"]["snapshotSeq"] == 12
             assert [i["id"] for i in notices[1]["params"]["items"]] == ["one", "two"]
             await begin_snapshot(relay, session_id="session", through_seq=0, meta={"externalSessionId": "native"})
             await relay.commit_snapshot()

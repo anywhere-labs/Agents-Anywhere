@@ -198,12 +198,12 @@ class RuntimeInstanceHost(RuntimeHostClient):
         return f"{self.connector_id}:{self.instance.runtime_type}:{namespace}"
 
     async def publish_runtime_snapshot(
-        self, runtime: str, session_id: str, meta: dict[str, Any], items: Iterable[dict[str, Any]],
+        self, runtime: str, session_id: str, meta: dict[str, Any], items: Iterable[dict[str, Any]], through_seq: int,
         *, runtime_id: str | None = None, on_progress: UploadProgress | None = None,
     ) -> None:
         self._validate_native_runtime(runtime)
         await self.base.publish_runtime_snapshot(
-            runtime, session_id, meta, items, runtime_id=self.instance.runtime_id, on_progress=on_progress,
+            runtime, session_id, meta, items, through_seq, runtime_id=self.instance.runtime_id, on_progress=on_progress,
         )
 
     async def publish_runtime_notifications(

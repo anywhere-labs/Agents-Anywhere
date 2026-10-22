@@ -53,7 +53,7 @@ class Harness:
         self.requests.append((method, params))
         return {"ok": True}
 
-    async def snapshot(self, runtime, session_id, meta, items, **kwargs):
+    async def snapshot(self, runtime, session_id, meta, items, through_seq, **kwargs):
         list(items)
         if self.failure is not None:
             raise self.failure

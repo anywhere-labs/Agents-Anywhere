@@ -16,7 +16,7 @@ SNAPSHOT_PAGE_BYTES = 8 * 1024 * 1024
 
 def snapshot_pages(
     runtime: str, runtime_id: str, session_id: str,
-    meta: dict[str, Any], items: Iterable[dict[str, Any]], *, page_bytes: int | None = SNAPSHOT_PAGE_BYTES,
+    meta: dict[str, Any], items: Iterable[dict[str, Any]], *, through_seq: int | None = None, page_bytes: int | None = SNAPSHOT_PAGE_BYTES,
 ) -> list[BinaryIO]:
     """Encode a complete snapshot into one or more ``/connector/ingest`` bodies.
 
@@ -46,6 +46,7 @@ def snapshot_pages(
                 body.write(b",")
             head = encode({"method": "timeline.sync", "params": {
                 **binding, "externalSessionId": meta["externalSessionId"], "complete": first,
+                **({"snapshotSeq": through_seq} if through_seq is not None else {}),
             }})
             # Leave the params object open to stream the items one at a time.
             body.write(head[:-2] + b',"items":[')
@@ -84,11 +85,11 @@ def snapshot_pages(
 
 def snapshot_body(
     runtime: str, runtime_id: str, session_id: str,
-    meta: dict[str, Any], items: Iterable[dict[str, Any]],
+    meta: dict[str, Any], items: Iterable[dict[str, Any]], through_seq: int,
 ) -> BinaryIO:
     """The whole snapshot as one request body."""
 
-    return snapshot_pages(runtime, runtime_id, session_id, meta, items, page_bytes=None)[0]
+    return snapshot_pages(runtime, runtime_id, session_id, meta, items, through_seq=through_seq, page_bytes=None)[0]
 
 
 def body_digest(body: BinaryIO) -> tuple[str, int]:

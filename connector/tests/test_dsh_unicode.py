@@ -72,7 +72,7 @@ def test_replace_lone_surrogates_keeps_well_formed_values():
 def test_snapshot_body_and_batch_encoding_never_raise_on_lone_surrogates():
     assert LONE.encode("utf-8", UTF8_REPLACE_LONE_SURROGATES) == REPLACED.encode("utf-8")
     body = snapshot_body(
-        "dsh", "rti", "session", {"externalSessionId": "ext", "title": LONE}, [{"id": "i", "content": {"text": LONE}}],
+        "dsh", "rti", "session", {"externalSessionId": "ext", "title": LONE}, [{"id": "i", "content": {"text": LONE}}], 12,
     )
     try:
         parsed = json.loads(body.read().decode("utf-8"))

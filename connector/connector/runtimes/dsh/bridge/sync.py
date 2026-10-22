@@ -224,7 +224,7 @@ class SyncRelay:
     async def deliver_snapshot(self, session_id: str, snapshot: dict[str, Any]) -> None:
         meta = snapshot["meta"]
         try:
-            await self.host.publish_runtime_snapshot("dsh", session_id, meta, self.iter_items())
+            await self.host.publish_runtime_snapshot("dsh", session_id, meta, self.iter_items(), snapshot["throughSeq"])
         except (ConnectorIngestRejectedError, httpx.HTTPStatusError) as error:
             if isinstance(error, httpx.HTTPStatusError) and not 400 <= error.response.status_code < 500:
                 raise

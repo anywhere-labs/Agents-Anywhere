@@ -1,19 +1,23 @@
-# DSH 大历史上传的 Connector 内存
+# DSH 快照的持久化分块上传
 
-Bridge 原来已在超过 8 MiB 时把页面写入 spool，但上传时仍将整个 spool 读回列表，再生成完整 JSON 字符串和 bytes，导致大历史重新占用多份内存。
+## 与现有主线的区别
 
-现在提交时逐页读取，逐条编码到临时 JSON 文件，再以 64 KiB 块发送既有 `/connector/ingest` 请求。实例绑定、turn 字段过滤和完整快照的提交语义保持不变。认证重试从文件开头重读；成功、失败和取消都关闭临时文件。
+#332 已经解决超过 8 MiB 的 HTTP 请求体限制，使用“第一页替换、后续页追加”的分页上传；后续页在同次调用内可重试。#353 将 DSH → Connector 的捕获改成 `aa.dsh.v2.Sync.ingestSnapshot` 客户端流。这两项都没有持久化尚未完成的上传位置；Connector/Server 重启后需要重新上传，且分页期间正式时间线只有部分历史。
 
-这是 Connector 内部优化，没有新增 Server API、数据库表或分块续传协议。断开连接后仍会重传整个 HTTP 请求；已提交历史的位置仍由既有 checkpoint 保存。
+本次保留 #353 的客户端流、Connector 的 spool 和逐条编码方式，只更换 Connector → Server 的快照传输：完整 JSON 写入临时文件，以 SHA-256 标识，同一正文按 256 KiB 分块持久化到 Server。重新捕获得到相同正文时，begin 返回已保存块号，Connector 只发送缺块；最后一次性确认并替换完整历史。每块请求独立且小于旧分页上限，不需要先发布第一页来腾出内存。
 
-自动化验证 512 条 Unicode 消息合成超过 32 MiB 的正文：逐条生成输入的编码与哈希阶段 Python 分配峰值低于 2 MiB。该测量不包含原生投影、Bridge 页缓存和 item ID 去重集合，也不是操作系统 RSS。
+## 成功与失败
 
-同规模约 32.2 MiB spool 的独立 Python 3.12 进程对比中，提交阶段 Python 分配峰值由约 75.5 MiB 降到 8.4 MiB，进程峰值 RSS 由约 151 MiB 降到 92.7 MiB。实际 Relay 仍会加载一页，包含最初最多 8 MiB 的缓存页。该合成样本不代表所有生产历史；Server 仍完整解析 JSON，不能据此宣称端到端内存有界。
+- begin、chunk、commit 端点与状态见 `contracts/connector-snapshot-upload/1.0/`。
+- 分块落库才确认，完整快照提交后才返回 `Sync.ingestSnapshot.accepted`，允许 Bridge 推进 checkpoint。
+- 元数据、完整时间线、完成 receipt 和暂存清理在同一数据库事务中提交。校验失败、写入失败或提交前取消时保留旧历史与已确认块。
+- 最终响应丢失后，begin/commit 根据 receipt 返回已完成，不再次替换历史。事件在事务提交后发布，沿用会话 revision fence 的恢复边界。
+- 使用新流请求已有的 `throughSeq`，按 Connector/runtime/session 保留版本水位，拒绝更旧上传。没有恢复旧 JSON-RPC Bridge 或增加本机协议。
 
-## 分页上传
+Server 与 Connector 需同时升级至 2.2.0；客户端查看会话的接口不变。数据库新增 v2_45，不修改主线已有的 v2_42～v2_44。
 
-完整快照编码后超过 8 MiB（`SNAPSHOT_PAGE_BYTES`）时，Connector 按条目边界把它切成若干页，每页是一个独立的 `/connector/ingest` 请求体：第一页带 `session.meta.upsert` 并以 `complete: true` 整体替换时间线，之后各页以 `complete: false` 追加剩余条目。Server 不需要知道分页：条目按 `orderSeq` 升序到达，而 Server 对比已有最大值更大的新条目原样保留它的 `orderSeq`，所以逐页追加得到的时间线和单请求一样；被撤回的条目在第一页替换时就已清掉。8 MiB 以内的快照仍是一个请求，行为不变。
+## 保留期限与边界
 
-这个"事务"不是原子的：第一页被接受到最后一页落库之间，Server 上该会话只有前面的部分。Connector 尽量缩短这个窗口——全部页先编码到本地临时文件再开始发送、各页在同一连接上连续发出、第二页起的瞬时失败（网络、5xx、408/429）只重试当前页（最多 3 次、0.5 秒起退避），后面的页不重发，永远不再发第一页（它会删掉已追加的条目）；第一页失败和单请求快照一样立即失败，走原来的重订阅路径——那时 Server 上什么都还没替换。重试用尽时抛出网络错误，走原来的重订阅路径重新捕获；4xx 或 `rejected` 立即失败，按会话隔离。快照提交的返回（2.1.0 起为 `aa.dsh.v2.Sync.ingestSnapshot` 的返回值）与检查点仍只在最后一页被接受后才产生。
+暂存块及完成 receipt 保留 24 小时，begin、Server 启动及每小时清理。最高版本水位不随暂存过期删除。单份上传上限 256 MiB，每 Connector 上限 512 MiB/32 份未完成上传。
 
-代理的请求体上限只需 ≥ 8 MiB。
+恢复仍需重新捕获并编码；只有正文完全相同才能复用已有块，历史、元数据或观察时间改变都会产生新摘要。receipt 过期后同一版本会重新传输，不承诺无限期幂等。Connector 保留临时文件编码和 Unicode 清理；Server 最终仍完整解析 JSON，不能声称端到端内存有界。未完成真实 DSH Desktop 和物理断网验证时，不能以故障注入测试替代该结论。

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any
 
 from connector.core.json_kv import JsonKeyValueStore
@@ -32,7 +32,7 @@ class RuntimeHostClient(ABC):
         return JsonKeyValueStore.default()
 
     async def publish_runtime_snapshot(
-        self, runtime: str, session_id: str, meta: dict[str, Any], items: Iterable[dict[str, Any]],
+        self, runtime: str, session_id: str, meta: dict[str, Any], items: Iterable[dict[str, Any]], through_seq: int,
         runtime_id: str | None = None, on_progress: UploadProgress | None = None,
     ) -> None:
         raise NotImplementedError("Snapshot ingestion is unavailable")

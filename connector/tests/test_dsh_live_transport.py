@@ -24,7 +24,7 @@ def backend_client(tmp_path):
         agent_runtime_providers=(),
     )
     client._ingest.ingest_notifications = AsyncMock()
-    async def snapshot(runtime, runtime_id, session_id, meta, items, **kwargs):
+    async def snapshot(runtime, runtime_id, session_id, meta, items, through_seq, **kwargs):
         await client._ingest.ingest_notifications([
             {"method": "session.meta.upsert", "params": {"sessionId": session_id, **meta, "runtime": runtime, "runtimeId": runtime_id}},
             {"method": "timeline.sync", "params": {"sessionId": session_id, "items": list(items), "complete": True, "runtime": runtime, "runtimeId": runtime_id}},

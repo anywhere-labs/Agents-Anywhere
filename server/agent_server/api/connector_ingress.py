@@ -7,7 +7,7 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Annotated, Any
 
 from anyio import CancelScope
 from fastapi import (
@@ -32,6 +32,11 @@ from agent_server.core.models import (
     ConnectorAuthResponse,
     ConnectorIngestRequest,
     ConnectorIngestResponse,
+)
+from agent_server.core.snapshot_upload import (
+    CHUNK_BYTES,
+    SnapshotUploadError,
+    SnapshotUploadManifest,
 )
 from agent_server.deps import (
     get_attachment_service,
@@ -71,6 +76,7 @@ from agent_server.services.runtime_ingress import (
     notification_runtime_id,
     runtime_notification_is_allowed,
 )
+from agent_server.services.snapshot_uploads import SnapshotUploadService
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 from agent_server.services.usage_events import connector_online_event
 
@@ -445,6 +451,57 @@ async def connector_ingest(
                 status_code=400,
                 detail={"code": exc.code, "message": exc.message},
             ) from exc
+
+
+@router.post("/connector/ingest/uploads")
+async def begin_snapshot_upload(
+    payload: SnapshotUploadManifest, db: Annotated[Store, Depends(get_store)],
+    authorization: str = Header(..., alias="Authorization"),
+) -> dict:
+    connector_id = _access_token_connector_id(authorization)
+    async with db.connector_lifecycle(connector_id):
+        await _require_active_connector(authorization, db)
+        try:
+            return await db.begin_snapshot_upload(connector_id, payload)
+        except SnapshotUploadError as exc:
+            raise HTTPException(exc.status, detail=str(exc)) from exc
+
+
+@router.put("/connector/ingest/uploads/{upload_id}/chunks/{index}")
+async def put_snapshot_chunk(
+    upload_id: str, index: int, request: Request,
+    db: Annotated[Store, Depends(get_store)],
+    authorization: str = Header(..., alias="Authorization"),
+) -> dict:
+    connector_id = _access_token_connector_id(authorization)
+    async with db.connector_lifecycle(connector_id):
+        await _require_active_connector(authorization, db)
+        body = bytearray()
+        async for part in request.stream():
+            if len(body) + len(part) > CHUNK_BYTES:
+                raise HTTPException(413, detail="Snapshot chunk is too large")
+            body.extend(part)
+        try:
+            await db.put_snapshot_chunk(connector_id, upload_id, index, bytes(body))
+        except SnapshotUploadError as exc:
+            raise HTTPException(exc.status, detail=str(exc)) from exc
+        return {"received": True}
+
+
+@router.post("/connector/ingest/uploads/{upload_id}/commit")
+async def commit_snapshot_upload(
+    upload_id: str, db: Annotated[Store, Depends(get_store)],
+    authorization: str = Header(..., alias="Authorization"),
+) -> dict:
+    connector_id = _access_token_connector_id(authorization)
+    async with db.connector_lifecycle(connector_id):
+        await _require_active_connector(authorization, db)
+        try:
+            return await SnapshotUploadService(db).commit(connector_id, upload_id)
+        except SnapshotUploadError as exc:
+            raise HTTPException(exc.status, detail=str(exc)) from exc
+        except NotificationValidationError as exc:
+            raise HTTPException(400, detail={"code": exc.code, "message": exc.message}) from exc
 
 
 @router.get("/connector/sessions/{session_id}/attachments/{file_id}/content")

@@ -85,12 +85,12 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         return self._runtime_storage.flush() if self._runtime_storage is not None else False
 
     async def publish_runtime_snapshot(
-        self, runtime: str, session_id: str, meta: dict[str, Any], items: Iterable[dict[str, Any]],
+        self, runtime: str, session_id: str, meta: dict[str, Any], items: Iterable[dict[str, Any]], through_seq: int,
         *, runtime_id: str | None = None, on_progress: UploadProgress | None = None,
     ) -> None:
         if self._ingest_snapshot is None:
             raise RuntimeError("Snapshot ingestion is unavailable")
-        await self._ingest_snapshot(runtime, runtime_id or runtime, session_id, meta, items, on_progress=on_progress)
+        await self._ingest_snapshot(runtime, runtime_id or runtime, session_id, meta, items, through_seq, on_progress=on_progress)
 
     async def publish_runtime_notifications(
         self, runtime: str, notifications: list[dict[str, Any]], *, runtime_id: str | None = None,
