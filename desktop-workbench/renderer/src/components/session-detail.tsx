@@ -973,55 +973,63 @@ export function SessionDetail({
               sessionId,
               cursorSequence(recovery.nextCursor),
             )
-            if (shouldReadLiveCapabilities) {
-              // Split the queue before starting the live read. On success,
-              // only capability projections older than that boundary are
-              // superseded; updates arriving during the request stay queued.
-              const bufferedBeforeLiveRead = bufferedEvents
-              bufferedEvents = []
-              try {
-                const liveCapabilities = await dashboardApi.getSessionRuntimeCapabilities(
-                  token,
-                  sessionId,
-                )
-                if (cancelled) {
-                  bufferedEvents = bufferedEventsAfterLiveCapabilityRead(
-                    bufferedBeforeLiveRead,
-                    bufferedEvents,
-                    false,
-                  )
-                  return
-                }
-                bufferedEvents = bufferedEventsAfterLiveCapabilityRead(
-                  bufferedBeforeLiveRead,
-                  bufferedEvents,
-                  true,
-                )
-                renderBuffer.flush()
-                setState((current) => {
-                  if (!current) return current
-                  const nextCapabilities = mergeEffectiveCapabilities(
-                    current.effectiveCapabilities,
-                    liveCapabilities.capabilitySet,
-                  )
-                  return nextCapabilities === current.effectiveCapabilities
-                    ? current
-                    : {
-                        ...current,
-                        effectiveCapabilities: nextCapabilities,
-                        serverTime: liveCapabilities.serverTime,
-                      }
-                })
-              } catch {
-                bufferedEvents = bufferedEventsAfterLiveCapabilityRead(
-                  bufferedBeforeLiveRead,
-                  bufferedEvents,
-                  false,
-                )
-                // Keep the last live/snapshot value instead of replacing it
-                // with a potentially older persisted recovery projection.
-              }
-            }
+            // Runtime state is not recovered by /events. Read it even when
+            // offline so the Server can return its last cached/persisted fact.
+            // Keep events received during these reads queued until both settle.
+            const bufferedBeforeLiveRead = bufferedEvents
+            bufferedEvents = []
+            const liveReadConnection = connectionSequence
+            const [stateResult, capabilitiesResult] = await Promise.allSettled([
+              dashboardApi.getSessionRuntimeState(token, sessionId),
+              shouldReadLiveCapabilities
+                ? dashboardApi.getSessionRuntimeCapabilities(token, sessionId)
+                : Promise.resolve(null),
+            ])
+            if (cancelled) return
+            const liveReadIsCurrent = liveReadConnection === connectionSequence
+            const liveState = liveReadIsCurrent && stateResult.status === "fulfilled"
+              ? stateResult.value
+              : null
+            const liveCapabilities = liveReadIsCurrent && capabilitiesResult.status === "fulfilled"
+              ? capabilitiesResult.value
+              : null
+            bufferedEvents = bufferedEventsAfterLiveCapabilityRead(
+              liveState
+                ? bufferedBeforeLiveRead.filter((event) => event.type !== "runtime.state.updated")
+                : bufferedBeforeLiveRead,
+              bufferedEvents,
+              liveCapabilities !== null,
+            )
+            renderBuffer.flush()
+            setState((current) => {
+              if (!current || current.session.id !== sessionId) return current
+              // Include facts received before the read in its version check.
+              // Other buffered domains (including refetch signals) keep their
+              // existing ordering and are drained after recovery is released.
+              const stateBeforeRead = bufferedBeforeLiveRead.reduce(
+                (latest, event) => event.type === "runtime.state.updated" && event.sessionId === sessionId
+                  ? mergeRuntimeState(
+                      latest,
+                      readPayloadValue<SessionRuntimeState>(event.payload.state),
+                      sessionId,
+                    )
+                  : latest,
+                current.state,
+              )
+              const nextRuntimeState = mergeRuntimeState(stateBeforeRead, liveState?.state, sessionId)
+              const nextCapabilities = mergeEffectiveCapabilities(
+                current.effectiveCapabilities,
+                liveCapabilities?.capabilitySet ?? null,
+              )
+              return nextRuntimeState === current.state && nextCapabilities === current.effectiveCapabilities
+                ? current
+                : {
+                    ...current,
+                    state: nextRuntimeState,
+                    effectiveCapabilities: nextCapabilities,
+                    serverTime: liveState?.serverTime ?? liveCapabilities?.serverTime ?? current.serverTime,
+                  }
+            })
           })
           .catch(() => refetch(`${reason}:recovery-failed`))
         recoveryPromise = settleSessionEventRecovery(
@@ -2567,12 +2575,7 @@ function mergeSessionEvent(
       acceptsRuntimeState,
     })
   }
-  const nextRuntimeState =
-    acceptsRuntimeState &&
-    runtimeState &&
-    !runtimeStatesSemanticallyEqual(current.state ?? null, runtimeState)
-      ? runtimeState
-      : current.state
+  const nextRuntimeState = mergeRuntimeState(current.state, runtimeState, current.session.id)
   const nextEffectiveCapabilities = mergeEffectiveCapabilities(
     current.effectiveCapabilities,
     capabilitySet,
@@ -2703,6 +2706,21 @@ function sessionSemanticallyEqual(left: SessionView, right: SessionView): boolea
     runtimeSettings: right.runtimeSettings,
     runtimeSettingsOverride: right.runtimeSettingsOverride,
   })
+}
+
+function mergeRuntimeState(
+  current: SessionRuntimeState | null | undefined,
+  incoming: SessionRuntimeState | null | undefined,
+  sessionId: string,
+): SessionRuntimeState | null | undefined {
+  if (!incoming || incoming.sessionId !== sessionId || incoming.updatedSeq < (current?.updatedSeq ?? 0)) {
+    return current
+  }
+  // Even identical facts must advance the version watermark. Otherwise a
+  // later, older observation could replace them with different facts.
+  return current && incoming.updatedSeq === current.updatedSeq && runtimeStatesSemanticallyEqual(current, incoming)
+    ? current
+    : incoming
 }
 
 function runtimeStatesSemanticallyEqual(

@@ -91,9 +91,15 @@ Use `runtime.state.updated`, `runtime.capability.updated`,
 - Server returns `snapshotRequired=true` only when durable meta/timeline
   recovery is explicitly impossible.
 - Client pulls snapshot only for initial load or `snapshotRequired=true`.
-- Runtime state and catalogs are not recovered from Server DB. After reconnect,
-  Web calls the relevant runtime live endpoint if it needs current state or
-  catalogs.
+- Runtime state and catalogs are not recovered from Server DB. After the
+  initial session subscription and reconnect, Web and Desktop read
+  `GET /sessions/{sessionId}/runtime/state` after successful event recovery.
+  This read also runs when the connector is offline, using the endpoint's
+  cached/persisted fallback. Older runtime-state revisions are ignored; events
+  received before the live read participate in its version check, while events
+  received during the read are applied afterwards. Failed live reads retain
+  the existing state and buffered events. Catalogs use their runtime live
+  endpoints when needed.
 - Runtime notices are recovered when Server has a sequence-backed projection.
   Session meta and the latest persisted effective capability projection are
   also returned when recovery starts at the current cursor, because presence
