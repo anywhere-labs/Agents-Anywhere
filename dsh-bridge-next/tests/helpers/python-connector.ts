@@ -19,8 +19,12 @@ export async function recordConnectorId(home: string, id: string): Promise<void>
 export function launchConnector(home: string, kind: string, mode: 'rpc' | 'start' = 'rpc') {
   const hook = join(home, 'test-python')
   mkdirSync(hook, { recursive: true })
-  const code = `import asyncio, os, sys
+  const code = `import asyncio, os, sys, json
 from pathlib import Path
+# The venv launcher adds an intermediate process on some platforms (uv on
+# Windows), so the pid Node spawned is not always the interpreter that claims
+# ownership. Report the claiming pid instead of assuming they are the same.
+print(json.dumps({'kind': 'test.python-pid', 'pid': os.getpid()}), flush=True)
 from connector.core import runtime_owner
 runtime_owner.system_home=lambda:Path(os.environ['AA_TEST_CONNECTOR_HOME'])
 from connector.server.client import BackendRpcClient
@@ -40,6 +44,8 @@ BackendRpcClient.run_forever=fake_backend
   })
   let buffer = '', stderr = ''
   let mesh: Mesh | undefined
+  let resolvePid!: (pid: number) => void
+  const claimingPid = new Promise<number>(resolve => { resolvePid = resolve })
   let resolveReady!: (client: ControlServiceClient) => void
   let rejectReady!: (error: Error) => void
   const ready = new Promise<ControlServiceClient>((resolve, reject) => { resolveReady = resolve; rejectReady = reject })
@@ -52,8 +58,9 @@ BackendRpcClient.run_forever=fake_backend
     let end: number
     while ((end = buffer.indexOf('\n')) !== -1) {
       const line = buffer.slice(0, end); buffer = buffer.slice(end + 1)
-      let value: { kind?: string, endpoint?: { unixPath?: string, pipe?: string }, key?: string }
+      let value: { kind?: string, pid?: number, endpoint?: { unixPath?: string, pipe?: string }, key?: string }
       try { value = JSON.parse(line) } catch { continue }
+      if (value.kind === 'test.python-pid' && typeof value.pid === 'number') { resolvePid(value.pid); continue }
       if (value.kind !== 'connector.ready' || !value.endpoint || typeof value.key !== 'string') continue
       const endpoint = value.endpoint.unixPath ? { unixPath: value.endpoint.unixPath } : { pipe: value.endpoint.pipe ?? '' }
       void (async () => {
@@ -70,6 +77,8 @@ BackendRpcClient.run_forever=fake_backend
   child.on('exit', () => fail(new Error(`Connector exited: ${stderr}`)))
   return {
     child,
+    /** Pid of the interpreter that claims ownership, which a venv launcher can differ from. */
+    pid: () => claimingPid,
     get stderr() { return stderr },
     async request(method: string, params?: unknown): Promise<any> {
       const client = await ready

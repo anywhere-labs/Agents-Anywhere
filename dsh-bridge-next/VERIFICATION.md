@@ -1,5 +1,22 @@
 # DSH Bridge Next 验证记录
 
+## DSH 0.2.1-rc.2 测试基线（2026-10-19）
+
+整套 `@deepseek-ai/*` 开发依赖升级到 `0.2.1-rc.2`，并按 0.2.1 生态对齐 Cordis 三件套（`cordis-plugin-group` 1.0.5、`cordis-plugin-include` 1.0.10、`cordis-plugin-loader` 1.0.6），新增官方 `@deepseek-ai/dsh-api-remote-access`；`@deepseek-ai/dsh-invariants` 在 0.2.1 线没有发布版本（`YN0082`），且源码、测试、脚本中零引用，予以删除。插件源码 `src/**` 未改动——生产路径对 0.2.1 的适配仍由 #339 承担（`client-connection` 的本地 owner 从 `operator` 改名为 `browserPeer`）。安装时会保留 `@deepseek-ai/dsh-working-directory` 的 peer 未满足提示（由官方 `dsh-api-session-controller` 请求，0.2.1 依赖线本身如此），不影响类型检查、构建与测试。
+
+测试侧跟进 0.2.1 的变更：`@deepseek-ai/dsh-session-persistence-jsonl` 取消默认导出，`tests/fixtures/command-runtime.ts` 与 `tests/benchmarks/startup.ts` 改用命名空间导入加 `Reflect.get(..., 'default')`（仓库原有 `native-runtime.ts` 的写法）；0.2.1 的官方 Gateway 与 SessionController 都注入 `remoteAccess` 服务，`gateway`、`agent-runtime` 夹具在存在该包时条件加载；0.2.1 的 `invoke()` 要求显式活着的 owner Peer，`gateway` 与 `runtime-startup` 夹具传入 `browserPeer ?? operator`；`Include` 的路径改用 `pathToFileURL`，修掉 Windows 本地既有的 `ERR_INVALID_URL_SCHEME`（0.2.0 下同样存在）。本改动最初还包含把 `runtime-recovery` 夹具的请求超时从 100 ms 提到 2 s；`main` 的 #353（MeshCall 0.3.0 迁移）已用 MeshCall 重写该用例，故该项随变基去掉。
+
+复核在 `main` 的最新提交上重做（先 `3edd3df` 2.2.0 / MeshCall 0.3.0，再变基到当前的 `origin/main`）：`corepack yarn check` 的类型检查、构建、产物检查全部通过，命令整体 exit 0；测试为 **201 项 / 通过 198 / 失败 0 / 跳过 3**。跳过的 3 项 = 2 项缺 `AGENT_SERVER_TEST_DB_URL` 的 PostgreSQL 活体探针 + 1 项待官方修复的 Gateway 注销用例（见下）。对照口径（在 `3edd3df` 上测）——只把依赖装到 0.2.1 而不带本次测试侧改动（`main` 的测试 + 已安装的 0.2.1 依赖）为 **192 / 161 / 29**；#353 之前的旧基线分别是 206 / 177 / 29（0.2.0 依赖）与 198 / 165 / 33（整体升级）。此前记录的两项失败处理如下：
+
+- `tests/integration/local-ownership.test.ts` —— **已修**。原先记作「Python Connector pid 竞争」是错的：`connector/core/runtime_owner.py:152` 写入的是 `os.getpid()`，而 uv 在 Windows 上创建的 venv `connector\.venv\Scripts\python.exe` 是转发器进程，Node `spawn` 得到的 pid 与解释器自报 pid 相差两万多（实测 `25364` 对 `42244`）；Linux 上 venv 的 python 是符号链接，两者相同，所以 CI 从未因此变红。夹具现在让解释器启动时打印 `{"kind":"test.python-pid","pid":os.getpid()}`，用例断言 state 文件里的 pid 等于「真正持有租约的解释器 pid」，而不是 spawn 出来的转发器 pid。同一用例末尾「前台 CLI 退出后记录必须消失」也只在 POSIX 成立：Windows 无法向另一个进程投递 SIGINT，`child.kill('SIGINT')` 实际是 TerminateProcess，连接器不会走 release 路径，因此改为断言残留记录不指向活进程（`process.kill(pid, 0)` 抛 `ESRCH`），沿用其它用例已经依赖的陈旧记录处理路径。超时 20 s 提到 60 s，因为该用例要先后拉起 3 次真实 Python 解释器，并行跑全量时会超时。
+- `tests/integration/user-questions.test.ts` 的 `typert gateway: forwarded Remote event source was removed` —— **按条件跳过**，跟踪在 #359。该错误由官方 `dsh-api-gateway` 的注销 disposer 构造（`lib/index.js:866-874`：`registration.lifetime.abort(error)` + `closeRemoteEvents(error)`，事件源由官方 `dsh-api-remotes` 注册），插件 `src/**` 从不调用 `registerRemoteEvents`。实测它发生在夹具 teardown 之后、以未处理拒绝的形式逃逸，node:test 会把它算到该用例上；夹具侧两次屏蔽（显式 `iterator.return()`、提前结束用例）都无效，只能等官方包修。
+
+跳过 2 项是缺 `AGENT_SERVER_TEST_DB_URL` 的 PostgreSQL 活体探针。另有 1 项偶发：`tests/unit/storage.test.ts` 的「记录被顶替」用例在三次运行中偶发一次把丢失回调计成 2 次（`2 !== 1`），与本次改动无关，记录在此待后续单独处理。
+
+`devDependencies` 全部落到 0.2.1-rc.2 之后，**0.2.0 只作为已发布的历史声明保留，不再纳入验证矩阵**：0.2.0 的基线数据留档在上面的对照口径里，若还要 0.2.0 的结论必须临时降级依赖重跑，不要拿本文档当 0.2.0 的验收记录。
+
+未做：PostgreSQL 活体后端下的探针链路；把 `tests/**` 纳入类型检查（纳入后会因 `desktop-workbench/electron/**` 的 CJS 边界产生 195 条错误，需另开改动）；DSH Desktop / Windows / 手机实机验收。另注：在 Windows 上并行跑全量时，`tests/unit/desktop-process.test.ts` 的两个真实进程查询用例会因 PowerShell / WMI 负载返回 `error`（单文件跑通过，CI 在 ubuntu 上走 `ps`，不受影响）；本机绿灯取自无其它负载时的完整 `corepack yarn check`。安装路径与握手在官方 DSH Desktop `0.2.1-rc.2` 上的复核记录见 #346。
+
 ## DSH 0.2.0-rc.2 与版本声明统一（2026-09-30）
 
 DSH 开发依赖统一升级到 `0.2.0-rc.2`；Typert peer 从精确的 `0.2.0-rc.1` 改为范围 `>=0.2.0-rc.1 <0.3.0-0`。DSH 0.2.0-rc.2 起在安装和 profile 启动时按 DSH peer 检查插件，精确版本会让后续 rc 拒绝加载插件。握手上报的 `runtimeVersion` 与 `bridgeVersion` 改为运行时读取，不再写死。兼容旧版 DSH 的代码分支不变。

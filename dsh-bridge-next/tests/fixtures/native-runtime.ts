@@ -96,7 +96,7 @@ export async function nativeRuntime(home: string, beforeHost?: (ctx: Context) =>
       if (entry.name === '@agents-anywhere/dsh-bridge-next') entry.name = new URL('../../lib/index.js', import.meta.url).href
     }
     const plugin = ctx.get('loader')
-      ? ctx.plugin(Include, { path: join(home, 'test-host.cordis.yml'), initial: [], patches: [
+      ? ctx.plugin(Include, { path: pathToFileURL(join(home, 'test-host.cordis.yml')).href, initial: [], patches: [
         ...patches, { id: 'agents-anywhere-bridge-next', config },
       ] }) : ctx.plugin(host, config)
     await plugin.await()
