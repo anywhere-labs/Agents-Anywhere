@@ -449,10 +449,13 @@ class SessionRepositoryMixin:
                 )
             ).first()
             if existing is None:
-                project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                project_id, normalized_cwd = await self._resolve_runtime_session_project(
                     conn,
                     connector_id=connector_id,
+                    runtime_id=runtime_id,
+                    external_session_id=external_session_id,
                     workspace_path=cwd,
+                    runtime=runtime,
                     now=now,
                 )
                 await conn.execute(
@@ -525,10 +528,13 @@ class SessionRepositoryMixin:
                     values["title"] = title
                     values["title_source"] = TITLE_SOURCE_CONNECTOR
                 if cwd is not None or current.project_id is None:
-                    project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                    project_id, normalized_cwd = await self._resolve_runtime_session_project(
                         conn,
                         connector_id=connector_id,
+                        runtime_id=runtime_id,
+                        external_session_id=external_session_id or current.external_session_id,
                         workspace_path=cwd or current.cwd,
+                        runtime=runtime,
                         now=now,
                     )
                     values["project_id"] = project_id
@@ -1743,6 +1749,7 @@ class SessionRepositoryMixin:
         last_activity_at: str | None = None,
         mark_read_on_change: bool = False,
         source_state: str | None = None,
+        resolve_workspace: bool = False,
     ) -> SessionView:
         values: dict[str, Any] = {}
         if status is not None:
@@ -1773,6 +1780,7 @@ class SessionRepositoryMixin:
                         sessions_t.c.last_activity_at,
                         sessions_t.c.source_state,
                         sessions_t.c.runtime,
+                        sessions_t.c.runtime_id,
                         sessions_t.c.archived,
                         sessions_t.c.dsh_archive_legacy,
                     ).where(sessions_t.c.id == session_id)
@@ -1787,11 +1795,14 @@ class SessionRepositoryMixin:
             ):
                 values["title"] = title
                 values["title_source"] = TITLE_SOURCE_CONNECTOR
-            if cwd is not None or row.project_id is None:
-                project_id, normalized_cwd = await self._ensure_project_for_workspace(
+            if resolve_workspace or cwd is not None or row.project_id is None:
+                project_id, normalized_cwd = await self._resolve_runtime_session_project(
                     conn,
                     connector_id=row.connector_id,
+                    runtime_id=row.runtime_id,
+                    external_session_id=external_session_id or row.external_session_id,
                     workspace_path=cwd if cwd is not None else row.cwd,
+                    runtime=row.runtime,
                 )
                 values["project_id"] = project_id
                 values["cwd"] = normalized_cwd

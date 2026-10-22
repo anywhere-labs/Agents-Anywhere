@@ -548,6 +548,9 @@ class RuntimeInstance(AgentRuntime):
     def supports_complete_session_inventory(self) -> bool:
         return self.native_runtime.supports_complete_session_inventory()
 
+    async def workspace_inventory(self) -> dict[str, Any] | None:
+        return await self.native_runtime.workspace_inventory()
+
     async def get_session_snapshot(
         self,
         session_id: str,

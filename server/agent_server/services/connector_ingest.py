@@ -261,6 +261,9 @@ class ConnectorIngestService:
                 )
                 if not effect.timeline_pending:
                     bucket["deferred_timeline_only"] = False
+                if effect.session_id != session_id and effect.needs_refetch:
+                    bucket["refetch"] = True
+                    bucket["session"] = bucket["session"] or effect.session_changed
                 if effect.session_id == session_id:
                     if effect.accepted_sequence is not None:
                         current_accepted_sequence = bucket["accepted_sequence"]

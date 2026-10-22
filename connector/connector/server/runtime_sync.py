@@ -107,6 +107,19 @@ class RuntimeSyncRunner:
                 )
                 entry = self.supervisor.entry(runtime_id)
                 await self.push_runtime_catalogs(runtime)
+                read_workspaces = getattr(runtime, "workspace_inventory", None)
+                if callable(read_workspaces):
+                    try:
+                        inventory = await read_workspaces()
+                        if inventory is not None:
+                            await self._ingest_scanner_notifications([{
+                                "method": "runtime.workspaces.updated",
+                                "params": {**inventory, "runtime": entry.runtime_type,
+                                           "runtimeId": entry.runtime_id},
+                            }])
+                    except Exception:  # noqa: BLE001 - retain grouping while syncing history.
+                        failed = True
+                        logger.exception("workspace inventory deferred runtime={}", runtime_id)
                 inventory_scan_token: str | None = None
                 runtime_type = entry.runtime_type
                 scoped_runtime_id = entry.runtime_id

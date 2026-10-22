@@ -92,6 +92,10 @@ class AgentRuntime(ABC):
             is not AgentRuntime.list_complete_session_inventory
         )
 
+    async def workspace_inventory(self) -> dict[str, Any] | None:
+        """Return authoritative native membership, or None without changing ownership."""
+        return None
+
     async def get_session_snapshot(
         self,
         session_id: str,

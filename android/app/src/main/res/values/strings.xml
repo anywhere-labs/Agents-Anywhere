@@ -119,6 +119,7 @@
     <string name="home_offline">Offline</string>
     <string name="home_new_session">New session</string>
     <string name="home_projects">Projects</string>
+    <string name="home_ungrouped">Ungrouped</string>
     <string name="home_no_projects">No projects yet.</string>
     <string name="home_project_no_sessions">No sessions yet.</string>
     <string name="home_new_session_in_project">New session in %1$s</string>

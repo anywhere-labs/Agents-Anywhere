@@ -7,6 +7,8 @@ from pathlib import PurePosixPath, PureWindowsPath
 
 from sqlalchemy import case
 
+from agent_server.infra.db import runtime_workspace_inventories
+
 from agent_server.infra.repositories.store_support import *
 
 
@@ -329,13 +331,18 @@ class ProjectRepositoryMixin:
                     workspace_path,
                     connector.device_os,
                 )
+                if manually_created:
+                    # Match rename ordering: device -> inventories -> project.
+                    await conn.execute(select(runtime_workspace_inventories.c.runtime_id).where(
+                        runtime_workspace_inventories.c.connector_id == connector_id,
+                    ).order_by(runtime_workspace_inventories.c.runtime_id).with_for_update())
                 existing_workspace = (
                     await conn.execute(
-                        select(projects_t.c.id).where(
+                        select(projects_t.c.id, projects_t.c.manually_created).where(
                             projects_t.c.user_id == user_id,
                             projects_t.c.connector_id == connector_id,
                             projects_t.c.workspace_key == workspace_key,
-                        )
+                        ).with_for_update()
                     )
                 ).first()
                 existing_project_id = (
@@ -359,13 +366,36 @@ class ProjectRepositoryMixin:
                 if existing_project_id is not None:
                     project_id = existing_project_id
                     if manually_created:
+                        await self._claim_native_project(conn, connector_id, project_id)
+                        claim_project = True
+                        if not existing_workspace.manually_created:
+                            session_state = (
+                                await conn.execute(
+                                    select(
+                                        select(sessions_t.c.id).where(
+                                            sessions_t.c.project_id == project_id,
+                                            sessions_t.c.archived == 1,
+                                        ).exists().label("has_archived"),
+                                        select(sessions_t.c.id).where(
+                                            sessions_t.c.project_id == project_id,
+                                            sessions_t.c.archived == 0,
+                                        ).exists().label("has_active"),
+                                    )
+                                )
+                            ).one()
+                            # Reusing an archived workspace is not an unarchive.
+                            # Keep its empty-project sidebar exception disabled;
+                            # a genuinely new session can make it visible again.
+                            claim_project = not (
+                                session_state.has_archived and not session_state.has_active
+                            )
                         await conn.execute(
                             update(projects_t)
                             .where(projects_t.c.id == project_id)
                             .values(
                                 name=cleaned_name,
                                 workspace_path=cleaned_path,
-                                manually_created=True,
+                                manually_created=claim_project,
                                 updated_at=now,
                             )
                         )
@@ -417,6 +447,10 @@ class ProjectRepositoryMixin:
         try:
             async with self._engine.begin() as conn:
                 if name is not None:
+                    await conn.execute(select(connectors_t.c.id).where(
+                        connectors_t.c.id == current.connectorId,
+                    ).with_for_update(read=True))
+                    await self._claim_native_project(conn, current.connectorId, project_id)
                     name_conflict = (
                         await conn.execute(
                             select(projects_t.c.id).where(
@@ -526,7 +560,7 @@ class ProjectRepositoryMixin:
                     select(projects_t.c.id).where(
                         projects_t.c.id == project_id,
                         projects_t.c.user_id == user_id,
-                    )
+                    ).with_for_update()
                 )
             ).first()
             if owned is None:

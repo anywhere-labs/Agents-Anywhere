@@ -28,6 +28,10 @@ from agent_server.core.usage import (
     UsageSessionRow,
     UsageUserRow,
 )
+from agent_server.core.workspace_inventory import (
+    RuntimeWorkspaceInventory,
+    WorkspaceSyncResult,
+)
 
 
 class InstanceSettingsRepository(Protocol):
@@ -255,6 +259,11 @@ class ConnectorNotificationRepository(
     TimelineEffectRepository,
     Protocol,
 ):
+    async def sync_runtime_workspaces(
+        self, *, connector_id: str, runtime_id: str, inventory: RuntimeWorkspaceInventory,
+        runtime: str,
+    ) -> WorkspaceSyncResult: ...
+
     async def refresh_unchanged_session_source(
         self, session_id: str, *, connector_id: str, runtime: str, runtime_id: str,
         availability: str, reason: str | None, observed_at: str | None,

@@ -54,6 +54,17 @@ connectors = Table(
 )
 
 
+runtime_workspace_inventories = Table(
+    "runtime_workspace_inventories",
+    metadata,
+    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), primary_key=True),
+    Column("runtime_id", Text, primary_key=True),
+    Column("snapshot_id", Text, nullable=False),
+    Column("observed_at", Text, nullable=False),
+    Column("snapshot_json", Text, nullable=False),
+)
+
+
 connector_runtime_types = Table(
     "connector_runtime_types",
     metadata,

@@ -112,6 +112,7 @@ internal fun HomeProjectList(
     onRetryProject: (String) -> Unit,
     onCreateProject: () -> Unit,
     pinnedSessions: List<AgentSession>,
+    ungroupedSessions: List<AgentSession>,
     sessionsByProject: Map<String, List<AgentSession>>,
     loadingProjectIds: Set<String>,
     expandedProjectIds: Set<String>,
@@ -122,6 +123,7 @@ internal fun HomeProjectList(
     onOpenSession: (AgentSession) -> Unit,
 ) {
     var pinnedExpanded by remember { mutableStateOf(true) }
+    var ungroupedExpanded by remember { mutableStateOf(true) }
     var filterAnchor by remember { mutableStateOf<Rect?>(null) }
     val projectsExpanded = projectPreferences.projectsExpanded
     val ordered = remember(projects, allSessions) {
@@ -132,7 +134,7 @@ internal fun HomeProjectList(
     val agentLabel = deviceAgentFilter.runtime?.runtimeTypeLabel()
     val filtersActive = deviceAgentFilter.active || projectSessionStatus != ProjectSessionStatusFilter.Active
 
-    if (projects.isEmpty() && pinnedSessions.isEmpty()) {
+    if (projects.isEmpty() && pinnedSessions.isEmpty() && ungroupedSessions.isEmpty()) {
         Box(Modifier.fillMaxSize()) {
             AppEmptyState(
                 message = stringResource(
@@ -189,6 +191,29 @@ internal fun HomeProjectList(
                     HomeProjectSessionRow(
                         session = session,
                         inset = false,
+                        onClick = { onOpenSession(session) },
+                        onLongPress = { onSessionLongPress(session, it) },
+                    )
+                }
+            }
+        }
+
+        if (ungroupedSessions.isNotEmpty()) {
+            item("ungrouped-title") {
+                HomeListSectionHeader(
+                    label = stringResource(R.string.home_ungrouped),
+                    expanded = ungroupedExpanded,
+                    onClick = { ungroupedExpanded = !ungroupedExpanded },
+                )
+            }
+            if (ungroupedExpanded) {
+                items(ungroupedSessions, key = { "ungrouped-session-${it.id}" }) { session ->
+                    HomeSessionRow(
+                        session = session,
+                        contextLabel = session.sidebarContextLabel(
+                            projectName = null,
+                            deviceName = devices.firstOrNull { it.id == session.connectorId }?.name,
+                        ),
                         onClick = { onOpenSession(session) },
                         onLongPress = { onSessionLongPress(session, it) },
                     )

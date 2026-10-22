@@ -119,6 +119,7 @@
     <string name="home_offline">离线</string>
     <string name="home_new_session">新建会话</string>
     <string name="home_projects">项目</string>
+    <string name="home_ungrouped">未分组</string>
     <string name="home_no_projects">暂无项目。</string>
     <string name="home_project_no_sessions">暂无会话。</string>
     <string name="home_new_session_in_project">在“%1$s”中新建会话</string>

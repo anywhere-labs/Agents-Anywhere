@@ -264,7 +264,7 @@ async def main(home: Path) -> None:
                 project = await store.get_project(project_id, user_id="dsh-test")
                 assert project.name == "AA only" and project.pinned
                 assert not any(n["method"] == "workspace.inventory" for n in transport.notifications)
-                assert (await store.get_session(main.id)).projectId == project_id
+                assert (await store.get_session(main.id)).projectId is None
                 assert [(item.id, item.contentHash) for item in await stored(main.id)] == history
                 assert runtime.sync_mode == "events"
                 print("DSH event pipeline passed")

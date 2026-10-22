@@ -23,6 +23,7 @@ from agent_server.core.protocol import (
     ProtocolPermissionCatalog,
 )
 from agent_server.core.runtime_identity import RuntimeIdentity, RuntimeIdentityError
+from agent_server.core.workspace_inventory import RuntimeWorkspaceInventory
 from agent_server.infra.repositories.projects import MissingWorkspaceError
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
@@ -90,6 +91,7 @@ class ConnectorNotificationService:
             ),
             SessionSourceNotificationHandler(store),
             SessionInventoryNotificationHandler(store),
+            WorkspaceInventoryNotificationHandler(store),
             SessionNotificationHandler(store),
             TimelineNotificationHandler(store, timeline_write_buffer),
             InteractionNotificationHandler(store, usage_recorder=usage),
@@ -455,6 +457,31 @@ class SessionSourceNotificationHandler:
 
     def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
+
+
+class WorkspaceInventoryNotificationHandler:
+    def __init__(self, store: ConnectorNotificationRepository) -> None:
+        self._store = store
+
+    async def apply(
+        self, *, connector_id: str, method: str, params: dict[str, Any],
+    ) -> IngestEffect | None:
+        if method != "runtime.workspaces.updated":
+            return None
+        runtime, runtime_id = runtime_identity_from_params(params)
+        if params.get("complete") is not True or type(params.get("version")) is not int:
+            raise NotificationValidationError("invalid_workspace_inventory", "expected a complete native workspace inventory")
+        try:
+            inventory = RuntimeWorkspaceInventory.model_validate({
+                key: value for key, value in params.items() if key not in {"runtime", "runtimeId"}
+            })
+        except ValidationError as exc:
+            raise NotificationValidationError("invalid_workspace_inventory", str(exc)) from exc
+        result = await self._store.sync_runtime_workspaces(
+            connector_id=connector_id, runtime_id=runtime_id, inventory=inventory, runtime=runtime,
+        )
+        return IngestEffect(session_ids=result.session_ids, session_changed=bool(result.session_ids),
+                            needs_refetch=bool(result.session_ids), dashboard_changed=result.dashboard_changed)
 
 
 class SessionInventoryNotificationHandler:

@@ -215,9 +215,14 @@ class SyncRelay:
                     await self.publish_notification(notice)
             await self.ingest_notifications(pending)
         elif kind == "workspace.inventory":
-            # Older plugin builds sent native project facts. Ignore those batches;
-            # all project grouping and naming use the existing session cwd path.
-            return
+            # Only the explicit complete-inventory extension is authoritative.
+            # Legacy operations and partial reads cannot clear any binding.
+            if type(op.get("version")) is not int or op.get("version") != 1 or op.get("complete") is not True:
+                return
+            await self.host.publish_runtime_notifications("dsh", [{
+                "method": "runtime.workspaces.updated",
+                "params": {key: op[key] for key in ("version", "complete", "snapshotId", "observedAt", "workspaces")},
+            }])
         else:
             raise ValueError(f"Unsupported bridge operation: {kind}")
 

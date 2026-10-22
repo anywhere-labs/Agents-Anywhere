@@ -24,6 +24,7 @@ from openai_codex.generated.v2_all import (
     TextUserInput,
     ThreadResumeParams,
     ThreadSortKey,
+    ThreadSourceKind,
     ThreadStartParams,
     TurnStartParams,
     UserInput,
@@ -132,6 +133,12 @@ class CodexRawThreadReadResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     thread: dict[str, Any]
+
+
+class CodexNativeProjectsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, strict=True)
+    data: list[dict[str, Any]]
+    next_cursor: str | None = Field(default=None, alias="nextCursor")
 
 
 class CodexSdkClient:
@@ -428,6 +435,63 @@ class CodexSdkClient:
 
         result = await self.call_read_with_recovery("thread/list", read_threads)
         return thread_list_result(result)
+
+    async def list_native_project_threads(
+        self, limit: int = 100, cursor: str | None = None,
+        archived: bool | None = None,
+    ) -> CodexThreadListResult:
+        """Keep explicit projectId:null, which SDK event serialization drops."""
+        async def read_threads(client: Any) -> CodexThreadListResult:
+            await ensure_codex_initialized(client)
+            result = await client._client.request(
+                "thread/list", {
+                    "limit": limit, "cursor": cursor, "archived": archived,
+                    "modelProviders": [], "sortKey": "recency_at", "sortDirection": "desc",
+                    "sourceKinds": [kind.value for kind in ThreadSourceKind],
+                }, response_model=CodexThreadTurnsListResponse,
+            )
+            return CodexThreadListResult(threads=tuple(result.data), next_cursor=result.next_cursor)
+
+        return await self.call_read_with_recovery("thread/list", read_threads)
+
+    async def list_native_projects(self) -> tuple[dict[str, Any], ...] | None:
+        async def read_projects(client: Any) -> tuple[dict[str, Any], ...] | None:
+            low_level = getattr(client, "_client", None)
+            request = getattr(low_level, "request", None)
+            if not callable(request):
+                return None
+            await ensure_codex_initialized(client)
+            cursor: str | None = None
+            cursors: set[str] = set()
+            projects: list[dict[str, Any]] = []
+            while True:
+                try:
+                    page = await request(
+                        "project/list", {"limit": 100, "cursor": cursor},
+                        response_model=CodexNativeProjectsResponse,
+                    )
+                except MethodNotFoundError:
+                    return None
+                except JsonRpcError as exc:
+                    # Older binaries can report an unknown enum variant rather
+                    # than method-not-found. Other failures must remain failures.
+                    message = str(exc)
+                    if "experimentalApi capability" in message or (
+                        "project/list" in message and "unknown variant" in message
+                    ):
+                        return None
+                    raise
+                projects.extend(page.data)
+                if len(projects) > 10_000:
+                    raise RuntimeInvalidRequestError("Codex project inventory exceeds 10000 entries")
+                cursor = page.next_cursor
+                if cursor is None:
+                    return tuple(projects)
+                if cursor in cursors:
+                    raise RuntimeInvalidRequestError("Codex project inventory repeated a cursor")
+                cursors.add(cursor)
+
+        return await self.call_read_with_recovery("project/list", read_projects)
 
     async def read_thread(
         self,

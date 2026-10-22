@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,18 +54,20 @@ from connector.runtimes.codex.ipc import (
     CodexIpcSessionProjector,
     CodexIpcTurnController,
     FollowedThread,
+    desktop_app,
     thread_snapshot_from_conversation_state,
 )
 from connector.runtimes.codex.ipc import deeplink as ipc_deeplink
-from connector.runtimes.codex.ipc import desktop_app
 from connector.runtimes.codex.lifecycle.runtime_lifecycle import CodexRuntimeLifecycle
 from connector.runtimes.codex.notifications import CodexNotificationProjector
 from connector.runtimes.codex.notifications.projector import notification_event
+from connector.runtimes.codex.sdk.command_notifications import notification_parts
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexModelListResult,
     CodexRuntimeClient,
 )
 from connector.runtimes.codex.sessions.reader import CodexSessionReader
+from connector.runtimes.codex.sessions.workspaces import CodexWorkspaceInventory
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
 from connector.runtimes.codex.turns.command_input import command_input
 from connector.runtimes.codex.turns.controller import CodexTurnController
@@ -86,6 +89,9 @@ class CodexRuntime(AgentRuntime):
     ipc_handoff_timeout_ms: int = 5000
 
     def __post_init__(self) -> None:
+        self._workspaces = CodexWorkspaceInventory(self.host, self.client)
+        self._workspace_refresh: asyncio.Task[None] | None = None
+        self._workspace_dirty = False
         self._active_turn_ids: dict[str, str] = {}
         self._session_states = RuntimeSessionStateCache(
             "codex",
@@ -161,6 +167,10 @@ class CodexRuntime(AgentRuntime):
         await self._start_ipc()
 
     async def stop(self) -> None:
+        if self._workspace_refresh is not None:
+            self._workspace_refresh.cancel()
+            await asyncio.gather(self._workspace_refresh, return_exceptions=True)
+            self._workspace_refresh = None
         if self.ipc_owner is not None:
             self.ipc_owner.detach()
         if self.ipc_service is not None:
@@ -506,6 +516,12 @@ class CodexRuntime(AgentRuntime):
             force,
         )
 
+    async def workspace_inventory(self) -> dict[str, Any] | None:
+        if not callable(getattr(self.client, "list_native_projects", None)):
+            return None
+        await self.start()
+        return await self._workspaces.read()
+
     async def get_session_state(
         self,
         session_id: str,
@@ -832,6 +848,12 @@ class CodexRuntime(AgentRuntime):
     async def _after_notification(self, message: Any) -> None:
         """Let the IPC owner republish after a native notification was projected."""
 
+        method, _ = notification_parts(message)
+        if method in {"project/changed", "thread/project/updated"}:
+            self._workspace_dirty = True
+            if self._workspace_refresh is None or self._workspace_refresh.done():
+                self._workspace_refresh = asyncio.create_task(self._refresh_workspace_membership())
+
         if self.ipc_owner is not None:
             try:
                 thread_id = notification_event(message).thread_id
@@ -839,6 +861,19 @@ class CodexRuntime(AgentRuntime):
                 thread_id = None
             if thread_id:
                 self.ipc_owner.notify_thread(thread_id)
+
+    async def _refresh_workspace_membership(self) -> None:
+        while self._workspace_dirty:
+            self._workspace_dirty = False
+            await asyncio.sleep(0.1)
+            try:
+                inventory = await self._workspaces.read()
+                if inventory is not None:
+                    await self.host.publish_runtime_notifications("codex", [{
+                        "method": "runtime.workspaces.updated", "params": inventory,
+                    }])
+            except Exception:  # noqa: BLE001 - keep native event delivery alive; scanner retries.
+                logger.exception("Codex workspace refresh deferred to the periodic inventory")
 
     def _get_model_list_result(self) -> CodexModelListResult | None:
         return self._lifecycle.model_list_result

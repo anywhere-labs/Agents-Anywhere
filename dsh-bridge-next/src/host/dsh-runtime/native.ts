@@ -32,7 +32,7 @@ export type NativeChange = { type: 'stream', id: string, turn: number, step: num
   | { type: 'session', id: string } | { type: 'status', id: string }
   | { type: 'refresh', id: string }
   | { type: 'question', id: string } | { type: 'approval', id: string } | { type: 'capabilities' }
-  | { type: 'visibility' } | { type: 'catalogs', catalogType: 'model' | 'permission' } | { type: 'commands' }
+  | { type: 'visibility' } | { type: 'workspaces' } | { type: 'catalogs', catalogType: 'model' | 'permission' } | { type: 'commands' }
 export interface NativeWorkspace { id: string, title: string, path: string, sessionIds: string[] }
 
 /** Configuration facts a session state read needs, without retaining the event log. */
@@ -115,6 +115,7 @@ export class NativeRuntime {
     ctx.on('agent/status', ({ agent }) => this.emit({ type: 'status', id: agent.id }), { global: true })
     ctx.on('domain/changed', change => {
       if (change.domain !== 'workspace') return
+      this.emit({ type: 'workspaces' })
       if (change.table === '' && change.operation === 'put') {
         const ids = record(change.value).archivedSessionIds
         if (Array.isArray(ids)) {

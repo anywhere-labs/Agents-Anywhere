@@ -615,6 +615,12 @@ private fun HomeProjectModeList(
                     .groupBy { it.projectId.orEmpty() }
                     .mapValues { (_, sessions) -> sessions.sortedWith(sessionListComparator()) }
             }
+            val knownProjectIds = state.projects.mapTo(mutableSetOf()) { it.id }
+            val ungroupedSessions = allSessions.filter {
+                (it.projectId == null || it.projectId !in knownProjectIds) &&
+                    (!it.pinned || it.archived) &&
+                    projectSessionMatchesStatus(it, projectSessionStatus) && deviceAgentFilter.matches(it)
+            }.sortedWith(sessionListComparator())
             HomeProjectList(
                 projects = state.projects.filter { projectHasVisibleSessions(it, allSessions, projectSessionStatus, deviceAgentFilter) },
                 devices = state.devices,
@@ -622,7 +628,8 @@ private fun HomeProjectModeList(
                     allSessions.map(AgentSession::runtime).filter(String::isNotBlank).distinct().sortedBy(String::runtimeTypeLabel)
                 },
                 deviceAgentFilter = deviceAgentFilter,
-                hasProjectsInOtherStatuses = state.projects.any { projectHasVisibleSessions(it, allSessions, ProjectSessionStatusFilter.All) },
+                hasProjectsInOtherStatuses = state.projects.any { projectHasVisibleSessions(it, allSessions, ProjectSessionStatusFilter.All) } ||
+                    allSessions.any { (it.projectId == null || it.projectId !in knownProjectIds) && deviceAgentFilter.matches(it) },
                 allSessions = allSessions,
                 projectPreferences = projectPreferences,
                 projectSessionStatus = projectSessionStatus,
@@ -632,6 +639,7 @@ private fun HomeProjectModeList(
                 onCreateProject = onCreateProject,
                 pinnedSessions = allSessions.filter { it.pinned && !it.archived && deviceAgentFilter.matches(it) }
                     .sortedWith(sessionListComparator()),
+                ungroupedSessions = ungroupedSessions,
                 sessionsByProject = visibleSessions,
                 loadingProjectIds = loadingProjectIds,
                 expandedProjectIds = expandedProjectIds,

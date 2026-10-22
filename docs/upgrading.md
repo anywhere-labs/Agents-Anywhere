@@ -2,9 +2,13 @@
 
 ## 先区分三个版本
 
-本次产品版本为 **2.1.0**；当前源码中的数据库 revision 为 **`v2_44`**，schema version 为 **`2.44`**。各端的 PATCH 版本可以不同，数据库 revision 独立编号，不能用来推断兼容性，见[版本号规则](versioning.md)。
+本次产品版本为 **2.1.0**；当前源码中的数据库 revision 为 **`v2_45`**，schema version 为 **`2.45`**。各端的 PATCH 版本可以不同，数据库 revision 独立编号，不能用来推断兼容性，见[版本号规则](versioning.md)。
 
 `main` 现在承载 v2。本文所说的 **v1 / 旧主线** 指主线切换前的实现，源代码提交为 `6c47e419`，不再指当前 `main`。早期 [main-to-v2 文档](migrations/main-to-v2/README.md)保留作历史参考。
+
+## 原生工作区与会话来源同步（#301）
+
+先升级 Server 并执行 `v2_45`，再升级含本次修复的 Connector 与 DSH 插件。归属按设备、Runtime 和原生工作区成员同步；同目录重建不重新关联旧会话，旧归档保留，新会话正常显示。Android 更新后可在项目视图查看未分组会话；Web、Desktop、iOS 复用已有入口。产品版本仍为 2.1.0，不新增 AA 删除接口。Codex 在确认原生项目成员能力后接入同一对账流程；原生成员规则仅管理曾明确加入原生项目的会话，其他 cwd 分组保持原样。Claude 保持原有最近 100 条会话与本地缓存同步，不新增完整历史扫描或原生工作区同步。配套要求与回退限制见[工作区同步与项目归档](api/project-archiving.md)。
 
 ## 已经运行 v2 的部署
 
@@ -20,7 +24,7 @@
    uv run python -m agent_server.infra.db.migrations current --verbose
    ```
 
-   以上命令使用该环境的 `AGENT_SERVER_DB_URL`。当前目标应为 `v2_44`；以后升级时，以待部署源码的 `CURRENT_SCHEMA_REVISION` 为准。
+   以上命令使用该环境的 `AGENT_SERVER_DB_URL`。当前目标应为 `v2_45`；以后升级时，以待部署源码的 `CURRENT_SCHEMA_REVISION` 为准。
 4. 启动同一版本的 Server/Web，检查 `/api/v2/health/ready`，再恢复入口流量和 Connector。验证账号登录、设备连接、会话恢复、消息、审批、文件和终端。
 5. 使用 [2.0.3 下载入口](../README.md#下载与入口)升级客户端。当前安装包没有可用的应用内下载地址，需手动分发。
 
