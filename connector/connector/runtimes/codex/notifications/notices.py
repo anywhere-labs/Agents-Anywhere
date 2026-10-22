@@ -15,8 +15,6 @@ from connector.runtimes.codex.domain.input_requests import (
 )
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
 
-QUOTA_ERROR_INFO = frozenset({"usageLimitExceeded", "rateLimitExceeded"})
-
 
 @dataclass(slots=True)
 class CodexNoticeHandler:
@@ -171,19 +169,6 @@ class CodexNoticeHandler:
         ):
             await self.host.notice_upsert(notice)
 
-    async def handle_rate_limits_updated(self, params: Mapping[str, Any]) -> None:
-        """Close quota failures after a rate-limit snapshot confirms recovery."""
-
-        if not _rate_limit_snapshot_confirms_recovery(params):
-            return
-        for notice in self.notices.close_execution_errors_for_codex_error_info(
-            codex_error_info=QUOTA_ERROR_INFO,
-            status="closed",
-            reason="rate_limit_recovered",
-            source="codex.account/rateLimits/updated",
-        ):
-            await self.host.notice_upsert(notice)
-
     def execution_error_notice(
         self,
         session_id: str,
@@ -249,15 +234,9 @@ def error_from_params(params: dict[str, Any]) -> dict[str, Any]:
     if isinstance(raw, dict):
         code = raw.get("code")
         message = raw.get("message") or raw.get("detail")
-        codex_error_info = raw.get("codexErrorInfo") or raw.get("codex_error_info")
         return {
             "code": str(code or "codex_turn_failed"),
             "message": str(message or "Codex turn failed."),
-            **(
-                {"codexErrorInfo": codex_error_info}
-                if isinstance(codex_error_info, str) and codex_error_info
-                else {}
-            ),
             "raw": raw,
         }
     message = params.get("message") or params.get("reason")
@@ -265,28 +244,3 @@ def error_from_params(params: dict[str, Any]) -> dict[str, Any]:
         "code": "codex_turn_failed",
         "message": str(message or "Codex turn failed."),
     }
-
-
-def _rate_limit_snapshot_confirms_recovery(params: Mapping[str, Any]) -> bool:
-    raw = params.get("rateLimits")
-    if not isinstance(raw, Mapping):
-        return False
-    limit_id = raw.get("limitId")
-    if isinstance(limit_id, str) and limit_id.lower() != "codex":
-        return False
-    if raw.get("rateLimitReachedType") is not None:
-        return False
-    if raw.get("spendControlReached") is True:
-        return False
-    windows = [
-        window
-        for key in ("primary", "secondary")
-        if isinstance((window := raw.get(key)), Mapping)
-    ]
-    if not windows:
-        return False
-    return all(
-        isinstance(window.get("usedPercent"), int)
-        and 0 <= window["usedPercent"] < 100
-        for window in windows
-    )

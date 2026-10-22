@@ -31,6 +31,7 @@ class CodexTurnLifecycleHandler:
 
         Side effects:
         - binds the active turn id when present
+        - closes open execution_error notices from earlier turns
         - updates SessionState.status to running
         """
 

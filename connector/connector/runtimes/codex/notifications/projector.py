@@ -73,9 +73,6 @@ class CodexNotificationProjector:
         """
 
         event = notification_event(message)
-        if event.event_type == "account/rateLimits/updated":
-            await self.notice_handler.handle_rate_limits_updated(event.params)
-            return
         thread_id = event.thread_id or codex_sessions.thread_id_from_result(
             event.params
         )

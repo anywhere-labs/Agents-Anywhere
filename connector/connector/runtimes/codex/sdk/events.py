@@ -6,7 +6,6 @@ from enum import Enum
 from typing import Any
 
 from openai_codex.generated.v2_all import (
-    AccountRateLimitsUpdatedNotification,
     AgentMessageDeltaNotification,
     AgentMessageThreadItem,
     CommandExecutionOutputDeltaNotification,
@@ -55,8 +54,7 @@ DeltaNotificationPayload = (
 )
 
 CodexKnownNotificationPayload = (
-    AccountRateLimitsUpdatedNotification
-    | DeltaNotificationPayload
+    DeltaNotificationPayload
     | ReasoningSummaryPartAddedNotification
     | FileChangePatchUpdatedNotification
     | ItemStartedNotification
@@ -359,25 +357,6 @@ def _sdk_payload_params(
             **common,
             "item": _sdk_response_item(payload.item),
         }
-    if isinstance(payload, AccountRateLimitsUpdatedNotification):
-        rate_limits = payload.rate_limits
-        return {
-            **common,
-            "rateLimits": _sdk_rate_limit_snapshot(rate_limits),
-            # Keep the full snapshot: rolling updates are sparse, and the notice
-            # reducer needs the remaining fields to decide whether recovery is safe.
-            **(
-                {
-                    "rateLimitsRaw": rate_limits.model_dump(
-                        mode="json",
-                        by_alias=True,
-                        exclude_none=True,
-                    )
-                }
-                if callable(getattr(rate_limits, "model_dump", None))
-                else {}
-            ),
-        }
     if method in {"turn/interrupted", "turn/cancelled"}:
         return common
     return common if common else None
@@ -405,9 +384,8 @@ def _delta_item_semantics(payload: DeltaNotificationPayload) -> dict[str, Any]:
 
 def _sdk_common_params(payload: CodexKnownNotificationPayload) -> dict[str, Any]:
     params: dict[str, Any] = {}
-    thread_id = getattr(payload, "thread_id", None)
-    if thread_id:
-        params["threadId"] = thread_id
+    if payload.thread_id:
+        params["threadId"] = payload.thread_id
     turn_id = _payload_turn_id(payload)
     if turn_id is not None:
         params["turnId"] = turn_id
@@ -431,7 +409,7 @@ def _payload_item_id(payload: CodexKnownNotificationPayload) -> str | None:
 def _payload_turn_id(payload: CodexKnownNotificationPayload) -> str | None:
     if isinstance(payload, TurnStartedNotification | TurnCompletedNotification):
         return payload.turn.id
-    return getattr(payload, "turn_id", None)
+    return payload.turn_id
 
 
 def _sdk_turn(turn: Turn) -> dict[str, Any]:
@@ -550,64 +528,12 @@ def _sdk_content_text(items: Sequence[ContentItem]) -> str:
 
 
 def _sdk_turn_error(error: Any) -> dict[str, Any]:
-    codex_error_info = getattr(error, "codex_error_info", None)
     return {
         "code": error.__class__.__name__ if error is not None else "codex_turn_failed",
         "message": _string_attr(error, "message") or "Codex turn failed.",
         **(
-            {"codexErrorInfo": _enum_value(codex_error_info)}
-            if codex_error_info is not None
-            else {}
-        ),
-        **(
             {"additionalDetails": _string_attr(error, "additional_details")}
             if _string_attr(error, "additional_details")
-            else {}
-        ),
-    }
-
-
-def _sdk_rate_limit_snapshot(snapshot: Any) -> dict[str, Any]:
-    return {
-        **(
-            {"limitId": snapshot.limit_id}
-            if isinstance(snapshot.limit_id, str)
-            else {}
-        ),
-        **(
-            {"primary": _sdk_rate_limit_window(snapshot.primary)}
-            if snapshot.primary is not None
-            else {}
-        ),
-        **(
-            {"secondary": _sdk_rate_limit_window(snapshot.secondary)}
-            if snapshot.secondary is not None
-            else {}
-        ),
-        **(
-            {"spendControlReached": snapshot.spend_control_reached}
-            if isinstance(snapshot.spend_control_reached, bool)
-            else {}
-        ),
-        **(
-            {"rateLimitReachedType": _enum_value(snapshot.rate_limit_reached_type)}
-            if snapshot.rate_limit_reached_type is not None
-            else {}
-        ),
-    }
-
-
-def _sdk_rate_limit_window(window: Any) -> dict[str, Any]:
-    return {
-        "usedPercent": window.used_percent,
-        **(
-            {"windowDurationMins": window.window_duration_mins}
-            if isinstance(window.window_duration_mins, int)
-            else {}
-        ),
-        **(
-            {"resetsAt": window.resets_at}
-            if isinstance(window.resets_at, int)
             else {}
         ),
     }
