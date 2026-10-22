@@ -50,6 +50,7 @@ from agent_server.infra.db.migrations import (
     upgrade_database,
 )
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
+from agent_server.infra.http_method_override import HttpMethodOverrideMiddleware
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
@@ -208,6 +209,9 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # HarmonyOS API 12 clients cannot send PATCH natively (RequestMethod.PATCH
+    # only exists from API 26); they send POST + X-HTTP-Method-Override instead.
+    app.add_middleware(HttpMethodOverrideMiddleware)
     if migrate_database:
         upgrade_database()
     app.state.store = Store()
