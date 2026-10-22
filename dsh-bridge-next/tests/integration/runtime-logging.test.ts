@@ -11,6 +11,7 @@ import { BridgeConnection } from '../../src/host/dsh-runtime/connection.js'
 import { RuntimeDiagnostics } from '../../src/host/dsh-runtime/diagnostics.js'
 import { RpcLogOutput } from '../../src/host/dsh-runtime/log-output.js'
 import { writeJson } from '../../src/host/storage/files.js'
+import { killTree, stopChild } from '../helpers/child-process.js'
 
 async function connector(home: string) {
   const child = spawn('uv', ['run', 'python', 'tests/logs_probe.py', home], {
@@ -21,12 +22,12 @@ async function connector(home: string) {
   const exited = new Promise<void>(resolve => child.once('exit', () => resolve()))
   const lines = createInterface({ input: child.stdout })
   const descriptor = await new Promise<{ instanceId: string; pid: number; key: string; callerKey: string; endpoint: { unixPath: string } }>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Connector not ready: ${stderr}`)), 15000)
+    const timer = setTimeout(() => { killTree(child); reject(new Error(`Connector not ready: ${stderr}`)) }, 15000)
     lines.once('line', line => { clearTimeout(timer); resolve(JSON.parse(line)) })
     child.once('error', error => { clearTimeout(timer); reject(error) })
     child.once('exit', () => { clearTimeout(timer); reject(new Error(`Connector exited: ${stderr}`)) })
   })
-  return { descriptor, async close() { lines.close(); child.stdin.end(); await exited } }
+  return { descriptor, async close() { lines.close(); await stopChild(child, () => child.stdin.end()); await exited } }
 }
 
 test('Bridge DI logger crosses real Python Logs RPC and history survives Connector replacement', { timeout: 30000 }, async () => {

@@ -1,11 +1,11 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { promisify } from 'node:util'
 import { execFile, spawn } from 'node:child_process'
-import { once } from 'node:events'
 import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Mesh, MeshCallError, Router } from 'meshcall'
 import { ControlServiceClient } from '../../src/host/generated/connector-control.js'
+import { stopChild } from './child-process.js'
 
 export const connectorProject = fileURLToPath(new URL('../../../connector', import.meta.url))
 export const python = process.env.AA_TEST_PYTHON ?? join(connectorProject, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
@@ -19,8 +19,11 @@ export async function recordConnectorId(home: string, id: string): Promise<void>
 export function launchConnector(home: string, kind: string, mode: 'rpc' | 'start' = 'rpc') {
   const hook = join(home, 'test-python')
   mkdirSync(hook, { recursive: true })
-  const code = `import asyncio, os, sys
+  // A venv launcher (uv on Windows) runs the interpreter as a child process, so the
+  // pid Node spawned is not the one that claims ownership; the interpreter reports it.
+  const code = `import asyncio, json, os, sys
 from pathlib import Path
+print(json.dumps({'kind': 'test.python-pid', 'pid': os.getpid()}), flush=True)
 from connector.core import runtime_owner
 runtime_owner.system_home=lambda:Path(os.environ['AA_TEST_CONNECTOR_HOME'])
 from connector.server.client import BackendRpcClient
@@ -46,14 +49,19 @@ BackendRpcClient.run_forever=fake_backend
   // Direct-CLI launches (`start`) never use the control channel; do not let its
   // expected rejection surface as an unhandled rejection.
   void ready.catch(() => undefined)
+  let resolvePid!: (pid: number) => void
+  let rejectPid!: (error: Error) => void
+  const claimingPid = new Promise<number>((resolve, reject) => { resolvePid = resolve; rejectPid = reject })
+  void claimingPid.catch(() => undefined)
   child.stderr.on('data', chunk => { stderr += chunk })
   child.stdout.on('data', chunk => {
     buffer += chunk
     let end: number
     while ((end = buffer.indexOf('\n')) !== -1) {
       const line = buffer.slice(0, end); buffer = buffer.slice(end + 1)
-      let value: { kind?: string, endpoint?: { unixPath?: string, pipe?: string }, key?: string }
+      let value: { kind?: string, pid?: number, endpoint?: { unixPath?: string, pipe?: string }, key?: string }
       try { value = JSON.parse(line) } catch { continue }
+      if (value.kind === 'test.python-pid' && typeof value.pid === 'number') { resolvePid(value.pid); continue }
       if (value.kind !== 'connector.ready' || !value.endpoint || typeof value.key !== 'string') continue
       const endpoint = value.endpoint.unixPath ? { unixPath: value.endpoint.unixPath } : { pipe: value.endpoint.pipe ?? '' }
       void (async () => {
@@ -65,11 +73,14 @@ BackendRpcClient.run_forever=fake_backend
   })
   const fail = (error: Error) => {
     rejectReady(error)
+    rejectPid(error)
   }
   child.on('error', fail)
   child.on('exit', () => fail(new Error(`Connector exited: ${stderr}`)))
   return {
     child,
+    /** Pid of the interpreter that claims ownership; differs from `child.pid` behind a venv launcher. */
+    pid: () => claimingPid,
     get stderr() { return stderr },
     async request(method: string, params?: unknown): Promise<any> {
       const client = await ready
@@ -87,11 +98,10 @@ BackendRpcClient.run_forever=fake_backend
       }
     },
     async close(crash = false) {
-      if (child.exitCode !== null || child.signalCode !== null) return
-      const exited = once(child, 'exit')
-      if (crash || mode === 'start') child.kill(crash ? 'SIGKILL' : 'SIGINT')
-      else child.stdin.end()
-      await exited
+      await stopChild(child, () => {
+        if (crash || mode === 'start') child.kill(crash ? 'SIGKILL' : 'SIGINT')
+        else child.stdin.end()
+      })
       await mesh?.close().catch(() => undefined)
     },
   }

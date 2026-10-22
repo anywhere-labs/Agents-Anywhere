@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, readFile, rm, mkdir, writeFile, realpath } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
+import { mkdtemp, readFile, rm, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import desktopMachine from '../../../desktop-workbench/electron/machine-state.ts'
@@ -8,6 +9,8 @@ import { machineStatePath, readLocalConnectorIds, readMachineState } from '../..
 import { recordConnectorId, launchConnector } from '../helpers/python-connector.js'
 
 const { MachineStateStore, desktopInstallation } = desktopMachine
+// The store canonicalizes with fs.realpathSync. On Windows the native realpath also expands
+// 8.3 short names (a short TEMP) where realpathSync does not, so expect the same function.
 const installation = (home: string) => desktopInstallation({ executablePath: process.execPath, appPath: home, packaged: false, platform: process.platform })
 
 test('hosts read the history written by Python without changing order or file contents', async t => {
@@ -34,7 +37,7 @@ test('Desktop installation updates preserve a live Python Connector owner and hi
   const after = await readMachineState(home)
   assert.deepEqual(after.runtime, before.runtime)
   assert.deepEqual(after.connectorIds, ['live'])
-  assert.equal((after.desktop as any).executablePath, process.execPath)
+  assert.equal((after.desktop as any).executablePath, realpathSync(process.execPath))
 })
 
 test('Desktop installation and Python ID publication serialize without losing either field', { timeout: 20000 }, async t => {
@@ -47,7 +50,7 @@ test('Desktop installation and Python ID publication serialize without losing ei
   ])
   const state = await readMachineState(home)
   assert.deepEqual(state.connectorIds, Array.from({ length: 8 }, (_, i) => `python-${i}`))
-  assert.equal((state.desktop as any).appPath, await realpath(home))
+  assert.equal((state.desktop as any).appPath, realpathSync(home))
 })
 
 test('read-only discovery leaves legacy migration to Python and preserves unknown fields', async t => {
@@ -64,6 +67,6 @@ test('read-only discovery leaves legacy migration to Python and preserves unknow
   const state = await readMachineState(home)
   assert.deepEqual(state.connectorIds, ['legacy', 'current'])
   assert.equal(state.future, true)
-  assert.equal((state.desktop as any).appPath, await realpath(home))
+  assert.equal((state.desktop as any).appPath, realpathSync(home))
   await assert.rejects(readFile(legacy), { code: 'ENOENT' })
 })
