@@ -5,7 +5,7 @@ import errno
 import hashlib
 import importlib
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, TypeVar
 
@@ -52,7 +52,9 @@ from connector.runtimes.codex.sdk.command_notifications import (
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.sdk.model_gateway import (
     CODEX_MODEL_GATEWAY_PROVIDER_ID,
+    CODEX_MODEL_GATEWAY_PROVIDER_NAME,
     codex_model_gateway_config,
+    codex_model_gateway_provider,
 )
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexCompactResult,
@@ -134,6 +136,28 @@ class CodexRawThreadReadResponse(BaseModel):
     thread: dict[str, Any]
 
 
+class CodexConfigLayersResponse(BaseModel):
+    """Only the raw layers of ``config/read``.
+
+    The SDK's typed ``Config`` validates every effective setting, so an
+    unrelated field from a newer Codex would fail the whole read.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    layers: list[dict[str, Any]] | None = None
+
+
+class CodexConfigWriteResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    file_path: str | None = Field(default=None, alias="filePath")
+
+
+# Codex Desktop writes the same config.toml; a conflicting write is re-read.
+CODEX_CONFIG_WRITE_ATTEMPTS = 3
+
+
 class CodexSdkClient:
     """Adapter from the Codex SDK client shape to the runtime client protocol.
 
@@ -179,6 +203,88 @@ class CodexSdkClient:
         await self.start_native_client(self._client)
         self._started = True
         self.start_global_notification_task()
+        await self.sync_model_gateway_provider()
+
+    async def sync_model_gateway_provider(self) -> None:
+        """Mirror the gateway provider into the user's ``config.toml``.
+
+        AA passes the provider inline on ``thread/start`` and ``thread/resume``,
+        and Codex stores only its id on the thread. Any other app-server on the
+        same ``CODEX_HOME`` -- Codex Desktop included -- then fails to resume
+        the thread with ``Model provider `agents_anywhere_gateway` not found``.
+
+        Codex edits its own file here, keeping user comments and tables, and
+        ``expectedVersion`` rejects the write if Desktop changed the file since
+        it was read, in which case the file is read again. A failure only costs
+        resuming outside AA, so it is logged and never blocks this runtime,
+        which keeps passing the provider inline.
+        """
+        try:
+            await self._sync_model_gateway_provider()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "codex model gateway provider was not synced to config.toml error={}",
+                exc,
+            )
+
+    async def _sync_model_gateway_provider(self) -> None:
+        await ensure_codex_initialized(self._client)
+        low_level_client = getattr(self._client, "_client", None)
+        request = getattr(low_level_client, "request", None)
+        if not callable(request):
+            if self._model_gateway is not None:
+                raise RuntimeInvalidRequestError(
+                    "Codex SDK client does not expose raw request() for config"
+                )
+            return
+        for attempt in range(1, CODEX_CONFIG_WRITE_ATTEMPTS + 1):
+            read = await request(
+                "config/read",
+                {"includeLayers": True},
+                response_model=CodexConfigLayersResponse,
+            )
+            current, version = _user_config_provider(
+                read.layers or (), CODEX_MODEL_GATEWAY_PROVIDER_ID
+            )
+            if self._model_gateway is None:
+                # Remove only the table AA wrote; a user's own provider that
+                # happens to use this id is left alone.
+                if (
+                    not isinstance(current, Mapping)
+                    or current.get("name") != CODEX_MODEL_GATEWAY_PROVIDER_NAME
+                ):
+                    return
+                value: dict[str, Any] | None = None
+            else:
+                value = codex_model_gateway_provider(self._model_gateway)
+                if current == value:
+                    return
+            try:
+                written = await request(
+                    "config/value/write",
+                    {
+                        "keyPath": (
+                            f"model_providers.{CODEX_MODEL_GATEWAY_PROVIDER_ID}"
+                        ),
+                        "value": value,
+                        "mergeStrategy": "replace",
+                        "expectedVersion": version,
+                    },
+                    response_model=CodexConfigWriteResponse,
+                )
+            except JsonRpcError as exc:
+                if (
+                    attempt < CODEX_CONFIG_WRITE_ATTEMPTS
+                    and _is_config_version_conflict(exc)
+                ):
+                    continue
+                raise
+            logger.info(
+                "codex model gateway provider {} path={}",
+                "removed" if value is None else "written",
+                written.file_path,
+            )
+            return
 
     async def start_native_client(self, client: Any) -> None:
         # Command notifications are routed through the SDK router of this
@@ -1380,6 +1486,38 @@ def codex_low_level_turn_start_required_message(
     if request.attachments:
         return "Codex low-level client is required for typed attachment input"
     return "Codex low-level client is required for explicit approval settings"
+
+
+def _is_config_version_conflict(error: JsonRpcError) -> bool:
+    data = error.data
+    return (
+        isinstance(data, Mapping)
+        and data.get("config_write_error_code") == "configVersionConflict"
+    )
+
+
+def _user_config_provider(
+    layers: Iterable[Mapping[str, Any]],
+    provider_id: str,
+) -> tuple[Any, str | None]:
+    """Return a provider table from the base user ``config.toml`` and its version."""
+
+    for layer in layers:
+        source = layer.get("name")
+        if not isinstance(source, Mapping) or source.get("type") != "user":
+            continue
+        if source.get("profile") is not None:
+            continue
+        config = layer.get("config")
+        providers = (
+            config.get("model_providers") if isinstance(config, Mapping) else None
+        )
+        current = (
+            providers.get(provider_id) if isinstance(providers, Mapping) else None
+        )
+        version = layer.get("version")
+        return current, version if isinstance(version, str) else None
+    return None, None
 
 
 def codex_thread_start_params(
