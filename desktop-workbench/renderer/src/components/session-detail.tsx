@@ -73,7 +73,7 @@ import {
   timelineClientMessageId,
 } from "@/components/session/optimistic-timeline"
 import { nextTimelineResetVersion } from "@/components/session/session-review-history"
-import { buildTurnReviewDisplay, type SessionReviewTarget } from "@/components/session/session-review-model"
+import { createTurnReviewDisplaySelector, type SessionReviewTarget } from "@/components/session/session-review-model"
 import { SessionReviewCard } from "@/components/session/session-review-card"
 import { SessionReviewTag } from "@/components/session/session-review-tag"
 import { isVisibleTimelineItem, messageText, runtimeLabel, textOf } from "@/components/session/session-utils"
@@ -1353,7 +1353,7 @@ export function SessionDetail({
     })
   }, [])
 
-  const handleRespondInteraction = async (
+  const handleRespondInteraction = React.useCallback(async (
     noticeId: string,
     actionId: string,
     input?: Record<string, unknown>,
@@ -1384,7 +1384,7 @@ export function SessionDetail({
       setResolvingNoticeId(null)
       setResolvingActionId(null)
     }
-  }
+  }, [removeNoticeFromState, resolvingNoticeId, session, tSession, token])
 
   React.useLayoutEffect(() => {
     const pendingPrependScrollRestore = pendingPrependScrollRestoreRef.current
@@ -1592,13 +1592,14 @@ export function SessionDetail({
     () => groupTimelineItems((state?.items ?? []).filter(isVisibleTimelineItem), interactionTargetIds),
     [interactionTargetIds, state?.items],
   )
+  const selectTurnReviewDisplay = React.useMemo(() => createTurnReviewDisplaySelector(), [sessionId])
   const turnReviewDisplay = React.useMemo(() => {
-    return buildTurnReviewDisplay(state?.session.id === sessionId ? state.items.filter(isVisibleTimelineItem) : [], {
+    return selectTurnReviewDisplay(state?.session.id === sessionId ? state.items.filter(isVisibleTimelineItem) : [], {
       root: state?.session.cwd,
       caseInsensitivePaths: connectorDeviceOs === "windows",
       turnInProgress,
     })
-  }, [connectorDeviceOs, sessionId, state?.items, state?.session.id, state?.session.cwd, turnInProgress])
+  }, [connectorDeviceOs, selectTurnReviewDisplay, sessionId, state?.items, state?.session.id, state?.session.cwd, turnInProgress])
   const completedTurnReviewsByEndItemId = React.useMemo(
     () => new Map(turnReviewDisplay.completedTurns.map((turn) => [turn.endItemId, turn])),
     [turnReviewDisplay.completedTurns],
@@ -1688,7 +1689,7 @@ export function SessionDetail({
                 .find((turn) => turn !== undefined)
               return (
                 <React.Fragment key={groupKey}>
-                  <TimelineGroupEntry
+                  <LiveTimelineGroupEntry
                     group={group}
                     token={token}
                     session={session}
@@ -1697,9 +1698,7 @@ export function SessionDetail({
                     resolvingActionId={resolvingActionId}
                     groupOpen={group.kind === "single" ? false : timelineGroupOpenByKey[group.key] ?? false}
                     itemOpenById={timelineItemOpenById}
-                    onGroupOpenChange={group.kind === "single"
-                      ? undefined
-                      : (open) => handleTimelineGroupOpenChange(group.key, open)}
+                    onGroupOpenChange={handleTimelineGroupOpenChange}
                     onItemOpenChange={handleTimelineItemOpenChange}
                     onRespondInteraction={handleRespondInteraction}
                   />
@@ -2183,6 +2182,36 @@ function isToolRunBarItem(item: TimelineItem): boolean {
   if (item.type !== "artifact") return false
   return (item.content.kind ?? "artifact") !== "diff"
 }
+
+type LiveTimelineGroupProps = Omit<React.ComponentProps<typeof TimelineGroupEntry>, "onGroupOpenChange"> & {
+  onGroupOpenChange: (key: string, open: boolean) => void
+}
+
+// Group objects are rebuilt when any item changes. Compare their immutable item
+// references so a streamed tail (or composer keystroke) does not render every
+// historical context menu, attachment list and message again.
+const LiveTimelineGroupEntry = React.memo(function LiveTimelineGroupEntry({
+  group, onGroupOpenChange, ...props
+}: LiveTimelineGroupProps) {
+  return <TimelineGroupEntry {...props} group={group} onGroupOpenChange={group.kind === "single"
+    ? undefined : (open) => onGroupOpenChange(group.key, open)} />
+}, (previous, next) => {
+  const left = previous.group
+  const right = next.group
+  if (left.kind !== right.kind) return false
+  if (left.kind === "single") {
+    if (right.kind !== "single" || left.item !== right.item) return false
+  } else {
+    if (right.kind === "single" || left.key !== right.key
+      || left.items.length !== right.items.length
+      || left.items.some((item, index) => item !== right.items[index])) return false
+    if (left.kind === "agent-calls"
+      && (right.kind !== "agent-calls" || left.parentItemId !== right.parentItemId)) return false
+  }
+  const keys = Object.keys(previous) as Array<keyof LiveTimelineGroupProps>
+  return keys.length === Object.keys(next).length
+    && keys.every((key) => key === "group" || previous[key] === next[key])
+})
 
 export function TimelineGroupEntry({
   group,

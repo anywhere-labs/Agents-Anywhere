@@ -24,7 +24,7 @@ import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
 import type { SessionView } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 
-export function MarkdownText({
+export const MarkdownText = React.memo(function MarkdownText({
   text,
   token,
   session,
@@ -36,7 +36,7 @@ export function MarkdownText({
   inverted?: boolean
 }) {
   return <MarkdownBody text={text} token={token} session={session} inverted={inverted} />
-}
+})
 
 // Keep the component identity stable while streamed message text changes.
 const MarkdownPre: Components["pre"] = ({ node, children, ...props }) => {

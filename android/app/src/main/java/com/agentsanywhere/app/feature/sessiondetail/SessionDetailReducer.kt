@@ -298,14 +298,15 @@ private fun SessionDetailState.applyTimelineRealtimeItems(
     replace: Boolean,
     cursor: String,
 ): SessionDetailState {
-    val currentReal = messages.filterNot { it.optimistic }
+    val hasOptimistic = messages.any { it.optimistic }
+    val currentReal = if (hasOptimistic) messages.filterNot { it.optimistic } else messages
     val projection = mergeRemoteTimelineItems(
         currentOrdering = timeline.orderingItems,
         currentMessages = currentReal,
         incoming = incoming,
         replace = replace,
     )
-    val messages = mergeReducerOptimistic(
+    val messages = if (!hasOptimistic) projection.messages else mergeReducerOptimistic(
         projection.messages,
         this.messages,
         projection.orderingItems,
