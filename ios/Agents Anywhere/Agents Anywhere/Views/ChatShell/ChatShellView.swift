@@ -20,7 +20,16 @@ struct ChatShellView: View {
         let layout = ChatSidebarState.Layout.resolve(
             hasRegularWidth: horizontalSizeClass == .regular
         )
-        sidebarLayout(layout)
+        // Regular width keeps the native split sidebar. Compact width uses
+        // the two-tab shell (phone + foldable outer screen); the drawer code
+        // path stays for rollback and other SidebarDrawer users.
+        Group {
+            if layout == .regularSplit {
+                sidebarLayout(layout)
+            } else {
+                CompactChatShellView()
+            }
+        }
         .onChange(of: layout, initial: true) { _, next in sidebar.setLayout(next) }
         .task(id: NewSessionLoadKey(target: appState.nativeChatServices?.newSession.refreshKey,
             presentationID: newSessionPresentationID)) {
