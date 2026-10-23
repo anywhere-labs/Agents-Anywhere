@@ -341,6 +341,21 @@ class SessionRepositoryMixin:
             )
         return await self.get_session(session_id)
 
+    async def discard_unstarted_session(self, session_id: str) -> bool:
+        """Roll back only our empty allocation after a proven pre-admission refusal."""
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                delete(sessions_t).where(
+                    sessions_t.c.id == session_id,
+                    sessions_t.c.origin == "platform",
+                    sessions_t.c.external_session_id.is_(None),
+                    sessions_t.c.seq == 0,
+                    ~select(timeline_items_t.c.session_id)
+                    .where(timeline_items_t.c.session_id == session_id).exists(),
+                ).returning(sessions_t.c.id)
+            )
+            return result.scalar_one_or_none() is not None
+
     async def upsert_connector_session(
         self,
         *,

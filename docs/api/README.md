@@ -128,3 +128,24 @@ endpoints when the selector is opened.
 an existing `externalSessionId` and pass selections through `selections`.
 New user tasks must use
 `POST /api/v2/sessions/create-and-start`.
+
+### 创建失败与恢复
+
+`create-and-start` 只有在 Runtime 接收成功后才返回成功、记录使用量并发布成功更新。
+Runtime 的 `ok:false` / `accepted:false` / `messageAccepted:false` 是业务拒绝，不能因为
+RPC 正常返回或包含外部会话 ID 而当作成功。拒绝响应使用 HTTP 409，`detail` 包含
+`code`、`message`、已分配的 `sessionId`、`platformSessionCreated`、`created`、
+`messageAccepted`、`resultUnknown` 和 `retryable:false`。未知的原生创建/接收状态为 null。
+
+仅当 Runtime 明确报告 `created:false` 且 `messageAccepted:false`，Server 才尝试撤销
+本次尚无外部绑定、没有 Timeline 的空平台记录并清理暂存文件；撤销成功后返回
+`platformSessionCreated:false`、`resultUnknown:false`，允许保留草稿回到编辑器重新提交。
+若平台记录已有更新而不能撤销，或原生端可能已创建/接收，则保留记录、返回
+`resultUnknown:true`，客户端通过 `sessionId` 查询，不直接重新创建。RPC 超时同样保守处理。
+业务拒绝会清理本次 active run，且不计入成功创建或消息发送。
+
+Web/Desktop 也防御旧 Server 的 HTTP 200 + 业务拒绝：保留草稿和附件并引导查询。
+启动阶段的 409 `runtime_starting` 可手动重试，但重试前必须用最新能力、模型和权限目录、
+Agent 模式配置验证原请求；缺失/失效时回到编辑器明确补选，不自动替换用户选择。
+DSH 模型目录未就绪时禁止首次提交。Android/iOS 通过现有 HTTP 非成功分支处理拒绝，
+不会获得 Web/Desktop 的本地恢复 UI；未升级的 Bridge 缺少确定的接收证据时按结果未知处理。

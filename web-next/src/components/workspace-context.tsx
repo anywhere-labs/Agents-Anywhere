@@ -40,6 +40,7 @@ import {
   withServerAttachments,
 } from "@/components/session/optimistic-timeline"
 import { sortSessionViews } from "@/components/session/session-list-order"
+import { useSessionCreation } from "@/components/session/use-session-creation"
 import { isApiError } from "@/lib/api/errors"
 
 // ─── Panel / page types ───────────────────────────────────────
@@ -264,7 +265,7 @@ function relativeSessionTime(session: RealSessionView): string {
 
 // ─── Context shape ────────────────────────────────────────────
 
-export type WorkspaceState = {
+export type WorkspaceState = ReturnType<typeof useSessionCreation> & {
   // Data from API
   connectors: ConnectorView[]
   sessions: SessionView[]
@@ -1285,6 +1286,28 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     })
   }, [clearOptimisticTop, sortSessions])
 
+  const removeLocalCreation = React.useCallback((id: string) => {
+    clearOptimisticTop(id)
+    setOptimisticMessages(current => {
+      const next = current.filter(message => message.localSessionId !== id)
+      optimisticMessagesRef.current = next
+      return next
+    })
+  }, [clearOptimisticTop])
+  const editCreationRoute = React.useCallback((projectId: string) => {
+    replaceRoute({ page: "home", projectId })
+  }, [replaceRoute])
+  const sessionCreation = useSessionCreation({
+    userId: authSession?.userId ?? null,
+    token: authSession?.accessToken ?? null,
+    addMessage: addOptimisticMessage,
+    bind: bindOptimisticSession,
+    markFailed: markOptimisticMessageFailed,
+    removeLocal: removeLocalCreation,
+    open: openSession,
+    edit: editCreationRoute,
+  })
+
   const clearResolvedOptimisticMessages = React.useCallback((sessionId: string, items: TimelineItem[]) => {
     const resolvedClientMessageIds = new Set(
       items
@@ -1411,6 +1434,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     pairDeviceDialogOpen,
     composerInsertion,
     optimisticMessages,
+    ...sessionCreation,
     openSession,
     goHome,
     replaceHome,

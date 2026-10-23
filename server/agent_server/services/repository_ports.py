@@ -525,6 +525,10 @@ class SessionRunRepository(
 
     async def create_session(self, **values: Any) -> SessionView: ...
 
+    async def discard_unstarted_session(self, session_id: str) -> bool: ...
+
+    async def delete_runtime_session_files(self, session_ids: list[str]) -> None: ...
+
     async def save_user_uploaded_file(
         self,
         *,

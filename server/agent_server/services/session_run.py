@@ -262,10 +262,19 @@ class SessionRunService:
             )
         except ConnectorOfflineError as exc:
             await self._store.clear_active_run(session.id)
-            raise SessionRunConflictError(str(exc)) from exc
+            raise SessionRunConflictError(_unconfirmed_creation_detail(
+                session.id, "connector_offline", str(exc),
+            )) from exc
         except ConnectorRpcError as exc:
             await self._store.clear_active_run(session.id)
-            raise SessionRunUpstreamError(exc.message or exc.code) from exc
+            raise SessionRunUpstreamError({
+                "code": exc.code,
+                "message": exc.message or exc.code,
+                "sessionId": session.id,
+                "platformSessionCreated": True,
+                "resultUnknown": True,
+                "retryable": False,
+            }) from exc
 
         if not isinstance(connector_result, dict):
             await self._mark_create_and_start_failed(
@@ -274,7 +283,39 @@ class SessionRunService:
                 code="invalid_connector_result",
                 message="connector did not return a session result",
             )
-            raise SessionRunUpstreamError("connector did not return a session result")
+            raise SessionRunUpstreamError(_unconfirmed_creation_detail(
+                session.id, "invalid_connector_result", "connector did not return a session result",
+            ))
+        if (
+            connector_result.get("ok") is False
+            or connector_result.get("accepted") is False
+            or connector_result.get("messageAccepted") is False
+        ):
+            await self._store.clear_active_run(session.id)
+            # IDs in a refusal can be deterministic placeholders, not native sessions.
+            # Only explicit pre-admission evidence permits rolling back the allocation.
+            not_started = (
+                connector_result.get("created") is False
+                and connector_result.get("messageAccepted") is False
+                and connector_result.get("sessionId") == session.id
+                and connector_result.get("runtime", payload.runtime) == payload.runtime
+                and connector_result.get("runtimeId", runtime_id) == runtime_id
+            )
+            discarded = not_started and await self._store.discard_unstarted_session(session.id)
+            if discarded:
+                await self._store.delete_runtime_session_files([session.id])
+            else:
+                await self._persist_operation_source_state(session, connector_result)
+            raise SessionRunConflictError({
+                "code": connector_result.get("code") or "runtime_operation_failed",
+                "message": connector_result.get("message") or "runtime rejected session creation",
+                "sessionId": session.id,
+                "platformSessionCreated": not discarded,
+                "created": connector_result.get("created"),
+                "messageAccepted": connector_result.get("messageAccepted"),
+                "resultUnknown": not discarded,
+                "retryable": False,
+            })
         try:
             resolve_session_runtime_binding(
                 connector_result,
@@ -289,7 +330,21 @@ class SessionRunService:
                 code="invalid_runtime_binding",
                 message=str(exc),
             )
-            raise SessionRunUpstreamError(str(exc)) from exc
+            detail = _unconfirmed_creation_detail(
+                session.id, "invalid_runtime_binding", str(exc),
+            )
+            # Expose the expected binding alongside the rejected connector identity.
+            # The caller can diagnose the mismatch without parsing a human message.
+            detail.update(
+                runtime=payload.runtime,
+                runtimeId=runtime_id,
+                connectorIdentity={
+                    field: connector_result[field]
+                    for field in ("sessionId", "runtime", "runtimeId")
+                    if field in connector_result
+                },
+            )
+            raise SessionRunUpstreamError(detail) from exc
         external_session_id = connector_result.get("externalSessionId")
         if external_session_id is not None and (
             not isinstance(external_session_id, str) or not external_session_id
@@ -300,7 +355,9 @@ class SessionRunService:
                 code="missing_external_session_id",
                 message="connector returned an invalid external session id",
             )
-            raise SessionRunUpstreamError("connector returned an invalid external session id")
+            raise SessionRunUpstreamError(_unconfirmed_creation_detail(
+                session.id, "missing_external_session_id", "connector returned an invalid external session id",
+            ))
         await self._store.start_active_run(
             session_id=session.id,
             runtime=payload.runtime,
@@ -964,6 +1021,17 @@ class SessionRunService:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         await self._store.clear_active_run(session_id)
         return RpcResponsePayload(ok=True, result=result)
+
+
+def _unconfirmed_creation_detail(session_id: str, code: str, message: str) -> dict[str, Any]:
+    return {
+        "code": code,
+        "message": message,
+        "sessionId": session_id,
+        "platformSessionCreated": True,
+        "resultUnknown": True,
+        "retryable": False,
+    }
 
 
 def _session_source_error_detail(session: SessionView) -> dict[str, str]:

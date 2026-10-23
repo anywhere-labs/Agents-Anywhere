@@ -9,7 +9,7 @@ import type {} from '@deepseek-ai/dsh-permission-presets'
 import { realpath, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { canonicalJson, digest, userMessageId } from './identity.js'
-import { BridgeError } from './errors.js'
+import { BridgeError, CreationNotStartedError } from './errors.js'
 import { ClientPresence } from './visibility.js'
 import { NativeSessionSource } from './sessions/source.js'
 import { record } from './types.js'
@@ -271,12 +271,18 @@ export class NativeRuntime {
       }
       const store = this.ctx.get('attachments')
       if (images.length && (!store || !platformId)) throw new BridgeError('UNSUPPORTED_OPERATION', 'DSH attachments are unavailable.')
-      await this.configuration.validate(selections, create)
+      let preset: string | undefined
+      try {
+        await this.configuration.validate(selections, create)
+        if (create) preset = await this.configuration.validatePreset(agentPreset)
+      } catch (error) {
+        if (create && !log && !intent && error instanceof BridgeError) throw new CreationNotStartedError(error)
+        throw error
+      }
       if (create) {
         if (log?.events.some(event => event.type === 'turn/start')) throw new BridgeError('INVALID_PARAMS', 'This session has already started. Continue it with a new message.')
-        const preset = await this.configuration.validatePreset(agentPreset)
         if (!intent) await this.creations.write(id, { requestId, fingerprint: fingerprint! })
-        await this.configuration.controller().create({ sessionId: id, cwd: path!, agentPreset: preset })
+        await this.configuration.controller().create({ sessionId: id, cwd: path!, agentPreset: preset! })
         const workspace = await this.ctx.workspaceRegistry.create(path!)
         await workspace.attachSession(id)
       }

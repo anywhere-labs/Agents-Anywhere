@@ -58,6 +58,7 @@ type AttachmentPreviewListProps = {
 }
 
 type UseAttachmentsOptions = {
+  initialAttachments?: AttachedFile[]
   enabled?: boolean
   allowedMimeTypes?: readonly string[]
   sessionId?: string
@@ -134,19 +135,33 @@ export function useAttachments(options: UseAttachmentsOptions = {}) {
   const { sessionId, token, enabled = true, allowedMimeTypes } = options
   const t = useTranslations("dashboard.new")
   const [rejectedTypes, setRejectedTypes] = useState(false)
-  const [attachments, setAttachments] = useState<AttachedFile[]>([])
+  const [attachments, setAttachments] = useState<AttachedFile[]>(() => options.initialAttachments ?? [])
   const [isDragging, setIsDragging] = useState(false)
   const dragCounter = useRef(0)
-  const attachmentsRef = useRef<AttachedFile[]>([])
+  const attachmentsRef = useRef<AttachedFile[]>(attachments)
   const sessionIdRef = useRef(sessionId)
+  const initialPreviewsPrepared = useRef(false)
+  const lifecycleGeneration = useRef(0)
 
   useEffect(() => {
     attachmentsRef.current = attachments
   }, [attachments])
 
+  // Restored File objects receive editor-owned previews outside render (including Strict Mode).
+  useEffect(() => {
+    if (initialPreviewsPrepared.current) return
+    initialPreviewsPrepared.current = true
+    if (!attachmentsRef.current.length) return
+    const next = attachmentsRef.current.map(file => file.type === "image" && !file.preview
+      ? { ...file, preview: URL.createObjectURL(file.file) } : file)
+    attachmentsRef.current = next
+    setAttachments(next)
+  }, [])
+
   const clear = useCallback((options: ClearAttachmentsOptions = {}) => {
     const revoke = options.revokePreviews ?? true
     setRejectedTypes(false)
+    if (!revoke) attachmentsRef.current = []
     setAttachments((prev) => {
       if (revoke) revokePreviews(prev)
       attachmentsRef.current = []
@@ -211,7 +226,12 @@ export function useAttachments(options: UseAttachmentsOptions = {}) {
     })
   }, [])
 
-  useEffect(() => () => revokePreviews(attachmentsRef.current), [])
+  useEffect(() => {
+    const generation = ++lifecycleGeneration.current
+    return () => queueMicrotask(() => {
+      if (lifecycleGeneration.current === generation) revokePreviews(attachmentsRef.current)
+    })
+  }, [])
 
   // Global paste handler
   useEffect(() => {

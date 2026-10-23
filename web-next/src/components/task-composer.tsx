@@ -27,7 +27,6 @@ import {
   AttachmentButton,
   AttachmentPreviewList,
   DragOverlay,
-  type AttachedFile,
   useAttachments,
 } from "@/components/attachment-input"
 import { buildOptimisticUserMessage } from "@/components/session/optimistic-timeline"
@@ -45,7 +44,6 @@ import { cn } from "@/lib/utils"
 import { useElementWidth } from "@/hooks/use-element-width"
 import type {
   DeviceRuntimeView,
-  InlineAttachmentRef,
   ProjectCreateRequest,
   ProtocolCapabilitySet,
   ProtocolModelCatalog,
@@ -66,7 +64,7 @@ import {
   selectionIdForModelCatalog,
   selectionIdForPermissionCatalog,
 } from "@/components/session/catalog-selection"
-import { CAPABILITY, capabilityIsUsable, attachmentMimeTypes } from "@/components/session/capabilities"
+import { CAPABILITY, capabilityIsUsable, findCapability, attachmentMimeTypes } from "@/components/session/capabilities"
 import {
   runtimeInstanceName,
   runtimeTypeName,
@@ -116,42 +114,6 @@ const MOBILE_NEW_SESSION_TITLE_KEYS = [
   "typewriter.changingToday",
 ] as const
 
-async function inlineAttachmentsFromFiles(files: AttachedFile[]): Promise<InlineAttachmentRef[]> {
-  const inlineAttachments: InlineAttachmentRef[] = []
-  for (const attachment of files) {
-    const content = await attachment.file.arrayBuffer()
-    const contentBase64 = arrayBufferToBase64(content)
-    const sha256 = await sha256Hex(content)
-    inlineAttachments.push({
-      fileId: attachment.id.slice(0, 64),
-      name: attachment.name,
-      mediaType: attachment.file.type || "application/octet-stream",
-      size: attachment.size,
-      sha256,
-      contentBase64,
-    })
-  }
-  return inlineAttachments
-}
-
-function arrayBufferToBase64(value: ArrayBuffer): string {
-  const bytes = new Uint8Array(value)
-  const chunkSize = 0x8000
-  let binary = ""
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    const chunk = bytes.subarray(index, index + chunkSize)
-    binary += String.fromCharCode(...chunk)
-  }
-  return btoa(binary)
-}
-
-async function sha256Hex(value: ArrayBuffer): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", value)
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")
-}
-
 type NewSessionTitleKey = (typeof NEW_SESSION_TITLE_KEYS)[number]
 type MobileNewSessionTitleKey = (typeof MOBILE_NEW_SESSION_TITLE_KEYS)[number]
 
@@ -160,14 +122,14 @@ export function TaskComposer() {
   const { session: authSession } = useAuth()
   const { isMobile, state: sidebarState } = useSidebar()
   const {
-    addOptimisticMessage,
-    bindOptimisticSession,
+    startSessionCreation,
+    creationEditorDraft,
+    discardCreationEditor,
+    saveCreationEditor,
     connectors,
     createProject,
     goHome,
-    markOptimisticMessageFailed,
     newSessionProject,
-    openSession,
     projects,
     resolveProject,
     sidebarShowsSessions,
@@ -249,7 +211,7 @@ export function TaskComposer() {
   )
   const hasOnlineDevice = deviceOptions.length > 0
 
-  const [selectedDevice, setSelectedDevice] = React.useState(deviceOptions[0]?.id ?? "")
+  const [selectedDevice, setSelectedDevice] = React.useState(creationEditorDraft?.request.connectorId ?? deviceOptions[0]?.id ?? "")
   const selectedConnector =
     onlineConnectors.find((connector) => connector.id === selectedDevice) ??
     onlineConnectors[0] ??
@@ -265,30 +227,33 @@ export function TaskComposer() {
     [runtimeInventory, selectedConnector],
   )
 
-  const [selectedAgent, setSelectedAgent] = React.useState(agentOptions[0]?.id ?? "")
+  const [selectedAgent, setSelectedAgent] = React.useState(creationEditorDraft?.request.runtimeId ?? agentOptions[0]?.id ?? "")
   const selectedRuntime = activeRuntimes(runtimeInventory[selectedConnectorId])
     .find((runtime) => runtime.runtimeId === selectedAgent) ?? null
   const selectedRuntimeScope = selectedRuntime
     ? { runtimeId: selectedRuntime.runtimeId, runtimeType: selectedRuntime.runtimeType }
     : undefined
-  const [selectedModel, setSelectedModel] = React.useState("")
-  const [selectedReasoning, setSelectedReasoning] = React.useState("")
-  const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
+  const [selectedModel, setSelectedModel] = React.useState(creationEditorDraft?.modelId ?? "")
+  const [selectedReasoning, setSelectedReasoning] = React.useState(creationEditorDraft?.reasoningId ?? "")
+  const [selectedPermissionMode, setSelectedPermissionMode] = React.useState(creationEditorDraft?.permissionMode ?? "")
   const [permissionRefreshKey, setPermissionRefreshKey] = React.useState(0)
-  const [workspace, setWorkspace] = React.useState<WorkspaceSelection | null>(null)
+  const [workspace, setWorkspace] = React.useState<WorkspaceSelection | null>(creationEditorDraft?.workspace ?? null)
   const [projectEditor, setProjectEditor] = React.useState<ProjectEditorState>(null)
-  const [prompt, setPrompt] = React.useState("")
+  const [prompt, setPrompt] = React.useState(creationEditorDraft?.prompt ?? "")
   const [modelCatalog, setModelCatalog] = React.useState<ProtocolModelCatalog | null>(null)
   const [permissionCatalog, setPermissionCatalog] = React.useState<ProtocolPermissionCatalog | null>(null)
   const [runtimeCapabilities, setRuntimeCapabilities] = React.useState<ProtocolCapabilitySet | null>(null)
   const [catalogsLoading, setCatalogsLoading] = React.useState(false)
+  const [catalogRefreshKey, setCatalogRefreshKey] = React.useState(0)
   const [creating, setCreating] = React.useState(false)
+  const [recoveryTargetChanged, setRecoveryTargetChanged] = React.useState(false)
+  const preserveRecoveredSelections = Boolean(creationEditorDraft && !recoveryTargetChanged)
   const creatingRef = React.useRef(false)
   const [createTick, setCreateTick] = React.useState(0)
   const [preferenceLoaded, setPreferenceLoaded] = React.useState(false)
   const [preference, setPreference] = React.useState<NewSessionPreference | null>(null)
   const preferenceRef = React.useRef<NewSessionPreference | null>(null)
-  const projectPrefillAppliedRef = React.useRef<string | null>(null)
+  const projectPrefillAppliedRef = React.useRef<string | null>(creationEditorDraft?.request.projectId ?? null)
   const composerRef = React.useRef<HTMLDivElement | null>(null)
   const composerWidth = useElementWidth(composerRef)
 
@@ -337,6 +302,7 @@ export function TaskComposer() {
   }, [persistPreference, preferenceLoaded])
 
   React.useEffect(() => {
+    if (runtimeInventoryLoading || (creationEditorDraft && !newSessionProject)) return
     if (!newSessionProject) {
       if (projectPrefillAppliedRef.current !== null) {
         projectPrefillAppliedRef.current = null
@@ -362,10 +328,10 @@ export function TaskComposer() {
       connectorId: newSessionProject.connectorId,
       projectId: newSessionProject.id,
     })
-  }, [deviceOptions, newSessionProject, selectedDevice])
+  }, [creationEditorDraft, runtimeInventoryLoading, deviceOptions, newSessionProject, selectedDevice])
 
   React.useEffect(() => {
-    if (newSessionProject) return
+    if (runtimeInventoryLoading || newSessionProject) return
     const nextDevice = preferredAvailableOptionId(
       deviceOptions,
       selectedDevice,
@@ -374,9 +340,10 @@ export function TaskComposer() {
     if (nextDevice !== selectedDevice) {
       setSelectedDevice(nextDevice)
     }
-  }, [deviceOptions, newSessionProject, preference?.connectorId, preferenceLoaded, selectedDevice])
+  }, [runtimeInventoryLoading, deviceOptions, newSessionProject, preference?.connectorId, preferenceLoaded, selectedDevice])
 
   React.useEffect(() => {
+    if (!selectedConnectorId) return
     setWorkspace((current) => {
       if (!current) return current
       if (current.connectorId && current.connectorId !== selectedConnectorId) return null
@@ -388,6 +355,7 @@ export function TaskComposer() {
   }, [projects, selectedConnectorId])
 
   React.useEffect(() => {
+    if (runtimeInventoryLoading) return
     const connectorId = selectedConnectorId
     const preferredAgent = preferenceLoaded && preference?.connectorId === connectorId
       ? preference.agent
@@ -400,7 +368,7 @@ export function TaskComposer() {
     if (nextAgent !== selectedAgent) {
       setSelectedAgent(nextAgent)
     }
-  }, [agentOptions, preference, preferenceLoaded, selectedAgent, selectedConnectorId])
+  }, [runtimeInventoryLoading, agentOptions, preference, preferenceLoaded, selectedAgent, selectedConnectorId])
 
   React.useEffect(() => {
     if (!authSession?.accessToken || !selectedConnectorId || !selectedAgent) {
@@ -468,13 +436,18 @@ export function TaskComposer() {
     return () => {
       cancelled = true
     }
-  }, [authSession?.accessToken, selectedAgent, selectedConnectorId, selectedRuntime?.runtimeType])
+  }, [authSession?.accessToken, selectedAgent, selectedConnectorId, selectedRuntime?.runtimeType, selectedRuntime?.status, catalogRefreshKey])
 
-  const canUseModelCatalog = capabilityIsUsable(
-    runtimeCapabilities,
-    CAPABILITY.modelCatalog,
-    selectedRuntimeScope,
-  )
+  // A failed cold-start read is not an authoritative empty catalog. Recover in place.
+  React.useEffect(() => {
+    if (!authSession?.accessToken || !selectedConnectorId || !selectedAgent || catalogsLoading || modelCatalog) return
+    if (runtimeCapabilities && !findCapability(runtimeCapabilities, CAPABILITY.modelCatalog, selectedRuntimeScope)?.supported) return
+    const refresh = () => setCatalogRefreshKey(value => value + 1)
+    const timer = window.setTimeout(refresh, 5_000)
+    window.addEventListener("focus", refresh)
+    return () => { window.clearTimeout(timer); window.removeEventListener("focus", refresh) }
+  }, [authSession?.accessToken, selectedConnectorId, selectedAgent, catalogsLoading, modelCatalog, catalogRefreshKey, runtimeCapabilities, selectedRuntime?.runtimeType])
+
   const canUsePermissionCatalog = capabilityIsUsable(
     runtimeCapabilities,
     CAPABILITY.permissionCatalog,
@@ -522,8 +495,9 @@ export function TaskComposer() {
     selectedRuntimeScope,
   )
   const allowedMimeTypes = React.useMemo(() => attachmentMimeTypes(runtimeCapabilities, selectedRuntimeScope), [runtimeCapabilities, selectedRuntimeScope])
+  const [restoredAttachments] = React.useState(() => (creationEditorDraft?.attachments ?? []).map(file => ({ ...file, preview: undefined })))
   const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop,
-    attachmentsAllowed, attachmentError } = useAttachments({ enabled: canUseAttachments, allowedMimeTypes })
+    attachmentsAllowed, attachmentError } = useAttachments({ enabled: canUseAttachments, allowedMimeTypes, initialAttachments: restoredAttachments })
 
   const models = React.useMemo(
     () => modelCatalog?.models.map((item) => ({
@@ -570,26 +544,26 @@ export function TaskComposer() {
     const nextModel = models.find((option) => option.default && option.enabled)?.id
       ?? models.find((option) => option.enabled)?.id
       ?? ""
-    setSelectedModel((current) => current && models.some((option) => option.id === current && option.enabled) ? current : nextModel)
-  }, [models])
+    setSelectedModel((current) => current && models.some((option) => option.id === current && option.enabled) ? current : preserveRecoveredSelections ? "" : nextModel)
+  }, [models, preserveRecoveredSelections])
 
   React.useEffect(() => {
     const nextPermissionMode = permissionOptions.find((option) => option.default && option.enabled)?.id
       ?? permissionOptions.find((option) => option.enabled)?.id
       ?? ""
     setSelectedPermissionMode((current) =>
-      current && permissionOptions.some((option) => option.id === current && option.enabled) ? current : nextPermissionMode,
+      current && permissionOptions.some((option) => option.id === current && option.enabled) ? current : preserveRecoveredSelections ? "" : nextPermissionMode,
     )
-  }, [permissionOptions])
+  }, [permissionOptions, preserveRecoveredSelections])
 
   React.useEffect(() => {
     const nextEffort = reasoningOptions.find((option) => option.default && option.enabled)?.id
       ?? reasoningOptions.find((option) => option.enabled)?.id
       ?? ""
     setSelectedReasoning((current) =>
-      current && reasoningOptions.some((option) => option.id === current && option.enabled) ? current : nextEffort,
+      current && reasoningOptions.some((option) => option.id === current && option.enabled) ? current : preserveRecoveredSelections ? "" : nextEffort,
     )
-  }, [reasoningOptions])
+  }, [reasoningOptions, preserveRecoveredSelections])
 
   React.useEffect(() => {
     setSelectedReasoning((current) => {
@@ -599,6 +573,7 @@ export function TaskComposer() {
   }, [reasoningOptions])
 
   React.useEffect(() => {
+    if (creationEditorDraft) return
     if (!preferenceLoaded || !selectedConnectorId || !selectedAgent) return
     if (catalogsLoading || (!modelCatalog && !permissionCatalog)) return
     const scope = newSessionSelectionScope(selectedConnectorId, selectedAgent)
@@ -632,8 +607,23 @@ export function TaskComposer() {
     selectedConnectorId,
   ])
 
+  React.useEffect(() => {
+    if (creationEditorDraft?.configurationRequired) toast.error(t("recoveryConfigurationRequired"))
+  }, [creationEditorDraft?.localSessionId, creationEditorDraft?.configurationRequired, t])
+
+  const recoverySelectionApplied = React.useRef(false)
+  React.useEffect(() => {
+    if (!creationEditorDraft || recoverySelectionApplied.current || catalogsLoading || runtimeInventoryLoading) return
+    if (selectedConnectorId !== creationEditorDraft.request.connectorId || selectedAgent !== creationEditorDraft.request.runtimeId) return
+    if ((creationEditorDraft.modelId && !modelCatalog) || (creationEditorDraft.permissionMode && !permissionCatalog)) return
+    setSelectedModel(models.some(model => model.id === creationEditorDraft.modelId && model.enabled) ? creationEditorDraft.modelId : "")
+    setSelectedReasoning(creationEditorDraft.reasoningId)
+    setSelectedPermissionMode(permissionOptions.some(mode => mode.id === creationEditorDraft.permissionMode && mode.enabled) ? creationEditorDraft.permissionMode : "")
+    recoverySelectionApplied.current = true
+  }, [creationEditorDraft, catalogsLoading, runtimeInventoryLoading, selectedConnectorId, selectedAgent, models, permissionOptions, modelCatalog, permissionCatalog])
+
   const selectedPermissionOption = permissionOptions.find((option) => option.id === selectedPermissionMode)
-  const modelLabel = selectedModelItem?.label ?? t("defaultModel")
+  const modelLabel = selectedModelItem?.label ?? t(modelCatalog ? "selectModel" : "modelCatalogUnavailable")
   const selectedReasoningOption = reasoningOptions.find((option) => option.id === selectedReasoning)
   const effortLabel = selectedReasoningOption?.label ?? t("defaultReasoning")
   const permissionLabel = selectedPermissionOption?.label ?? t("permissionMode")
@@ -642,6 +632,7 @@ export function TaskComposer() {
   const selectedPermissionSelection = selectionIdForPermissionCatalog(permissionCatalog, selectedPermissionMode)
 
   const handleDeviceChange = React.useCallback((connectorId: string) => {
+    setRecoveryTargetChanged(true)
     const targetOptions = activeRuntimes(runtimeInventory[connectorId])
     const preferredAgent = preferenceRef.current?.connectorId === connectorId
       ? preferenceRef.current.agent
@@ -671,6 +662,7 @@ export function TaskComposer() {
 
   const handleAgentChange = React.useCallback((agent: string) => {
     if (!selectedConnectorId || !agentOptions.some((option) => option.id === agent)) return
+    setRecoveryTargetChanged(true)
     setSelectedAgent(agent)
     persistTargetPreference(selectedConnectorId, agent)
   }, [agentOptions, persistTargetPreference, selectedConnectorId])
@@ -696,10 +688,31 @@ export function TaskComposer() {
     })
   }, [modelCatalog, models, persistTargetPreference, selectedAgent, selectedConnectorId])
 
-  const requiresModelSelection = canUseModelCatalog && models.length > 0
-  const requiresPermissionSelection = canUsePermissionCatalog && permissionOptions.length > 0
+  // Save edits when navigating away, while keeping each owner responsible for its own previews.
+  const editorSnapshot = React.useRef(creationEditorDraft)
+  if (creationEditorDraft && !runtimeInventoryLoading && !catalogsLoading && workspace && selectedRuntime) {
+    editorSnapshot.current = {
+      ...creationEditorDraft, prompt, attachments, workspace,
+      modelId: selectedModel, reasoningId: selectedReasoning, permissionMode: selectedPermissionMode,
+      request: {
+        ...creationEditorDraft.request, connectorId: selectedConnectorId,
+        runtime: selectedRuntime.runtimeType, runtimeId: selectedRuntime.runtimeId,
+        projectId: workspace.projectId ?? creationEditorDraft.request.projectId,
+        cwd: workspace.path,
+      },
+    }
+  }
+  React.useEffect(() => () => {
+    if (editorSnapshot.current) saveCreationEditor(editorSnapshot.current)
+  }, [saveCreationEditor])
+
+  const requiresModelSelection = selectedRuntime?.runtimeType === "dsh" || Boolean(findCapability(runtimeCapabilities, CAPABILITY.modelCatalog, selectedRuntimeScope)?.supported)
+  const requiresPermissionSelection = Boolean(findCapability(runtimeCapabilities, CAPABILITY.permissionCatalog, selectedRuntimeScope)?.supported)
   const hasSelectionSettings = models.length > 0 || permissionOptions.length > 0
+  const recoveryTargetUnavailable = Boolean(creationEditorDraft && !recoveryTargetChanged && !runtimeInventoryLoading
+    && (selectedConnectorId !== creationEditorDraft.request.connectorId || selectedAgent !== creationEditorDraft.request.runtimeId))
   const canCreate =
+    !recoveryTargetUnavailable &&
     Boolean(authSession?.accessToken && selectedConnector && selectedRuntime && workspace?.path) &&
     workspace?.connectorId === selectedConnectorId &&
     !creating &&
@@ -717,7 +730,7 @@ export function TaskComposer() {
 
   const handleCreate = async () => {
     if (!authSession?.accessToken || !selectedConnector || !selectedRuntime || !workspace?.path || creatingRef.current) return
-    if (workspace.connectorId !== selectedConnector.id) return
+    if (recoveryTargetUnavailable || workspace.connectorId !== selectedConnector.id) return
     if (!prompt.trim() && attachments.length === 0) return
     if (catalogsLoading) return
     if (requiresModelSelection && !selectedModelSelection) return
@@ -788,7 +801,7 @@ export function TaskComposer() {
       createdAt: now,
       updatedAt: now,
     }
-    addOptimisticMessage({
+    const optimisticMessage = {
       clientMessageId,
       sessionId: localSessionId,
       localSessionId,
@@ -802,10 +815,7 @@ export function TaskComposer() {
         items: [],
         nextSeq: 0,
       }),
-    })
-    clear()
-    setPrompt("")
-    openSession(localSessionId)
+    }
     try {
       const selections = {
         ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
@@ -836,21 +846,18 @@ export function TaskComposer() {
         },
       )
       persistPreference(nextPreference)
-      const created = await dashboardApi.createAndStartSession(authSession.accessToken, {
-        ...createBody,
-        content: messageText,
-        selections,
-        attachments: selectedAttachments.length > 0
-          ? await inlineAttachmentsFromFiles(selectedAttachments)
-          : undefined,
-        clientMessageId,
-      })
-      toolSidebarStore.migrateSession(localSessionId, created.session.id)
-      bindOptimisticSession(localSessionId, created.session, created.attachments)
+      // Transfer File/preview ownership to the workspace before navigating away.
+      clear({ revokePreviews: false })
+      setPrompt("")
+      startSessionCreation({
+        localSessionId, clientMessageId, prompt,
+        attachments: selectedAttachments,
+        workspace: { ...workspace, projectId: project.id },
+        modelId: selectedModel, reasoningId: selectedReasoning, permissionMode: selectedPermissionMode,
+        request: { ...createBody, content: messageText, selections, clientMessageId },
+      }, optimisticMessage, (id) => toolSidebarStore.migrateSession(localSessionId, id))
     } catch (err) {
-      const message = err instanceof Error ? err.message : t("createFailed")
-      markOptimisticMessageFailed(clientMessageId, message)
-      toast.error(message)
+      toast.error(err instanceof Error ? err.message : t("createFailed"))
     } finally {
       creatingRef.current = false
       setCreating(false)
@@ -889,6 +896,17 @@ export function TaskComposer() {
           className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20"
         >
           <div className="flex flex-col gap-3 px-5 pt-4">
+            {creationEditorDraft ? (
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm text-muted-foreground">{t("restoredDraft")}</p>
+                <Button variant="ghost" size="sm" onClick={() => {
+                  discardCreationEditor()
+                  clear()
+                  setPrompt("")
+                }}>{t("discardDraft")}</Button>
+              </div>
+            ) : null}
+            {recoveryTargetUnavailable ? <p role="alert" className="text-sm text-destructive">{t("restoredTargetUnavailable")}</p> : null}
             <AttachmentPreviewList attachments={attachments} onRemove={remove} />
             {attachmentError ? <p role="alert" className="text-xs text-destructive">{attachmentError}</p> : null}
             <Textarea

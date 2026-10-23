@@ -224,4 +224,10 @@ filtered sessions use `unavailable`. Complete inventories carry these source fac
 the adapter forwards that fact through existing ingestion before returning state.
 Sends recheck availability and return
 `{ok:false,code:"session_archived",result:{sourceState,...}}` for archived sessions.
-No server logic, tables, migrations, or additional AA unarchive protection are added.
+For create-and-start configuration validation failures before any native session or
+creation intent exists, the failure result explicitly contains `created:false` and
+`messageAccepted:false`. Other failures must not infer non-admission from a missing
+configuration snapshot or an allocated external ID. An exception after prompting
+can have an unknown admission outcome. Server consumers must preserve these business
+failure semantics; no schema or generated protocol changes are required for these
+fields inside the existing open result object.

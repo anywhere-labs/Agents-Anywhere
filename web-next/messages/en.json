@@ -326,6 +326,9 @@
       "settings": "Settings"
     },
     "new": {
+      "restoredTargetUnavailable": "The original device or runtime is unavailable. Select a target before sending.",
+      "restoredDraft": "Your uncreated task draft has been restored.",
+      "discardDraft": "Discard draft",
       "askApproval": "Ask approval",
       "attach": "Attach files",
       "attachmentLimit": "Up to {count} files",
@@ -410,6 +413,9 @@
       "sendTask": "Send task",
       "agent": "Agent",
       "createFailed": "Failed to create session.",
+      "selectModel": "Choose a model",
+      "modelCatalogUnavailable": "Model catalog not ready",
+      "recoveryConfigurationRequired": "Your draft and attachments are retained. Review the model, permissions and Agent mode in Runtime settings before sending.",
       "attachmentOnlyPrompt": "(No text content.)",
       "imagePreview": {
         "close": "Close",
@@ -845,6 +851,14 @@
       "sessions": "Sessions"
     },
     "session": {
+      "creationFailed": "Task not created",
+      "creationUnconfirmed": "Creation result unconfirmed",
+      "checkCreatedSession": "Check allocated session",
+      "creationCheckFirst": "Check the device session list before creating again. Your draft is retained in this app.",
+      "creationDraftRetained": "Your input and attachments are retained. Retry manually when ready.",
+      "retryCreation": "Retry creation",
+      "editCreation": "Back to editing",
+      "checkDeviceSessions": "View device sessions",
       "device": "Device",
       "status": "Status",
       "sessionId": "Session ID",

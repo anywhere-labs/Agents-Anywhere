@@ -5,7 +5,7 @@ import { parseAttachments } from './attachments.js'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionQueryEngine, SessionRecord } from '@deepseek-ai/dsh-session-query'
 import { capabilities } from './capabilities.js'
-import { BridgeError, publicError } from './errors.js'
+import { BridgeError, CreationNotStartedError, publicError } from './errors.js'
 import { parseSelections } from './selections.js'
 import { projectHistoryAsync } from './history.js'
 import { sessionId, nativeSessionId } from './identity.js'
@@ -99,7 +99,8 @@ export class RuntimeRouter {
           const configuration = native.ctx.sessions.get(id) ? await native.configuration.state(id).catch(() => undefined) : undefined
           return { ok: false, code: failure.code === 'SESSION_ARCHIVED' ? 'session_archived' : failure.code === 'SESSION_NOT_FOUND' ? 'session_unavailable' : failure.code,
             message: failure.message, result: { sessionId: params.sessionId, externalSessionId: id, sourceState,
-              ...(configuration ? { configuration, created: create, messageAccepted: false } : {}) } }
+              ...(error instanceof CreationNotStartedError ? { created: false, messageAccepted: false }
+                : configuration ? { configuration, created: create } : {}) } }
         }
         return { accepted: true, sessionId: sessionId(this.namespace, id), externalSessionId: id }
       }

@@ -343,6 +343,9 @@
       "clear": "清除筛选"
     },
     "new": {
+      "restoredTargetUnavailable": "原设备或 Runtime 当前不可用，请重新选择后再发送。",
+      "restoredDraft": "已恢复未创建的任务草稿",
+      "discardDraft": "放弃草稿",
       "askApproval": "请求确认",
       "attach": "添加附件",
       "attachmentLimit": "最多 {count} 个文件",
@@ -427,6 +430,9 @@
       "sendTask": "发送任务",
       "agent": "Agent",
       "createFailed": "无法创建会话。",
+      "selectModel": "请选择模型",
+      "modelCatalogUnavailable": "模型目录尚未就绪",
+      "recoveryConfigurationRequired": "草稿和附件已保留。请重新确认模型、权限及 Runtime 配置中的 Agent 模式后再发送。",
       "attachmentOnlyPrompt": "（无文字内容。）",
       "imagePreview": {
         "close": "关闭",
@@ -881,6 +887,14 @@
       "waitingForScan": "等待手机扫码"
     },
     "session": {
+      "creationFailed": "任务尚未创建",
+      "creationUnconfirmed": "创建结果未确认",
+      "checkCreatedSession": "查看已分配会话",
+      "creationCheckFirst": "请先核对设备会话列表，避免重复创建。草稿仍保留在当前应用中。",
+      "creationDraftRetained": "输入内容和附件已保留；准备就绪后请手动重试。",
+      "retryCreation": "重试创建",
+      "editCreation": "返回编辑",
+      "checkDeviceSessions": "查看设备会话",
       "device": "设备",
       "status": "状态",
       "sessionId": "会话 ID",
