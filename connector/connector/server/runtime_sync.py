@@ -89,7 +89,14 @@ class RuntimeSyncRunner:
                 runtime = self.supervisor.resolve_runtime(runtime_id)
                 if runtime.sync_mode == "events":
                     await runtime.resynchronize()
-            except Exception:
+            except RuntimeUnavailableError as exc:
+                if not self.runtime_stopped(runtime_id):
+                    logger.info(
+                        "runtime event recovery skipped runtime={} reason={}",
+                        runtime_id,
+                        exc,
+                    )
+            except Exception:  # noqa: BLE001
                 logger.exception("runtime event recovery deferred runtime={}", runtime_id)
 
     async def sync_existing_once(self) -> None:
@@ -218,7 +225,7 @@ class RuntimeSyncRunner:
                     (time.monotonic() - runtime_started_at) * 1000,
                 )
             except RuntimeUnavailableError:
-                if self.runtime_has_config(runtime_id):
+                if self.runtime_has_config(runtime_id) and not self.runtime_stopped(runtime_id):
                     logger.info(
                         "existing session sync runtime unavailable runtime={}",
                         runtime_id,
@@ -442,6 +449,11 @@ class RuntimeSyncRunner:
     def runtime_has_config(self, runtime_id: str) -> bool:
         entry = self.supervisor.entry(runtime_id)
         return entry.config is not None
+
+    def runtime_stopped(self, runtime_id: str) -> bool:
+        # The supervisor keeps stopped (and server-deleted) instances registered
+        # so they can be restarted; their absence is intentional, not a failure.
+        return self.supervisor.entry(runtime_id).status == "stopped"
 
 
 def validation_error_summary(error: ValidationError) -> str:
