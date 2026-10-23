@@ -1,0 +1,3060 @@
+{
+  "string": [
+    {
+      "name": "home_project_options",
+      "value": "项目操作"
+    },
+    {
+      "name": "home_project_filter_sessions",
+      "value": "筛选项目会话"
+    },
+    {
+      "name": "home_project_session_status",
+      "value": "会话状态"
+    },
+    {
+      "name": "home_project_filter_active",
+      "value": "活跃会话"
+    },
+    {
+      "name": "home_project_filter_archived",
+      "value": "已归档"
+    },
+    {
+      "name": "home_project_filter_all",
+      "value": "全部"
+    },
+    {
+      "name": "home_project_load_retry",
+      "value": "会话加载失败，点击重试。"
+    },
+    {
+      "name": "common_back",
+      "value": "返回"
+    },
+    {
+      "name": "common_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "common_checking",
+      "value": "检查中..."
+    },
+    {
+      "name": "common_close",
+      "value": "关闭"
+    },
+    {
+      "name": "common_continue",
+      "value": "继续"
+    },
+    {
+      "name": "common_copied",
+      "value": "已复制"
+    },
+    {
+      "name": "common_copy",
+      "value": "复制"
+    },
+    {
+      "name": "common_creating",
+      "value": "创建中..."
+    },
+    {
+      "name": "common_done",
+      "value": "完成"
+    },
+    {
+      "name": "common_all",
+      "value": "全部"
+    },
+    {
+      "name": "common_files",
+      "value": "文件"
+    },
+    {
+      "name": "common_now",
+      "value": "刚刚"
+    },
+    {
+      "name": "common_ok",
+      "value": "好的"
+    },
+    {
+      "name": "common_password",
+      "value": "密码"
+    },
+    {
+      "name": "common_select",
+      "value": "选择"
+    },
+    {
+      "name": "common_save",
+      "value": "保存"
+    },
+    {
+      "name": "common_saving",
+      "value": "保存中..."
+    },
+    {
+      "name": "common_server_url",
+      "value": "服务器地址"
+    },
+    {
+      "name": "common_terminal",
+      "value": "终端"
+    },
+    {
+      "name": "common_user_id",
+      "value": "用户 ID"
+    },
+    {
+      "name": "common_working",
+      "value": "处理中..."
+    },
+    {
+      "name": "common_wait",
+      "value": "等待"
+    },
+    {
+      "name": "common_claim",
+      "value": "配对"
+    },
+    {
+      "name": "common_delete",
+      "value": "删除"
+    },
+    {
+      "name": "common_setup",
+      "value": "设置"
+    },
+    {
+      "name": "common_revoke",
+      "value": "撤销"
+    },
+    {
+      "name": "common_enable",
+      "value": "开启"
+    },
+    {
+      "name": "common_disable",
+      "value": "关闭"
+    },
+    {
+      "name": "common_send",
+      "value": "发送"
+    },
+    {
+      "name": "auth_continue_to",
+      "value": "继续使用"
+    },
+    {
+      "name": "auth_choose_login",
+      "value": "选择登录方式。"
+    },
+    {
+      "name": "auth_enter_server",
+      "value": "输入服务器"
+    },
+    {
+      "name": "auth_password_login",
+      "value": "账号密码登录"
+    },
+    {
+      "name": "auth_continue_qr",
+      "value": "扫码登录"
+    },
+    {
+      "name": "auth_host_choice_title",
+      "value": "选择登录服务"
+    },
+    {
+      "name": "auth_official_service",
+      "value": "登录Agents Anywhere Cloud"
+    },
+    {
+      "name": "auth_official_service_description",
+      "value": "使用 Agents Anywhere 在线服务"
+    },
+    {
+      "name": "auth_self_host_service",
+      "value": "连接到你自己的服务实例"
+    },
+    {
+      "name": "auth_or",
+      "value": "OR"
+    },
+    {
+      "name": "auth_connect_server",
+      "value": "连接服务器"
+    },
+    {
+      "name": "auth_self_host_service_description",
+      "value": "连接你自己部署的服务器"
+    },
+    {
+      "name": "auth_coming_soon",
+      "value": "暂未开放"
+    },
+    {
+      "name": "auth_host_choice_hint",
+      "value": "如果你没有私有化部署后端，请选择 Cloud 登录。"
+    },
+    {
+      "name": "auth_self_host_login_title",
+      "value": "self-host 登录"
+    },
+    {
+      "name": "auth_web_login_subtitle",
+      "value": "输入后端地址，验证连接后自动打开登录页面。"
+    },
+    {
+      "name": "auth_backend_url",
+      "value": "后端地址"
+    },
+    {
+      "name": "auth_continue_in_web",
+      "value": "继续打开网页登录"
+    },
+    {
+      "name": "auth_opening_web_login",
+      "value": "正在打开网页登录..."
+    },
+    {
+      "name": "auth_web_login_help",
+      "value": "可使用密码登录，或使用此服务器已配置的任意 OAuth 服务。"
+    },
+    {
+      "name": "auth_passwords_do_not_match",
+      "value": "两次输入的密码不一致。"
+    },
+    {
+      "name": "qr_camera_permission_required",
+      "value": "需要相机权限才能扫描二维码。"
+    },
+    {
+      "name": "qr_start_failed",
+      "value": "无法开始二维码登录。"
+    },
+    {
+      "name": "qr_help_title",
+      "value": "如何生成移动端登录二维码？"
+    },
+    {
+      "name": "qr_help_body",
+      "value": "打开 Agents Anywhere 桌面端或网页端，进入设置 - 手机连接 - 开始连接，然后扫描页面上的二维码。"
+    },
+    {
+      "name": "qr_scan_first",
+      "value": "请先扫描二维码。"
+    },
+    {
+      "name": "qr_status_failed",
+      "value": "无法检查二维码登录状态。"
+    },
+    {
+      "name": "qr_complete_failed",
+      "value": "无法完成二维码登录。"
+    },
+    {
+      "name": "qr_camera_access_needed",
+      "value": "需要相机权限才能扫描。"
+    },
+    {
+      "name": "qr_completing",
+      "value": "正在完成登录..."
+    },
+    {
+      "name": "qr_rejected",
+      "value": "登录已被拒绝。"
+    },
+    {
+      "name": "qr_expired",
+      "value": "二维码已过期。"
+    },
+    {
+      "name": "qr_consumed",
+      "value": "二维码已被使用。"
+    },
+    {
+      "name": "qr_waiting",
+      "value": "等待网页端确认..."
+    },
+    {
+      "name": "home_search_coming_soon",
+      "value": "搜索功能即将推出。"
+    },
+    {
+      "name": "home_session_pinned",
+      "value": "会话已置顶。"
+    },
+    {
+      "name": "home_session_unpinned",
+      "value": "会话已取消置顶。"
+    },
+    {
+      "name": "home_pin_update_failed",
+      "value": "无法更新置顶状态。"
+    },
+    {
+      "name": "home_session_archived",
+      "value": "会话已归档。"
+    },
+    {
+      "name": "home_session_restored",
+      "value": "会话已恢复。"
+    },
+    {
+      "name": "home_archive_failed",
+      "value": "无法归档会话。"
+    },
+    {
+      "name": "home_restore_failed",
+      "value": "无法恢复会话。"
+    },
+    {
+      "name": "home_session_renamed",
+      "value": "会话已重命名。"
+    },
+    {
+      "name": "home_rename_failed",
+      "value": "无法重命名会话。"
+    },
+    {
+      "name": "home_title_required",
+      "value": "标题不能为空。"
+    },
+    {
+      "name": "home_rename",
+      "value": "重命名"
+    },
+    {
+      "name": "home_unarchive",
+      "value": "取消归档"
+    },
+    {
+      "name": "home_archive",
+      "value": "归档"
+    },
+    {
+      "name": "home_unpin",
+      "value": "取消置顶"
+    },
+    {
+      "name": "home_pin",
+      "value": "置顶"
+    },
+    {
+      "name": "home_rename_session",
+      "value": "重命名会话"
+    },
+    {
+      "name": "home_tab_active",
+      "value": "活跃"
+    },
+    {
+      "name": "home_tab_archived",
+      "value": "已归档"
+    },
+    {
+      "name": "home_tab_devices",
+      "value": "设备"
+    },
+    {
+      "name": "home_devices_empty",
+      "value": "还没有设备。配对一台设备后即可连接 agent。"
+    },
+    {
+      "name": "home_pair_device_first",
+      "value": "先配对设备，然后就可以在设备上启动会话。"
+    },
+    {
+      "name": "home_pair_new_device",
+      "value": "配对新设备"
+    },
+    {
+      "name": "home_create_new_session",
+      "value": "新建会话"
+    },
+    {
+      "name": "home_no_active_sessions_create",
+      "value": "还没有活跃会话。准备好后创建一个吧。"
+    },
+    {
+      "name": "home_no_active_projects_create",
+      "value": "还没有活跃项目。准备好后创建一个吧。"
+    },
+    {
+      "name": "home_no_archived_projects_yet",
+      "value": "还没有包含已归档会话的项目。"
+    },
+    {
+      "name": "home_no_projects_create",
+      "value": "还没有项目。准备好后创建一个吧。"
+    },
+    {
+      "name": "home_no_archived_sessions_yet",
+      "value": "还没有已归档会话。"
+    },
+    {
+      "name": "home_no_active_sessions",
+      "value": "没有活跃会话。"
+    },
+    {
+      "name": "home_no_archived_sessions",
+      "value": "没有已归档会话。"
+    },
+    {
+      "name": "home_no_sessions_yet",
+      "value": "还没有会话。"
+    },
+    {
+      "name": "home_pinned",
+      "value": "置顶"
+    },
+    {
+      "name": "home_no_pinned_sessions",
+      "value": "没有置顶会话。"
+    },
+    {
+      "name": "home_recents",
+      "value": "最近"
+    },
+    {
+      "name": "home_no_recent_sessions",
+      "value": "没有最近会话。"
+    },
+    {
+      "name": "home_online",
+      "value": "在线"
+    },
+    {
+      "name": "home_offline",
+      "value": "离线"
+    },
+    {
+      "name": "home_new_session",
+      "value": "新建会话"
+    },
+    {
+      "name": "home_projects",
+      "value": "项目"
+    },
+    {
+      "name": "home_no_projects",
+      "value": "暂无项目。"
+    },
+    {
+      "name": "home_project_no_sessions",
+      "value": "暂无会话。"
+    },
+    {
+      "name": "home_new_session_in_project",
+      "value": "在“%s”中新建会话"
+    },
+    {
+      "name": "home_project_edit",
+      "value": "编辑"
+    },
+    {
+      "name": "home_project_pin",
+      "value": "置顶项目"
+    },
+    {
+      "name": "home_project_unpin",
+      "value": "取消置顶项目"
+    },
+    {
+      "name": "home_project_archive",
+      "value": "归档该项目"
+    },
+    {
+      "name": "home_project_edit_title",
+      "value": "编辑项目"
+    },
+    {
+      "name": "home_project_name",
+      "value": "项目名称"
+    },
+    {
+      "name": "home_project_device",
+      "value": "设备"
+    },
+    {
+      "name": "home_project_path",
+      "value": "路径"
+    },
+    {
+      "name": "home_project_path_immutable",
+      "value": "项目创建后，设备和路径不可修改。"
+    },
+    {
+      "name": "home_project_archive_title",
+      "value": "归档项目会话？"
+    },
+    {
+      "name": "home_project_archive_description",
+      "value": "“%s”中的所有活跃会话都会被归档，项目本身会保留。"
+    },
+    {
+      "name": "home_project_pinned",
+      "value": "项目已置顶。"
+    },
+    {
+      "name": "home_project_unpinned",
+      "value": "项目已取消置顶。"
+    },
+    {
+      "name": "home_project_updated",
+      "value": "项目已更新。"
+    },
+    {
+      "name": "home_project_update_failed",
+      "value": "无法更新项目。"
+    },
+    {
+      "name": "home_project_archived",
+      "value": "项目会话已归档。"
+    },
+    {
+      "name": "home_project_archive_failed",
+      "value": "无法归档项目会话。"
+    },
+    {
+      "name": "home_session_status_waiting_approval",
+      "value": "等待批准"
+    },
+    {
+      "name": "home_session_status_running",
+      "value": "会话运行中"
+    },
+    {
+      "name": "home_session_status_unread",
+      "value": "未读会话"
+    },
+    {
+      "name": "home_session_status_error",
+      "value": "会话出错"
+    },
+    {
+      "name": "devices_title",
+      "value": "设备"
+    },
+    {
+      "name": "devices_empty",
+      "value": "还没有设备。添加一台设备开始配对。"
+    },
+    {
+      "name": "devices_add_new",
+      "value": "添加新设备"
+    },
+    {
+      "name": "devices_online",
+      "value": "在线"
+    },
+    {
+      "name": "devices_offline",
+      "value": "离线"
+    },
+    {
+      "name": "devices_no_online",
+      "value": "暂无在线设备"
+    },
+    {
+      "name": "devices_agent_status_loading",
+      "value": "正在获取 Agent 状态..."
+    },
+    {
+      "name": "devices_agent_status_unavailable",
+      "value": "Agent 状态不可用"
+    },
+    {
+      "name": "common_retry",
+      "value": "重试"
+    },
+    {
+      "name": "configure_agent_title",
+      "value": "配置 Agent"
+    },
+    {
+      "name": "configure_agent_action",
+      "value": "配置"
+    },
+    {
+      "name": "configure_agent_description",
+      "value": "配置 %s"
+    },
+    {
+      "name": "configure_agent_configure_and_start",
+      "value": "配置并启动"
+    },
+    {
+      "name": "configure_agent_configuring",
+      "value": "配置中..."
+    },
+    {
+      "name": "configure_agent_save_failed",
+      "value": "无法配置此 Agent，请稍后重试。"
+    },
+    {
+      "name": "configure_agent_start_failed",
+      "value": "Agent 已配置，但启动失败。可稍后通过开关重试。"
+    },
+    {
+      "name": "configure_agent_no_fields",
+      "value": "此 Agent 无需额外配置，可直接配置并启动。"
+    },
+    {
+      "name": "runtime_config_executable_path",
+      "value": "可执行文件路径"
+    },
+    {
+      "name": "runtime_config_executable_path_description",
+      "value": "可选的运行时可执行文件路径。留空时使用自动发现结果。"
+    },
+    {
+      "name": "runtime_config_executable_path_placeholder",
+      "value": "/运行时/可执行文件/路径"
+    },
+    {
+      "name": "runtime_config_environment",
+      "value": "环境变量"
+    },
+    {
+      "name": "runtime_config_environment_description",
+      "value": "使用字符串覆盖继承值，或明确移除继承的环境变量。"
+    },
+    {
+      "name": "runtime_config_environment_name",
+      "value": "变量名称"
+    },
+    {
+      "name": "runtime_config_environment_value",
+      "value": "变量值"
+    },
+    {
+      "name": "runtime_config_environment_unset",
+      "value": "移除继承值"
+    },
+    {
+      "name": "runtime_config_add_variable",
+      "value": "添加环境变量"
+    },
+    {
+      "name": "runtime_config_environment_blank_name",
+      "value": "环境变量名称不能为空。"
+    },
+    {
+      "name": "runtime_config_environment_invalid_name",
+      "value": "环境变量名称不能包含“=”或空字符。"
+    },
+    {
+      "name": "runtime_config_environment_duplicate_name",
+      "value": "环境变量名称不能重复。"
+    },
+    {
+      "name": "device_runtime_load_failed",
+      "value": "无法加载运行时。"
+    },
+    {
+      "name": "device_runtime_update_failed",
+      "value": "无法更新运行时状态。"
+    },
+    {
+      "name": "device_runtime_delete_failed",
+      "value": "无法删除运行时配置。"
+    },
+    {
+      "name": "device_runtime_loading",
+      "value": "正在加载运行时..."
+    },
+    {
+      "name": "device_runtime_no_configured",
+      "value": "没有已配置的 Agent"
+    },
+    {
+      "name": "device_runtime_desktop_configuration_hint",
+      "value": "如需配置或添加其他 Agent，请前往桌面端操作。"
+    },
+    {
+      "name": "device_runtime_not_present",
+      "value": "连接器上不存在此运行时"
+    },
+    {
+      "name": "device_runtime_not_configured",
+      "value": "需要配置"
+    },
+    {
+      "name": "device_runtime_stopped",
+      "value": "已停止"
+    },
+    {
+      "name": "device_runtime_discovering",
+      "value": "发现中"
+    },
+    {
+      "name": "device_runtime_available",
+      "value": "可用"
+    },
+    {
+      "name": "device_runtime_unavailable",
+      "value": "不可用"
+    },
+    {
+      "name": "device_runtime_validating",
+      "value": "正在验证配置"
+    },
+    {
+      "name": "device_runtime_starting",
+      "value": "启动中"
+    },
+    {
+      "name": "device_runtime_running",
+      "value": "运行中"
+    },
+    {
+      "name": "device_runtime_stopping",
+      "value": "停止中"
+    },
+    {
+      "name": "device_runtime_error",
+      "value": "运行时错误"
+    },
+    {
+      "name": "device_runtime_unknown",
+      "value": "未知状态"
+    },
+    {
+      "name": "device_detail_prepare_setup_failed",
+      "value": "无法准备设备设置。"
+    },
+    {
+      "name": "device_detail_delete_failed",
+      "value": "无法删除设备。"
+    },
+    {
+      "name": "device_detail_revoke_failed",
+      "value": "无法撤销设备令牌。"
+    },
+    {
+      "name": "device_detail_update_sessions_failed",
+      "value": "无法更新会话。"
+    },
+    {
+      "name": "device_detail_sessions_not_found",
+      "value": "%d 个会话已不存在，请刷新列表完成同步。"
+    },
+    {
+      "name": "device_detail_archived_sessions_toast",
+      "value": "已归档 %d 个会话。"
+    },
+    {
+      "name": "device_detail_unarchived_sessions_toast",
+      "value": "已取消归档 %d 个会话。"
+    },
+    {
+      "name": "device_detail_not_found",
+      "value": "未找到设备"
+    },
+    {
+      "name": "device_detail_refresh_try_again",
+      "value": "刷新设备后再试。"
+    },
+    {
+      "name": "device_detail_device_actions",
+      "value": "设备操作"
+    },
+    {
+      "name": "device_detail_agents_section",
+      "value": "AGENT"
+    },
+    {
+      "name": "device_detail_sessions_section",
+      "value": "会话"
+    },
+    {
+      "name": "device_detail_remove_agent",
+      "value": "删除运行时配置"
+    },
+    {
+      "name": "device_detail_archive_all",
+      "value": "全部归档"
+    },
+    {
+      "name": "device_detail_unarchive_all",
+      "value": "全部取消归档"
+    },
+    {
+      "name": "device_detail_no_active_sessions",
+      "value": "这台设备没有活跃会话。"
+    },
+    {
+      "name": "device_detail_no_archived_sessions",
+      "value": "这台设备没有已归档会话。"
+    },
+    {
+      "name": "device_detail_no_sessions",
+      "value": "这台设备没有会话。"
+    },
+    {
+      "name": "device_detail_selected_count",
+      "value": "已选择 %d 个"
+    },
+    {
+      "name": "device_detail_archive_selected",
+      "value": "归档所选"
+    },
+    {
+      "name": "device_detail_unarchive_selected",
+      "value": "取消归档所选"
+    },
+    {
+      "name": "device_detail_all_active_sessions",
+      "value": "所有活跃会话"
+    },
+    {
+      "name": "device_detail_all_archived_sessions",
+      "value": "所有已归档会话"
+    },
+    {
+      "name": "device_detail_all_sessions",
+      "value": "所有会话"
+    },
+    {
+      "name": "device_setup_pair_new_title",
+      "value": "配对新设备"
+    },
+    {
+      "name": "device_setup_page_title",
+      "value": "添加新设备"
+    },
+    {
+      "name": "device_setup_name_title",
+      "value": "命名设备"
+    },
+    {
+      "name": "device_setup_name_description",
+      "value": "给这个设备起一个名字，方便之后识别。"
+    },
+    {
+      "name": "device_setup_name_placeholder",
+      "value": "例如 amber-finch"
+    },
+    {
+      "name": "device_setup_create_device",
+      "value": "创建设备"
+    },
+    {
+      "name": "device_setup_save_name",
+      "value": "保存名称"
+    },
+    {
+      "name": "device_setup_saving_name",
+      "value": "保存中..."
+    },
+    {
+      "name": "device_setup_os_title",
+      "value": "选择操作系统"
+    },
+    {
+      "name": "device_setup_os_description",
+      "value": "%s 使用什么操作系统？"
+    },
+    {
+      "name": "device_setup_os_desktop",
+      "value": "Win / Mac"
+    },
+    {
+      "name": "device_setup_os_desktop_description",
+      "value": "下载并使用桌面连接器完成设备配对。"
+    },
+    {
+      "name": "device_setup_os_linux",
+      "value": "Linux"
+    },
+    {
+      "name": "device_setup_os_linux_description",
+      "value": "复制命令到目标设备的终端运行，需要会使用 uv/uvx。"
+    },
+    {
+      "name": "device_setup_desktop_title",
+      "value": "下载Desktop APP"
+    },
+    {
+      "name": "device_setup_desktop_description",
+      "value": "从下面地址下载Desktop APP到目标设备上"
+    },
+    {
+      "name": "device_setup_download_label",
+      "value": "下载地址"
+    },
+    {
+      "name": "device_setup_command_title",
+      "value": "使用命令启动"
+    },
+    {
+      "name": "device_setup_command_description",
+      "value": "在 %s 的终端中运行这条命令。设备会自动上线。"
+    },
+    {
+      "name": "device_setup_linux_session_warning",
+      "value": "注意保持这个终端会话存活。如果关闭终端，anywhere-cli 进程也会退出，Linux 设备就会下线。最简单的持久化方式是把配对命令放到 screen 里运行："
+    },
+    {
+      "name": "device_setup_linux_detach_hint",
+      "value": "Connector 在线后，可以按 Ctrl-A，再按 D 退出但不关闭会话。之后需要回到这个会话时运行："
+    },
+    {
+      "name": "device_setup_copy_value",
+      "value": "复制"
+    },
+    {
+      "name": "device_setup_pair_title",
+      "value": "准备配对"
+    },
+    {
+      "name": "device_setup_pair_description",
+      "value": "选择操作系统后，这里会显示对应的连接说明。"
+    },
+    {
+      "name": "device_setup_finish_title",
+      "value": "完成配对"
+    },
+    {
+      "name": "device_setup_finish_description",
+      "value": "完成前面的操作后，即可完成设备配对。"
+    },
+    {
+      "name": "device_setup_desktop_login_title",
+      "value": "在Desktop APP上完成登录"
+    },
+    {
+      "name": "device_setup_desktop_login_description",
+      "value": "在Desktop APP上完成登录，设备会自动上线"
+    },
+    {
+      "name": "device_setup_linux_finish_description",
+      "value": "保持命令运行；设备上线后即可返回设备列表开始使用。"
+    },
+    {
+      "name": "device_setup_success_title",
+      "value": "设备已配对"
+    },
+    {
+      "name": "device_setup_success_description",
+      "value": "%s 已上线，可以运行会话。"
+    },
+    {
+      "name": "device_setup_reconnect_title",
+      "value": "重新连接 %s"
+    },
+    {
+      "name": "device_setup_device_fallback",
+      "value": "设备"
+    },
+    {
+      "name": "device_setup_this_device_fallback",
+      "value": "这台设备"
+    },
+    {
+      "name": "device_setup_claim_failed",
+      "value": "配对码验证失败。"
+    },
+    {
+      "name": "device_setup_generate_failed",
+      "value": "生成连接器令牌失败。"
+    },
+    {
+      "name": "device_setup_name_then_generate",
+      "value": "先给设备命名，然后生成一次性连接器令牌。"
+    },
+    {
+      "name": "device_setup_generating",
+      "value": "生成中..."
+    },
+    {
+      "name": "device_setup_generate_token",
+      "value": "生成令牌"
+    },
+    {
+      "name": "device_setup_preparing_credentials",
+      "value": "正在为 %s 准备设置凭据。"
+    },
+    {
+      "name": "device_setup_preparing",
+      "value": "正在准备设置"
+    },
+    {
+      "name": "device_setup_credentials_ready",
+      "value": "%s 的凭据已准备好。选择一种方式连接这台设备。"
+    },
+    {
+      "name": "device_setup_use_token",
+      "value": "使用令牌"
+    },
+    {
+      "name": "device_setup_use_token_description",
+      "value": "使用 ID 和令牌直接启动连接器。"
+    },
+    {
+      "name": "device_setup_pair_code",
+      "value": "配对码"
+    },
+    {
+      "name": "device_setup_pair_code_description",
+      "value": "在目标机器上运行配对命令，然后把显示的配对码填在这里。"
+    },
+    {
+      "name": "device_setup_connected",
+      "value": "已连接"
+    },
+    {
+      "name": "device_setup_waiting_connection",
+      "value": "等待设备上线..."
+    },
+    {
+      "name": "device_setup_run_start_command",
+      "value": "在需要连接到这台服务器的机器上运行此命令。"
+    },
+    {
+      "name": "device_setup_start_connector",
+      "value": "启动连接器"
+    },
+    {
+      "name": "device_setup_run_pair_command",
+      "value": "在设备上运行配对命令，然后粘贴连接器显示的代码。"
+    },
+    {
+      "name": "device_setup_pair_command",
+      "value": "配对命令"
+    },
+    {
+      "name": "device_setup_claiming",
+      "value": "配对中..."
+    },
+    {
+      "name": "device_setup_waiting_device",
+      "value": "等待设备上线"
+    },
+    {
+      "name": "device_setup_close_content_description",
+      "value": "关闭设置"
+    },
+    {
+      "name": "device_setup_device_name",
+      "value": "设备名"
+    },
+    {
+      "name": "device_setup_pair_code_placeholder",
+      "value": "配对码"
+    },
+    {
+      "name": "device_actions_rename_failed",
+      "value": "无法重命名设备。"
+    },
+    {
+      "name": "device_actions_rename_device",
+      "value": "重命名设备"
+    },
+    {
+      "name": "device_actions_rename",
+      "value": "重命名"
+    },
+    {
+      "name": "device_actions_setup",
+      "value": "重新连接"
+    },
+    {
+      "name": "device_confirm_delete_device_title",
+      "value": "删除这台设备？"
+    },
+    {
+      "name": "device_confirm_delete_device_body",
+      "value": "这会移除设备，并删除服务端所有关联记录，包括会话、工作区、已关联的 agent、运行时设置和连接器令牌。之后需要重新配对才能恢复。"
+    },
+    {
+      "name": "device_confirm_deleting",
+      "value": "删除中..."
+    },
+    {
+      "name": "device_confirm_retry_delete",
+      "value": "重试删除"
+    },
+    {
+      "name": "device_confirm_revoke_title",
+      "value": "撤销这台设备的令牌？"
+    },
+    {
+      "name": "device_confirm_revoke_body",
+      "value": "%s 当前的连接器令牌将停止工作，设备会断开连接，直到你运行新的设置命令。"
+    },
+    {
+      "name": "device_confirm_revoking",
+      "value": "撤销中..."
+    },
+    {
+      "name": "device_confirm_delete_runtime_config_title",
+      "value": "删除 %s 配置？"
+    },
+    {
+      "name": "device_confirm_delete_runtime_config_body",
+      "value": "这会删除服务端保存的 %s 配置，不会删除本地运行时安装或已有会话。"
+    },
+    {
+      "name": "device_confirm_delete_active_runtime_config_body",
+      "value": "%s 正在运行。服务端会先停止运行时，再删除保存的配置；不会删除本地安装或已有会话。"
+    },
+    {
+      "name": "device_confirm_delete_runtime_config",
+      "value": "删除配置"
+    },
+    {
+      "name": "device_confirm_archive_all_title",
+      "value": "归档这台设备上的%s？"
+    },
+    {
+      "name": "device_confirm_unarchive_all_title",
+      "value": "取消归档这台设备上的%s？"
+    },
+    {
+      "name": "device_confirm_archive_all_body",
+      "value": "%s 上的这些会话会移动到已归档，之后可以再取消归档。"
+    },
+    {
+      "name": "device_confirm_unarchive_all_body",
+      "value": "%s 上的所有已归档会话会移回活跃。"
+    },
+    {
+      "name": "device_confirm_archive_all_confirm",
+      "value": "归档全部"
+    },
+    {
+      "name": "device_confirm_unarchive_all_confirm",
+      "value": "取消归档全部"
+    },
+    {
+      "name": "terminal_pair_first",
+      "value": "先配对一台设备，再打开终端。"
+    },
+    {
+      "name": "terminal_all_devices_offline",
+      "value": "先让一台设备上线，再打开终端。"
+    },
+    {
+      "name": "files_pair_first",
+      "value": "先配对一台设备，再浏览文件。"
+    },
+    {
+      "name": "files_all_devices_offline",
+      "value": "先让一台设备上线，再浏览文件。"
+    },
+    {
+      "name": "new_session_title",
+      "value": "新建会话"
+    },
+    {
+      "name": "new_session_checking_devices",
+      "value": "正在检查设备"
+    },
+    {
+      "name": "new_session_checking_devices_description",
+      "value": "正在获取你的设备连接状态。"
+    },
+    {
+      "name": "new_session_devices_unavailable",
+      "value": "暂时无法读取设备"
+    },
+    {
+      "name": "new_session_devices_unavailable_description",
+      "value": "暂时无法获取设备状态，请重试。"
+    },
+    {
+      "name": "new_session_connect_device_title",
+      "value": "先连接一台设备"
+    },
+    {
+      "name": "new_session_connect_device_description",
+      "value": "会话会在你的电脑上运行。连接设备后，就能选择 Agent 开始聊天。"
+    },
+    {
+      "name": "new_session_devices_offline_title",
+      "value": "设备还未上线"
+    },
+    {
+      "name": "new_session_devices_offline_description",
+      "value": "请确认电脑上的 Agents Anywhere 已连接并保持联网，再重新检查设备状态。"
+    },
+    {
+      "name": "new_session_checking_agents",
+      "value": "正在检查可用 Agent"
+    },
+    {
+      "name": "new_session_checking_agents_description",
+      "value": "正在查找已配置并启动的 Agent。"
+    },
+    {
+      "name": "new_session_agents_unavailable",
+      "value": "暂时无法读取 Agent"
+    },
+    {
+      "name": "new_session_agents_unavailable_description",
+      "value": "暂时无法获取 Agent 状态，请重试。"
+    },
+    {
+      "name": "new_session_setup_agent_title",
+      "value": "先配置一个 Agent"
+    },
+    {
+      "name": "new_session_setup_agent_description",
+      "value": "还没有可用的 Agent，请先在桌面端完成配置。"
+    },
+    {
+      "name": "new_session_start_agent_title",
+      "value": "启动 Agent 后即可聊天"
+    },
+    {
+      "name": "new_session_start_agent_description",
+      "value": "启动一个已配置的 Agent，就可以开始聊天了。"
+    },
+    {
+      "name": "new_session_agent_starting_title",
+      "value": "Agent 正在启动"
+    },
+    {
+      "name": "new_session_agent_starting_description",
+      "value": "Agent 正在启动，准备好后就能开始聊天。"
+    },
+    {
+      "name": "new_session_configure_agent_action",
+      "value": "配置 Agent"
+    },
+    {
+      "name": "new_session_no_available_agents",
+      "value": "没有找到可用的在线Agent\n请检查设备和Agent设置"
+    },
+    {
+      "name": "new_session_start_agent_action",
+      "value": "启动 Agent"
+    },
+    {
+      "name": "new_session_view_agent_action",
+      "value": "查看 Agent"
+    },
+    {
+      "name": "new_session_connect_device_action",
+      "value": "连接设备"
+    },
+    {
+      "name": "new_session_manage_agents",
+      "value": "管理 Agent"
+    },
+    {
+      "name": "new_session_view_devices",
+      "value": "查看设备"
+    },
+    {
+      "name": "new_session_check_again",
+      "value": "重新检查"
+    },
+    {
+      "name": "new_session_checking_again",
+      "value": "检查中…"
+    },
+    {
+      "name": "new_session_load_directory_failed",
+      "value": "无法加载这个目录。"
+    },
+    {
+      "name": "new_session_create_failed",
+      "value": "无法创建会话。"
+    },
+    {
+      "name": "new_session_device",
+      "value": "设备"
+    },
+    {
+      "name": "new_session_agent",
+      "value": "Agent"
+    },
+    {
+      "name": "new_session_no_device",
+      "value": "未选择设备"
+    },
+    {
+      "name": "new_session_no_agent",
+      "value": "未选择 Agent"
+    },
+    {
+      "name": "new_session_no_online_agent",
+      "value": "没有可用的在线设备。"
+    },
+    {
+      "name": "new_session_starting",
+      "value": "启动中..."
+    },
+    {
+      "name": "new_session_start_chat",
+      "value": "开始聊天"
+    },
+    {
+      "name": "new_session_workspace",
+      "value": "工作目录"
+    },
+    {
+      "name": "new_session_choose_path",
+      "value": "选择路径"
+    },
+    {
+      "name": "new_session_expand_directory",
+      "value": "展开目录列表"
+    },
+    {
+      "name": "new_session_collapse_directory",
+      "value": "收起目录列表"
+    },
+    {
+      "name": "new_session_create_project",
+      "value": "新建项目"
+    },
+    {
+      "name": "new_session_choose_project",
+      "value": "选择项目"
+    },
+    {
+      "name": "new_session_no_project",
+      "value": "请先选择或新建项目。"
+    },
+    {
+      "name": "new_session_no_projects",
+      "value": "暂无项目，新建一个项目后即可开始会话。"
+    },
+    {
+      "name": "new_session_project_name",
+      "value": "项目名称"
+    },
+    {
+      "name": "new_session_project_name_placeholder",
+      "value": "输入项目名称"
+    },
+    {
+      "name": "new_session_project_directory",
+      "value": "项目目录"
+    },
+    {
+      "name": "new_session_choose_directory",
+      "value": "选择目录"
+    },
+    {
+      "name": "new_session_project_creating",
+      "value": "正在创建..."
+    },
+    {
+      "name": "new_session_project_create_failed",
+      "value": "无法创建项目。"
+    },
+    {
+      "name": "new_session_loading_directory",
+      "value": "正在加载目录..."
+    },
+    {
+      "name": "new_session_empty_directory",
+      "value": "这个目录是空的。"
+    },
+    {
+      "name": "new_session_choose_device",
+      "value": "选择设备"
+    },
+    {
+      "name": "new_session_choose_agent",
+      "value": "选择 Agent"
+    },
+    {
+      "name": "new_session_no_online_agents",
+      "value": "没有具备可用运行时的在线设备。"
+    },
+    {
+      "name": "new_session_no_attached_agents",
+      "value": "这台设备没有已配置且正在运行的 Agent。"
+    },
+    {
+      "name": "new_session_home_directory",
+      "value": "主目录"
+    },
+    {
+      "name": "new_session_model",
+      "value": "模型"
+    },
+    {
+      "name": "new_session_reasoning",
+      "value": "推理强度"
+    },
+    {
+      "name": "new_session_permission",
+      "value": "权限"
+    },
+    {
+      "name": "new_session_choose_model",
+      "value": "选择模型"
+    },
+    {
+      "name": "new_session_choose_reasoning",
+      "value": "选择推理强度"
+    },
+    {
+      "name": "new_session_choose_permission",
+      "value": "选择权限"
+    },
+    {
+      "name": "new_session_catalog_loading",
+      "value": "正在加载实时选项..."
+    },
+    {
+      "name": "new_session_catalog_unavailable",
+      "value": "不可用"
+    },
+    {
+      "name": "new_session_model_catalog_unavailable",
+      "value": "此运行时未提供模型目录。"
+    },
+    {
+      "name": "new_session_permission_catalog_unavailable",
+      "value": "此运行时未提供权限目录。"
+    },
+    {
+      "name": "new_session_catalog_stale",
+      "value": "当前显示的选项已过期，请重试后再开始。"
+    },
+    {
+      "name": "new_session_capabilities_failed",
+      "value": "无法加载运行时能力。"
+    },
+    {
+      "name": "new_session_model_catalog_failed",
+      "value": "无法加载模型目录。"
+    },
+    {
+      "name": "new_session_permission_catalog_failed",
+      "value": "无法加载权限目录。"
+    },
+    {
+      "name": "new_session_runtime_load_failed",
+      "value": "无法加载这台设备的运行时。"
+    },
+    {
+      "name": "new_session_runtime_inactive",
+      "value": "运行时尚未激活"
+    },
+    {
+      "name": "new_session_message_placeholder",
+      "value": "描述第一个任务…"
+    },
+    {
+      "name": "new_session_attach_files",
+      "value": "添加附件"
+    },
+    {
+      "name": "new_session_attachment_limit",
+      "value": "最多可以添加 %d 个附件。"
+    },
+    {
+      "name": "new_session_attachment_too_large",
+      "value": "%s 文件过大。"
+    },
+    {
+      "name": "new_session_attachment_empty",
+      "value": "%s 是空文件。"
+    },
+    {
+      "name": "new_session_attachment_read_failed",
+      "value": "无法读取附件。"
+    },
+    {
+      "name": "new_session_attachment_picker_failed",
+      "value": "无法打开文件选择器。"
+    },
+    {
+      "name": "new_session_runtime_changed",
+      "value": "准备请求时 Runtime 选项已变化，请刷新后重试。"
+    },
+    {
+      "name": "new_session_create_interrupted",
+      "value": "上一次创建请求可能仍在执行，请返回会话列表刷新确认后再重试。"
+    },
+    {
+      "name": "session_attachment_read_failed",
+      "value": "无法读取附件。"
+    },
+    {
+      "name": "session_attachment_upload_empty",
+      "value": "上传结果为空。"
+    },
+    {
+      "name": "session_attachment_upload_failed",
+      "value": "附件上传失败。"
+    },
+    {
+      "name": "session_attachment_download_failed",
+      "value": "无法下载附件。"
+    },
+    {
+      "name": "session_attachment_save",
+      "value": "保存图片"
+    },
+    {
+      "name": "session_attachment_saved",
+      "value": "图片已保存。"
+    },
+    {
+      "name": "session_attachment_save_failed",
+      "value": "无法保存图片。"
+    },
+    {
+      "name": "session_attachment_save_permission_required",
+      "value": "此 Android 版本需要存储权限才能保存图片。"
+    },
+    {
+      "name": "session_attachment_open_failed",
+      "value": "没有应用可以打开这个附件。"
+    },
+    {
+      "name": "session_attachment_base64_invalid",
+      "value": "下载的附件内容已损坏。"
+    },
+    {
+      "name": "session_attachment_upload_incomplete",
+      "value": "服务端返回的附件上传结果不完整。"
+    },
+    {
+      "name": "session_attachment_size_mismatch",
+      "value": "%s 的文件大小校验失败。"
+    },
+    {
+      "name": "session_attachment_sha_mismatch",
+      "value": "%s 的 SHA-256 校验失败。"
+    },
+    {
+      "name": "session_attachment_media_type_invalid",
+      "value": "%s 的媒体类型无效。"
+    },
+    {
+      "name": "session_attachment_limit",
+      "value": "每条消息最多添加 %d 个附件。"
+    },
+    {
+      "name": "session_attachment_file_too_large",
+      "value": "%s 超过 25 MB。"
+    },
+    {
+      "name": "session_attachment_read_one_failed",
+      "value": "无法读取这个附件。"
+    },
+    {
+      "name": "session_camera_permission_required",
+      "value": "需要相机权限才能拍照。"
+    },
+    {
+      "name": "session_photo_access_required",
+      "value": "请允许访问照片后再选择图片。"
+    },
+    {
+      "name": "session_file_picker_failed",
+      "value": "无法打开文件选择器。"
+    },
+    {
+      "name": "session_load_messages_failed",
+      "value": "无法加载消息。"
+    },
+    {
+      "name": "session_wait_uploads",
+      "value": "请等待附件上传完成。"
+    },
+    {
+      "name": "session_send_failed",
+      "value": "无法发送消息。"
+    },
+    {
+      "name": "session_takeover_update_failed",
+      "value": "无法更新接管状态。"
+    },
+    {
+      "name": "session_runtime_state_unknown",
+      "value": "运行时状态不可用，请刷新后重试。"
+    },
+    {
+      "name": "session_runtime_state_error",
+      "value": "会话运行出错，请稍后重试。"
+    },
+    {
+      "name": "session_send_unavailable",
+      "value": "当前运行时状态下不可发送消息。"
+    },
+    {
+      "name": "session_steer_unavailable",
+      "value": "运行时当前无法接收追加指令。"
+    },
+    {
+      "name": "session_runtime_catalog_loading",
+      "value": "正在加载实时运行时目录…"
+    },
+    {
+      "name": "session_runtime_catalog_stale",
+      "value": "正在显示上次成功加载的目录。"
+    },
+    {
+      "name": "session_runtime_catalog_empty",
+      "value": "服务端未返回可用选项。"
+    },
+    {
+      "name": "session_runtime_model_catalog_failed",
+      "value": "无法加载实时模型目录。"
+    },
+    {
+      "name": "session_runtime_permission_catalog_failed",
+      "value": "无法加载实时权限目录。"
+    },
+    {
+      "name": "session_selection_update_failed",
+      "value": "无法更新运行时选择。"
+    },
+    {
+      "name": "session_commands_loading",
+      "value": "正在加载运行时命令…"
+    },
+    {
+      "name": "session_commands_empty",
+      "value": "没有匹配的运行时命令。"
+    },
+    {
+      "name": "session_commands_load_failed",
+      "value": "无法加载运行时命令。"
+    },
+    {
+      "name": "session_command_failed",
+      "value": "运行时命令执行失败。"
+    },
+    {
+      "name": "session_command_unknown",
+      "value": "请选择有效的运行时命令；斜杠输入已保留。"
+    },
+    {
+      "name": "session_notice_submit",
+      "value": "提交响应"
+    },
+    {
+      "name": "session_notice_response_failed",
+      "value": "无法发送运行时响应。"
+    },
+    {
+      "name": "session_interrupt_failed",
+      "value": "无法中断这个会话。"
+    },
+    {
+      "name": "session_approval_resolve_failed",
+      "value": "无法处理审批。"
+    },
+    {
+      "name": "session_agent_working",
+      "value": "%s 正在处理"
+    },
+    {
+      "name": "session_agent_interrupting",
+      "value": "正在中断 %s"
+    },
+    {
+      "name": "session_agent_fallback",
+      "value": "Agent"
+    },
+    {
+      "name": "session_device_offline_placeholder",
+      "value": "设备已离线，暂时不能聊天。"
+    },
+    {
+      "name": "session_reply_to",
+      "value": "回复 %s"
+    },
+    {
+      "name": "session_read_only_placeholder",
+      "value": "只读模式-开启接管后可发送消息"
+    },
+    {
+      "name": "session_runtime_model_loading",
+      "value": "正在加载模型…"
+    },
+    {
+      "name": "session_runtime_permission_loading",
+      "value": "正在加载权限…"
+    },
+    {
+      "name": "session_runtime_model_unavailable",
+      "value": "模型不可用"
+    },
+    {
+      "name": "session_runtime_permission_unavailable",
+      "value": "权限不可用"
+    },
+    {
+      "name": "session_open_from_list",
+      "value": "从列表中打开一个会话。"
+    },
+    {
+      "name": "session_title_fallback",
+      "value": "会话"
+    },
+    {
+      "name": "session_device_offline_title",
+      "value": "设备已离线"
+    },
+    {
+      "name": "session_device_offline_body",
+      "value": "设备重新连接后，这个会话才能继续接收消息。"
+    },
+    {
+      "name": "session_enable_takeover_title",
+      "value": "开启接管？"
+    },
+    {
+      "name": "session_disable_takeover_title",
+      "value": "关闭接管？"
+    },
+    {
+      "name": "session_enable_takeover_body",
+      "value": "• 开启后可在网页上接管这个会话。\n• 消息可能不会立即同步到 %s 客户端，通常重启它们后即可刷新同步。\n• 如果你同时在 Agents Anywhere 和 %s 客户端中操作此会话，可能导致意料外的结果。"
+    },
+    {
+      "name": "session_disable_takeover_body",
+      "value": "• 关闭后会话将回到只读模式，无法继续发送消息。\n• 这里产生的会话记录可能不会立即同步到 %s 客户端，通常重启它们后即可刷新同步。"
+    },
+    {
+      "name": "session_send_anyway_title",
+      "value": "仍要发送？"
+    },
+    {
+      "name": "session_send_anyway_body",
+      "value": "这个会话处于错误状态。发送后会尝试开始新一轮对话。"
+    },
+    {
+      "name": "session_approval_fallback",
+      "value": "允许这次 %s 请求？"
+    },
+    {
+      "name": "session_approval_deny",
+      "value": "拒绝"
+    },
+    {
+      "name": "session_approval_approve",
+      "value": "批准"
+    },
+    {
+      "name": "session_approval_approve_session",
+      "value": "本会话内批准"
+    },
+    {
+      "name": "session_approval_always_allow",
+      "value": "始终允许"
+    },
+    {
+      "name": "session_approval_allow",
+      "value": "允许"
+    },
+    {
+      "name": "session_input_request_other",
+      "value": "其他"
+    },
+    {
+      "name": "session_input_request_submit",
+      "value": "提交"
+    },
+    {
+      "name": "session_upload_file_read_failed",
+      "value": "无法读取 %s。"
+    },
+    {
+      "name": "session_upload_file_empty",
+      "value": "%s 是空文件。"
+    },
+    {
+      "name": "session_welcome_1",
+      "value": "接下来要做什么？"
+    },
+    {
+      "name": "session_welcome_2",
+      "value": "让 agent 从哪里开始？"
+    },
+    {
+      "name": "session_welcome_3",
+      "value": "这次想推进哪件事？"
+    },
+    {
+      "name": "session_welcome_4",
+      "value": "给 agent 一个任务。"
+    },
+    {
+      "name": "session_welcome_5",
+      "value": "从一个工作区开始。"
+    },
+    {
+      "name": "session_welcome_6",
+      "value": "哪里需要处理？"
+    },
+    {
+      "name": "session_welcome_7",
+      "value": "这里要发生什么？"
+    },
+    {
+      "name": "session_welcome_8",
+      "value": "把任务交给合适的设备。"
+    },
+    {
+      "name": "session_welcome_9",
+      "value": "选个工作区，然后开始。"
+    },
+    {
+      "name": "session_welcome_10",
+      "value": "描述下一步改动。"
+    },
+    {
+      "name": "session_welcome_11",
+      "value": "想调查什么？"
+    },
+    {
+      "name": "session_welcome_12",
+      "value": "开始一个专注会话。"
+    },
+    {
+      "name": "session_welcome_13",
+      "value": "想让 agent 检查什么？"
+    },
+    {
+      "name": "session_welcome_14",
+      "value": "把想法变成会话。"
+    },
+    {
+      "name": "session_welcome_15",
+      "value": "选定目标，开始执行。"
+    },
+    {
+      "name": "session_welcome_16",
+      "value": "今天要改什么？"
+    },
+    {
+      "name": "session_status_failed",
+      "value": "失败"
+    },
+    {
+      "name": "session_show_less",
+      "value": "收起"
+    },
+    {
+      "name": "session_read_more",
+      "value": "展开"
+    },
+    {
+      "name": "session_copy_reply",
+      "value": "复制回复"
+    },
+    {
+      "name": "session_share",
+      "value": "分享"
+    },
+    {
+      "name": "session_share_dialog_title",
+      "value": "分享内容"
+    },
+    {
+      "name": "session_share_dialog_body",
+      "value": "分享后会生成一个公开链接。互联网上任何获得链接的人都可以查看其中的内容。"
+    },
+    {
+      "name": "session_share_reply",
+      "value": "当前回复"
+    },
+    {
+      "name": "session_share_reply_description",
+      "value": "只分享本回合中 Agent 的回复。"
+    },
+    {
+      "name": "session_share_entire_session",
+      "value": "整个会话"
+    },
+    {
+      "name": "session_share_entire_session_description",
+      "value": "分享创建链接时的完整会话快照。"
+    },
+    {
+      "name": "session_share_create",
+      "value": "生成链接"
+    },
+    {
+      "name": "session_share_creating",
+      "value": "生成中…"
+    },
+    {
+      "name": "session_share_chooser_title",
+      "value": "分享链接"
+    },
+    {
+      "name": "session_share_failed",
+      "value": "无法生成分享链接。"
+    },
+    {
+      "name": "session_share_open_failed",
+      "value": "无法打开系统分享面板。"
+    },
+    {
+      "name": "session_reasoning",
+      "value": "推理"
+    },
+    {
+      "name": "session_reasoning_single_summary",
+      "value": "推理了 %s"
+    },
+    {
+      "name": "session_reasoning_summary",
+      "value": "推理过程 · %d 条摘要"
+    },
+    {
+      "name": "session_command",
+      "value": "命令"
+    },
+    {
+      "name": "session_command_fallback",
+      "value": "命令"
+    },
+    {
+      "name": "session_output",
+      "value": "输出"
+    },
+    {
+      "name": "session_input",
+      "value": "输入"
+    },
+    {
+      "name": "session_error",
+      "value": "错误"
+    },
+    {
+      "name": "session_diff",
+      "value": "差异"
+    },
+    {
+      "name": "session_no_output",
+      "value": "没有输出"
+    },
+    {
+      "name": "session_no_preview",
+      "value": "暂无预览"
+    },
+    {
+      "name": "session_tool_summary_commands",
+      "value": "执行了 %d 条指令"
+    },
+    {
+      "name": "session_tool_summary_reasoning",
+      "value": "推理了 %d 次"
+    },
+    {
+      "name": "session_tool_summary_changed_files",
+      "value": "修改了 %d 个文件"
+    },
+    {
+      "name": "session_tool_summary_created_files",
+      "value": "创建了 %d 个文件"
+    },
+    {
+      "name": "session_tool_summary_items",
+      "value": "%d 条活动"
+    },
+    {
+      "name": "session_tool_ran",
+      "value": "执行了 %s"
+    },
+    {
+      "name": "session_tool_changed_file",
+      "value": "修改了 %s"
+    },
+    {
+      "name": "session_tool_changed_files",
+      "value": "修改了文件"
+    },
+    {
+      "name": "session_tool_created_file",
+      "value": "创建了 %s"
+    },
+    {
+      "name": "session_tool_created_files",
+      "value": "创建了文件"
+    },
+    {
+      "name": "session_tool_searched",
+      "value": "搜索了 %s"
+    },
+    {
+      "name": "session_tool_web_fallback",
+      "value": "网页"
+    },
+    {
+      "name": "session_tool_agent_invoke",
+      "value": "调用 Agent"
+    },
+    {
+      "name": "session_tool_agent_spawn",
+      "value": "启动 Agent"
+    },
+    {
+      "name": "session_tool_agent_send_input",
+      "value": "向 Agent 发送消息"
+    },
+    {
+      "name": "session_tool_agent_resume",
+      "value": "恢复 Agent"
+    },
+    {
+      "name": "session_tool_agent_wait",
+      "value": "等待 Agent"
+    },
+    {
+      "name": "session_tool_agent_close",
+      "value": "关闭 Agent"
+    },
+    {
+      "name": "session_tool_agent_unknown",
+      "value": "Agent 调用"
+    },
+    {
+      "name": "session_tool_agent_with_description",
+      "value": "%s：%s"
+    },
+    {
+      "name": "session_agent_call_group_summary",
+      "value": "调用了 %d 个子 Agent"
+    },
+    {
+      "name": "session_file_change_added",
+      "value": "新增"
+    },
+    {
+      "name": "session_file_change_deleted",
+      "value": "删除"
+    },
+    {
+      "name": "session_file_change_renamed",
+      "value": "重命名"
+    },
+    {
+      "name": "session_file_change_modified",
+      "value": "修改"
+    },
+    {
+      "name": "session_file_change_changed",
+      "value": "变更"
+    },
+    {
+      "name": "session_reconnect_summary",
+      "value": "正在重连：%s"
+    },
+    {
+      "name": "session_timeline_unknown_item",
+      "value": "未识别的 timeline item：%s"
+    },
+    {
+      "name": "session_conversation_compacting",
+      "value": "正在压缩上下文"
+    },
+    {
+      "name": "session_conversation_compacted",
+      "value": "对话已压缩"
+    },
+    {
+      "name": "session_conversation_compaction_failed",
+      "value": "上下文压缩失败"
+    },
+    {
+      "name": "session_agent_pending",
+      "value": "等待 %s 接收任务…"
+    },
+    {
+      "name": "session_waiting_approval_placeholder",
+      "value": "等待你在下方处理交互…"
+    },
+    {
+      "name": "session_pending_placeholder",
+      "value": "等待运行时接收任务…"
+    },
+    {
+      "name": "session_busy_placeholder",
+      "value": "发送中断，或等待当前回合结束"
+    },
+    {
+      "name": "session_error_placeholder",
+      "value": "这个会话有错误，发送后会重试"
+    },
+    {
+      "name": "session_takeover",
+      "value": "接管"
+    },
+    {
+      "name": "session_attachment_camera",
+      "value": "相机"
+    },
+    {
+      "name": "session_attachment_photos",
+      "value": "照片"
+    },
+    {
+      "name": "session_attachment_file",
+      "value": "文件"
+    },
+    {
+      "name": "session_attachment_name_fallback",
+      "value": "附件"
+    },
+    {
+      "name": "session_runtime_select_model",
+      "value": "选择模型"
+    },
+    {
+      "name": "session_runtime_settings_title",
+      "value": "模型配置"
+    },
+    {
+      "name": "session_runtime_mode_effort",
+      "value": "模式与推理强度"
+    },
+    {
+      "name": "session_runtime_effort_default",
+      "value": "默认"
+    },
+    {
+      "name": "session_runtime_no_settings",
+      "value": "暂无可用设置"
+    },
+    {
+      "name": "session_dsh_concurrent_writer",
+      "value": "请先停止其他正在运行此 DSH Session 的实例，等待其退出后刷新。"
+    },
+    {
+      "name": "session_runtime_permission_mode",
+      "value": "权限模式"
+    },
+    {
+      "name": "session_runtime_effort_for",
+      "value": "%s 的推理强度"
+    },
+    {
+      "name": "runtime_permission_accept_edits",
+      "value": "允许编辑"
+    },
+    {
+      "name": "runtime_permission_read_only",
+      "value": "只读"
+    },
+    {
+      "name": "runtime_permission_dsh_read_only",
+      "value": "仅可查看"
+    },
+    {
+      "name": "runtime_permission_dsh_workspace_write",
+      "value": "工作区内修改"
+    },
+    {
+      "name": "runtime_permission_dsh_full_access",
+      "value": "完全权限"
+    },
+    {
+      "name": "runtime_permission_request_approval",
+      "value": "请求批准"
+    },
+    {
+      "name": "runtime_permission_auto_review",
+      "value": "替我审批"
+    },
+    {
+      "name": "runtime_permission_full_access",
+      "value": "完全访问权限"
+    },
+    {
+      "name": "runtime_permission_desc_request_approval",
+      "value": "编辑外部文件和使用互联网时始终询问"
+    },
+    {
+      "name": "runtime_permission_desc_auto_review",
+      "value": "仅对检测到的风险操作请求批准"
+    },
+    {
+      "name": "runtime_permission_desc_ask",
+      "value": "编辑外部文件或访问互联网前都会先询问。"
+    },
+    {
+      "name": "runtime_permission_desc_auto",
+      "value": "只有检测到可能不安全的操作时才会询问。"
+    },
+    {
+      "name": "runtime_permission_desc_full_access",
+      "value": "可不受限制地访问互联网和您电脑上的任何文件"
+    },
+    {
+      "name": "runtime_permission_claude_default",
+      "value": "询问权限"
+    },
+    {
+      "name": "runtime_permission_desc_claude_default",
+      "value": "使用 Claude Code 默认的高风险工具确认方式。"
+    },
+    {
+      "name": "runtime_permission_claude_accept_edits",
+      "value": "接受编辑"
+    },
+    {
+      "name": "runtime_permission_desc_claude_accept_edits",
+      "value": "自动接受文件编辑；其他高风险工具仍会询问。"
+    },
+    {
+      "name": "runtime_permission_claude_plan",
+      "value": "计划模式"
+    },
+    {
+      "name": "runtime_permission_desc_claude_plan",
+      "value": "允许规划，但不执行写入或命令。"
+    },
+    {
+      "name": "runtime_permission_claude_auto",
+      "value": "自动模式"
+    },
+    {
+      "name": "runtime_permission_desc_claude_auto",
+      "value": "使用 Claude Code 的自动分类器判断高风险操作。"
+    },
+    {
+      "name": "runtime_permission_claude_dont_ask",
+      "value": "不询问"
+    },
+    {
+      "name": "runtime_permission_desc_claude_dont_ask",
+      "value": "拒绝未获批准的工具，不再弹出权限确认。"
+    },
+    {
+      "name": "runtime_permission_claude_bypass_permissions",
+      "value": "完全访问权限"
+    },
+    {
+      "name": "runtime_permission_desc_claude_bypass_permissions",
+      "value": "跳过权限确认，允许不受限制地使用工具。"
+    },
+    {
+      "name": "runtime_effort_low",
+      "value": "低"
+    },
+    {
+      "name": "runtime_effort_medium",
+      "value": "中"
+    },
+    {
+      "name": "runtime_effort_high",
+      "value": "高"
+    },
+    {
+      "name": "runtime_effort_xhigh",
+      "value": "更高"
+    },
+    {
+      "name": "runtime_effort_max",
+      "value": "最高"
+    },
+    {
+      "name": "runtime_desc_opus_default",
+      "value": "默认选择。适合大型重构和复杂调试。"
+    },
+    {
+      "name": "runtime_desc_opus_context",
+      "value": "Opus 4.7，支持 1M 上下文窗口。"
+    },
+    {
+      "name": "runtime_desc_sonnet_workhorse",
+      "value": "适合日常开发任务。"
+    },
+    {
+      "name": "runtime_desc_haiku_fast",
+      "value": "简单、快速。"
+    },
+    {
+      "name": "runtime_desc_legacy",
+      "value": "旧版 Opus，用于兼容旧会话。"
+    },
+    {
+      "name": "files_session_no_workspace",
+      "value": "这个会话没有工作区。"
+    },
+    {
+      "name": "files_load_failed",
+      "value": "无法加载文件。"
+    },
+    {
+      "name": "files_open_failed",
+      "value": "无法打开文件。"
+    },
+    {
+      "name": "files_device_offline",
+      "value": "设备已离线。"
+    },
+    {
+      "name": "files_select_device",
+      "value": "请选择设备。"
+    },
+    {
+      "name": "files_windows_drives",
+      "value": "这台电脑"
+    },
+    {
+      "name": "files_terminal_connecting",
+      "value": "正在连接..."
+    },
+    {
+      "name": "files_terminal_disconnected",
+      "value": "连接已断开，点按重新连接。"
+    },
+    {
+      "name": "files_terminal_exited",
+      "value": "终端已退出，点按重新连接。"
+    },
+    {
+      "name": "files_terminal_error",
+      "value": "连接已断开，点按重新连接。"
+    },
+    {
+      "name": "files_terminal_clear",
+      "value": "清空终端"
+    },
+    {
+      "name": "files_loading",
+      "value": "正在加载文件..."
+    },
+    {
+      "name": "files_empty_directory",
+      "value": "这个目录是空的。"
+    },
+    {
+      "name": "files_loading_file",
+      "value": "正在加载文件..."
+    },
+    {
+      "name": "files_binary_preview_unavailable",
+      "value": "这个文件无法预览。"
+    },
+    {
+      "name": "files_open_file_to_preview",
+      "value": "打开文件后可在这里预览。"
+    },
+    {
+      "name": "files_search_in_file",
+      "value": "在文件中搜索"
+    },
+    {
+      "name": "files_copied_code",
+      "value": "已复制代码"
+    },
+    {
+      "name": "files_copy_code",
+      "value": "复制代码"
+    },
+    {
+      "name": "files_search",
+      "value": "搜索"
+    },
+    {
+      "name": "files_copied_path",
+      "value": "已复制路径"
+    },
+    {
+      "name": "files_copy_path",
+      "value": "复制路径"
+    },
+    {
+      "name": "profile_settings",
+      "value": "设置"
+    },
+    {
+      "name": "profile_account",
+      "value": "账号"
+    },
+    {
+      "name": "profile_language",
+      "value": "语言"
+    },
+    {
+      "name": "profile_sidebar_display",
+      "value": "侧边栏显示"
+    },
+    {
+      "name": "profile_project_view",
+      "value": "项目视图"
+    },
+    {
+      "name": "profile_session_view",
+      "value": "会话视图"
+    },
+    {
+      "name": "profile_archived_sessions",
+      "value": "已归档会话"
+    },
+    {
+      "name": "profile_updates",
+      "value": "更新"
+    },
+    {
+      "name": "profile_appearance",
+      "value": "外观"
+    },
+    {
+      "name": "profile_version",
+      "value": "版本"
+    },
+    {
+      "name": "profile_check_updates",
+      "value": "检查更新"
+    },
+    {
+      "name": "profile_follow_system",
+      "value": "跟随系统"
+    },
+    {
+      "name": "profile_language_follow_system",
+      "value": "Follow system"
+    },
+    {
+      "name": "profile_system",
+      "value": "系统"
+    },
+    {
+      "name": "profile_light",
+      "value": "浅色"
+    },
+    {
+      "name": "profile_dark",
+      "value": "深色"
+    },
+    {
+      "name": "profile_english",
+      "value": "English"
+    },
+    {
+      "name": "profile_simplified_chinese",
+      "value": "简体中文"
+    },
+    {
+      "name": "profile_language_system_description",
+      "value": "使用设备语言。"
+    },
+    {
+      "name": "profile_language_english_description",
+      "value": "始终显示英文。"
+    },
+    {
+      "name": "profile_language_chinese_description",
+      "value": "始终显示简体中文。"
+    },
+    {
+      "name": "update_available_title",
+      "value": "发现新版本"
+    },
+    {
+      "name": "update_new_version_badge",
+      "value": "有新版本"
+    },
+    {
+      "name": "update_available_message",
+      "value": "新版本 v%s 已可用，建议更新以保持服务兼容。继续使用旧版本可能导致部分功能无法使用。"
+    },
+    {
+      "name": "update_ignore_version",
+      "value": "忽略此版本"
+    },
+    {
+      "name": "update_ignore_failed",
+      "value": "无法保存忽略记录，请重试。"
+    },
+    {
+      "name": "update_download_unavailable",
+      "value": "更新下载暂未开放，请稍后再试。"
+    },
+    {
+      "name": "update_now",
+      "value": "立即更新"
+    },
+    {
+      "name": "update_retry",
+      "value": "重新下载"
+    },
+    {
+      "name": "update_downloading_title",
+      "value": "正在下载更新"
+    },
+    {
+      "name": "update_downloading_version",
+      "value": "正在下载 v%s"
+    },
+    {
+      "name": "update_download_progress",
+      "value": "%d% · %s / %s"
+    },
+    {
+      "name": "update_download_progress_unknown",
+      "value": "已下载 %s"
+    },
+    {
+      "name": "update_cancel_download",
+      "value": "取消下载"
+    },
+    {
+      "name": "update_preparing_install",
+      "value": "正在准备安装…"
+    },
+    {
+      "name": "update_download_failed",
+      "value": "更新包下载失败，请重试。"
+    },
+    {
+      "name": "update_up_to_date",
+      "value": "当前已是最新版本。"
+    },
+    {
+      "name": "update_check_failed",
+      "value": "暂时无法检查更新。"
+    },
+    {
+      "name": "profile_official_service",
+      "value": "官方服务"
+    },
+    {
+      "name": "profile_self_hosted",
+      "value": "Self-host 服务"
+    },
+    {
+      "name": "profile_sign_out",
+      "value": "退出登录"
+    },
+    {
+      "name": "profile_account_fallback",
+      "value": "账号"
+    },
+    {
+      "name": "profile_avatar_updating",
+      "value": "正在更新头像"
+    },
+    {
+      "name": "profile_avatar_change",
+      "value": "点按更换头像"
+    },
+    {
+      "name": "profile_account_id",
+      "value": "账号 ID"
+    },
+    {
+      "name": "profile_role",
+      "value": "角色"
+    },
+    {
+      "name": "profile_role_admin",
+      "value": "管理员"
+    },
+    {
+      "name": "profile_role_member",
+      "value": "成员"
+    },
+    {
+      "name": "profile_change_password",
+      "value": "修改密码"
+    },
+    {
+      "name": "profile_new_password",
+      "value": "新密码"
+    },
+    {
+      "name": "profile_confirm_password",
+      "value": "确认密码"
+    },
+    {
+      "name": "profile_password_min_length",
+      "value": "至少输入 8 个字符。"
+    },
+    {
+      "name": "profile_password_updated",
+      "value": "密码已更新。"
+    },
+    {
+      "name": "profile_password_update_failed",
+      "value": "密码更新失败。"
+    },
+    {
+      "name": "profile_avatar_updated",
+      "value": "头像已更新。"
+    },
+    {
+      "name": "profile_avatar_update_failed",
+      "value": "头像更新失败。"
+    },
+    {
+      "name": "profile_avatar_read_failed",
+      "value": "无法读取这张图片。"
+    },
+    {
+      "name": "profile_account_load_failed",
+      "value": "账号信息加载失败。"
+    },
+    {
+      "name": "profile_sign_out_title",
+      "value": "退出登录？"
+    },
+    {
+      "name": "profile_sign_out_body",
+      "value": "退出后需要重新登录才能继续使用此服务器。"
+    },
+    {
+      "name": "profile_nickname",
+      "value": "昵称"
+    },
+    {
+      "name": "profile_email",
+      "value": "邮箱"
+    },
+    {
+      "name": "profile_email_unbound",
+      "value": "未绑定"
+    },
+    {
+      "name": "profile_updated",
+      "value": "账号已更新。"
+    },
+    {
+      "name": "profile_update_failed",
+      "value": "无法更新账号。"
+    },
+    {
+      "name": "profile_edit_nickname",
+      "value": "修改昵称"
+    },
+    {
+      "name": "profile_bind_email",
+      "value": "绑定或修改邮箱"
+    },
+    {
+      "name": "profile_loading_email_policy",
+      "value": "正在加载邮箱设置…"
+    },
+    {
+      "name": "profile_retry",
+      "value": "重试"
+    },
+    {
+      "name": "profile_email_code",
+      "value": "邮箱验证码"
+    },
+    {
+      "name": "profile_send_code",
+      "value": "发送验证码"
+    },
+    {
+      "name": "profile_resend_in",
+      "value": "%d 秒后重新发送"
+    },
+    {
+      "name": "profile_code_sent",
+      "value": "验证码已发送，请检查收件箱。"
+    },
+    {
+      "name": "profile_email_verification_disabled",
+      "value": "此服务无需验证码即可绑定邮箱。"
+    },
+    {
+      "name": "profile_email_status",
+      "value": "邮箱状态"
+    },
+    {
+      "name": "profile_email_verified",
+      "value": "已验证"
+    },
+    {
+      "name": "profile_email_unverified",
+      "value": "未验证"
+    },
+    {
+      "name": "home_sessions_title",
+      "value": "会话"
+    },
+    {
+      "name": "home_mark_all_read",
+      "value": "全部已读"
+    },
+    {
+      "name": "workspace_home",
+      "value": "主目录"
+    },
+    {
+      "name": "workspace_resolving_home",
+      "value": "正在解析主目录…"
+    },
+    {
+      "name": "workspace_resolve_failed",
+      "value": "无法解析此目录，请重试。"
+    },
+    {
+      "name": "workspace_browse",
+      "value": "浏览文件系统"
+    },
+    {
+      "name": "workspace_selected",
+      "value": "已选择"
+    },
+    {
+      "name": "project_name_adjusted",
+      "value": "名称刚刚被占用，已生成可用名称，请确认后再次提交。"
+    },
+    {
+      "name": "project_workspace_conflict_title",
+      "value": "此目录已有项目"
+    },
+    {
+      "name": "project_workspace_conflict_message",
+      "value": "此目录已属于项目“%s”。继续将其重命名为“%s”，会话和设置都会保留。"
+    },
+    {
+      "name": "project_rename_existing",
+      "value": "继续并重命名"
+    },
+    {
+      "name": "archived_all_projects",
+      "value": "全部项目"
+    },
+    {
+      "name": "archived_unknown_project",
+      "value": "未知项目"
+    },
+    {
+      "name": "archived_empty",
+      "value": "暂无已归档会话"
+    },
+    {
+      "name": "archived_retry",
+      "value": "重试"
+    },
+    {
+      "name": "archived_refresh",
+      "value": "刷新"
+    },
+    {
+      "name": "archived_restore",
+      "value": "恢复"
+    },
+    {
+      "name": "archived_restore_project",
+      "value": "全部恢复"
+    },
+    {
+      "name": "archived_restoring",
+      "value": "恢复中…"
+    },
+    {
+      "name": "archived_restored",
+      "value": "会话已恢复"
+    },
+    {
+      "name": "archived_restore_failed",
+      "value": "恢复会话失败，请重试。"
+    },
+    {
+      "name": "archived_view_now",
+      "value": "立即查看"
+    },
+    {
+      "name": "archived_load_more",
+      "value": "加载更多"
+    },
+    {
+      "name": "archived_loading_more",
+      "value": "加载中…"
+    },
+    {
+      "name": "archived_time_unavailable",
+      "value": "暂无时间"
+    },
+    {
+      "name": "archived_loaded_count",
+      "value": "已加载 %d 个会话"
+    },
+    {
+      "name": "archive_page_hint",
+      "value": "归档的会话会保留在这里，恢复后可继续聊天。"
+    },
+    {
+      "name": "archive_filter_label",
+      "value": "按项目筛选"
+    },
+    {
+      "name": "archive_filter_expanded",
+      "value": "项目筛选已展开"
+    },
+    {
+      "name": "archive_filter_collapsed",
+      "value": "项目筛选已收起"
+    },
+    {
+      "name": "archive_archived_at",
+      "value": "归档于 %s"
+    },
+    {
+      "name": "archive_loading",
+      "value": "正在加载归档会话…"
+    },
+    {
+      "name": "archive_load_failed",
+      "value": "暂时无法加载归档会话"
+    },
+    {
+      "name": "archive_retry_hint",
+      "value": "检查网络连接后再试一次。"
+    },
+    {
+      "name": "archive_empty_hint",
+      "value": "暂时不需要的会话可以归档到这里，需要时再恢复。"
+    },
+    {
+      "name": "archive_project_empty",
+      "value": "这个项目还没有归档会话"
+    },
+    {
+      "name": "archive_project_empty_hint",
+      "value": "可以切换项目，查看其他已归档的会话。"
+    },
+    {
+      "name": "archive_show_all_projects",
+      "value": "查看全部项目"
+    },
+    {
+      "name": "archive_page_empty",
+      "value": "当前没有可显示的会话"
+    },
+    {
+      "name": "archive_more_hint",
+      "value": "继续加载，查看更早的归档会话。"
+    },
+    {
+      "name": "archive_more_failed",
+      "value": "暂时无法加载更多会话"
+    },
+    {
+      "name": "archive_restore_session_description",
+      "value": "恢复会话：%s"
+    },
+    {
+      "name": "archive_restore_project_description",
+      "value": "恢复 %s 的全部归档会话"
+    },
+    {
+      "name": "device_pairing_connection_title",
+      "value": "连接您的设备"
+    },
+    {
+      "name": "device_pairing_connection_description",
+      "value": "您可以通过桌面程序或 CLI 连接您的设备。"
+    },
+    {
+      "name": "device_pairing_desktop_title",
+      "value": "使用桌面程序连接"
+    },
+    {
+      "name": "device_pairing_desktop_description",
+      "value": "如果您使用 Windows 或 macOS，搭配桌面程序连接可以获得最佳体验。"
+    },
+    {
+      "name": "device_pairing_cli_title",
+      "value": "使用命令行连接"
+    },
+    {
+      "name": "device_pairing_cli_description",
+      "value": "使用一行命令连接您的设备，建议用于 Linux。"
+    },
+    {
+      "name": "device_pairing_desktop_install_title",
+      "value": "使用桌面程序连接"
+    },
+    {
+      "name": "device_pairing_desktop_install_description",
+      "value": "前往官网下载页下载 Agents Anywhere 桌面程序，然后按照下方步骤完成连接。"
+    },
+    {
+      "name": "device_pairing_desktop_download_title",
+      "value": "下载并安装"
+    },
+    {
+      "name": "device_pairing_desktop_install_step_download",
+      "value": "在官网下载页选择适合您设备的 Windows 或 macOS 安装包，下载后完成安装。"
+    },
+    {
+      "name": "device_pairing_desktop_login_title",
+      "value": "打开程序并登录"
+    },
+    {
+      "name": "device_pairing_desktop_install_step_login",
+      "value": "打开桌面程序，连接到您当前使用的服务，并使用同一个账号登录。"
+    },
+    {
+      "name": "device_pairing_desktop_online_title",
+      "value": "等待设备上线"
+    },
+    {
+      "name": "device_pairing_desktop_install_step_online",
+      "value": "登录后，桌面程序会自动连接这台设备。回到当前应用，即可在设备列表中查看并使用它。"
+    },
+    {
+      "name": "device_pairing_command_warning_title",
+      "value": "确定要使用命令行吗？"
+    },
+    {
+      "name": "device_pairing_command_warning_description",
+      "value": "此方式需要一定的计算机基础，您需要会使用终端以及 uv / uvx 命令行工具。"
+    },
+    {
+      "name": "device_pairing_command_warning_fallback",
+      "value": "如果您使用 Windows 或 macOS，更推荐使用桌面程序，连接和日常使用会更方便。"
+    },
+    {
+      "name": "device_pairing_command_warning_desktop",
+      "value": "使用桌面程序"
+    },
+    {
+      "name": "device_pairing_command_warning_confirm",
+      "value": "继续使用命令行"
+    },
+    {
+      "name": "device_pairing_name_title",
+      "value": "命名设备"
+    },
+    {
+      "name": "device_pairing_name_description",
+      "value": "为您的设备起一个容易辨认的名字，然后选择配对方式。"
+    },
+    {
+      "name": "device_pairing_name_label",
+      "value": "设备名"
+    },
+    {
+      "name": "device_pairing_name_placeholder",
+      "value": "例如 amber-finch"
+    },
+    {
+      "name": "device_pairing_method_title",
+      "value": "选择配对方式"
+    },
+    {
+      "name": "device_pairing_method_description",
+      "value": "选择一种方式，将 %s 连接到您的账号。"
+    },
+    {
+      "name": "device_pairing_pair_code_title",
+      "value": "使用配对码"
+    },
+    {
+      "name": "device_pairing_pair_code_description",
+      "value": "在设备终端运行命令，将生成的 6 位配对码填回这里。"
+    },
+    {
+      "name": "device_pairing_token_title",
+      "value": "使用 Token"
+    },
+    {
+      "name": "device_pairing_token_description",
+      "value": "在设备终端运行包含 Token 的命令，直接完成连接。"
+    },
+    {
+      "name": "device_pairing_command_step_title",
+      "value": "使用 Token 连接"
+    },
+    {
+      "name": "device_pairing_command_step_description",
+      "value": "在 %s 的终端中运行下方命令，设备会自动连接到您的账号。"
+    },
+    {
+      "name": "device_pairing_linux_session_warning",
+      "value": "请保持终端运行，关闭后设备会离线。如果您使用 Linux，可以通过 screen 保持后台会话："
+    },
+    {
+      "name": "device_pairing_linux_detach_hint",
+      "value": "设备上线后，在 screen 会话中按 Ctrl-A，再按 D，即可离开并保持后台运行。需要返回会话时运行："
+    },
+    {
+      "name": "device_pairing_waiting_online",
+      "value": "等待设备上线..."
+    },
+    {
+      "name": "device_pairing_code_step_title",
+      "value": "使用配对码配对"
+    },
+    {
+      "name": "device_pairing_code_step_description",
+      "value": "将 %s 的配对码填入下方，即可完成连接。"
+    },
+    {
+      "name": "device_pairing_pair_command",
+      "value": "在设备上运行"
+    },
+    {
+      "name": "device_pairing_pair_command_hint",
+      "value": "运行命令后，将终端显示的 6 位配对码输入下方。"
+    },
+    {
+      "name": "device_pairing_code_label",
+      "value": "设备上的配对码"
+    },
+    {
+      "name": "device_pairing_confirming",
+      "value": "正在确认配对，等待设备上线..."
+    },
+    {
+      "name": "device_pairing_claim",
+      "value": "认领"
+    },
+    {
+      "name": "device_pairing_exit_title",
+      "value": "设备已创建"
+    },
+    {
+      "name": "device_pairing_exit_description",
+      "value": "设备 %s 已经创建但尚未完成配对。如果不再需要，请在设备列表中手动删除。"
+    },
+    {
+      "name": "device_pairing_continue_pairing",
+      "value": "继续配对"
+    },
+    {
+      "name": "device_pairing_close_anyway",
+      "value": "仍然关闭"
+    },
+    {
+      "name": "device_pairing_copy_command",
+      "value": "复制命令"
+    },
+    {
+      "name": "device_pairing_errors_create_failed",
+      "value": "无法创建连接器。"
+    },
+    {
+      "name": "device_pairing_errors_claim_failed",
+      "value": "无法认领配对。"
+    },
+    {
+      "name": "device_pairing_errors_copy_failed",
+      "value": "复制失败，请选中命令后手动复制。"
+    },
+    {
+      "name": "device_pairing_download",
+      "value": "前往官网下载"
+    },
+    {
+      "name": "device_pairing_exit_waiting_description",
+      "value": "离开页面后仍会等待 %s 上线，并更新设备列表。如果不再需要这台设备，请在设备列表中删除。"
+    },
+    {
+      "name": "device_pairing_open_download_failed",
+      "value": "无法打开下载页面，请稍后重试。"
+    }
+  ]
+}
