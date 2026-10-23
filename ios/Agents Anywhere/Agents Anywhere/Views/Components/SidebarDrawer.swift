@@ -545,6 +545,7 @@ private struct SidebarDrawerNativeSplitView<
                 let safeAreaInsets = geometry.safeAreaInsets
 
                 SidebarDrawerNativeSidebar(
+                    safeAreaTop: safeAreaInsets.top,
                     edgeEffectStyle: sidebarHeaderEdgeEffectStyle,
                     header: sidebarHeader(safeAreaInsets),
                     content: sidebarContent(safeAreaInsets)
@@ -603,22 +604,39 @@ private struct SidebarDrawerNativeSplitView<
     }
 }
 
+/// The portrait lift accepted on the Duo inner screen: cancels the Liquid
+/// Glass sidebar container's extra top inset (~21pt) and tightens another
+/// ~35pt under the status bar. Measured, not derived.
+private let sidebarPortraitTopLift: CGFloat = 56
+/// Below this much top safe area there is no status bar (landscape), and any
+/// lift pushes the wordmark off screen — leave the system layout alone.
+private let sidebarStatusBarThreshold: CGFloat = 40
+
 private struct SidebarDrawerNativeSidebar<Header: View, Content: View>: View {
+    let safeAreaTop: CGFloat
     let edgeEffectStyle: ScrollEdgeEffectStyle
     let header: Header
     let content: Content
 
+    private var topLift: CGFloat {
+        // Landscape: a small drop reads better than flush against the edge.
+        safeAreaTop >= sidebarStatusBarThreshold ? -sidebarPortraitTopLift : 14
+    }
+
     var body: some View {
-        content
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .scrollEdgeEffectStyle(edgeEffectStyle, for: .top)
-            .safeAreaBar(edge: .top, spacing: 0) {
-                SidebarDrawerHeaderBar(
-                    safeAreaInsets: EdgeInsets(),
-                    header: header
-                )
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        Group {
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .scrollEdgeEffectStyle(edgeEffectStyle, for: .top)
+                .safeAreaBar(edge: .top, spacing: 0) {
+                    SidebarDrawerHeaderBar(
+                        safeAreaInsets: EdgeInsets(),
+                        header: header
+                    )
+                }
+        }
+        .padding(.top, topLift)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

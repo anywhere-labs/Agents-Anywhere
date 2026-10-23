@@ -203,10 +203,16 @@ struct ChatSidebarIconControlStyle: ViewModifier {
 }
 
 struct ChatSidebarHeaderView: View {
+    @Environment(\.sidebarDrawerPresentation) private var presentation
+
     var body: some View {
         AAWordmark(fontSize: 24)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .padding(.horizontal, 18)
+            // 抽屉盖在全屏上，safe area 之外再垫 20pt 与状态栏分层；双栏侧栏
+            // 已由系统的 safe area 管理顶部，额外留白会让内容整体偏下（Duo
+            // 内屏竖屏尤其明显），所以只在抽屉形态下垫。
+            .padding(.top, presentation == .drawer ? 20 : 0)
             .containerCornerOffset(.horizontal, sizeToFit: true)
     }
 }
