@@ -8,7 +8,8 @@
             "claude",
             "opencode",
             "acp",
-            "dsh"
+            "dsh",
+            "antigravity"
           ],
           "title": "Runtime",
           "type": "string"
