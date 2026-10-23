@@ -34,7 +34,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.api.RemoteRuntimeModelGroup
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeSelectionOption
+import com.agentsanywhere.app.feature.sessiondetail.rowLabel
+import com.agentsanywhere.app.feature.sessiondetail.sectionByModelGroup
 import com.agentsanywhere.app.ui.designsystem.AABottomSheet
 import com.agentsanywhere.app.ui.designsystem.AABottomSheetColors
 import com.agentsanywhere.app.ui.designsystem.AABottomSheetDefaults
@@ -46,22 +49,29 @@ private enum class RuntimeSettingsPage {
     ModeEffort,
 }
 
-private data class ModelOptionGroup(
+internal data class ModelOptionGroup(
     val label: String,
     val options: List<RuntimeSelectionOption>,
-)
+) {
+    val group: RemoteRuntimeModelGroup?
+        get() = options.firstNotNullOfOrNull(RuntimeSelectionOption::group)
+}
 
-private val RuntimeSelectionOption.modelLabel: String
-    get() = label.substringBefore(" · ").ifBlank { label }
+// Model options carry explicit modelId / modelLabel / effortLabel; the " · " split is only a fallback
+// for options built without them.
+private val RuntimeSelectionOption.sheetModelLabel: String
+    get() = modelLabel ?: label.substringBefore(" · ").ifBlank { label }
 
-private val RuntimeSelectionOption.effortLabel: String?
-    get() = label.substringAfter(" · ", "").takeIf(String::isNotBlank)
+private val RuntimeSelectionOption.sheetEffortLabel: String?
+    get() = if (modelId != null) effortLabel else label.substringAfter(" · ", "").takeIf(String::isNotBlank)
 
 internal fun RuntimeSelectionOption.effortDisplayLabel(defaultLabel: String): String =
-    effortLabel ?: defaultLabel
+    sheetEffortLabel ?: defaultLabel
 
-private fun List<RuntimeSelectionOption>.groupByModelLabel(): List<ModelOptionGroup> =
-    groupBy(RuntimeSelectionOption::modelLabel).map { (label, options) -> ModelOptionGroup(label, options) }
+internal fun List<RuntimeSelectionOption>.groupByModel(): List<ModelOptionGroup> =
+    groupBy { option -> option.modelId?.let { "id:$it" } ?: "label:${option.sheetModelLabel}" }
+        .values
+        .map { options -> ModelOptionGroup(options.first().sheetModelLabel, options) }
 
 @Composable
 internal fun SessionRuntimeSettingsSheet(
@@ -83,7 +93,7 @@ internal fun SessionRuntimeSettingsSheet(
 ) {
     var page by remember(runtimeLabel) { mutableStateOf(RuntimeSettingsPage.Model) }
     val palette = AABottomSheetDefaults.colors()
-    val groupedModels = remember(modelOptions) { modelOptions.groupByModelLabel() }
+    val groupedModels = remember(modelOptions) { modelOptions.groupByModel() }
     val selectedModelGroup = groupedModels.firstOrNull { group ->
         group.options.any { it.selectionId == selectedModelId }
     } ?: groupedModels.firstOrNull()
@@ -186,11 +196,13 @@ private fun ModelOptions(
 ) {
     val options = groups.map { group ->
         val current = group.options.firstOrNull { it.selectionId == selectedId }
-        current
+        val option = current
             ?: group.options.firstOrNull { it.enabled && it.default }
             ?: group.options.firstOrNull { it.enabled }
             ?: group.options.first()
-    }.map { option -> option.copy(label = option.modelLabel) }
+        option.copy(label = group.label)
+    }
+    val sections = groups.indices.toList().sectionByModelGroup { groups[it].group }
     val selectedIds = groups
         .firstOrNull { group -> group.options.any { option -> option.selectionId == selectedId } }
         ?.options
@@ -209,14 +221,18 @@ private fun ModelOptions(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            options.forEach { option ->
-                AABottomSheetItem(
-                    text = option.label,
-                    supportingText = option.disabledReason,
-                    selected = option.selectionId == selectedId || option.selectionId in selectedIds,
-                    enabled = !busy && !loading && option.enabled,
-                    onClick = { onSelect(option.selectionId) },
-                )
+            sections.forEach { section ->
+                section.header?.let { SectionLabel(it, palette) }
+                section.items.forEach { index ->
+                    val option = options[index]
+                    AABottomSheetItem(
+                        text = section.rowLabel(option.label, groups[index].group),
+                        supportingText = option.disabledReason,
+                        selected = option.selectionId == selectedId || option.selectionId in selectedIds,
+                        enabled = !busy && !loading && option.enabled,
+                        onClick = { onSelect(option.selectionId) },
+                    )
+                }
             }
         }
     }

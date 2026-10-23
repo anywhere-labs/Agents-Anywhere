@@ -89,6 +89,12 @@ class ProtocolReasoningItem(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ProtocolModelGroup(BaseModel):
+    id: str = Field(min_length=1)
+    displayName: str = Field(min_length=1)
+    itemDisplayName: str | None = Field(default=None, min_length=1)
+
+
 class ProtocolModelItem(BaseModel):
     displayName: str
     id: str
@@ -96,6 +102,7 @@ class ProtocolModelItem(BaseModel):
     description: str | None = None
     default: bool = False
     reasoningItems: list[ProtocolReasoningItem] = Field(default_factory=list)
+    group: ProtocolModelGroup | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

@@ -570,6 +570,7 @@ fun NewSessionScreen(
                             id = model.id,
                             label = model.displayName,
                             enabled = enabled,
+                            group = model.group,
                         )
                     },
                     enabled = !creatingProject && runtimeSelection.modelCatalog.fresh,

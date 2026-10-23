@@ -147,6 +147,16 @@ class ProtocolReasoningItem(ProtocolWireModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ProtocolModelGroup(ProtocolWireModel):
+    """Where a model is routed from, e.g. a DSH provider or relay."""
+
+    id: str = Field(min_length=1)
+    displayName: str = Field(min_length=1)
+    # Row text under this group's header, without the provider the header already
+    # shows. The item's displayName stays unique on its own for selections.
+    itemDisplayName: str | None = Field(default=None, min_length=1)
+
+
 class ProtocolModelItem(ProtocolWireModel):
     displayName: str
     id: str
@@ -154,6 +164,8 @@ class ProtocolModelItem(ProtocolWireModel):
     description: str | None = None
     default: bool = False
     reasoningItems: list[ProtocolReasoningItem] = Field(default_factory=list)
+    # Clients section the picker by group only when a catalog has 2+ groups.
+    group: ProtocolModelGroup | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

@@ -302,6 +302,15 @@ def model_catalog_payload(catalog: RuntimeModelCatalog) -> dict[str, Any]:
                     }
                     for reasoning in model.reasoning_items
                 ],
+                "group": (
+                    {
+                        "id": model.group.id,
+                        "displayName": model.group.title,
+                        "itemDisplayName": model.group.item_title,
+                    }
+                    if model.group is not None
+                    else None
+                ),
                 "metadata": {
                     **dict(model.metadata),
                     "enabled": model.enabled,

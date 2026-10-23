@@ -7,7 +7,7 @@
 ## 1. 已确认的业务规则
 
 1. DSH Runtime 向 AA 提供权限、模型、effort 的能力及可选值，并提供 Agent 模式目录。
-2. 模型的实际身份是 `provider ID + model ID`。界面按模型名称是否跨 provider 重复，决定是否显示 provider。
+2. 模型的实际身份是 `provider ID + model ID`。目录里有两个及以上 provider 时，选择器按 provider 分组；模型名称跨 provider 重复时，名称本身也带上 provider（§5）。
 3. 新建会话要把权限、provider、model、effort、cwd、Agent 模式完整传到插件，并在首条消息开始执行前完成设置。
 4. **AA 新会话继续使用 AA 现有偏好机制。不得根据 DSH 返回的默认值、最近选择或默认标记覆盖 AA 的选择。**
 5. **保持 AA 现有偏好的存储结构、作用域、保存时机和失效回退逻辑不变。**本次补齐 DSH 的目录、请求透传和执行，不重写平台偏好功能。
@@ -150,6 +150,15 @@ effort 处理规则：
 - 不支持 effort 的模型关闭相应选择器，清除不适用的旧 effort，不发送空字符串。
 - `null / 未指定` 若作为“模型默认推理”的显式选择保留，其含义是采用模型适配器的默认行为，不是读取 DSH 最近保存的全局 effort。不得用全局默认 effort 填补 AA 的参数。
 - 请求的 effort 被官方规范化时，以返回的实际选择回显；不能显示 high，却实际已选成另一值而不告知用户。
+
+### 5.3 按 provider 分组
+
+与 DSH 自己的模型选择器一致，AA 选择器按 provider 分组：组标题是 provider 显示名，组内不重复 provider。
+
+- 协议：模型条目新增可选 `group: {id, displayName, itemDisplayName}`（`contracts/protocol/1.0`）。Connector 从插件模型的 `metadata.provider` / `metadata.providerName` 生成它；两个 provider 显示名相同时，组名为 `providerName / provider ID`。`itemDisplayName` 取 `metadata.modelName`，同一 provider 内同名时追加 `[model ID]`。插件不需要为分组单独升级。
+- 客户端：目录中出现两个及以上不同 `group.id` 时才分组；组按首次出现排序，组内保持目录顺序；没有 `group` 的模型放在末尾、不带标题。只有一个 provider 时保持平铺列表。
+- 分组标题下的行显示 `itemDisplayName`，不再重复 provider；平铺列表与选中态（输入框上的模型按钮）仍用 §5.1 的名称，跨 provider 同名时带 provider，以便选中后能确认来源。
+- §5.1 的名称规则不变：未识别 `group` 的旧客户端仍能区分同名模型。
 
 ## 6. 设备详情：新会话默认模式
 

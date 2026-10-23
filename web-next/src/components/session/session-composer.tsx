@@ -10,7 +10,10 @@ import { Badge } from "@/components/ui/badge"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -40,6 +43,8 @@ import {
   catalogItemDisabledReason,
   catalogItemEnabled,
   catalogI18nText,
+  groupModelOptions,
+  modelSectionRows,
   isDshAutoReviewPermission,
   modelCatalogDisplayName,
   modelIdsForSelectionId,
@@ -249,6 +254,7 @@ export function SessionComposer({
     enabled: catalogItemEnabled(item),
     disabledReason: catalogItemDisabledReason(item),
     selectionId: item.selectionId,
+    group: item.group ?? null,
     reasoningItems: item.reasoningItems.map((reasoning) => ({
       id: reasoning.id,
       label: catalogI18nText(tNew, reasoning.metadata, "labelKey", reasoning.displayName),
@@ -533,6 +539,66 @@ export function SessionComposer({
     void submit()
   }
 
+  const renderModelMenuItem = (modelItem: (typeof modelItems)[number]) => {
+    const modelEfforts = modelItem.reasoningItems
+    if (modelEfforts.length === 0) {
+      return (
+        <DropdownMenuItem
+          key={modelItem.id}
+          disabled={!modelItem.enabled}
+          className="gap-2"
+          onSelect={() => chooseModel(modelItem.id, "")}
+        >
+          <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">{modelItem.label}</span>
+            {!modelItem.enabled && modelItem.disabledReason ? (
+              <span className="block truncate text-xs text-muted-foreground">
+                {modelItem.disabledReason}
+              </span>
+            ) : null}
+          </span>
+        </DropdownMenuItem>
+      )
+    }
+    return (
+      <DropdownMenuSub key={modelItem.id}>
+        <DropdownMenuSubTrigger
+          className="gap-2"
+          disabled={effortSelectorDisabled || !modelItem.enabled}
+        >
+          <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
+          <span className="max-w-40 truncate" title={modelItem.disabledReason ?? undefined}>
+            {modelItem.label}
+          </span>
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent className="w-56">
+          {modelEfforts.map((item) => (
+            <DropdownMenuItem
+              key={item.id}
+              disabled={!item.enabled}
+              className="gap-2"
+              onSelect={() => chooseModel(modelItem.id, item.id)}
+            >
+              <Check className={cn(
+                "size-3.5",
+                selectedModel === modelItem.id && selectedReasoning === item.id ? "opacity-100" : "opacity-0",
+              )} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{item.label}</span>
+                {!item.enabled && item.disabledReason ? (
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {item.disabledReason}
+                  </span>
+                ) : null}
+              </span>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+    )
+  }
+
   return (
     <div
       className="shrink-0 px-4 pb-4 pt-2"
@@ -774,67 +840,17 @@ export function SessionComposer({
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" className="w-56">
-                      {modelItems.length > 0 ? (
-                        modelItems.map((modelItem) => {
-                          const modelEfforts = modelItem.reasoningItems
-                          if (modelEfforts.length === 0) {
-                            return (
-                              <DropdownMenuItem
-                                key={modelItem.id}
-                                disabled={!modelItem.enabled}
-                                className="gap-2"
-                                onSelect={() => chooseModel(modelItem.id, "")}
-                              >
-                                <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
-                                <span className="min-w-0 flex-1">
-                                  <span className="block truncate">{modelItem.label}</span>
-                                  {!modelItem.enabled && modelItem.disabledReason ? (
-                                    <span className="block truncate text-xs text-muted-foreground">
-                                      {modelItem.disabledReason}
-                                    </span>
-                                  ) : null}
-                                </span>
-                              </DropdownMenuItem>
-                            )
-                          }
-                          return (
-                            <DropdownMenuSub key={modelItem.id}>
-                              <DropdownMenuSubTrigger
-                                className="gap-2"
-                                disabled={effortSelectorDisabled || !modelItem.enabled}
-                              >
-                                <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
-                                <span className="max-w-40 truncate" title={modelItem.disabledReason ?? undefined}>
-                                  {modelItem.label}
-                                </span>
-                              </DropdownMenuSubTrigger>
-                              <DropdownMenuSubContent className="w-56">
-                                {modelEfforts.map((item) => (
-                                  <DropdownMenuItem
-                                    key={item.id}
-                                    disabled={!item.enabled}
-                                    className="gap-2"
-                                    onSelect={() => chooseModel(modelItem.id, item.id)}
-                                  >
-                                    <Check className={cn(
-                                      "size-3.5",
-                                      selectedModel === modelItem.id && selectedReasoning === item.id ? "opacity-100" : "opacity-0",
-                                    )} />
-                                    <span className="min-w-0 flex-1">
-                                      <span className="block truncate">{item.label}</span>
-                                      {!item.enabled && item.disabledReason ? (
-                                        <span className="block truncate text-xs text-muted-foreground">
-                                          {item.disabledReason}
-                                        </span>
-                                      ) : null}
-                                    </span>
-                                  </DropdownMenuItem>
-                                ))}
-                              </DropdownMenuSubContent>
-                            </DropdownMenuSub>
-                          )
-                        })
-                      ) : null}
+                      {groupModelOptions(modelItems).map((section, index) => (
+                        <React.Fragment key={section.id === null ? "ungrouped" : `group:${section.id}`}>
+                          {index > 0 ? <DropdownMenuSeparator /> : null}
+                          {section.displayName ? (
+                            <DropdownMenuGroup>
+                              <DropdownMenuLabel>{section.displayName}</DropdownMenuLabel>
+                              {modelSectionRows(section).map(renderModelMenuItem)}
+                            </DropdownMenuGroup>
+                          ) : section.items.map(renderModelMenuItem)}
+                        </React.Fragment>
+                      ))}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : null}

@@ -1,7 +1,10 @@
 package com.agentsanywhere.app.feature.sessions
 
 import com.agentsanywhere.app.api.RemoteRuntimeCapabilities
+import com.agentsanywhere.app.api.RemoteRuntimeModel
 import com.agentsanywhere.app.api.RemoteRuntimeModelCatalogResponse
+import com.agentsanywhere.app.api.RemoteRuntimeModelGroup
+import com.agentsanywhere.app.api.RemoteRuntimeReasoning
 import com.agentsanywhere.app.api.RemoteRuntimePermissionCatalogResponse
 import com.agentsanywhere.app.feature.devices.DeviceRuntime
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
@@ -94,6 +97,7 @@ data class NewSessionModel(
     val metadata: Map<String, Any?>,
     val enabled: Boolean = true,
     val disabledReason: String? = null,
+    val group: RemoteRuntimeModelGroup? = null,
 )
 
 data class NewSessionReasoning(
@@ -540,6 +544,7 @@ internal fun RemoteRuntimeModelCatalogResponse.toNewSessionModelCatalog(): NewSe
                 metadata = model.metadata,
                 enabled = model.enabled,
                 disabledReason = model.disabledReason,
+                group = model.group,
             )
         },
         serverTime = serverTime,
@@ -547,6 +552,33 @@ internal fun RemoteRuntimeModelCatalogResponse.toNewSessionModelCatalog(): NewSe
         runtimeType = catalog.runtimeType,
     )
 }
+
+/** Inverse of [toNewSessionModelCatalog]'s per-model mapping, so both catalogs share one option builder. */
+internal fun NewSessionModel.toRemoteRuntimeModel(): RemoteRuntimeModel =
+    RemoteRuntimeModel(
+        id = id,
+        selectionId = selectionId,
+        displayName = displayName,
+        description = description,
+        default = default,
+        reasoningItems = reasoningItems.map {
+            RemoteRuntimeReasoning(
+                id = it.id,
+                selectionId = it.selectionId,
+                fullModelId = it.fullModelId,
+                displayName = it.displayName,
+                description = it.description,
+                default = it.default,
+                metadata = it.metadata,
+                enabled = it.enabled,
+                disabledReason = it.disabledReason,
+            )
+        },
+        metadata = metadata,
+        enabled = enabled,
+        disabledReason = disabledReason,
+        group = group,
+    )
 
 internal fun RemoteRuntimePermissionCatalogResponse.toNewSessionPermissionCatalog(): NewSessionPermissionCatalog {
     return NewSessionPermissionCatalog(

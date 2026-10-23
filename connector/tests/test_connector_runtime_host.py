@@ -315,6 +315,7 @@ async def _exercise_runtime_catalog_notifications() -> None:
                             "description": None,
                             "default": False,
                             "reasoningItems": [],
+                            "group": None,
                             "metadata": {"enabled": True},
                         }
                     ],

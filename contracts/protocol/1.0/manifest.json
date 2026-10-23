@@ -37,7 +37,7 @@
       "model": "ProtocolModelCatalog",
       "path": "schemas/model-catalog.schema.json",
       "pydanticMode": "validation",
-      "sha256": "6fe940e6bf74c3f03a94dc30efbc0dff54c60685303717aa4bbf683edf638c7f",
+      "sha256": "36dab5aa9c55e1c537088e2909d1311a7d9102801d6d6eb98afc536e6f29d26c",
       "slug": "model-catalog"
     },
     {
@@ -45,7 +45,7 @@
       "model": "ProtocolModelCatalogResponse",
       "path": "schemas/model-catalog-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "c8c10ad82d3c0c718eb85a261e359700982f35dc92766cd546888b2ba640d86f",
+      "sha256": "d1c2d669c84d22881a2d334a7dda103a3e2911d830304651e0fcfc5a9e834e5a",
       "slug": "model-catalog-response"
     },
     {
