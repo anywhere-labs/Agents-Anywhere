@@ -34,6 +34,7 @@ import {
   type DesktopOnboardingEntry,
 } from "./desktop-onboarding";
 import { DesktopUpdateService } from "./desktop-updates";
+import { nextSilentLaunchState, shouldLaunchSilently, type SilentLaunchState } from "./silent-launch";
 import { validateTitleBarColors } from "./title-bar";
 import type { BackendInit } from "./backend/protocol";
 import { DesktopBackendClient } from "./backend-client";
@@ -84,6 +85,8 @@ const API_ROUTE_PREFIXES = [
 /** `checking` until the backend's first probe answers; the renderer shows it as progress. */
 let ownership: OwnershipState = { status: "checking" };
 let recheckingOwnership: Promise<OwnershipState> | null = null;
+/** Only a silent login-item launch holds its window back; anything else is `settled`. */
+let silentLaunch: SilentLaunchState = "settled";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -558,13 +561,17 @@ function appWindowIcon(): string {
   return path.join(app.getAppPath(), "build", "icon-mac-source.png");
 }
 
+/** A login item or an updater hands the app a hidden-launch argument. */
+function launchedInBackground(argv: readonly string[]): boolean {
+  return argv.includes(LOGIN_ITEM_HIDDEN_ARG) || argv.includes("--background");
+}
+
 function launchedAsLoginItem(): boolean {
   const login = app.getLoginItemSettings(loginItemOptions());
   return Boolean(
     login.wasOpenedAtLogin ||
       login.wasOpenedAsHidden ||
-      process.argv.includes(LOGIN_ITEM_HIDDEN_ARG) ||
-      process.argv.includes("--background") ||
+      launchedInBackground(process.argv) ||
       process.argv.includes("--squirrel-firstrun"),
   );
 }
@@ -905,14 +912,22 @@ function publishOwnership(state: OwnershipState): void {
   ownership = state;
   sendToRenderer("workbench:ownership:state", ownership);
   if (ownership.status === "owned" && app.isPackaged) void drainDesktopOAuthCallbacks();
+  applyOwnershipToSilentLaunch(ownership);
 }
 
-/** Only a silent login-item launch has to wait for the first ownership result. */
-async function waitForOwnership(timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (ownership.status !== "owned" && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
+/**
+ * A silent login-item launch holds its window back until ownership settles, so a
+ * slow cold start no longer flashes it (a fixed 10 s wait used to show the
+ * window on every boot, because the Connector can take minutes to start).
+ * The window is only revealed for a result the user has to resolve.
+ */
+function applyOwnershipToSilentLaunch(state: OwnershipState): void {
+  const next = nextSilentLaunchState(silentLaunch, state.status);
+  const revealed = next === "revealed" && silentLaunch !== "revealed";
+  silentLaunch = next;
+  // A result that arrives before the launch window exists is applied again by
+  // the caller once it does.
+  if (revealed && mainWindow && !mainWindow.isDestroyed()) showMainWindow();
 }
 
 async function confirmQuit(): Promise<boolean> {
@@ -1012,17 +1027,28 @@ if (hasSingleInstanceLock) {
       onState: (state) => sendToRenderer("workbench:updates:state", state),
     });
     createWindowsTray();
-    // A silent login-item launch must not flash a window when this machine
-    // already owns the Connector, so it is the one case that waits.
-    const silentLoginLaunch = backend?.getSettings()?.silentLaunch === true
-      && launchedAsLoginItem()
-      && !process.env.WORKBENCH_WEB_URL;
-    let showOnLaunch = true;
-    if (silentLoginLaunch) {
-      await waitForOwnership(10_000);
-      showOnLaunch = ownership.status !== "owned";
-    }
+    // A silent login-item launch never reveals its window on its own: the tray is
+    // the entry point. It is only shown when ownership settles into a state the
+    // user has to resolve, so a slow cold start stays invisible.
+    //
+    // `backend.getSettings()` is null until the Connector reports its settings,
+    // which on a cold boot happens long after this decision. Reading it too early
+    // used to make every login-item launch look like a manual one and reveal the
+    // window immediately. The settings file is the same source, available now.
+    const launchSettings = backend?.getSettings() ?? readDesktopSettings(desktopSettingsPath());
+    const silentLoginLaunch = shouldLaunchSilently({
+      silentLaunch: launchSettings.silentLaunch,
+      openedAsLoginItem: launchedAsLoginItem(),
+      webUrlOverride: process.env.WORKBENCH_WEB_URL,
+    });
+    const showOnLaunch = !silentLoginLaunch;
     createMainWindow(showOnLaunch, await resolveLaunchRoute(silentLoginLaunch));
+    if (silentLoginLaunch) {
+      // Start holding after the window exists, then settle against the result
+      // the backend has already published (if any).
+      silentLaunch = "holding";
+      applyOwnershipToSilentLaunch(ownership);
+    }
     if (app.isPackaged && ownership.status === "owned") await drainDesktopOAuthCallbacks();
     if (process.platform === "darwin" && app.dock) app.dock.setIcon(appWindowIcon());
     if (!showOnLaunch) hideDockIfIdle();
@@ -1037,12 +1063,12 @@ if (hasSingleInstanceLock) {
   app.on("activate", () => showMainWindow());
   app.on("second-instance", (_event, argv) => {
     const onboarding = desktopOnboardingFromArgv(argv);
+    const rawUrl = onboarding ? null : app.isPackaged ? desktopOAuthUrlFromArgv(argv) : null;
     if (onboarding) queueDesktopOnboarding(onboarding);
-    else if (app.isPackaged) {
-      const rawUrl = desktopOAuthUrlFromArgv(argv);
-      if (rawUrl) queueDesktopOAuthCallback(rawUrl);
-    }
-    showMainWindow();
+    else if (rawUrl) queueDesktopOAuthCallback(rawUrl);
+    // A second background launch (another login item, an installer relaunch) must
+    // not pull the hidden window forward; a deep link still has to surface.
+    if (onboarding || rawUrl || !launchedInBackground(argv)) showMainWindow();
   });
   app.on("window-all-closed", () => {
     // Connector cleanup is handled by the explicit quit flow.
