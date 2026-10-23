@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from connector.logging import logger
@@ -22,6 +22,7 @@ from connector.runtimes.codex.domain.input_requests import (
 )
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
 from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
+from connector.runtimes.codex.turns.actions import CodexTurnActions
 
 EnsureStarted = Callable[[], Awaitable[None]]
 
@@ -34,6 +35,7 @@ class CodexInteractionController:
     active_turn_ids: dict[str, str]
     notices: CodexNoticeRegistry
     ensure_started: EnsureStarted
+    turn_actions: CodexTurnActions
 
     async def respond_interaction(
         self,
@@ -42,6 +44,42 @@ class CodexInteractionController:
         action_id: str,
         input_data: Mapping[str, Any] | None = None,
     ) -> RuntimeOperationResult:
+        notice = self.notices.get(notice_id)
+        if notice is not None and notice.source.get("component") == "codex.plan_review":
+            if notice.session_id != session_id or notice.status != "open" or not notice.response_required or session_id in self.active_turn_ids:
+                return RuntimeOperationResult(ok=False, code="codex_plan_not_pending", message="Plan is no longer waiting for review")
+            data = dict(input_data or {})
+            plan = data.get("plan", notice.message)
+            feedback = data.get("feedback")
+            if action_id not in {"implement_plan", "revise_plan"} or not isinstance(plan, str) or not plan.strip():
+                return RuntimeOperationResult(ok=False, code="codex_input_invalid", message="A non-empty plan and valid action are required")
+            if action_id == "revise_plan" and (not isinstance(feedback, str) or not feedback.strip()):
+                return RuntimeOperationResult(ok=False, code="codex_input_invalid", message="Feedback is required")
+            self.notices.upsert(replace(notice, message=plan))
+            responding = self.notices.transition(notice_id, status="responding", context={"responseActionId": action_id})
+            await self.host.notice_upsert(responding)
+            content = ("Implement the following user-approved plan:\n\n" + plan if action_id == "implement_plan"
+                       else "Continue planning from this user-edited plan:\n\n" + plan + "\n\nRequested changes:\n" + feedback.strip())
+            try:
+                result = await self.turn_actions.start_turn(
+                    session_id=session_id, external_session_id=notice.context["threadId"], content=content,
+                    collaboration_mode="default" if action_id == "implement_plan" else "plan",
+                )
+            except Exception:
+                reopened = self.notices.transition(notice_id, status="open")
+                await self.host.notice_upsert(reopened)
+                await self.session_states.update(session_id=session_id, external_session_id=notice.context["threadId"],
+                                                 status="waiting_approval", metadata={"source": "codex.plan_review.retry"})
+                raise
+            if result.ok:
+                resolved = self.notices.transition(notice_id, status="resolved", response_required=False, blocking=None, actions=())
+                await self.host.notice_upsert(resolved)
+            else:
+                reopened = self.notices.transition(notice_id, status="open")
+                await self.host.notice_upsert(reopened)
+                await self.session_states.update(session_id=session_id, external_session_id=notice.context["threadId"],
+                                                 status="waiting_approval", metadata={"source": "codex.plan_review.retry"})
+            return result
         if self.client is None:
             raise RuntimeUnsupportedError("respond_interaction")
         data = dict(input_data or {})
