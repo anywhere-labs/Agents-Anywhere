@@ -131,6 +131,8 @@ export type SessionStatusValue =
 export type RuntimeStatusValue = SessionStatusValue | "error" | "disconnected";
 
 export type SessionView = {
+  nativeProjectId?: string | null;
+  projectSyncReason?: string | null;
   id: string;
   connectorId: string;
   projectId?: string | null;
@@ -289,6 +291,15 @@ export type ProjectView = {
   connectorId: string;
   name: string;
   workspacePath: string;
+  runtime?: string | null;
+  runtimeId?: string | null;
+  nativeProjectId?: string | null;
+  identityKind?: "legacy" | "native" | "directory";
+  roots?: string[];
+  sourceState?: string;
+  sourceAvailability?: "available" | "unknown";
+  rootStates?: Record<string, "present" | "missing" | "unknown">;
+  lastSyncedAt?: string | null;
   manuallyCreated?: boolean;
   sidebarSessionCounts?: { active: number; archived: number };
   pinned: boolean;
@@ -310,14 +321,29 @@ export type ProjectResponse = {
 };
 
 export type ProjectCreateRequest = {
-  manuallyCreated?: boolean;
+  newOperation?: boolean;
+  runtime?: string;
+  runtimeId?: string;
+  requestId?: string;
   name: string;
   connectorId: string;
   workspacePath: string;
 };
 
-export type ProjectCreateResponse = ProjectResponse & {
-  attachedSessions: number;
+export type ProjectCreateResponse = {
+  project: ProjectView | null;
+  operationId: string;
+  status: "pending" | "succeeded" | "failed" | "unknown";
+  syncState: string;
+  nativeProjectId: string | null;
+  roots: string[];
+  message?: string | null;
+  serverTime: string;
+};
+
+export type PendingProjectOperation = {
+  request: ProjectCreateRequest;
+  operation: ProjectCreateResponse;
 };
 
 export type ProjectPatchRequest = {
@@ -346,7 +372,7 @@ export type SessionCreateRequest = {
 
 export type SessionCreateAndStartRequest = {
   connectorId: string;
-  projectId: string;
+  projectId: string | null;
   runtime: string;
   runtimeId?: string;
   title?: string;

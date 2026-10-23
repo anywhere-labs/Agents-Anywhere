@@ -5,21 +5,11 @@ from __future__ import annotations
 import posixpath
 from pathlib import PurePosixPath, PureWindowsPath
 
-from sqlalchemy import case
+from sqlalchemy import case, tuple_
+
+from agent_server.infra.db import device_runtimes, project_operations, runtime_workspace_inventories
 
 from agent_server.infra.repositories.store_support import *
-
-
-class MissingWorkspaceError(ValueError):
-    """Raised when a connector session cannot be assigned to a workspace."""
-
-
-class ProjectNameConflictError(ValueError):
-    """Raised when another project owned by the user already has this name."""
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-        super().__init__(f'project name already exists: "{name}"')
 
 
 def _clean_workspace_path(path: str, device_os: str | None) -> tuple[str, str]:
@@ -46,35 +36,29 @@ def _clean_workspace_path(path: str, device_os: str | None) -> tuple[str, str]:
     return display, display
 
 
-def _workspace_name(path: str, device_os: str | None) -> str:
-    """Return the final directory component used for an auto-created project."""
-    looks_windows = (
-        device_os == "windows"
-        or (len(path) >= 3 and path[1] == ":" and path[2] in ("/", "\\"))
-        or path.startswith("\\\\")
-    )
-    name = PureWindowsPath(path).name if looks_windows else PurePosixPath(path).name
-    return name or "Workspace"
+def _project_operation_parameters(request: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in request.items() if key not in {"requestId", "newOperation"}}
 
 
-def _next_project_name(base: str, existing_names: set[str]) -> str:
-    base = base[:255]
-    candidate = base
-    suffix = 1
-    while candidate in existing_names:
-        ending = f" ({suffix})"
-        candidate = f"{base[: 255 - len(ending)]}{ending}"
-        suffix += 1
-    return candidate
-
-
-def _project_from_row(row: Any) -> ProjectView:
+def _project_from_row(row: Any, state: dict[str, Any] | None = None) -> ProjectView:
+    state = state or {}
+    roots = json.loads(row.get("roots_json") or "[]")
+    unknown = set(state.get("unknownDirectories", []))
+    directories = state.get("directories", {})
+    root_states = {root: "unknown" if _clean_workspace_path(root, None)[1] in unknown
+                   else directories.get(_clean_workspace_path(root, None)[1], "unknown") for root in roots}
     return ProjectView(
         id=row["id"],
         userId=row["user_id"],
         connectorId=row["connector_id"],
         name=row["name"],
         workspacePath=row["workspace_path"],
+        runtime=row.get("runtime"), runtimeId=row.get("runtime_id"),
+        nativeProjectId=row.get("native_project_id"), identityKind=row.get("identity_kind", "legacy"),
+        roots=json.loads(row.get("roots_json") or "[]"), sourceState=row.get("source_state", "pending"),
+        sourceAvailability="unknown" if state.get("syncUnavailable") or state.get("version") != 2 else "available",
+        rootStates=root_states,
+        lastSyncedAt=row.get("workspace_last_checked_at"),
         manuallyCreated=bool(row["manually_created"]),
         pinned=bool(row["pinned"]),
         pinnedAt=row["pinned_at"],
@@ -128,6 +112,10 @@ def _project_view_query() -> Any:
             sidebar_active_count,
             sidebar_archived_count,
             last_activity,
+            select(runtime_workspace_inventories.c.observed_at).where(
+                runtime_workspace_inventories.c.connector_id == projects_t.c.connector_id,
+                runtime_workspace_inventories.c.runtime_id == projects_t.c.runtime_id,
+            ).correlate(projects_t).scalar_subquery().label("workspace_last_checked_at"),
         )
         .select_from(
             projects_t.join(
@@ -142,133 +130,29 @@ def _project_view_query() -> Any:
     )
 
 
+async def _project_views(conn: Any, rows: Any) -> list[ProjectView]:
+    sources = {(row["connector_id"], row["runtime_id"]) for row in rows if row.get("runtime_id")}
+    facts = {}
+    if sources:
+        snapshots = (await conn.execute(select(runtime_workspace_inventories).where(
+            tuple_(runtime_workspace_inventories.c.connector_id, runtime_workspace_inventories.c.runtime_id).in_(sources),
+        ))).mappings().all()
+        facts = {(row["connector_id"], row["runtime_id"]): json.loads(row["snapshot_json"]) for row in snapshots}
+    return [_project_from_row(row, facts.get((row["connector_id"], row.get("runtime_id")))) for row in rows]
+
+
 class ProjectRepositoryMixin:
-    async def _ensure_project_for_workspace(
-        self,
-        conn: Any,
-        *,
-        connector_id: str,
-        workspace_path: str | None,
-        now: str | None = None,
-    ) -> tuple[str, str]:
-        """Find or create the project that owns a connector workspace.
-
-        The helper is intentionally transaction-friendly so session upserts can
-        assign the project and write the session in one transaction.
-        """
-        # Share-lock the active device until the project/session write commits.
-        # Deletion then either cleans up this write or prevents it from starting.
-        connector = (
-            (
-                await conn.execute(
-                    select(
-                        connectors_t.c.user_id,
-                        connectors_t.c.device_os,
-                    )
-                    .where(
-                        connectors_t.c.id == connector_id,
-                        connectors_t.c.revoked == 0,
-                    )
-                    .with_for_update(read=True)
-                )
-            )
-            .mappings()
-            .first()
-        )
-        if connector is None:
-            raise KeyError(connector_id)
-
-        device_os = connector["device_os"]
-        if not isinstance(workspace_path, str) or not workspace_path.strip():
-            raise MissingWorkspaceError("session workdir is required")
-        candidate_path = workspace_path.strip()
-        cleaned_path, workspace_key = _clean_workspace_path(candidate_path, device_os)
-        existing = (
-            await conn.execute(
-                select(projects_t.c.id)
-                .where(
-                    projects_t.c.user_id == connector["user_id"],
-                    projects_t.c.connector_id == connector_id,
-                    projects_t.c.workspace_key == workspace_key,
-                )
-                .order_by(projects_t.c.created_at.asc(), projects_t.c.id.asc())
-                .limit(1)
-            )
-        ).first()
-        if existing is not None:
-            return str(existing.id), cleaned_path
-
-        existing_names = {
-            str(row[0])
-            for row in (
-                await conn.execute(
-                    select(projects_t.c.name).where(
-                        projects_t.c.user_id == connector["user_id"]
-                    )
-                )
-            ).all()
-        }
-        name = _next_project_name(
-            _workspace_name(cleaned_path, device_os),
-            existing_names,
-        )
-        project_id = f"proj_{secrets.token_urlsafe(10)}"
-        timestamp = now or utc_now()
-        await conn.execute(
-            insert(projects_t).values(
-                id=project_id,
-                user_id=connector["user_id"],
-                connector_id=connector_id,
-                name=name,
-                workspace_path=cleaned_path,
-                workspace_key=workspace_key,
-                pinned=0,
-                created_at=timestamp,
-                updated_at=timestamp,
-            )
-        )
-        return project_id, cleaned_path
-
-    async def ensure_project_for_workspace(
-        self,
-        *,
-        connector_id: str,
-        workspace_path: str | None,
-        user_id: str | None = None,
-    ) -> ProjectView:
-        """Resolve a workspace without renaming or marking its project manual."""
-        for attempt in range(3):
-            try:
-                async with self._engine.begin() as conn:
-                    connector = (
-                        await conn.execute(
-                            select(connectors_t.c.user_id).where(
-                                connectors_t.c.id == connector_id,
-                                connectors_t.c.revoked == 0,
-                            )
-                        )
-                    ).first()
-                    if connector is None or (
-                        user_id is not None and connector.user_id != user_id
-                    ):
-                        raise KeyError(connector_id)
-                    project_id, _ = await self._ensure_project_for_workspace(
-                        conn,
-                        connector_id=connector_id,
-                        workspace_path=workspace_path,
-                    )
-                return await self.get_project(project_id, user_id=connector.user_id)
-            except IntegrityError:
-                # A concurrent session or client may claim this path/name.
-                # Start a fresh transaction and reuse its project or next name.
-                if attempt == 2:
-                    raise
-        raise RuntimeError("project resolution exhausted retries")
-
     async def list_projects(self, *, user_id: str) -> list[ProjectView]:
         query = (
             _project_view_query()
-            .where(projects_t.c.user_id == user_id)
+             .where(projects_t.c.user_id == user_id,
+                connectors_t.c.revoked == 0,
+                projects_t.c.source_state.in_(["active", "pending", "unknown"]),
+                or_(projects_t.c.identity_kind == "legacy", select(device_runtimes.c.runtime_id).where(
+                    device_runtimes.c.connector_id == projects_t.c.connector_id,
+                    device_runtimes.c.runtime_id == projects_t.c.runtime_id,
+                    device_runtimes.c.config_json.is_not(None),
+                ).exists()))
             .order_by(
                 projects_t.c.pinned.desc(),
                 projects_t.c.pinned_at.desc(),
@@ -285,7 +169,7 @@ class ProjectRepositoryMixin:
         )
         async with self._engine.connect() as conn:
             rows = (await conn.execute(query)).mappings().all()
-        return [_project_from_row(row) for row in rows]
+            return await _project_views(conn, rows)
 
     async def get_project(self, project_id: str, *, user_id: str) -> ProjectView:
         query = _project_view_query().where(
@@ -294,161 +178,175 @@ class ProjectRepositoryMixin:
         )
         async with self._engine.connect() as conn:
             row = (await conn.execute(query)).mappings().first()
-        if row is None:
-            raise KeyError(project_id)
-        return _project_from_row(row)
+            if row is None:
+                raise KeyError(project_id)
+            return (await _project_views(conn, [row]))[0]
 
-    async def create_project(
-        self,
-        *,
-        user_id: str,
-        connector_id: str,
-        name: str,
-        workspace_path: str,
-        manually_created: bool = True,
-    ) -> ProjectView:
-        cleaned_name = name.strip()
-        if not cleaned_name:
-            raise ValueError("name must not be empty")
+    async def create_project(self, *, user_id: str, connector_id: str, name: str,
+                             workspace_path: str, manually_created: bool = True) -> ProjectView:
+        """Import a legacy record for administrative migrations, never native creation."""
         project_id = f"proj_{secrets.token_urlsafe(10)}"
-        now = utc_now()
-        try:
-            async with self._engine.begin() as conn:
-                connector = (
-                    await conn.execute(
-                        select(connectors_t.c.device_os).where(
-                            connectors_t.c.id == connector_id,
-                            connectors_t.c.user_id == user_id,
-                            connectors_t.c.revoked == 0,
-                        ).with_for_update(read=True)
-                    )
-                ).first()
-                if connector is None:
-                    raise KeyError(connector_id)
-                cleaned_path, workspace_key = _clean_workspace_path(
-                    workspace_path,
-                    connector.device_os,
-                )
-                existing_workspace = (
-                    await conn.execute(
-                        select(projects_t.c.id).where(
-                            projects_t.c.user_id == user_id,
-                            projects_t.c.connector_id == connector_id,
-                            projects_t.c.workspace_key == workspace_key,
-                        )
-                    )
-                ).first()
-                existing_project_id = (
-                    str(existing_workspace.id)
-                    if existing_workspace is not None
-                    else None
-                )
-                if manually_created or existing_project_id is None:
-                    name_conflict = (
-                        await conn.execute(
-                            select(projects_t.c.id).where(
-                                projects_t.c.user_id == user_id,
-                                projects_t.c.name == cleaned_name,
-                                projects_t.c.id != (existing_project_id or ""),
-                            )
-                        )
-                    ).first()
-                    if name_conflict is not None:
-                        raise ProjectNameConflictError(cleaned_name)
-
-                if existing_project_id is not None:
-                    project_id = existing_project_id
-                    if manually_created:
-                        await conn.execute(
-                            update(projects_t)
-                            .where(projects_t.c.id == project_id)
-                            .values(
-                                name=cleaned_name,
-                                workspace_path=cleaned_path,
-                                manually_created=True,
-                                updated_at=now,
-                            )
-                        )
-                else:
-                    await conn.execute(
-                        insert(projects_t).values(
-                            id=project_id,
-                            user_id=user_id,
-                            connector_id=connector_id,
-                            name=cleaned_name,
-                            workspace_path=cleaned_path,
-                            workspace_key=workspace_key,
-                            manually_created=manually_created,
-                            pinned=0,
-                            created_at=now,
-                            updated_at=now,
-                        )
-                    )
-        except IntegrityError as exc:
-            # The preflight checks provide the normal UX path. The database
-            # constraint closes the concurrent-create race.
-            raise ProjectNameConflictError(cleaned_name) from exc
+        async with self._engine.begin() as conn:
+            device = (await conn.execute(select(connectors_t.c.device_os).where(
+                connectors_t.c.id == connector_id, connectors_t.c.user_id == user_id,
+                connectors_t.c.revoked == 0,
+            ))).first()
+            if device is None:
+                raise KeyError(connector_id)
+            path, key = _clean_workspace_path(workspace_path, device.device_os)
+            await conn.execute(insert(projects_t).values(id=project_id, user_id=user_id,
+                connector_id=connector_id, name=name.strip(), workspace_path=path, workspace_key=key,
+                manually_created=manually_created, created_at=utc_now(), updated_at=utc_now()))
         return await self.get_project(project_id, user_id=user_id)
 
-    async def update_project(
-        self,
-        project_id: str,
-        *,
-        user_id: str,
-        name: str | None = None,
-        pinned: bool | None = None,
-    ) -> ProjectView:
+    async def update_project(self, project_id: str, *, user_id: str,
+                             name: str | None = None, pinned: bool | None = None) -> ProjectView:
         current = await self.get_project(project_id, user_id=user_id)
-        values: dict[str, Any] = {"updated_at": utc_now()}
         if name is not None:
-            cleaned_name = name.strip()
-            if not cleaned_name:
-                raise ValueError("name must not be empty")
-            values["name"] = cleaned_name
+            raise ValueError("project names are owned by the native runtime")
+        values = {"updated_at": utc_now()}
         if pinned is not None:
-            values["pinned"] = int(pinned)
-            values["pinned_at"] = (
-                current.pinnedAt
-                if pinned and current.pinned
-                else utc_now()
-                if pinned
-                else None
-            )
-        try:
-            async with self._engine.begin() as conn:
-                if name is not None:
-                    name_conflict = (
-                        await conn.execute(
-                            select(projects_t.c.id).where(
-                                projects_t.c.user_id == user_id,
-                                projects_t.c.name == cleaned_name,
-                                projects_t.c.id != project_id,
-                            )
-                        )
-                    ).first()
-                    if name_conflict is not None:
-                        raise ProjectNameConflictError(cleaned_name)
-                result = await conn.execute(
-                    update(projects_t)
-                    .where(
-                        projects_t.c.id == project_id,
-                        projects_t.c.user_id == user_id,
-                    )
-                    .values(**values)
-                )
-        except IntegrityError as exc:
-            if name is not None:
-                raise ProjectNameConflictError(cleaned_name) from exc
-            raise
-        if result.rowcount == 0:
-            raise KeyError(project_id)
+            values.update(pinned=int(pinned), pinned_at=(current.pinnedAt or utc_now()) if pinned else None)
+        async with self._engine.begin() as conn:
+            await conn.execute(update(projects_t).where(projects_t.c.id == project_id,
+                projects_t.c.user_id == user_id).values(**values))
         return await self.get_project(project_id, user_id=user_id)
+
+    async def list_pending_project_operations(self, *, user_id: str) -> list[dict[str, Any]]:
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(select(project_operations).where(
+                project_operations.c.user_id == user_id,
+                project_operations.c.status.in_(["pending", "unknown", "succeeded"]),
+                select(device_runtimes.c.runtime_id).where(
+                    device_runtimes.c.connector_id == project_operations.c.connector_id,
+                    device_runtimes.c.runtime_id == project_operations.c.runtime_id,
+                    device_runtimes.c.config_json.is_not(None),
+                ).exists(),
+            ).order_by(project_operations.c.created_at.desc()))).mappings().all()
+            pending = []
+            for row in rows:
+                if row["status"] == "succeeded" and json.loads(row["result_json"] or "{}").get("clientAcknowledged"):
+                    continue
+                pending.append(dict(row))
+            return pending
+
+    async def recover_project_operation(self, *, user_id: str, request: dict[str, Any]) -> dict[str, Any] | None:
+        # Exact request identity wins, even for an explicit new operation retry.
+        async with self._engine.connect() as conn:
+            row = (await conn.execute(select(project_operations).where(
+                project_operations.c.user_id == user_id,
+                project_operations.c.request_id == request["requestId"],
+            ))).mappings().first()
+        if row is not None:
+            if {"newOperation": False, **json.loads(row["request_json"])} != {"newOperation": False, **request}:
+                raise ValueError("requestId was reused with different parameters")
+            return dict(row)
+        if request.get("newOperation"):
+            return None
+        target = _project_operation_parameters(request)
+        matches = [row for row in await self.list_pending_project_operations(user_id=user_id)
+                   if _project_operation_parameters(json.loads(row["request_json"])) == target]
+        if len(matches) > 1:
+            raise ValueError("存在多个相同参数的待核对操作，请从操作列表选择继续核对")
+        return matches[0] if matches else None
+
+    async def begin_project_operation(self, *, user_id: str, connector_id: str,
+                                      runtime: str, runtime_id: str, request_id: str,
+                                      request: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        encoded = json.dumps(request, sort_keys=True)
+        async with self._engine.begin() as conn:
+            # Serialize receipts per user; concurrent retries cannot execute twice.
+            owner = (await conn.execute(select(users_t.c.id).where(users_t.c.id == user_id).with_for_update())).first()
+            if owner is None:
+                raise KeyError(user_id)
+            row = (await conn.execute(select(project_operations).where(
+                project_operations.c.user_id == user_id, project_operations.c.request_id == request_id,
+            ))).mappings().first()
+            if row:
+                if {"newOperation": False, **json.loads(row["request_json"])} != {"newOperation": False, **request}:
+                    raise ValueError("requestId was reused with different parameters")
+                return dict(row), False
+            if not request.get("newOperation"):
+                # The user row lock also serializes cross-device requests whose
+                # requestIds differ after reopening the editor.
+                candidates = (await conn.execute(select(project_operations).where(
+                    project_operations.c.user_id == user_id,
+                    project_operations.c.connector_id == connector_id,
+                    project_operations.c.runtime_id == runtime_id,
+                    project_operations.c.status.in_(["pending", "unknown", "succeeded"]),
+                ).order_by(project_operations.c.created_at.desc()))).mappings().all()
+                recoverable = []
+                for candidate in candidates:
+                    if _project_operation_parameters(json.loads(candidate["request_json"])) != _project_operation_parameters(request):
+                        continue
+                    if candidate["status"] == "succeeded" and json.loads(candidate["result_json"] or "{}").get("clientAcknowledged"):
+                        continue
+                    recoverable.append(dict(candidate))
+                if len(recoverable) > 1:
+                    raise ValueError("存在多个相同参数的待核对操作，请从操作列表选择继续核对")
+                if recoverable:
+                    return recoverable[0], False
+            value = {'id': f"pop_{secrets.token_urlsafe(16)}", 'user_id': user_id, 'connector_id': connector_id,
+                         'runtime': runtime, 'runtime_id': runtime_id, 'request_id': request_id, 'request_json': encoded,
+                         'status': "pending", 'result_json': None, 'created_at': utc_now(), 'updated_at': utc_now()}
+            await conn.execute(insert(project_operations).values(**value))
+            return value, True
+
+    async def finish_project_operation(self, operation_id: str, status: str, result: dict[str, Any]) -> None:
+        # Client receipt acknowledgement is Server-owned, never a Runtime result field.
+        result = {key: value for key, value in result.items() if key != "clientAcknowledged"}
+        async with self._engine.begin() as conn:
+            previous = (await conn.execute(select(project_operations).where(
+                project_operations.c.id == operation_id,
+            ).with_for_update())).mappings().first()
+            if previous is None or (status != "succeeded" and previous["status"] not in {"pending", "unknown"}):
+                return
+            if json.loads(previous["result_json"] or "{}").get("clientAcknowledged"):
+                result = {**result, "clientAcknowledged": True}
+            await conn.execute(update(project_operations).where(project_operations.c.id == operation_id).values(
+                status=status, result_json=json.dumps(result), updated_at=utc_now()))
+
+    async def acknowledge_project_operation(self, operation_id: str, *, user_id: str) -> None:
+        async with self._engine.begin() as conn:
+            row = (await conn.execute(select(project_operations).where(
+                project_operations.c.id == operation_id, project_operations.c.user_id == user_id,
+            ).with_for_update())).mappings().first()
+            if row is None:
+                raise KeyError(operation_id)
+            result = json.loads(row["result_json"] or "{}")
+            if row["status"] != "succeeded":
+                raise ValueError("operation result is not yet confirmed")
+            projected = (await conn.execute(select(projects_t.c.id).where(
+                projects_t.c.connector_id == row["connector_id"], projects_t.c.runtime_id == row["runtime_id"],
+                projects_t.c.native_project_id == result.get("nativeProjectId"),
+            ))).first()
+            if projected is None:
+                raise ValueError("project is still synchronizing")
+            await conn.execute(update(project_operations).where(project_operations.c.id == operation_id).values(
+                result_json=json.dumps({**result, "clientAcknowledged": True}), updated_at=utc_now()))
+
+    async def get_project_operation(self, operation_id: str, *, user_id: str) -> dict[str, Any]:
+        async with self._engine.connect() as conn:
+            row = (await conn.execute(select(project_operations).where(
+                project_operations.c.id == operation_id, project_operations.c.user_id == user_id,
+            ))).mappings().first()
+        if row is None:
+            raise KeyError(operation_id)
+        return dict(row)
+
+    async def find_native_project(self, *, user_id: str, connector_id: str,
+                                  runtime_id: str, native_project_id: str) -> ProjectView | None:
+        async with self._engine.connect() as conn:
+            row = (await conn.execute(_project_view_query().where(projects_t.c.user_id == user_id,
+                projects_t.c.connector_id == connector_id, projects_t.c.runtime_id == runtime_id,
+                projects_t.c.native_project_id == native_project_id))).mappings().first()
+            return (await _project_views(conn, [row]))[0] if row else None
 
     async def delete_project(self, project_id: str, *, user_id: str) -> int:
         async with self._engine.begin() as conn:
             owned = (
                 await conn.execute(
-                    select(projects_t.c.id).where(
+                    select(projects_t.c.id, projects_t.c.identity_kind).where(
                         projects_t.c.id == project_id,
                         projects_t.c.user_id == user_id,
                     )
@@ -456,6 +354,8 @@ class ProjectRepositoryMixin:
             ).first()
             if owned is None:
                 raise KeyError(project_id)
+            if owned.identity_kind != "legacy":
+                raise ValueError("native projects must be deleted in the native tool")
             attached = int(
                 (
                     await conn.execute(
@@ -526,7 +426,7 @@ class ProjectRepositoryMixin:
                     select(projects_t.c.id).where(
                         projects_t.c.id == project_id,
                         projects_t.c.user_id == user_id,
-                    )
+                    ).with_for_update()
                 )
             ).first()
             if owned is None:

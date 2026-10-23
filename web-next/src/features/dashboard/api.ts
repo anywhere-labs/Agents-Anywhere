@@ -1,3 +1,4 @@
+import type { ProjectSyncTranslator } from "./project-workspaces";
 import { ApiClient, apiClient, apiPath } from "@/lib/api";
 import { shouldAuthorizeDownloadUrl } from "@/lib/api/download-auth";
 import type {
@@ -27,6 +28,8 @@ import type {
   ProtocolPermissionCatalogResponse,
   PublicSessionShareResponse,
   ProjectCreateRequest,
+  PendingProjectOperation,
+  ProjectView,
   ProjectCreateResponse,
   ProjectDeleteResponse,
   ProjectListResponse,
@@ -157,6 +160,35 @@ export class DashboardApi {
     body: ProjectCreateRequest,
   ): Promise<ProjectCreateResponse> {
     return this.client.post<ProjectCreateResponse>("/projects", body, { token });
+  }
+
+  pendingProjectOperations(token: string): Promise<{ operations: PendingProjectOperation[] }> {
+    return this.client.get("/projects/operations", { token });
+  }
+
+  private async confirmProjectReceipt(token: string, result: ProjectCreateResponse): Promise<ProjectView> {
+    if (!result.project) throw new Error("Project is still synchronizing");
+    // If acknowledgement is lost, the next editor still resumes this operation.
+    await this.client.post(`/projects/operations/${encodeURIComponent(result.operationId)}/ack`, {}, { token }).catch(() => undefined);
+    return result.project;
+  }
+
+  async awaitProject(token: string, result: ProjectCreateResponse, translate: ProjectSyncTranslator): Promise<ProjectView> {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      if (result.project) return this.confirmProjectReceipt(token, result);
+      if (result.status === "failed") throw new Error(result.message ? `${translate("createFailed")}: ${result.message}` : translate("createFailed"));
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      result = await this.client.get<ProjectCreateResponse>(`/projects/operations/${encodeURIComponent(result.operationId)}`, { token });
+    }
+    if (result.project) return this.confirmProjectReceipt(token, result);
+    throw new Error(result.status === "succeeded"
+      ? translate("createdPending")
+      : translate("resultUnknown"));
+  }
+
+  refreshProjectSource(token: string, project: ProjectView): Promise<{ accepted: boolean }> {
+    const query = new URLSearchParams({ connectorId: project.connectorId, runtime: project.runtime || "", runtimeId: project.runtimeId || "" });
+    return this.client.post(`/projects/refresh?${query}`, {}, { token });
   }
 
   updateProject(

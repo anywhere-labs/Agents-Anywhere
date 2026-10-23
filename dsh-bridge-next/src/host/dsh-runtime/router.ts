@@ -1,6 +1,8 @@
 import { PROJECTION_VERSION } from './history.js'
 import { jsonBytes } from './json-size.js'
 import { randomUUID } from 'node:crypto'
+import { realpath, stat } from 'node:fs/promises'
+import { isAbsolute } from 'node:path'
 import { parseAttachments } from './attachments.js'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionQueryEngine, SessionRecord } from '@deepseek-ai/dsh-session-query'
@@ -92,7 +94,7 @@ export class RuntimeRouter {
         const id = create ? nativeSessionId(this.namespace, params.sessionId) as SessionId : await this.resolve(params, signal, true)
         try {
           await native.send(id, params.content, params.clientMessageId, typeof params.cwd === 'string' ? params.cwd : undefined, create,
-            parseSelections(params.selections), typeof params.agentPreset === 'string' ? params.agentPreset : undefined, signal, attachments, params.sessionId)
+            parseSelections(params.selections), typeof params.agentPreset === 'string' ? params.agentPreset : undefined, signal, attachments, params.sessionId, typeof params.nativeProjectId === 'string' ? params.nativeProjectId : undefined)
         } catch (error) {
           const failure = publicError(error)
           const sourceState = await native.source.state(id)
@@ -140,7 +142,30 @@ export class RuntimeRouter {
       }
       case 'ping': return { ok: true }
       case 'getRuntimeConfig': return { runtime: 'dsh', revision: 2, values: {}, metadata: { readOnly: !this.reader.native?.ctx.get('agents'), storageMode: 'dsh-native' } }
-      case 'listWorkspaces': return { workspaces: this.reader.native?.workspaces() ?? [] }
+      case 'createWorkspace': {
+        const native = this.reader.native
+        if (!native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Native workspace registry is unavailable.')
+        if (typeof params.path !== 'string' || typeof params.name !== 'string' || typeof params.requestId !== 'string') {
+          throw new BridgeError('INVALID_PARAMS', 'Path, name and request ID are required.')
+        }
+        if (!isAbsolute(params.path)) throw new BridgeError('INVALID_PARAMS', 'Choose an absolute directory.')
+        let path: string
+        try {
+          path = await realpath(params.path)
+          if (!(await stat(path)).isDirectory()) throw new Error('not a directory')
+        } catch { throw new BridgeError('INVALID_PARAMS', 'Choose an existing accessible directory.') }
+        const workspace = await native.ctx.workspaceRegistry.create(path, params.name)
+        return { nativeProjectId: workspace.id, name: workspace.title, roots: [workspace.path], identityKind: 'native' }
+      }
+      case 'listWorkspaces': {
+        const native = this.reader.native
+        if (!native) throw new BridgeError('UNSUPPORTED_OPERATION', 'Native workspace registry is unavailable.')
+        if (params.full !== false) await native.source.initialize(signal)
+        const workspaces = native.workspaces()
+        return { workspaces, members: params.full === false ? [] : workspaces.flatMap(workspace =>
+          workspace.sessionIds.map(id => ({ sessionId: id, projectId: workspace.id,
+            cwd: native.source.records.get(id)?.header.cwd ?? null }))) }
+      }
       case 'getRuntimeCapabilities': return this.reader.native?.capabilities() ?? capabilities()
       case 'listSessions': return this.list(params, signal)
       case 'getSessionSnapshot': return this.snapshot(params, signal)

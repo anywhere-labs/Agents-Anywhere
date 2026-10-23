@@ -402,6 +402,9 @@ class RuntimeInstanceHost(RuntimeHostClient):
             raise ValueError("Cannot rebind an instance Host to another runtime")
         return replace(self, base=await self.base.prepare_runtime_host(runtime_id))
 
+    async def sync_state_flush(self) -> None:
+        await self.base.sync_state_flush()
+
     async def sync_state_write(
         self,
         key: str,
@@ -547,6 +550,12 @@ class RuntimeInstance(AgentRuntime):
 
     def supports_complete_session_inventory(self) -> bool:
         return self.native_runtime.supports_complete_session_inventory()
+
+    async def create_workspace(self, name: str, path: str, request_id: str) -> dict[str, Any]:
+        return await self.native_runtime.create_workspace(name=name, path=path, request_id=request_id)
+
+    async def workspace_inventory(self, full: bool = True) -> dict[str, Any] | None:
+        return await self.native_runtime.workspace_inventory(full=full)
 
     async def get_session_snapshot(
         self,

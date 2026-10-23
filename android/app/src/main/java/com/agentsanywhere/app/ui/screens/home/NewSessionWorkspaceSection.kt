@@ -37,7 +37,6 @@ import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessions.recentWorkspacePaths
 import com.agentsanywhere.app.feature.sessions.workspacePathKey
-import com.agentsanywhere.app.feature.sessions.workspaceProject
 import com.agentsanywhere.app.feature.sessions.workspaceProjectName
 import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
@@ -52,6 +51,7 @@ internal data class WorkspaceChoice(val path: String, val projectId: String? = n
 @Composable
 internal fun WorkspaceSection(
     path: String,
+    projectId: String?,
     connectorId: String?,
     deviceOs: String?,
     homePath: String?,
@@ -67,7 +67,6 @@ internal fun WorkspaceSection(
 ) {
     val colors = LocalAAColors.current
     val available = projects.filter { it.connectorId == connectorId }
-    val homeProject = workspaceProject(available, connectorId.orEmpty(), homePath.orEmpty(), deviceOs)
     val recent = remember(projectMode, connectorId, deviceOs, homePath, sessions, projects) {
         if (projectMode) emptyList() else recentWorkspacePaths(connectorId, deviceOs, homePath, sessions, projects)
     }
@@ -93,14 +92,14 @@ internal fun WorkspaceSection(
                     onClick = if (projectMode) onCreate else onBrowse,
                 )
             }
-            if (!projectMode || homeProject == null) item(key = "home") {
+            item(key = "home") {
                 WorkspaceOptionRow(stringResource(R.string.workspace_home), homePath.orEmpty(), homePath != null && workspacePathKey(path, deviceOs) == workspacePathKey(homePath, deviceOs), enabled = !homePath.isNullOrBlank()) {
-                    onSelect(WorkspaceChoice(homePath.orEmpty(), homeProject?.id))
+                    onSelect(WorkspaceChoice(homePath.orEmpty()))
                 }
             }
             if (projectMode) {
                 items(available, key = { "project:${it.id}" }) { project ->
-                    WorkspaceOptionRow(project.name, project.workspacePath, workspacePathKey(path, deviceOs) == workspacePathKey(project.workspacePath, deviceOs)) {
+                    WorkspaceOptionRow(project.name, listOfNotNull(project.runtime, project.runtimeId, project.workspacePath, project.nativeProjectId).joinToString(" · "), projectId == project.id) {
                         onSelect(WorkspaceChoice(project.workspacePath, project.id))
                     }
                 }

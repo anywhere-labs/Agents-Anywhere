@@ -84,6 +84,7 @@ class ConnectorIngestService:
     ) -> ConnectorIngestResponse:
         await self._store.record_connector_activity(connector_id)
         effects = []
+        workspace_receipts: list[tuple[str, str]] = []
         accepted = 0
         rejected: list[ConnectorIngestRejectedNotification] = []
         protocol_capabilities_changed = False
@@ -120,6 +121,8 @@ class ConnectorIngestService:
                 )
                 continue
             accepted += 1
+            if notification.method in {"runtime.workspaces.updated", "runtime.workspaces.chunk"}:
+                workspace_receipts.append((notification.params["runtimeId"], notification.params["snapshotId"]))
             if notification.method == "runtime.statusChanged":
                 continue
             effects.append(effect)
@@ -157,6 +160,8 @@ class ConnectorIngestService:
                 connector_id=connector_id,
                 reason="connector.ingest",
             )
+        for runtime_id, snapshot_id in workspace_receipts:
+            await self._store.ack_runtime_workspaces(connector_id=connector_id, runtime_id=runtime_id, snapshot_id=snapshot_id)
         return ConnectorIngestResponse(
             accepted=accepted,
             rejected=rejected,
@@ -261,6 +266,9 @@ class ConnectorIngestService:
                 )
                 if not effect.timeline_pending:
                     bucket["deferred_timeline_only"] = False
+                if effect.session_id != session_id and effect.needs_refetch:
+                    bucket["refetch"] = True
+                    bucket["session"] = bucket["session"] or effect.session_changed
                 if effect.session_id == session_id:
                     if effect.accepted_sequence is not None:
                         current_accepted_sequence = bucket["accepted_sequence"]

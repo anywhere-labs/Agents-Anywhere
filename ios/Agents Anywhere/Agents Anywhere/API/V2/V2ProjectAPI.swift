@@ -6,8 +6,31 @@ struct V2ProjectAPI {
     func list() async throws -> V2ProjectListResponse {
         try await transport.send(HTTPRequest<EmptyRequestBody, V2ProjectListResponse>(method: .get, path: "/projects"))
     }
-    func create(_ body: V2ProjectCreateRequest) async throws -> V2ProjectResponse {
-        try await transport.send(HTTPRequest<V2ProjectCreateRequest, V2ProjectResponse>(method: .post, path: "/projects", body: body))
+    func create(_ body: V2ProjectCreateRequest) async throws -> V2ProjectOperation {
+        try await transport.send(HTTPRequest<V2ProjectCreateRequest, V2ProjectOperation>(method: .post, path: "/projects", body: body))
+    }
+    func pendingOperations() async throws -> V2ProjectOperationList {
+        try await transport.send(HTTPRequest<EmptyRequestBody, V2ProjectOperationList>(method: .get, path: "/projects/operations"))
+    }
+    private struct Acknowledged: Decodable { let acknowledged: Bool }
+    func acknowledge(_ id: String) async throws {
+        let _: Acknowledged = try await transport.send(HTTPRequest<EmptyRequestBody, Acknowledged>(method: .post,
+            path: "/projects/operations/" + id.v2URLPathComponentEncoded + "/ack"))
+    }
+    func operation(_ id: String) async throws -> V2ProjectOperation {
+        try await transport.send(HTTPRequest<EmptyRequestBody, V2ProjectOperation>(method: .get,
+            path: "/projects/operations/" + id.v2URLPathComponentEncoded))
+    }
+    func runtimes(_ connectorID: String) async throws -> V2DeviceRuntimeListResponse {
+        try await transport.send(HTTPRequest<EmptyRequestBody, V2DeviceRuntimeListResponse>(method: .get,
+            path: "/connectors/" + connectorID.v2URLPathComponentEncoded + "/runtimes"))
+    }
+    private struct RefreshResult: Decodable { let accepted: Bool }
+    func refresh(_ project: V2Project) async throws {
+        guard let runtime = project.runtime, let runtimeID = project.runtimeId else { throw HTTPError.invalidResponse }
+        let _: RefreshResult = try await transport.send(HTTPRequest<EmptyRequestBody, RefreshResult>(method: .post,
+            path: "/projects/refresh", queryItems: [URLQueryItem(name: "connectorId", value: project.connectorId),
+                URLQueryItem(name: "runtime", value: runtime), URLQueryItem(name: "runtimeId", value: runtimeID)]))
     }
     func update(_ id: String, _ body: V2ProjectPatchRequest) async throws -> V2ProjectResponse {
         try await transport.send(HTTPRequest<V2ProjectPatchRequest, V2ProjectResponse>(method: .patch, path: path(id), body: body))

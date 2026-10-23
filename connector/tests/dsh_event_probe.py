@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -23,10 +24,14 @@ os.environ.pop("AGENT_SERVER_DB_URL", None)
 import httpx
 from agent_server.app import create_app
 from agent_server.core.auth import create_connector_access_token
+from agent_server.core.device_runtime import RuntimeTypeDescriptor
+from agent_server.infra.db import device_runtimes
 from dsh_probe_database import fresh_server_database
 from dsh_probe_transport import IngestTransport
+from sqlalchemy import insert
 
 from connector.core import runtime_owner
+from connector.runtime_protocol.workspace_paths import DirectoryObserver
 from connector.runtimes.dsh.identity import model_selection_id, permission_selection_id
 from connector.runtimes.dsh.provider import DshProvider
 from connector.runtimes.dsh.runtime import DshRuntime
@@ -61,6 +66,8 @@ async def main(home: Path) -> None:
             ingest = ConnectorIngestClient("http://test", access_token, lambda: http, lambda _timeout: http)
 
             async def notify(method, params):
+                if method == "runtime.workspaces.invalidated":
+                    return  # Explicit reconciliation ticks below drive this headless probe.
                 await ingest.ingest_notifications([{"method": method, "params": params}])
 
             async def download(*_args):
@@ -229,12 +236,50 @@ async def main(home: Path) -> None:
                 ], "reconnection changed IDs, duplicated messages or retained stale rows"
                 workspaces = await runtime._request("listWorkspaces")
                 assert any(Path(w["path"]).resolve() == home.resolve() and external_id in w["sessionIds"] for w in workspaces["workspaces"])
+                # Read the native registry and local directories, then apply the
+                # current workspace protocol through the real HTTP ingress.
+                await store.replace_connector_runtime_types(connector.id, [RuntimeTypeDescriptor(
+                    runtimeType="dsh", displayName="DSH", available=True, implementationType="dsh",
+                    description=None, reason=None, recommended=False, recommendationRank=None,
+                    configSchema=None, capabilities={}, metadata={}, instancePolicy="single", maxInstances=1,
+                )])
+                now = datetime.now(UTC).isoformat()
+                async with store.engine.begin() as conn:
+                    await conn.execute(insert(device_runtimes).values(connector_id=connector.id, runtime_id="dsh",
+                        runtime_type="dsh", name="DSH", name_key="dsh", config_json="{}", active=1,
+                        status="running", created_at=now, updated_at=now))
+                epoch = await store.issue_workspace_epoch(connector.id)
+                sequence = 0
+
+                async def reconcile_projects():
+                    nonlocal sequence
+                    inventory = await runtime.workspace_inventory()
+                    sequence += 1
+                    roots = {root for workspace in inventory["workspaces"] for root in workspace["roots"]}
+                    directories = await DirectoryObserver().read(roots | {m["cwd"] for m in inventory["members"] if m.get("cwd")})
+                    await ingest.ingest_notifications([{"method": "runtime.workspaces.updated", "params": {
+                        **inventory, "runtime": "dsh", "runtimeId": "dsh", "version": 2,
+                        "epoch": epoch, "sequence": sequence, "snapshotId": f"native-{sequence}",
+                        "observedAt": datetime.now(UTC).isoformat(), "directories": directories,
+                    }}])
+
+                await reconcile_projects()
                 main = next(s for s in sessions if s.externalSessionId == "native-main")
                 project_id = (await store.get_session(main.id)).projectId
-                assert (await store.get_project(project_id, user_id="dsh-test")).name == Path(main.cwd).name
-                await store.update_project(project_id, user_id="dsh-test", pinned=True, name="AA only")
+                native_project = next(w for w in workspaces["workspaces"] if main.externalSessionId in w["sessionIds"])
+                assert (await store.get_project(project_id, user_id="dsh-test")).name == native_project["title"]
+                await store.update_project(project_id, user_id="dsh-test", pinned=True)
+                try:
+                    await store.update_project(project_id, user_id="dsh-test", name="AA only")
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError("Native project names must not be changed locally")
                 assert all(w["title"] != "AA only" for w in (await runtime._request("listWorkspaces"))["workspaces"])
                 await native_action("rename")
+                await reconcile_projects()
+                renamed = await store.get_project(project_id, user_id="dsh-test")
+                assert renamed.name == "DSH 项目改名" and renamed.pinned
 
                 # An explicit native archive event uses the existing ingestion path.
                 await native_action("archive")
@@ -261,10 +306,13 @@ async def main(home: Path) -> None:
                     return completed_inventories() > count
                 await until(calibrated, "offline archive calibration did not complete")
                 assert (await store.get_session(main.id)).sourceAvailability == "archived"
+                await reconcile_projects()
                 project = await store.get_project(project_id, user_id="dsh-test")
-                assert project.name == "AA only" and project.pinned
+                assert project.name == "DSH 项目改名" and project.pinned
+                assert project.sourceState == "historical"
+                assert project.id not in {p.id for p in await store.list_projects(user_id="dsh-test")}
                 assert not any(n["method"] == "workspace.inventory" for n in transport.notifications)
-                assert (await store.get_session(main.id)).projectId == project_id
+                assert (await store.get_session(main.id)).projectId is None
                 assert [(item.id, item.contentHash) for item in await stored(main.id)] == history
                 assert runtime.sync_mode == "events"
                 print("DSH event pipeline passed")

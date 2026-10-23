@@ -107,6 +107,9 @@ export class BridgeService {
   @query({ description: 'Runtime-wide capabilities.', request: payload, response: payload, inject: [callScope] })
   async getRuntimeCapabilities(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('getRuntimeCapabilities', request, call, context) }
 
+  @query({ description: 'Create or reuse a native workspace in an existing directory.', request: payload, response: payload, inject: [callScope] })
+  async createWorkspace(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('createWorkspace', request, call, context) }
+
   @query({ description: 'Workspaces DSH knows.', request: payload, response: payload, inject: [callScope] })
   async listWorkspaces(request: Payload, call: CallScope, context: RpcContext): Promise<Payload> { return this.forward('listWorkspaces', request, call, context) }
 

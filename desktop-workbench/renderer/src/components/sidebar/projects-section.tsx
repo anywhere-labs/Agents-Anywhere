@@ -50,7 +50,6 @@ export type ProjectListController = {
   onExpandedChange: (projectId: string, open: boolean) => void
   onOpenSession: (sessionId: string) => void
   onNewSession: (projectId: string) => void
-  onEdit: (project: ProjectView) => void
   onTogglePin: (project: ProjectView) => void
   onArchiveAll: (project: ProjectView) => void
   onToggleSessionPin: (sessionId: string) => void
@@ -81,7 +80,6 @@ export function ProjectList({
           onExpandedChange={(open) => controller.onExpandedChange(project.id, open)}
           onOpenSession={controller.onOpenSession}
           onNewSession={() => controller.onNewSession(project.id)}
-          onEdit={() => controller.onEdit(project)}
           onTogglePin={() => controller.onTogglePin(project)}
           onArchiveAll={() => controller.onArchiveAll(project)}
           onToggleSessionPin={controller.onToggleSessionPin}

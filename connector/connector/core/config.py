@@ -18,6 +18,9 @@ class ConnectorConfig:
     reconnect_seconds: float = 3
     sync_existing_on_connect: bool = True
     sync_interval_seconds: float = 30
+    workspace_sync_enabled: bool = True
+    workspace_interval_seconds: float = 30
+    workspace_members_interval_seconds: float = 300
     state_path: str | None = None
 
     @classmethod
@@ -53,6 +56,9 @@ class ConnectorConfig:
                 True,
             ),
             sync_interval_seconds=float(os.environ.get("AGENT_CONNECTOR_SYNC_INTERVAL_SECONDS", "30")),
+            workspace_sync_enabled=_bool_env("AGENT_CONNECTOR_WORKSPACE_SYNC", True),
+            workspace_interval_seconds=float(os.environ.get("AGENT_CONNECTOR_WORKSPACE_INTERVAL_SECONDS", "30")),
+            workspace_members_interval_seconds=float(os.environ.get("AGENT_CONNECTOR_WORKSPACE_MEMBERS_INTERVAL_SECONDS", "300")),
             state_path=os.environ.get("AGENT_CONNECTOR_STATE_FILE"),
         )
 
@@ -72,6 +78,9 @@ class ConnectorConfig:
             reconnect_seconds=float(data.get("reconnectSeconds", 3)),
             sync_existing_on_connect=bool(data.get("syncExistingOnConnect", True)),
             sync_interval_seconds=float(data.get("syncIntervalSeconds", 30)),
+            workspace_sync_enabled=bool(data.get("workspaceSyncEnabled", True)),
+            workspace_interval_seconds=float(data.get("workspaceIntervalSeconds", 30)),
+            workspace_members_interval_seconds=float(data.get("workspaceMembersIntervalSeconds", 300)),
             state_path=(
                 data.get("statePath")
                 if isinstance(data.get("statePath"), str)
@@ -92,6 +101,9 @@ class ConnectorConfig:
                     "reconnectSeconds": self.reconnect_seconds,
                     "syncExistingOnConnect": self.sync_existing_on_connect,
                     "syncIntervalSeconds": self.sync_interval_seconds,
+                    "workspaceSyncEnabled": self.workspace_sync_enabled,
+                    "workspaceIntervalSeconds": self.workspace_interval_seconds,
+                    "workspaceMembersIntervalSeconds": self.workspace_members_interval_seconds,
                     "statePath": self.state_path,
                 },
                 ensure_ascii=False,

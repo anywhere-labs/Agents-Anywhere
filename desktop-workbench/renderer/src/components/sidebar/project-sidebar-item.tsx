@@ -1,12 +1,15 @@
 "use client"
 
 import * as React from "react"
+import { toast } from "sonner"
+import { useAuth } from "@/components/auth/auth-context"
+import { dashboardApi } from "@/features/dashboard/api"
 import {
   Archive,
+  RefreshCw,
   Folder,
   FolderOpen,
   MoreHorizontal,
-  Pencil,
   Pin,
   PinOff,
   SquarePen,
@@ -45,7 +48,7 @@ import {
 } from "@/components/sidebar/project-identity"
 import type { ProjectView } from "@/features/dashboard/types"
 import { cn } from "@/lib/utils"
-import { useTranslations } from "next-intl"
+import { useFormatter, useTranslations } from "next-intl"
 
 /** Sessions shown per expanded project before "show more". */
 const PROJECT_SESSION_PREVIEW = 8
@@ -60,7 +63,6 @@ export function ProjectSidebarItem({
   onExpandedChange,
   onOpenSession,
   onNewSession,
-  onEdit,
   onTogglePin,
   onArchiveAll,
   onToggleSessionPin,
@@ -76,7 +78,6 @@ export function ProjectSidebarItem({
   onExpandedChange: (open: boolean) => void
   onOpenSession: (sessionId: string) => void
   onNewSession: () => void
-  onEdit: () => void
   onTogglePin: () => void
   onArchiveAll: () => void
   onToggleSessionPin: (sessionId: string) => void
@@ -84,6 +85,17 @@ export function ProjectSidebarItem({
   onRenameSession: (sessionId: string, title: string) => Promise<boolean>
 }) {
   const t = useTranslations("dashboard")
+  const tSync = useTranslations("dashboard.projectSync")
+  const format = useFormatter()
+  const { session } = useAuth()
+  const [refreshing, setRefreshing] = React.useState(false)
+  const refresh = async () => {
+    if (!session) return
+    setRefreshing(true)
+    try { await dashboardApi.refreshProjectSource(session.accessToken, project); toast.success(tSync("refreshRequested")) }
+    catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
+    finally { setRefreshing(false) }
+  }
   const [nameHovered, setNameHovered] = React.useState(false)
   const [optionsOpen, setOptionsOpen] = React.useState(false)
   const [showsAllSessions, setShowsAllSessions] = React.useState(false)
@@ -141,6 +153,8 @@ export function ProjectSidebarItem({
                     <span className="code-mono break-all text-[11px] opacity-80">
                       {identity.workspacePath}
                     </span>
+                    <span className="text-[11px]">{project.sourceState === "unknown" ? tSync("sourceUnknown") : project.sourceState === "pending" ? tSync("sourcePending") : tSync("project")}</span>
+                    <span className="text-[11px]">{tSync("lastChecked", { time: project.lastSyncedAt ? format.dateTime(new Date(project.lastSyncedAt), { dateStyle: "medium", timeStyle: "short" }) : tSync("neverChecked") })}</span>
                     {agentSummary ? (
                       <span className="text-[11px] opacity-80">{agentSummary}</span>
                     ) : null}
@@ -179,9 +193,8 @@ export function ProjectSidebarItem({
               </Tooltip>
               <DropdownMenuContent align="end" collisionPadding={8} className="w-56">
                 <DropdownMenuGroup>
-                  <DropdownMenuItem onSelect={onEdit}>
-                    <Pencil />
-                    {t("projects.edit")}
+                  <DropdownMenuItem onSelect={() => void refresh()} disabled={refreshing || !project.runtimeId}>
+                    <RefreshCw />{tSync("refreshSource")}
                   </DropdownMenuItem>
                   <DropdownMenuItem onSelect={onTogglePin}>
                     {project.pinned ? <PinOff /> : <Pin />}

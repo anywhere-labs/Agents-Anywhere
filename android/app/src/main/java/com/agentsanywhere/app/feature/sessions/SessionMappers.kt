@@ -9,7 +9,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.format.DateTimeParseException
 
-internal fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>): AgentSession {
+internal fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>, projectSyncReasonLabel: (String) -> String? = { null }): AgentSession {
     val workspace = cwd.workspaceName()
     val statusValue = status.toSessionStatus()
     val displayTitle = title?.takeIf { it.isNotBlank() }
@@ -22,7 +22,8 @@ internal fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>)
         runtimeLabels.primary,
         runtimeLabels.secondary,
         deviceName.takeIf { it.isNotBlank() },
-        workspace.takeIf { it.isNotBlank() },
+        cwd.takeIf { projectId == null } ?: workspace.takeIf { it.isNotBlank() },
+        if (projectId == null) projectSyncReason?.let(projectSyncReasonLabel) else null,
     )
 
     return AgentSession(

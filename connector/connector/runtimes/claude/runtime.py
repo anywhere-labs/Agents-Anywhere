@@ -24,6 +24,7 @@ from connector.runtime_protocol import (
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.claude.catalogs.reader import ClaudeCatalogReader
+from connector.runtimes.claude.discovery import load_claude_sdk
 from connector.runtimes.claude.domain.capabilities import (
     ClaudeCapabilityContext,
     claude_runtime_capabilities,
@@ -43,9 +44,11 @@ from connector.runtimes.claude.sdk.client import (
     ClaudeClientFactory,
     SdkLoader,
 )
+from connector.runtimes.claude.sdk.history_source import ClaudeHistorySource
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.sessions.reader import ClaudeSessionReader
 from connector.runtimes.claude.sessions.sync_state import ClaudeSessionSyncStateStore
+from connector.runtimes.claude.sessions.workspaces import ClaudeWorkspaceInventory
 from connector.runtimes.claude.timeline.messages import ClaudeMessageProjector
 from connector.runtimes.claude.turns.controller import ClaudeTurnController
 
@@ -58,6 +61,8 @@ class ClaudeRuntime(AgentRuntime):
     client_factory: ClaudeClientFactory | None = None
     client_message_kv: JsonKeyValueStore | None = None
     runtime_version: str = "native-0"
+    _workspaces: ClaudeWorkspaceInventory = field(init=False)
+    _history_source: ClaudeHistorySource = field(init=False)
     _sessions: dict[str, ClaudeSession] = field(default_factory=dict, init=False)
     _session_states: RuntimeSessionStateCache = field(init=False)
     _session_store: ClaudeSessionStore = field(init=False)
@@ -71,7 +76,13 @@ class ClaudeRuntime(AgentRuntime):
     _notifications: ClaudeNotificationProjector = field(init=False)
     _turns: ClaudeTurnController = field(init=False)
 
+    async def workspace_inventory(self, full: bool = True) -> dict[str, Any] | None:
+        return await self._workspaces.read(full=full)
+
     def __post_init__(self) -> None:
+        environment = self.config.values.get("environment", {})
+        self._history_source = ClaudeHistorySource(environment.get("CLAUDE_CONFIG_DIR"))
+        self._workspaces = ClaudeWorkspaceInventory(self._history_source.config_dir)
         self._session_states = RuntimeSessionStateCache(
             "claude",
             self.host,
@@ -91,6 +102,11 @@ class ClaudeRuntime(AgentRuntime):
             config=self.config,
             sdk_loader=self.sdk_loader,
         )
+        # The native SDK reads history via process-global environment. Injected
+        # SDKs retain their own backend; native reads share one isolated source.
+        history_source = (
+            self._history_source if self.sdk_loader is load_claude_sdk else None
+        )
         self._session_reader = ClaudeSessionReader(
             config=self.config,
             host=self.host,
@@ -98,6 +114,7 @@ class ClaudeRuntime(AgentRuntime):
             sdk_loader=self.sdk_loader,
             sync_states=self._session_sync_states,
             pending_messages=self._pending_messages,
+            history_source=history_source,
         )
         self._history_syncer = ClaudeHistorySyncer(
             config=self.config,
@@ -107,6 +124,7 @@ class ClaudeRuntime(AgentRuntime):
             cursor_store=ClaudeHistoryCursorStore(self.host),
             sync_states=self._session_sync_states,
             pending_messages=self._pending_messages,
+            history_source=history_source,
         )
         self._timeline = ClaudeMessageProjector()
         self._notices = ClaudeNoticeRegistry()
@@ -145,7 +163,10 @@ class ClaudeRuntime(AgentRuntime):
         await self._turns.runner.reconnect_sessions()
 
     async def stop(self) -> None:
-        await self._turns.stop()
+        try:
+            await self._turns.stop()
+        finally:
+            await self._history_source.close()
 
     async def get_config(self) -> RuntimeConfig:
         return self.config

@@ -6,7 +6,7 @@ struct V2SessionCreationService {
     /// Encodes initial attachments inline because no session-scoped upload resource exists before creation.
     func createAndStart(
         connectorId: V2ConnectorID,
-        projectId: String,
+        projectId: String?,
         runtime: V2RuntimeID,
         runtimeId: V2RuntimeID? = nil,
         title: String?,
@@ -54,7 +54,7 @@ struct V2SessionCreationService {
 
     func bindExisting(
         connectorId: V2ConnectorID,
-        projectId: String,
+        projectId: String?,
         runtime: V2RuntimeID,
         runtimeId: V2RuntimeID? = nil,
         externalSessionId: String,

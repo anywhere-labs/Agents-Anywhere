@@ -199,7 +199,7 @@ test('fast mixed native events flush at 30 Hz with complete final text, tool res
   } finally { feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })
 
-test('baseline buffers native changes and archive events without syncing native projects', { timeout: 30_000 }, async () => {
+test('baseline buffers native changes and archive events while syncing native workspace membership', { timeout: 30_000 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'dsh-sync-'))
   const fixture = await nativeRuntime(home)
   const native = fixture.ctx.agentsAnywhereRuntime.native
@@ -246,7 +246,10 @@ test('baseline buffers native changes and archive events without syncing native 
     await fixture.ctx.workspaceRegistry.archiveSession(fixture.session.id)
     await until(() => notifications(ops()).some(n => n.method === 'session.source.updated' && n.params.sessionId === sessionId('test', fixture.session.id) && n.params.availability === 'archived'), 'explicit archive event')
     assert.ok(!notifications(ops()).some(n => n.method.startsWith('workspace.')), 'native projects are not synchronized')
-    assert.ok(!JSON.stringify(ops()).includes('DSH 项目名称'))
+    const workspaceInventory = ops().filter(operation => operation.kind === 'workspace.inventory').at(-1)
+    assert.equal(workspaceInventory?.version, 1)
+    assert.equal(workspaceInventory?.complete, true)
+    assert.deepEqual(workspaceInventory?.workspaces, [])
     assert.ok(!notifications(ops()).some(n => n.method === 'session.source.updated' && n.params.sessionId === sessionId('test', 'empty-native')), 'Draft source notifications must not create empty AA sessions either')
     assert.deepEqual(errors, [])
     assert.deepEqual(batches.map(b => b.batchSeq), batches.map((_, n) => n + 1))
@@ -502,6 +505,9 @@ test('official native loop crosses Python and backend despite corrupt history, i
     await corruptHistory(ctx, home)
     await mountAgents(ctx, adapter)
   })
+  const nativeWorkspace = await fixture.ctx.workspaceRegistry.create(home)
+  await nativeWorkspace.attachSession(fixture.session.id)
+  await nativeWorkspace.attachSession(SessionId('persisted-only'))
   let closed = false
   const mutations = (async () => {
     while (!closed) {

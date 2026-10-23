@@ -13,10 +13,6 @@ struct ProjectSelectionSheet: View {
     private var canBrowse: Bool {
         model.connector?.status == .online && model.network.availability != .offline && model.isValid && !model.isCreating
     }
-    private var homeProject: V2Project? {
-        model.homePath.flatMap { ProjectWorkspacePath.project(in: model.projects, connectorID: model.connectorID,
-            path: $0, deviceOS: model.connector?.deviceOs) }
-    }
     private var directories: [WorkspaceDirectoryChoice] {
         WorkspaceDirectoryChoice.recent(connectorID: model.connectorID, deviceOS: model.connector?.deviceOs,
             home: model.homePath, projects: repository.projects, sessions: repository.sessions)
@@ -33,7 +29,7 @@ struct ProjectSelectionSheet: View {
                     }
                 }
                 Section(showsSessionList ? String(localized: "工作目录") : String(localized: "这台设备上的项目")) {
-                    if showsSessionList || homeProject == nil { homeRow }
+                    homeRow
                     if showsSessionList {
                         ForEach(directories) { directory in
                             directoryRow(name: directory.name, path: directory.path)
@@ -137,7 +133,7 @@ struct ProjectSummaryLabel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(project.name).font(.headline).foregroundStyle(.primary)
-            Text(project.workspacePath).font(.system(.footnote, design: .monospaced))
+            Text([project.runtime, project.runtimeId, project.workspacePath, project.nativeProjectId].compactMap { $0 }.joined(separator: " · ")).font(.system(.footnote, design: .monospaced))
                 .foregroundStyle(.secondary).lineLimit(2)
         }
     }

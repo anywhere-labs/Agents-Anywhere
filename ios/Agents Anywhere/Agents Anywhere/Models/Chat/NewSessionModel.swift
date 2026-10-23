@@ -15,6 +15,7 @@ struct NewSessionPreference: Codable {
 /// both the device and its configured Agent instance have been chosen.
 @MainActor @Observable
 final class NewSessionModel {
+    private var projectRequests: [String: String] = [:]
     let draft = ComposerDraft()
     let settings = ConversationSettings()
     private(set) var connectors: [V2Connector] = []
@@ -101,14 +102,16 @@ final class NewSessionModel {
         if !hasLoadedProjects { hasLoadedProjects = true }
         // The path is the draft's identity. Late lists, renames and display-mode
         // changes may discover a project without changing the chosen directory.
-        if workspace.isEmpty, let saved = project { workspace = saved.workspacePath }
+        if workspace.isEmpty, let saved = project { workspace = saved.preferredWorkspacePath }
         identifyProject()
     }
 
     @discardableResult func selectProject(_ id: String) -> Bool {
         guard !isCreating, isValid, let value = projects.first(where: { $0.id == id }) else { return false }
         if connectorID != value.connectorId { focusDevice(value.connectorId, workspace: nil) }
-        workspace = value.workspacePath
+        workspace = value.preferredWorkspacePath
+        projectID = value.id
+        if let sourceRuntime = value.runtimeId { runtimeID = sourceRuntime }
         identifyProject()
         return true
     }
@@ -116,7 +119,7 @@ final class NewSessionModel {
     private func restoreProjectForDevice() {
         workspace = preference.workspaces[connectorID] ?? ""
         projectID = preference.projectIDs?[connectorID]
-        if workspace.isEmpty { workspace = project?.workspacePath ?? homePaths[connectorID] ?? "" }
+        if workspace.isEmpty { workspace = project?.preferredWorkspacePath ?? homePaths[connectorID] ?? "" }
         identifyProject()
     }
 
@@ -124,12 +127,13 @@ final class NewSessionModel {
         guard isValid, !isCreating, !connectorID.isEmpty,
               ProjectWorkspacePath.key(path, deviceOS: connector?.deviceOs) != nil else { return false }
         workspace = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        projectID = nil
         identifyProject()
         return true
     }
 
     private func identifyProject() {
-        let resolved = ProjectWorkspacePath.project(in: projects, connectorID: connectorID, path: workspace, deviceOS: connector?.deviceOs)?.id
+        let resolved = projects.first { $0.id == projectID && $0.connectorId == connectorID && $0.runtimeId == runtimeID }?.id
         if projectID != resolved { projectID = resolved }
         guard !connectorID.isEmpty else { return }
         // Dashboard ticks call this for every push; only write defaults when the target changed.
@@ -287,28 +291,40 @@ final class NewSessionModel {
         saveSelections()
         defer { isCreating = false; saveDraft() }
         let selectedDevice = connectorID, selectedPath = workspace
-        let project: V2Project
+        let projectRequestKey = [selectedDevice, runtime.id, selectedPath].joined(separator: "\u{0}")
+        let projectRequestID = projectRequests[projectRequestKey] ?? UUID().uuidString
+        projectRequests[projectRequestKey] = projectRequestID
+        let project: V2Project?
         do {
+            if runtime.capabilities["directoryProjects"] == true && projectID == nil {
+                project = nil
+            } else {
             project = try await V2WorkspaceProjectResolver(api: projectAPI).resolve(
                 projects: projects, connectorID: selectedDevice, path: selectedPath, deviceOS: connector?.deviceOs,
+                runtime: runtime, projectID: projectID, requestID: projectRequestID,
                 validate: { [self] in
                     guard isValid, !Task.isCancelled else { throw CancellationError() }
                     guard connectorID == selectedDevice, workspace == selectedPath,
                           network.availability != .offline, connector?.status == .online else { throw URLError(.notConnectedToInternet) }
                 })
             guard isValid, !Task.isCancelled else { return nil }
+            if let project {
             guard project.connectorId == selectedDevice,
-                  ProjectWorkspacePath.key(project.workspacePath, deviceOS: connector?.deviceOs) == ProjectWorkspacePath.key(selectedPath, deviceOS: connector?.deviceOs) else {
+                  (project.roots ?? [project.workspacePath]).contains(where: {
+                      ProjectWorkspacePath.key($0, deviceOS: connector?.deviceOs) == ProjectWorkspacePath.key(selectedPath, deviceOS: connector?.deviceOs)
+                  }) else {
                 throw HTTPError.invalidResponse
             }
             projects.removeAll { $0.id == project.id }; projects.append(project)
-            workspace = project.workspacePath; identifyProject()
+            workspace = selectedPath; projectID = project.id; identifyProject()
             onProjectResolved?(project)
+            }
+            }
         } catch {
             if isValid { self.error = error.localizedDescription }
             return nil
         }
-        let submission = NewSessionSubmission(project: project, runtime: runtime, text: text, attachments: files)
+        let submission = NewSessionSubmission(project: project, connectorID: selectedDevice, path: selectedPath, runtime: runtime, text: text, attachments: files)
         draft.clear(); saveDraft()
         var completed = false
         defer {
@@ -321,7 +337,7 @@ final class NewSessionModel {
         }
         await onStaged?(submission)
         guard isValid, !Task.isCancelled else { return nil }
-        let target = (project.connectorId, runtime.id, project.id)
+        let target = (selectedDevice, runtime.id, project?.id)
         let chosenSelections = settings.selections
         await prepareTarget()
         guard isValid, !Task.isCancelled, prepared != nil, connectorID == target.0, runtimeID == target.1,
@@ -333,15 +349,14 @@ final class NewSessionModel {
         var didSubmit = false
         do {
             guard isValid, !Task.isCancelled, projectID == target.2,
-                  let current = self.project, current.connectorId == target.0,
-                  current.workspacePath == project.workspacePath,
+                  workspace == selectedPath,
                   network.availability != .offline, connector?.status == .online else {
                 error = String(localized: "项目或设备状态已变化，请检查运行目标后再次发送。草稿已保留。")
                 return nil
             }
             didSubmit = true
-            let response = try await creation.createAndStart(connectorId: connectorID, projectId: project.id, runtime: runtime.runtimeType,
-                runtimeId: runtime.id, title: nil, cwd: project.workspacePath,
+            let response = try await creation.createAndStart(connectorId: connectorID, projectId: project?.id, runtime: runtime.runtimeType,
+                runtimeId: runtime.id, title: nil, cwd: selectedPath,
                 content: text, selections: settings.selections, attachments: files.map(\.local),
                 clientMessageId: submission.pending.id)
             guard isValid else { return nil }

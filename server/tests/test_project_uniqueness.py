@@ -1,219 +1,121 @@
 from __future__ import annotations
 
-from conftest import ApiV2TestClient as TestClient
+import asyncio
 
-from agent_server.app import create_app
+from runtime_fixtures import seed_workspace_project
+from test_backend_mvp import auth_headers, make_client
 
-
-def _authenticated_client(tmp_path) -> tuple[TestClient, dict[str, str]]:
-    client = TestClient(create_app())
-    client.get("/auth/config")
-    registered = client.post(
-        "/auth/register",
-        json={
-            "email": "project-owner@example.com",
-            "displayName": "Project Owner",
-            "password": "secret",
-            "setupToken": client.app.state.setup_token.peek(),
-        },
-    )
-    assert registered.status_code == 200, registered.text
-    return client, {"Authorization": f"Bearer {registered.json()['accessToken']}"}
+from agent_server.services.device_runtimes import DeviceRuntimeService
 
 
-def test_project_create_reuses_workspace_and_rejects_duplicate_name(tmp_path) -> None:
-    client, headers = _authenticated_client(tmp_path)
-    connector = client.post(
-        "/connectors",
-        headers=headers,
-        json={"name": "dev"},
-    )
-    assert connector.status_code == 200, connector.text
-    connector_id = connector.json()["connector"]["id"]
+class ProjectSourceRpc:
+    def __init__(self):
+        self.requests = []
 
-    first = client.post(
-        "/projects",
-        headers=headers,
-        json={
-            "name": "Original",
-            "connectorId": connector_id,
-            "workspacePath": "/repo/",
-        },
-    )
+    async def is_online(self, connector_id):
+        return True
+
+    async def disconnect(self, connector_id, **kwargs):
+        pass
+
+    async def request(self, connector_id, method, params, **kwargs):
+        assert method == "project.create"
+        self.requests.append(params)
+        return {"nativeProjectId": f"native-{len(self.requests)}", "roots": [params["path"]]}
+
+
+def _source(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+    connector_id = client.post("/connectors", headers=headers, json={"name": "dev"}).json()["connector"]["id"]
+    user_id = client.get("/auth/me", headers=headers).json()["userId"]
+    store = client.app.state.store
+    asyncio.run(seed_workspace_project(store, connector_id, user_id))
+    asyncio.run(store.update_protocol_capabilities(connector_id, {"revision": 1, "capabilities": [{
+        "capabilityId": "runtime.project.create", "version": "1", "scope": "runtime", "runtime": "codex", "runtimeId": "codex",
+        "supported": True, "available": True, "allowed": True,
+    }]}))
+    rpc = ProjectSourceRpc()
+    client.app.state.rpc = rpc
+    client.app.state.device_runtime_service = DeviceRuntimeService(store, rpc)
+    payload = {"name": "Same name", "connectorId": connector_id, "workspacePath": "/new", "runtime": "codex", "runtimeId": "codex", "requestId": "first"}
+    return client, headers, user_id, rpc, payload
+
+
+def _project_from_receipt(client, headers, user_id, payload, receipt):
+    project = asyncio.run(seed_workspace_project(client.app.state.store, payload["connectorId"], user_id,
+        payload["workspacePath"], name=payload["name"], native_id=receipt["nativeProjectId"]))
+    response = client.get(f"/projects/operations/{receipt['operationId']}", headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["project"]["id"] == project.id
+    return project
+
+
+def test_project_creation_recovers_receipt_until_acknowledged_then_allows_same_name_and_path(tmp_path):
+    client, headers, user_id, rpc, payload = _source(tmp_path)
+    first = client.post("/projects", headers=headers, json=payload)
     assert first.status_code == 200, first.text
-    project_id = first.json()["project"]["id"]
-    assert first.json()["project"]["manuallyCreated"] is True
-
-    replacement = client.post(
-        "/projects",
-        headers=headers,
-        json={
-            "name": "Renamed",
-            "connectorId": connector_id,
-            "workspacePath": "/repo",
-        },
-    )
-    assert replacement.status_code == 200, replacement.text
-    assert replacement.json()["project"]["id"] == project_id
-    assert replacement.json()["project"]["name"] == "Renamed"
-    assert replacement.json()["project"]["manuallyCreated"] is True
-
-    other = client.post(
-        "/projects",
-        headers=headers,
-        json={
-            "name": "Already used",
-            "connectorId": connector_id,
-            "workspacePath": "/other",
-        },
-    )
-    assert other.status_code == 200, other.text
-
-    duplicate_name = client.post(
-        "/projects",
-        headers=headers,
-        json={
-            "name": "Already used",
-            "connectorId": connector_id,
-            "workspacePath": "/third",
-        },
-    )
-    assert duplicate_name.status_code == 409, duplicate_name.text
-    assert duplicate_name.json()["detail"]["code"] == "project_name_conflict"
-
-    projects = client.get("/projects", headers=headers).json()["projects"]
-    assert len(projects) == 2
-    assert (
-        next(project for project in projects if project["id"] == project_id)["name"]
-        == "Renamed"
-    )
-
-    archived = client.post(
-        f"/projects/{project_id}/sessions/archive-all",
-        headers=headers,
-        json={"archived": True, "scope": "all"},
-    )
-    assert archived.status_code == 200, archived.text
-    assert archived.json()["affected"] == 0
-    projects = client.get("/projects", headers=headers).json()["projects"]
-    assert (
-        next(project for project in projects if project["id"] == project_id)[
-            "manuallyCreated"
-        ]
-        is False
-    )
+    receipt = first.json()
+    assert receipt["status"] == "succeeded"
+    assert receipt["project"] is None
+    assert receipt["syncState"] == "pending"
+    retry = client.post("/projects", headers=headers, json={**payload, "requestId": "reopened"})
+    assert retry.json()["operationId"] == receipt["operationId"]
+    assert len(rpc.requests) == 1
+    first_project = _project_from_receipt(client, headers, user_id, payload, receipt)
+    # Projection alone is not proof the client received success.
+    pending = client.get("/projects/operations", headers=headers).json()["operations"]
+    assert [item["operation"]["operationId"] for item in pending] == [receipt["operationId"]]
+    ack = client.post(f"/projects/operations/{receipt['operationId']}/ack", headers=headers)
+    assert ack.status_code == 200, ack.text
+    assert client.get("/projects/operations", headers=headers).json()["operations"] == []
+    second = client.post("/projects", headers=headers, json={**payload, "requestId": "second"})
+    assert second.status_code == 200, second.text
+    assert second.json()["operationId"] != receipt["operationId"]
+    second_project = _project_from_receipt(client, headers, user_id, payload, second.json())
+    assert first_project.id != second_project.id
+    assert first_project.name == second_project.name
+    assert first_project.workspacePath == second_project.workspacePath
+    # Even after acknowledgement, the original request ID remains idempotent.
+    assert client.post("/projects", headers=headers, json=payload).json()["operationId"] == receipt["operationId"]
+    assert len(rpc.requests) == 2
 
 
-def test_project_create_supports_automatic_projects_without_renaming(tmp_path) -> None:
-    client, headers = _authenticated_client(tmp_path)
-    connector_id = client.post(
-        "/connectors", headers=headers, json={"name": "dev"}
-    ).json()["connector"]["id"]
-    manual = client.post(
-        "/projects",
-        headers=headers,
-        json={
-            "name": "Custom name",
-            "connectorId": connector_id,
-            "workspacePath": "/repo",
-        },
-    ).json()["project"]
-
-    def create_automatic(path, name):
-        response = client.post(
-            "/projects",
-            headers=headers,
-            json={
-                "name": name,
-                "connectorId": connector_id,
-                "workspacePath": path,
-                "manuallyCreated": False,
-            },
-        )
-        assert response.status_code == 200, response.text
-        return response.json()["project"]
-
-    reused = create_automatic("/repo/./", "repo")
-    assert reused == manual
-    automatic = create_automatic("/work/repo", "repo")
-    assert automatic["name"] == "repo"
-    assert automatic["manuallyCreated"] is False
-    # A stale client may propose a name belonging to a different workspace.
-    # Reusing the path must preserve the original name and manual flag anyway.
-    again = create_automatic("/work/repo/", "Custom name")
-    assert again == automatic
-    collision = client.post(
-        "/projects",
-        headers=headers,
-        json={
-            "name": "repo",
-            "connectorId": connector_id,
-            "workspacePath": "/other/repo",
-            "manuallyCreated": False,
-        },
-    )
-    assert collision.status_code == 409
-    assert collision.json()["detail"]["code"] == "project_name_conflict"
-    other = create_automatic("/other/repo", "repo (1)")
-    assert other["id"] != automatic["id"]
-    assert other["name"] == "repo (1)"
-    assert other["manuallyCreated"] is False
-    assert len(client.get("/projects", headers=headers).json()["projects"]) == 3
+def test_explicit_new_operation_keeps_its_own_identity_on_retry(tmp_path):
+    client, headers, _, rpc, payload = _source(tmp_path)
+    first = client.post("/projects", headers=headers, json=payload).json()
+    new_payload = {**payload, "requestId": "explicit-new", "newOperation": True}
+    second = client.post("/projects", headers=headers, json=new_payload).json()
+    assert first["operationId"] != second["operationId"]
+    assert client.post("/projects", headers=headers, json=new_payload).json()["operationId"] == second["operationId"]
+    assert len(rpc.requests) == 2
 
 
-def test_automatic_project_create_validates_ownership_paths_and_revocation(
-    tmp_path,
-) -> None:
-    client, headers = _authenticated_client(tmp_path)
-    connector_id = client.post(
-        "/connectors", headers=headers, json={"name": "dev"}
-    ).json()["connector"]["id"]
-    body = {
-        "name": "repo",
-        "connectorId": connector_id,
-        "workspacePath": "/repo",
-        "manuallyCreated": False,
-    }
-    assert client.post("/projects", json=body).status_code == 401
-    for invalid in ("", "relative/path", "~"):
-        assert (
-            client.post(
-                "/projects",
-                headers=headers,
-                json={**body, "workspacePath": invalid},
-            ).status_code
-            == 422
-        )
-    assert (
-        client.post(
-            "/projects",
-            headers=headers,
-            json={**body, "connectorId": "missing"},
-        ).status_code
-        == 404
-    )
-    client.patch("/admin/settings", headers=headers, json={"registrationOpen": True})
-    other = client.post(
-        "/auth/register",
-        json={
-            "email": "other@example.com",
-            "displayName": "Other",
-            "password": "secret",
-        },
-    )
-    assert other.status_code == 200, other.text
-    other_headers = {"Authorization": f"Bearer {other.json()['accessToken']}"}
-    assert client.post("/projects", headers=other_headers, json=body).status_code == 404
-    assert client.get("/projects", headers=headers).json()["projects"] == []
-    revoked = client.delete(f"/connectors/{connector_id}", headers=headers)
+def test_project_creation_validates_scope_paths_ownership_and_revocation(tmp_path):
+    client, headers, _, rpc, payload = _source(tmp_path)
+    assert client.post("/projects", json=payload).status_code == 401
+    for path in ("", "relative/path", "~"):
+        assert client.post("/projects", headers=headers, json={**payload, "workspacePath": path}).status_code == 422
+    assert client.post("/projects", headers=headers, json={**payload, "connectorId": "missing"}).status_code == 404
+    other = auth_headers(client, user_id="other")
+    assert client.post("/projects", headers=other, json=payload).status_code == 404
+    assert client.post("/projects", headers=headers, json={**payload, "runtimeId": "missing"}).status_code == 404
+    assert client.post("/projects", headers=headers, json={**payload, "runtime": "dsh"}).status_code == 422
+    legacy = {key: value for key, value in payload.items() if key not in {"runtime", "runtimeId", "requestId"}}
+    assert client.post("/projects", headers=headers, json=legacy).status_code == 426
+    revoked = client.delete(f"/connectors/{payload['connectorId']}", headers=headers)
     assert revoked.status_code == 204, revoked.text
-    assert client.post("/projects", headers=headers, json=body).status_code == 404
+    assert client.post("/projects", headers=headers, json=payload).status_code == 404
+    assert rpc.requests == []
 
 
-def test_project_auto_names_fit_the_name_limit_with_suffixes() -> None:
-    from agent_server.infra.repositories.projects import _next_project_name
+def test_project_create_request_enforces_name_length():
+    import pytest
+    from pydantic import ValidationError
 
-    name = "文" * 255
-    next_name = _next_project_name(name, {name})
-    assert len(next_name) == 255
-    assert next_name.endswith(" (1)")
+    from agent_server.core.models import ProjectCreateRequest
+
+    common = {"connectorId": "device", "workspacePath": "/repo", "runtime": "codex", "runtimeId": "codex", "requestId": "request"}
+    assert ProjectCreateRequest(name="文" * 255, **common).name == "文" * 255
+    with pytest.raises(ValidationError):
+        ProjectCreateRequest(name="文" * 256, **common)

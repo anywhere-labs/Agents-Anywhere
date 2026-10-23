@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -34,6 +35,32 @@ class CodexRuntimeBinarySelection:
     login_shell: str | None
     login_shell_path: str | None
     reason: str | None = None
+
+
+def _run_probe(command: list[str], *, timeout: float, check: bool = False,
+               capture_output: bool = True, **kwargs) -> subprocess.CompletedProcess:
+    """A short probe must not leave a launcher's descendants alive on timeout."""
+    with subprocess.Popen(
+        command, stdout=subprocess.PIPE if capture_output else None,
+        stderr=subprocess.PIPE if capture_output else None,
+        start_new_session=os.name == "posix", **kwargs,
+    ) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except BaseException:
+            if os.name == "posix":
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            else:
+                process.kill()
+            process.communicate()
+            raise
+        result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        if check:
+            result.check_returncode()
+        return result
 
 
 def default_login_shell() -> str | None:
@@ -73,7 +100,7 @@ def read_login_shell_path(shell: str | None = None) -> LoginShellPathResult:
 
     command = f'printf "{LOGIN_SHELL_PATH_MARKER}%s\\n" "$PATH"'
     try:
-        completed = subprocess.run(
+        completed = _run_probe(
             [selected_shell, "-lic", command],
             check=False,
             capture_output=True,
@@ -180,7 +207,7 @@ def select_codex_runtime_binary(
 def codex_version_error(candidate: str, environment: Mapping[str, str]) -> str | None:
     """Validate the executable with the same environment used by the SDK."""
     try:
-        result = subprocess.run(
+        result = _run_probe(
             codex_launch_command(candidate, ["--version"], environment),
             env=dict(environment),
             capture_output=True,

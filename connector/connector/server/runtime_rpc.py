@@ -3,12 +3,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, ClassVar
 
+from connector.logging import logger
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeHostClient,
     RuntimeInvalidRequestError,
     RuntimeScope,
     RuntimeSupervisor,
+    RuntimeUnsupportedError,
 )
 from connector.runtime_protocol.instance_binding import runtime_config_for_instance
 from connector.server.runtime_rpc_params import (
@@ -64,6 +66,9 @@ class RuntimeRpcHandler:
         "runtime.permissionCatalog",
         "session.discover",
         "session.create",
+        "project.create",
+        "project.operation",
+        "workspace.refresh",
         "session.sync",
         "session.state",
         "session.capabilities",
@@ -141,6 +146,7 @@ class RuntimeRpcHandler:
                 revision=parsed.config_revision,
             )
             entry = self.agent_runtime_supervisor.entry(parsed.runtime_id)
+            await self._invalidate_workspaces(RuntimeScope(parsed.runtime_id, parsed.runtime_type))
             return self._scoped_result(
                 RuntimeScope(parsed.runtime_id, parsed.runtime_type),
                 {
@@ -199,12 +205,38 @@ class RuntimeRpcHandler:
                 runtime,
                 await discover_sessions(runtime, self.agent_runtime_host, params),
             )
+        if method in {"project.create", "project.operation", "workspace.refresh"}:
+            runtime = self._resolve_agent_runtime(params)
+            result = {"accepted": True}
+            receipt_key = f"project-operations/{params.get('runtimeId')}/{params.get('requestId')}"
+            if method == "project.operation":
+                receipt = await self.agent_runtime_host.sync_state_read(receipt_key)
+                return receipt if isinstance(receipt, dict) else {"status": "unknown"}
+            if method == "project.create":
+                if not all(isinstance(params.get(key), str) and params[key] for key in ("name", "path", "requestId")):
+                    raise RuntimeInvalidRequestError("name, path and requestId are required")
+                receipt = await self.agent_runtime_host.sync_state_read(receipt_key)
+                if isinstance(receipt, dict):
+                    if receipt.get("status") == "succeeded":
+                        return self._runtime_result(runtime, receipt["result"])
+                    raise RuntimeInvalidRequestError("Native creation is pending or unknown; query the operation first")
+                await self.agent_runtime_host.sync_state_write(receipt_key, {"status": "pending"})
+                await self.agent_runtime_host.sync_state_flush()
+                try:
+                    result = await runtime.create_workspace(name=params["name"], path=params["path"], request_id=params["requestId"])
+                except (RuntimeInvalidRequestError, RuntimeUnsupportedError) as exc:
+                    await self.agent_runtime_host.sync_state_write(receipt_key, {"status": "failed", "result": {"message": str(exc)}})
+                    await self.agent_runtime_host.sync_state_flush()
+                    raise
+                await self.agent_runtime_host.sync_state_write(receipt_key, {"status": "succeeded", "result": result})
+                await self.agent_runtime_host.sync_state_flush()
+            await self._invalidate_workspaces(scoped_runtime(params))
+            return self._runtime_result(runtime, result)
         if method == "session.create":
             runtime = self._resolve_agent_runtime(params)
-            return self._runtime_result(
-                runtime,
-                await dispatch_session_create(runtime, params),
-            )
+            result = await dispatch_session_create(runtime, params)
+            await self._invalidate_workspaces(scoped_runtime(params))
+            return self._runtime_result(runtime, result)
         if method == "session.sync":
             return self.accept_session_sync(params)
         if method == "session.state":
@@ -302,6 +334,19 @@ class RuntimeRpcHandler:
                 "externalSessionId": parsed.external_session_id,
             },
         )
+
+    async def _invalidate_workspaces(self, scope: RuntimeScope) -> None:
+        # Creation/start has already completed. A failed refresh hint must not
+        # turn that success into a retryable creation error; periodic sync will
+        # reconcile the source if immediate scheduling is unavailable.
+        try:
+            await self.agent_runtime_host.publish_runtime_notifications(
+                scope.runtime_type,
+                [{"method": "runtime.workspaces.invalidated", "params": {}}],
+                runtime_id=scope.runtime_id,
+            )
+        except Exception:  # noqa: BLE001 - a refresh hint cannot undo a completed mutation
+            logger.exception("Unable to schedule workspace refresh for {}", scope.runtime_id)
 
     def _parse_config_params(self, params: dict[str, Any]) -> RuntimeConfigParams:
         return RuntimeConfigParams.parse(params)
